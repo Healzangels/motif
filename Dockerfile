@@ -51,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # mounts don't end up with root-owned files.
 ARG PUID=99
 ARG PGID=100
-RUN groupadd -g ${PGID} motif && \
+RUN if ! getent group ${PGID} >/dev/null; then groupadd -g ${PGID} motif; fi && \
     useradd -u ${PUID} -g ${PGID} -m -s /usr/sbin/nologin motif
 
 # Copy venv from builder
