@@ -262,13 +262,6 @@ Create a new proxy host:
 In **Custom Locations**, add a single location `/` with this advanced config:
 
 ```nginx
-allow 10.0.1.0/24;
-allow 203.0.113.10;
-allow 100.64.0.0/10;
-allow 10.127.0.0/16;
-deny all;
-satisfy all;
-
 # Forward auth via Authentik
 auth_request /outpost.goauthentik.io/auth/nginx;
 error_page 401 = @goauthentik_proxy_signin;
