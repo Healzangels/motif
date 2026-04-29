@@ -76,7 +76,7 @@
           <span class="form-env-badge" data-env-badge="plex.url" style="display:none">// ENV OVERRIDE</span>
         </div>
         <input class="input" type="text" data-cfg-field="plex.url"
-               placeholder="http://10.0.1.98:32400" autocomplete="off" />
+               placeholder="http://192.168.1.10:32400" autocomplete="off" />
         <p class="form-hint">URL motif uses to reach Plex. Use the LAN IP, not <code>localhost</code>.</p>
       </label>
 
@@ -382,7 +382,7 @@
     </p>
     <pre class="codeblock">widget:
   type: customapi
-  url: https://motif.cmacserver.com/api/public/stats
+  url: https://motif.example.com/api/public/stats
   refreshInterval: 30000
   display: list
   mappings:

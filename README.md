@@ -103,10 +103,10 @@ A template XML is provided at `unraid/motif.xml`.
 docker run -d \
   --name motif \
   --restart unless-stopped \
-  -p 10.0.1.98:5309:5309 \
+  -p 192.168.1.10:5309:5309 \
   -v /mnt/user/appdata/motif:/config \
   -v /mnt/user/data:/data \
-  -e MOTIF_PLEX_URL=http://10.0.1.98:32400 \
+  -e MOTIF_PLEX_URL=http://192.168.1.10:32400 \
   -e MOTIF_PLEX_TOKEN=YOUR_TOKEN_HERE \
   --user 99:100 \
   healzangels/motif:latest
@@ -128,7 +128,7 @@ You can kick off a sync immediately from the dashboard or via the API:
 ```bash
 # Generate an admin token at /settings → Tokens first
 curl -X POST -H "Authorization: Bearer mtf_..." \
-  http://10.0.1.98:5309/api/sync/now
+  http://192.168.1.10:5309/api/sync/now
 ```
 
 ## Configuration: motif.yaml + env vars
@@ -176,11 +176,11 @@ motif exposes `/api/public/stats` specifically for [Homepage](https://gethomepag
 # services.yaml
 - Themes:
     - motif:
-        href: https://motif.cmacserver.com
+        href: https://motif.example.com
         icon: mdi-music-note-eighth
         widget:
           type: customapi
-          url: https://motif.cmacserver.com/api/public/stats
+          url: https://motif.example.com/api/public/stats
           refreshInterval: 30000
           display: list
           mappings:
@@ -242,7 +242,7 @@ If your User Share allocation forces themes and media onto different filesystems
 motif is designed to live behind your existing NPM + Authentik setup, with these layers:
 
 1. **Container hardening** — runs as UID 99 (nobody) in a read-only root filesystem, all capabilities dropped, `no-new-privileges` set. Only `/config`, `/themes`, and Plex media volumes are writable.
-2. **Network exposure** — binds to `10.0.1.98:5309` only (LAN IP), not `0.0.0.0`.
+2. **Network exposure** — binds to `192.168.1.10:5309` only (LAN IP), not `0.0.0.0`.
 3. **Reverse proxy** — NPM with the standard `Local+VPN only` ACL block applied via custom location config.
 4. **App-layer auth** — local password (bcrypt, 30-day session cookies) or Authentik forward-auth, your choice
 5. **API tokens** — hashed at rest, scoped per-token, revocable
@@ -252,8 +252,8 @@ motif is designed to live behind your existing NPM + Authentik setup, with these
 
 Create a new proxy host:
 
-* **Domain**: `motif.cmacserver.com`
-* **Forward Hostname/IP**: `10.0.1.98`
+* **Domain**: `motif.example.com`
+* **Forward Hostname/IP**: `192.168.1.10`
 * **Forward Port**: `5309`
 * **Block Common Exploits**: ON
 * **Cache Assets**: OFF
@@ -263,7 +263,7 @@ In **Custom Locations**, add a single location `/` with this advanced config:
 
 ```nginx
 allow 10.0.1.0/24;
-allow 71.234.15.8;
+allow 203.0.113.10;
 allow 100.64.0.0/10;
 allow 10.127.0.0/16;
 deny all;
