@@ -32,9 +32,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH" \
     MOTIF_CONFIG_DIR=/config \
-    MOTIF_THEMES_DIR=/themes \
-    MOTIF_MOVIES_ROOT=/media/movies \
-    MOTIF_TV_ROOT=/media/tv \
+    MOTIF_DATA_DIR=/data \
     MOTIF_COOKIES_FILE=/config/cookies.txt \
     MOTIF_WEB_HOST=0.0.0.0 \
     MOTIF_WEB_PORT=5309
@@ -51,7 +49,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # mounts don't end up with root-owned files.
 ARG PUID=99
 ARG PGID=100
-RUN groupadd -g ${PGID} motif && \
+RUN if ! getent group ${PGID} >/dev/null; then \
+        groupadd -g ${PGID} motif; \
+    fi && \
     useradd -u ${PUID} -g ${PGID} -m -s /usr/sbin/nologin motif
 
 # Copy venv from builder
@@ -59,11 +59,11 @@ COPY --from=builder /opt/venv /opt/venv
 
 # Copy application
 WORKDIR /app
-COPY --chown=motif:motif app /app/app
+COPY app /app/app
 
 # Create the dirs the app expects so volumes mount cleanly even on first run
-RUN mkdir -p /config /themes/movies /themes/tv /media/movies /media/tv && \
-    chown -R motif:motif /config /themes
+RUN mkdir -p /config /data && \
+    chown -R ${PUID}:${PGID} /config /data /app
 
 USER motif
 
