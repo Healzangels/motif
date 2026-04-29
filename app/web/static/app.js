@@ -55,6 +55,7 @@
     const path = window.location.pathname;
     const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
                   '/coverage': 'coverage', '/queue': 'queue',
+                  '/scans': 'scans',
                   '/libraries': 'libraries',
                   '/settings': 'settings' };
     const k = map[path];
@@ -267,7 +268,9 @@
         }
 
         let srcCell;
-        if (provenance === 'manual') {
+        if (it.upstream_source === 'plex_orphan') {
+          srcCell = '<span class="link-badge link-badge-orphan" title="adopted orphan (no upstream record)">O</span>';
+        } else if (provenance === 'manual') {
           srcCell = '<span class="link-badge link-badge-manual" title="manually overridden">M</span>';
         } else if (provenance === 'cloud') {
           srcCell = '<span class="link-badge link-badge-cloud" title="Plex cloud theme">☁</span>';
@@ -567,6 +570,12 @@
       $('#storage-hardlinks').textContent = fmt.num(stats.storage.hardlinks);
       $('#storage-copies').textContent = fmt.num(stats.storage.copies);
       $('#storage-wasted').textContent = fmtBytes(stats.storage.copies_bytes);
+
+      // Orphans count (themes adopted from Plex with no upstream match)
+      const orphanEl = $('#orphan-count');
+      if (orphanEl) {
+        orphanEl.textContent = fmt.num(stats.storage.orphans || 0);
+      }
 
       if (stats.storage.copies > 0) {
         $('#copies-block').style.display = '';
@@ -904,7 +913,282 @@
     if (cur) refreshDryRunState();
   }
 
-  // ---- Settings tabs ----
+  // ---- Scans page ----
+
+  let scansState = {
+    runId: null,
+    filter: '',
+    page: 0,
+    pageSize: 50,
+    findings: [],
+    selectedIds: new Set(),
+  };
+
+  async function loadScansList() {
+    const tbody = $('#scan-runs-body');
+    if (!tbody) return;
+    try {
+      const data = await api('GET', '/api/scans');
+      const runs = data.runs || [];
+      if (!runs.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="muted center">no scans yet — click SCAN PLEX FOLDERS to start</td></tr>';
+        return;
+      }
+      tbody.innerHTML = runs.map((r) => {
+        const status = htmlEscape(r.status);
+        const dur = r.finished_at && r.started_at
+          ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + 's'
+          : (r.status === 'running' ? '…' : '–');
+        return `<tr data-run="${r.id}">
+          <td>${r.id}</td>
+          <td>${htmlEscape(r.started_at)}</td>
+          <td><span class="status-${status}">${status.toUpperCase()}</span> ${dur}</td>
+          <td>${r.sections_scanned}</td>
+          <td>${r.folders_walked}</td>
+          <td>${r.themes_found}</td>
+          <td>${r.findings_count}</td>
+          <td><button class="btn btn-tiny" data-view-scan="${r.id}">VIEW</button></td>
+        </tr>`;
+      }).join('');
+      tbody.querySelectorAll('[data-view-scan]').forEach((btn) => {
+        btn.addEventListener('click', () => loadScanDetail(parseInt(btn.dataset.viewScan, 10)));
+      });
+
+      // Auto-poll if any run is in progress
+      if (data.running) {
+        setTimeout(() => loadScansList().catch(console.error), 3000);
+      }
+    } catch (e) {
+      console.error('scans list failed', e);
+    }
+  }
+
+  async function triggerScan() {
+    const btn = $('#scan-trigger-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = '// SCANNING...';
+    try {
+      await api('POST', '/api/scans');
+      await loadScansList();
+    } catch (e) {
+      alert('Scan failed to start: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '// SCAN PLEX FOLDERS';
+    }
+  }
+
+  async function loadScanDetail(runId) {
+    scansState.runId = runId;
+    scansState.page = 0;
+    scansState.filter = '';
+    scansState.selectedIds.clear();
+
+    const block = $('#scan-detail-block');
+    if (block) block.style.display = '';
+    $('#scan-detail-id').textContent = runId;
+
+    try {
+      const data = await api('GET', `/api/scans/${runId}`);
+      const run = data.run || {};
+      $('#scan-detail-meta').textContent =
+        `started ${run.started_at} · ${run.findings_count} findings`;
+      const sm = $('#scan-summary');
+      const k = data.kind_counts || {};
+      sm.innerHTML = `
+        <div class="kpi-row" style="margin-top:10px">
+          <div class="kpi"><div class="kpi-num">${k.exact_match || 0}</div><div class="kpi-lbl">EXACT</div></div>
+          <div class="kpi"><div class="kpi-num">${k.hash_match || 0}</div><div class="kpi-lbl">HASH MATCH</div></div>
+          <div class="kpi"><div class="kpi-num">${k.content_mismatch || 0}</div><div class="kpi-lbl">MISMATCH</div></div>
+          <div class="kpi"><div class="kpi-num">${k.orphan_resolvable || 0}</div><div class="kpi-lbl">ORPHANS (RESOLVED)</div></div>
+          <div class="kpi"><div class="kpi-num">${k.orphan_unresolved || 0}</div><div class="kpi-lbl">ORPHANS (UNRESOLVED)</div></div>
+        </div>`;
+      await loadFindings();
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function loadFindings() {
+    const runId = scansState.runId;
+    if (!runId) return;
+    const params = new URLSearchParams({
+      offset: String(scansState.page * scansState.pageSize),
+      limit: String(scansState.pageSize),
+    });
+    if (scansState.filter) params.set('kind', scansState.filter);
+    try {
+      const data = await api('GET', `/api/scans/${runId}/findings?${params}`);
+      scansState.findings = data.findings || [];
+      renderFindings();
+    } catch (e) {
+      console.error('findings load failed', e);
+    }
+  }
+
+  function renderFindings() {
+    const tbody = $('#scan-findings-body');
+    if (!tbody) return;
+    if (!scansState.findings.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted center">no findings match this filter</td></tr>';
+      return;
+    }
+    tbody.innerHTML = scansState.findings.map((f) => {
+      const folder = htmlEscape(f.media_folder.split('/').pop());
+      let resolved = '';
+      if (f.resolved_metadata) {
+        try {
+          const md = JSON.parse(f.resolved_metadata);
+          const ids = [
+            md.tmdb_id ? `tmdb:${md.tmdb_id}` : null,
+            md.imdb_id ? md.imdb_id : null,
+            md.tvdb_id ? `tvdb:${md.tvdb_id}` : null,
+          ].filter(Boolean).join(' / ');
+          resolved = `<span class="muted small">${htmlEscape(md.source || '')}</span> ${htmlEscape(ids)}`;
+        } catch {}
+      }
+      const checked = scansState.selectedIds.has(f.id) ? 'checked' : '';
+      const decision = f.decision === 'pending' ? '–' : htmlEscape(f.decision);
+      const isAdopted = !!f.adopted_at;
+      const actions = isAdopted
+        ? '<span class="muted small">DONE</span>'
+        : `<select class="input" data-decide="${f.id}">
+             <option value="">–</option>
+             <option value="adopt">adopt</option>
+             <option value="replace">replace</option>
+             <option value="keep_existing">keep</option>
+             <option value="ignore">ignore</option>
+           </select>`;
+      return `<tr data-finding="${f.id}">
+        <td><input type="checkbox" data-select="${f.id}" ${checked} ${isAdopted ? 'disabled' : ''} /></td>
+        <td><span class="kind-${htmlEscape(f.finding_kind)}">${htmlEscape(f.finding_kind)}</span></td>
+        <td title="${htmlEscape(f.media_folder)}">${folder}</td>
+        <td>${resolved}</td>
+        <td><code class="small">${htmlEscape(f.file_sha256.substring(0, 12))}…</code></td>
+        <td>${decision}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('[data-select]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = parseInt(cb.dataset.select, 10);
+        if (cb.checked) scansState.selectedIds.add(id);
+        else scansState.selectedIds.delete(id);
+        updateBulkBar();
+      });
+    });
+
+    tbody.querySelectorAll('[data-decide]').forEach((sel) => {
+      sel.addEventListener('change', async () => {
+        const id = parseInt(sel.dataset.decide, 10);
+        const decision = sel.value;
+        if (!decision) return;
+        try {
+          await api('POST', `/api/scans/findings/${id}/decision`, { decision });
+          await loadFindings();
+        } catch (e) {
+          alert('Decision failed: ' + e.message);
+        }
+      });
+    });
+
+    updateBulkBar();
+  }
+
+  function updateBulkBar() {
+    const bar = $('#scan-bulk-bar');
+    if (!bar) return;
+    const n = scansState.selectedIds.size;
+    if (n === 0) {
+      bar.style.display = 'none';
+      return;
+    }
+    bar.style.display = '';
+    $('#scan-bulk-count').textContent = `${n} selected`;
+  }
+
+  function bindScans() {
+    if (!$('#scan-trigger-btn')) return;
+    $('#scan-trigger-btn').addEventListener('click', () => triggerScan().catch(console.error));
+
+    document.querySelectorAll('.scan-filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.scan-filter-btn').forEach((b) =>
+          b.classList.remove('scan-filter-active'));
+        btn.classList.add('scan-filter-active');
+        scansState.filter = btn.dataset.filterKind || '';
+        scansState.page = 0;
+        scansState.selectedIds.clear();
+        loadFindings().catch(console.error);
+      });
+    });
+
+    const selectAll = $('#findings-select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        scansState.findings.forEach((f) => {
+          if (!f.adopted_at) {
+            if (selectAll.checked) scansState.selectedIds.add(f.id);
+            else scansState.selectedIds.delete(f.id);
+          }
+        });
+        renderFindings();
+      });
+    }
+
+    $('#findings-prev-btn')?.addEventListener('click', () => {
+      if (scansState.page > 0) { scansState.page -= 1; loadFindings().catch(console.error); }
+    });
+    $('#findings-next-btn')?.addEventListener('click', () => {
+      scansState.page += 1; loadFindings().catch(console.error);
+    });
+
+    $('#scan-bulk-adopt-btn')?.addEventListener('click', async () => {
+      // Auto-collect all hash_match findings on this page
+      const ids = scansState.findings
+        .filter((f) => f.finding_kind === 'hash_match' && !f.adopted_at)
+        .map((f) => f.id);
+      if (!ids.length) {
+        alert('No hash_match findings on this page to bulk-adopt.');
+        return;
+      }
+      if (!confirm(`Adopt ${ids.length} hash-matched theme(s)? Each will be hardlinked into your themes_dir.`)) {
+        return;
+      }
+      try {
+        const r = await api('POST', '/api/scans/findings/decisions/bulk',
+                            { finding_ids: ids, decision: 'adopt' });
+        alert(`Enqueued ${r.enqueued} adoption(s).`);
+        await loadFindings();
+      } catch (e) {
+        alert('Bulk adopt failed: ' + e.message);
+      }
+    });
+
+    document.querySelectorAll('[data-bulk]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const decision = btn.dataset.bulk;
+        const ids = Array.from(scansState.selectedIds);
+        if (!ids.length) return;
+        if (!confirm(`Apply "${decision}" to ${ids.length} finding(s)?`)) return;
+        try {
+          const r = await api('POST', '/api/scans/findings/decisions/bulk',
+                              { finding_ids: ids, decision });
+          alert(`Enqueued ${r.enqueued} action(s).`);
+          scansState.selectedIds.clear();
+          await loadFindings();
+        } catch (e) {
+          alert('Bulk action failed: ' + e.message);
+        }
+      });
+    });
+
+    loadScansList().catch(console.error);
+  }
+
+
 
   function bindSettingsTabs() {
     const tabs = document.querySelectorAll('#settings-tabs .tab');
@@ -1119,6 +1403,33 @@
     bindDryRunBanner();
     bindSettingsTabs();
     bindConfigSaves();
+    bindScans();
+
+    // TVDB test key handler
+    const tvdbBtn = document.getElementById('tvdb-test-btn');
+    if (tvdbBtn) {
+      tvdbBtn.addEventListener('click', async () => {
+        const result = document.getElementById('tvdb-test-result');
+        const input = document.querySelector('[data-cfg-field="plex.tvdb_api_key"]');
+        const key = input && input.value && input.value !== '***' ? input.value : null;
+        result.textContent = '... testing';
+        result.style.color = '';
+        try {
+          const body = key ? { api_key: key } : {};
+          const r = await api('POST', '/api/tvdb/test', body);
+          if (r.ok) {
+            result.textContent = '✓ ' + r.message;
+            result.style.color = 'var(--green)';
+          } else {
+            result.textContent = '✗ ' + r.message;
+            result.style.color = 'var(--red)';
+          }
+        } catch (e) {
+          result.textContent = '✗ ' + e.message;
+          result.style.color = 'var(--red)';
+        }
+      });
+    }
 
     loadDashboard().catch(console.error);
     loadCoverage().catch(console.error);

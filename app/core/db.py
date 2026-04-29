@@ -22,8 +22,10 @@ log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS themes (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     media_type           TEXT NOT NULL CHECK (media_type IN ('movie', 'tv')),
     tmdb_id              INTEGER NOT NULL,
+    tvdb_id              INTEGER,
     imdb_id              TEXT,
     title                TEXT NOT NULL,
     original_title       TEXT,
@@ -33,24 +35,27 @@ CREATE TABLE IF NOT EXISTS themes (
     youtube_video_id     TEXT,
     youtube_added_at     TEXT,
     youtube_edited_at    TEXT,
-    upstream_source      TEXT NOT NULL CHECK (upstream_source IN ('imdb', 'themoviedb')),
+    upstream_source      TEXT NOT NULL CHECK (upstream_source IN ('imdb', 'themoviedb', 'plex_orphan')),
     raw_json             TEXT,
     last_seen_sync_at    TEXT NOT NULL,
     first_seen_sync_at   TEXT NOT NULL,
     failure_kind         TEXT,
     failure_message      TEXT,
     failure_at           TEXT,
-    PRIMARY KEY (media_type, tmdb_id)
+    UNIQUE (media_type, tmdb_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_themes_imdb ON themes (imdb_id) WHERE imdb_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_themes_tvdb ON themes (tvdb_id) WHERE tvdb_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_themes_video ON themes (youtube_video_id);
 CREATE INDEX IF NOT EXISTS idx_themes_title ON themes (title);
 CREATE INDEX IF NOT EXISTS idx_themes_failure ON themes (failure_kind) WHERE failure_kind IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_themes_orphan ON themes (upstream_source) WHERE upstream_source = 'plex_orphan';
 
 CREATE TABLE IF NOT EXISTS local_files (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
+    theme_id        INTEGER,
     file_path       TEXT NOT NULL,
     file_sha256     TEXT,
     file_size       INTEGER,
@@ -65,6 +70,7 @@ CREATE TABLE IF NOT EXISTS local_files (
 CREATE TABLE IF NOT EXISTS placements (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
+    theme_id        INTEGER,
     media_folder    TEXT NOT NULL,
     placed_at       TEXT NOT NULL,
     placement_kind  TEXT NOT NULL CHECK (placement_kind IN ('hardlink', 'copy', 'symlink')),
@@ -79,10 +85,11 @@ CREATE TABLE IF NOT EXISTS placements (
 -- Download / placement / sync queue. Workers consume from here.
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_type        TEXT NOT NULL CHECK (job_type IN ('sync', 'download', 'place', 'refresh', 'relink')),
+    job_type        TEXT NOT NULL
+                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt')),
     media_type      TEXT,
     tmdb_id         INTEGER,
-    payload         TEXT,                    -- JSON
+    payload         TEXT,
     status          TEXT NOT NULL DEFAULT 'pending'
                        CHECK (status IN ('pending', 'running', 'done', 'failed', 'cancelled')),
     attempts        INTEGER NOT NULL DEFAULT 0,
@@ -127,6 +134,7 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 CREATE TABLE IF NOT EXISTS user_overrides (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
+    theme_id        INTEGER,
     youtube_url     TEXT NOT NULL,
     set_at          TEXT NOT NULL,
     set_by          TEXT,
@@ -150,6 +158,7 @@ CREATE TABLE IF NOT EXISTS plex_sections (
 CREATE TABLE IF NOT EXISTS pending_updates (
     media_type        TEXT NOT NULL,
     tmdb_id           INTEGER NOT NULL,
+    theme_id          INTEGER,
     old_video_id      TEXT,
     new_video_id      TEXT,
     old_youtube_url   TEXT,
@@ -166,6 +175,56 @@ CREATE TABLE IF NOT EXISTS pending_updates (
 CREATE INDEX IF NOT EXISTS idx_pending_updates_decision
     ON pending_updates (decision, detected_at);
 
+CREATE TABLE IF NOT EXISTS scan_runs (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    started_at        TEXT NOT NULL,
+    finished_at       TEXT,
+    status            TEXT NOT NULL DEFAULT 'running'
+                        CHECK (status IN ('running','complete','failed','cancelled')),
+    sections_scanned  INTEGER NOT NULL DEFAULT 0,
+    folders_walked    INTEGER NOT NULL DEFAULT 0,
+    themes_found      INTEGER NOT NULL DEFAULT 0,
+    findings_count    INTEGER NOT NULL DEFAULT 0,
+    initiated_by      TEXT,
+    error             TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scan_runs_status ON scan_runs (status, started_at);
+
+CREATE TABLE IF NOT EXISTS scan_findings (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    scan_run_id         INTEGER NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE,
+    section_id          TEXT NOT NULL,
+    section_type        TEXT NOT NULL CHECK (section_type IN ('movie','show')),
+    media_folder        TEXT NOT NULL,
+    file_path           TEXT NOT NULL,
+    file_size           INTEGER NOT NULL,
+    file_mtime          TEXT NOT NULL,
+    file_sha256         TEXT NOT NULL,
+    finding_kind        TEXT NOT NULL
+                          CHECK (finding_kind IN
+                            ('exact_match','hash_match','content_mismatch',
+                             'orphan_resolvable','orphan_unresolved')),
+    theme_id            INTEGER REFERENCES themes(id) ON DELETE SET NULL,
+    resolved_metadata   TEXT,
+    decision            TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (decision IN
+                            ('pending','adopt','replace','keep_existing','ignore')),
+    decision_at         TEXT,
+    decision_by         TEXT,
+    adopt_outcome       TEXT,
+    adopted_at          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_scan_findings_run ON scan_findings (scan_run_id, decision);
+CREATE INDEX IF NOT EXISTS idx_scan_findings_kind ON scan_findings (finding_kind, decision);
+CREATE INDEX IF NOT EXISTS idx_scan_findings_hash ON scan_findings (file_sha256);
+
+CREATE TABLE IF NOT EXISTS tvdb_lookup_cache (
+    cache_key      TEXT PRIMARY KEY,
+    response_json  TEXT NOT NULL,
+    fetched_at     TEXT NOT NULL,
+    expires_at     TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -179,7 +238,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -281,6 +340,223 @@ def _migrate_v3_to_v4(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
+    """v5 adds support for filesystem scans (Plex folder adoption) and orphan
+    themes (theme.mp3 files that exist in Plex but have no upstream record).
+
+    Changes:
+      - themes: add `id INTEGER` (autoincrement, but kept nullable for legacy
+        rows; a unique index makes lookups by id efficient). Add `tvdb_id`
+        column. Allow negative tmdb_ids by relaxing nothing (the column was
+        always INTEGER; the negative-id sentinel is by convention).
+      - themes: extend upstream_source CHECK to include 'plex_orphan'.
+      - local_files, placements, pending_updates, user_overrides: add
+        `theme_id INTEGER` column for future path; existing FK on
+        (media_type, tmdb_id) remains the actual relational key.
+      - new tables: scan_runs, scan_findings, tvdb_lookup_cache.
+      - widen jobs.job_type CHECK to include 'scan' and 'adopt'.
+    """
+    log.info("Migrating to schema v5 (scan/adopt + orphan themes)")
+
+    # The CHECK constraint on themes.upstream_source needs widening to include
+    # 'plex_orphan'. SQLite doesn't allow ALTER ... CHECK, so we recreate the
+    # table. Same for jobs.job_type. Existing data is preserved through
+    # INSERT INTO ... SELECT ... patterns.
+    #
+    # CRITICAL: foreign_keys must be OFF during the table-recreate dance,
+    # otherwise DROP TABLE themes cascades and wipes all FK'd rows in
+    # local_files / placements / pending_updates. We turn FKs off, do the
+    # migration, then turn them back on.
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.executescript("""
+
+        -- ======================================================================
+        -- themes: add id, tvdb_id; extend upstream_source CHECK
+        -- ======================================================================
+        CREATE TABLE themes_new (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            media_type           TEXT NOT NULL CHECK (media_type IN ('movie', 'tv')),
+            tmdb_id              INTEGER NOT NULL,
+            tvdb_id              INTEGER,
+            imdb_id              TEXT,
+            title                TEXT NOT NULL,
+            original_title       TEXT,
+            year                 TEXT,
+            release_date         TEXT,
+            youtube_url          TEXT,
+            youtube_video_id     TEXT,
+            youtube_added_at     TEXT,
+            youtube_edited_at    TEXT,
+            upstream_source      TEXT NOT NULL
+                                   CHECK (upstream_source IN ('imdb', 'themoviedb', 'plex_orphan')),
+            raw_json             TEXT,
+            last_seen_sync_at    TEXT NOT NULL,
+            first_seen_sync_at   TEXT NOT NULL,
+            failure_kind         TEXT,
+            failure_message      TEXT,
+            failure_at           TEXT,
+            UNIQUE (media_type, tmdb_id)
+        );
+
+        INSERT INTO themes_new (
+            media_type, tmdb_id, imdb_id, title, original_title, year, release_date,
+            youtube_url, youtube_video_id, youtube_added_at, youtube_edited_at,
+            upstream_source, raw_json, last_seen_sync_at, first_seen_sync_at,
+            failure_kind, failure_message, failure_at
+        )
+        SELECT
+            media_type, tmdb_id, imdb_id, title, original_title, year, release_date,
+            youtube_url, youtube_video_id, youtube_added_at, youtube_edited_at,
+            upstream_source, raw_json, last_seen_sync_at, first_seen_sync_at,
+            failure_kind, failure_message, failure_at
+        FROM themes;
+
+        DROP TABLE themes;
+        ALTER TABLE themes_new RENAME TO themes;
+
+        CREATE INDEX IF NOT EXISTS idx_themes_imdb ON themes (imdb_id) WHERE imdb_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_themes_tvdb ON themes (tvdb_id) WHERE tvdb_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_themes_video ON themes (youtube_video_id);
+        CREATE INDEX IF NOT EXISTS idx_themes_title ON themes (title);
+        CREATE INDEX IF NOT EXISTS idx_themes_failure ON themes (failure_kind) WHERE failure_kind IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_themes_orphan ON themes (upstream_source) WHERE upstream_source = 'plex_orphan';
+
+        -- ======================================================================
+        -- jobs: extend job_type to include 'scan' and 'adopt'
+        -- ======================================================================
+        CREATE TABLE jobs_new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type        TEXT NOT NULL
+                              CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt')),
+            media_type      TEXT,
+            tmdb_id         INTEGER,
+            payload         TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending'
+                              CHECK (status IN ('pending','running','done','failed','cancelled')),
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            max_attempts    INTEGER NOT NULL DEFAULT 3,
+            last_error      TEXT,
+            created_at      TEXT NOT NULL,
+            started_at      TEXT,
+            finished_at     TEXT,
+            next_run_at     TEXT
+        );
+        INSERT INTO jobs_new SELECT * FROM jobs;
+        DROP TABLE jobs;
+        ALTER TABLE jobs_new RENAME TO jobs;
+        CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs (job_type, status);
+
+        -- ======================================================================
+        -- Add theme_id column to FK'd tables. Backfill from themes.id via the
+        -- (media_type, tmdb_id) join. Existing code keeps using (media_type,
+        -- tmdb_id) — the new column is for future code paths.
+        -- ======================================================================
+        ALTER TABLE local_files     ADD COLUMN theme_id INTEGER;
+        ALTER TABLE placements      ADD COLUMN theme_id INTEGER;
+        ALTER TABLE pending_updates ADD COLUMN theme_id INTEGER;
+        ALTER TABLE user_overrides  ADD COLUMN theme_id INTEGER;
+
+        UPDATE local_files SET theme_id = (
+            SELECT id FROM themes
+             WHERE themes.media_type = local_files.media_type
+               AND themes.tmdb_id = local_files.tmdb_id
+        );
+        UPDATE placements SET theme_id = (
+            SELECT id FROM themes
+             WHERE themes.media_type = placements.media_type
+               AND themes.tmdb_id = placements.tmdb_id
+        );
+        UPDATE pending_updates SET theme_id = (
+            SELECT id FROM themes
+             WHERE themes.media_type = pending_updates.media_type
+               AND themes.tmdb_id = pending_updates.tmdb_id
+        );
+        UPDATE user_overrides SET theme_id = (
+            SELECT id FROM themes
+             WHERE themes.media_type = user_overrides.media_type
+               AND themes.tmdb_id = user_overrides.tmdb_id
+        );
+
+        -- ======================================================================
+        -- scan_runs: one row per Plex folder scan
+        -- ======================================================================
+        CREATE TABLE scan_runs (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at        TEXT NOT NULL,
+            finished_at       TEXT,
+            status            TEXT NOT NULL DEFAULT 'running'
+                                CHECK (status IN ('running','complete','failed','cancelled')),
+            sections_scanned  INTEGER NOT NULL DEFAULT 0,
+            folders_walked    INTEGER NOT NULL DEFAULT 0,
+            themes_found      INTEGER NOT NULL DEFAULT 0,
+            findings_count    INTEGER NOT NULL DEFAULT 0,
+            initiated_by      TEXT,
+            error             TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_scan_runs_status ON scan_runs (status, started_at);
+
+        -- ======================================================================
+        -- scan_findings: one row per theme.mp3 found during a scan
+        -- ======================================================================
+        CREATE TABLE scan_findings (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            scan_run_id         INTEGER NOT NULL REFERENCES scan_runs(id) ON DELETE CASCADE,
+            section_id          TEXT NOT NULL,                  -- Plex section
+            section_type        TEXT NOT NULL CHECK (section_type IN ('movie','show')),
+            media_folder        TEXT NOT NULL,                  -- absolute path to the folder
+            file_path           TEXT NOT NULL,                  -- absolute path to theme.mp3
+            file_size           INTEGER NOT NULL,
+            file_mtime          TEXT NOT NULL,
+            file_sha256         TEXT NOT NULL,
+            -- finding_kind:
+            --   exact_match       — file at the canonical themes_dir matches by hash AND inode
+            --   hash_match        — same content as a known motif file, but separate inode (adoptable)
+            --   content_mismatch  — folder has a theme.mp3 that doesn't match motif's known content for this item
+            --   orphan_resolvable — no themes row matches this folder by title+year, but we have nfo/tvdb metadata
+            --   orphan_unresolved — no themes row, no metadata: a fallback synthetic id will be allocated
+            finding_kind        TEXT NOT NULL
+                                  CHECK (finding_kind IN
+                                    ('exact_match','hash_match','content_mismatch',
+                                     'orphan_resolvable','orphan_unresolved')),
+            -- The themes row this finding maps to (if any). For orphans
+            -- this is NULL until the user adopts.
+            theme_id            INTEGER REFERENCES themes(id) ON DELETE SET NULL,
+            -- For orphans: the parsed metadata we discovered, JSON.
+            resolved_metadata   TEXT,
+            -- decision lifecycle:
+            decision            TEXT NOT NULL DEFAULT 'pending'
+                                  CHECK (decision IN
+                                    ('pending','adopt','replace','keep_existing','ignore')),
+            decision_at         TEXT,
+            decision_by         TEXT,
+            -- adoption result (filled when decision is acted on):
+            adopt_outcome       TEXT,                          -- JSON
+            adopted_at          TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_scan_findings_run
+            ON scan_findings (scan_run_id, decision);
+        CREATE INDEX IF NOT EXISTS idx_scan_findings_kind
+            ON scan_findings (finding_kind, decision);
+        CREATE INDEX IF NOT EXISTS idx_scan_findings_hash
+            ON scan_findings (file_sha256);
+
+        -- ======================================================================
+        -- tvdb_lookup_cache: stores TVDB API responses to avoid re-querying
+        -- ======================================================================
+        CREATE TABLE tvdb_lookup_cache (
+            cache_key      TEXT PRIMARY KEY,         -- e.g. 'movie:title=Inception:year=2010'
+            response_json  TEXT NOT NULL,
+            fetched_at     TEXT NOT NULL,
+            expires_at     TEXT NOT NULL
+        );
+    """)
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
@@ -319,6 +595,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 3:
                     _migrate_v3_to_v4(conn)
                     current = 4
+                elif current == 4:
+                    _migrate_v4_to_v5(conn)
+                    current = 5
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

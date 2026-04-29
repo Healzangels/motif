@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
+
+import json
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -81,6 +83,13 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 raise ValueError(f"unknown field: {section_name}.{k}")
             # Special: plex.token empty-string-or-mask = keep existing
             if section_name == "plex" and k == "token":
+                if v == "" or v == "***":
+                    continue
+                if v is None:
+                    setattr(section, k, "")
+                    continue
+            # Same for tvdb_api_key
+            if section_name == "plex" and k == "tvdb_api_key":
                 if v == "" or v == "***":
                     continue
                 if v is None:
@@ -243,6 +252,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/queue", response_class=HTMLResponse)
     async def queue_page(request: Request):
         return templates.TemplateResponse(request, "queue.html")
+
+    @app.get("/scans", response_class=HTMLResponse)
+    async def scans_page(request: Request):
+        return templates.TemplateResponse(request, "scans.html")
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
@@ -501,7 +514,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM themes
                    WHERE failure_kind IN ('video_private','video_removed','video_age_restricted','geo_blocked')
                   ) AS failures_unavailable,
-                  (SELECT COUNT(*) FROM themes WHERE failure_kind = 'cookies_expired') AS failures_cookies
+                  (SELECT COUNT(*) FROM themes WHERE failure_kind = 'cookies_expired') AS failures_cookies,
+                  (SELECT COUNT(*) FROM themes WHERE upstream_source = 'plex_orphan') AS orphans_total
             """).fetchone()
             last_sync = conn.execute("""
                 SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1
@@ -527,6 +541,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "copies": row["copies"],
                 "total_bytes": row["storage_bytes"],
                 "copies_bytes": row["storage_copies_bytes"],
+                "orphans": row["orphans_total"],
             },
             "updates": {
                 "pending": row["updates_pending"],
@@ -585,6 +600,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             payload["plex"]["token_set"] = False
             payload["plex"]["token"] = ""
+        # Same for the TVDB API key
+        if payload.get("plex", {}).get("tvdb_api_key"):
+            payload["plex"]["tvdb_api_key"] = "***"
+            payload["plex"]["tvdb_api_key_set"] = True
+        else:
+            payload["plex"]["tvdb_api_key_set"] = False
+            payload["plex"]["tvdb_api_key"] = ""
         return {
             "config": payload,
             "env_overrides": settings.env_overrides(),
@@ -652,6 +674,198 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Return the updated config with masking applied
         return await api_get_config(request)
+
+    # --- Plex folder scanning ---
+
+    @app.post("/api/scans")
+    async def api_trigger_scan(request: Request, db: Path = Depends(get_db_path)):
+        """Enqueue a scan job. Returns the job id; poll /api/scans for run state."""
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(
+                status_code=400,
+                detail="themes_dir not configured — set it on /settings before scanning",
+            )
+        # Reject if a scan is already running
+        with get_conn(db) as conn:
+            running = conn.execute(
+                "SELECT id FROM scan_runs WHERE status = 'running' LIMIT 1"
+            ).fetchone()
+            if running:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"a scan is already running (id={running['id']})",
+                )
+            payload = json.dumps({"initiated_by": request.state.principal.username})
+            conn.execute(
+                """INSERT INTO jobs (job_type, payload, status, created_at, next_run_at)
+                   VALUES ('scan', ?, 'pending', datetime('now'), datetime('now'))""",
+                (payload,),
+            )
+            job_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        log_event(db, level="INFO", component="scan",
+                  message=f"Scan enqueued by {request.state.principal.username}",
+                  detail={"job_id": job_id})
+        return {"ok": True, "job_id": job_id}
+
+    @app.get("/api/scans")
+    async def api_list_scans(db: Path = Depends(get_db_path), limit: int = 20):
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                """SELECT * FROM scan_runs
+                   ORDER BY started_at DESC LIMIT ?""",
+                (max(1, min(100, limit)),),
+            ).fetchall()
+            running = conn.execute(
+                "SELECT id FROM scan_runs WHERE status = 'running' LIMIT 1"
+            ).fetchone()
+        return {
+            "runs": [dict(r) for r in rows],
+            "running": dict(running) if running else None,
+        }
+
+    @app.get("/api/scans/{scan_id}")
+    async def api_get_scan(scan_id: int, db: Path = Depends(get_db_path)):
+        with get_conn(db) as conn:
+            run = conn.execute(
+                "SELECT * FROM scan_runs WHERE id = ?", (scan_id,)
+            ).fetchone()
+            if not run:
+                raise HTTPException(status_code=404, detail="scan not found")
+            counts = {}
+            for kind in ("exact_match", "hash_match", "content_mismatch",
+                         "orphan_resolvable", "orphan_unresolved"):
+                row = conn.execute(
+                    """SELECT COUNT(*) AS c FROM scan_findings
+                       WHERE scan_run_id = ? AND finding_kind = ?""",
+                    (scan_id, kind),
+                ).fetchone()
+                counts[kind] = row["c"]
+            decisions = {}
+            for d in ("pending", "adopt", "replace", "keep_existing", "ignore"):
+                row = conn.execute(
+                    """SELECT COUNT(*) AS c FROM scan_findings
+                       WHERE scan_run_id = ? AND decision = ?""",
+                    (scan_id, d),
+                ).fetchone()
+                decisions[d] = row["c"]
+        return {
+            "run": dict(run),
+            "kind_counts": counts,
+            "decision_counts": decisions,
+        }
+
+    @app.get("/api/scans/{scan_id}/findings")
+    async def api_list_findings(scan_id: int, db: Path = Depends(get_db_path),
+                                kind: Optional[str] = None,
+                                decision: Optional[str] = None,
+                                offset: int = 0, limit: int = 100):
+        sql = "SELECT * FROM scan_findings WHERE scan_run_id = ?"
+        params: list = [scan_id]
+        if kind:
+            sql += " AND finding_kind = ?"
+            params.append(kind)
+        if decision:
+            sql += " AND decision = ?"
+            params.append(decision)
+        sql += " ORDER BY id LIMIT ? OFFSET ?"
+        params.extend([max(1, min(500, limit)), max(0, offset)])
+        with get_conn(db) as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return {"findings": [dict(r) for r in rows]}
+
+    @app.post("/api/scans/findings/{finding_id}/decision")
+    async def api_decide_finding(finding_id: int, request: Request,
+                                  db: Path = Depends(get_db_path)):
+        """Apply a decision to a single scan finding. Body: {"decision": "adopt"}."""
+        _require_admin(request)
+        body = await request.json()
+        decision = body.get("decision")
+        if decision not in ("adopt", "replace", "keep_existing", "ignore"):
+            raise HTTPException(status_code=400,
+                                detail=f"invalid decision: {decision}")
+        with get_conn(db) as conn:
+            f = conn.execute(
+                "SELECT id, decision, adopted_at FROM scan_findings WHERE id = ?",
+                (finding_id,),
+            ).fetchone()
+            if not f:
+                raise HTTPException(status_code=404, detail="finding not found")
+            if f["adopted_at"]:
+                return {"ok": True, "note": "already adopted (no-op)",
+                        "finding_id": finding_id}
+            payload = json.dumps({
+                "finding_id": finding_id,
+                "decision": decision,
+                "decided_by": request.state.principal.username,
+            })
+            conn.execute(
+                """INSERT INTO jobs (job_type, payload, status, created_at, next_run_at)
+                   VALUES ('adopt', ?, 'pending', datetime('now'), datetime('now'))""",
+                (payload,),
+            )
+        return {"ok": True, "finding_id": finding_id, "decision": decision}
+
+    @app.post("/api/scans/findings/decisions/bulk")
+    async def api_decide_findings_bulk(request: Request,
+                                        db: Path = Depends(get_db_path)):
+        """Apply a decision to many findings at once. Body:
+            {"finding_ids": [1,2,3], "decision": "adopt"}"""
+        _require_admin(request)
+        body = await request.json()
+        ids = body.get("finding_ids") or []
+        decision = body.get("decision")
+        if not isinstance(ids, list) or not ids:
+            raise HTTPException(status_code=400, detail="finding_ids must be non-empty list")
+        if decision not in ("adopt", "replace", "keep_existing", "ignore"):
+            raise HTTPException(status_code=400,
+                                detail=f"invalid decision: {decision}")
+        enqueued = 0
+        with get_conn(db) as conn:
+            for fid in ids:
+                try:
+                    fid_int = int(fid)
+                except (TypeError, ValueError):
+                    continue
+                row = conn.execute(
+                    "SELECT id, adopted_at FROM scan_findings WHERE id = ?",
+                    (fid_int,),
+                ).fetchone()
+                if not row or row["adopted_at"]:
+                    continue
+                payload = json.dumps({
+                    "finding_id": fid_int,
+                    "decision": decision,
+                    "decided_by": request.state.principal.username,
+                })
+                conn.execute(
+                    """INSERT INTO jobs (job_type, payload, status, created_at, next_run_at)
+                       VALUES ('adopt', ?, 'pending', datetime('now'), datetime('now'))""",
+                    (payload,),
+                )
+                enqueued += 1
+        return {"ok": True, "enqueued": enqueued}
+
+    # --- TVDB credentials test ---
+
+    @app.post("/api/tvdb/test")
+    async def api_tvdb_test(request: Request, db: Path = Depends(get_db_path)):
+        """Validate the configured TVDB API key. Body optional:
+        {"api_key": "..."}; if absent, uses the saved key from motif.yaml."""
+        _require_admin(request)
+        from ..core.tvdb import TVDBClient
+
+        try:
+            body = await request.json() if (await request.body()) else {}
+        except Exception:
+            body = {}
+        key = body.get("api_key") or settings.tvdb_api_key
+        if not key:
+            return {"ok": False, "message": "no API key configured"}
+
+        client = TVDBClient(key, db)
+        ok, msg = client.test_credentials()
+        return {"ok": ok, "message": msg}
 
     # --- Storage waste / relink ---
 
@@ -955,7 +1169,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         where_clause = " AND ".join(where)
         sql = f"""
             SELECT DISTINCT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
-                   t.youtube_url, t.youtube_video_id, t.failure_kind, t.failure_message
+                   t.youtube_url, t.youtube_video_id, t.failure_kind, t.failure_message,
+                   t.upstream_source
             FROM themes t {join}
             WHERE {where_clause}
             ORDER BY t.title COLLATE NOCASE

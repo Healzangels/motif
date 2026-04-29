@@ -172,6 +172,10 @@ class Settings:
     def plex_included_titles(self) -> set[str]:
         return set(self._cfg.plex.section_include)
 
+    @property
+    def tvdb_api_key(self) -> str:
+        return self._cfg.plex.tvdb_api_key
+
     # ---- Downloads section ----
 
     @property

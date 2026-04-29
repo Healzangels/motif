@@ -634,6 +634,11 @@ pre code, .codeblock {
   border-color: rgba(109,211,255,0.4);
   background: rgba(109,211,255,0.05);
 }
+.link-badge-orphan {
+  color: var(--green);
+  border-color: rgba(143,228,150,0.4);
+  background: rgba(143,228,150,0.06);
+}
 
 /* ---- Failure glyphs ---- */
 
@@ -901,3 +906,74 @@ pre code, .codeblock {
    Sticky positioning means both the banner AND topbar stick at the top. */
 .dry-run-banner + .topbar { top: 0; }
 body.dry-run-on .topbar { /* nothing special needed; sticky stacks naturally */ }
+
+/* ====================================================================
+   Scans page — finding-kind color badges, KPI row, status pills
+   ==================================================================== */
+
+.kind-exact_match,
+.kind-hash_match,
+.kind-content_mismatch,
+.kind-orphan_resolvable,
+.kind-orphan_unresolved {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: var(--t-small);
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid currentColor;
+  border-radius: 2px;
+  white-space: nowrap;
+}
+
+.kind-exact_match       { color: var(--ink-dim); }
+.kind-hash_match        { color: var(--green); }
+.kind-content_mismatch  { color: var(--amber); }
+.kind-orphan_resolvable { color: var(--cyan); }
+.kind-orphan_unresolved { color: var(--red); }
+
+.scan-filter-btn { opacity: 0.6; }
+.scan-filter-btn.scan-filter-active {
+  opacity: 1;
+  background: var(--ink-faint);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+
+.kpi-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: stretch;
+}
+.kpi {
+  flex: 1;
+  min-width: 120px;
+  padding: 14px 16px;
+  border: 1px solid var(--bg-ridge);
+  background: var(--bg-recess);
+  text-align: center;
+}
+.kpi-num {
+  font-family: var(--font-mono);
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1;
+}
+.kpi-lbl {
+  font-family: var(--font-mono);
+  font-size: var(--t-small);
+  color: var(--ink-dim);
+  margin-top: 6px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.status-running   { color: var(--cyan); }
+.status-complete  { color: var(--green); }
+.status-failed    { color: var(--red); }
+.status-cancelled { color: var(--amber); }
+
+.scan-summary { margin-bottom: 8px; }

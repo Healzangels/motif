@@ -211,6 +211,10 @@ class Worker:
             self._do_refresh(job)
         elif jt == "relink":
             self._do_relink(job)
+        elif jt == "scan":
+            self._do_scan(job)
+        elif jt == "adopt":
+            self._do_adopt(job)
         else:
             self._mark_failed(job["id"], f"unknown job type: {jt}")
             return
@@ -220,6 +224,50 @@ class Worker:
 
     def _do_sync(self, job: sqlite3.Row) -> None:
         run_sync(self.settings.db_path, self.settings.motifdb_base_url)
+
+    def _do_scan(self, job: sqlite3.Row) -> None:
+        """Run a Plex folder scan. Payload optionally carries
+        {'initiated_by': 'username'}."""
+        from .scanner import run_scan
+        if not self.settings.is_paths_ready():
+            log_event(self.settings.db_path, level="WARNING",
+                      component="scan",
+                      message="Skipped: themes_dir not configured.")
+            raise RuntimeError("themes_dir not configured")
+
+        payload = {}
+        if job["payload"]:
+            try:
+                payload = json.loads(job["payload"])
+            except Exception:
+                pass
+        initiated_by = payload.get("initiated_by", "system")
+        run_scan(
+            self.settings.db_path, self.settings,
+            initiated_by=initiated_by,
+            cancel_check=self.stop_event.is_set,
+        )
+
+    def _do_adopt(self, job: sqlite3.Row) -> None:
+        """Apply a per-finding adoption decision. Payload carries
+        {'finding_id': N, 'decision': 'adopt'|..., 'decided_by': 'username'}."""
+        from .adopt import adopt_finding
+        if not self.settings.is_paths_ready():
+            log_event(self.settings.db_path, level="WARNING",
+                      component="adopt",
+                      message="Skipped: themes_dir not configured.")
+            raise RuntimeError("themes_dir not configured")
+
+        if not job["payload"]:
+            raise RuntimeError("adopt job missing payload")
+        payload = json.loads(job["payload"])
+        adopt_finding(
+            self.settings.db_path,
+            finding_id=int(payload["finding_id"]),
+            decision=str(payload["decision"]),
+            decided_by=payload.get("decided_by", "system"),
+            settings=self.settings,
+        )
 
     def _do_download(self, job: sqlite3.Row) -> None:
         media_type = job["media_type"]

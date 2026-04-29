@@ -103,10 +103,10 @@ A template XML is provided at `unraid/motif.xml`.
 docker run -d \
   --name motif \
   --restart unless-stopped \
-  -p 192.168.1.10:5309:5309 \
+  -p 10.0.1.98:5309:5309 \
   -v /mnt/user/appdata/motif:/config \
   -v /mnt/user/data:/data \
-  -e MOTIF_PLEX_URL=http://192.168.1.10:32400 \
+  -e MOTIF_PLEX_URL=http://10.0.1.98:32400 \
   -e MOTIF_PLEX_TOKEN=YOUR_TOKEN_HERE \
   --user 99:100 \
   healzangels/motif:latest
@@ -128,7 +128,7 @@ You can kick off a sync immediately from the dashboard or via the API:
 ```bash
 # Generate an admin token at /settings → Tokens first
 curl -X POST -H "Authorization: Bearer mtf_..." \
-  http://192.168.1.10:5309/api/sync/now
+  http://10.0.1.98:5309/api/sync/now
 ```
 
 ## Configuration: motif.yaml + env vars
@@ -176,11 +176,11 @@ motif exposes `/api/public/stats` specifically for [Homepage](https://gethomepag
 # services.yaml
 - Themes:
     - motif:
-        href: https://motif.example.com
+        href: https://motif.cmacserver.com
         icon: mdi-music-note-eighth
         widget:
           type: customapi
-          url: https://motif.example.com/api/public/stats
+          url: https://motif.cmacserver.com/api/public/stats
           refreshInterval: 30000
           display: list
           mappings:
@@ -242,7 +242,7 @@ If your User Share allocation forces themes and media onto different filesystems
 motif is designed to live behind your existing NPM + Authentik setup, with these layers:
 
 1. **Container hardening** — runs as UID 99 (nobody) in a read-only root filesystem, all capabilities dropped, `no-new-privileges` set. Only `/config`, `/themes`, and Plex media volumes are writable.
-2. **Network exposure** — binds to `192.168.1.10:5309` only (LAN IP), not `0.0.0.0`.
+2. **Network exposure** — binds to `10.0.1.98:5309` only (LAN IP), not `0.0.0.0`.
 3. **Reverse proxy** — NPM with the standard `Local+VPN only` ACL block applied via custom location config.
 4. **App-layer auth** — local password (bcrypt, 30-day session cookies) or Authentik forward-auth, your choice
 5. **API tokens** — hashed at rest, scoped per-token, revocable
@@ -252,8 +252,8 @@ motif is designed to live behind your existing NPM + Authentik setup, with these
 
 Create a new proxy host:
 
-* **Domain**: `motif.example.com`
-* **Forward Hostname/IP**: `192.168.1.10`
+* **Domain**: `motif.cmacserver.com`
+* **Forward Hostname/IP**: `10.0.1.98`
 * **Forward Port**: `5309`
 * **Block Common Exploits**: ON
 * **Cache Assets**: OFF
@@ -262,6 +262,12 @@ Create a new proxy host:
 In **Custom Locations**, add a single location `/` with this advanced config:
 
 ```nginx
+allow 10.0.1.0/24;
+allow 71.234.15.8;
+allow 100.64.0.0/10;
+allow 10.127.0.0/16;
+deny all;
+satisfy all;
 
 # Forward auth via Authentik
 auth_request /outpost.goauthentik.io/auth/nginx;
@@ -341,6 +347,7 @@ These can be set in `.env` for first-boot bootstrapping. After motif.yaml is wri
 | `MOTIF_THEMES_DIR`            | Themes Directory          | If unset, must be set via UI on first run |
 | `MOTIF_PLEX_SECTION_EXCLUDE`  | Section Exclude           | Comma-separated titles                 |
 | `MOTIF_PLEX_SECTION_INCLUDE`  | Section Include           | Comma-separated whitelist              |
+| `MOTIF_TVDB_API_KEY`          | TVDB API Key              | Optional, used during scans for orphan resolution |
 | `MOTIF_DL_RATE_HOUR`          | Rate per hour             |                                        |
 | `MOTIF_DRY_RUN`               | Dry-run                   | Initial value only on fresh DB         |
 | `MOTIF_TRUST_FORWARD_AUTH`    | (no UI equivalent)        | Trust X-Authentik-Username             |
@@ -379,6 +386,37 @@ The topbar shows a cyan **UPD <count>** badge whenever there are pending updates
 
 If you've manually overridden a theme via `/settings` and ThemerrDB later updates upstream, the update STILL appears in your queue — but accepting it will only re-download. The override URL in `user_overrides` continues to take precedence at download time. To actually replace a manual theme with the upstream version, clear the override from the item's detail dialog AND accept the update.
 
+## Plex Scans (adopting existing themes)
+
+If your Plex folders already have `theme.mp3` files in them — from a previous Themerr install, manual placement, or another tool — motif can scan them and adopt them rather than re-downloading.
+
+Trigger from the **`/coverage`** page: click `// SCAN PLEX FOLDERS →`. This enqueues a single-shot scan job that walks every managed section's `location_paths`, hashes every `theme.mp3` in immediate subfolders, and classifies each finding into one of:
+
+| Kind | Meaning | What happens on adopt |
+|------|---------|-----------------------|
+| `exact_match` | File is already a hardlink to motif's canonical copy | Nothing — already done |
+| `hash_match` | Same content as a known motif file but different inode | Re-hardlink so they share an inode |
+| `content_mismatch` | Folder has a `theme.mp3` but motif has a different canonical file for this item | User chooses: ADOPT (use Plex's), REPLACE (download motif's), or KEEP (mark as manual override) |
+| `orphan_resolvable` | Folder has no matching ThemerrDB record, but `.nfo` or TVDB lookup found IDs | Adopt creates a `themes` row with `upstream_source='plex_orphan'` and the resolved IDs |
+| `orphan_unresolved` | No record, no metadata at all | Adopt allocates a synthetic negative `tmdb_id` |
+
+Findings appear on the **`/scans`** page with a triage table. Each row has a per-item decision dropdown, plus a `// BULK ADOPT (HASH MATCHES)` button that auto-collects all hash_match findings on the current page and adopts them in one click. Multi-select with checkboxes for bulk operations on other kinds.
+
+### Orphan resolution
+
+For folders with no matching ThemerrDB record, motif tries two metadata sources in order:
+
+1. **NFO sidecar files** (`<folder>.nfo`, `movie.nfo`, or `tvshow.nfo`) — Sonarr and Radarr write these with `<imdbid>`, `<tmdbid>`, `<tvdbid>`, and `<uniqueid>` blocks. No external API calls needed.
+2. **TVDB API** (if you've set `MOTIF_TVDB_API_KEY`) — falls back to `https://api4.thetvdb.com/v4` to search by title+year. Requires a paid TVDB v4 subscription (~$12/year). Without a key, unresolved orphans get a synthetic negative `tmdb_id` and you can still adopt them locally.
+
+### Orphan promotion
+
+When you adopt an orphan with a synthetic negative `tmdb_id`, motif keeps watching during sync. If ThemerrDB later adds a record matching the orphan's `imdb_id`, or its `(title, year)` tuple, sync **promotes** the orphan in place: the negative `tmdb_id` becomes the real one, `upstream_source` flips from `plex_orphan` to `imdb`/`themoviedb`, and the FK'd rows in `local_files` and `placements` follow along. No manual intervention.
+
+### Browse SRC column
+
+Adopted orphans show up in `/movies` and `/tv` with a green `O` in the SRC column (alongside `A` auto, `M` manual, `☁` cloud).
+
 ## Theme failures
 
 When a download fails, motif classifies the failure into one of:
@@ -400,11 +438,12 @@ Items in the four "video unavailable" states (`private`, `removed`, `age_restric
 ## Web UI tour
 
 * `/` — dashboard with rolled-up stats, last sync results, and recent activity
-* `/movies` — searchable, filterable browse with per-item details, manual re-download, and overrides; LINK column shows hardlink (`=`) or copy (`C`) state; **!** column shows download failures; SRC column shows whether the theme was auto, manually overridden (`M`), or already provided by Plex cloud (`☁`)
+* `/movies` — searchable, filterable browse with per-item details, manual re-download, and overrides; LINK column shows hardlink (`=`) or copy (`C`) state; **!** column shows download failures; SRC column shows whether the theme was auto (`A`), manually overridden (`M`), already provided by Plex cloud (`☁`), or adopted as an orphan (`O`)
 * `/tv` — same for TV
 * `/libraries` — Plex sections with managed/excluded toggles, per-section placement counts, refresh button
 * `/coverage` — items in your Plex library that motif could provide a theme for but hasn't placed yet, plus a STORAGE WASTE section listing all copy-mode placements with a RE-LINK ALL button
 * `/queue` — live job queue and full event stream (auto-refreshes every 5s)
+* `/scans` — Plex folder scan history and findings triage (adopt/replace/keep/ignore)
 * `/settings` — manage API tokens, change admin password, view Homepage widget config, toggle dry-run
 
 ## API endpoints

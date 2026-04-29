@@ -69,6 +69,7 @@ class PlexConfigSection:
     analyze_after_placement: bool = True
     section_exclude: list[str] = field(default_factory=list)
     section_include: list[str] = field(default_factory=list)
+    tvdb_api_key: str = ""       # for orphan resolution; masked in API responses
 
 
 @dataclass
@@ -145,6 +146,7 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_PLEX_ANALYZE",        "plex.analyze_after_placement",    _to_bool),
     ("MOTIF_PLEX_SECTION_EXCLUDE","plex.section_exclude",            _to_csv_list),
     ("MOTIF_PLEX_SECTION_INCLUDE","plex.section_include",            _to_csv_list),
+    ("MOTIF_TVDB_API_KEY",        "plex.tvdb_api_key",               str),
     # downloads
     ("MOTIF_DL_RATE_HOUR",        "downloads.rate_per_hour",         int),
     ("MOTIF_DL_CONCURRENCY",      "downloads.concurrency",           int),

@@ -76,7 +76,7 @@
           <span class="form-env-badge" data-env-badge="plex.url" style="display:none">// ENV OVERRIDE</span>
         </div>
         <input class="input" type="text" data-cfg-field="plex.url"
-               placeholder="http://192.168.1.10:32400" autocomplete="off" />
+               placeholder="http://10.0.1.98:32400" autocomplete="off" />
         <p class="form-hint">URL motif uses to reach Plex. Use the LAN IP, not <code>localhost</code>.</p>
       </label>
 
@@ -93,6 +93,28 @@
           An empty value here PRESERVES the existing token. To clear, click the CLEAR button.
         </p>
         <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.token" style="margin-top:6px">// CLEAR TOKEN</button>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">TVDB API KEY</span>
+          <span class="form-env-badge" data-env-badge="plex.tvdb_api_key" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="password" data-cfg-field="plex.tvdb_api_key"
+               placeholder="(optional)" autocomplete="off" />
+        <p class="form-hint">
+          Optional. Used during Plex scans to resolve orphan theme.mp3 files
+          that lack an .nfo sidecar. Without a key, unresolved orphans get a
+          synthetic ID. Get one at <a href="https://thetvdb.com/api-information"
+          target="_blank" rel="noopener">thetvdb.com/api-information</a>
+          (paid subscription required).
+          Empty value PRESERVES the existing key.
+        </p>
+        <div style="display:flex;gap:8px;margin-top:6px">
+          <button type="button" class="btn btn-tiny" id="tvdb-test-btn">// TEST KEY</button>
+          <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.tvdb_api_key">// CLEAR KEY</button>
+          <span class="muted small" id="tvdb-test-result"></span>
+        </div>
       </label>
 
       <label class="form-label form-checkbox">
@@ -360,7 +382,7 @@
     </p>
     <pre class="codeblock">widget:
   type: customapi
-  url: https://motif.example.com/api/public/stats
+  url: https://motif.cmacserver.com/api/public/stats
   refreshInterval: 30000
   display: list
   mappings:

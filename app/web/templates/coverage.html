@@ -1,9 +1,12 @@
 {% extends "base.html" %}
 {% block title %}Plex Coverage{% endblock %}
 {% block content %}
-<section class="hero">
-  <h1 class="title">PLEX COVERAGE</h1>
-  <p class="muted">items in your plex library, theme availability cross-referenced with motifdb</p>
+<section class="hero" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap">
+  <div style="flex:1">
+    <h1 class="title">PLEX COVERAGE</h1>
+    <p class="muted">items in your plex library, theme availability cross-referenced with motifdb</p>
+  </div>
+  <a href="/scans" class="btn btn-warn" style="text-decoration:none">// SCAN PLEX FOLDERS →</a>
 </section>
 
 <section class="grid grid-stats">
@@ -34,6 +37,13 @@
   <article class="stat stat-mini">
     <header class="stat-head"><span class="stat-label">WASTED ON COPIES</span></header>
     <div class="stat-num accent-red" id="storage-wasted">—</div>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">ORPHANS</span></header>
+    <div class="stat-num accent" id="orphan-count">—</div>
+    <footer class="stat-foot">
+      <span class="muted">no upstream record</span>
+    </footer>
   </article>
 </section>
 

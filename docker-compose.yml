@@ -34,10 +34,10 @@ services:
     hostname: motif
     restart: unless-stopped
     networks:
-      - proxy
+      - cmacproxy
     ports:
       # Bind to LAN IP only — exposed externally via NPM with ACL.
-      - "192.168.1.10:5309:5309"
+      - "10.0.1.98:5309:5309"
     volumes:
       - /mnt/user/appdata/motif:/config
       - /mnt/user/data:/data
@@ -46,7 +46,7 @@ services:
       # These can be configured from the UI after first run. Setting them
       # here as env vars makes them ALWAYS WIN over the UI's saved values
       # (12-factor override semantics). Comment them out to manage via UI.
-      MOTIF_PLEX_URL: "http://192.168.1.10:32400"
+      MOTIF_PLEX_URL: "http://10.0.1.98:32400"
       MOTIF_PLEX_TOKEN: "${MOTIF_PLEX_TOKEN}"   # set in .env, NEVER commit
 
       # ---- Auth (Authentik via NPM forward auth) ----
@@ -78,5 +78,5 @@ services:
         max-file: "5"
 
 networks:
-  proxy:
+  cmacproxy:
     external: true

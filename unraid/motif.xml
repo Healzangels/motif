@@ -49,7 +49,7 @@
   <!-- ============================================================== -->
   <!-- REQUIRED env vars                                                -->
   <!-- ============================================================== -->
-  <Config Name="Plex URL" Target="MOTIF_PLEX_URL" Default="http://192.168.1.10:32400" Mode="" Description="Plex Media Server URL reachable from inside this container. Use the LAN IP of your Plex host. Example: http://192.168.1.10:32400. Can be changed later from /settings." Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.10:32400</Config>
+  <Config Name="Plex URL" Target="MOTIF_PLEX_URL" Default="http://192.168.1.10:32400" Mode="" Description="Plex Media Server URL reachable from inside this container. Use the LAN IP of your Plex host. Example: http://10.0.1.98:32400. Can be changed later from /settings." Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.10:32400</Config>
 
   <Config Name="Plex token" Target="MOTIF_PLEX_TOKEN" Default="" Mode="" Description="Plex auth token. Find at https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/ — log into Plex Web, look at any item's XML metadata, copy X-Plex-Token from the URL. Can be changed later from /settings." Type="Variable" Display="always" Required="true" Mask="true"></Config>
 

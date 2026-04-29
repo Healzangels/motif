@@ -162,6 +162,70 @@ def _upsert_theme(
     url_changed = False
     old_vid: str | None = None
 
+    # Orphan promotion: before inserting a new theme, check if there's a
+    # plex_orphan row with negative tmdb_id matching this real record by
+    # imdb_id, or by (title, year). If so, promote it: update the orphan's
+    # tmdb_id to the real value, propagate the change to FK'd tables, and
+    # treat this as an UPDATE rather than an INSERT.
+    if is_new:
+        orphan = None
+        if imdb_id:
+            orphan = conn.execute(
+                """SELECT id, tmdb_id FROM themes
+                   WHERE upstream_source = 'plex_orphan'
+                     AND media_type = ? AND imdb_id = ?
+                   LIMIT 1""",
+                (media_type, imdb_id),
+            ).fetchone()
+        if orphan is None and title and year:
+            orphan = conn.execute(
+                """SELECT id, tmdb_id FROM themes
+                   WHERE upstream_source = 'plex_orphan'
+                     AND media_type = ? AND lower(title) = lower(?) AND year = ?
+                   LIMIT 1""",
+                (media_type, title, year),
+            ).fetchone()
+        if orphan:
+            old_tmdb = orphan["tmdb_id"]
+            log.info("Promoting orphan theme id=%d (%s/%d) → real tmdb_id=%d",
+                     orphan["id"], media_type, old_tmdb, tmdb_id)
+            # Migrate the orphan row's tmdb_id and FK'd tables in one txn.
+            # The row keeps its `id`; only tmdb_id changes. We must briefly
+            # disable FK enforcement because we're updating the parent and
+            # children sequentially — there's no atomic "update both" in
+            # SQLite, and intermediate states would violate the FK.
+            conn.execute("PRAGMA foreign_keys = OFF")
+            try:
+                conn.execute(
+                    "UPDATE themes SET tmdb_id = ?, upstream_source = ? "
+                    "WHERE id = ?",
+                    (tmdb_id, upstream_source, orphan["id"]),
+                )
+                conn.execute(
+                    "UPDATE local_files SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                    (tmdb_id, media_type, old_tmdb),
+                )
+                conn.execute(
+                    "UPDATE placements SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                    (tmdb_id, media_type, old_tmdb),
+                )
+                conn.execute(
+                    "UPDATE pending_updates SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                    (tmdb_id, media_type, old_tmdb),
+                )
+                conn.execute(
+                    "UPDATE user_overrides SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                    (tmdb_id, media_type, old_tmdb),
+                )
+            finally:
+                conn.execute("PRAGMA foreign_keys = ON")
+            existing = conn.execute(
+                "SELECT youtube_video_id, youtube_edited_at FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            is_new = False
+
     if is_new:
         conn.execute(
             """
