@@ -1,0 +1,82 @@
+# docker-compose.yml — motif (v1.4.0+)
+#
+# Two-volume model (matches Plex's path layout):
+#   /config — appdata: SQLite DB, motif.yaml, cookies.txt, session key (rw)
+#   /data   — unified data root: must mirror what Plex sees so motif can
+#             read/write into the same folder structure (rw)
+#
+# After v1.4.0, motif's settings live in /config/motif.yaml and are managed
+# from the web UI at /settings. The env vars below are minimal: just what's
+# needed for first-boot bootstrapping. Everything else (themes path,
+# downloads tuning, schedule, matching, etc.) is configured from the UI
+# and persists across container restarts.
+#
+# IMPORTANT: For hardlinks to work, the configured themes directory and
+# the Plex media folders must be on the same filesystem. With a single
+# /data mount that mirrors /mnt/user/data, this is automatic — everything
+# under /data is on the same Unraid User Share. Verify with:
+#   stat -c '%d' /mnt/user/data/media/themes/movies/
+#   stat -c '%d' /mnt/user/data/media/movies/<any-folder>/
+# Both should print the same device number.
+
+services:
+  motif:
+    # Default: pull from Docker Hub. To build locally, comment this and
+    # uncomment the build: block below.
+    image: healzangels/motif:latest
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     PUID: 99    # nobody on Unraid
+    #     PGID: 100   # users on Unraid
+    container_name: motif
+    hostname: motif
+    restart: unless-stopped
+    networks:
+      - cmacproxy
+    ports:
+      # Bind to LAN IP only — exposed externally via NPM with ACL.
+      - "10.0.1.98:5309:5309"
+    volumes:
+      - /mnt/user/appdata/motif:/config
+      - /mnt/user/data:/data
+    environment:
+      # ---- Bootstrap (first-boot only) ----
+      # These can be configured from the UI after first run. Setting them
+      # here as env vars makes them ALWAYS WIN over the UI's saved values
+      # (12-factor override semantics). Comment them out to manage via UI.
+      MOTIF_PLEX_URL: "http://10.0.1.98:32400"
+      MOTIF_PLEX_TOKEN: "${MOTIF_PLEX_TOKEN}"   # set in .env, NEVER commit
+
+      # ---- Auth (Authentik via NPM forward auth) ----
+      # Set to 'true' ONLY when behind NPM with X-Authentik-Username forwarded.
+      MOTIF_TRUST_FORWARD_AUTH: "false"
+
+      # ---- Misc ----
+      TZ: "America/New_York"
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:5309/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=512m,mode=1777
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+networks:
+  cmacproxy:
+    external: true

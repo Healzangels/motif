@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-row">
+    <h1 class="title">SIGNAL ACQUIRED</h1>
+    <button class="btn" id="sync-now-btn">// SYNC NOW</button>
+  </div>
+  <p class="muted">tracking motifdb · synced daily at 13:00 utc</p>
+</section>
+
+<section class="grid grid-stats" id="stats-grid">
+  <article class="stat stat-primary">
+    <header class="stat-head">
+      <span class="stat-label">MOVIES TRACKED</span>
+      <span class="stat-glyph">▷</span>
+    </header>
+    <div class="stat-num" data-stat="movies.total">—</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="movies"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b data-stat="movies.downloaded">—</b> downloaded</span>
+      <span><b data-stat="movies.placed">—</b> placed</span>
+    </footer>
+  </article>
+
+  <article class="stat">
+    <header class="stat-head">
+      <span class="stat-label">TV SERIES TRACKED</span>
+      <span class="stat-glyph">◇</span>
+    </header>
+    <div class="stat-num" data-stat="tv.total">—</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="tv"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b data-stat="tv.downloaded">—</b> downloaded</span>
+      <span><b data-stat="tv.placed">—</b> placed</span>
+    </footer>
+  </article>
+
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">QUEUE PENDING</span></header>
+    <div class="stat-num accent" data-stat="queue.pending">—</div>
+  </article>
+
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">RUNNING NOW</span></header>
+    <div class="stat-num accent-cyan" data-stat="queue.running">—</div>
+  </article>
+
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">FAILURES</span></header>
+    <div class="stat-num accent-red" data-stat="queue.failed">—</div>
+  </article>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// LAST SYNC</h2>
+  </header>
+  <pre class="block-body" id="last-sync"></pre>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// RECENT ACTIVITY</h2>
+    <a href="/queue" class="link-tiny">all events →</a>
+  </header>
+  <ol class="event-stream" id="event-stream"></ol>
+</section>
+{% endblock %}

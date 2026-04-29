@@ -1,0 +1,614 @@
+"""
+Background worker.
+
+Consumes from the `jobs` table and dispatches to the right handler:
+- 'sync': run a full ThemerrDB sync
+- 'download': fetch the theme MP3 to the local library
+- 'place': place theme files into Plex media folders + trigger refresh
+- 'refresh': trigger Plex analyze for an item (rare, manual)
+- 'relink': retry hardlinking for placements that fell back to copy
+
+A simple in-process token-bucket rate limiter caps download throughput.
+Worker holds no long-lived DB connection — all writes are short transactions.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+import threading
+import time
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+from ..config import Settings
+from .db import get_conn, transaction
+from .downloader import (
+    CookiesMissingError, DownloadError, FailureKind, download_theme,
+)
+from .events import log_event, now_iso
+from .placement import FolderIndex, place_theme
+from .plex import PlexClient, PlexConfig
+from .runtime import is_dry_run
+from .sync import run_sync
+
+log = logging.getLogger(__name__)
+
+
+# -------- Token bucket --------
+
+class TokenBucket:
+    """Thread-safe token bucket. `rate` tokens are added per `period` seconds,
+    capped at `capacity`. acquire() blocks until a token is available."""
+
+    def __init__(self, rate: float, capacity: int, period: float = 3600.0):
+        self._capacity = capacity
+        # tokens added per second
+        self._fill_rate = rate / period
+        self._tokens = float(capacity)
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+
+    def acquire(self, tokens: int = 1) -> None:
+        while True:
+            with self._lock:
+                now = time.monotonic()
+                elapsed = now - self._last
+                self._tokens = min(self._capacity, self._tokens + elapsed * self._fill_rate)
+                self._last = now
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    return
+                deficit = tokens - self._tokens
+                wait = deficit / self._fill_rate
+            time.sleep(min(wait, 30.0))
+
+
+# -------- Job dispatching --------
+
+@dataclass
+class Worker:
+    settings: Settings
+    stop_event: threading.Event
+    bucket: TokenBucket
+    _folder_index_movies: FolderIndex | None = None
+    _folder_index_tv: FolderIndex | None = None
+    _index_built_at: float = 0.0
+
+    def __post_init__(self):
+        # Stale after 5 minutes — rebuilt on demand
+        self._index_ttl = 300.0
+
+    # -- Index management --
+
+    def _index_for(self, media_type: str) -> FolderIndex:
+        """Build (or reuse) a FolderIndex for the given media type by
+        unioning all managed Plex sections of the matching type.
+
+        Movie sections (Plex type='movie') feed the movie index; show
+        sections feed the TV index. The user's "Anime" section, being type
+        'show', falls into TV — so an anime show's theme lands in the
+        anime section's path, not in the regular TV root."""
+        now = time.monotonic()
+        if now - self._index_built_at > self._index_ttl:
+            from .sections import list_sections  # avoid import cycle at top
+            sections = list_sections(self.settings.db_path)
+            movie_roots: list[Path] = []
+            show_roots: list[Path] = []
+            for s in sections:
+                if not s.get("included"):
+                    continue
+                paths = s.get("location_paths") or []
+                for p in paths:
+                    pp = Path(p)
+                    if s["type"] == "movie":
+                        movie_roots.append(pp)
+                    elif s["type"] == "show":
+                        show_roots.append(pp)
+            self._folder_index_movies = FolderIndex.build_multi(
+                movie_roots, plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
+            )
+            self._folder_index_tv = FolderIndex.build_multi(
+                show_roots, plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
+            )
+            self._index_built_at = now
+        return self._folder_index_movies if media_type == "movie" else self._folder_index_tv  # type: ignore[return-value]
+
+    def _plex_client(self) -> PlexClient | None:
+        if not self.settings.plex_enabled or not self.settings.plex_url or not self.settings.plex_token:
+            return None
+        cfg = PlexConfig(
+            url=self.settings.plex_url,
+            token=self.settings.plex_token,
+            movie_section=self.settings.plex_movie_section,
+            tv_section=self.settings.plex_tv_section,
+            enabled=True,
+        )
+        return PlexClient(cfg, plus_mode=self.settings.plus_equiv_mode)  # type: ignore[arg-type]
+
+    # -- Loop --
+
+    def run(self) -> None:
+        log.info("Worker loop starting")
+        while not self.stop_event.is_set():
+            job = self._claim_next_job()
+            if job is None:
+                # No work — back off briefly
+                self.stop_event.wait(2.0)
+                continue
+            try:
+                self._dispatch(job)
+            except Exception as e:
+                log.exception("Job %s crashed: %s", job["id"], e)
+                self._mark_failed(job["id"], str(e))
+        log.info("Worker loop stopped")
+
+    def _claim_next_job(self) -> sqlite3.Row | None:
+        with get_conn(self.settings.db_path) as conn, transaction(conn):
+            row = conn.execute(
+                """
+                SELECT * FROM jobs
+                WHERE status = 'pending'
+                  AND (next_run_at IS NULL OR next_run_at <= ?)
+                ORDER BY id ASC LIMIT 1
+                """,
+                (now_iso(),),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute(
+                """
+                UPDATE jobs SET status = 'running', started_at = ?, attempts = attempts + 1
+                WHERE id = ?
+                """,
+                (now_iso(), row["id"]),
+            )
+            return row
+
+    def _mark_done(self, job_id: int) -> None:
+        with get_conn(self.settings.db_path) as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'done', finished_at = ?, last_error = NULL WHERE id = ?",
+                (now_iso(), job_id),
+            )
+
+    def _mark_failed(self, job_id: int, err: str) -> None:
+        with get_conn(self.settings.db_path) as conn:
+            row = conn.execute(
+                "SELECT attempts, max_attempts FROM jobs WHERE id = ?", (job_id,),
+            ).fetchone()
+            if row is None:
+                return
+            if row["attempts"] >= row["max_attempts"]:
+                conn.execute(
+                    "UPDATE jobs SET status = 'failed', finished_at = ?, last_error = ? WHERE id = ?",
+                    (now_iso(), err, job_id),
+                )
+            else:
+                # Exponential backoff: 1m, 5m, 25m, ...
+                backoff_minutes = 5 ** (row["attempts"] - 1)
+                next_run = (datetime.now(timezone.utc) + timedelta(minutes=backoff_minutes)).isoformat(timespec="seconds")
+                conn.execute(
+                    """
+                    UPDATE jobs SET status = 'pending', last_error = ?, next_run_at = ?,
+                                    started_at = NULL
+                    WHERE id = ?
+                    """,
+                    (err, next_run, job_id),
+                )
+
+    def _dispatch(self, job: sqlite3.Row) -> None:
+        jt = job["job_type"]
+        log.info("Job %d (%s) starting", job["id"], jt)
+        if jt == "sync":
+            self._do_sync(job)
+        elif jt == "download":
+            self._do_download(job)
+        elif jt == "place":
+            self._do_place(job)
+        elif jt == "refresh":
+            self._do_refresh(job)
+        elif jt == "relink":
+            self._do_relink(job)
+        else:
+            self._mark_failed(job["id"], f"unknown job type: {jt}")
+            return
+        self._mark_done(job["id"])
+
+    # -- Job handlers --
+
+    def _do_sync(self, job: sqlite3.Row) -> None:
+        run_sync(self.settings.db_path, self.settings.motifdb_base_url)
+
+    def _do_download(self, job: sqlite3.Row) -> None:
+        media_type = job["media_type"]
+        tmdb_id = job["tmdb_id"]
+
+        # Bail early if themes_dir hasn't been configured yet (first-run
+        # state). The job stays pending and gets retried; once the user
+        # sets the path in /settings, downloads will pick up.
+        if not self.settings.is_paths_ready():
+            log_event(
+                self.settings.db_path, level="WARNING", component="download",
+                media_type=media_type, tmdb_id=tmdb_id,
+                message="Skipped: themes_dir not configured. Set it on /settings.",
+            )
+            raise RuntimeError("themes_dir not configured")
+
+        # Look up theme + any user override
+        with get_conn(self.settings.db_path) as conn:
+            theme = conn.execute(
+                "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            override = conn.execute(
+                "SELECT * FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+
+        if theme is None:
+            raise RuntimeError(f"theme not in DB: {media_type}/{tmdb_id}")
+
+        yt_url = override["youtube_url"] if override else theme["youtube_url"]
+        if not yt_url:
+            raise RuntimeError("no YouTube URL")
+
+        # Re-extract video ID in case override URL is in a different format
+        from .sync import extract_video_id
+        vid = extract_video_id(yt_url)
+        if not vid:
+            raise RuntimeError(f"could not extract video ID from {yt_url}")
+
+        # Dry-run: log what we would do and stop here (no YouTube hit, no rate-limit token consumed)
+        if is_dry_run(self.settings.db_path, default=self.settings.dry_run_default):
+            log_event(
+                self.settings.db_path, level="INFO", component="dryrun",
+                media_type=media_type, tmdb_id=tmdb_id,
+                message=f"DRY-RUN: would download '{theme['title']}' from {yt_url}",
+                detail={"video_id": vid, "url": yt_url, "would_save_to": str(
+                    (self.settings.movies_themes_dir if media_type == "movie"
+                     else self.settings.tv_themes_dir) / f"{vid}.mp3"
+                )},
+            )
+            return  # job marked done by caller
+
+        # Apply rate limit
+        self.bucket.acquire()
+
+        out_dir = (self.settings.movies_themes_dir if media_type == "movie"
+                   else self.settings.tv_themes_dir)
+
+        try:
+            result = download_theme(
+                youtube_url=yt_url,
+                video_id=vid,
+                output_dir=out_dir,
+                cookies_file=self.settings.cookies_file,
+                audio_quality=self.settings.download_audio_quality,
+            )
+        except DownloadError as e:
+            kind = e.kind if hasattr(e, "kind") else FailureKind.UNKNOWN
+            # Persist the failure on the theme row so the UI can show a badge
+            with get_conn(self.settings.db_path) as conn:
+                conn.execute(
+                    """UPDATE themes SET failure_kind = ?, failure_message = ?,
+                                          failure_at = ?
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (kind.value, str(e)[:500], now_iso(), media_type, tmdb_id),
+                )
+            level = "ERROR" if kind == FailureKind.COOKIES_EXPIRED else "WARNING"
+            log_event(
+                self.settings.db_path, level=level, component="download",
+                media_type=media_type, tmdb_id=tmdb_id,
+                message=f"Download failed for '{theme['title']}': {kind.human}",
+                detail={"kind": kind.value, "youtube_url": yt_url,
+                        "needs_manual_override": kind.needs_manual_override,
+                        "raw": str(e)[:300]},
+            )
+            raise
+
+        # Success — clear any previous failure on this theme
+        with get_conn(self.settings.db_path) as conn:
+            conn.execute(
+                """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
+                                      failure_at = NULL
+                   WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL""",
+                (media_type, tmdb_id),
+            )
+
+        # Record the local file
+        rel_path = str(result.file_path.relative_to(self.settings.themes_dir))
+        provenance = "manual" if override else "auto"
+        with get_conn(self.settings.db_path) as conn, transaction(conn):
+            conn.execute(
+                """
+                INSERT INTO local_files
+                    (media_type, tmdb_id, file_path, file_sha256, file_size,
+                     downloaded_at, source_video_id, provenance)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                    file_path = excluded.file_path,
+                    file_sha256 = excluded.file_sha256,
+                    file_size = excluded.file_size,
+                    downloaded_at = excluded.downloaded_at,
+                    source_video_id = excluded.source_video_id,
+                    provenance = excluded.provenance
+                """,
+                (media_type, tmdb_id, rel_path, result.file_sha256,
+                 result.file_size, now_iso(), vid, provenance),
+            )
+            # Enqueue a placement job
+            conn.execute(
+                """
+                INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
+                                  created_at, next_run_at)
+                VALUES ('place', ?, ?, ?, 'pending', ?, ?)
+                """,
+                (media_type, tmdb_id, "{}", now_iso(), now_iso()),
+            )
+
+        log_event(
+            self.settings.db_path, level="INFO", component="download",
+            media_type=media_type, tmdb_id=tmdb_id,
+            message=f"Downloaded theme for {theme['title']}",
+            detail={"size": result.file_size, "video_id": vid},
+        )
+
+    def _do_place(self, job: sqlite3.Row) -> None:
+        media_type = job["media_type"]
+        tmdb_id = job["tmdb_id"]
+
+        if not self.settings.is_paths_ready():
+            log_event(
+                self.settings.db_path, level="WARNING", component="place",
+                media_type=media_type, tmdb_id=tmdb_id,
+                message="Skipped: themes_dir not configured. Set it on /settings.",
+            )
+            raise RuntimeError("themes_dir not configured")
+
+        with get_conn(self.settings.db_path) as conn:
+            theme = conn.execute(
+                "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            local = conn.execute(
+                "SELECT * FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+
+        # In dry-run, the local file may not exist yet (download was skipped).
+        # We can still report what placement *would* have done by running the
+        # folder-index lookup without touching anything.
+        dry = is_dry_run(self.settings.db_path, default=self.settings.dry_run_default)
+
+        if theme is None:
+            raise RuntimeError("theme missing")
+
+        if dry:
+            # Just resolve the target folder and Plex theme presence, log it
+            from .placement import find_target_folder
+            index = self._index_for(media_type)
+            find = find_target_folder(
+                index, title=theme["title"], year=theme["year"] or "",
+                edition_raw="",
+                strict_edition=self.settings.strict_edition_match,
+                plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
+            )
+            plex_has = False
+            if self.settings.plex_enabled and self.settings.plex_token:
+                plex_client = self._plex_client()
+                if plex_client:
+                    try:
+                        plex_has = plex_client.has_theme(
+                            media_type=media_type, title=theme["title"],
+                            year=theme["year"] or "", edition_raw="",
+                        )
+                    finally:
+                        plex_client.close()
+
+            if plex_has:
+                msg = f"DRY-RUN: would skip '{theme['title']}' — Plex already has theme"
+            elif find.folder is None:
+                msg = f"DRY-RUN: no target folder for '{theme['title']}': {find.reason}"
+            else:
+                msg = f"DRY-RUN: would place theme for '{theme['title']}' at {find.folder}/theme.mp3"
+            log_event(
+                self.settings.db_path, level="INFO", component="dryrun",
+                media_type=media_type, tmdb_id=tmdb_id,
+                message=msg,
+                detail={
+                    "target_folder": str(find.folder) if find.folder else None,
+                    "match_kind": find.kind,
+                    "plex_already_has_theme": plex_has,
+                },
+            )
+            return
+
+        if local is None:
+            raise RuntimeError("local file missing (download not yet complete)")
+
+        source_file = self.settings.themes_dir / local["file_path"]
+        if not source_file.exists():
+            raise RuntimeError(f"source file missing: {source_file}")
+
+        index = self._index_for(media_type)
+        plex_client = self._plex_client()
+        try:
+            outcome = place_theme(
+                media_type=media_type,
+                title=theme["title"],
+                year=theme["year"] or "",
+                edition_raw="",  # TODO: future: per-edition placement
+                source_file=source_file,
+                index=index,
+                plex=plex_client,
+                strict_edition=self.settings.strict_edition_match,
+                plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
+                skip_if_plex_has_theme=True,
+                analyze_after=self.settings.plex_analyze_after,
+            )
+        finally:
+            if plex_client:
+                plex_client.close()
+
+        if outcome.placed:
+            # Read provenance from the local_files row that was the source
+            with get_conn(self.settings.db_path) as conn:
+                lf_row = conn.execute(
+                    "SELECT provenance FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                placement_provenance = lf_row["provenance"] if lf_row else "auto"
+                conn.execute(
+                    """
+                    INSERT INTO placements
+                        (media_type, tmdb_id, media_folder, placed_at,
+                         placement_kind, plex_rating_key, plex_refreshed, provenance)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(media_type, tmdb_id, media_folder) DO UPDATE SET
+                        placed_at = excluded.placed_at,
+                        placement_kind = excluded.placement_kind,
+                        plex_rating_key = excluded.plex_rating_key,
+                        plex_refreshed = excluded.plex_refreshed,
+                        provenance = excluded.provenance
+                    """,
+                    (media_type, tmdb_id, str(outcome.target_folder), now_iso(),
+                     outcome.kind, outcome.plex_rating_key,
+                     1 if outcome.plex_refreshed else 0, placement_provenance),
+                )
+        log_event(
+            self.settings.db_path,
+            level="INFO" if outcome.placed else "DEBUG",
+            component="place", media_type=media_type, tmdb_id=tmdb_id,
+            message=(f"Placed in {outcome.target_folder}" if outcome.placed
+                     else f"Skipped placement: {outcome.reason}"),
+            detail={"reason": outcome.reason, "kind": outcome.kind},
+        )
+
+    def _do_refresh(self, job: sqlite3.Row) -> None:
+        plex = self._plex_client()
+        if not plex:
+            return
+        try:
+            payload = json.loads(job["payload"] or "{}")
+            rk = payload.get("rating_key")
+            if rk:
+                plex.refresh(rk)
+        finally:
+            plex.close()
+
+    def _do_relink(self, job: sqlite3.Row) -> None:
+        """Retry hardlinking for placements that fell back to copy.
+
+        Walks every placement_kind='copy' row (or a specific one when
+        media_type/tmdb_id are set on the job), and tries os.link() again
+        from the source theme file. If the link succeeds, the existing copy
+        is atomically replaced. If it still fails (still cross-FS), the
+        copy is left in place.
+        """
+        import os
+        import shutil
+
+        if not self.settings.is_paths_ready():
+            log_event(
+                self.settings.db_path, level="WARNING", component="relink",
+                message="Skipped: themes_dir not configured.",
+            )
+            return
+
+        media_type = job["media_type"]
+        tmdb_id = job["tmdb_id"]
+
+        with get_conn(self.settings.db_path) as conn:
+            if media_type and tmdb_id:
+                rows = conn.execute(
+                    """SELECT p.*, lf.file_path
+                       FROM placements p
+                       JOIN local_files lf
+                         ON lf.media_type = p.media_type AND lf.tmdb_id = p.tmdb_id
+                       WHERE p.media_type = ? AND p.tmdb_id = ?
+                         AND p.placement_kind = 'copy'""",
+                    (media_type, tmdb_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT p.*, lf.file_path
+                       FROM placements p
+                       JOIN local_files lf
+                         ON lf.media_type = p.media_type AND lf.tmdb_id = p.tmdb_id
+                       WHERE p.placement_kind = 'copy'"""
+                ).fetchall()
+
+        relinked = 0
+        still_copy = 0
+        errors = 0
+        for r in rows:
+            src = self.settings.themes_dir / r["file_path"]
+            dst = Path(r["media_folder"]) / "theme.mp3"
+            if not src.exists():
+                errors += 1
+                continue
+            if not dst.exists():
+                # Destination disappeared (movie folder deleted?) — clean up the row
+                with get_conn(self.settings.db_path) as conn:
+                    conn.execute(
+                        """DELETE FROM placements
+                           WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
+                        (r["media_type"], r["tmdb_id"], r["media_folder"]),
+                    )
+                continue
+
+            tmp = dst.with_suffix(dst.suffix + ".relink-tmp")
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+
+            try:
+                os.link(src, tmp)
+            except OSError as e:
+                # Still cross-filesystem — leave it as a copy
+                still_copy += 1
+                log.debug("relink still cross-FS for %s: %s", dst, e)
+                continue
+
+            # Hardlink succeeded — atomically replace the copy with the link
+            try:
+                os.replace(tmp, dst)
+            except OSError as e:
+                errors += 1
+                log.warning("relink replace failed for %s: %s", dst, e)
+                try: tmp.unlink()
+                except OSError: pass
+                continue
+
+            with get_conn(self.settings.db_path) as conn:
+                conn.execute(
+                    """UPDATE placements SET placement_kind = 'hardlink', placed_at = ?
+                       WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
+                    (now_iso(), r["media_type"], r["tmdb_id"], r["media_folder"]),
+                )
+            relinked += 1
+
+        log_event(
+            self.settings.db_path, level="INFO", component="relink",
+            message=f"Relink sweep complete: {relinked} converted, "
+                    f"{still_copy} still cross-FS, {errors} errors",
+            detail={"relinked": relinked, "still_copy": still_copy, "errors": errors},
+        )
+
+
+# -------- Entry point --------
+
+def start_worker(settings: Settings, stop_event: threading.Event) -> threading.Thread:
+    bucket = TokenBucket(
+        rate=float(settings.download_rate_per_hour),
+        capacity=max(1, settings.download_rate_per_hour),
+        period=3600.0,
+    )
+    w = Worker(settings=settings, stop_event=stop_event, bucket=bucket)
+    t = threading.Thread(target=w.run, name="motif-worker", daemon=True)
+    t.start()
+    return t

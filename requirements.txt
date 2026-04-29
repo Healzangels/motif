@@ -1,0 +1,18 @@
+# motif runtime dependencies
+# Pinned major versions to keep behavior stable across rebuilds.
+# Update intentionally — yt-dlp in particular benefits from frequent updates
+# to keep up with YouTube's anti-bot changes; we let pip resolve a recent patch.
+
+fastapi==0.115.*
+uvicorn[standard]==0.32.*
+httpx==0.27.*
+apscheduler==3.10.*
+jinja2==3.1.*
+python-multipart==0.0.*
+bcrypt==4.2.*
+pyyaml==6.0.*
+
+# yt-dlp updates often (sometimes weekly) to stay ahead of YouTube changes.
+# We pin to a recent stable but the Dockerfile rebuilds rebuild against the
+# latest patch by default. Users who hit YouTube extractor breakage can rebuild.
+yt-dlp>=2025.1.0

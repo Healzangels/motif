@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Plex Coverage{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1 class="title">PLEX COVERAGE</h1>
+  <p class="muted">items in your plex library, theme availability cross-referenced with motifdb</p>
+</section>
+
+<section class="grid grid-stats">
+  <article class="stat">
+    <header class="stat-head"><span class="stat-label">PLEX MOVIES</span></header>
+    <div class="stat-num" id="plex-movies-total">—</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-movies-with-theme">—</b> with theme</span>
+      <span class="muted"><b id="plex-movies-motif">—</b> motif available</span>
+    </footer>
+  </article>
+  <article class="stat">
+    <header class="stat-head"><span class="stat-label">PLEX TV</span></header>
+    <div class="stat-num" id="plex-tv-total">—</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-tv-with-theme">—</b> with theme</span>
+      <span class="muted"><b id="plex-tv-motif">—</b> motif available</span>
+    </footer>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">HARDLINKS</span></header>
+    <div class="stat-num ok" id="storage-hardlinks">—</div>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">COPIES</span></header>
+    <div class="stat-num accent" id="storage-copies">—</div>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">WASTED ON COPIES</span></header>
+    <div class="stat-num accent-red" id="storage-wasted">—</div>
+  </article>
+</section>
+
+<section class="block" id="copies-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// STORAGE WASTE — placements that fell back to copy</h2>
+    <button class="btn btn-tiny btn-warn" id="relink-all-btn">// RE-LINK ALL</button>
+  </header>
+  <div class="block-body" style="padding:12px 18px">
+    <p class="muted" style="font-size:var(--t-tiny);margin-bottom:8px">
+      These themes were copied instead of hardlinked because the source and destination were on different filesystems.
+      Each copy is duplicate disk usage. Fix the User Share allocation so themes and media share a filesystem,
+      then click RE-LINK ALL to convert copies → hardlinks without re-downloading.
+    </p>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>TITLE</th><th>YEAR</th><th>DESTINATION</th><th class="col-year">SIZE</th><th class="col-actions">ACT</th></tr>
+    </thead>
+    <tbody id="copies-body"></tbody>
+  </table>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// MOVIES MISSING THEMES (motifdb has them)</h2>
+  </header>
+  <table class="table">
+    <thead>
+      <tr><th>TITLE</th><th>YEAR</th><th>MOTIF</th><th>ACTIONS</th></tr>
+    </thead>
+    <tbody id="movies-missing-body">
+      <tr><td colspan="4" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// TV SHOWS MISSING THEMES</h2>
+  </header>
+  <table class="table">
+    <thead>
+      <tr><th>TITLE</th><th>YEAR</th><th>MOTIF</th><th>ACTIONS</th></tr>
+    </thead>
+    <tbody id="tv-missing-body">
+      <tr><td colspan="4" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}

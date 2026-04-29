@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <title>{% block title %}Motif{% endblock %} · motif</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Major+Mono+Display&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css" />
+  <script defer src="/static/app.js"></script>
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+  <div id="dry-run-banner" class="dry-run-banner" style="display:none">
+    <span class="dry-run-mark">⚠</span>
+    <span class="dry-run-text">DRY-RUN ACTIVE — no themes downloaded, no files placed, no Plex calls. Sync still runs.</span>
+    <button class="btn btn-tiny" id="dry-run-disable-btn" type="button">// DISABLE</button>
+  </div>
+  <div id="paths-banner" class="paths-banner" style="display:none">
+    <span class="paths-banner-mark">!</span>
+    <span class="paths-banner-text">CONFIGURE THEMES DIRECTORY — motif can sync ThemerrDB but cannot download or place files until you set <strong>themes_dir</strong> in <a href="/settings#paths">/settings</a>.</span>
+  </div>
+  <header class="topbar">
+    <a href="/" class="brand">
+      <span class="brand-mark">▰▰▰</span>
+      <span class="brand-name">motif</span>
+      <span class="brand-version">v1</span>
+    </a>
+    <nav class="nav">
+      <a href="/" data-nav="dashboard">DASH</a>
+      <a href="/movies" data-nav="movies">MOVIES</a>
+      <a href="/tv" data-nav="tv">TV</a>
+      <a href="/libraries" data-nav="libraries">LIBRARIES</a>
+      <a href="/coverage" data-nav="coverage">COVERAGE</a>
+      <a href="/queue" data-nav="queue">QUEUE</a>
+      <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
+    </nav>
+    <div class="topbar-status" id="topbar-status">
+      <a href="/movies?status=updates" class="topbar-badge" id="topbar-updates-badge"
+         style="display:none" title="upstream updates available">
+        <span id="topbar-updates-count">0</span>
+        <span class="topbar-badge-label">UPD</span>
+      </a>
+      <a href="/movies?status=failures" class="topbar-badge topbar-badge-warn" id="topbar-failures-badge"
+         style="display:none" title="downloads failed">
+        <span id="topbar-failures-count">0</span>
+        <span class="topbar-badge-label">!</span>
+      </a>
+      <span class="dot dot-pulse"></span>
+      <span class="muted" id="topbar-status-text">…</span>
+      <a href="/logout" class="topbar-logout" title="sign out">⏻</a>
+    </div>
+  </header>
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span class="muted">motif · homelab theme orchestration · </span>
+    <a class="muted" href="/healthz">healthz</a>
+  </footer>
+</body>
+</html>

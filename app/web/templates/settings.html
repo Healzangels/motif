@@ -1,0 +1,407 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1 class="title">SETTINGS</h1>
+  <p class="muted">all configuration · saved to /config/motif.yaml · live across restarts</p>
+</section>
+
+<nav class="tabs" role="tablist" id="settings-tabs">
+  <button class="tab tab-active" data-tab="paths" role="tab">PATHS</button>
+  <button class="tab" data-tab="plex" role="tab">PLEX</button>
+  <button class="tab" data-tab="downloads" role="tab">DOWNLOADS</button>
+  <button class="tab" data-tab="matching" role="tab">MATCHING</button>
+  <button class="tab" data-tab="schedule" role="tab">SCHEDULE</button>
+  <button class="tab" data-tab="runtime" role="tab">RUNTIME</button>
+  <button class="tab" data-tab="tokens" role="tab">TOKENS</button>
+  <button class="tab" data-tab="password" role="tab">PASSWORD</button>
+  <button class="tab" data-tab="homepage" role="tab">HOMEPAGE</button>
+</nav>
+
+<!-- ============================ PATHS ============================ -->
+<section class="block tab-panel" data-panel="paths">
+  <header class="block-head">
+    <h2 class="block-title">// PATHS</h2>
+    <span class="muted small">where motif writes theme files</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="paths">
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">THEMES DIRECTORY</span>
+          <span class="form-env-badge" data-env-badge="paths.themes_dir" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="paths.themes_dir"
+               placeholder="/data/media/themes" autocomplete="off" />
+        <p class="form-hint">
+          Container-relative path where motif stores downloaded theme files.
+          Subdirectories <code>movies/</code> and <code>tv/</code> are auto-created.
+          Must be on the same filesystem as your Plex media folders for hardlinks
+          to work — typically <code>/data/media/themes</code> when /data is mounted
+          to <code>/mnt/user/data</code>.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">COOKIES FILE</span>
+          <span class="form-env-badge" data-env-badge="paths.cookies_file" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="paths.cookies_file"
+               placeholder="/config/cookies.txt" autocomplete="off" />
+        <p class="form-hint">
+          Path to your YouTube cookies.txt (Netscape format). Drop the file
+          into <code>/mnt/user/appdata/motif/cookies.txt</code> on the host.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="paths">// SAVE PATHS</button>
+      <span class="form-status" data-save-status="paths"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PLEX ============================ -->
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PLEX SERVER</h2>
+    <span class="muted small">connection + library management</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="plex">
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">PLEX URL</span>
+          <span class="form-env-badge" data-env-badge="plex.url" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="plex.url"
+               placeholder="http://10.0.1.98:32400" autocomplete="off" />
+        <p class="form-hint">URL motif uses to reach Plex. Use the LAN IP, not <code>localhost</code>.</p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">PLEX TOKEN</span>
+          <span class="form-env-badge" data-env-badge="plex.token" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="password" data-cfg-field="plex.token"
+               placeholder="(set)" autocomplete="off" />
+        <p class="form-hint">
+          Find at <a href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"
+                     target="_blank" rel="noopener">support.plex.tv → finding-an-authentication-token</a>.
+          An empty value here PRESERVES the existing token. To clear, click the CLEAR button.
+        </p>
+        <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.token" style="margin-top:6px">// CLEAR TOKEN</button>
+      </label>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="plex.analyze_after_placement" />
+        <span class="form-label-text">REFRESH PLEX AFTER PLACING</span>
+        <p class="form-hint">
+          When checked, motif tells Plex to re-scan an item's metadata after
+          dropping its theme.mp3, so the theme appears immediately.
+          Recommended.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <span class="form-label-text">SECTION EXCLUDE</span>
+        <input class="input" type="text" data-cfg-field-list="plex.section_exclude"
+               placeholder="Home Movies, Music Videos" autocomplete="off" />
+        <p class="form-hint">
+          Comma-separated section TITLES to ignore. You can also flip individual
+          sections from the <a href="/libraries">/libraries</a> page.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <span class="form-label-text">SECTION INCLUDE (whitelist)</span>
+        <input class="input" type="text" data-cfg-field-list="plex.section_include"
+               placeholder="Movies, 4K Movies, TV Shows, Anime" autocomplete="off" />
+        <p class="form-hint">
+          Optional. When set, ONLY these sections are managed.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="plex">// SAVE PLEX</button>
+      <span class="form-status" data-save-status="plex"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ DOWNLOADS ============================ -->
+<section class="block tab-panel" data-panel="downloads" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// DOWNLOAD TUNING</h2>
+    <span class="muted small">YouTube rate limits and audio quality</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="downloads">
+      <label class="form-label">
+        <span class="form-label-text">RATE PER HOUR</span>
+        <input class="input" type="number" min="1" max="600" step="1"
+               data-cfg-field="downloads.rate_per_hour" />
+        <p class="form-hint">
+          Maximum theme downloads per hour. <code>30</code> is conservative;
+          fresh cookies can sustain <code>60–120</code>. Going above 200/hr
+          risks YouTube bot detection.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <span class="form-label-text">CONCURRENCY</span>
+        <input class="input" type="number" min="1" max="8" step="1"
+               data-cfg-field="downloads.concurrency" />
+        <p class="form-hint">
+          Parallel YouTube downloads. <code>1</code> is safest. Don't increase
+          unless you understand the bot-detection risk.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <span class="form-label-text">AUDIO QUALITY (LAME -V)</span>
+        <input class="input" type="number" min="0" max="9" step="1"
+               data-cfg-field="downloads.audio_quality" />
+        <p class="form-hint">
+          <code>0</code> = ~245 kbps VBR (~5 MB/theme), <code>9</code> = ~65 kbps (~1 MB/theme).
+          For 6,000 themes, this ranges from 30 GB to 6 GB.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <span class="form-label-text">MAX RETRIES</span>
+        <input class="input" type="number" min="1" max="10" step="1"
+               data-cfg-field="downloads.retries" />
+        <p class="form-hint">How many times to retry a failed download before marking it failed.</p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="downloads">// SAVE DOWNLOADS</button>
+      <span class="form-status" data-save-status="downloads"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ MATCHING ============================ -->
+<section class="block tab-panel" data-panel="matching" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// FOLDER MATCHING</h2>
+    <span class="muted small">how titles map to Plex folders</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="matching">
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="matching.strict_edition" />
+        <span class="form-label-text">STRICT EDITION MATCH</span>
+        <p class="form-hint">
+          When checked, edition tags ("Theatrical", "Director's Cut") must match
+          exactly to place a theme. When unchecked, motif places into any
+          matching title+year folder regardless of edition.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <span class="form-label-text">PLUS-MODE</span>
+        <select class="input" data-cfg-field="matching.plus_mode">
+          <option value="separator">separator — treat + as word break</option>
+          <option value="literal">literal — treat + as part of word</option>
+        </select>
+        <p class="form-hint">
+          How <code>+</code> in titles is handled. The default <code>separator</code>
+          mirrors the legacy merge-themes.sh behavior.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="matching">// SAVE MATCHING</button>
+      <span class="form-status" data-save-status="matching"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ SCHEDULE ============================ -->
+<section class="block tab-panel" data-panel="schedule" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC SCHEDULE</h2>
+    <span class="muted small">when motif pulls ThemerrDB updates</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="sync">
+      <label class="form-label">
+        <span class="form-label-text">CRON EXPRESSION (UTC)</span>
+        <input class="input" type="text" data-cfg-field="sync.cron"
+               placeholder="0 13 * * *" autocomplete="off" />
+        <p class="form-hint">
+          5-field cron: <code>minute hour day month dow</code>. Default
+          <code>0 13 * * *</code> runs daily at 13:00 UTC, 1 hour after
+          ThemerrDB's daily push. <strong class="warn">// RESTART REQUIRED</strong>
+          to take effect (the scheduler reads this once at startup).
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">THEMERRDB URL</span>
+          <span class="form-env-badge" data-env-badge="sync.db_url" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.db_url"
+               placeholder="https://app.lizardbyte.dev/ThemerrDB" autocomplete="off" />
+        <p class="form-hint">
+          Override only if you're mirroring ThemerrDB elsewhere. Leave the default
+          unless you know why you'd want to change it.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>
+      <span class="form-status" data-save-status="sync"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ RUNTIME ============================ -->
+<section class="block tab-panel" data-panel="runtime" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// RUNTIME MODE</h2>
+  </header>
+  <div class="block-body">
+    <div id="dry-run-state" style="display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin-bottom:24px">
+      <div style="flex:1;min-width:280px">
+        <div class="muted" style="font-size:var(--t-tiny);letter-spacing:0.18em;margin-bottom:6px">DRY-RUN MODE</div>
+        <div id="dry-run-current" style="font-family:var(--font-display);font-size:22px;color:var(--green-bright)">…</div>
+        <p class="muted" style="font-size:var(--t-tiny);margin-top:8px;line-height:1.6">
+          When dry-run is ON, motif still syncs ThemerrDB and resolves matches, but skips actual
+          downloads and file placements. Use it for an initial test pass before committing real action.
+          This setting persists across container restarts.
+        </p>
+      </div>
+      <div style="display:flex;gap:8px;flex-direction:column">
+        <button class="btn btn-warn" id="dry-run-on-btn" type="button">// ENABLE DRY-RUN</button>
+        <button class="btn" id="dry-run-off-btn" type="button">// DISABLE</button>
+      </div>
+    </div>
+
+    <div class="form-grid" data-config-form="runtime">
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">LOG LEVEL</span>
+          <span class="form-env-badge" data-env-badge="runtime.log_level" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <select class="input" data-cfg-field="runtime.log_level">
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+        <p class="form-hint">
+          <strong class="warn">// RESTART REQUIRED</strong> to take effect.
+          DEBUG is verbose; INFO is the default.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="runtime">// SAVE RUNTIME</button>
+      <span class="form-status" data-save-status="runtime"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ TOKENS ============================ -->
+<section class="block tab-panel" data-panel="tokens" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// API TOKENS</h2>
+    <button class="btn btn-tiny" id="new-token-btn">+ NEW TOKEN</button>
+  </header>
+  <div class="block-body" style="padding:0">
+    <table class="table" id="tokens-table">
+      <thead>
+        <tr>
+          <th>NAME</th><th>SCOPE</th><th>PREFIX</th>
+          <th>CREATED</th><th>LAST USED</th><th>ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="tokens-body">
+        <tr><td colspan="6" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ PASSWORD ============================ -->
+<section class="block tab-panel" data-panel="password" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// CHANGE PASSWORD</h2>
+  </header>
+  <div class="block-body">
+    <form id="password-form" class="auth-form" style="max-width:480px;margin:0">
+      <label class="auth-label">CURRENT PASSWORD
+        <input class="input" name="current_password" type="password" required autocomplete="current-password" />
+      </label>
+      <label class="auth-label">NEW PASSWORD
+        <input class="input" name="new_password" type="password" required minlength="8" maxlength="128"
+               autocomplete="new-password" />
+      </label>
+      <button type="submit" class="btn btn-warn">// UPDATE</button>
+      <span id="password-status" class="muted" style="margin-left:12px"></span>
+    </form>
+  </div>
+</section>
+
+<!-- ============================ HOMEPAGE ============================ -->
+<section class="block tab-panel" data-panel="homepage" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// HOMEPAGE INTEGRATION</h2>
+  </header>
+  <div class="block-body">
+    <p class="muted" style="margin-bottom:12px">
+      For Homepage's Custom API widget, use the public stats endpoint (no auth required):
+    </p>
+    <pre class="codeblock">widget:
+  type: customapi
+  url: https://motif.cmacserver.com/api/public/stats
+  refreshInterval: 30000
+  display: list
+  mappings:
+    - field: movies_downloaded
+      label: Movies w/ themes
+      format: number
+    - field: tv_downloaded
+      label: TV w/ themes
+      format: number
+    - field: queue_pending
+      label: Queue
+      format: number
+    - field: storage_copies_bytes
+      label: Wasted on copies
+      format: bytes</pre>
+  </div>
+</section>
+
+<dialog class="dlg" id="new-token-dlg">
+  <article class="dlg-body">
+    <button class="dlg-close" data-close>×</button>
+    <h3>NEW API TOKEN</h3>
+    <form id="new-token-form" class="auth-form">
+      <label class="auth-label">NAME
+        <input class="input" name="name" required maxlength="64" placeholder="e.g. homepage-dashboard" autofocus />
+      </label>
+      <label class="auth-label">SCOPE
+        <select class="input" name="scope">
+          <option value="read" selected>read — stats &amp; browse only</option>
+          <option value="admin">admin — full access (re-download, override, sync)</option>
+        </select>
+      </label>
+      <button type="submit" class="btn">// CREATE</button>
+    </form>
+    <div id="new-token-result" style="display:none;margin-top:20px">
+      <h4 style="font-size:var(--t-tiny);letter-spacing:0.2em;color:var(--amber);margin-bottom:8px">SAVE THIS NOW — IT WON'T BE SHOWN AGAIN</h4>
+      <pre class="codeblock" id="new-token-value"></pre>
+      <p class="muted" style="margin-top:8px;font-size:var(--t-tiny)">
+        Use as <code>Authorization: Bearer &lt;token&gt;</code> or <code>?api_key=&lt;token&gt;</code>.
+      </p>
+    </div>
+  </article>
+</dialog>
+{% endblock %}

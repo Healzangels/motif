@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Queue & Logs{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1 class="title">QUEUE / LOGS</h1>
+  <p class="muted">live job queue and event stream</p>
+</section>
+
+<section class="block block-split">
+  <div class="split-half">
+    <header class="block-head">
+      <h2 class="block-title">// JOBS</h2>
+      <div class="chips chips-inline">
+        <button class="chip chip-active" data-jobfilter="all">ALL</button>
+        <button class="chip" data-jobfilter="pending">PENDING</button>
+        <button class="chip" data-jobfilter="running">RUNNING</button>
+        <button class="chip" data-jobfilter="failed">FAILED</button>
+        <button class="chip" data-jobfilter="done">DONE</button>
+      </div>
+    </header>
+    <table class="table table-tight">
+      <thead>
+        <tr><th>ID</th><th>TYPE</th><th>ITEM</th><th>STATE</th><th>TIME</th><th>NOTE</th></tr>
+      </thead>
+      <tbody id="jobs-body"><tr><td colspan="6" class="muted center">loading…</td></tr></tbody>
+    </table>
+  </div>
+  <div class="split-half">
+    <header class="block-head">
+      <h2 class="block-title">// EVENT STREAM</h2>
+      <span class="muted live-indicator"><span class="dot dot-pulse"></span> live</span>
+    </header>
+    <ol class="event-stream event-stream-tall" id="event-stream-full"></ol>
+  </div>
+</section>
+{% endblock %}

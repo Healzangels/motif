@@ -1,0 +1,71 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>motif</Name>
+  <Repository>healzangels/motif:latest</Repository>
+  <Registry>https://hub.docker.com/r/healzangels/motif</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/healzangels/motif/issues</Support>
+  <Project>https://github.com/healzangels/motif</Project>
+  <Overview>
+    Automated theme song orchestration for Plex via [b]ThemerrDB[/b].
+
+    motif syncs ThemerrDB daily, downloads theme songs from YouTube, and places them as theme.mp3 sidecar files in your Plex movie/show folders so Plex picks them up automatically. Includes a CRT-styled web UI at port 5309 with library browsing, manual overrides, dry-run mode, and per-section management for libraries (Movies, 4K, TV, Anime, etc).
+
+    [b]Path model:[/b] motif uses a single /data mount that mirrors what Plex sees. After first boot, you'll choose where to write theme files from the /settings page in the UI (typically /data/media/themes). All settings are saved to /config/motif.yaml and persist across container restarts.
+
+    [b]Before first run:[/b]
+    1) Drop a YouTube cookies.txt file into your appdata folder (Netscape format from the "Get cookies.txt LOCALLY" extension)
+    2) Set your Plex token below
+    3) After the container starts, visit /settings and set the THEMES DIRECTORY (e.g. /data/media/themes)
+    4) The first sync runs in DRY-RUN mode by default — disable from the UI banner once you've reviewed the planned actions
+  </Overview>
+  <Category>MediaApp:Other Tools:</Category>
+  <WebUI>http://[IP]:[PORT:5309]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/healzangels/motif/main/unraid/motif.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/healzangels/motif/main/unraid/icon.png</Icon>
+  <ExtraParams>--user 99:100</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>A YouTube cookies.txt file and a valid Plex token. See the project README for the cookies workflow.</Requires>
+
+  <!-- ============================================================== -->
+  <!-- WebUI port                                                       -->
+  <!-- ============================================================== -->
+  <Config Name="WebUI Port" Target="5309" Default="5309" Mode="tcp" Description="Port for the motif web UI. Pick anything free on your host." Type="Port" Display="always" Required="true" Mask="false">5309</Config>
+
+  <!-- ============================================================== -->
+  <!-- Volume mounts (just two!)                                        -->
+  <!-- ============================================================== -->
+  <Config Name="Config (appdata)" Target="/config" Default="/mnt/user/appdata/motif" Mode="rw" Description="motif's persistent state: SQLite DB, motif.yaml configuration file, cookies.txt, generated session key. MUST be writable by user 99:100. Drop your YouTube cookies.txt here as cookies.txt." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/motif</Config>
+
+  <Config Name="Data (mirrors Plex)" Target="/data" Default="/mnt/user/data" Mode="rw" Description="Single unified data mount. Should mirror what your Plex container sees as /data — typically /mnt/user/data on Unraid. motif reads/writes inside this single tree so hardlinks work for free. After first boot, configure the THEMES DIRECTORY from the /settings page in the UI (typically /data/media/themes)." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/data</Config>
+
+  <!-- ============================================================== -->
+  <!-- REQUIRED env vars                                                -->
+  <!-- ============================================================== -->
+  <Config Name="Plex URL" Target="MOTIF_PLEX_URL" Default="http://192.168.1.10:32400" Mode="" Description="Plex Media Server URL reachable from inside this container. Use the LAN IP of your Plex host. Example: http://10.0.1.98:32400. Can be changed later from /settings." Type="Variable" Display="always" Required="true" Mask="false">http://192.168.1.10:32400</Config>
+
+  <Config Name="Plex token" Target="MOTIF_PLEX_TOKEN" Default="" Mode="" Description="Plex auth token. Find at https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/ — log into Plex Web, look at any item's XML metadata, copy X-Plex-Token from the URL. Can be changed later from /settings." Type="Variable" Display="always" Required="true" Mask="true"></Config>
+
+  <!-- ============================================================== -->
+  <!-- Optional bootstrap env vars                                      -->
+  <!-- ============================================================== -->
+  <!-- All other settings (themes path, downloads tuning, schedule,    -->
+  <!-- matching rules, log level) are configured from the web UI at    -->
+  <!-- /settings after first boot and saved to /config/motif.yaml.     -->
+  <!-- The env vars below override the UI when set (12-factor).        -->
+
+  <Config Name="Trust forward-auth header" Target="MOTIF_TRUST_FORWARD_AUTH" Default="false" Mode="" Description="Set 'true' ONLY if motif sits behind Authentik or another forward-auth proxy that injects X-Authentik-Username. Leave 'false' for direct LAN access — otherwise an attacker who can hit the container directly could spoof the header." Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+
+  <Config Name="Section exclude (optional)" Target="MOTIF_PLEX_SECTION_EXCLUDE" Default="" Mode="" Description="Comma-separated Plex section TITLES to exclude from management (e.g. 'Home Movies,Music Videos'). Leave empty unless you need this — you can also flip per-section management from the /libraries page in the UI." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+
+  <Config Name="Section include / whitelist (optional)" Target="MOTIF_PLEX_SECTION_INCLUDE" Default="" Mode="" Description="Optional whitelist. When set, ONLY these section titles are managed. Comma-separated, e.g. 'Movies,4K Movies,TV Shows,Anime'. Overrides the exclude list." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+
+  <Config Name="Timezone" Target="TZ" Default="America/New_York" Mode="" Description="Container timezone — affects log timestamps and the cron schedule (which is interpreted in UTC inside motif but reported in local time in the UI)." Type="Variable" Display="advanced" Required="false" Mask="false">America/New_York</Config>
+</Container>

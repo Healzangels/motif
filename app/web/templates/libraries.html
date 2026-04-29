@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Libraries{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-row">
+    <h1 class="title">LIBRARIES</h1>
+    <button class="btn" id="refresh-libraries-btn">// REFRESH FROM PLEX</button>
+  </div>
+  <p class="muted">plex sections motif manages · toggle include/exclude per library</p>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// MOVIE SECTIONS</h2>
+  </header>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>SECTION</th>
+        <th class="col-state">TYPE</th>
+        <th class="col-state">MGD</th>
+        <th class="col-year">PLACED</th>
+        <th class="col-year">COPIES</th>
+        <th>LOCATIONS</th>
+        <th class="col-actions">ACTIONS</th>
+      </tr>
+    </thead>
+    <tbody id="libraries-movies-body">
+      <tr><td colspan="7" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// TV / SHOW SECTIONS</h2>
+  </header>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>SECTION</th>
+        <th class="col-state">TYPE</th>
+        <th class="col-state">MGD</th>
+        <th class="col-year">PLACED</th>
+        <th class="col-year">COPIES</th>
+        <th>LOCATIONS</th>
+        <th class="col-actions">ACTIONS</th>
+      </tr>
+    </thead>
+    <tbody id="libraries-tv-body">
+      <tr><td colspan="7" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}
