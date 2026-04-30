@@ -847,9 +847,29 @@ pre code, .codeblock {
   background: rgba(255,184,74,0.05);
   vertical-align: middle;
 }
-/* (v1.10.30 .copies-pill removed in v1.10.31 — dedup reverted, rows
-   are per-rating_key again; differentiation handled by .edition-pill
-   plus the title-cell folder_path tooltip.) */
+/* v1.10.33: at-a-glance 'TDB' pill on each library row so users can
+   see whether ThemerrDB has the title without opening the SOURCE
+   menu. Green for tracked, dim grey for not. Slightly smaller than
+   the edition pill so it doesn't compete visually. */
+.tdb-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.tdb-pill-yes {
+  color: var(--green);
+  border: 1px solid rgba(109,255,181,0.35);
+  background: rgba(109,255,181,0.06);
+}
+.tdb-pill-no {
+  color: var(--fg-mute);
+  border: 1px solid var(--line);
+  background: transparent;
+}
 /* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
    as the regular T badge but de-emphasized — informational rows aren't
    actionable so they shouldn't compete with normal rows. */

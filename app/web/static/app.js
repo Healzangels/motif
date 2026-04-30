@@ -2332,6 +2332,22 @@
         ? ` <span class="edition-pill" title="Plex edition tag">${htmlEscape(ed)}</span>`
         : '';
     })();
+    // v1.10.33: at-a-glance ThemerrDB-tracked indicator. The SRC badge
+    // alone doesn't tell users whether REPLACE w/ TDB is available
+    // (an M or U row may or may not have a TDB alternative). The pill
+    // is visible on every tab — most useful on ALL where the SRC
+    // column has every flavor mixed.
+    const tdbAvailLabel = (() => {
+      // not_in_plex rows are already obviously TDB-tracked (that's
+      // what they are) — pill would be redundant.
+      if (it.not_in_plex) return '';
+      const isThemerrDbAvail = it.upstream_source
+        && it.upstream_source !== 'plex_orphan';
+      if (isThemerrDbAvail) {
+        return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — REPLACE w/ TDB available in the SOURCE menu">TDB</span>';
+      }
+      return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
+    })();
 
     // v1.10.24 Option C row actions — collapse the wide button row into
     // categorized menu buttons so each row stays in-bounds:
@@ -2521,7 +2537,7 @@
         <td>
           <div class="title-cell" title="${htmlEscape(titleTooltip)}">
             ${titleGlyphs.join('')}
-            <span class="title-cell-name">${htmlEscape(it.plex_title)}${editionLabel}${sectionLabel}</span>
+            <span class="title-cell-name">${htmlEscape(it.plex_title)}${editionLabel}${tdbAvailLabel}${sectionLabel}</span>
           </div>
         </td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>
