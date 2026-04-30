@@ -729,6 +729,20 @@ pre code, .codeblock {
   border-color: rgba(255,216,107,0.5);
   background: rgba(255,216,107,0.08);
 }
+/* T badge: motif-managed ThemerrDB download. Restated as a class so the
+   row template doesn't need inline color overrides. */
+.link-badge-themerrdb {
+  color: var(--green-bright);
+  border-color: var(--green-deep);
+}
+/* A badge: motif adopted an existing local sidecar — file is the source
+   of truth, no ThemerrDB link. Distinguished from U (yellow) by using a
+   teal/cyan-blend, and from M (magenta sidecar) by being filled. */
+.link-badge-adopt {
+  color: var(--cyan);
+  border-color: rgba(109,211,255,0.5);
+  background: rgba(109,211,255,0.08);
+}
 .link-badge-cloud {
   color: var(--cyan);
   border-color: rgba(109,211,255,0.4);

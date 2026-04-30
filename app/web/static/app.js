@@ -2074,31 +2074,47 @@
     const themeId = it.theme_tmdb;
     const downloaded = !!it.file_path;
 
-    // Source badge — reflects what Plex is actually playing.
-    //   T = ThemerrDB-sourced; motif placed an auto download
-    //   M = Manual — covers everything user-driven:
-    //       (a) motif-managed manual (UI upload, URL, scan-adopt) when
-    //           placed.provenance='manual'
-    //       (b) loose theme.mp3 sidecar at the Plex folder that motif
-    //           doesn't track yet (run /scans → ADOPT to manage it)
-    //       The DL/PL pills tell the two M sub-cases apart at a glance:
-    //         DL+PL lit → motif manages
-    //         no pills  → sidecar only
-    //   P = Plex agent / cloud — Plex thinks the item has a theme but
-    //       there's no local sidecar and motif doesn't manage it
-    //   — = no theme anywhere
+    // Source badge — reflects what Plex is actually playing. v1.10.4 split
+    // the old generic M into U/A/M so the user can tell at a glance whether
+    // motif owns the file:
+    //   T = ThemerrDB-sourced; motif downloaded from upstream (auto)
+    //   U = User-managed: motif placed a file the user provided (UI upload
+    //       or manual YouTube URL). Either an override on a real ThemerrDB
+    //       title, or an orphan with no upstream record.
+    //   A = Adopted sidecar: motif took ownership of an existing theme.mp3
+    //       at the Plex folder (no ThemerrDB link, file is the source of
+    //       truth). Differentiated from U by source_video_id pattern.
+    //   M = Loose theme.mp3 sidecar at the Plex folder that motif doesn't
+    //       manage yet (run /scans → ADOPT to claim it).
+    //   P = Plex agent / cloud — Plex has a theme but no local sidecar AND
+    //       motif doesn't manage it.
+    //   — = no theme anywhere.
     //
-    // Pre-1.9.7 v1.9.5 split case (a) into a separate U badge — collapsed
-    // back into M per user's mental model: "scan-adopt items are M but
-    // managed, indicated by DL/PL pills".
+    // U-vs-A discriminator: motif's upload path stores source_video_id=''
+    // (empty); manual URL stores an 11-char YouTube video id; sidecar
+    // adopt stores the canonical filename hash (longer, mixed). So:
+    //   svid empty OR matches youtube-id pattern → U
+    //   anything else (provenance=manual, upstream=plex_orphan)  → A
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
     const sidecarOnly = !placed && !!it.plex_local_theme;
+    const isOrphanRow = it.upstream_source === 'plex_orphan';
+    const svid = it.source_video_id || '';
+    const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
     let srcCell;
-    if (placed && placedProv === 'manual') {
-      srcCell = '<span class="link-badge link-badge-manual" title="motif manages this manual theme (UI upload, URL, or scan adopt)">M</span>';
-    } else if (placed) {
-      srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB and placed" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
+    if (placed && placedProv === 'auto') {
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif downloaded from ThemerrDB and placed">T</span>';
+    } else if (placed && placedProv === 'manual') {
+      // User-managed file: was it user-provided (URL/upload = U) or
+      // adopted from an existing sidecar (A)? The discriminator only
+      // matters for orphan rows; for real ThemerrDB titles a manual
+      // placement is always a URL override, so always U.
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
+      if (!isOrphanRow || wasUploadedOrUrl) {
+        srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+      } else {
+        srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+      }
     } else if (sidecarOnly) {
       srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (run /scans → ADOPT to take ownership)">M</span>';
     } else if (it.plex_has_theme) {
