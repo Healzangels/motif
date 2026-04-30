@@ -387,12 +387,18 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 200px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
-.col-section { width: 220px; }
 
-/* Fixed layout so paired tables (e.g. libraries movie/tv) share column widths
-   regardless of content. */
-.table-fixed { table-layout: fixed; }
-.table-fixed td, .table-fixed th { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Libraries page: paired movie/TV tables with shared column widths so the
+   two blocks align visually. Sized to fit header text + typical content. */
+.libraries-table { table-layout: fixed; }
+.libraries-table th, .libraries-table td { white-space: nowrap; }
+.lib-col-section  { width: 240px; }
+.lib-col-type     { width: 80px; }
+.lib-col-mgd      { width: 70px; text-align: center; }
+.lib-col-num      { width: 90px; text-align: center; font-variant-numeric: tabular-nums; }
+.lib-col-actions  { width: 120px; text-align: right; }
+.libraries-table td.lib-locations,
+.libraries-table th.lib-locations { overflow: hidden; text-overflow: ellipsis; }
 
 .state-pill {
   display: inline-block;

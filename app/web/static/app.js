@@ -735,15 +735,15 @@
       const locations = (s.location_paths || []).map(htmlEscape).join('<br>') || '<span class="muted">—</span>';
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}">
-          <td><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
-          <td class="col-state"><span class="muted">${htmlEscape(s.type)}</span></td>
-          <td class="col-state">
+          <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
+          <td class="lib-col-type"><span class="muted">${htmlEscape(s.type)}</span></td>
+          <td class="lib-col-mgd">
             <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
           </td>
-          <td class="col-year">${fmt.num(s.placed_count)}</td>
-          <td class="col-year">${s.copies_count > 0 ? '<span class="accent">'+fmt.num(s.copies_count)+'</span>' : fmt.num(s.copies_count)}</td>
-          <td style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${locations}</td>
-          <td class="col-actions">
+          <td class="lib-col-num">${fmt.num(s.placed_count)}</td>
+          <td class="lib-col-num">${s.copies_count > 0 ? '<span class="accent">'+fmt.num(s.copies_count)+'</span>' : fmt.num(s.copies_count)}</td>
+          <td class="lib-locations" style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${locations}</td>
+          <td class="lib-col-actions">
             <span class="muted" style="font-size:var(--t-tiny)">id=${htmlEscape(s.section_id)}</span>
           </td>
         </tr>
