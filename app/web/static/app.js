@@ -1098,30 +1098,78 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
     });
 
-    document.addEventListener('change', async (e) => {
+    // Deferred save: capture every MGD/ROLE change into librariesDirty
+    // (keyed by section_id). The // SAVE button commits everything in
+    // one click — consistent with the rest of /settings, and the user
+    // can flip several sections without each toggle firing a request.
+    document.addEventListener('change', (e) => {
       const tog = e.target.closest('input[data-section-toggle]');
       const roleSel = e.target.closest('select[data-section-role]');
       if (tog) {
-        const fd = new FormData();
-        fd.append('included', tog.checked ? 'true' : 'false');
-        try {
-          await api('POST', `/api/libraries/${encodeURIComponent(tog.dataset.sectionToggle)}/include`, fd);
-        } catch (err) {
-          alert('Update failed: ' + err.message);
-          tog.checked = !tog.checked;
-        }
+        const sid = tog.dataset.sectionToggle;
+        if (!librariesDirty[sid]) librariesDirty[sid] = {};
+        librariesDirty[sid].included = tog.checked;
+        updateLibrariesSaveButton();
       } else if (roleSel) {
         const sid = roleSel.dataset.sectionRole;
-        const role = roleSel.value;
-        try {
-          await api('POST', `/api/libraries/${encodeURIComponent(sid)}/flags`, { role });
-        } catch (err) {
-          alert('Role update failed: ' + err.message);
-          // Revert: re-fetch to pick up authoritative state
-          loadLibraries().catch(()=>{});
-        }
+        if (!librariesDirty[sid]) librariesDirty[sid] = {};
+        librariesDirty[sid].role = roleSel.value;
+        updateLibrariesSaveButton();
       }
     });
+
+    // SAVE button: iterate dirty sections, fire per-row requests in
+    // sequence (handful of rows, so parallelism not worth the
+    // complexity), surface a summary status.
+    document.getElementById('libraries-save-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('libraries-save-btn');
+      const status = document.getElementById('libraries-save-status');
+      const entries = Object.entries(librariesDirty);
+      if (entries.length === 0) return;
+      btn.disabled = true;
+      status.textContent = `saving ${entries.length}…`;
+      status.classList.remove('ok', 'err');
+      let ok = 0;
+      let failed = 0;
+      for (const [sid, change] of entries) {
+        try {
+          if ('included' in change) {
+            const fd = new FormData();
+            fd.append('included', change.included ? 'true' : 'false');
+            await api('POST', `/api/libraries/${encodeURIComponent(sid)}/include`, fd);
+          }
+          if ('role' in change) {
+            await api('POST', `/api/libraries/${encodeURIComponent(sid)}/flags`,
+                      { role: change.role });
+          }
+          ok += 1;
+        } catch (err) {
+          console.error('libraries save failed for', sid, err);
+          failed += 1;
+        }
+      }
+      librariesDirty = {};
+      status.textContent = failed === 0
+        ? `✓ saved ${ok} section${ok === 1 ? '' : 's'}`
+        : `✗ ${failed} of ${ok + failed} failed — see console`;
+      status.classList.add(failed === 0 ? 'ok' : 'err');
+      updateLibrariesSaveButton();
+      // Re-fetch authoritative state, in case anything diverged
+      setTimeout(() => loadLibraries().catch(()=>{}), 600);
+      setTimeout(() => { status.textContent = ''; status.classList.remove('ok', 'err'); }, 4000);
+    });
+  }
+
+  // Per-section pending changes captured by the libraries SAVE button.
+  // Shape: {section_id: {included?: bool, role?: 'standard'|'4k'|'anime'|'anime_4k'}}.
+  let librariesDirty = {};
+
+  function updateLibrariesSaveButton() {
+    const btn = document.getElementById('libraries-save-btn');
+    if (!btn) return;
+    const n = Object.keys(librariesDirty).length;
+    btn.disabled = n === 0;
+    btn.textContent = n === 0 ? '// SAVE' : `// SAVE (${n})`;
   }
 
 
@@ -1524,16 +1572,17 @@
       scansState.page += 1; loadFindings().catch(console.error);
     });
 
-    $('#scan-bulk-adopt-btn')?.addEventListener('click', async () => {
-      // Auto-collect all hash_match findings on this page
+    // Generic bulk adopt by finding kind. The two adopt buttons share
+    // this helper — only the kind filter and confirmation copy differ.
+    async function bulkAdoptKind(kind, label) {
       const ids = scansState.findings
-        .filter((f) => f.finding_kind === 'hash_match' && !f.adopted_at)
+        .filter((f) => f.finding_kind === kind && !f.adopted_at)
         .map((f) => f.id);
       if (!ids.length) {
-        alert('No hash_match findings on this page to bulk-adopt.');
+        alert(`No ${kind} findings on this page to bulk-adopt.`);
         return;
       }
-      if (!confirm(`Adopt ${ids.length} hash-matched theme(s)? Each will be hardlinked into your themes_dir.`)) {
+      if (!confirm(`Adopt ${ids.length} ${label}? Each will be hardlinked into your themes_dir.`)) {
         return;
       }
       try {
@@ -1544,7 +1593,12 @@
       } catch (e) {
         alert('Bulk adopt failed: ' + e.message);
       }
-    });
+    }
+
+    $('#scan-bulk-adopt-btn')?.addEventListener('click',
+      () => bulkAdoptKind('hash_match', 'hash-matched theme(s) (these match a ThemerrDB record by content)'));
+    $('#scan-bulk-adopt-tmdb-btn')?.addEventListener('click',
+      () => bulkAdoptKind('orphan_resolvable', 'TMDB-matched theme(s) (motif will manage these as manual M sources)'));
 
     document.querySelectorAll('[data-bulk]').forEach((btn) => {
       btn.addEventListener('click', async () => {
@@ -2003,29 +2057,29 @@
     const themeId = it.theme_tmdb;
     const downloaded = !!it.file_path;
 
-    // Source badge — reflects what Plex is *actually playing*, not just
-    // what motif has staged. T/U only fire when motif has a placement
-    // (theme.mp3 hardlinked into the Plex folder); a download that hasn't
-    // landed yet keeps the previous SRC (sidecar/cloud/—) so users aren't
-    // misled about which file Plex would serve.
+    // Source badge — reflects what Plex is actually playing.
     //   T = ThemerrDB-sourced; motif placed an auto download
-    //   U = User-uploaded — motif placed it (UI upload/URL/scan-adopt);
-    //       placements.provenance='manual'
-    //   M = Manual sidecar — file at the Plex folder that motif doesn't
-    //       manage (run /scans → ADOPT to take ownership)
-    //   P = Plex agent / cloud
+    //   M = Manual — covers everything user-driven:
+    //       (a) motif-managed manual (UI upload, URL, scan-adopt) when
+    //           placed.provenance='manual'
+    //       (b) loose theme.mp3 sidecar at the Plex folder that motif
+    //           doesn't track yet (run /scans → ADOPT to manage it)
+    //       The DL/PL pills tell the two M sub-cases apart at a glance:
+    //         DL+PL lit → motif manages
+    //         no pills  → sidecar only
+    //   P = Plex agent / cloud — Plex thinks the item has a theme but
+    //       there's no local sidecar and motif doesn't manage it
     //   — = no theme anywhere
     //
-    // The DL pill still lights as soon as motif has a local_files row,
-    // so "downloaded but not placed" is visible (DL on, PL off, SRC = M
-    // / P / —) — distinct from "downloaded and placed" (DL + PL on,
-    // SRC = T / U).
+    // Pre-1.9.7 v1.9.5 split case (a) into a separate U badge — collapsed
+    // back into M per user's mental model: "scan-adopt items are M but
+    // managed, indicated by DL/PL pills".
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
     const sidecarOnly = !placed && !!it.plex_local_theme;
     let srcCell;
     if (placed && placedProv === 'manual') {
-      srcCell = '<span class="link-badge link-badge-user" title="user-uploaded — motif placed this (UI upload, URL, or scan adopt)">U</span>';
+      srcCell = '<span class="link-badge link-badge-manual" title="motif manages this manual theme (UI upload, URL, or scan adopt)">M</span>';
     } else if (placed) {
       srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB and placed" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
     } else if (sidecarOnly) {

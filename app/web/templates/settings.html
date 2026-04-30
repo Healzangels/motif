@@ -160,7 +160,11 @@
 <section class="block tab-panel" data-panel="plex" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// LIBRARY SECTIONS</h2>
-    <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// REFRESH FROM PLEX</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="form-status muted small" id="libraries-save-status"></span>
+      <button class="btn btn-tiny btn-warn" id="libraries-save-btn" type="button" disabled>// SAVE</button>
+      <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// REFRESH FROM PLEX</button>
+    </div>
   </header>
   <div class="block-body" style="padding:0">
     <p class="muted small" style="padding:10px 18px">

@@ -44,7 +44,8 @@
       <input type="text" id="scan-findings-search" class="input"
              placeholder="search folder path or resolved title…"
              autocomplete="off" style="flex:1;min-width:240px" />
-      <button class="btn btn-tiny" id="scan-bulk-adopt-btn" type="button">// BULK ADOPT (HASH MATCHES)</button>
+      <button class="btn btn-tiny" id="scan-bulk-adopt-btn" type="button" title="adopt every hash_match — these have content matching ThemerrDB; safe bulk action">// BULK ADOPT (HASH)</button>
+      <button class="btn btn-tiny" id="scan-bulk-adopt-tmdb-btn" type="button" title="adopt every orphan_resolvable — TMDB matched these to a movie/show; motif takes ownership as M (manual-managed)">// BULK ADOPT (TMDB)</button>
     </div>
 
     <table class="table" id="scan-findings-table">
