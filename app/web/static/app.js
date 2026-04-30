@@ -2129,30 +2129,34 @@
     //       motif doesn't manage it.
     //   — = no theme anywhere.
     //
-    // U-vs-A discriminator: motif's upload path stores source_video_id=''
-    // (empty); manual URL stores an 11-char YouTube video id; sidecar
-    // adopt stores the canonical filename hash (longer, mixed). So:
-    //   svid empty OR matches youtube-id pattern → U
-    //   anything else (provenance=manual, upstream=plex_orphan)  → A
+    // v1.10.12: source_kind on local_files is the authoritative
+    // discriminator. 'themerrdb' / 'url' / 'upload' / 'adopt' are
+    // stamped at insert time. The svid heuristic stays as a fallback
+    // for rows older than the migration that didn't get backfilled
+    // confidently.
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
     const sidecarOnly = !placed && !!it.plex_local_theme;
     const isOrphanRow = it.upstream_source === 'plex_orphan';
+    const sourceKind = it.source_kind || null;
     const svid = it.source_video_id || '';
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
     let srcCell;
     if (placed && placedProv === 'auto') {
-      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif downloaded from ThemerrDB and placed">T</span>';
+      // T can come from a real ThemerrDB download or a hash/exact
+      // match adopt (byte-identical to the upstream); both are 'auto'.
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
     } else if (placed && placedProv === 'manual') {
-      // User-managed file: was it user-provided (URL/upload = U) or
-      // adopted from an existing sidecar (A)? The discriminator only
-      // matters for orphan rows; for real ThemerrDB titles a manual
-      // placement is always a URL override, so always U.
-      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
-      if (!isOrphanRow || wasUploadedOrUrl) {
-        srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
-      } else {
+      let kind = sourceKind;
+      if (!kind) {
+        // Pre-1.10.12 fallback heuristic.
+        const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
+        kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
+      }
+      if (kind === 'adopt') {
         srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+      } else {
+        srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
       }
     } else if (sidecarOnly) {
       srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (run /scans → ADOPT to take ownership)">M</span>';

@@ -63,6 +63,15 @@ CREATE TABLE IF NOT EXISTS local_files (
     source_video_id TEXT NOT NULL,
     provenance      TEXT NOT NULL DEFAULT 'auto'
                        CHECK (provenance IN ('auto', 'manual')),
+    -- v1.10.12: drives the T/U/A badge unambiguously. Pre-1.10.12 the UI
+    -- guessed via the source_video_id shape, which mis-classified an
+    -- adopted sidecar of a ThemerrDB-tracked title (canonical filename
+    -- uses the youtube id → looked like a URL override). Now the
+    -- creator stamps the right kind explicitly.
+    source_kind     TEXT
+                       CHECK (source_kind IN ('themerrdb', 'url',
+                                              'upload', 'adopt')
+                              OR source_kind IS NULL),
     PRIMARY KEY (media_type, tmdb_id),
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
 );
@@ -278,7 +287,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -688,6 +697,49 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
+    """v11 adds local_files.source_kind so the row badge can show T/U/A
+    without guessing.
+
+    Pre-1.10.12 the UI inferred the badge from source_video_id shape:
+      ''                   → upload  (U)
+      11-char yt-id        → url     (U)
+      anything else        → adopt   (A)
+    But _do_adopt for an orphan_resolvable that resolved to a real
+    ThemerrDB row writes the YouTube video id into source_video_id
+    (canonical filename uses it for cache stability). That row got
+    mis-classified as U when it should be A.
+
+    Backfill heuristic for existing rows — same shape rules, but
+    additionally promote orphan_-prefixed source_video_id (only an
+    adopt path produces that pattern) to 'adopt' so we don't lose
+    those. Manual rows that share a YouTube-id shape with the URL
+    overrides stay tagged 'url' — that's the same ambiguity the
+    pre-1.10.12 heuristic had, and there's no data to disambiguate.
+    """
+    log.info("Migrating to schema v11 (local_files.source_kind)")
+    conn.executescript("""
+        ALTER TABLE local_files ADD COLUMN source_kind TEXT;
+        UPDATE local_files
+           SET source_kind = 'themerrdb'
+         WHERE provenance = 'auto'
+           AND source_video_id NOT LIKE 'orphan_%';
+        UPDATE local_files
+           SET source_kind = 'adopt'
+         WHERE source_video_id LIKE 'orphan_%';
+        UPDATE local_files
+           SET source_kind = 'upload'
+         WHERE provenance = 'manual'
+           AND (source_video_id IS NULL OR source_video_id = '');
+        UPDATE local_files
+           SET source_kind = 'url'
+         WHERE provenance = 'manual'
+           AND length(source_video_id) = 11
+           AND source_video_id GLOB '[A-Za-z0-9_-]*'
+           AND source_kind IS NULL;
+    """)
+
+
 def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
     """v10: index hygiene + library-page perf.
 
@@ -790,6 +842,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 9:
                     _migrate_v9_to_v10(conn)
                     current = 10
+                elif current == 10:
+                    _migrate_v10_to_v11(conn)
+                    current = 11
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

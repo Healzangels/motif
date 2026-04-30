@@ -279,7 +279,7 @@ def _library_main_query(
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
                t.failure_kind, t.failure_message, t.upstream_source,
-               lf.file_path, lf.source_video_id, lf.provenance,
+               lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
                p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
                (SELECT j.job_type FROM jobs j
                 WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
@@ -436,7 +436,7 @@ def _library_not_in_plex(
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,
             t.failure_kind, t.failure_message, t.upstream_source,
-            lf.file_path, lf.source_video_id, lf.provenance,
+            lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
             p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
             (SELECT j.job_type FROM jobs j
              WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
@@ -1472,7 +1472,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
                        lf.file_path, lf.file_size, lf.downloaded_at,
-                       lf.source_video_id, lf.provenance,
+                       lf.source_video_id, lf.provenance, lf.source_kind,
                        COALESCE(MAX(pi.local_theme_file), 0) AS plex_local_theme,
                        COALESCE(MAX(pi.has_theme), 0) AS plex_has_theme
                 FROM local_files lf
@@ -2024,14 +2024,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn.execute(
                 """INSERT INTO local_files
                      (media_type, tmdb_id, file_path, file_sha256, file_size,
-                      downloaded_at, source_video_id, provenance)
-                   VALUES (?, ?, ?, ?, ?, ?, '', 'manual')
+                      downloaded_at, source_video_id, provenance, source_kind)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'manual', 'upload')
                    ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
                        file_path = excluded.file_path,
                        file_sha256 = excluded.file_sha256,
                        file_size = excluded.file_size,
                        downloaded_at = excluded.downloaded_at,
-                       provenance = excluded.provenance""",
+                       provenance = excluded.provenance,
+                       source_kind = excluded.source_kind""",
                 (theme_media_type, tmdb_id, rel_path, sha, len(data), now_iso()),
             )
             # Clear any prior failure on the row (a manual upload obviates it)

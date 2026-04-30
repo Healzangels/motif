@@ -309,19 +309,29 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     # Provenance: hash/exact matches share content with motif's canonical
     # (same sha as what ThemerrDB would produce), so they earn the 'auto'
     # provenance — T badge in the UI. Everything else (orphans, content
-    # mismatches) is user-curated and gets 'manual' (M badge).
+    # mismatches) is user-curated and gets 'manual'.
     provenance = "auto" if finding_kind in ("hash_match", "exact_match") else "manual"
+    # source_kind drives the T/U/A badge unambiguously (v1.10.12). Hash
+    # and exact matches are byte-identical with what ThemerrDB would
+    # download, so 'themerrdb'. Everything else (orphan_* findings,
+    # content_mismatch) is the user adopting a local file as the source
+    # of truth — 'adopt'.
+    source_kind = ("themerrdb"
+                   if finding_kind in ("hash_match", "exact_match")
+                   else "adopt")
 
     # Record local_files and placements
     with get_conn(db_path) as conn:
         conn.execute(
             """INSERT OR REPLACE INTO local_files
                  (media_type, tmdb_id, theme_id, file_path, file_sha256,
-                  file_size, downloaded_at, source_video_id, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                  file_size, downloaded_at, source_video_id, provenance,
+                  source_kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (media_type, tmdb_id, theme_id,
              str(canonical_path), finding["file_sha256"], finding["file_size"],
-             now_iso(), canonical_name.replace(".mp3", ""), provenance),
+             now_iso(), canonical_name.replace(".mp3", ""), provenance,
+             source_kind),
         )
         conn.execute(
             """INSERT OR REPLACE INTO placements

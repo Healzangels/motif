@@ -454,23 +454,28 @@ class Worker:
         # Record the local file
         rel_path = str(result.file_path.relative_to(self.settings.themes_dir))
         provenance = "manual" if override else "auto"
+        # source_kind drives the T/U/A badge (v1.10.12). 'url' when the
+        # download was driven by a user_overrides row; 'themerrdb'
+        # otherwise.
+        source_kind = "url" if override else "themerrdb"
         with get_conn(self.settings.db_path) as conn, transaction(conn):
             conn.execute(
                 """
                 INSERT INTO local_files
                     (media_type, tmdb_id, file_path, file_sha256, file_size,
-                     downloaded_at, source_video_id, provenance)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     downloaded_at, source_video_id, provenance, source_kind)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
                     file_path = excluded.file_path,
                     file_sha256 = excluded.file_sha256,
                     file_size = excluded.file_size,
                     downloaded_at = excluded.downloaded_at,
                     source_video_id = excluded.source_video_id,
-                    provenance = excluded.provenance
+                    provenance = excluded.provenance,
+                    source_kind = excluded.source_kind
                 """,
                 (media_type, tmdb_id, rel_path, result.file_sha256,
-                 result.file_size, now_iso(), vid, provenance),
+                 result.file_size, now_iso(), vid, provenance, source_kind),
             )
             # Decide whether to auto-place. Per-job payload override wins;
             # otherwise fall back to the global placement.auto_place setting.
