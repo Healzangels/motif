@@ -139,6 +139,44 @@
       }
       // Drive paths-not-configured banner
       updatePathsBanner(stats);
+
+      // v1.10.6: lock the SYNC + REFRESH FROM PLEX buttons while their
+      // corresponding worker job is running. Prevents spam-clicks and
+      // surfaces the in-flight state textually so the user knows the
+      // click registered.
+      const plexEnumBusy = (stats.queue && stats.queue.plex_enum_in_flight > 0);
+      const themerrdbBusy = (stats.queue && stats.queue.themerrdb_sync_in_flight > 0);
+      const refreshBtn = document.getElementById('library-refresh-btn');
+      if (refreshBtn) {
+        const orig = refreshBtn.dataset.origLabel || refreshBtn.textContent;
+        if (plexEnumBusy) {
+          if (!refreshBtn.dataset.origLabel) refreshBtn.dataset.origLabel = orig;
+          refreshBtn.disabled = true;
+          refreshBtn.textContent = '// REFRESHING…';
+        } else if (refreshBtn.dataset.origLabel) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = refreshBtn.dataset.origLabel;
+        }
+      }
+      // SYNC button — disable during BOTH a ThemerrDB sync AND a Plex
+      // enum, per user request: 'when a refresh for a given library is
+      // occurring for plex lets disable the sync button so we don't
+      // allow spam clicking'. The button lives on /dashboard; lock here
+      // even when the user is on /movies because the topbar status
+      // poll fires on every page.
+      const syncBusy = plexEnumBusy || themerrdbBusy;
+      const syncBtn = document.getElementById('sync-now-btn');
+      if (syncBtn) {
+        const orig = syncBtn.dataset.origLabel || syncBtn.textContent;
+        if (syncBusy) {
+          if (!syncBtn.dataset.origLabel) syncBtn.dataset.origLabel = orig;
+          syncBtn.disabled = true;
+          syncBtn.textContent = themerrdbBusy ? '// SYNCING…' : '// REFRESHING…';
+        } else if (syncBtn.dataset.origLabel) {
+          syncBtn.disabled = false;
+          syncBtn.textContent = syncBtn.dataset.origLabel;
+        }
+      }
     } catch (e) {
       $('#topbar-status-text').textContent = 'OFFLINE';
     }
@@ -2437,21 +2475,30 @@
       }, 250);
     });
 
-    // Refresh
+    // Refresh — v1.10.6: send {tab, fourk} so the backend only enumerates
+    // sections backing the current tab variant. While the enum runs the
+    // button is left in a 'REFRESHING…' state; refreshTopbarStatus's
+    // plex_enum_in_flight signal flips it back when the worker finishes.
     document.getElementById('library-refresh-btn')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;
-      const orig = btn.textContent;
-      btn.textContent = '// ENQUEUED';
+      const orig = btn.dataset.origLabel || btn.textContent;
+      btn.dataset.origLabel = orig;
+      btn.textContent = '// REFRESHING…';
       try {
-        await api('POST', '/api/library/refresh');
-        // Poll for ~30s for the enum to finish, then refresh the list
+        await api('POST', '/api/library/refresh', {
+          tab: libraryState.tab,
+          fourk: !!libraryState.fourk,
+        });
         setTimeout(() => loadLibrary().catch(()=>{}), 5000);
         setTimeout(() => loadLibrary().catch(()=>{}), 15000);
       } catch (err) {
         alert('Refresh failed: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = orig;
       }
-      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 6000);
+      // Don't re-enable here — refreshTopbarStatus owns the lock based on
+      // plex_enum_in_flight. The button restores once the worker drains.
     });
 
     // Pager

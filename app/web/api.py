@@ -810,6 +810,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type IN ('sync','plex_enum')
                      AND status IN ('pending','running')) AS sync_in_flight,
+                  -- v1.10.6: split out so the UI can lock the per-tab
+                  -- REFRESH button only when a Plex enum is active, and
+                  -- the SYNC button only when a ThemerrDB sync is active.
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'sync'
+                     AND status IN ('pending','running')) AS themerrdb_sync_in_flight,
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'plex_enum'
+                     AND status IN ('pending','running')) AS plex_enum_in_flight,
                   -- Local files with no placement = items waiting placement
                   -- approval (typically because a sidecar already exists at
                   -- the Plex folder; user must approve overwrite via /pending).
@@ -872,6 +881,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "running": row["running"],
                 "failed": row["failed"],
                 "sync_in_flight": row["sync_in_flight"],
+                "themerrdb_sync_in_flight": row["themerrdb_sync_in_flight"],
+                "plex_enum_in_flight": row["plex_enum_in_flight"],
                 "pending_placements": row["pending_placements"],
             },
             "storage": {
@@ -2093,8 +2104,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/library/refresh")
     async def api_library_refresh(request: Request, db: Path = Depends(get_db_path)):
-        """Manually enqueue a plex_enum job (refresh the unified browse cache)."""
+        """Manually enqueue a plex_enum job (refresh the unified browse cache).
+
+        v1.10.6: optional body {"tab": "movies|tv|anime", "fourk": bool}
+        narrows the refresh to sections that back the requested tab so the
+        REFRESH FROM PLEX button on /movies?fourk=1 only re-enumerates
+        movie+4k sections. Body absent → full refresh (legacy behavior).
+        """
         _require_admin(request)
+        try:
+            body = await request.json() if (await request.body()) else {}
+        except Exception:
+            body = {}
+        tab = body.get("tab")
+        fourk = bool(body.get("fourk"))
+
         with get_conn(db) as conn:
             existing = conn.execute(
                 "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
@@ -2102,6 +2126,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if existing:
                 return {"ok": True, "job_id": existing["id"], "already_queued": True}
+
+            if tab in ("movies", "tv", "anime"):
+                # Map tab → section predicate, mirroring the /api/library
+                # tab_where logic. Anime is purely flag-driven; Movies/TV
+                # exclude anime-flagged sections.
+                if tab == "movies":
+                    sec_where = "type = 'movie' AND is_anime = 0"
+                elif tab == "tv":
+                    sec_where = "type = 'show' AND is_anime = 0"
+                else:
+                    sec_where = "is_anime = 1"
+                sec_where += f" AND is_4k = {1 if fourk else 0}"
+                sections = conn.execute(
+                    f"SELECT section_id FROM plex_sections "
+                    f"WHERE included = 1 AND {sec_where}"
+                ).fetchall()
+                if not sections:
+                    return {"ok": True, "enqueued": 0,
+                            "note": "no managed sections match this tab"}
+                ids: list[int] = []
+                for s in sections:
+                    cur = conn.execute(
+                        "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                        "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                        (json.dumps({"section_id": s["section_id"],
+                                     "scope": f"{tab}{'-4k' if fourk else ''}"}),
+                         now_iso(), now_iso()),
+                    )
+                    ids.append(cur.lastrowid)
+                return {"ok": True, "enqueued": len(ids), "job_ids": ids,
+                        "scope": f"{tab}{'-4k' if fourk else ''}"}
+
+            # Legacy global refresh (no tab specified).
             cur = conn.execute(
                 "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                 "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
