@@ -54,8 +54,7 @@
   function highlightNav() {
     const path = window.location.pathname;
     const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
-                  '/anime': 'anime',
-                  '/coverage': 'coverage', '/queue': 'queue',
+                  '/anime': 'anime', '/queue': 'queue',
                   '/pending': 'pending', '/scans': 'scans',
                   '/settings': 'settings' };
     const k = map[path];
@@ -185,26 +184,82 @@
     `).join('');
   }
 
+  // Polled by the SYNC button to know when both the sync + plex_enum
+  // jobs have finished. Set when the user clicks // SYNC, cleared when
+  // /api/stats reports queue.sync_in_flight == 0.
+  let syncWatcher = null;
+
+  function setSyncButtonState(state) {
+    const btn = $('#sync-now-btn');
+    if (!btn) return;
+    if (state === 'idle') {
+      btn.disabled = false;
+      btn.textContent = '// SYNC';
+    } else if (state === 'running') {
+      btn.disabled = true;
+      btn.textContent = '// SYNCING…';
+    } else if (state === 'done') {
+      btn.disabled = true;
+      btn.textContent = '✓ DONE';
+      setTimeout(() => setSyncButtonState('idle'), 1500);
+    }
+  }
+
   function bindDashboard() {
     const syncBtn = $('#sync-now-btn');
     if (!syncBtn) return;
     syncBtn.addEventListener('click', async (ev) => {
-      const btn = ev.currentTarget;
-      btn.disabled = true;
-      btn.textContent = '// QUEUED';
+      setSyncButtonState('running');
       try {
         // metadata_only: don't auto-enqueue downloads. Downloads happen
-        // explicitly from /movies, /tv, or /coverage.
+        // explicitly from /movies, /tv, /anime via the missing-themes
+        // banner or per-row RE-DL.
         await api('POST', '/api/sync/now', { metadata_only: true });
       } catch (e) {
         alert('Sync failed: ' + e.message);
+        setSyncButtonState('idle');
+        return;
       }
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = '// SYNC';
-        loadDashboard().catch(console.error);
-      }, 1500);
+      // Poll /api/stats until the sync + auto-enqueued plex_enum settle.
+      // Once neither job is in flight we flash DONE then revert.
+      if (syncWatcher) clearInterval(syncWatcher);
+      let primed = false;
+      syncWatcher = setInterval(async () => {
+        try {
+          const s = await api('GET', '/api/stats');
+          const inFlight = (s.queue && s.queue.sync_in_flight) || 0;
+          if (inFlight > 0) primed = true;
+          if (primed && inFlight === 0) {
+            clearInterval(syncWatcher);
+            syncWatcher = null;
+            setSyncButtonState('done');
+            loadDashboard().catch(console.error);
+          }
+        } catch (e) { /* ignore transient errors */ }
+      }, 2000);
     });
+
+    // If the page loads while a sync is already in progress (left running
+    // by another tab/session), reflect that.
+    api('GET', '/api/stats').then((s) => {
+      if (s && s.queue && s.queue.sync_in_flight > 0) {
+        setSyncButtonState('running');
+        if (syncWatcher) clearInterval(syncWatcher);
+        let primed = true;
+        syncWatcher = setInterval(async () => {
+          try {
+            const s2 = await api('GET', '/api/stats');
+            const inFlight = (s2.queue && s2.queue.sync_in_flight) || 0;
+            if (primed && inFlight === 0) {
+              clearInterval(syncWatcher);
+              syncWatcher = null;
+              setSyncButtonState('done');
+              loadDashboard().catch(console.error);
+            }
+          } catch (e) { /* ignore */ }
+        }, 2000);
+      }
+    }).catch(()=>{});
   }
 
   // ---- Browse (movies / tv) ----
@@ -2141,7 +2196,7 @@
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
     if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
-    if (path === '/movies' || path === '/tv' || path === '/anime' || path === '/coverage')
+    if (path === '/movies' || path === '/tv' || path === '/anime')
       setInterval(() => loadLibrary().catch(() => {}), 30000);
   });
 })();

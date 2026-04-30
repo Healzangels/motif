@@ -249,7 +249,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/coverage", response_class=HTMLResponse)
     async def coverage_page(request: Request):
-        return templates.TemplateResponse(request, "coverage.html")
+        # /coverage is gone in v1.8.1 — its content was either duplicated on
+        # the Dash (stat cards, copies/relink) or superseded by the missing-
+        # themes banner on /movies, /tv, /anime. Redirect bookmarks to the
+        # Dash where the relevant tools now live.
+        return RedirectResponse("/", status_code=302)
 
     @app.get("/libraries", response_class=HTMLResponse)
     async def libraries_page(request: Request):
@@ -522,6 +526,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'failed') AS failed,
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type IN ('sync','plex_enum')
+                     AND status IN ('pending','running')) AS sync_in_flight,
                   (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total,
                   (SELECT COUNT(*) FROM themes
@@ -548,6 +555,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "pending": row["pending"],
                 "running": row["running"],
                 "failed": row["failed"],
+                "sync_in_flight": row["sync_in_flight"],
             },
             "storage": {
                 "hardlinks": row["hardlinks"],

@@ -95,6 +95,30 @@
   </article>
 </section>
 
+<!-- Copies-block: only renders when there are placements that fell back to
+     copy (cross-FS situation). Was on /coverage; moved here in v1.8.1 since
+     /coverage went away. // RE-LINK ALL converts them to hardlinks where
+     the filesystem permits, no re-download needed. -->
+<section class="block" id="copies-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// STORAGE WASTE — placements that fell back to copy</h2>
+    <button class="btn btn-tiny btn-warn" id="relink-all-btn">// RE-LINK ALL</button>
+  </header>
+  <div class="block-body" style="padding:12px 18px">
+    <p class="muted" style="font-size:var(--t-tiny);margin-bottom:8px">
+      These themes were copied instead of hardlinked because the source and destination were on different filesystems.
+      Each copy is duplicate disk usage. Fix the User Share allocation so themes and media share a filesystem,
+      then click RE-LINK ALL to convert copies → hardlinks without re-downloading.
+    </p>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>TITLE</th><th>YEAR</th><th>DESTINATION</th><th class="col-year">SIZE</th><th class="col-actions">ACT</th></tr>
+    </thead>
+    <tbody id="copies-body"></tbody>
+  </table>
+</section>
+
 <section class="block">
   <header class="block-head">
     <h2 class="block-title">// LAST SYNC</h2>
