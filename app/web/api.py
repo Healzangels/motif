@@ -29,6 +29,7 @@ import json
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -203,6 +204,178 @@ def _require_admin(request: Request) -> Principal:
     if not p.is_admin:
         raise HTTPException(status_code=403, detail="admin scope required")
     return p
+
+
+def _library_main_query(
+    db: Path, *, tab: str, fourk: bool, q: str, status: str,
+    page: int, per_page: int,
+) -> dict:
+    """Sync helper for /api/library — runs all SQL in one threadpool call
+    so the FastAPI event loop isn't blocked. v1.10.2 perf pass:
+      - consolidated 3 metadata queries (plex_enumerated, last_plex_enum_at,
+        last_sync_at) into one round trip.
+      - skip the heavy LEFT JOIN themes/lf/p in the COUNT when status='all'
+        and q is empty/title-only — the tab predicate alone is sufficient
+        to count rows there.
+      - heavy joins still happen for the rows query (we need theme/lf/p
+        columns to render rows) and for status filters that reference
+        them in WHERE.
+    """
+    if tab == "movies":
+        tab_where = "pi.media_type = 'movie' AND ps.is_anime = 0"
+    elif tab == "tv":
+        tab_where = "pi.media_type = 'show' AND ps.is_anime = 0"
+    else:  # anime — both movie- and show-typed anime sections allowed
+        tab_where = "ps.is_anime = 1"
+    tab_where += " AND ps.is_4k = 1" if fourk else " AND ps.is_4k = 0"
+
+    params: list = []
+    where_extra = ""
+    where_pi_only = ""
+    if q:
+        clause = " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
+        where_extra += clause
+        where_pi_only += clause
+        params.extend([f"%{q}%", q])
+    if status == "themed":
+        where_extra += (" AND t.tmdb_id IS NOT NULL "
+                        "AND t.upstream_source != 'plex_orphan'")
+    elif status == "manual":
+        where_extra += (
+            " AND ("
+            "  (lf.provenance = 'manual')"
+            "  OR (pi.local_theme_file = 1 "
+            "      AND lf.file_path IS NULL AND p.media_folder IS NULL)"
+            ")"
+        )
+    elif status == "plex_agent":
+        where_extra += (" AND pi.has_theme = 1 "
+                        "AND pi.local_theme_file = 0 "
+                        "AND lf.file_path IS NULL "
+                        "AND p.media_folder IS NULL")
+    elif status == "untracked":
+        where_extra += (" AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan') "
+                        "AND pi.has_theme = 0 "
+                        "AND pi.local_theme_file = 0 "
+                        "AND lf.file_path IS NULL "
+                        "AND p.media_folder IS NULL")
+    elif status == "placed":
+        where_extra += " AND p.media_folder IS NOT NULL"
+    elif status == "unplaced":
+        where_extra += " AND lf.file_path IS NOT NULL AND p.media_folder IS NULL"
+    elif status == "failures":
+        where_extra += " AND t.failure_kind IS NOT NULL"
+
+    sql_select = """
+        SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
+               pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
+               pi.folder_path, pi.has_theme AS plex_has_theme,
+               pi.local_theme_file AS plex_local_theme,
+               ps.title AS section_title,
+               t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
+               t.title AS theme_title, t.youtube_url, t.youtube_video_id,
+               t.failure_kind, t.failure_message, t.upstream_source,
+               lf.file_path, lf.source_video_id, lf.provenance,
+               p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
+               (SELECT j.job_type FROM jobs j
+                WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
+                  AND j.job_type IN ('download', 'place')
+                  AND j.status IN ('pending', 'running')
+                ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
+                         j.id DESC
+                LIMIT 1) AS job_in_flight
+    """
+    sql_from = """
+        FROM plex_items pi
+        INNER JOIN plex_sections ps
+          ON ps.section_id = pi.section_id AND ps.included = 1
+        LEFT JOIN themes t ON t.id = (
+            SELECT t2.id FROM themes t2
+            WHERE t2.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+              AND (
+                (t2.tmdb_id = pi.guid_tmdb AND pi.guid_tmdb IS NOT NULL
+                 AND t2.upstream_source != 'plex_orphan')
+                OR (t2.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL
+                    AND t2.upstream_source = 'plex_orphan')
+              )
+            ORDER BY CASE WHEN t2.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
+                     t2.id DESC
+            LIMIT 1
+        )
+        LEFT JOIN local_files lf
+          ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+        LEFT JOIN placements p
+          ON p.media_type = t.media_type AND p.tmdb_id = t.tmdb_id
+    """
+    sql_from_pi_only = """
+        FROM plex_items pi
+        INNER JOIN plex_sections ps
+          ON ps.section_id = pi.section_id AND ps.included = 1
+    """
+    sql_where = f"WHERE {tab_where}{where_extra}"
+    # Fast-path COUNT: status='all' (the default tab load) only references
+    # plex_items/plex_sections columns, so we can skip the heavy LEFT JOIN
+    # themes correlated subquery + lf/p joins entirely. This is the single
+    # biggest win for tab navigation perf since most users land on 'all'.
+    if status == "all":
+        sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
+                     f"WHERE {tab_where}{where_pi_only}")
+        count_params = params
+    else:
+        sql_count = f"SELECT COUNT(*) {sql_from} {sql_where}"
+        count_params = params
+
+    sql_missing_count = f"""
+        SELECT COUNT(*)
+        FROM plex_items pi
+        INNER JOIN plex_sections ps
+          ON ps.section_id = pi.section_id AND ps.included = 1
+        INNER JOIN themes t
+          ON t.tmdb_id = pi.guid_tmdb
+         AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+        LEFT JOIN local_files lf
+          ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+        WHERE {tab_where}
+          AND lf.file_path IS NULL
+          AND t.upstream_source != 'plex_orphan'
+    """
+    sql_rows = (
+        f"{sql_select} {sql_from} {sql_where} "
+        f"ORDER BY pi.title COLLATE NOCASE LIMIT ? OFFSET ?"
+    )
+    # Single round-trip for the three banner-meta scalars added in v1.10.0.
+    # Was three separate queries per request — now one. Each scalar is
+    # already independently indexed; combining is purely a round-trip win.
+    sql_meta = """
+        SELECT
+            EXISTS(SELECT 1 FROM plex_items LIMIT 1)             AS plex_enumerated,
+            (SELECT MAX(finished_at) FROM jobs
+              WHERE job_type = 'plex_enum' AND status = 'success') AS last_plex_enum_at,
+            (SELECT MAX(finished_at) FROM sync_runs
+              WHERE status = 'success')                            AS last_sync_at
+    """
+    offset = (page - 1) * per_page
+    with get_conn(db) as conn:
+        total = conn.execute(sql_count, count_params).fetchone()[0]
+        missing_count = conn.execute(sql_missing_count).fetchone()[0]
+        rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
+        meta = conn.execute(sql_meta).fetchone()
+    plex_enumerated = bool(meta["plex_enumerated"])
+    last_plex_enum_at = meta["last_plex_enum_at"]
+    last_sync_at = meta["last_sync_at"]
+    plex_scan_stale = bool(
+        plex_enumerated
+        and last_sync_at
+        and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
+    )
+    items = [dict(r) for r in rows]
+    return {"total": total, "missing_count": missing_count,
+            "page": page, "per_page": per_page,
+            "tab": tab, "fourk": fourk, "items": items,
+            "plex_enumerated": plex_enumerated,
+            "plex_scan_stale": plex_scan_stale,
+            "last_plex_enum_at": last_plex_enum_at,
+            "last_sync_at": last_sync_at}
 
 
 def _library_not_in_plex(
@@ -605,8 +778,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- JSON: stats ---
 
-    @app.get("/api/stats")
-    async def api_stats(db: Path = Depends(get_db_path)):
+    def _stats_sync(db: Path) -> tuple:
+        """All SQL for /api/stats. Pulled out so the async endpoint can
+        ship it to the threadpool — this is polled every 15s by the
+        topbar and was blocking the event loop alongside library reads.
+        """
         with get_conn(db) as conn:
             row = conn.execute("""
                 SELECT
@@ -670,6 +846,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             last_sync = conn.execute("""
                 SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1
             """).fetchone()
+            dry = is_dry_run(db, default=settings.dry_run_default)
+        return row, last_sync, dry
+
+    @app.get("/api/stats")
+    async def api_stats(db: Path = Depends(get_db_path)):
+        row, last_sync, dry = await run_in_threadpool(_stats_sync, db)
         return {
             "movies": {
                 "total": row["movies_total"],
@@ -715,7 +897,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "anime":  {"standard": bool(row["anime_std"]),
                            "fourk":   bool(row["anime_4k"])},
             },
-            "dry_run": is_dry_run(db, default=settings.dry_run_default),
+            "dry_run": dry,
             "last_sync": dict(last_sync) if last_sync else None,
         }
 
@@ -1530,177 +1712,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         has no anime signal.
         """
         if status == "not_in_plex":
-            return _library_not_in_plex(db, tab=tab, fourk=fourk,
-                                        q=q, page=page, per_page=per_page)
-        # Tab → media_type + flag filter. Anime/4K are user-applied flags
-        # (Settings → PLEX → LIBRARY SECTIONS), independent of section title.
-        # The Movies and TV tabs explicitly EXCLUDE anime-flagged sections.
-        if tab == "movies":
-            tab_where = "pi.media_type = 'movie' AND ps.is_anime = 0"
-        elif tab == "tv":
-            tab_where = "pi.media_type = 'show' AND ps.is_anime = 0"
-        else:  # anime — both movie- and show-typed anime sections allowed
-            tab_where = "ps.is_anime = 1"
-        tab_where += " AND ps.is_4k = 1" if fourk else " AND ps.is_4k = 0"
-
-        params: list = []
-        where_extra = ""
-        if q:
-            where_extra += " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
-            params.extend([f"%{q}%", q])
-        if status == "themed":
-            # ThemerrDB-tracked. Excludes plex_orphan rows (orphans/manual
-            # uploads aren't from upstream).
-            where_extra += (" AND t.tmdb_id IS NOT NULL "
-                            "AND t.upstream_source != 'plex_orphan'")
-        elif status == "manual":
-            # Manually-sourced themes:
-            #   - motif owns the file with provenance='manual' (uploaded
-            #     via UI or assigned via URL), OR
-            #   - the Plex folder has a sidecar theme.mp3 that motif
-            #     doesn't track (someone dropped a file directly).
-            # Matches the M badge.
-            where_extra += (
-                " AND ("
-                "  (lf.provenance = 'manual')"
-                "  OR (pi.local_theme_file = 1 "
-                "      AND lf.file_path IS NULL AND p.media_folder IS NULL)"
-                ")"
+            return await run_in_threadpool(
+                _library_not_in_plex, db, tab=tab, fourk=fourk,
+                q=q, page=page, per_page=per_page,
             )
-        elif status == "plex_agent":
-            # Plex's agent has a theme but no local sidecar AND motif
-            # doesn't track it. Matches the P badge.
-            where_extra += (" AND pi.has_theme = 1 "
-                            "AND pi.local_theme_file = 0 "
-                            "AND lf.file_path IS NULL "
-                            "AND p.media_folder IS NULL")
-        elif status == "untracked":
-            # No theme anywhere — no ThemerrDB row, no Plex theme,
-            # no motif tracking, no sidecar. Candidates for manual URL or
-            # upload to flesh out the catalog.
-            where_extra += (" AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan') "
-                            "AND pi.has_theme = 0 "
-                            "AND pi.local_theme_file = 0 "
-                            "AND lf.file_path IS NULL "
-                            "AND p.media_folder IS NULL")
-        elif status == "placed":
-            where_extra += " AND p.media_folder IS NOT NULL"
-        elif status == "unplaced":
-            where_extra += " AND lf.file_path IS NOT NULL AND p.media_folder IS NULL"
-        elif status == "failures":
-            where_extra += " AND t.failure_kind IS NOT NULL"
-
-        sql_select = """
-            SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
-                   pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
-                   pi.folder_path, pi.has_theme AS plex_has_theme,
-                   pi.local_theme_file AS plex_local_theme,
-                   ps.title AS section_title,
-                   t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
-                   t.title AS theme_title, t.youtube_url, t.youtube_video_id,
-                   t.failure_kind, t.failure_message, t.upstream_source,
-                   lf.file_path, lf.source_video_id, lf.provenance,
-                   p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
-                   -- In-flight job indicator: which type of job is currently
-                   -- pending/running for this theme. The MIN aggregates so
-                   -- we get a single value per row even if multiple jobs
-                   -- queued. NULL = nothing in flight.
-                   (SELECT j.job_type FROM jobs j
-                    WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
-                      AND j.job_type IN ('download', 'place')
-                      AND j.status IN ('pending', 'running')
-                    ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
-                             j.id DESC
-                    LIMIT 1) AS job_in_flight
-        """
-        sql_from = """
-            FROM plex_items pi
-            INNER JOIN plex_sections ps
-              ON ps.section_id = pi.section_id AND ps.included = 1
-            -- Themes match: prefer a real ThemerrDB row by tmdb_id; fall back
-            -- to a plex_orphan keyed by imdb_id (manual-url / upload-theme /
-            -- scan-adopt all populate guid_imdb on the orphan from plex_items).
-            -- Picks at most one row, ordered: ThemerrDB-real > orphan, latest first.
-            LEFT JOIN themes t ON t.id = (
-                SELECT t2.id FROM themes t2
-                WHERE t2.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
-                  AND (
-                    (t2.tmdb_id = pi.guid_tmdb AND pi.guid_tmdb IS NOT NULL
-                     AND t2.upstream_source != 'plex_orphan')
-                    OR (t2.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL
-                        AND t2.upstream_source = 'plex_orphan')
-                  )
-                ORDER BY CASE WHEN t2.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
-                         t2.id DESC
-                LIMIT 1
-            )
-            LEFT JOIN local_files lf
-              ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
-            LEFT JOIN placements p
-              ON p.media_type = t.media_type AND p.tmdb_id = t.tmdb_id
-        """
-        sql_where = f"WHERE {tab_where}{where_extra}"
-        sql_count = f"SELECT COUNT(*) {sql_from} {sql_where}"
-        # Missing-themes count: themed (joined themes row exists) AND no
-        # local_files row. Drives the "you have N missing themes" banner +
-        # the DOWNLOAD MISSING bulk action. Ignores `q`/`status` filters so
-        # the banner reflects the whole tab regardless of UI filtering.
-        # We use the unfiltered tab predicate only.
-        sql_missing_count = f"""
-            SELECT COUNT(*)
-            FROM plex_items pi
-            INNER JOIN plex_sections ps
-              ON ps.section_id = pi.section_id AND ps.included = 1
-            INNER JOIN themes t
-              ON t.tmdb_id = pi.guid_tmdb
-             AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
-            LEFT JOIN local_files lf
-              ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
-            WHERE {tab_where}
-              AND lf.file_path IS NULL
-              AND t.upstream_source != 'plex_orphan'
-        """
-        sql_rows = (
-            f"{sql_select} {sql_from} {sql_where} "
-            f"ORDER BY pi.title COLLATE NOCASE LIMIT ? OFFSET ?"
+        return await run_in_threadpool(
+            _library_main_query, db, tab=tab, fourk=fourk,
+            q=q, status=status, page=page, per_page=per_page,
         )
-        offset = (page - 1) * per_page
-        with get_conn(db) as conn:
-            total = conn.execute(sql_count, params).fetchone()[0]
-            missing_count = conn.execute(sql_missing_count).fetchone()[0]
-            rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
-            # v1.10.0: gate the missing-themes banner on a Plex scan having
-            # actually happened. Pre-1.10.0 the banner could surface a high
-            # missing_count immediately after a sync even if the user had
-            # never run plex_enum (or had a stale enum) — misleading because
-            # the cross-reference was apples-to-oranges. Now the frontend
-            # only shows the banner when we have at least one plex_items
-            # row, and surfaces an advisory if sync ran more recently than
-            # the last Plex enum (stale comparison).
-            plex_enumerated = conn.execute(
-                "SELECT EXISTS(SELECT 1 FROM plex_items LIMIT 1)"
-            ).fetchone()[0] == 1
-            last_plex_enum_at = conn.execute(
-                """SELECT MAX(finished_at) FROM jobs
-                   WHERE job_type = 'plex_enum' AND status = 'success'"""
-            ).fetchone()[0]
-            last_sync_at = conn.execute(
-                """SELECT MAX(finished_at) FROM sync_runs
-                   WHERE status = 'success'"""
-            ).fetchone()[0]
-        plex_scan_stale = bool(
-            plex_enumerated
-            and last_sync_at
-            and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
-        )
-        items = [dict(r) for r in rows]
-        return {"total": total, "missing_count": missing_count,
-                "page": page, "per_page": per_page,
-                "tab": tab, "fourk": fourk, "items": items,
-                "plex_enumerated": plex_enumerated,
-                "plex_scan_stale": plex_scan_stale,
-                "last_plex_enum_at": last_plex_enum_at,
-                "last_sync_at": last_sync_at}
 
     @app.post("/api/library/download-batch")
     async def api_library_download_batch(

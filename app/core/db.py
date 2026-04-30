@@ -103,6 +103,14 @@ CREATE TABLE IF NOT EXISTS jobs (
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status, next_run_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs (job_type, status);
+-- v1.10.2: per-item lookup hits this on every library row (job_in_flight
+-- correlated subquery). Without it the library page does an N×M scan of
+-- jobs per library row and softlocks the API.
+CREATE INDEX IF NOT EXISTS idx_jobs_item ON jobs (media_type, tmdb_id);
+-- v1.10.2: sync_runs.finished_at and jobs (job_type, status, finished_at)
+-- power the library page's plex-scan-stale advisory; cheap to add.
+CREATE INDEX IF NOT EXISTS idx_jobs_type_status_finished
+    ON jobs (job_type, status, finished_at);
 
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -270,7 +278,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -680,6 +688,39 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v9_to_v10(conn: sqlite3.Connection) -> None:
+    """v10: index hygiene + library-page perf.
+
+    Two install paths historically had divergent jobs indexes:
+      - fresh install (CREATE TABLE jobs path) got idx_jobs_status +
+        idx_jobs_type, but NOT idx_jobs_item.
+      - migrated install (v6 _migrate_v5_to_v6 jobs rebuild) got
+        idx_jobs_status_next + idx_jobs_item, but NOT idx_jobs_type.
+
+    Result: depending on whether you came in fresh or migrated, the
+    library page's per-row job_in_flight correlated subquery either
+    used a (media_type, tmdb_id) index or scanned the whole jobs
+    table per row — manifesting as a soft-lock on tab navigation
+    once jobs grew past a few thousand rows.
+
+    Reconcile by ensuring BOTH (media_type, tmdb_id) and
+    (job_type, status) indexes exist, plus the new
+    (job_type, status, finished_at) compound used by the
+    library page's plex-scan-stale advisory.
+    """
+    log.info("Migrating to schema v10 (jobs index hygiene)")
+    conn.executescript("""
+        CREATE INDEX IF NOT EXISTS idx_jobs_item ON jobs (media_type, tmdb_id);
+        CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs (job_type, status);
+        CREATE INDEX IF NOT EXISTS idx_jobs_type_status_finished
+            ON jobs (job_type, status, finished_at);
+        -- ANALYZE updates SQLite's stat tables so the query planner
+        -- picks the right index for the library page's correlated
+        -- subqueries. Cheap one-shot at migration time.
+        ANALYZE;
+    """)
+
+
 def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
     """v8 adds is_anime + is_4k flags to plex_sections — user-applied
     classifiers that drive the Movies / TV / Anime tab partition. Both
@@ -746,6 +787,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 8:
                     _migrate_v8_to_v9(conn)
                     current = 9
+                elif current == 9:
+                    _migrate_v9_to_v10(conn)
+                    current = 10
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
