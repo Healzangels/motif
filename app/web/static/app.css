@@ -600,6 +600,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   padding: 8px 0;
 }
 .event-stream-tall { max-height: 700px; }
+
+/* v1.10.37: jobs table on /queue scrolls within a fixed-height container
+   so it stays the same size as the event-stream pane next to it. Sticky
+   thead keeps column labels visible while scrolling. */
+.jobs-scroll {
+  max-height: 700px;
+  overflow-y: auto;
+}
+.jobs-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .event-stream li {
   padding: 4px 18px;
   display: grid;

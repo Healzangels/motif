@@ -18,12 +18,18 @@
         <button class="chip" data-jobfilter="done">DONE</button>
       </div>
     </header>
-    <table class="table table-tight">
-      <thead>
-        <tr><th>ID</th><th>TYPE</th><th>ITEM</th><th>STATE</th><th>TIME</th><th>NOTE</th></tr>
-      </thead>
-      <tbody id="jobs-body"><tr><td colspan="6" class="muted center">loading…</td></tr></tbody>
-    </table>
+    <!-- v1.10.37: scroll the jobs list within a fixed-height container so
+         the page doesn't grow unbounded with thousands of entries; mirrors
+         the event-stream-tall pane on the right. Sticky thead keeps the
+         column labels visible while scrolling. -->
+    <div class="jobs-scroll">
+      <table class="table table-tight">
+        <thead>
+          <tr><th>ID</th><th>TYPE</th><th>ITEM</th><th>STATE</th><th>TIME</th><th>NOTE</th></tr>
+        </thead>
+        <tbody id="jobs-body"><tr><td colspan="6" class="muted center">loading…</td></tr></tbody>
+      </table>
+    </div>
   </div>
   <div class="split-half">
     <header class="block-head">
