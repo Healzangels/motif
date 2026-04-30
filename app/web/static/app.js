@@ -2414,6 +2414,20 @@
         { mt: themeMt, id: themeId },
       ));
     }
+    // v1.10.18: UNMANAGE — drop motif's tracking + delete canonical,
+    // BUT leave the Plex-folder file intact. Row flips to M
+    // (unmanaged sidecar). Useful for testing or temporarily
+    // disconnecting motif from a theme without losing the file.
+    // Only meaningful when motif currently manages a placement
+    // (T/U/A states). For sidecar-only rows there's nothing to
+    // unmanage; for non-placed rows ditto.
+    if (placed && downloaded) {
+      overflow.push(overflowItemHtml(
+        'unmanage', 'UNMANAGE',
+        "drop motif's tracking + delete the canonical; leave the Plex-folder theme.mp3 alone (row flips to M)",
+        { mt: themeMt, id: themeId, danger: true },
+      ));
+    }
     if (downloaded || isOrphan) {
       overflow.push(overflowItemHtml(
         'purge', '× PURGE',
@@ -2852,6 +2866,28 @@
                          btn.dataset.title || '',
                          btn.dataset.orphan === '1');
         await loadLibrary().catch(()=>{});
+      } else if (act === 'unmanage') {
+        // v1.10.18: drop tracking but leave the Plex-folder file in
+        // place. Confirms before firing — destructive and silent
+        // about which file gets deleted (the user may not realize
+        // the canonical is in /themes vs. their Plex folder).
+        const title = btn.dataset.title || 'this item';
+        if (!confirm(
+          `Stop managing the theme for "${title}"?\n\n`
+          + `Motif will:\n`
+          + `  • delete its canonical copy at /themes/...\n`
+          + `  • drop its tracking (local_files + placement rows)\n`
+          + `  • LEAVE the theme.mp3 in your Plex folder alone\n\n`
+          + `The row will flip back to M (unmanaged sidecar). You can `
+          + `re-adopt or replace it later.`
+        )) return;
+        try {
+          await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/unmanage`);
+          libraryRapidPoll();
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Unmanage failed: ' + e.message);
+        }
       } else if (act === 'upload-theme') {
         openUploadDialog({
           ratingKey: btn.dataset.rk,

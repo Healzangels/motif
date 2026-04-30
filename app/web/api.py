@@ -2533,6 +2533,97 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"Replace requested by {request.state.user}")
         return {"ok": True}
 
+    @app.post("/api/items/{media_type}/{tmdb_id}/unmanage")
+    async def api_unmanage_item(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.10.18: drop motif's management of a theme without deleting
+        the file at the Plex folder.
+
+        Workflow:
+          - Delete motif's canonical (/themes/<movies|tv>/<Title (Year)>/theme.mp3).
+            For hardlink placements the file at the Plex folder shares the
+            inode and survives; for copy placements the Plex copy is
+            independent and likewise survives.
+          - Drop local_files + placements rows.
+          - For plex_orphan rows: drop the themes row too (FK CASCADE
+            cleans children) so the orphan doesn't linger with no
+            local_files. Real ThemerrDB rows keep the themes row so the
+            row reappears as themed-but-unmanaged.
+
+        Result: row flips back to M (unmanaged sidecar) and can be
+        re-adopted, replaced with TDB, or otherwise re-managed via the
+        normal row actions. Use case: testing, or temporarily
+        disconnecting motif from a title without nuking the actual
+        theme file.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            theme = conn.execute(
+                "SELECT upstream_source, title FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if theme is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            local = conn.execute(
+                "SELECT file_path FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if local is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="not motif-managed (no local_files row)",
+                )
+
+        # Delete the canonical only — leave Plex-folder placements intact.
+        themes_dir = settings.themes_dir
+        if themes_dir:
+            try:
+                p = themes_dir / local["file_path"]
+                if p.is_file():
+                    p.unlink()
+                # Best-effort cleanup of empty parent dir (Title (Year)/).
+                # Don't recurse upward; only the immediate parent matters.
+                try:
+                    parent = p.parent
+                    if parent.is_dir() and not any(parent.iterdir()):
+                        parent.rmdir()
+                except OSError:
+                    pass
+            except OSError as e:
+                log.warning("unmanage: could not unlink canonical %s: %s",
+                            local["file_path"], e)
+
+        is_orphan = theme["upstream_source"] == "plex_orphan"
+        with get_conn(db) as conn:
+            if is_orphan:
+                conn.execute(
+                    "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+                conn.execute(
+                    "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+            # plex_items.local_theme_file intentionally NOT cleared — the
+            # sidecar at the Plex folder is still present (we left it
+            # alone), and the row should now render as M (unmanaged).
+
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Unmanage theme '{theme['title']}' "
+                          f"by {request.state.principal.username}",
+                  detail={"orphan": is_orphan})
+        return {"ok": True, "title": theme["title"], "orphan": is_orphan}
+
     @app.post("/api/items/{media_type}/{tmdb_id}/forget")
     async def api_forget_item(
         request: Request, media_type: MediaType, tmdb_id: int,
