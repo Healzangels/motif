@@ -2699,6 +2699,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     status_code=409,
                     detail="not motif-managed (no local_files row)",
                 )
+            # v1.10.31: snapshot the placement folders before deletion so
+            # we can optimistically flip plex_items.local_theme_file=1 on
+            # them. The hardlink at /movies/Foo/theme.mp3 survives motif
+            # deleting the canonical (different inode reference), but
+            # plex_items.local_theme_file may have been 0 — the placement
+            # was made by motif post-enum and we haven't re-stat'd. The
+            # async section enum will re-confirm later, but the row needs
+            # to render as M *now*.
+            placements = conn.execute(
+                "SELECT media_folder FROM placements "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchall()
 
         # Delete the canonical only — leave Plex-folder placements intact.
         themes_dir = settings.themes_dir
@@ -2735,14 +2748,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
-            # plex_items.local_theme_file intentionally NOT cleared — the
-            # sidecar at the Plex folder is still present (we left it
-            # alone), and the row should now render as M (unmanaged).
-            # v1.10.21: kick a per-section enum so the next library
-            # load picks up the live local_theme_file flag from Plex
-            # (which was likely 0 before motif placed, then never
-            # re-stat'd to 1 after the place — a stale 0 would render
-            # the row as untracked instead of M).
+            # v1.10.31: optimistically set plex_items.local_theme_file=1
+            # for every folder we just unmanaged from. The sidecar at
+            # those paths still exists (we deleted only the canonical),
+            # so the row should render as M immediately. Without this,
+            # if local_theme_file was 0 from a stale enum the row would
+            # appear as untracked until the section enum below caught
+            # up — which left users thinking UNMANAGE behaved like
+            # PURGE.
+            for pr in placements:
+                conn.execute(
+                    "UPDATE plex_items SET local_theme_file = 1 "
+                    "WHERE folder_path = ?",
+                    (pr["media_folder"],),
+                )
+            # Section enum still queued so the live state confirms our
+            # optimistic flip (preserve_plex_file=True path — the file
+            # is on disk, enum re-stat's and agrees).
             _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
 
         log_event(db, level="INFO", component="api",

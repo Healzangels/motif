@@ -2155,36 +2155,17 @@
       tbody.innerHTML = `<tr><td colspan="8" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
       return;
     }
-    // v1.10.30: collapse rows that map to the same theme. Plex sometimes
-    // exposes one movie as multiple rating_keys (e.g. when the same
-    // movie file is in both /movies and /4kmovies sections, or when
-    // Plex didn't merge two file versions). Each row's actions are
-    // keyed by (theme_media_type, theme_tmdb) anyway — they apply
-    // identically to every underlying plex_items entry — so showing
-    // multiple rows was just visual noise. Dedup keys: theme tmdb when
-    // available, else rating_key (orphans / untracked stay distinct).
-    const seenItems = new Map();
-    const dedupedItems = [];
-    for (const it of (data.items || [])) {
-      const key = (it.theme_media_type && it.theme_tmdb !== null && it.theme_tmdb !== undefined)
-        ? `t:${it.theme_media_type}:${it.theme_tmdb}`
-        : `rk:${it.rating_key}`;
-      const prev = seenItems.get(key);
-      if (prev) {
-        prev.copies_count = (prev.copies_count || 1) + 1;
-        prev.copies_folders = prev.copies_folders
-          || (prev.folder_path ? [prev.folder_path] : []);
-        if (it.folder_path) prev.copies_folders.push(it.folder_path);
-      } else {
-        seenItems.set(key, it);
-        dedupedItems.push(it);
-      }
-    }
-    libraryState.items = dedupedItems;
-    if (dedupedItems.length === 0) {
+    // (v1.10.30 dedup reverted in v1.10.31 — users prefer per-row
+    // entries with the edition pill differentiating them. The two-row
+    // case now resolves naturally: properly tagged 4K vs standard
+    // sections show on different tabs; rows that share title+year
+    // within a tab differentiate via the edition tag from
+    // folder_path.)
+    libraryState.items = data.items || [];
+    if (data.items.length === 0) {
       tbody.innerHTML = '<tr><td colspan="9" class="muted center">no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX</td></tr>';
     } else {
-      tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
+      tbody.innerHTML = data.items.map(renderLibraryRow).join('');
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
@@ -2532,26 +2513,15 @@
     const selected = libraryState.selected.has(selKey);
     // v1.10.29: hover-tooltip on the title cell shows the Plex folder
     // path so duplicate rows (same title+year, different folders) can
-    // be told apart. v1.10.30: when this row collapses N plex_items
-    // entries, list every folder in the tooltip and show a small
-    // 'Nx' pill so the user knows the action affects multiple
-    // placements.
-    const titleTooltip = (() => {
-      if (it.copies_count && it.copies_folders && it.copies_folders.length) {
-        return 'Plex folders:\n  ' + it.copies_folders.join('\n  ');
-      }
-      return it.folder_path ? `Plex folder: ${it.folder_path}` : '';
-    })();
-    const copiesPill = (it.copies_count && it.copies_count > 1)
-      ? ` <span class="copies-pill" title="this row covers ${it.copies_count} Plex entries (different sections / file versions)">${it.copies_count}×</span>`
-      : '';
+    // be told apart at a glance.
+    const titleTooltip = it.folder_path ? `Plex folder: ${it.folder_path}` : '';
     return `
       <tr${rowExtra}>
         <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
           <div class="title-cell" title="${htmlEscape(titleTooltip)}">
             ${titleGlyphs.join('')}
-            <span class="title-cell-name">${htmlEscape(it.plex_title)}${editionLabel}${copiesPill}${sectionLabel}</span>
+            <span class="title-cell-name">${htmlEscape(it.plex_title)}${editionLabel}${sectionLabel}</span>
           </div>
         </td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>
