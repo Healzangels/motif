@@ -581,6 +581,24 @@
     await loadItems().catch(()=>{});
   }
 
+  async function revertToThemerrDb(mediaType, tmdbId, btn) {
+    if (!confirm('Replace your manual override with the ThemerrDB version?\n\n'
+        + 'Motif will clear the override and download from upstream. The SRC '
+        + 'will switch from U back to T.')) return;
+    if (btn) btn.disabled = true;
+    try {
+      await api('POST', `/api/items/${mediaType}/${tmdbId}/revert`);
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+    } catch (e) {
+      alert('Revert failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
   async function redownload(mediaType, tmdbId, btn) {
     if (btn) btn.disabled = true;
     try {
@@ -1177,6 +1195,7 @@
   let scansState = {
     runId: null,
     filter: '',
+    q: '',
     page: 0,
     pageSize: 50,
     findings: [],
@@ -1277,6 +1296,7 @@
       limit: String(scansState.pageSize),
     });
     if (scansState.filter) params.set('kind', scansState.filter);
+    if (scansState.q) params.set('q', scansState.q);
     try {
       const data = await api('GET', `/api/scans/${runId}/findings?${params}`);
       scansState.findings = data.findings || [];
@@ -1386,6 +1406,22 @@
         loadFindings().catch(console.error);
       });
     });
+
+    // Findings search box (debounced) — searches folder path / file path /
+    // resolved-metadata title via the new ?q= server param.
+    const findingsSearch = $('#scan-findings-search');
+    if (findingsSearch) {
+      let dt;
+      findingsSearch.addEventListener('input', () => {
+        clearTimeout(dt);
+        dt = setTimeout(() => {
+          scansState.q = findingsSearch.value.trim();
+          scansState.page = 0;
+          scansState.selectedIds.clear();
+          loadFindings().catch(console.error);
+        }, 250);
+      });
+    }
 
     const selectAll = $('#findings-select-all');
     if (selectAll) {
@@ -1861,27 +1897,24 @@
     const downloaded = !!it.file_path;
     const placed = !!it.media_folder;
 
-    // Source badge. Motif "tracks" an item when it has either a local_files
-    // row (canonical in themes_dir) OR a placements row (motif hardlinked
-    // theme.mp3 into the Plex folder). Either signal is enough to claim
-    // ownership.
-    //   M = manually sourced — motif provenance='manual', OR a sidecar
-    //       theme.mp3 lives at the Plex folder that motif doesn't track
-    //       (someone dropped it in directly; classified manual until
-    //       /scans adopts it as a hash_match against ThemerrDB content).
-    //   T = ThemerrDB-sourced (motif auto-downloaded)
-    //   P = Plex agent / cloud — Plex thinks the item has a theme but
-    //       there's no local sidecar and motif doesn't track it
+    // Source badge — four distinct categories now (U split out from M):
+    //   T = ThemerrDB-sourced; motif auto-downloaded
+    //   U = User-uploaded — motif tracks via UI upload, URL, or scan-adopt;
+    //       provenance='manual' on the local_files row
+    //   M = Manual sidecar — a theme.mp3 file lives at the Plex folder but
+    //       motif doesn't track it (run /scans to adopt)
+    //   P = Plex agent / cloud — Plex thinks the item has a theme, but no
+    //       local sidecar and motif doesn't track it
     //   — = no theme anywhere
     const motifTracks = !!(it.file_path || it.media_folder);
     const sidecarOnly = !motifTracks && !!it.plex_local_theme;
     let srcCell;
     if (motifTracks && it.provenance === 'manual') {
-      srcCell = '<span class="link-badge link-badge-manual" title="manually uploaded (file or YouTube URL)">M</span>';
+      srcCell = '<span class="link-badge" title="user-uploaded — motif manages this file (UI upload, URL, or scan adopt)" style="color:var(--magenta);border-color:var(--magenta)">U</span>';
     } else if (motifTracks) {
       srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
     } else if (sidecarOnly) {
-      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — manually placed (run /scans → ADOPT to track it)">M</span>';
+      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (run /scans → ADOPT to take ownership)">M</span>';
     } else if (it.plex_has_theme) {
       srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
     } else {
@@ -1951,9 +1984,20 @@
     const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="upload an MP3 file">UPLOAD</button>`;
     const isOrphan = it.upstream_source === 'plex_orphan';
     if (themed && themeId !== null && themeId !== undefined) {
-      const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
       acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
-      acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
+      // Three button states for the download/redownload action:
+      //   U row (manual override active) — label DOWNLOAD, action 'revert'.
+      //     Clears the override and fetches from ThemerrDB. Result will be T.
+      //   T row, already downloaded — label RE-DL, action 'redl'.
+      //   T row, not downloaded yet  — label DOWNLOAD, action 'redl'.
+      const isManual = it.provenance === 'manual';
+      const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
+      if (isManual && isThemerrDb) {
+        acts.push(`<button class="btn btn-tiny" data-act="revert" data-mt="${themeMt}" data-id="${themeId}" title="clear override and download from ThemerrDB">DOWNLOAD</button>`);
+      } else {
+        const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
+        acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
+      }
     }
     acts.push(urlBtn);
     acts.push(upBtn);
@@ -2207,6 +2251,8 @@
       const act = btn.dataset.act;
       if (act === 'redl') {
         redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+      } else if (act === 'revert') {
+        revertToThemerrDb(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'info') {
         openInfoDialog(btn.dataset.mt, btn.dataset.id).catch(console.error);
       } else if (act === 'delete-orphan') {

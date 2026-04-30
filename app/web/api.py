@@ -816,6 +816,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_list_findings(scan_id: int, db: Path = Depends(get_db_path),
                                 kind: Optional[str] = None,
                                 decision: Optional[str] = None,
+                                q: Optional[str] = None,
                                 offset: int = 0, limit: int = 100):
         sql = "SELECT * FROM scan_findings WHERE scan_run_id = ?"
         params: list = [scan_id]
@@ -825,6 +826,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if decision:
             sql += " AND decision = ?"
             params.append(decision)
+        if q:
+            # Substring search over folder path + resolved metadata title.
+            # The title lives inside resolved_metadata JSON for orphans, so
+            # we LIKE-match the JSON blob too.
+            sql += " AND (media_folder LIKE ? OR file_path LIKE ? OR resolved_metadata LIKE ?)"
+            like = f"%{q}%"
+            params.extend([like, like, like])
         sql += " ORDER BY id LIMIT ? OFFSET ?"
         params.extend([max(1, min(500, limit)), max(0, offset)])
         with get_conn(db) as conn:
@@ -2190,6 +2198,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           "placements_unlinked": unlinked,
                           "placements_total": len(placement_rows)})
         return Response(status_code=204)
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/revert")
+    async def api_revert_to_themerrdb(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """Drop the user_override on a theme and re-download from
+        ThemerrDB's upstream URL. Used by the // DOWNLOAD button on
+        U-tagged rows in the library view to flip a manual override
+        back to T (auto). Refuses if the theme is a plex_orphan
+        (no upstream to revert to).
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT upstream_source FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="not in database")
+            if row["upstream_source"] == "plex_orphan":
+                raise HTTPException(
+                    status_code=409,
+                    detail="this theme has no ThemerrDB upstream to revert to",
+                )
+            conn.execute(
+                "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+            conn.execute(
+                """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
+                                     failure_at = NULL
+                   WHERE media_type = ? AND tmdb_id = ?""",
+                (media_type, tmdb_id),
+            )
+            # Cancel any in-flight download (would otherwise pick up the
+            # override URL we just deleted), then enqueue a fresh one.
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
+                     AND status IN ('pending', 'failed')""",
+                (now_iso(), media_type, tmdb_id),
+            )
+            conn.execute(
+                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
+                                     created_at, next_run_at)
+                   VALUES ('download', ?, ?, '{"reason":"revert_to_themerrdb"}', 'pending', ?, ?)""",
+                (media_type, tmdb_id, now_iso(), now_iso()),
+            )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Override cleared + ThemerrDB re-download requested by {request.state.user}")
+        return {"ok": True}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/redownload")
     async def api_redownload(
