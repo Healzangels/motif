@@ -3036,6 +3036,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"Override cleared + ThemerrDB re-download requested by {request.state.user}")
         return {"ok": True}
 
+    @app.post("/api/items/{media_type}/{tmdb_id}/clear-failure")
+    async def api_clear_failure(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.10.42: acknowledge / dismiss the failure flag on a theme.
+
+        Clears themes.failure_kind / failure_message / failure_at — the
+        red ⚠ glyph in the title cell and the red TDB ✗ pill go away.
+        Doesn't fix the underlying problem (the YouTube URL is still
+        dead) — it's purely a 'I know, stop showing me the warning'
+        action. Future failed downloads will re-set the flag.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT failure_kind, title FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            if row["failure_kind"] is None:
+                return {"ok": True, "no_op": True}
+            conn.execute(
+                "UPDATE themes SET failure_kind = NULL, failure_message = NULL, "
+                "                  failure_at = NULL "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Failure acknowledged on '{row['title']}' "
+                          f"by {request.state.principal.username}",
+                  detail={"prior_failure_kind": row["failure_kind"]})
+        return {"ok": True, "title": row["title"],
+                "cleared_kind": row["failure_kind"]}
+
     @app.post("/api/items/{media_type}/{tmdb_id}/redownload")
     async def api_redownload(
         request: Request, media_type: MediaType, tmdb_id: int,

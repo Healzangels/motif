@@ -2342,9 +2342,10 @@
         : '';
     })();
     // v1.10.33: at-a-glance ThemerrDB-tracked indicator. v1.10.40
-    // adds a red 'TDB ✗' state for permanent-failure rows so users
-    // can see TDB has the title but the YouTube URL is dead and a
-    // manual override is required.
+    // added the red TDB ✗ state for permanent-failure rows;
+    // v1.10.42 splits cookies_expired out as a yellow TDB ⚠ since
+    // that one's user-fixable (drop a cookies.txt file) rather
+    // than a dead URL.
     const TDB_DEAD_FAILURES = new Set([
       'video_private', 'video_removed',
       'video_age_restricted', 'geo_blocked',
@@ -2355,6 +2356,9 @@
         && it.upstream_source !== 'plex_orphan';
       if (!isThemerrDbAvail) {
         return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
+      }
+      if (it.failure_kind === 'cookies_expired') {
+        return ' <span class="tdb-pill tdb-pill-cookies" title="ThemerrDB has this title but the YouTube URL needs a cookies.txt file — drop it at the path configured in Settings → PATHS to recover">TDB ⚠</span>';
       }
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
         return ' <span class="tdb-pill tdb-pill-dead" title="ThemerrDB has this title but the YouTube URL is unavailable — set a manual URL via SET URL to recover">TDB ✗</span>';
@@ -2473,6 +2477,17 @@
           { mt: themeMt, id: themeId, warn: true },
         ));
       }
+    }
+    // v1.10.42: ACK FAILURE — clear the failure flag on the theme so
+    // the red ! glyph + red TDB ✗ go away. Doesn't fix anything;
+    // 'I know, stop showing me the warning'. Re-fires on the next
+    // failed download attempt.
+    if (it.failure_kind && themed && themeId !== null && themeId !== undefined) {
+      sourceItems.push(menuItemHtml(
+        'clear-failure', 'ACK FAILURE',
+        'acknowledge / dismiss the failure flag (the underlying problem stays — set a manual URL or wait for ThemerrDB to update)',
+        { mt: themeMt, id: themeId },
+      ));
     }
     sourceItems.push(menuItemHtml(
       'manual-url', 'SET URL',
@@ -3000,6 +3015,16 @@
                          btn.dataset.title || '',
                          btn.dataset.orphan === '1');
         await loadLibrary().catch(()=>{});
+      } else if (act === 'clear-failure') {
+        // v1.10.42: silent acknowledge — no confirm prompt, the
+        // action is non-destructive (doesn't delete files or
+        // change placements, just clears a flag column).
+        try {
+          await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/clear-failure`);
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Clear-failure failed: ' + e.message);
+        }
       } else if (act === 'unmanage') {
         // v1.10.18: drop tracking but leave the Plex-folder file in
         // place. Confirms before firing — destructive and silent
