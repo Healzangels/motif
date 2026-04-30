@@ -2155,17 +2155,34 @@
       tbody.innerHTML = `<tr><td colspan="8" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
       return;
     }
-    // (v1.10.30 dedup reverted in v1.10.31 — users prefer per-row
-    // entries with the edition pill differentiating them. The two-row
-    // case now resolves naturally: properly tagged 4K vs standard
-    // sections show on different tabs; rows that share title+year
-    // within a tab differentiate via the edition tag from
-    // folder_path.)
-    libraryState.items = data.items || [];
-    if (data.items.length === 0) {
+    // v1.10.35: silent dedup keyed on (theme, media_type, folder_path).
+    // Plex sometimes lists one movie twice in the same section under
+    // different rating_keys (file versions Plex didn't merge). When
+    // those rating_keys share the same folder_path the rows are
+    // visually identical and just confuse the user — collapse them.
+    // Distinct folder_paths (1408 base vs Director's Cut, or movie
+    // mounted in standard + 4K sections) stay as separate rows so
+    // the edition pill / section label differentiates correctly.
+    // Untracked rows / orphans / blank folder_path fall back to
+    // rating_key so unrelated items aren't accidentally merged.
+    const seenItems = new Map();
+    const dedupedItems = [];
+    for (const it of (data.items || [])) {
+      const themed = (it.theme_media_type
+                      && it.theme_tmdb !== null
+                      && it.theme_tmdb !== undefined);
+      const key = (themed && it.folder_path)
+        ? `t:${it.theme_media_type}:${it.theme_tmdb}:${it.folder_path}`
+        : `rk:${it.rating_key}`;
+      if (seenItems.has(key)) continue;
+      seenItems.set(key, it);
+      dedupedItems.push(it);
+    }
+    libraryState.items = dedupedItems;
+    if (dedupedItems.length === 0) {
       tbody.innerHTML = '<tr><td colspan="9" class="muted center">no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX</td></tr>';
     } else {
-      tbody.innerHTML = data.items.map(renderLibraryRow).join('');
+      tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
