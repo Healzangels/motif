@@ -51,16 +51,30 @@ class ParsedFolder:
         return bool(self.year)
 
 
+# v1.10.25: Plex's folder format also uses {imdb-...}/{tmdb-...}/{tvdb-...}
+# tags as GUID hints for its own scanner. They look like edition tags
+# but semantically aren't — folders like 'Foo (2024) {imdb-tt12345}'
+# are the base edition, not a Director's Cut. Pre-1.10.25 they got
+# captured as editions, giving the placement engine edition_norm
+# 'imdb tt12345'; ThemerrDB-downloaded themes have empty edition_norm
+# so the title/year/edition lookup never matched and placement
+# logged 'Skipped placement: no matching folder'.
+_GUID_TAG_PREFIXES = ("imdb-", "tmdb-", "tvdb-", "plex-", "agentid-")
+
+
 def parse_folder_name(folder_basename: str) -> ParsedFolder:
     """Mirrors parse_title_year_edition() in merge-themes.sh."""
     base = folder_basename
     editions: list[str] = []
-    # Strip any number of trailing {tag} groups
+    # Strip any number of trailing {tag} groups. GUID-style tags are
+    # dropped entirely — they aren't editions.
     while True:
         m = re.match(r"^(.*)\{([^}]*)\}\s*$", base)
         if not m:
             break
-        editions.insert(0, m.group(2))
+        tag = m.group(2)
+        if not tag.lower().startswith(_GUID_TAG_PREFIXES):
+            editions.insert(0, tag)
         base = m.group(1).rstrip()
 
     m = re.match(r"^(.+)\s+\((\d{4})\)$", base)

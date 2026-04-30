@@ -55,15 +55,20 @@
   // '·'. Used to surface 'Director's Cut' / 'Extended' / etc. on
   // library rows so users can tell editions apart at a glance (the
   // title and year are identical across editions of the same film).
+  // v1.10.25: GUID-style tags ({imdb-/tmdb-/tvdb-/plex-/agentid-}) are
+  // skipped — they're scanner hints, not editions, and rendering them
+  // as a pill cluttered the title cell.
   function parseEditionFromFolderPath(folderPath) {
     if (!folderPath) return '';
     const segs = String(folderPath).split(/[\\/]/).filter(Boolean);
     let s = segs.length ? segs[segs.length - 1] : '';
     const editions = [];
+    const guidPrefix = /^(imdb|tmdb|tvdb|plex|agentid)-/i;
     while (true) {
       const m = s.match(/^(.*)\{([^}]*)\}\s*$/);
       if (!m) break;
-      editions.unshift(m[2]);
+      const tag = m[2];
+      if (!guidPrefix.test(tag)) editions.unshift(tag);
       s = m[1].replace(/\s+$/, '');
     }
     return editions
