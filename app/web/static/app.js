@@ -2222,115 +2222,165 @@
 
     const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
 
-    // Actions: kept in a flex row so they don't wrap. Build an array and
-    // join inside the .row-actions wrapper.
-    //   DOWNLOAD / RE-DL — present when motif tracks the theme; label
-    //                      reflects whether a local file exists yet.
-    //   URL              — set/replace YouTube URL via override
-    //   UPLOAD           — drop a manual MP3 in
-    //   DEL              — present only when there's something to remove
-    //                      (motif local file exists, OR row is orphan).
-    //                      P-agent-only items get no DEL since motif doesn't
-    //                      manage that file — Plex put it there.
-    const acts = [];
-    // Disable URL + UPLOAD when motif is busy on this item — either a
-    // download/place job is in flight, or a download finished and is
-    // awaiting placement approval. Adding another override mid-flight
-    // would race the worker.
+    // v1.10.13 Option A row-action reorg. Each row renders at most:
+    //   [ⓘ INFO]  [primary contextual]  [DEL]  [⋯ overflow]
+    // ⓘ — only when themed (ThemerrDB record exists)
+    // primary — single contextual button picked by row state (see
+    //   primaryRowAction below). Never a duplicate of an overflow item.
+    // DEL — only when there's a motif placement to remove
+    // ⋯ — overflow menu containing URL, UPLOAD, REPLACE w/ TDB,
+    //   PURGE, and any state-specific alts. Native <details> popover.
+    //
+    // While a job is in flight (lockManualActions), the primary button
+    // and every overflow item is disabled. INFO and the overflow trigger
+    // stay clickable so the user can still inspect.
     const lockManualActions = !!it.job_in_flight || awaitingApproval;
     const lockTitle = it.job_in_flight
       ? 'wait for current job to finish'
       : (awaitingApproval ? 'pending placement approval — review at /pending'
                           : '');
-    const urlAttrs = lockManualActions
-      ? ` disabled title="${htmlEscape(lockTitle)}"`
-      : ' title="provide a YouTube URL"';
-    const upAttrs = lockManualActions
-      ? ` disabled title="${htmlEscape(lockTitle)}"`
-      : ' title="upload an MP3 file"';
-    const urlBtn = `<button class="btn btn-tiny btn-warn" data-act="manual-url" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}"${urlAttrs}>URL</button>`;
-    const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}"${upAttrs}>UPLOAD</button>`;
     const isOrphan = it.upstream_source === 'plex_orphan';
+    const isManual = it.provenance === 'manual';
+    const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
+
+    function lockedAttrs(extraTitle) {
+      return lockManualActions
+        ? ` disabled title="${htmlEscape(lockTitle)}"`
+        : ` title="${htmlEscape(extraTitle)}"`;
+    }
+
+    // Primary picks at most one contextual action.
+    function primaryRowAction() {
+      if (sidecarOnly) {
+        return {
+          act: 'adopt-sidecar',
+          label: 'ADOPT',
+          tip: "take ownership of the existing theme.mp3 sidecar; motif manages it from now on",
+          rk: it.rating_key,
+        };
+      }
+      if (themed && themeId !== null && themeId !== undefined) {
+        if (isManual && isThemerrDb) {
+          return {
+            act: 'revert',
+            label: 'REVERT',
+            tip: 'clear manual override and download from ThemerrDB',
+            mt: themeMt, id: themeId,
+          };
+        }
+        if (!downloaded) {
+          return {
+            act: 'redl',
+            label: 'DOWNLOAD',
+            tip: 'download from ThemerrDB',
+            mt: themeMt, id: themeId,
+          };
+        }
+        if (downloaded && !placed) {
+          return {
+            act: 'replace',
+            label: 'REPLACE',
+            tip: "push motif's downloaded theme back into the Plex folder (no re-download)",
+            mt: themeMt, id: themeId,
+          };
+        }
+        // downloaded + placed
+        return {
+          act: 'redl',
+          label: 'RE-DL',
+          tip: 're-download from ThemerrDB',
+          mt: themeMt, id: themeId,
+        };
+      }
+      return null;  // untracked, P, etc — overflow URL/UPLOAD only
+    }
+
+    function primaryButtonHtml(p) {
+      if (!p) return '';
+      const dataset = [
+        p.rk !== undefined ? `data-rk="${htmlEscape(p.rk)}"` : '',
+        p.mt !== undefined ? `data-mt="${htmlEscape(p.mt)}"` : '',
+        p.id !== undefined ? `data-id="${htmlEscape(p.id)}"` : '',
+        `data-title="${htmlEscape(it.plex_title)}"`,
+        `data-year="${htmlEscape(it.year || '')}"`,
+      ].filter(Boolean).join(' ');
+      const cls = (p.act === 'replace' || p.act === 'revert')
+        ? 'btn btn-tiny btn-warn' : 'btn btn-tiny';
+      return `<button class="${cls}" data-act="${p.act}" ${dataset}${lockedAttrs(p.tip)}>${p.label}</button>`;
+    }
+
+    function overflowItemHtml(act, label, tip, extras = {}) {
+      const dataset = [
+        extras.rk !== undefined ? `data-rk="${htmlEscape(extras.rk)}"` : '',
+        extras.mt !== undefined ? `data-mt="${htmlEscape(extras.mt)}"` : '',
+        extras.id !== undefined ? `data-id="${htmlEscape(extras.id)}"` : '',
+        `data-title="${htmlEscape(it.plex_title)}"`,
+        `data-year="${htmlEscape(it.year || '')}"`,
+        extras.orphan !== undefined ? `data-orphan="${extras.orphan ? '1' : '0'}"` : '',
+      ].filter(Boolean).join(' ');
+      const cls = extras.danger ? 'btn btn-tiny btn-danger'
+                : extras.warn   ? 'btn btn-tiny btn-warn'
+                :                 'btn btn-tiny';
+      return `<button class="${cls}" data-act="${act}" ${dataset}${lockedAttrs(tip)}>${label}</button>`;
+    }
+
+    // Overflow items, in order. Drop entries that don't apply to this
+    // row's state. URL + UPLOAD are always available so users can
+    // re-source the theme regardless of current state.
+    const overflow = [];
+    overflow.push(overflowItemHtml(
+      'manual-url', 'SET URL',
+      'provide a YouTube URL (manual override)',
+      { rk: it.rating_key, warn: true },
+    ));
+    overflow.push(overflowItemHtml(
+      'upload-theme', 'UPLOAD MP3',
+      'upload an MP3 file as the theme',
+      { rk: it.rating_key },
+    ));
+    if (sidecarOnly && isThemerrDb) {
+      overflow.push(overflowItemHtml(
+        'replace-with-themerrdb', 'REPLACE w/ TDB',
+        "overwrite the existing sidecar with motif's ThemerrDB download",
+        { rk: it.rating_key, warn: true },
+      ));
+    }
+    // RE-DL is offered as a secondary on T-rows when REPLACE is the
+    // primary (downloaded + not placed) — lets the user force a fresh
+    // fetch instead of re-pushing the cached file.
+    if (themed && downloaded && !placed && !(isManual && isThemerrDb)) {
+      overflow.push(overflowItemHtml(
+        'redl', 'RE-DL',
+        're-download from ThemerrDB',
+        { mt: themeMt, id: themeId },
+      ));
+    }
+    if (downloaded || isOrphan) {
+      overflow.push(overflowItemHtml(
+        'purge', '× PURGE',
+        isOrphan ? 'delete everything: orphan record + files'
+                 : 'delete everything: motif drops the canonical + tracking',
+        { mt: themeMt, id: themeId, orphan: isOrphan, danger: true },
+      ));
+    }
+
+    const acts = [];
     if (themed && themeId !== null && themeId !== undefined) {
       acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
-      // Three button states for the download/redownload action:
-      //   U row (manual override active) — label DOWNLOAD, action 'revert'.
-      //     Clears the override and fetches from ThemerrDB. Result will be T.
-      //   T row, already downloaded — label RE-DL, action 'redl'.
-      //   T row, not downloaded yet  — label DOWNLOAD, action 'redl'.
-      //
-      // v1.10.11: hide the button entirely while a job is in flight or
-      // the row is awaiting placement approval. Pre-1.10.11 it would
-      // briefly show as 'DOWNLOAD' on a freshly-uploaded/URL row (the
-      // initial download is in progress, file_path not yet populated)
-      // — redundant with the spinner glyph and a click could race the
-      // worker. Once the download lands the row re-renders with
-      // RE-DL as expected.
-      const isManual = it.provenance === 'manual';
-      const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
-      if (!lockManualActions) {
-        if (isManual && isThemerrDb) {
-          acts.push(`<button class="btn btn-tiny" data-act="revert" data-mt="${themeMt}" data-id="${themeId}" title="clear override and download from ThemerrDB">DOWNLOAD</button>`);
-        } else {
-          const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
-          acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
-        }
-      }
     }
-    acts.push(urlBtn);
-    acts.push(upBtn);
-    // v1.10.9: inline ADOPT and REPLACE-WITH-THEMERRDB for sidecar-only
-    // rows (M badge — file exists at the Plex folder but motif doesn't
-    // manage it). Folds the /scans page workflow into per-row actions:
-    //   ADOPT          — claim the sidecar; flips to A (or T if hash
-    //                    matches a ThemerrDB download).
-    //   REPLACE-W-TDB  — only when ThemerrDB tracks this title. Cancels
-    //                    in-flight jobs and downloads the upstream
-    //                    theme with force_place=true; row flips to T.
-    if (sidecarOnly) {
-      const adoptAttrs = lockManualActions
-        ? ` disabled title="${htmlEscape(lockTitle)}"`
-        : " title=\"take ownership of the existing theme.mp3 sidecar; motif manages it from now on\"";
-      acts.push(`<button class="btn btn-tiny" data-act="adopt-sidecar" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}"${adoptAttrs}>ADOPT</button>`);
-      const tdbTracked = it.upstream_source && it.upstream_source !== 'plex_orphan';
-      if (tdbTracked) {
-        const replAttrs = lockManualActions
-          ? ` disabled title="${htmlEscape(lockTitle)}"`
-          : " title=\"overwrite the existing sidecar with motif's ThemerrDB download\"";
-        acts.push(`<button class="btn btn-tiny btn-warn" data-act="replace-with-themerrdb" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}"${replAttrs}>REPLACE w/ TDB</button>`);
-      }
-    }
-    // REPLACE: motif has the canonical (DL on) but no placement (PL off).
-    // One-click push the existing file back into the Plex folder without
-    // re-downloading.
-    if (downloaded && !placed && themed) {
-      acts.push(`<button class="btn btn-tiny" data-act="replace" data-mt="${themeMt}" data-id="${themeId}" title="push motif's downloaded theme back into the Plex folder (no re-download)">REPLACE</button>`);
-    }
-    // Destructive actions (DEL, PURGE) are also locked when a job is in
-    // flight — clicking them mid-download/place would race the worker
-    // and could leave dangling files or stale DB rows. Use the same
-    // lockManualActions/awaitingApproval guard as URL/UPLOAD above.
-    const destructiveAttrs = lockManualActions
-      ? ` disabled title="${htmlEscape(lockTitle)}"`
-      : '';
-    // DEL: remove placement only (Plex stops playing motif's theme).
-    //      Canonical stays so REPLACE can put it back. Shown when there's
-    //      a placement to remove.
+    const primaryHtml = primaryButtonHtml(primaryRowAction());
+    if (primaryHtml) acts.push(primaryHtml);
     if (placed) {
-      const delTitle = lockManualActions
-        ? lockTitle
-        : "remove from Plex folder; canonical stays (use REPLACE to put it back)";
-      acts.push(`<button class="btn btn-tiny btn-danger" data-act="unplace" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}"${lockManualActions ? ' disabled' : ''} title="${htmlEscape(delTitle)}">DEL</button>`);
+      const delTip = "remove from Plex folder; canonical stays (use REPLACE to put it back)";
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="unplace" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}"${lockedAttrs(delTip)}>DEL</button>`);
     }
-    // PURGE: remove everything — placement, canonical, plus the themes
-    //        row when it's a plex_orphan. The "× PURGE" label hints at
-    //        the destructive scope.
-    if (downloaded || isOrphan) {
-      const purgeTitle = lockManualActions
-        ? lockTitle
-        : (isOrphan ? 'delete everything: orphan record + files'
-                    : 'delete everything: motif drops the canonical + tracking');
-      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="${isOrphan ? '1' : '0'}"${lockManualActions ? ' disabled' : ''} title="${htmlEscape(purgeTitle)}">× PURGE</button>`);
+    // Overflow popover. Native <details>; CSS positions the panel and a
+    // global click-outside handler closes any other open menus.
+    if (overflow.length) {
+      acts.push(
+        `<details class="row-overflow"><summary class="btn btn-tiny" title="more actions">⋯</summary>`
+        + `<div class="row-overflow-panel">${overflow.join('')}</div></details>`
+      );
     }
     const actions = `<div class="row-actions">${acts.join('')}</div>`;
 
@@ -2640,10 +2690,28 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
     });
 
+    // v1.10.13: close any open row-overflow popover when the user clicks
+    // anywhere outside it. Native <details> handles open/close on the
+    // summary itself, but doesn't auto-dismiss on outside click.
+    document.addEventListener('click', (e) => {
+      const inside = e.target.closest('.row-overflow');
+      document.querySelectorAll('.row-overflow[open]').forEach((d) => {
+        if (d !== inside) d.removeAttribute('open');
+      });
+    });
+
     // Row clicks: redl, upload-theme, manual-url, delete-orphan, override, info
     document.getElementById('library-body')?.addEventListener('click', async (e) => {
+      // Action buttons inside an overflow panel should also close the
+      // popover after firing; let the action handler run first, then
+      // collapse the parent <details>.
+      const overflowParent = e.target.closest('.row-overflow');
       const btn = e.target.closest('button[data-act]');
       if (!btn) return;
+      if (overflowParent) {
+        // schedule close after handler runs (microtask)
+        setTimeout(() => overflowParent.removeAttribute('open'), 0);
+      }
       const act = btn.dataset.act;
       if (act === 'redl') {
         redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);

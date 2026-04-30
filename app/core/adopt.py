@@ -40,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from .canonical import canonical_theme_subdir
 from .db import get_conn
 from .events import log_event, now_iso
 
@@ -239,17 +240,25 @@ def adopt_finding(db_path: Path, finding_id: int, decision: str,
 
 def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     """Adopt the existing theme.mp3 — hardlink it (or copy if cross-FS) into
-    motif's themes_dir and record DB rows."""
+    motif's themes_dir and record DB rows.
+
+    v1.10.13: writes into the canonical subfolder layout
+        themes_dir/<movies|tv>/<Title (Year)>/theme.mp3
+    matching the regular ThemerrDB download path. Pre-1.10.13 the adopt
+    path used a flat layout (themes_dir/movies/<vid>.mp3) which mixed
+    every adopted file into one directory; relocate_legacy_canonical_files
+    on next startup will migrate any pre-1.10.13 adopted files into the
+    subfolder layout. file_path is now stored relative to themes_dir
+    (matching the worker download path).
+    """
     media_type = "movie" if finding["section_type"] == "movie" else "tv"
     finding_kind = finding["finding_kind"]
     theme_id = finding["theme_id"]
 
-    # Resolve target themes_dir for this media type
-    target_dir = (settings.movies_themes_dir if media_type == "movie"
+    media_root = (settings.movies_themes_dir if media_type == "movie"
                   else settings.tv_themes_dir)
-    if not target_dir:
+    if not media_root:
         raise AdoptError("themes_dir not configured")
-    target_dir.mkdir(parents=True, exist_ok=True)
 
     source_path = Path(finding["file_path"])
     if not source_path.is_file():
@@ -263,7 +272,6 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
         media_type = "movie" if finding["section_type"] == "movie" else "tv"
         tmdb_id = allocated_tmdb_id
     else:
-        # Look up tmdb_id from existing themes row
         with get_conn(db_path) as conn:
             row = conn.execute(
                 "SELECT media_type, tmdb_id FROM themes WHERE id = ?",
@@ -274,11 +282,16 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
             media_type = row["media_type"]
             tmdb_id = row["tmdb_id"]
 
-    # Decide canonical filename. For orphans without a video_id, use a hash-based
-    # name so it's stable. For known themes, use the youtube_video_id if known,
-    # otherwise the file's sha256 prefix.
-    canonical_name = _canonical_filename(db_path, theme_id, finding["file_sha256"])
-    canonical_path = target_dir / canonical_name
+    # Resolve title+year for the canonical subdir from the themes row.
+    with get_conn(db_path) as conn:
+        meta = conn.execute(
+            "SELECT title, year FROM themes WHERE id = ?", (theme_id,),
+        ).fetchone()
+    title = (meta and meta["title"]) or ""
+    year = (meta and meta["year"]) or ""
+    out_dir = media_root / canonical_theme_subdir(title, year)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    canonical_path = out_dir / "theme.mp3"
 
     # Place the canonical file. If canonical_path already exists with the same
     # inode as source, nothing to do. Otherwise hardlink (or copy on EXDEV).
@@ -320,7 +333,16 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
                    if finding_kind in ("hash_match", "exact_match")
                    else "adopt")
 
-    # Record local_files and placements
+    # source_video_id: keep the previous convention (yt id when known,
+    # else hash-based) for back-compat with row badge heuristics, but
+    # decouple from the on-disk filename which is now always theme.mp3.
+    source_vid = _canonical_filename(
+        db_path, theme_id, finding["file_sha256"],
+    ).replace(".mp3", "")
+    # file_path stored relative to themes_dir, matching the worker
+    # download path. Pre-1.10.13 stored absolute, which broke the
+    # canonical-layout migration on existing installs.
+    rel_path = str(canonical_path.relative_to(settings.themes_dir))
     with get_conn(db_path) as conn:
         conn.execute(
             """INSERT OR REPLACE INTO local_files
@@ -329,9 +351,8 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
                   source_kind)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (media_type, tmdb_id, theme_id,
-             str(canonical_path), finding["file_sha256"], finding["file_size"],
-             now_iso(), canonical_name.replace(".mp3", ""), provenance,
-             source_kind),
+             rel_path, finding["file_sha256"], finding["file_size"],
+             now_iso(), source_vid, provenance, source_kind),
         )
         conn.execute(
             """INSERT OR REPLACE INTO placements
