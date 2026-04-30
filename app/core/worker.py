@@ -476,21 +476,32 @@ class Worker:
             # otherwise fall back to the global placement.auto_place setting.
             # When auto_place is False, the staged file lands in /pending and
             # the user approves placement manually.
+            #
+            # v1.10.9: payload may also carry force_place=true (set by the
+            # REPLACE-WITH-THEMERRDB row action in the unified library
+            # browse). Propagates into the place job's payload as force=true
+            # so place_theme overwrites any existing sidecar without the
+            # plex_has_theme guard kicking in.
             auto_place = self.settings.auto_place_default
+            force_place = False
             try:
                 payload = json.loads(job["payload"] or "{}")
                 if "auto_place" in payload:
                     auto_place = bool(payload["auto_place"])
+                if payload.get("force_place"):
+                    force_place = True
+                    auto_place = True  # force implies auto
             except (TypeError, ValueError):
                 pass
             if auto_place:
+                place_payload = '{"force":true,"reason":"replace_with_themerrdb"}' if force_place else "{}"
                 conn.execute(
                     """
                     INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
                                       created_at, next_run_at)
                     VALUES ('place', ?, ?, ?, 'pending', ?, ?)
                     """,
-                    (media_type, tmdb_id, "{}", now_iso(), now_iso()),
+                    (media_type, tmdb_id, place_payload, now_iso(), now_iso()),
                 )
 
         log_event(

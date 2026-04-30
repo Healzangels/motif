@@ -23,9 +23,15 @@ the 'pending' state.
 
 All operations are recorded as completed by stamping the scan_findings row's
 adopt_outcome and adopted_at fields.
+
+v1.10.9: split out `adopt_folder()` — a finding-less primitive that takes
+a folder_path + plex_item context and runs the same adopt logic without
+requiring a scan to have produced a scan_findings row. Used by the inline
+ADOPT button on /movies, /tv, /anime row actions.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -42,6 +48,142 @@ log = logging.getLogger(__name__)
 
 class AdoptError(Exception):
     """Failures during adoption — caller decides whether to retry or skip."""
+
+
+# ---------------------------------------------------------------------------
+# v1.10.9: finding-less primitives
+#
+# adopt_folder / replace_with_themerrdb let the API call adopt and replace
+# semantics directly from a Plex row, without first running a scan to
+# populate scan_findings. The scan workflow still works as before — these
+# primitives are an additional code path for the inline row buttons.
+# ---------------------------------------------------------------------------
+
+_SHA_BUFSIZE = 1024 * 1024  # 1 MiB
+
+def _hash_file(path: Path) -> tuple[str, int]:
+    """Return (sha256_hex, file_size). Streams to keep memory bounded."""
+    h = hashlib.sha256()
+    size = 0
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(_SHA_BUFSIZE)
+            if not chunk:
+                break
+            h.update(chunk)
+            size += len(chunk)
+    return h.hexdigest(), size
+
+
+def adopt_folder(
+    db_path: Path, *,
+    settings,
+    folder_path: str,
+    media_type: str,
+    title: str,
+    year: str,
+    imdb_id: str | None = None,
+    tmdb_id: int | None = None,
+    decided_by: str,
+) -> dict:
+    """Adopt the theme.mp3 sitting at folder_path/theme.mp3 as a motif-managed
+    theme. Builds a synthetic finding-shaped dict and reuses _do_adopt so the
+    file-placement and DB-write logic is shared with the /scans flow.
+
+    Behaves like an 'orphan_resolvable' finding when imdb_id or tmdb_id is
+    known, otherwise 'orphan_unresolved'. The metadata dict carries
+    title/year/imdb_id/tmdb_id so _create_orphan_theme stamps a real theme
+    row (with the real tmdb_id when available, else a synthetic negative).
+    """
+    if media_type not in ("movie", "tv"):
+        raise AdoptError(f"unknown media_type: {media_type}")
+    sidecar = Path(folder_path) / "theme.mp3"
+    if not sidecar.is_file():
+        raise AdoptError(f"no theme.mp3 at {folder_path}")
+    sha256, size = _hash_file(sidecar)
+
+    metadata: dict = {"title": title, "year": year}
+    if imdb_id:
+        metadata["imdb_id"] = imdb_id
+    if tmdb_id is not None:
+        metadata["tmdb_id"] = int(tmdb_id)
+
+    section_type = "movie" if media_type == "movie" else "show"
+    finding_kind = ("orphan_resolvable"
+                    if (imdb_id or tmdb_id is not None)
+                    else "orphan_unresolved")
+
+    finding = {
+        "section_type": section_type,
+        "finding_kind": finding_kind,
+        "theme_id": None,
+        "file_path": str(sidecar),
+        "file_sha256": sha256,
+        "file_size": size,
+        "media_folder": str(folder_path),
+        "resolved_metadata": json.dumps(metadata),
+    }
+    outcome = _do_adopt(db_path, finding, settings, decided_by)
+    log_event(db_path, level="INFO", component="adopt",
+              media_type=outcome.get("media_type"),
+              tmdb_id=outcome.get("tmdb_id"),
+              message=f"Inline adopt of sidecar at {folder_path}",
+              detail={"folder_path": str(folder_path),
+                      "sha256": sha256,
+                      "kind": finding_kind,
+                      "decided_by": decided_by})
+    return outcome
+
+
+def replace_with_themerrdb(
+    db_path: Path, *,
+    media_type: str,
+    tmdb_id: int,
+    decided_by: str,
+) -> dict:
+    """Sidecar is currently in place but ThemerrDB has the title — fetch
+    motif's authoritative download and overwrite. Cancels any in-flight
+    download/place jobs for this item, enqueues a fresh download with
+    force_place=true so the worker overwrites the sidecar without
+    plex_has_theme guarding it.
+    """
+    if media_type not in ("movie", "tv"):
+        raise AdoptError(f"unknown media_type: {media_type}")
+    with get_conn(db_path) as conn:
+        theme = conn.execute(
+            "SELECT youtube_url, upstream_source FROM themes "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        ).fetchone()
+        if theme is None:
+            raise AdoptError(f"no theme row for {media_type}/{tmdb_id}")
+        if theme["upstream_source"] == "plex_orphan":
+            raise AdoptError("no ThemerrDB record to replace from")
+        if not theme["youtube_url"]:
+            raise AdoptError("ThemerrDB record has no youtube_url")
+
+        conn.execute(
+            """UPDATE jobs SET status = 'cancelled', finished_at = ?
+               WHERE job_type IN ('download','place')
+                 AND media_type = ? AND tmdb_id = ?
+                 AND status IN ('pending','running')""",
+            (now_iso(), media_type, tmdb_id),
+        )
+        cur = conn.execute(
+            """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
+                                 created_at, next_run_at)
+               VALUES ('download', ?, ?, ?, 'pending', ?, ?)""",
+            (media_type, tmdb_id,
+             json.dumps({"reason": "replace_with_themerrdb",
+                         "force_place": True}),
+             now_iso(), now_iso()),
+        )
+    log_event(db_path, level="INFO", component="adopt",
+              media_type=media_type, tmdb_id=tmdb_id,
+              message="Replace-with-ThemerrDB enqueued",
+              detail={"job_id": cur.lastrowid, "decided_by": decided_by})
+    return {"action": "replace_with_themerrdb", "job_id": cur.lastrowid,
+            "media_type": media_type, "tmdb_id": tmdb_id}
 
 
 def adopt_finding(db_path: Path, finding_id: int, decision: str,

@@ -2264,6 +2264,27 @@
     }
     acts.push(urlBtn);
     acts.push(upBtn);
+    // v1.10.9: inline ADOPT and REPLACE-WITH-THEMERRDB for sidecar-only
+    // rows (M badge — file exists at the Plex folder but motif doesn't
+    // manage it). Folds the /scans page workflow into per-row actions:
+    //   ADOPT          — claim the sidecar; flips to A (or T if hash
+    //                    matches a ThemerrDB download).
+    //   REPLACE-W-TDB  — only when ThemerrDB tracks this title. Cancels
+    //                    in-flight jobs and downloads the upstream
+    //                    theme with force_place=true; row flips to T.
+    if (sidecarOnly) {
+      const adoptAttrs = lockManualActions
+        ? ` disabled title="${htmlEscape(lockTitle)}"`
+        : " title=\"take ownership of the existing theme.mp3 sidecar; motif manages it from now on\"";
+      acts.push(`<button class="btn btn-tiny" data-act="adopt-sidecar" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}"${adoptAttrs}>ADOPT</button>`);
+      const tdbTracked = it.upstream_source && it.upstream_source !== 'plex_orphan';
+      if (tdbTracked) {
+        const replAttrs = lockManualActions
+          ? ` disabled title="${htmlEscape(lockTitle)}"`
+          : " title=\"overwrite the existing sidecar with motif's ThemerrDB download\"";
+        acts.push(`<button class="btn btn-tiny btn-warn" data-act="replace-with-themerrdb" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}"${replAttrs}>REPLACE w/ TDB</button>`);
+      }
+    }
     // REPLACE: motif has the canonical (DL on) but no placement (PL off).
     // One-click push the existing file back into the Plex folder without
     // re-downloading.
@@ -2662,6 +2683,27 @@
           kindHuman: btn.dataset.kindHuman || 'failure',
           message: btn.dataset.msg || '',
         });
+      } else if (act === 'adopt-sidecar') {
+        // v1.10.9: inline adopt — claim the sidecar at this Plex folder.
+        const title = btn.dataset.title || 'this item';
+        if (!confirm(`Adopt the existing theme.mp3 for "${title}"?\n\nMotif will hardlink the file into /themes and manage it from now on.`)) return;
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/adopt-sidecar`);
+          libraryRapidPoll();
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Adopt failed: ' + e.message);
+        }
+      } else if (act === 'replace-with-themerrdb') {
+        const title = btn.dataset.title || 'this item';
+        if (!confirm(`Replace the existing theme for "${title}" with the ThemerrDB download?\n\nMotif will fetch from upstream and overwrite the current sidecar.`)) return;
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/replace-with-themerrdb`);
+          libraryRapidPoll();
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Replace failed: ' + e.message);
+        }
       }
     });
   }

@@ -1858,6 +1858,92 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"tab": tab, "fourk": fourk, "enqueued": enqueued})
         return {"ok": True, "enqueued": enqueued, "tab": tab, "fourk": fourk}
 
+    @app.post("/api/plex_items/{rating_key}/adopt-sidecar")
+    async def api_adopt_sidecar(
+        request: Request, rating_key: str,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.10.9: take ownership of an existing theme.mp3 sidecar at a
+        Plex item's folder. Hardlinks the file into motif's themes_dir
+        and records local_files + placement rows so the row flips from
+        unmanaged-sidecar (M) to motif-adopted (A).
+
+        Uses adopt_folder() which reuses _do_adopt for the actual file
+        and DB work (same path the /scans page uses for orphan_resolvable
+        findings) — but no scan_findings row is required.
+        """
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409,
+                                detail="themes_dir not configured; visit /settings")
+        with get_conn(db) as conn:
+            pi = conn.execute(
+                "SELECT * FROM plex_items WHERE rating_key = ?",
+                (rating_key,),
+            ).fetchone()
+            if pi is None:
+                raise HTTPException(status_code=404,
+                                    detail="plex_items row not found")
+            if not pi["folder_path"]:
+                raise HTTPException(status_code=409,
+                                    detail="Plex item has no folder path")
+            if not pi["local_theme_file"]:
+                raise HTTPException(status_code=409,
+                                    detail="no theme.mp3 sidecar at this folder")
+        from ..core.adopt import adopt_folder, AdoptError
+        media_type = "tv" if pi["media_type"] == "show" else "movie"
+        try:
+            outcome = await run_in_threadpool(
+                adopt_folder, db,
+                settings=settings,
+                folder_path=pi["folder_path"],
+                media_type=media_type,
+                title=pi["title"],
+                year=str(pi["year"] or ""),
+                imdb_id=pi["guid_imdb"],
+                tmdb_id=int(pi["guid_tmdb"]) if pi["guid_tmdb"] else None,
+                decided_by=request.state.principal.username,
+            )
+        except AdoptError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"ok": True, "outcome": outcome}
+
+    @app.post("/api/plex_items/{rating_key}/replace-with-themerrdb")
+    async def api_replace_with_themerrdb(
+        request: Request, rating_key: str,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.10.9: sidecar-only Plex row whose tmdb_id is tracked by
+        ThemerrDB — fetch motif's authoritative download and overwrite
+        the existing sidecar. Cancels any in-flight jobs for the item
+        and enqueues a fresh download with force_place=true so the
+        place worker overwrites without the plex_has_theme guard.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            pi = conn.execute(
+                "SELECT * FROM plex_items WHERE rating_key = ?",
+                (rating_key,),
+            ).fetchone()
+            if pi is None:
+                raise HTTPException(status_code=404,
+                                    detail="plex_items row not found")
+            if not pi["guid_tmdb"]:
+                raise HTTPException(status_code=409,
+                                    detail="Plex item has no tmdb GUID")
+        from ..core.adopt import replace_with_themerrdb, AdoptError
+        media_type = "tv" if pi["media_type"] == "show" else "movie"
+        try:
+            outcome = await run_in_threadpool(
+                replace_with_themerrdb, db,
+                media_type=media_type,
+                tmdb_id=int(pi["guid_tmdb"]),
+                decided_by=request.state.principal.username,
+            )
+        except AdoptError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"ok": True, "outcome": outcome}
+
     @app.post("/api/plex_items/{rating_key}/upload-theme")
     async def api_upload_theme(
         request: Request, rating_key: str,
