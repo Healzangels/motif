@@ -2115,12 +2115,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchall()
         # Unlink each placement's theme.mp3
         unlinked = 0
+        affected_folders: list[str] = []
         for pr in placements:
             try:
                 p = Path(pr["media_folder"]) / "theme.mp3"
                 if p.is_file():
                     p.unlink()
                     unlinked += 1
+                affected_folders.append(pr["media_folder"])
             except OSError as e:
                 log.warning("unplace: could not unlink %s: %s", pr["media_folder"], e)
         with get_conn(db) as conn:
@@ -2128,6 +2130,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             )
+            # Optimistically clear plex_items flags so the SRC badge
+            # immediately reflects "no theme" instead of going stale-P
+            # (Plex's metadata still says theme=present for some time
+            # after a file delete; a manual REFRESH FROM PLEX will
+            # re-confirm against the live Plex API).
+            for folder in affected_folders:
+                conn.execute(
+                    "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
+                    "WHERE folder_path = ?",
+                    (folder,),
+                )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Unplaced by {request.state.user}",
@@ -2213,12 +2226,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Unlink placement files (hardlinks have independent inodes; deleting
         # the canonical alone wouldn't remove these copies in Plex folders).
         unlinked = 0
+        affected_folders: list[str] = []
         for pr in placements:
             try:
                 p = Path(pr["media_folder"]) / "theme.mp3"
                 if p.is_file():
                     p.unlink()
                     unlinked += 1
+                affected_folders.append(pr["media_folder"])
             except OSError as e:
                 log.warning("forget: could not unlink %s: %s", pr["media_folder"], e)
         themes_dir = settings.themes_dir
@@ -2248,6 +2263,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 conn.execute(
                     "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
+                )
+            # Clear the plex_items theme flags for every folder we just
+            # unlinked from. Without this, /api/library would see
+            # has_theme=1 from the cached enum and slap a stale P badge
+            # on what's now an empty folder. Plex's own metadata catches
+            # up after the next refresh; this just keeps the UI honest
+            # in the meantime.
+            for folder in affected_folders:
+                conn.execute(
+                    "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
+                    "WHERE folder_path = ?",
+                    (folder,),
                 )
 
         log_event(db, level="INFO", component="api",
