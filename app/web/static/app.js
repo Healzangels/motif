@@ -2396,8 +2396,20 @@
       const cls = extras.danger ? 'btn btn-tiny btn-danger'
                 : extras.warn   ? 'btn btn-tiny btn-warn'
                 :                 'btn btn-tiny';
-      const titleAttr = lockManualActions
-        ? ` disabled title="${htmlEscape(lockTitle)}"`
+      // v1.10.34: extras.bypassLock lets actions like PUSH TO PLEX
+      // remain clickable when the row is awaitingApproval (downloaded
+      // but not placed). That state IS what PUSH TO PLEX resolves;
+      // pre-1.10.34 the lock disabled it and forced users to /pending.
+      // Real in-flight jobs still disable the button — clicking
+      // mid-run would race the worker.
+      const isLocked = extras.bypassLock
+        ? !!it.job_in_flight
+        : lockManualActions;
+      const lockMsg = it.job_in_flight
+        ? 'wait for current job to finish'
+        : lockTitle;
+      const titleAttr = isLocked
+        ? ` disabled title="${htmlEscape(lockMsg)}"`
         : ` title="${htmlEscape(tip)}"`;
       return `<button class="${cls}" data-act="${act}" ${dataset}${titleAttr}>${label}</button>`;
     }
@@ -2465,17 +2477,21 @@
     // nothing to push.
     const placeItems = [];
     if (themed && downloaded && !placed) {
+      // v1.10.34: bypassLock=true so this stays clickable in the
+      // 'downloaded but not placed' state (a.k.a. awaitingApproval).
+      // Pushing IS the resolution action there — locking it forced
+      // users to /pending unnecessarily.
       placeItems.push(menuItemHtml(
         'replace', 'PUSH TO PLEX',
         "push motif's downloaded theme into the Plex folder (no re-download)",
-        { mt: themeMt, id: themeId, warn: true },
+        { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
     if (themed && downloaded && placed) {
       placeItems.push(menuItemHtml(
         'replace', 'RE-PUSH',
         "force motif to re-place the canonical at the Plex folder (no re-download)",
-        { mt: themeMt, id: themeId, warn: true },
+        { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
 
