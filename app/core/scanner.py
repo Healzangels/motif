@@ -46,7 +46,7 @@ from .nfo import find_nfo, parse_nfo
 from .normalize import normalize_title, titles_equal
 from .placement import parse_folder_name
 from .sections import list_sections
-from .tvdb import TVDBClient
+from .tmdb import TMDBClient
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +63,7 @@ class ScanContext:
     movies_themes_dir: Path
     tv_themes_dir: Path
     plus_mode: str
-    tvdb: TVDBClient
+    tmdb: TMDBClient
     cancel_check: callable  # () -> bool, returns True if scan should abort
 
     def is_cancelled(self) -> bool:
@@ -92,7 +92,7 @@ def run_scan(db_path: Path, settings, *, initiated_by: str = "system",
               message=f"Scan started by {initiated_by}",
               detail={"scan_run_id": scan_run_id})
 
-    tvdb = TVDBClient(settings.tvdb_api_key or None, db_path)
+    tmdb = TMDBClient(settings.tmdb_api_key or None, db_path)
     ctx = ScanContext(
         db_path=db_path,
         scan_run_id=scan_run_id,
@@ -100,7 +100,7 @@ def run_scan(db_path: Path, settings, *, initiated_by: str = "system",
         movies_themes_dir=settings.movies_themes_dir,
         tv_themes_dir=settings.tv_themes_dir,
         plus_mode=settings.plus_equiv_mode,
-        tvdb=tvdb,
+        tmdb=tmdb,
         cancel_check=cancel_check,
     )
 
@@ -371,21 +371,21 @@ def _classify_orphan(ctx: ScanContext, media_type: str, parsed,
             })
             return "orphan_resolvable", None, metadata
 
-    # Fall back to TVDB if API key is configured
-    if ctx.tvdb.enabled:
-        tvdb_md = (
-            ctx.tvdb.search_movie(parsed.title, parsed.year)
+    # Fall back to TMDB if API key is configured (free; was TVDB pre-1.9)
+    if ctx.tmdb.enabled:
+        tmdb_md = (
+            ctx.tmdb.search_movie(parsed.title, parsed.year)
             if media_type == "movie"
-            else ctx.tvdb.search_show(parsed.title, parsed.year)
+            else ctx.tmdb.search_show(parsed.title, parsed.year)
         )
-        if tvdb_md and (tvdb_md.get("tvdb_id") or tvdb_md.get("tmdb_id")):
+        if tmdb_md and tmdb_md.get("tmdb_id"):
             metadata.update({
-                "source": "tvdb",
-                "title": tvdb_md.get("title") or parsed.title,
-                "year": tvdb_md.get("year") or parsed.year,
-                "tmdb_id": tvdb_md.get("tmdb_id"),
-                "imdb_id": tvdb_md.get("imdb_id"),
-                "tvdb_id": tvdb_md.get("tvdb_id"),
+                "source": "tmdb",
+                "title": tmdb_md.get("title") or parsed.title,
+                "year": tmdb_md.get("year") or parsed.year,
+                "tmdb_id": tmdb_md.get("tmdb_id"),
+                "imdb_id": tmdb_md.get("imdb_id"),
+                "tvdb_id": None,
             })
             return "orphan_resolvable", None, metadata
 

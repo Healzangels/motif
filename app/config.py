@@ -174,7 +174,13 @@ class Settings:
 
     @property
     def tvdb_api_key(self) -> str:
+        # Kept for backward compat with any caller that still references
+        # this name; the canonical field is tmdb_api_key as of v1.9.
         return self._cfg.plex.tvdb_api_key
+
+    @property
+    def tmdb_api_key(self) -> str:
+        return self._cfg.plex.tmdb_api_key
 
     # ---- Downloads section ----
 

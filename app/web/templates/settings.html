@@ -97,23 +97,23 @@
 
       <label class="form-label">
         <div class="form-label-row">
-          <span class="form-label-text">TVDB API KEY</span>
-          <span class="form-env-badge" data-env-badge="plex.tvdb_api_key" style="display:none">// ENV OVERRIDE</span>
+          <span class="form-label-text">TMDB API KEY</span>
+          <span class="form-env-badge" data-env-badge="plex.tmdb_api_key" style="display:none">// ENV OVERRIDE</span>
         </div>
-        <input class="input" type="password" data-cfg-field="plex.tvdb_api_key"
+        <input class="input" type="password" data-cfg-field="plex.tmdb_api_key"
                placeholder="(optional)" autocomplete="off" />
         <p class="form-hint">
           Optional. Used during Plex scans to resolve orphan theme.mp3 files
           that lack an .nfo sidecar. Without a key, unresolved orphans get a
-          synthetic ID. Get one at <a href="https://thetvdb.com/api-information"
-          target="_blank" rel="noopener">thetvdb.com/api-information</a>
-          (paid subscription required).
+          synthetic ID. Get one (free) at
+          <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>
+          — sign up, request an API Key (v3 auth), and paste the key value here.
           Empty value PRESERVES the existing key.
         </p>
         <div style="display:flex;gap:8px;margin-top:6px">
-          <button type="button" class="btn btn-tiny" id="tvdb-test-btn">// TEST KEY</button>
-          <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.tvdb_api_key">// CLEAR KEY</button>
-          <span class="muted small" id="tvdb-test-result"></span>
+          <button type="button" class="btn btn-tiny" id="tmdb-test-btn">// TEST KEY</button>
+          <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.tmdb_api_key">// CLEAR KEY</button>
+          <span class="muted small" id="tmdb-test-result"></span>
         </div>
       </label>
 

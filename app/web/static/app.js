@@ -2519,18 +2519,18 @@
     bindManualUrlDialog();
     bindInfoDialog();
 
-    // TVDB test key handler
-    const tvdbBtn = document.getElementById('tvdb-test-btn');
-    if (tvdbBtn) {
-      tvdbBtn.addEventListener('click', async () => {
-        const result = document.getElementById('tvdb-test-result');
-        const input = document.querySelector('[data-cfg-field="plex.tvdb_api_key"]');
+    // TMDB test key handler
+    const tmdbBtn = document.getElementById('tmdb-test-btn');
+    if (tmdbBtn) {
+      tmdbBtn.addEventListener('click', async () => {
+        const result = document.getElementById('tmdb-test-result');
+        const input = document.querySelector('[data-cfg-field="plex.tmdb_api_key"]');
         const key = input && input.value && input.value !== '***' ? input.value : null;
         result.textContent = '... testing';
         result.style.color = '';
         try {
           const body = key ? { api_key: key } : {};
-          const r = await api('POST', '/api/tvdb/test', body);
+          const r = await api('POST', '/api/tmdb/test', body);
           if (r.ok) {
             result.textContent = '✓ ' + r.message;
             result.style.color = 'var(--green)';

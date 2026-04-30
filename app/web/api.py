@@ -88,8 +88,8 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 if v is None:
                     setattr(section, k, "")
                     continue
-            # Same for tvdb_api_key
-            if section_name == "plex" and k == "tvdb_api_key":
+            # Same for the optional API keys (legacy tvdb_api_key + new tmdb_api_key)
+            if section_name == "plex" and k in ("tvdb_api_key", "tmdb_api_key"):
                 if v == "" or v == "***":
                     continue
                 if v is None:
@@ -657,13 +657,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         else:
             payload["plex"]["token_set"] = False
             payload["plex"]["token"] = ""
-        # Same for the TVDB API key
+        # Same for the optional TMDB API key (and legacy tvdb_api_key)
         if payload.get("plex", {}).get("tvdb_api_key"):
             payload["plex"]["tvdb_api_key"] = "***"
             payload["plex"]["tvdb_api_key_set"] = True
         else:
             payload["plex"]["tvdb_api_key_set"] = False
             payload["plex"]["tvdb_api_key"] = ""
+        if payload.get("plex", {}).get("tmdb_api_key"):
+            payload["plex"]["tmdb_api_key"] = "***"
+            payload["plex"]["tmdb_api_key_set"] = True
+        else:
+            payload["plex"]["tmdb_api_key_set"] = False
+            payload["plex"]["tmdb_api_key"] = ""
         return {
             "config": payload,
             "env_overrides": settings.env_overrides(),
@@ -911,24 +917,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 enqueued += 1
         return {"ok": True, "enqueued": enqueued}
 
-    # --- TVDB credentials test ---
+    # --- TMDB credentials test ---
 
-    @app.post("/api/tvdb/test")
-    async def api_tvdb_test(request: Request, db: Path = Depends(get_db_path)):
-        """Validate the configured TVDB API key. Body optional:
+    @app.post("/api/tmdb/test")
+    async def api_tmdb_test(request: Request, db: Path = Depends(get_db_path)):
+        """Validate the configured TMDB API key. Body optional:
         {"api_key": "..."}; if absent, uses the saved key from motif.yaml."""
         _require_admin(request)
-        from ..core.tvdb import TVDBClient
+        from ..core.tmdb import TMDBClient
 
         try:
             body = await request.json() if (await request.body()) else {}
         except Exception:
             body = {}
-        key = body.get("api_key") or settings.tvdb_api_key
+        key = body.get("api_key") or settings.tmdb_api_key
         if not key:
             return {"ok": False, "message": "no API key configured"}
 
-        client = TVDBClient(key, db)
+        client = TMDBClient(key, db)
         ok, msg = client.test_credentials()
         return {"ok": ok, "message": msg}
 
