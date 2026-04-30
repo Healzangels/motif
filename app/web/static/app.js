@@ -2373,10 +2373,16 @@
     }
     if (themed && themeId !== null && themeId !== undefined && !sidecarOnly) {
       if (!lockManualActions) {
-        const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
-        const dlTip = downloaded ? 're-download from ThemerrDB' : 'download from ThemerrDB';
+        // v1.10.26: always 'DOWNLOAD' regardless of whether a local
+        // file already exists. The action is the same either way —
+        // fetch whatever video is in the Info section. Pre-1.10.26
+        // we toggled to 'RE-DL' on already-downloaded rows, which
+        // confused users into thinking it was a different operation.
         sourceItems.push(menuItemHtml(
-          'redl', dlLabel, dlTip, { mt: themeMt, id: themeId },
+          'redl', 'DOWNLOAD',
+          downloaded ? 're-download from ThemerrDB (overwrites local)'
+                     : 'download from ThemerrDB',
+          { mt: themeMt, id: themeId },
         ));
       }
       if (sourceKindForActions === 'url') {

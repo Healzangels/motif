@@ -475,14 +475,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
-  z-index: 10;
+  z-index: 100;
   display: flex;
   flex-direction: column;
   gap: 4px;
   padding: 6px;
-  background: var(--bg-deep);
-  border: 1px solid var(--bg-ridge);
-  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+  /* v1.10.26: was var(--bg-deep) (undefined → transparent) which let
+     the panel bleed into the row below. Use --bg-elev-2 (the same
+     opaque tone we use for table headers) so the panel reads as a
+     proper popover. Z-index bumped to 100 so it sits above the
+     adjacent rows' content. */
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line-bright);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55);
   min-width: 160px;
 }
 .row-menu-panel .btn-tiny {
