@@ -33,6 +33,7 @@ import httpx
 
 from .db import get_conn, transaction
 from .events import log_event, now_iso
+from .normalize import titles_equal
 
 log = logging.getLogger(__name__)
 
@@ -182,13 +183,21 @@ def _upsert_theme(
                 (media_type, imdb_id),
             ).fetchone()
         if orphan is None and title and year:
-            orphan = conn.execute(
-                """SELECT id, tmdb_id FROM themes
+            # Pull every plex_orphan candidate for this media_type+year (cheap
+            # filter) and select the one whose normalized title matches. This
+            # handles things like "(500) Days of Summer" vs "500 Days of
+            # Summer" or roman-numeral / word-number variations that exact
+            # case-insensitive comparison would miss.
+            orphan_candidates = conn.execute(
+                """SELECT id, tmdb_id, title FROM themes
                    WHERE upstream_source = 'plex_orphan'
-                     AND media_type = ? AND lower(title) = lower(?) AND year = ?
-                   LIMIT 1""",
-                (media_type, title, year),
-            ).fetchone()
+                     AND media_type = ? AND year = ?""",
+                (media_type, year),
+            ).fetchall()
+            for cand in orphan_candidates:
+                if titles_equal(cand["title"] or "", title):
+                    orphan = cand
+                    break
         if orphan:
             old_tmdb = orphan["tmdb_id"]
             log.info("Promoting orphan theme id=%d (%s/%d) → real tmdb_id=%d",
@@ -248,6 +257,30 @@ def _upsert_theme(
     else:
         old_vid = existing["youtube_video_id"]
         url_changed = (yt_vid != old_vid) and yt_vid is not None
+        # If the user has set a manual override for this theme, do NOT silently
+        # overwrite themes.youtube_url with the new upstream value — the
+        # override is the user's authoritative choice. Keep the previous
+        # upstream URL on the row; the new one will be surfaced via
+        # pending_updates so the user can decide whether to revert.
+        has_override = conn.execute(
+            "SELECT 1 FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        ).fetchone() is not None
+        if has_override and url_changed:
+            conn.execute(
+                """
+                UPDATE themes SET
+                    imdb_id = ?, title = ?, original_title = ?, year = ?, release_date = ?,
+                    upstream_source = ?, raw_json = ?, last_seen_sync_at = ?
+                WHERE media_type = ? AND tmdb_id = ?
+                """,
+                (
+                    imdb_id, title, original_title, year, rd or None,
+                    upstream_source, _safe_json(record), sync_ts,
+                    media_type, tmdb_id,
+                ),
+            )
+            return is_new, url_changed, old_vid
         conn.execute(
             """
             UPDATE themes SET
@@ -376,16 +409,20 @@ def run_sync(db_path, base_url: str, *, auto_place_override: bool | None = None)
                             )
                         elif url_changed:
                             stats.updated_count += 1
-                            # If we already have a downloaded local file for this
-                            # item, write a pending_update row instead of auto-
-                            # downloading. The user gets to decide whether to
-                            # accept the upstream change.
+                            # If we already have a downloaded local file OR the
+                            # user has set a manual override, write a pending_update
+                            # row instead of auto-downloading. The user gets to
+                            # decide whether to accept the upstream change.
                             already_have = conn.execute(
                                 "SELECT 1 FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                                 (media_type, int(tmdb_id)),
                             ).fetchone() is not None
+                            has_override = conn.execute(
+                                "SELECT 1 FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                                (media_type, int(tmdb_id)),
+                            ).fetchone() is not None
 
-                            if already_have:
+                            if already_have or has_override:
                                 yt_vid = extract_video_id(record.get("youtube_theme_url"))
                                 conn.execute(
                                     """

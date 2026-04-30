@@ -43,7 +43,7 @@ from typing import Iterable, Optional
 from .db import get_conn
 from .events import log_event, now_iso
 from .nfo import find_nfo, parse_nfo
-from .normalize import normalize_title
+from .normalize import normalize_title, titles_equal
 from .placement import parse_folder_name
 from .sections import list_sections
 from .tvdb import TVDBClient
@@ -277,24 +277,37 @@ def _classify(ctx: ScanContext, media_type: str, parsed, title_norm: str,
     """Return (finding_kind, theme_id_or_none, resolved_metadata_dict_or_none)."""
 
     with get_conn(ctx.db_path) as conn:
-        # Look for matching themes row by (title, year)
-        candidate = conn.execute(
-            """SELECT id, media_type, tmdb_id, title, year, youtube_video_id
-               FROM themes
-               WHERE media_type = ? AND lower(title) = lower(?) AND year = ?
-               ORDER BY id LIMIT 1""",
-            (media_type, parsed.title, parsed.year or ""),
-        ).fetchone()
-
-        if candidate is None and parsed.year is None:
-            # Year missing in folder — fall back to title-only match
-            candidate = conn.execute(
+        # Look up candidates by year first (cheap filter), then narrow by
+        # normalized-title match in Python so we catch things like
+        # "(500) Days of Summer" against "500 Days of Summer". Falling back
+        # to title-only when the folder lacks a year.
+        candidate = None
+        candidate_rows: list = []
+        if parsed.year:
+            # Themes for this year (or null year — sometimes ThemerrDB lacks it)
+            candidate_rows = conn.execute(
                 """SELECT id, media_type, tmdb_id, title, year, youtube_video_id
                    FROM themes
-                   WHERE media_type = ? AND lower(title) = lower(?)
-                   ORDER BY id LIMIT 1""",
-                (media_type, parsed.title),
-            ).fetchone()
+                   WHERE media_type = ? AND (year = ? OR year IS NULL OR year = '')""",
+                (media_type, parsed.year),
+            ).fetchall()
+        if not candidate_rows:
+            # No year → consider every theme of this type
+            candidate_rows = conn.execute(
+                """SELECT id, media_type, tmdb_id, title, year, youtube_video_id
+                   FROM themes WHERE media_type = ?""",
+                (media_type,),
+            ).fetchall()
+
+        for row in candidate_rows:
+            if titles_equal(row["title"] or "", parsed.title, ctx.plus_mode):
+                # Prefer rows whose year matches the folder year exactly
+                if parsed.year and row["year"] == parsed.year:
+                    candidate = row
+                    break
+                if candidate is None:
+                    candidate = row
+                # keep scanning in case a year-exact match shows up later
 
         if candidate:
             theme_id = candidate["id"]

@@ -261,11 +261,10 @@
         const provenance = it.placed ? it.placed.provenance
                           : (it.downloaded ? it.downloaded.provenance : null);
 
-        // Failure flag
-        let failCell = '<span class="muted">—</span>';
+        // Inline glyphs prepended to title cell.
         let rowExtra = '';
+        const titleGlyphs = [];
         if (it.failure_kind) {
-          const needsManual = ['video_private','video_removed','video_age_restricted','geo_blocked'].includes(it.failure_kind);
           const human = {
             'cookies_expired': 'YouTube cookies expired',
             'video_private': 'Video is private',
@@ -275,14 +274,20 @@
             'network_error': 'Network error',
             'unknown': 'Unknown failure'
           }[it.failure_kind] || it.failure_kind;
-          if (needsManual) {
-            failCell = `<span class="fail-glyph fail-glyph-bad" title="${htmlEscape(human)} — needs manual override">!</span>`;
-          } else {
-            failCell = `<span class="fail-glyph fail-glyph-warn" title="${htmlEscape(human)}">·</span>`;
-          }
+          const failMsg = it.failure_message ? ' — ' + it.failure_message : '';
+          titleGlyphs.push(
+            `<button class="title-glyph title-glyph-fail" title="${htmlEscape(human + failMsg)}" `
+            + `data-act="open-override" data-mt="${it.media_type}" data-id="${it.tmdb_id}" `
+            + `data-kind="${htmlEscape(it.failure_kind)}" data-kind-human="${htmlEscape(human)}" `
+            + `data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`
+          );
           rowExtra = ' class="row-failure"';
-        } else if (it.pending_update) {
-          failCell = '<span class="fail-glyph fail-glyph-info" title="Update available">↑</span>';
+        }
+        if (it.pending_update) {
+          titleGlyphs.push(
+            `<button class="title-glyph title-glyph-update" title="Upstream update available — click to review" `
+            + `data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" type="button">↑</button>`
+          );
         }
 
         let linkCell;
@@ -313,18 +318,24 @@
           ? `<a href="https://www.imdb.com/title/${htmlEscape(imdb)}" target="_blank" rel="noopener">${htmlEscape(imdb)}</a>`
           : '<span class="muted">—</span>';
 
+        const isOrphan = it.upstream_source === 'plex_orphan';
+        const deleteBtn = isOrphan
+          ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${it.media_type}" data-id="${it.tmdb_id}" data-title="${htmlEscape(it.title || '')}" title="delete this orphan and all associated files">× DEL</button>`
+          : '';
         const actions = it.pending_update
           ? `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}">DETAILS</button>
              <button class="btn btn-tiny btn-warn" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}">ACCEPT</button>
-             <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}">KEEP</button>`
+             <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}">KEEP</button>
+             ${deleteBtn}`
           : `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}">DETAILS</button>
-             <button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${it.media_type}" data-id="${it.tmdb_id}">RE-DL</button>`;
+             <button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${it.media_type}" data-id="${it.tmdb_id}">RE-DL</button>
+             ${deleteBtn}`;
 
         return `
           <tr${rowExtra}>
-            <td class="col-state">${failCell}</td>
             <td>
               <div class="title-cell">
+                ${titleGlyphs.join('')}
                 ${ovr}
                 <span class="title-cell-name">${htmlEscape(it.title)}</span>
               </div>
@@ -399,6 +410,15 @@
         acceptUpdate(mt, id, btn).catch(console.error);
       } else if (btn.dataset.act === 'decline-update') {
         declineUpdate(mt, id, btn).catch(console.error);
+      } else if (btn.dataset.act === 'delete-orphan') {
+        deleteOrphan(mt, id, btn.dataset.title || '').catch(console.error);
+      } else if (btn.dataset.act === 'open-override') {
+        openOverrideDialog({
+          mediaType: mt,
+          tmdbId: id,
+          kindHuman: btn.dataset.kindHuman || btn.dataset.kind || 'failure',
+          message: btn.dataset.msg || '',
+        });
       } else if (btn.dataset.page) {
         browseState.page = Number(btn.dataset.page);
         loadItems().catch(console.error);
@@ -413,6 +433,88 @@
     });
 
     loadItems().catch(console.error);
+  }
+
+  // ---- Manual YouTube URL override modal ----
+
+  const YOUTUBE_URL_RE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)[A-Za-z0-9_-]{6,}/i;
+
+  function openOverrideDialog({ mediaType, tmdbId, kindHuman, message }) {
+    const dlg = document.getElementById('override-dlg');
+    if (!dlg) return;
+    document.getElementById('override-mt').value = mediaType;
+    document.getElementById('override-id').value = tmdbId;
+    const meta = document.getElementById('override-dlg-meta');
+    const msgFrag = message ? ` — ${htmlEscape(message)}` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((kindHuman || 'failure').toUpperCase())}${msgFrag}</p>`;
+    document.getElementById('override-url').value = '';
+    document.getElementById('override-status').textContent = '';
+    if (typeof dlg.showModal === 'function') dlg.showModal(); else dlg.setAttribute('open', '');
+  }
+
+  function closeOverrideDialog() {
+    const dlg = document.getElementById('override-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+  }
+
+  function bindOverrideDialog() {
+    const dlg = document.getElementById('override-dlg');
+    if (!dlg) return;
+    document.getElementById('override-dlg-close')?.addEventListener('click', closeOverrideDialog);
+    document.getElementById('override-cancel')?.addEventListener('click', closeOverrideDialog);
+    const form = document.getElementById('override-form');
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const status = document.getElementById('override-status');
+      const url = document.getElementById('override-url').value.trim();
+      const mt = document.getElementById('override-mt').value;
+      const id = document.getElementById('override-id').value;
+      if (!YOUTUBE_URL_RE.test(url)) {
+        status.textContent = '✗ enter a valid YouTube URL';
+        status.classList.remove('ok'); status.classList.add('err');
+        return;
+      }
+      status.textContent = 'saving…';
+      status.classList.remove('err', 'ok');
+      try {
+        await api('POST', `/api/items/${mt}/${id}/override`, { youtube_url: url });
+        status.textContent = '✓ override saved · download queued';
+        status.classList.add('ok');
+        setTimeout(() => {
+          closeOverrideDialog();
+          loadItems().catch(()=>{});
+        }, 700);
+      } catch (e) {
+        status.textContent = '✗ ' + e.message;
+        status.classList.add('err');
+      }
+    });
+  }
+
+  async function deleteOrphan(mediaType, tmdbId, title) {
+    const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
+    const ok = confirm(
+      `Delete the orphan ${labelTitle}?\n\n` +
+      `This will:\n` +
+      `  · remove the theme.mp3 from every Plex folder it was placed in\n` +
+      `  · delete the canonical file in /data/media/themes\n` +
+      `  · delete the database row and all linked records\n\n` +
+      `This cannot be undone. The next sync will not recreate this row.`,
+    );
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/items/${mediaType}/${tmdbId}`, { method: 'DELETE' });
+      if (!r.ok && r.status !== 204) {
+        const text = await r.text().catch(() => '');
+        throw new Error(`${r.status}: ${text || r.statusText}`);
+      }
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+      return;
+    }
+    // Refresh the row list
+    await loadItems().catch(()=>{});
   }
 
   async function redownload(mediaType, tmdbId, btn) {
@@ -1568,6 +1670,7 @@
     bindConfigSaves();
     bindScans();
     bindPending();
+    bindOverrideDialog();
 
     // TVDB test key handler
     const tvdbBtn = document.getElementById('tvdb-test-btn');

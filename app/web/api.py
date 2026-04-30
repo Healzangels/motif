@@ -1381,6 +1381,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "events": [dict(e) for e in recent_events],
         }
 
+    @app.delete("/api/items/{media_type}/{tmdb_id}", status_code=204)
+    async def api_delete_item(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """Delete a theme row + all FK'd children + on-disk files. Restricted
+        to plex_orphan rows: real ThemerrDB rows would just come back on the
+        next sync, so deleting them is a footgun."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            theme = conn.execute(
+                "SELECT upstream_source, title FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if theme is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            if theme["upstream_source"] != "plex_orphan":
+                raise HTTPException(
+                    status_code=400,
+                    detail="only plex_orphan rows can be deleted; real ThemerrDB rows "
+                           "would be re-created on the next sync",
+                )
+            # Collect files to unlink BEFORE we drop the rows
+            placement_rows = conn.execute(
+                "SELECT media_folder, placement_kind FROM placements "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchall()
+            local_row = conn.execute(
+                "SELECT rel_path FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+
+        # Unlink placement files (hardlinks have independent inodes; deleting
+        # the canonical doesn't remove these). Best-effort; missing files are OK.
+        unlinked = 0
+        for pr in placement_rows:
+            try:
+                p = Path(pr["media_folder"]) / "theme.mp3"
+                if p.is_file():
+                    p.unlink()
+                    unlinked += 1
+            except OSError as e:
+                log.warning("Could not unlink placement %s: %s", pr["media_folder"], e)
+        # Unlink canonical (only safe to delete if no other theme references
+        # the same file_sha256 — but for orphans this is always unique by
+        # construction)
+        themes_dir = settings.themes_dir
+        if local_row and themes_dir:
+            try:
+                p = themes_dir / local_row["rel_path"]
+                if p.is_file():
+                    p.unlink()
+            except OSError as e:
+                log.warning("Could not unlink canonical %s: %s", local_row["rel_path"], e)
+
+        # Drop the theme row; FK ON DELETE CASCADE handles local_files,
+        # placements, pending_updates, user_overrides in one transaction.
+        with get_conn(db) as conn:
+            conn.execute(
+                "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Orphan deleted by {request.state.user}",
+                  detail={"title": theme["title"],
+                          "placements_unlinked": unlinked,
+                          "placements_total": len(placement_rows)})
+        return Response(status_code=204)
+
     @app.post("/api/items/{media_type}/{tmdb_id}/redownload")
     async def api_redownload(
         request: Request, media_type: MediaType, tmdb_id: int,
@@ -1415,15 +1489,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/override")
     async def api_override(
         request: Request, media_type: MediaType, tmdb_id: int,
-        youtube_url: Annotated[str, Form()],
-        note: Annotated[str, Form()] = "",
         db: Path = Depends(get_db_path),
     ):
+        """Set or replace a manual YouTube URL override for one theme.
+
+        Accepts either JSON body {"youtube_url": "...", "note": "..."} or
+        legacy form-encoded fields (youtube_url, note). Side effects:
+          - upsert into user_overrides
+          - clear failure_kind / failure_message / failure_at on themes
+            (we're overriding the broken upstream)
+          - enqueue a download job; worker prefers user_overrides
+        """
         _require_admin(request)
+        # Accept JSON or form
+        youtube_url: str = ""
+        note: str = ""
+        ctype = (request.headers.get("content-type") or "").lower()
+        if "application/json" in ctype:
+            try:
+                body = await request.json()
+            except Exception:
+                raise HTTPException(status_code=400, detail="invalid JSON body")
+            if not isinstance(body, dict):
+                raise HTTPException(status_code=400, detail="body must be a JSON object")
+            youtube_url = str(body.get("youtube_url") or "")
+            note = str(body.get("note") or "")
+        else:
+            form = await request.form()
+            youtube_url = str(form.get("youtube_url") or "")
+            note = str(form.get("note") or "")
+        if not youtube_url:
+            raise HTTPException(status_code=400, detail="youtube_url is required")
         vid = extract_video_id(youtube_url)
         if not vid:
             raise HTTPException(status_code=400, detail="invalid YouTube URL")
-        # Normalize to canonical form
         canonical = f"https://www.youtube.com/watch?v={vid}"
         with get_conn(db) as conn:
             row = conn.execute(
@@ -1443,6 +1542,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        note = excluded.note""",
                 (media_type, tmdb_id, canonical, now_iso(), request.state.user, note),
             )
+            # Clear any prior failure — the override should retry from scratch
+            conn.execute(
+                """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
+                                     failure_at = NULL
+                   WHERE media_type = ? AND tmdb_id = ?""",
+                (media_type, tmdb_id),
+            )
+            # Cancel any in-flight download for this item, then enqueue fresh
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
+                     AND status IN ('pending', 'failed')""",
+                (now_iso(), media_type, tmdb_id),
+            )
             conn.execute(
                 """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
                                      created_at, next_run_at)
@@ -1451,7 +1564,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
-                  message=f"Override set by {request.state.user}: {canonical}")
+                  message=f"Override set by {request.state.user}: {canonical}",
+                  detail={"note": note} if note else None)
         return {"ok": True, "youtube_url": canonical}
 
     @app.delete("/api/items/{media_type}/{tmdb_id}/override")

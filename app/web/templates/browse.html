@@ -29,7 +29,6 @@
   <table class="table" id="items-table">
     <thead>
       <tr>
-        <th class="col-state">!</th>
         <th class="col-title">TITLE</th>
         <th class="col-year">YEAR</th>
         <th class="col-state">DL</th>
@@ -41,12 +40,43 @@
       </tr>
     </thead>
     <tbody id="items-body">
-      <tr><td colspan="9" class="muted center">loading…</td></tr>
+      <tr><td colspan="8" class="muted center">loading…</td></tr>
     </tbody>
   </table>
 </section>
 
 <dialog class="dlg" id="item-dlg">
   <article class="dlg-body" id="item-dlg-body">…</article>
+</dialog>
+
+<dialog class="dlg" id="override-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// MANUAL YOUTUBE URL OVERRIDE</h2>
+      <button class="dlg-close" id="override-dlg-close" type="button">×</button>
+    </header>
+    <div class="dlg-meta" id="override-dlg-meta"></div>
+    <form id="override-form">
+      <input type="hidden" id="override-mt" />
+      <input type="hidden" id="override-id" />
+      <label class="form-label">
+        <span class="form-label-text">// MANUAL YOUTUBE URL</span>
+        <input class="input" type="url" id="override-url"
+               placeholder="https://www.youtube.com/watch?v=…"
+               pattern="https?://(www\.)?(youtube\.com/watch\?v=|youtu\.be/)[A-Za-z0-9_-]{6,}.*"
+               required autocomplete="off" />
+        <p class="form-hint">
+          ThemerrDB's link doesn't work. Provide your own YouTube URL and
+          motif will download from there instead. This sets a manual
+          override that future ThemerrDB syncs won't touch.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
+        <button class="btn" type="button" id="override-cancel">// CANCEL</button>
+        <span class="form-status" id="override-status"></span>
+      </div>
+    </form>
+  </article>
 </dialog>
 {% endblock %}
