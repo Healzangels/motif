@@ -346,6 +346,93 @@ def _enqueue_download(
 
 # ----- Public entry point -----
 
+# How many fetched items to process per write transaction. Mirrors the
+# plex_enum batching from v1.9.6: smaller batches release the BEGIN
+# IMMEDIATE lock more often, letting concurrent API writers (log_event
+# in particular) make progress while a multi-thousand-item sync is
+# running. Pre-1.9.9 sync did one transaction per item, ~10K transactions
+# end-to-end, which soft-locked the API for the duration.
+_SYNC_BATCH = 50
+
+
+def _flush_sync_batch(
+    db_path,
+    batch: list[tuple[str, int, dict, str]],
+    *,
+    sync_ts: str,
+    enqueue_downloads: bool,
+    auto_place_override: bool | None,
+    stats: SyncStats,
+) -> None:
+    """Process one batch of fetched ThemerrDB records inside a single txn.
+
+    `batch` is a list of (media_type, tmdb_id, record, upstream_source).
+    """
+    if not batch:
+        return
+    with get_conn(db_path) as conn, transaction(conn):
+        for media_type, tmdb_id, record, upstream_source in batch:
+            is_new, url_changed, old_video_id = _upsert_theme(
+                conn,
+                media_type=media_type,
+                tmdb_id=tmdb_id,
+                record=record,
+                upstream_source=upstream_source,
+                sync_ts=sync_ts,
+            )
+            if is_new:
+                stats.new_count += 1
+                if enqueue_downloads:
+                    _enqueue_download(
+                        conn, media_type=media_type, tmdb_id=tmdb_id,
+                        reason="new", auto_place=auto_place_override,
+                    )
+            elif url_changed:
+                stats.updated_count += 1
+                already_have = conn.execute(
+                    "SELECT 1 FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone() is not None
+                has_override = conn.execute(
+                    "SELECT 1 FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone() is not None
+                if already_have or has_override:
+                    yt_vid = extract_video_id(record.get("youtube_theme_url"))
+                    conn.execute(
+                        """
+                        INSERT INTO pending_updates (
+                            media_type, tmdb_id, old_video_id, new_video_id,
+                            old_youtube_url, new_youtube_url,
+                            upstream_edited_at, detected_at, decision
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+                        ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                            new_video_id = excluded.new_video_id,
+                            new_youtube_url = excluded.new_youtube_url,
+                            upstream_edited_at = excluded.upstream_edited_at,
+                            detected_at = excluded.detected_at,
+                            decision = CASE
+                                WHEN pending_updates.decision = 'declined'
+                                THEN 'declined'
+                                ELSE 'pending'
+                            END
+                        """,
+                        (
+                            media_type, tmdb_id,
+                            old_video_id, yt_vid,
+                            None, record.get("youtube_theme_url"),
+                            record.get("youtube_theme_edited"),
+                            sync_ts,
+                        ),
+                    )
+                else:
+                    if enqueue_downloads:
+                        _enqueue_download(
+                            conn, media_type=media_type, tmdb_id=tmdb_id,
+                            reason="url_changed",
+                            auto_place=auto_place_override,
+                        )
+
 
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
@@ -385,6 +472,7 @@ def run_sync(db_path, base_url: str, *,
                 else:
                     stats.tv_seen = len(index)
 
+                batch: list[tuple[str, int, dict, str]] = []
                 for entry in index:
                     tmdb_id = entry.get("id")
                     if tmdb_id is None:
@@ -397,76 +485,28 @@ def run_sync(db_path, base_url: str, *,
                     if record is None:
                         stats.errors += 1
                         continue
-
                     upstream_source = "imdb" if imdb_id else "themoviedb"
-
-                    with get_conn(db_path) as conn, transaction(conn):
-                        is_new, url_changed, old_video_id = _upsert_theme(
-                            conn,
-                            media_type=media_type,
-                            tmdb_id=int(tmdb_id),
-                            record=record,
-                            upstream_source=upstream_source,
-                            sync_ts=sync_ts,
+                    batch.append((media_type, int(tmdb_id), record, upstream_source))
+                    if len(batch) >= _SYNC_BATCH:
+                        _flush_sync_batch(
+                            db_path, batch, sync_ts=sync_ts,
+                            enqueue_downloads=enqueue_downloads,
+                            auto_place_override=auto_place_override,
+                            stats=stats,
                         )
-                        if is_new:
-                            stats.new_count += 1
-                            if enqueue_downloads:
-                                _enqueue_download(
-                                    conn, media_type=media_type, tmdb_id=int(tmdb_id),
-                                    reason="new", auto_place=auto_place_override,
-                                )
-                        elif url_changed:
-                            stats.updated_count += 1
-                            # If we already have a downloaded local file OR the
-                            # user has set a manual override, write a pending_update
-                            # row instead of auto-downloading. The user gets to
-                            # decide whether to accept the upstream change.
-                            already_have = conn.execute(
-                                "SELECT 1 FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                                (media_type, int(tmdb_id)),
-                            ).fetchone() is not None
-                            has_override = conn.execute(
-                                "SELECT 1 FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
-                                (media_type, int(tmdb_id)),
-                            ).fetchone() is not None
+                        batch.clear()
+                        # Yield the writer lock briefly so concurrent API
+                        # writers (log_event etc.) can land between batches.
+                        time.sleep(0.05)
 
-                            if already_have or has_override:
-                                yt_vid = extract_video_id(record.get("youtube_theme_url"))
-                                conn.execute(
-                                    """
-                                    INSERT INTO pending_updates (
-                                        media_type, tmdb_id, old_video_id, new_video_id,
-                                        old_youtube_url, new_youtube_url,
-                                        upstream_edited_at, detected_at, decision
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                                    ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
-                                        new_video_id = excluded.new_video_id,
-                                        new_youtube_url = excluded.new_youtube_url,
-                                        upstream_edited_at = excluded.upstream_edited_at,
-                                        detected_at = excluded.detected_at,
-                                        decision = CASE
-                                            WHEN pending_updates.decision = 'declined'
-                                            THEN 'declined'   -- preserve declined state
-                                            ELSE 'pending'
-                                        END
-                                    """,
-                                    (
-                                        media_type, int(tmdb_id),
-                                        old_video_id, yt_vid,
-                                        None, record.get("youtube_theme_url"),
-                                        record.get("youtube_theme_edited"),
-                                        sync_ts,
-                                    ),
-                                )
-                            else:
-                                # No local file yet — just enqueue the download
-                                if enqueue_downloads:
-                                    _enqueue_download(
-                                        conn, media_type=media_type, tmdb_id=int(tmdb_id),
-                                        reason="url_changed",
-                                        auto_place=auto_place_override,
-                                    )
+                if batch:
+                    _flush_sync_batch(
+                        db_path, batch, sync_ts=sync_ts,
+                        enqueue_downloads=enqueue_downloads,
+                        auto_place_override=auto_place_override,
+                        stats=stats,
+                    )
+                    batch.clear()
 
         with get_conn(db_path) as conn:
             conn.execute(
