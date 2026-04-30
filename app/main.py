@@ -112,6 +112,13 @@ def main() -> int:
     if purged:
         log.info("Purged %d expired session(s)", purged)
 
+    # One-shot data migration: relocate flat <vid>.mp3 files into the new
+    # per-item subfolder layout (mirrors Plex's "Title (Year)" convention).
+    # Idempotent: rows already in the new layout are skipped.
+    if settings.is_paths_ready():
+        from .core.canonical import relocate_legacy_canonical_files
+        relocate_legacy_canonical_files(settings.db_path, settings.themes_dir)
+
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).
     if settings.plex_enabled and settings.plex_url and settings.plex_token:

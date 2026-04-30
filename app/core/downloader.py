@@ -167,11 +167,13 @@ def download_theme(
     audio_quality: str = "0",
 ) -> DownloadResult:
     """
-    Download a single YouTube theme to {output_dir}/{video_id}.mp3.
+    Download a single YouTube theme to {output_dir}/theme.mp3.
 
-    File naming uses the video ID (not the title) for stability — the upstream
-    title can change without the audio actually changing. The mp3 is named after
-    the video so we can detect "this is the same theme" cheaply.
+    output_dir is item-specific (themes_dir/<movies|tv>/<sanitized title (year)>),
+    so a flat filename "theme.mp3" mirrors what motif places into Plex.
+
+    If theme.mp3 already exists at the target, this is a no-op — callers that
+    need to force a fresh download (e.g. video_id changed) must unlink it first.
     """
     if yt_dlp is None:
         raise DownloadError("yt-dlp is not installed in this environment")
@@ -182,11 +184,12 @@ def download_theme(
         )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / video_id  # extension will be added by yt-dlp postproc
-    expected_mp3 = output_dir / f"{video_id}.mp3"
+    target = output_dir / "theme"  # extension added by yt-dlp postproc
+    expected_mp3 = output_dir / "theme.mp3"
 
     if expected_mp3.exists():
-        # Already downloaded — return existing file's metadata
+        # Already downloaded — return existing file's metadata. The worker
+        # is responsible for invalidating this when source_video_id changes.
         return DownloadResult(
             file_path=expected_mp3,
             file_size=expected_mp3.stat().st_size,
@@ -215,8 +218,7 @@ def download_theme(
 
     if not expected_mp3.exists():
         # ffmpeg may have produced a different extension if conversion failed.
-        # Look for any file matching {video_id}.* and try to recover.
-        for f in output_dir.glob(f"{video_id}.*"):
+        for f in output_dir.glob("theme.*"):
             if f.suffix.lower() == ".mp3":
                 expected_mp3 = f
                 break

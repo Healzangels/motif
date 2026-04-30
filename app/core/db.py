@@ -238,7 +238,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -557,6 +557,18 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         conn.execute("PRAGMA foreign_keys = ON")
 
 
+def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
+    """v6 marks the canonical-layout switch from <vid>.mp3 to
+    <subdir>/theme.mp3 (mirroring Plex's "Title (Year)" folder shape).
+
+    No schema changes — the version bump pairs with a startup task that
+    walks local_files, renames files on disk, and updates file_path. That
+    runs in app.main because it needs filesystem access (settings.themes_dir)
+    that migrations don't have.
+    """
+    log.info("Migrating to schema v6 (canonical layout switch — no schema changes)")
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
@@ -598,6 +610,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 4:
                     _migrate_v4_to_v5(conn)
                     current = 5
+                elif current == 5:
+                    _migrate_v5_to_v6(conn)
+                    current = 6
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

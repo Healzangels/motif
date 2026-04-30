@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..config import Settings
+from .canonical import canonical_theme_subdir
 from .db import get_conn, transaction
 from .downloader import (
     CookiesMissingError, DownloadError, FailureKind, download_theme,
@@ -322,22 +323,44 @@ class Worker:
 
         # Dry-run: log what we would do and stop here (no YouTube hit, no rate-limit token consumed)
         if is_dry_run(self.settings.db_path, default=self.settings.dry_run_default):
+            preview_dir = ((self.settings.movies_themes_dir if media_type == "movie"
+                            else self.settings.tv_themes_dir)
+                           / canonical_theme_subdir(theme["title"], theme["year"]))
             log_event(
                 self.settings.db_path, level="INFO", component="dryrun",
                 media_type=media_type, tmdb_id=tmdb_id,
                 message=f"DRY-RUN: would download '{theme['title']}' from {yt_url}",
-                detail={"video_id": vid, "url": yt_url, "would_save_to": str(
-                    (self.settings.movies_themes_dir if media_type == "movie"
-                     else self.settings.tv_themes_dir) / f"{vid}.mp3"
-                )},
+                detail={"video_id": vid, "url": yt_url,
+                        "would_save_to": str(preview_dir / "theme.mp3")},
             )
             return  # job marked done by caller
 
         # Apply rate limit
         self.bucket.acquire()
 
-        out_dir = (self.settings.movies_themes_dir if media_type == "movie"
-                   else self.settings.tv_themes_dir)
+        from .canonical import canonical_theme_subdir
+        media_root = (self.settings.movies_themes_dir if media_type == "movie"
+                      else self.settings.tv_themes_dir)
+        out_dir = media_root / canonical_theme_subdir(theme["title"], theme["year"])
+
+        # If a previously downloaded theme.mp3 was for a different video (e.g.
+        # ThemerrDB URL changed since last sync), unlink the stale one so the
+        # downloader's "already exists" short-circuit doesn't keep us pinned
+        # to the old audio.
+        existing_local = None
+        with get_conn(self.settings.db_path) as conn:
+            existing_local = conn.execute(
+                "SELECT source_video_id FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+        target_mp3 = out_dir / "theme.mp3"
+        if (target_mp3.exists() and existing_local
+                and existing_local["source_video_id"] != vid):
+            try:
+                target_mp3.unlink()
+            except OSError as e:
+                log.warning("Could not invalidate stale theme.mp3 %s: %s", target_mp3, e)
 
         try:
             result = download_theme(
