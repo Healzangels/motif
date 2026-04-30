@@ -160,11 +160,7 @@
 <section class="block tab-panel" data-panel="plex" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// LIBRARY SECTIONS</h2>
-    <div style="display:flex;gap:8px;align-items:center">
-      <span class="form-status muted small" id="libraries-save-status"></span>
-      <button class="btn btn-tiny btn-warn" id="libraries-save-btn" type="button" disabled>// SAVE</button>
-      <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// REFRESH FROM PLEX</button>
-    </div>
+    <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// REFRESH FROM PLEX</button>
   </header>
   <div class="block-body" style="padding:0">
     <p class="muted small" style="padding:10px 18px">
@@ -204,6 +200,14 @@
         <tr><td colspan="7" class="muted center">loading…</td></tr>
       </tbody>
     </table>
+    <!-- v1.10.36: SAVE moved here from the block-head so it lines up with
+         every other settings section (PATHS, PLEX, DOWNLOADS, etc. all
+         have a bottom-left form-actions). REFRESH FROM PLEX stays in the
+         header — it's a read action, not a save. -->
+    <div class="form-actions" style="margin:0 18px 18px">
+      <button class="btn btn-warn" id="libraries-save-btn" type="button" disabled>// SAVE</button>
+      <span class="form-status muted small" id="libraries-save-status"></span>
+    </div>
   </div>
 </section>
 
