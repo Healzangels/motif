@@ -715,6 +715,14 @@ pre code, .codeblock {
   border-color: rgba(255,122,214,0.4);
   background: rgba(255,122,214,0.06);
 }
+/* U badge: motif-managed user upload/URL — distinguished from the M
+   sidecar (magenta) by using a yellow/gold accent. Same visual weight,
+   different hue so the two states don't blur together at a glance. */
+.link-badge-user {
+  color: #ffd86b;
+  border-color: rgba(255,216,107,0.5);
+  background: rgba(255,216,107,0.08);
+}
 .link-badge-cloud {
   color: var(--cyan);
   border-color: rgba(109,211,255,0.4);

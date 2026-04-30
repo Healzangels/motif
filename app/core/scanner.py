@@ -277,6 +277,27 @@ def _classify(ctx: ScanContext, media_type: str, parsed, title_norm: str,
     """Return (finding_kind, theme_id_or_none, resolved_metadata_dict_or_none)."""
 
     with get_conn(ctx.db_path) as conn:
+        # Hash-first match: any local_files row with the same sha means
+        # motif already manages this exact audio content. Always classify
+        # as exact_match regardless of inode — the file is "managed",
+        # which is what the user cares about. Inode-mismatch (copy
+        # instead of hardlink) is a storage-efficiency issue surfaced via
+        # the Dash COPIES card, not something the user needs to act on
+        # from /scans. Pre-1.9.5 this returned hash_match for the
+        # different-inode case, which made motif-uploaded files re-pester
+        # the user as adoptable on every fresh scan.
+        hash_row = conn.execute(
+            """SELECT lf.media_type, lf.tmdb_id, t.id AS theme_id
+               FROM local_files lf
+               JOIN themes t
+                 ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id
+               WHERE lf.media_type = ? AND lf.file_sha256 = ?
+               LIMIT 1""",
+            (media_type, file_sha256),
+        ).fetchone()
+        if hash_row:
+            return "exact_match", hash_row["theme_id"], None
+
         # Look up candidates by year first (cheap filter), then narrow by
         # normalized-title match in Python so we catch things like
         # "(500) Days of Summer" against "500 Days of Summer". Falling back

@@ -2090,6 +2090,92 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "events": [dict(e) for e in recent_events],
         }
 
+    @app.post("/api/items/{media_type}/{tmdb_id}/unplace")
+    async def api_unplace_item(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """Remove the placement of a theme (theme.mp3 in Plex's folder) but
+        keep motif's canonical so the user can REPLACE it back later. The
+        Plex side stops playing the motif theme; the file in themes_dir
+        stays, allowing one-click re-placement without re-download.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            theme = conn.execute(
+                "SELECT title FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if theme is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            placements = conn.execute(
+                "SELECT media_folder FROM placements "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchall()
+        # Unlink each placement's theme.mp3
+        unlinked = 0
+        for pr in placements:
+            try:
+                p = Path(pr["media_folder"]) / "theme.mp3"
+                if p.is_file():
+                    p.unlink()
+                    unlinked += 1
+            except OSError as e:
+                log.warning("unplace: could not unlink %s: %s", pr["media_folder"], e)
+        with get_conn(db) as conn:
+            conn.execute(
+                "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Unplaced by {request.state.user}",
+                  detail={"title": theme["title"],
+                          "placements_unlinked": unlinked,
+                          "placements_total": len(placements)})
+        return {"ok": True, "placements_unlinked": unlinked}
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/replace")
+    async def api_replace_item(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """Re-place motif's existing canonical into the Plex media folder.
+        Used after a DEL (unplace) when the user wants to push the
+        downloaded theme back without re-fetching from YouTube. Force-
+        overwrites any sidecar that has appeared in the meantime.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            local = conn.execute(
+                "SELECT 1 FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if local is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="no local file to replace from — re-download first",
+                )
+            # Cancel in-flight place jobs to avoid double placement
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
+                     AND status IN ('pending','running')""",
+                (now_iso(), media_type, tmdb_id),
+            )
+            conn.execute(
+                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
+                                     created_at, next_run_at)
+                   VALUES ('place', ?, ?, '{"force":true,"reason":"user_replace"}',
+                           'pending', ?, ?)""",
+                (media_type, tmdb_id, now_iso(), now_iso()),
+            )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Replace requested by {request.state.user}")
+        return {"ok": True}
+
     @app.post("/api/items/{media_type}/{tmdb_id}/forget")
     async def api_forget_item(
         request: Request, media_type: MediaType, tmdb_id: int,

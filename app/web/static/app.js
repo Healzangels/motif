@@ -556,14 +556,49 @@
     });
   }
 
-  async function forgetTheme(mediaType, tmdbId, title, isOrphan) {
+  async function unplaceTheme(mediaType, tmdbId, title) {
+    // Removes the theme.mp3 from Plex's folder but keeps motif's canonical
+    // so REPLACE can push it back later. No re-download needed if user
+    // changes their mind.
+    const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
+    const ok = confirm(
+      `Remove ${labelTitle} from the Plex folder?\n\n` +
+      `Motif's canonical copy stays in /data/media/themes — click REPLACE ` +
+      `on the row to push it back without re-downloading.`);
+    if (!ok) return;
+    try {
+      await api('POST', `/api/items/${mediaType}/${tmdbId}/unplace`);
+    } catch (e) {
+      alert('Unplace failed: ' + e.message);
+    }
+  }
+
+  async function replaceTheme(mediaType, tmdbId, btn) {
+    // Push motif's existing canonical back into the Plex folder. Force
+    // overwrite so any sidecar that reappeared since unplace is replaced.
+    if (btn) btn.disabled = true;
+    try {
+      await api('POST', `/api/items/${mediaType}/${tmdbId}/replace`);
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+    } catch (e) {
+      alert('Replace failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function purgeTheme(mediaType, tmdbId, title, isOrphan) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
     const orphanWarning = isOrphan
-      ? '\n\nThis is an adopted/manual entry. The themes row will be deleted permanently;'
-      + ' future syncs will NOT recreate it.'
-      : '\n\nMotif will lose track of the local theme. The Plex placements will be removed.'
-      + ' If ThemerrDB has this title, it will reappear as missing on next view.';
-    const ok = confirm(`Remove ${labelTitle}?${orphanWarning}\n\nThis cannot be undone.`);
+      ? '\n\nThis is an adopted/manual entry. The themes row will be deleted'
+      + ' permanently; future syncs will NOT recreate it.'
+      : '\n\nMotif drops the canonical file in /data/media/themes AND the placement'
+      + ' in the Plex folder. If ThemerrDB has this title, it will reappear as'
+      + ' missing on next view; URL/UPLOAD again to restore.';
+    const ok = confirm(`Purge ${labelTitle}?${orphanWarning}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
       const r = await fetch(`/api/items/${mediaType}/${tmdbId}/forget`, { method: 'POST' });
@@ -572,7 +607,7 @@
         throw new Error(`${r.status}: ${t || r.statusText}`);
       }
     } catch (e) {
-      alert('Remove failed: ' + e.message);
+      alert('Purge failed: ' + e.message);
     }
   }
 
@@ -1252,9 +1287,16 @@
         btn.addEventListener('click', () => loadScanDetail(parseInt(btn.dataset.viewScan, 10)));
       });
 
-      // Auto-poll if any run is in progress
+      // Auto-poll if any run is in progress. Also refresh the detail
+      // pane (scansState.runId) so the actions disable/enable as the
+      // run flips out of 'running'.
       if (data.running) {
-        setTimeout(() => loadScansList().catch(console.error), 3000);
+        setTimeout(() => {
+          loadScansList().catch(console.error);
+          if (scansState.runId) {
+            loadScanDetail(scansState.runId).catch(()=>{});
+          }
+        }, 3000);
       }
     } catch (e) {
       console.error('scans list failed', e);
@@ -1290,8 +1332,15 @@
     try {
       const data = await api('GET', `/api/scans/${runId}`);
       const run = data.run || {};
-      $('#scan-detail-meta').textContent =
-        `started ${run.started_at} · ${run.findings_count} findings`;
+      // Track run status so renderFindings can disable the per-row decision
+      // dropdowns while a scan is still mid-flight (clicking does nothing
+      // server-side and confuses users).
+      scansState.runStatus = run.status || '';
+      const liveTag = scansState.runStatus === 'running'
+        ? ' · <span class="accent-cyan">RUNNING — actions disabled until complete</span>'
+        : '';
+      $('#scan-detail-meta').innerHTML =
+        `started ${htmlEscape(run.started_at)} · ${htmlEscape(String(run.findings_count || 0))} findings${liveTag}`;
       const sm = $('#scan-summary');
       const k = data.kind_counts || {};
       sm.innerHTML = `
@@ -1354,16 +1403,28 @@
                            : f.decision === 'keep_existing' ? 'lock'
                            : htmlEscape(f.decision);
       const isAdopted = !!f.adopted_at;
-      const actions = isAdopted
-        ? '<span class="muted small">DONE</span>'
-        : `<select class="input" data-decide="${f.id}">
+      // Lock per-row interaction while the scan run is still active.
+      // The worker writes findings rows as it goes, so users can land on
+      // a partially-populated table — clicking decisions then would hit
+      // a moving target and actions would silently no-op.
+      const scanRunning = scansState.runStatus === 'running';
+      const lockReason = scanRunning ? 'scan still running — wait for completion' : '';
+      let actions;
+      if (isAdopted) {
+        actions = '<span class="muted small">DONE</span>';
+      } else if (scanRunning) {
+        actions = '<span class="muted small" title="' + htmlEscape(lockReason) + '">SCANNING…</span>';
+      } else {
+        actions = `<select class="input" data-decide="${f.id}">
              <option value="">–</option>
              <option value="adopt">adopt</option>
              <option value="replace">replace</option>
              <option value="keep_existing">lock</option>
            </select>`;
+      }
+      const cbDisabled = isAdopted || scanRunning;
       return `<tr data-finding="${f.id}">
-        <td><input type="checkbox" data-select="${f.id}" ${checked} ${isAdopted ? 'disabled' : ''} /></td>
+        <td><input type="checkbox" data-select="${f.id}" ${checked} ${cbDisabled ? 'disabled' : ''} /></td>
         <td><span class="kind-${htmlEscape(f.finding_kind)}">${htmlEscape(f.finding_kind)}</span></td>
         <td title="${htmlEscape(f.media_folder)}">${folder}</td>
         <td>${resolved}</td>
@@ -1964,7 +2025,7 @@
     const sidecarOnly = !placed && !!it.plex_local_theme;
     let srcCell;
     if (placed && placedProv === 'manual') {
-      srcCell = '<span class="link-badge" title="user-uploaded — motif placed this (UI upload, URL, or scan adopt)" style="color:var(--magenta);border-color:var(--magenta)">U</span>';
+      srcCell = '<span class="link-badge link-badge-user" title="user-uploaded — motif placed this (UI upload, URL, or scan adopt)">U</span>';
     } else if (placed) {
       srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB and placed" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
     } else if (sidecarOnly) {
@@ -2078,8 +2139,23 @@
     }
     acts.push(urlBtn);
     acts.push(upBtn);
+    // REPLACE: motif has the canonical (DL on) but no placement (PL off).
+    // One-click push the existing file back into the Plex folder without
+    // re-downloading.
+    if (downloaded && !placed && themed) {
+      acts.push(`<button class="btn btn-tiny" data-act="replace" data-mt="${themeMt}" data-id="${themeId}" title="push motif's downloaded theme back into the Plex folder (no re-download)">REPLACE</button>`);
+    }
+    // DEL: remove placement only (Plex stops playing motif's theme).
+    //      Canonical stays so REPLACE can put it back. Shown when there's
+    //      a placement to remove.
+    if (placed) {
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="unplace" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" title="remove from Plex folder; canonical stays (use REPLACE to put it back)">DEL</button>`);
+    }
+    // PURGE: remove everything — placement, canonical, plus the themes
+    //        row when it's a plex_orphan. The "× PURGE" label hints at
+    //        the destructive scope.
     if (downloaded || isOrphan) {
-      acts.push(`<button class="btn btn-tiny btn-danger" data-act="forget" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="${isOrphan ? '1' : '0'}" title="${isOrphan ? 'delete orphan + files' : 'remove local theme (Plex agent fallback remains)'}">DEL</button>`);
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="${isOrphan ? '1' : '0'}" title="${isOrphan ? 'delete everything: orphan record + files' : 'delete everything: motif drops the canonical + tracking'}">× PURGE</button>`);
     }
     const actions = `<div class="row-actions">${acts.join('')}</div>`;
 
@@ -2335,10 +2411,15 @@
       } else if (act === 'delete-orphan') {
         await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
         await loadLibrary().catch(()=>{});
-      } else if (act === 'forget') {
-        await forgetTheme(btn.dataset.mt, btn.dataset.id,
-                          btn.dataset.title || '',
-                          btn.dataset.orphan === '1');
+      } else if (act === 'unplace') {
+        await unplaceTheme(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
+        await loadLibrary().catch(()=>{});
+      } else if (act === 'replace') {
+        await replaceTheme(btn.dataset.mt, btn.dataset.id, btn);
+      } else if (act === 'purge') {
+        await purgeTheme(btn.dataset.mt, btn.dataset.id,
+                         btn.dataset.title || '',
+                         btn.dataset.orphan === '1');
         await loadLibrary().catch(()=>{});
       } else if (act === 'upload-theme') {
         openUploadDialog({
