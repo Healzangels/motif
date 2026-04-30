@@ -49,6 +49,29 @@
     );
   }
 
+  // v1.10.17: extract edition tag(s) from a Plex folder path. Mirrors
+  // app/core/normalize.py:parse_folder_name — strips trailing {tag}
+  // groups from the basename, drops the 'edition-' prefix, joins with
+  // '·'. Used to surface 'Director's Cut' / 'Extended' / etc. on
+  // library rows so users can tell editions apart at a glance (the
+  // title and year are identical across editions of the same film).
+  function parseEditionFromFolderPath(folderPath) {
+    if (!folderPath) return '';
+    const segs = String(folderPath).split(/[\\/]/).filter(Boolean);
+    let s = segs.length ? segs[segs.length - 1] : '';
+    const editions = [];
+    while (true) {
+      const m = s.match(/^(.*)\{([^}]*)\}\s*$/);
+      if (!m) break;
+      editions.unshift(m[2]);
+      s = m[1].replace(/\s+$/, '');
+    }
+    return editions
+      .map((e) => e.replace(/^edition-/i, ''))
+      .filter(Boolean)
+      .join(' · ');
+  }
+
   // ---- Nav highlighting ----
 
   function highlightNav() {
@@ -2240,6 +2263,15 @@
       : '<span class="muted">—</span>';
 
     const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
+    // v1.10.17: edition tag from folder_path so users can tell apart
+    // multiple Plex entries that share title+year (Director's Cut,
+    // Extended, IMAX, etc.). Renders as a yellow chip after the title.
+    const editionLabel = (() => {
+      const ed = parseEditionFromFolderPath(it.folder_path);
+      return ed
+        ? ` <span class="edition-pill" title="Plex edition tag">${htmlEscape(ed)}</span>`
+        : '';
+    })();
 
     // v1.10.13 Option A row-action reorg. Each row renders at most:
     //   [ⓘ INFO]  [primary contextual]  [DEL]  [⋯ overflow]
@@ -2419,7 +2451,7 @@
         <td>
           <div class="title-cell">
             ${titleGlyphs.join('')}
-            <span class="title-cell-name">${htmlEscape(it.plex_title)}${sectionLabel}</span>
+            <span class="title-cell-name">${htmlEscape(it.plex_title)}${editionLabel}${sectionLabel}</span>
           </div>
         </td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>

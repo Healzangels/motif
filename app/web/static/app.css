@@ -801,6 +801,21 @@ pre code, .codeblock {
   border-color: rgba(143,228,150,0.4);
   background: rgba(143,228,150,0.06);
 }
+/* v1.10.17: edition pill on the title cell. Subtle yellow border
+   so the eye can quickly group rows that share title+year by
+   their edition (Director's Cut, Extended, IMAX, etc.). */
+.edition-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--amber-bright);
+  border: 1px solid rgba(255,184,74,0.35);
+  background: rgba(255,184,74,0.05);
+  vertical-align: middle;
+}
 /* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
    as the regular T badge but de-emphasized — informational rows aren't
    actionable so they shouldn't compete with normal rows. */
