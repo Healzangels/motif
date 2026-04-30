@@ -1987,9 +1987,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ORDER BY ts DESC LIMIT 25",
                 (media_type, tmdb_id),
             ).fetchall()
+        # Absolute file_path for the UI: local_files.file_path is stored
+        # relative to themes_dir. Compose it once on the server so the
+        # dialog can display the real on-disk path.
+        local_payload = None
+        if lf:
+            d = dict(lf)
+            if settings.is_paths_ready() and d.get("file_path"):
+                d["abs_path"] = str(settings.themes_dir / d["file_path"])
+            local_payload = d
         return {
             "theme": dict(t),
-            "local_file": dict(lf) if lf else None,
+            "local_file": local_payload,
             "placements": [dict(p) for p in placements],
             "override": dict(ovr) if ovr else None,
             "events": [dict(e) for e in recent_events],

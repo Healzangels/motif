@@ -1922,8 +1922,8 @@
     const isOrphan = it.upstream_source === 'plex_orphan';
     if (themed && themeId !== null && themeId !== undefined) {
       const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
-      acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
       acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
+      acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
     }
     acts.push(urlBtn);
     acts.push(upBtn);
@@ -2229,7 +2229,7 @@
       ? `<dt>placed in</dt><dd>${placements.map(p => `<div class="muted small">${htmlEscape(p.media_folder)} <span class="muted">(${htmlEscape(p.placement_kind)})</span></div>`).join('')}</dd>`
       : '';
     const dlBlock = lf
-      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.file_path)} · ${fmt.num(lf.file_size)}B · ${htmlEscape(lf.provenance)}</dd>`
+      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · ${htmlEscape(lf.provenance)}</dd>`
       : '';
     body.innerHTML = `
       <h3>${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
@@ -2248,8 +2248,15 @@
       </dl>
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
         <iframe width="100%" height="220" src="https://www.youtube.com/embed/${htmlEscape(ytId)}"
-                frameborder="0" allowfullscreen
-                style="background:#000"></iframe></div>` : ''}
+                frameborder="0" allow="encrypted-media" allowfullscreen
+                style="background:#000"></iframe>
+        <p class="muted small" style="margin-top:6px">
+          Some videos disable embedded preview (YouTube error 153). The
+          download itself is unaffected — yt-dlp pulls audio directly.
+          Click <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener">${htmlEscape(ytUrl)}</a>
+          to watch on YouTube.
+        </p>
+      </div>` : ''}
     `;
   }
 
