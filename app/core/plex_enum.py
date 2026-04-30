@@ -73,12 +73,23 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
 
 
 def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int]:
-    """Upsert one batch of items. Returns (inserted_count, updated_count)."""
+    """Upsert one batch of items. Returns (inserted_count, updated_count).
+
+    Side effect: stats `folder_path/theme.mp3` per item to record whether a
+    sidecar exists. Cheap (~1ms per item) and only happens during enum so
+    the unified browse view can show M for sidecars motif doesn't track.
+    """
     inserted = 0
     updated = 0
     now = now_iso()
     with get_conn(db_path) as conn, transaction(conn):
         for it in items:
+            sidecar = 0
+            if it.folder_path:
+                try:
+                    sidecar = 1 if (Path(it.folder_path) / "theme.mp3").is_file() else 0
+                except OSError:
+                    sidecar = 0
             existing = conn.execute(
                 "SELECT 1 FROM plex_items WHERE rating_key = ?",
                 (it.rating_key,),
@@ -88,12 +99,13 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
                     """UPDATE plex_items SET
                           section_id = ?, media_type = ?, title = ?, year = ?,
                           guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
-                          folder_path = ?, has_theme = ?, last_seen_at = ?
+                          folder_path = ?, has_theme = ?, local_theme_file = ?,
+                          last_seen_at = ?
                        WHERE rating_key = ?""",
                     (it.section_id, it.media_type, it.title, it.year,
                      it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                     it.folder_path, 1 if it.has_theme else 0, now,
-                     it.rating_key),
+                     it.folder_path, 1 if it.has_theme else 0, sidecar,
+                     now, it.rating_key),
                 )
                 updated += 1
             else:
@@ -101,11 +113,12 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
                     """INSERT INTO plex_items
                        (rating_key, section_id, media_type, title, year,
                         guid_imdb, guid_tmdb, guid_tvdb, folder_path,
-                        has_theme, first_seen_at, last_seen_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        has_theme, local_theme_file, first_seen_at, last_seen_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (it.rating_key, it.section_id, it.media_type, it.title,
                      it.year, it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                     it.folder_path, 1 if it.has_theme else 0, now, now),
+                     it.folder_path, 1 if it.has_theme else 0, sidecar,
+                     now, now),
                 )
                 inserted += 1
     return inserted, updated

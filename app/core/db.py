@@ -163,18 +163,23 @@ CREATE TABLE IF NOT EXISTS plex_sections (
 -- in the unified browse view; not FK'd to plex_sections so a section deletion
 -- doesn't cascade-wipe history.
 CREATE TABLE IF NOT EXISTS plex_items (
-    rating_key      TEXT PRIMARY KEY,
-    section_id      TEXT NOT NULL,
-    media_type      TEXT NOT NULL CHECK (media_type IN ('movie', 'show')),
-    title           TEXT NOT NULL,
-    year            TEXT,
-    guid_imdb       TEXT,
-    guid_tmdb       INTEGER,
-    guid_tvdb       INTEGER,
-    folder_path     TEXT NOT NULL DEFAULT '',
-    has_theme       INTEGER NOT NULL DEFAULT 0,
-    first_seen_at   TEXT NOT NULL,
-    last_seen_at    TEXT NOT NULL
+    rating_key       TEXT PRIMARY KEY,
+    section_id       TEXT NOT NULL,
+    media_type       TEXT NOT NULL CHECK (media_type IN ('movie', 'show')),
+    title            TEXT NOT NULL,
+    year             TEXT,
+    guid_imdb        TEXT,
+    guid_tmdb        INTEGER,
+    guid_tvdb        INTEGER,
+    folder_path      TEXT NOT NULL DEFAULT '',
+    has_theme        INTEGER NOT NULL DEFAULT 0,
+    -- v9+: result of stat()'ing folder_path/theme.mp3 during plex_enum.
+    -- 1 = a sidecar file exists at the Plex folder; combined with motif's
+    --     own tracking, this lets the SRC badge differentiate cloud-only
+    --     Plex themes (P) from local sidecars motif doesn't track (M).
+    local_theme_file INTEGER NOT NULL DEFAULT 0,
+    first_seen_at    TEXT NOT NULL,
+    last_seen_at     TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_plex_items_section ON plex_items (section_id);
 CREATE INDEX IF NOT EXISTS idx_plex_items_type    ON plex_items (media_type);
@@ -265,7 +270,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -663,6 +668,18 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
+    """v9 adds plex_items.local_theme_file (whether a theme.mp3 sidecar
+    exists at the Plex folder). Populated by plex_enum during enumeration;
+    used by the SRC badge logic to distinguish Plex cloud themes (P) from
+    user-dropped local sidecars (M).
+    """
+    log.info("Migrating to schema v9 (plex_items.local_theme_file)")
+    conn.executescript(
+        "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
 def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
     """v8 adds is_anime + is_4k flags to plex_sections — user-applied
     classifiers that drive the Movies / TV / Anime tab partition. Both
@@ -726,6 +743,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 7:
                     _migrate_v7_to_v8(conn)
                     current = 8
+                elif current == 8:
+                    _migrate_v8_to_v9(conn)
+                    current = 9
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

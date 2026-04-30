@@ -1375,7 +1375,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|themed|plex_agent|untracked|placed|unplaced|failures)$"),
+        status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|placed|unplaced|failures)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         db: Path = Depends(get_db_path),
@@ -1404,17 +1404,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # uploads aren't from upstream).
             where_extra += (" AND t.tmdb_id IS NOT NULL "
                             "AND t.upstream_source != 'plex_orphan'")
+        elif status == "manual":
+            # Manually-sourced themes:
+            #   - motif owns the file with provenance='manual' (uploaded
+            #     via UI or assigned via URL), OR
+            #   - the Plex folder has a sidecar theme.mp3 that motif
+            #     doesn't track (someone dropped a file directly).
+            # Matches the M badge.
+            where_extra += (
+                " AND ("
+                "  (lf.provenance = 'manual')"
+                "  OR (pi.local_theme_file = 1 "
+                "      AND lf.file_path IS NULL AND p.media_folder IS NULL)"
+                ")"
+            )
         elif status == "plex_agent":
-            # Plex's agent has a theme but motif doesn't track it. Matches
-            # the P badge.
+            # Plex's agent has a theme but no local sidecar AND motif
+            # doesn't track it. Matches the P badge.
             where_extra += (" AND pi.has_theme = 1 "
+                            "AND pi.local_theme_file = 0 "
                             "AND lf.file_path IS NULL "
                             "AND p.media_folder IS NULL")
         elif status == "untracked":
-            # No ThemerrDB record AND no Plex theme AND no motif tracking —
-            # candidates for manual URL or upload to flesh out the catalog.
+            # No theme anywhere — no ThemerrDB row, no Plex theme,
+            # no motif tracking, no sidecar. Candidates for manual URL or
+            # upload to flesh out the catalog.
             where_extra += (" AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan') "
                             "AND pi.has_theme = 0 "
+                            "AND pi.local_theme_file = 0 "
                             "AND lf.file_path IS NULL "
                             "AND p.media_folder IS NULL")
         elif status == "placed":
@@ -1428,6 +1445,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
                    pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
                    pi.folder_path, pi.has_theme AS plex_has_theme,
+                   pi.local_theme_file AS plex_local_theme,
                    ps.title AS section_title,
                    t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                    t.title AS theme_title, t.youtube_url, t.youtube_video_id,

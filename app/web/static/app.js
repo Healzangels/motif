@@ -943,6 +943,13 @@
                  : isAnime         ? 'anime'
                  : is4k            ? '4k'
                  :                   'standard';
+      // Movie sections only get standard/4k options — anime tabs draw from
+      // type='show' sections in motif's typical Plex layout. Show/show-4K
+      // sections get the full set including anime + anime 4K.
+      const animeOpts = s.type === 'movie'
+        ? ''
+        : `<option value="anime"${role === 'anime' ? ' selected' : ''}>anime</option>
+           <option value="anime_4k"${role === 'anime_4k' ? ' selected' : ''}>anime 4k</option>`;
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}">
           <td class="lib-col-id">${htmlEscape(s.section_id)}</td>
@@ -955,8 +962,7 @@
             <select class="input" data-section-role="${htmlEscape(s.section_id)}" title="which Movies/TV/Anime tab does this section feed">
               <option value="standard"${role === 'standard' ? ' selected' : ''}>standard</option>
               <option value="4k"${role === '4k' ? ' selected' : ''}>4k</option>
-              <option value="anime"${role === 'anime' ? ' selected' : ''}>anime</option>
-              <option value="anime_4k"${role === 'anime_4k' ? ' selected' : ''}>anime 4k</option>
+              ${animeOpts}
             </select>
           </td>
           <td class="lib-locations" style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${locations}</td>
@@ -1850,19 +1856,26 @@
     const placed = !!it.media_folder;
 
     // Source badge. Motif "tracks" an item when it has either a local_files
-    // row (the canonical lives in themes_dir) OR a placements row (motif
-    // hardlinked theme.mp3 into the Plex folder). Either signal is enough
-    // to claim ownership and override the P fallback.
-    //   M = manually uploaded (file or URL); provenance == 'manual'
-    //   T = ThemerrDB-sourced (motif downloaded auto)
-    //   P = Plex agent / pre-existing theme that motif doesn't track
+    // row (canonical in themes_dir) OR a placements row (motif hardlinked
+    // theme.mp3 into the Plex folder). Either signal is enough to claim
+    // ownership.
+    //   M = manually sourced — motif provenance='manual', OR a sidecar
+    //       theme.mp3 lives at the Plex folder that motif doesn't track
+    //       (someone dropped it in directly; classified manual until
+    //       /scans adopts it as a hash_match against ThemerrDB content).
+    //   T = ThemerrDB-sourced (motif auto-downloaded)
+    //   P = Plex agent / cloud — Plex thinks the item has a theme but
+    //       there's no local sidecar and motif doesn't track it
     //   — = no theme anywhere
     const motifTracks = !!(it.file_path || it.media_folder);
+    const sidecarOnly = !motifTracks && !!it.plex_local_theme;
     let srcCell;
     if (motifTracks && it.provenance === 'manual') {
       srcCell = '<span class="link-badge link-badge-manual" title="manually uploaded (file or YouTube URL)">M</span>';
     } else if (motifTracks) {
       srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
+    } else if (sidecarOnly) {
+      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — manually placed (run /scans → ADOPT to track it)">M</span>';
     } else if (it.plex_has_theme) {
       srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
     } else {
