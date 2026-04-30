@@ -37,6 +37,14 @@ from .sync import run_sync
 log = logging.getLogger(__name__)
 
 
+class _JobPermanentFailure(Exception):
+    """v1.10.40: raised by job handlers when retry won't fix it
+    (e.g. yt-dlp says the video is removed). The worker treats
+    this as terminal — status='failed' immediately, no backoff
+    schedule, no further attempts. The user is expected to
+    provide a manual override or accept the failure."""
+
+
 # -------- Token bucket --------
 
 class TokenBucket:
@@ -140,6 +148,13 @@ class Worker:
                 continue
             try:
                 self._dispatch(job)
+            except _JobPermanentFailure as e:
+                # v1.10.40: handler classified the error as permanent
+                # (e.g. YouTube video removed). Skip retry — mark
+                # the job 'failed' immediately. The themes row's
+                # failure_kind is already persisted by the handler.
+                log.info("Job %s permanently failed: %s", job["id"], e)
+                self._mark_failed_terminal(job["id"], str(e))
             except Exception as e:
                 log.exception("Job %s crashed: %s", job["id"], e)
                 self._mark_failed(job["id"], str(e))
@@ -172,6 +187,21 @@ class Worker:
             conn.execute(
                 "UPDATE jobs SET status = 'done', finished_at = ?, last_error = NULL WHERE id = ?",
                 (now_iso(), job_id),
+            )
+
+    def _mark_failed_terminal(self, job_id: int, err: str) -> None:
+        """v1.10.40: mark a job 'failed' immediately, bypassing the
+        attempts-vs-max_attempts retry logic. Used for permanent
+        failures where retrying is pointless (video removed/private/
+        geo-blocked/age-restricted) — the user has to provide a
+        manual override URL or accept the failure.
+        """
+        with get_conn(self.settings.db_path) as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'failed', finished_at = ?, "
+                "                last_error = ? "
+                "WHERE id = ?",
+                (now_iso(), err, job_id),
             )
 
     def _mark_failed(self, job_id: int, err: str) -> None:
@@ -431,6 +461,16 @@ class Worker:
                        WHERE media_type = ? AND tmdb_id = ?""",
                     (kind.value, str(e)[:500], now_iso(), media_type, tmdb_id),
                 )
+                # v1.10.40: also cancel any pending follow-up place job
+                # we might have already enqueued (e.g. force_place=true
+                # from REPLACE w/ TDB) — without the file, place can't
+                # do anything useful.
+                conn.execute(
+                    """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                       WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
+                         AND status IN ('pending','running')""",
+                    (now_iso(), media_type, tmdb_id),
+                )
             level = "ERROR" if kind == FailureKind.COOKIES_EXPIRED else "WARNING"
             log_event(
                 self.settings.db_path, level=level, component="download",
@@ -440,6 +480,14 @@ class Worker:
                         "needs_manual_override": kind.needs_manual_override,
                         "raw": str(e)[:300]},
             )
+            # v1.10.40: video-side permanent failures (removed/private/
+            # age-restricted/geo-blocked) — retry won't help. Bypass
+            # the worker's backoff schedule and mark the job 'failed'
+            # immediately by raising _JobPermanentFailure. Transient
+            # kinds (network/cookies/unknown) keep the original
+            # retry-with-backoff behavior via plain `raise`.
+            if kind.needs_manual_override:
+                raise _JobPermanentFailure(str(e)) from e
             raise
 
         # Success — clear any previous failure on this theme

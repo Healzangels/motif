@@ -2341,21 +2341,25 @@
         ? ` <span class="edition-pill" title="Plex edition tag">${htmlEscape(ed)}</span>`
         : '';
     })();
-    // v1.10.33: at-a-glance ThemerrDB-tracked indicator. The SRC badge
-    // alone doesn't tell users whether REPLACE w/ TDB is available
-    // (an M or U row may or may not have a TDB alternative). The pill
-    // is visible on every tab — most useful on ALL where the SRC
-    // column has every flavor mixed.
+    // v1.10.33: at-a-glance ThemerrDB-tracked indicator. v1.10.40
+    // adds a red 'TDB ✗' state for permanent-failure rows so users
+    // can see TDB has the title but the YouTube URL is dead and a
+    // manual override is required.
+    const TDB_DEAD_FAILURES = new Set([
+      'video_private', 'video_removed',
+      'video_age_restricted', 'geo_blocked',
+    ]);
     const tdbAvailLabel = (() => {
-      // not_in_plex rows are already obviously TDB-tracked (that's
-      // what they are) — pill would be redundant.
       if (it.not_in_plex) return '';
       const isThemerrDbAvail = it.upstream_source
         && it.upstream_source !== 'plex_orphan';
-      if (isThemerrDbAvail) {
-        return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — REPLACE w/ TDB available in the SOURCE menu">TDB</span>';
+      if (!isThemerrDbAvail) {
+        return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
       }
-      return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
+      if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
+        return ' <span class="tdb-pill tdb-pill-dead" title="ThemerrDB has this title but the YouTube URL is unavailable — set a manual URL via SET URL to recover">TDB ✗</span>';
+      }
+      return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — REPLACE w/ TDB available in the SOURCE menu">TDB</span>';
     })();
 
     // v1.10.24 Option C row actions — collapse the wide button row into

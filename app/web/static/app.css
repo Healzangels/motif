@@ -883,6 +883,14 @@ pre code, .codeblock {
   border: 1px solid var(--line);
   background: transparent;
 }
+/* v1.10.40: dead-URL state — TDB has the title but YouTube returned
+   a permanent failure (video removed / private / age-restricted /
+   geo-blocked). Red so users notice and reach for SET URL. */
+.tdb-pill-dead {
+  color: var(--red);
+  border: 1px solid rgba(255,107,107,0.45);
+  background: rgba(255,107,107,0.08);
+}
 /* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
    as the regular T badge but de-emphasized — informational rows aren't
    actionable so they shouldn't compete with normal rows. */
