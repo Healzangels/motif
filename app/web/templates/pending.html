@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Pending{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1 class="title">PENDING</h1>
+  <p class="muted">downloaded themes awaiting placement into Plex · approve to publish, decline to remove</p>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// STAGED DOWNLOADS · <span id="pending-count">0</span></h2>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-tiny" id="pending-refresh-btn" type="button">// REFRESH</button>
+      <button class="btn btn-tiny" id="pending-place-all-btn" type="button">// APPROVE ALL</button>
+    </div>
+  </header>
+  <div class="block-body" style="padding:0">
+    <table class="table">
+      <thead>
+        <tr>
+          <th style="width:36px"><input type="checkbox" id="pending-select-all" /></th>
+          <th>TITLE</th>
+          <th class="col-year">YEAR</th>
+          <th style="width:60px">TYPE</th>
+          <th>SOURCE</th>
+          <th>DOWNLOADED</th>
+          <th class="col-actions">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="pending-body">
+        <tr><td colspan="7" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div id="pending-bulk-bar" style="margin-top:14px;display:none;padding:12px;border:1px dashed var(--bg-ridge)">
+  <span class="muted small" id="pending-bulk-count"></span>
+  <span style="margin:0 12px">·</span>
+  <button class="btn btn-tiny" id="pending-bulk-approve" type="button">APPROVE SELECTED</button>
+  <button class="btn btn-tiny btn-warn" id="pending-bulk-discard" type="button">DISCARD SELECTED</button>
+</div>
+{% endblock %}

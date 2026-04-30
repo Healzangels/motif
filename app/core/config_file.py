@@ -87,6 +87,16 @@ class MatchingConfig:
 
 
 @dataclass
+class PlacementConfig:
+    # When True (default), a successful download immediately enqueues a
+    # `place` job that hardlinks the staged theme into Plex's media folder.
+    # When False, downloads land in /pending for user review and only get
+    # placed after manual approval. Per-job payload may override this via
+    # an "auto_place" key.
+    auto_place: bool = True
+
+
+@dataclass
 class SyncConfig:
     db_url: str = "https://app.lizardbyte.dev/ThemerrDB"
     cron: str = "0 13 * * *"
@@ -113,6 +123,7 @@ class MotifConfig:
     plex: PlexConfigSection = field(default_factory=PlexConfigSection)
     downloads: DownloadsConfig = field(default_factory=DownloadsConfig)
     matching: MatchingConfig = field(default_factory=MatchingConfig)
+    placement: PlacementConfig = field(default_factory=PlacementConfig)
     sync: SyncConfig = field(default_factory=SyncConfig)
     web: WebConfig = field(default_factory=WebConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
@@ -155,6 +166,8 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     # matching
     ("MOTIF_STRICT_EDITION",      "matching.strict_edition",         _to_bool),
     ("MOTIF_PLUS_MODE",           "matching.plus_mode",              str),
+    # placement
+    ("MOTIF_AUTO_PLACE",          "placement.auto_place",            _to_bool),
     # sync
     ("MOTIF_DB_URL",              "sync.db_url",                     str),
     ("MOTIF_SYNC_CRON",           "sync.cron",                       str),

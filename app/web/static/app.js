@@ -186,19 +186,46 @@
   }
 
   function bindDashboard() {
-    if (!$('#sync-now-btn')) return;
-    $('#sync-now-btn').addEventListener('click', async (ev) => {
-      const btn = ev.currentTarget;
+    const dlPlaceBtn = $('#sync-download-place-btn');
+    const dlOnlyBtn = $('#sync-download-only-btn');
+    const placeStagedBtn = $('#sync-place-staged-btn');
+    if (!dlPlaceBtn && !dlOnlyBtn && !placeStagedBtn) return;
+
+    async function runSync(btn, originalLabel, body) {
       btn.disabled = true;
       btn.textContent = '// QUEUED';
       try {
-        await api('POST', '/api/sync/now');
+        await api('POST', '/api/sync/now', body);
       } catch (e) {
         alert('Sync failed: ' + e.message);
       }
       setTimeout(() => {
         btn.disabled = false;
-        btn.textContent = '// SYNC NOW';
+        btn.textContent = originalLabel;
+        loadDashboard().catch(console.error);
+      }, 1500);
+    }
+
+    dlPlaceBtn?.addEventListener('click', (ev) => {
+      runSync(ev.currentTarget, '// SYNC + PLACE', { download_only: false });
+    });
+    dlOnlyBtn?.addEventListener('click', (ev) => {
+      runSync(ev.currentTarget, '// DOWNLOAD ONLY', { download_only: true });
+    });
+    placeStagedBtn?.addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PLACING';
+      try {
+        const res = await api('POST', '/api/pending/place', { all: true });
+        if (res.enqueued === 0) alert('Nothing staged to place.');
+      } catch (e) {
+        alert('Place staged failed: ' + e.message);
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = orig;
         loadDashboard().catch(console.error);
       }, 1500);
     });
@@ -1386,6 +1413,142 @@
   }
 
 
+  // ---- Pending (staged-but-not-placed) ----
+
+  const pendingState = { items: [], selected: new Set() };
+
+  function pendingKey(it) { return `${it.media_type}:${it.tmdb_id}`; }
+
+  async function loadPending() {
+    const tbody = $('#pending-body');
+    if (!tbody) return;
+    let data;
+    try {
+      data = await api('GET', '/api/pending');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="7" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    pendingState.items = data.items || [];
+    const cntEl = $('#pending-count');
+    if (cntEl) cntEl.textContent = pendingState.items.length;
+    // Drop selections for items no longer present
+    const liveKeys = new Set(pendingState.items.map(pendingKey));
+    for (const k of Array.from(pendingState.selected)) {
+      if (!liveKeys.has(k)) pendingState.selected.delete(k);
+    }
+    if (pendingState.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted center">no staged downloads — everything is either placed or unsynced</td></tr>';
+      updatePendingBulkBar();
+      return;
+    }
+    const rows = pendingState.items.map((it) => {
+      const k = pendingKey(it);
+      const checked = pendingState.selected.has(k) ? 'checked' : '';
+      const sourceLabel = it.provenance === 'manual' ? 'MANUAL' :
+                          (it.upstream_source === 'plex_orphan' ? 'ORPHAN' : 'THEMERRDB');
+      const dlAt = it.downloaded_at ? fmt.time(it.downloaded_at) : '—';
+      return `
+        <tr>
+          <td><input type="checkbox" data-pending-key="${htmlEscape(k)}" ${checked} /></td>
+          <td><strong>${htmlEscape(it.title || '—')}</strong></td>
+          <td class="col-year">${htmlEscape(it.year || '—')}</td>
+          <td><span class="muted">${htmlEscape(it.media_type)}</span></td>
+          <td><span class="muted small">${sourceLabel}</span></td>
+          <td><span class="muted small">${dlAt}</span></td>
+          <td class="col-actions">
+            <button class="btn btn-tiny" data-pending-approve="${htmlEscape(k)}">APPROVE</button>
+            <button class="btn btn-tiny btn-warn" data-pending-discard="${htmlEscape(k)}">DISCARD</button>
+          </td>
+        </tr>
+      `;
+    });
+    tbody.innerHTML = rows.join('');
+    updatePendingBulkBar();
+  }
+
+  function updatePendingBulkBar() {
+    const bar = $('#pending-bulk-bar');
+    if (!bar) return;
+    const n = pendingState.selected.size;
+    if (n > 0) {
+      bar.style.display = '';
+      $('#pending-bulk-count').textContent = `${n} selected`;
+    } else {
+      bar.style.display = 'none';
+    }
+  }
+
+  function pendingItemsForKeys(keys) {
+    const set = new Set(keys);
+    return pendingState.items
+      .filter((it) => set.has(pendingKey(it)))
+      .map((it) => ({ media_type: it.media_type, tmdb_id: it.tmdb_id }));
+  }
+
+  async function pendingApprove(keys) {
+    const body = keys === 'all' ? { all: true } : { items: pendingItemsForKeys(keys) };
+    const res = await api('POST', '/api/pending/place', body);
+    pendingState.selected.clear();
+    await loadPending();
+    return res;
+  }
+
+  async function pendingDiscard(keys) {
+    if (!confirm(`Discard ${keys.length} download(s)? The file(s) will be deleted.`)) return null;
+    const res = await api('POST', '/api/pending/discard', { items: pendingItemsForKeys(keys) });
+    pendingState.selected.clear();
+    await loadPending();
+    return res;
+  }
+
+  function bindPending() {
+    const tbody = $('#pending-body');
+    if (!tbody) return;
+    $('#pending-refresh-btn')?.addEventListener('click', () => loadPending().catch(console.error));
+    $('#pending-place-all-btn')?.addEventListener('click', async () => {
+      if (!confirm('Approve placement for ALL staged downloads?')) return;
+      try { await pendingApprove('all'); } catch (e) { alert(e.message); }
+    });
+    $('#pending-select-all')?.addEventListener('change', (e) => {
+      const on = e.target.checked;
+      pendingState.selected.clear();
+      if (on) for (const it of pendingState.items) pendingState.selected.add(pendingKey(it));
+      // Mirror to row checkboxes without re-rendering
+      tbody.querySelectorAll('input[data-pending-key]').forEach((el) => { el.checked = on; });
+      updatePendingBulkBar();
+    });
+    tbody.addEventListener('change', (e) => {
+      const cb = e.target.closest('input[data-pending-key]');
+      if (!cb) return;
+      const k = cb.getAttribute('data-pending-key');
+      if (cb.checked) pendingState.selected.add(k); else pendingState.selected.delete(k);
+      updatePendingBulkBar();
+    });
+    tbody.addEventListener('click', async (e) => {
+      const ap = e.target.closest('[data-pending-approve]');
+      const ds = e.target.closest('[data-pending-discard]');
+      if (ap) {
+        const k = ap.getAttribute('data-pending-approve');
+        try { await pendingApprove([k]); } catch (err) { alert(err.message); }
+      } else if (ds) {
+        const k = ds.getAttribute('data-pending-discard');
+        try { await pendingDiscard([k]); } catch (err) { alert(err.message); }
+      }
+    });
+    $('#pending-bulk-approve')?.addEventListener('click', async () => {
+      const keys = Array.from(pendingState.selected);
+      if (keys.length === 0) return;
+      try { await pendingApprove(keys); } catch (e) { alert(e.message); }
+    });
+    $('#pending-bulk-discard')?.addEventListener('click', async () => {
+      const keys = Array.from(pendingState.selected);
+      if (keys.length === 0) return;
+      try { await pendingDiscard(keys); } catch (e) { alert(e.message); }
+    });
+  }
+
+
   // ---- Bootstrap ----
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -1404,6 +1567,7 @@
     bindSettingsTabs();
     bindConfigSaves();
     bindScans();
+    bindPending();
 
     // TVDB test key handler
     const tvdbBtn = document.getElementById('tvdb-test-btn');
@@ -1437,10 +1601,12 @@
     loadTokens().catch(console.error);
     loadLibraries().catch(console.error);
     loadConfigIntoForms().catch(console.error);
+    loadPending().catch(console.error);
 
     // Auto-refresh on relevant pages
     const path = window.location.pathname;
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
+    if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
   });
 })();

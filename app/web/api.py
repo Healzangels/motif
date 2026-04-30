@@ -257,6 +257,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def scans_page(request: Request):
         return templates.TemplateResponse(request, "scans.html")
 
+    @app.get("/pending", response_class=HTMLResponse)
+    async def pending_page(request: Request):
+        return templates.TemplateResponse(request, "pending.html")
+
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         _require_admin(request)
@@ -1015,6 +1019,133 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # --- Pending updates ---
 
+    @app.get("/api/pending")
+    async def api_pending(db: Path = Depends(get_db_path)):
+        """List items downloaded into the staging area but not yet placed
+        into a Plex media folder. These are awaiting user approval when the
+        global placement.auto_place is False, or when a sync was kicked off
+        with download_only=true."""
+        with get_conn(db) as conn:
+            rows = conn.execute("""
+                SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
+                       t.youtube_url, t.youtube_video_id, t.upstream_source,
+                       lf.rel_path, lf.file_size, lf.downloaded_at,
+                       lf.source_video_id, lf.provenance
+                FROM local_files lf
+                JOIN themes t
+                  ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id
+                LEFT JOIN placements p
+                  ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                WHERE p.media_folder IS NULL
+                ORDER BY lf.downloaded_at DESC
+            """).fetchall()
+        return {"items": [dict(r) for r in rows]}
+
+    @app.get("/api/pending/count")
+    async def api_pending_count(db: Path = Depends(get_db_path)):
+        with get_conn(db) as conn:
+            row = conn.execute("""
+                SELECT COUNT(*) FROM local_files lf
+                LEFT JOIN placements p
+                  ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                WHERE p.media_folder IS NULL
+            """).fetchone()
+        return {"count": row[0]}
+
+    @app.post("/api/pending/place")
+    async def api_pending_place(request: Request, db: Path = Depends(get_db_path)):
+        """Approve placement for one, many, or all staged items. Body:
+        {"items": [{media_type, tmdb_id}, ...]} or {"all": true}."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        targets: list[tuple[str, int]] = []
+        with get_conn(db) as conn:
+            if isinstance(body, dict) and body.get("all"):
+                rows = conn.execute("""
+                    SELECT lf.media_type, lf.tmdb_id FROM local_files lf
+                    LEFT JOIN placements p
+                      ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                    WHERE p.media_folder IS NULL
+                """).fetchall()
+                targets = [(r["media_type"], r["tmdb_id"]) for r in rows]
+            elif isinstance(body, dict) and isinstance(body.get("items"), list):
+                for it in body["items"]:
+                    if isinstance(it, dict) and "media_type" in it and "tmdb_id" in it:
+                        targets.append((str(it["media_type"]), int(it["tmdb_id"])))
+            enqueued = 0
+            for media_type, tmdb_id in targets:
+                # Skip if a place job is already pending/running for this item
+                existing = conn.execute(
+                    """SELECT id FROM jobs WHERE job_type = 'place'
+                       AND media_type = ? AND tmdb_id = ?
+                       AND status IN ('pending','running')""",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
+                                         created_at, next_run_at)
+                       VALUES ('place', ?, ?, '{}', 'pending', ?, ?)""",
+                    (media_type, tmdb_id, now_iso(), now_iso()),
+                )
+                enqueued += 1
+        log_event(db, level="INFO", component="api",
+                  message=f"Bulk place approved by {request.state.user}",
+                  detail={"requested": len(targets), "enqueued": enqueued})
+        return {"ok": True, "enqueued": enqueued, "requested": len(targets)}
+
+    @app.post("/api/pending/discard")
+    async def api_pending_discard(request: Request, db: Path = Depends(get_db_path)):
+        """Decline a staged download: delete the file and its local_files row.
+        Theme record is preserved so a future sync can re-detect and re-download."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        targets: list[tuple[str, int]] = []
+        if isinstance(body, dict) and isinstance(body.get("items"), list):
+            for it in body["items"]:
+                if isinstance(it, dict) and "media_type" in it and "tmdb_id" in it:
+                    targets.append((str(it["media_type"]), int(it["tmdb_id"])))
+        if not targets:
+            return {"ok": True, "discarded": 0}
+        themes_dir = settings.themes_dir
+        discarded = 0
+        with get_conn(db) as conn:
+            for media_type, tmdb_id in targets:
+                # Don't discard if already placed — that's a different operation
+                placed = conn.execute(
+                    "SELECT 1 FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                if placed:
+                    continue
+                row = conn.execute(
+                    "SELECT rel_path FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                if row and themes_dir:
+                    abs_path = themes_dir / row["rel_path"]
+                    try:
+                        if abs_path.is_file():
+                            abs_path.unlink()
+                    except OSError as e:
+                        log.warning("Discard failed to unlink %s: %s", abs_path, e)
+                conn.execute(
+                    "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+                discarded += 1
+        log_event(db, level="INFO", component="api",
+                  message=f"Bulk discard by {request.state.user}",
+                  detail={"requested": len(targets), "discarded": discarded})
+        return {"ok": True, "discarded": discarded, "requested": len(targets)}
+
     @app.get("/api/updates")
     async def api_list_updates(
         decision: str = Query("pending", pattern="^(pending|accepted|declined|all)$"),
@@ -1444,6 +1575,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/sync/now")
     async def api_sync_now(request: Request, db: Path = Depends(get_db_path)):
         _require_admin(request)
+        # Optional body: {"download_only": bool}. True forces downloads to
+        # land in /pending; False forces auto-place; absent uses the global
+        # placement.auto_place default.
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        payload: dict = {}
+        if isinstance(body, dict) and "download_only" in body:
+            payload["auto_place"] = not bool(body["download_only"])
+        payload_json = json.dumps(payload) if payload else "{}"
         with get_conn(db) as conn:
             existing = conn.execute(
                 "SELECT id FROM jobs WHERE job_type = 'sync' AND status IN ('pending','running')"
@@ -1451,13 +1593,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if existing:
                 return {"ok": True, "job_id": existing["id"], "already_queued": True}
             cur = conn.execute(
-                """INSERT INTO jobs (job_type, status, created_at, next_run_at)
-                   VALUES ('sync', 'pending', ?, ?)""",
-                (now_iso(), now_iso()),
+                """INSERT INTO jobs (job_type, payload, status, created_at, next_run_at)
+                   VALUES ('sync', ?, 'pending', ?, ?)""",
+                (payload_json, now_iso(), now_iso()),
             )
             job_id = cur.lastrowid
         log_event(db, level="INFO", component="api",
-                  message=f"Manual sync queued by {request.state.user}")
+                  message=f"Manual sync queued by {request.state.user}",
+                  detail={"download_only": bool(body.get("download_only", False))} if isinstance(body, dict) else None)
         return {"ok": True, "job_id": job_id}
 
     @app.get("/healthz")

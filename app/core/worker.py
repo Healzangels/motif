@@ -223,7 +223,19 @@ class Worker:
     # -- Job handlers --
 
     def _do_sync(self, job: sqlite3.Row) -> None:
-        run_sync(self.settings.db_path, self.settings.motifdb_base_url)
+        # Optional payload override: {"auto_place": true|false}. When absent,
+        # download jobs enqueued by this sync inherit the global setting.
+        auto_place_override: bool | None = None
+        try:
+            payload = json.loads(job["payload"] or "{}")
+            if "auto_place" in payload:
+                auto_place_override = bool(payload["auto_place"])
+        except (TypeError, ValueError):
+            pass
+        run_sync(
+            self.settings.db_path, self.settings.motifdb_base_url,
+            auto_place_override=auto_place_override,
+        )
 
     def _do_scan(self, job: sqlite3.Row) -> None:
         """Run a Plex folder scan. Payload optionally carries
@@ -386,15 +398,26 @@ class Worker:
                 (media_type, tmdb_id, rel_path, result.file_sha256,
                  result.file_size, now_iso(), vid, provenance),
             )
-            # Enqueue a placement job
-            conn.execute(
-                """
-                INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                  created_at, next_run_at)
-                VALUES ('place', ?, ?, ?, 'pending', ?, ?)
-                """,
-                (media_type, tmdb_id, "{}", now_iso(), now_iso()),
-            )
+            # Decide whether to auto-place. Per-job payload override wins;
+            # otherwise fall back to the global placement.auto_place setting.
+            # When auto_place is False, the staged file lands in /pending and
+            # the user approves placement manually.
+            auto_place = self.settings.auto_place_default
+            try:
+                payload = json.loads(job["payload"] or "{}")
+                if "auto_place" in payload:
+                    auto_place = bool(payload["auto_place"])
+            except (TypeError, ValueError):
+                pass
+            if auto_place:
+                conn.execute(
+                    """
+                    INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
+                                      created_at, next_run_at)
+                    VALUES ('place', ?, ?, ?, 'pending', ?, ?)
+                    """,
+                    (media_type, tmdb_id, "{}", now_iso(), now_iso()),
+                )
 
         log_event(
             self.settings.db_path, level="INFO", component="download",

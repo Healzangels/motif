@@ -4,7 +4,11 @@
 <section class="hero">
   <div class="hero-row">
     <h1 class="title">SIGNAL ACQUIRED</h1>
-    <button class="btn" id="sync-now-btn">// SYNC NOW</button>
+    <div class="sync-actions">
+      <button class="btn" id="sync-download-place-btn" title="run sync, download new themes, place into Plex immediately">// SYNC + PLACE</button>
+      <button class="btn" id="sync-download-only-btn" title="run sync and download new themes, but stage them in /pending for review">// DOWNLOAD ONLY</button>
+      <button class="btn" id="sync-place-staged-btn" title="approve placement of every theme currently staged in /pending">// PLACE STAGED</button>
+    </div>
   </div>
   <p class="muted">tracking motifdb · synced daily at 13:00 utc</p>
 </section>

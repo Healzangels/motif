@@ -204,6 +204,12 @@ class Settings:
     def plus_equiv_mode(self) -> str:
         return self._cfg.matching.plus_mode
 
+    # ---- Placement section ----
+
+    @property
+    def auto_place_default(self) -> bool:
+        return self._cfg.placement.auto_place
+
     # ---- Sync section ----
 
     @property

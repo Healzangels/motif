@@ -21,6 +21,7 @@ Sync strategy:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sqlite3
@@ -281,8 +282,13 @@ def _enqueue_download(
     media_type: str,
     tmdb_id: int,
     reason: str,
+    auto_place: bool | None = None,
 ) -> None:
-    """Add a download job, deduping against any pending/running job for the same item."""
+    """Add a download job, deduping against any pending/running job for the same item.
+
+    `auto_place=None` means "use the global setting"; True/False writes an explicit
+    override into the job payload that the worker honors.
+    """
     existing = conn.execute(
         """
         SELECT id FROM jobs
@@ -293,20 +299,30 @@ def _enqueue_download(
     ).fetchone()
     if existing:
         return
+    payload: dict = {"reason": reason}
+    if auto_place is not None:
+        payload["auto_place"] = bool(auto_place)
     conn.execute(
         """
         INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, created_at, next_run_at)
         VALUES ('download', ?, ?, ?, 'pending', ?, ?)
         """,
-        (media_type, tmdb_id, f'{{"reason": "{reason}"}}', now_iso(), now_iso()),
+        (media_type, tmdb_id, json.dumps(payload), now_iso(), now_iso()),
     )
 
 
 # ----- Public entry point -----
 
 
-def run_sync(db_path, base_url: str) -> SyncStats:
-    """Run a full ThemerrDB sync. Returns stats."""
+def run_sync(db_path, base_url: str, *, auto_place_override: bool | None = None) -> SyncStats:
+    """Run a full ThemerrDB sync. Returns stats.
+
+    `auto_place_override=None` lets the worker fall back to the global
+    placement.auto_place setting when each download finishes. Setting it to
+    True or False stamps that decision onto every download enqueued by this
+    run (so a "download only" sync always lands in /pending regardless of
+    the global default, and vice versa).
+    """
     stats = SyncStats()
     sync_ts = now_iso()
 
@@ -356,7 +372,7 @@ def run_sync(db_path, base_url: str) -> SyncStats:
                             stats.new_count += 1
                             _enqueue_download(
                                 conn, media_type=media_type, tmdb_id=int(tmdb_id),
-                                reason="new",
+                                reason="new", auto_place=auto_place_override,
                             )
                         elif url_changed:
                             stats.updated_count += 1
@@ -402,6 +418,7 @@ def run_sync(db_path, base_url: str) -> SyncStats:
                                 _enqueue_download(
                                     conn, media_type=media_type, tmdb_id=int(tmdb_id),
                                     reason="url_changed",
+                                    auto_place=auto_place_override,
                                 )
 
         with get_conn(db_path) as conn:

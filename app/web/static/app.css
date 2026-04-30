@@ -388,6 +388,9 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .col-actions { width: 200px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
 
+/* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
+.sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* Libraries page: paired movie/TV tables with shared column widths so the
    two blocks align visually. Sized to fit header text + typical content. */
 .libraries-table { table-layout: fixed; }

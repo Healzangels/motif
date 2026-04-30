@@ -283,6 +283,37 @@
   </div>
 </section>
 
+<!-- ============================ PLACEMENT (within SCHEDULE tab) ============================ -->
+<section class="block tab-panel" data-panel="schedule" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PLACEMENT MODE</h2>
+    <span class="muted small">what happens after a download finishes</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="placement">
+      <label class="form-label form-checkbox">
+        <div class="form-label-row">
+          <span class="form-label-text">AUTO-PLACE AFTER DOWNLOAD</span>
+          <span class="form-env-badge" data-env-badge="placement.auto_place" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input type="checkbox" data-cfg-field="placement.auto_place" />
+        <p class="form-hint">
+          When checked (default), every successful download immediately places
+          the theme into Plex's media folder. When unchecked, downloads land
+          in <a href="/pending">/pending</a> for manual approval — useful when
+          you want to review what motif found before publishing.
+          The dashboard <code>// DOWNLOAD ONLY</code> button overrides this
+          setting per-sync regardless of the default.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="placement">// SAVE PLACEMENT</button>
+      <span class="form-status" data-save-status="placement"></span>
+    </div>
+  </div>
+</section>
+
 <!-- ============================ RUNTIME ============================ -->
 <section class="block tab-panel" data-panel="runtime" style="display:none">
   <header class="block-head">
