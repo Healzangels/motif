@@ -2032,16 +2032,26 @@
     if (cntEl) cntEl.textContent =
       `· ${fmt.num(data.total)} match${data.total === 1 ? '' : 'es'}`;
 
-    // Missing-themes banner
+    // Missing-themes banner. v1.10.0: only show after Plex has been
+    // enumerated at least once — pre-scan, the missing_count is comparing
+    // ThemerrDB against an empty/stale plex_items snapshot, which is
+    // misleading. Show a "scan needed" hint instead.
     const banner = document.getElementById('library-missing-banner');
+    const scanHint = document.getElementById('library-scan-hint');
     if (banner) {
       const n = data.missing_count || 0;
-      if (n > 0) {
+      const enumerated = !!data.plex_enumerated;
+      if (enumerated && n > 0) {
         document.getElementById('library-missing-count').textContent = fmt.num(n);
+        const staleEl = document.getElementById('library-missing-stale');
+        if (staleEl) staleEl.style.display = data.plex_scan_stale ? '' : 'none';
         banner.style.display = '';
       } else {
         banner.style.display = 'none';
       }
+    }
+    if (scanHint) {
+      scanHint.style.display = data.plex_enumerated ? 'none' : '';
     }
     const totalPages = Math.max(1, Math.ceil(data.total / libraryState.perPage));
     document.getElementById('library-pager').innerHTML = `

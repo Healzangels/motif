@@ -1563,10 +1563,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             total = conn.execute(sql_count, params).fetchone()[0]
             missing_count = conn.execute(sql_missing_count).fetchone()[0]
             rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
+            # v1.10.0: gate the missing-themes banner on a Plex scan having
+            # actually happened. Pre-1.10.0 the banner could surface a high
+            # missing_count immediately after a sync even if the user had
+            # never run plex_enum (or had a stale enum) — misleading because
+            # the cross-reference was apples-to-oranges. Now the frontend
+            # only shows the banner when we have at least one plex_items
+            # row, and surfaces an advisory if sync ran more recently than
+            # the last Plex enum (stale comparison).
+            plex_enumerated = conn.execute(
+                "SELECT EXISTS(SELECT 1 FROM plex_items LIMIT 1)"
+            ).fetchone()[0] == 1
+            last_plex_enum_at = conn.execute(
+                """SELECT MAX(finished_at) FROM jobs
+                   WHERE job_type = 'plex_enum' AND status = 'success'"""
+            ).fetchone()[0]
+            last_sync_at = conn.execute(
+                """SELECT MAX(finished_at) FROM sync_runs
+                   WHERE status = 'success'"""
+            ).fetchone()[0]
+        plex_scan_stale = bool(
+            plex_enumerated
+            and last_sync_at
+            and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
+        )
         items = [dict(r) for r in rows]
         return {"total": total, "missing_count": missing_count,
                 "page": page, "per_page": per_page,
-                "tab": tab, "fourk": fourk, "items": items}
+                "tab": tab, "fourk": fourk, "items": items,
+                "plex_enumerated": plex_enumerated,
+                "plex_scan_stale": plex_scan_stale,
+                "last_plex_enum_at": last_plex_enum_at,
+                "last_sync_at": last_sync_at}
 
     @app.post("/api/library/download-batch")
     async def api_library_download_batch(

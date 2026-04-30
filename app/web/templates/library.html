@@ -29,14 +29,29 @@
   </span>
 </a>
 
+<!-- Scan-needed hint — shown when motif has not yet enumerated Plex.
+     Without a scan, the missing-themes count would be comparing ThemerrDB
+     against nothing. Click REFRESH FROM PLEX above to populate. -->
+<div id="library-scan-hint" class="missing-banner" style="display:none;border-color:var(--cyan);background:rgba(109,211,255,0.04)">
+  <span class="missing-banner-glyph" style="color:var(--cyan)">▸</span>
+  <span class="missing-banner-text">
+    no Plex scan on record yet — click <strong>// REFRESH FROM PLEX</strong>
+    to enumerate this library so motif can compare it against ThemerrDB.
+  </span>
+</div>
+
 <!-- Missing-themes banner — shown when N>0 ThemerrDB-tracked items in this
-     tab haven't been downloaded yet. Updates after every sync so users
-     immediately see new themable items. -->
+     tab haven't been downloaded yet AND a Plex scan has happened so the
+     comparison is real. Stale-advisory appears when sync ran more recently
+     than the last Plex enum (1.10.0+). -->
 <div id="library-missing-banner" class="missing-banner" style="display:none">
   <span class="missing-banner-glyph">▸</span>
   <span class="missing-banner-text">
     <strong id="library-missing-count">0</strong> missing themes available from ThemerrDB
     in this tab — click to enqueue all.
+    <span id="library-missing-stale" class="muted small" style="display:none;margin-left:8px">
+      (sync newer than last Plex scan — REFRESH FROM PLEX for accurate count)
+    </span>
   </span>
   <button class="btn btn-tiny btn-warn" id="library-download-missing-btn" type="button">// DOWNLOAD ALL</button>
 </div>
