@@ -240,6 +240,7 @@ def _library_main_query(
     db: Path, *, tab: str, fourk: bool, q: str, status: str,
     page: int, per_page: int,
     sort: str = "title", sort_dir: str = "asc",
+    tdb: str = "any",
 ) -> dict:
     """Sync helper for /api/library — runs all SQL in one threadpool call
     so the FastAPI event loop isn't blocked. v1.10.2 perf pass:
@@ -301,6 +302,21 @@ def _library_main_query(
     elif status == "failures":
         where_extra += " AND t.failure_kind IS NOT NULL"
 
+    # v1.10.20: secondary 'TDB MATCH' filter, stacks on top of `status`.
+    # 'tracked' means ThemerrDB has the title (the row's joined themes
+    # record is a real upstream entry, not a plex_orphan). 'untracked'
+    # is the inverse — Plex has the item but ThemerrDB doesn't, OR the
+    # joined themes row is an orphan motif made up itself.
+    # Useful for slicing MANUAL into 'I can REPLACE w/ TDB' vs 'no TDB
+    # alternative exists'. No-op for status=themed (already tracked) /
+    # status=untracked (already untracked) — frontend hides the
+    # secondary toggle in those cases.
+    if tdb == "tracked":
+        where_extra += (" AND t.tmdb_id IS NOT NULL "
+                        "AND t.upstream_source != 'plex_orphan'")
+    elif tdb == "untracked":
+        where_extra += " AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan')"
+
     sql_select = """
         SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
                pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
@@ -348,11 +364,12 @@ def _library_main_query(
           ON ps.section_id = pi.section_id AND ps.included = 1
     """
     sql_where = f"WHERE {tab_where}{where_extra}"
-    # Fast-path COUNT: status='all' (the default tab load) only references
-    # plex_items/plex_sections columns, so we can skip the heavy LEFT JOIN
-    # themes correlated subquery + lf/p joins entirely. This is the single
-    # biggest win for tab navigation perf since most users land on 'all'.
-    if status == "all":
+    # Fast-path COUNT: status='all' AND tdb='any' (the default tab load)
+    # only references plex_items/plex_sections columns, so we can skip
+    # the heavy LEFT JOIN themes correlated subquery + lf/p joins. The
+    # tdb filter requires the themes join, so it falls through to the
+    # full-join path when set.
+    if status == "all" and tdb == "any":
         sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
                      f"WHERE {tab_where}{where_pi_only}")
         count_params = params
@@ -1750,6 +1767,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         fourk: bool = Query(False),
         q: str = Query(""),
         status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|failures|not_in_plex)$"),
+        tdb: str = Query("any", pattern="^(any|tracked|untracked)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         sort: str = Query("title", pattern="^(title|year|src|dl|pl|link|imdb)$"),
@@ -1768,6 +1786,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         has no anime signal.
         """
         if status == "not_in_plex":
+            # tdb sub-filter is redundant for not_in_plex (everything in
+            # that view is tracked), so it's not threaded through.
             return await run_in_threadpool(
                 _library_not_in_plex, db, tab=tab, fourk=fourk,
                 q=q, page=page, per_page=per_page,
@@ -1775,7 +1795,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return await run_in_threadpool(
             _library_main_query, db, tab=tab, fourk=fourk,
-            q=q, status=status, page=page, per_page=per_page,
+            q=q, status=status, tdb=tdb, page=page, per_page=per_page,
             sort=sort, sort_dir=sort_dir,
         )
 

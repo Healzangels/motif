@@ -70,6 +70,19 @@
     <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
     <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
   </div>
+  <!-- v1.10.20: secondary TDB-match filter, stacks on the status chip
+       above. Useful for slicing MANUAL into 'has a TDB alternative I
+       could REPLACE w/' vs 'no upstream theme exists'. Hidden when the
+       primary chip already implies a TDB-tracked answer (THEMERRDB,
+       UNTRACKED, THEMERRDB ONLY) — see updateTdbFilterVisibility(). -->
+  <div class="chips chips-secondary" role="tablist" id="library-tdb-filter"
+       aria-label="ThemerrDB match"
+       title="filter on whether ThemerrDB has the title">
+    <span class="chips-label">TDB MATCH:</span>
+    <button class="chip chip-tiny chip-active" data-tdb="any" title="don't filter on ThemerrDB match">ANY</button>
+    <button class="chip chip-tiny" data-tdb="tracked" title="rows where ThemerrDB has the title (REPLACE w/ TDB available)">TRACKED</button>
+    <button class="chip chip-tiny" data-tdb="untracked" title="rows where ThemerrDB doesn't have the title">UNTRACKED</button>
+  </div>
 </section>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row

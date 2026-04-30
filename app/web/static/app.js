@@ -2052,6 +2052,10 @@
     perPage: 50,
     q: "",
     status: "all",
+    // v1.10.20: secondary 'TDB MATCH' filter ∈ {any, tracked, untracked}.
+    // Stacks on top of `status` to slice further (e.g. MANUAL + TRACKED
+    // shows the manual rows that have a TDB alternative for REPLACE).
+    tdb: "any",
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2062,6 +2066,30 @@
 
   function libKey(it) {
     return `${it.theme_media_type || it.plex_media_type}:${it.theme_tmdb || it.rating_key}`;
+  }
+
+  // v1.10.20: hide the secondary TDB-match chips when the primary chip
+  // already implies a TDB answer. THEMERRDB ⇒ tracked, UNTRACKED ⇒
+  // untracked, THEMERRDB ONLY ⇒ tracked (and uses a different code
+  // path on the backend that doesn't apply tdb filtering anyway).
+  // Resets the filter to 'any' on hide so it doesn't silently leak
+  // into the URL.
+  function updateTdbFilterVisibility() {
+    const wrap = document.getElementById('library-tdb-filter');
+    if (!wrap) return;
+    const status = libraryState.status;
+    const redundant = (status === 'themed' || status === 'untracked'
+                       || status === 'not_in_plex' || status === 'failures');
+    if (redundant) {
+      wrap.style.display = 'none';
+      if (libraryState.tdb !== 'any') {
+        libraryState.tdb = 'any';
+        wrap.querySelectorAll('[data-tdb]').forEach((x) =>
+          x.classList.toggle('chip-active', x.dataset.tdb === 'any'));
+      }
+    } else {
+      wrap.style.display = '';
+    }
   }
 
   function updateSortIndicators() {
@@ -2086,6 +2114,9 @@
     });
     if (libraryState.q) params.set('q', libraryState.q);
     if (libraryState.status !== 'all') params.set('status', libraryState.status);
+    if (libraryState.tdb && libraryState.tdb !== 'any') {
+      params.set('tdb', libraryState.tdb);
+    }
     if (libraryState.sort && libraryState.sort !== 'title') {
       params.set('sort', libraryState.sort);
     }
@@ -2601,9 +2632,29 @@
           b.classList.add('chip-active');
           libraryState.status = b.dataset.status;
           libraryState.page = 1;
+          updateTdbFilterVisibility();
           loadLibrary().catch(console.error);
         });
       });
+
+    // v1.10.20: secondary TDB-match chips. Reset to 'any' when the
+    // primary chip changes to one that already implies a TDB answer
+    // (THEMERRDB, UNTRACKED, THEMERRDB ONLY) and hide the toggle —
+    // letting the user toggle in those cases would either return the
+    // same result or no result.
+    if (document.getElementById('library-body')) {
+      document.querySelectorAll('[data-tdb]').forEach((b) => {
+        b.addEventListener('click', () => {
+          document.querySelectorAll('[data-tdb]').forEach((x) =>
+            x.classList.remove('chip-active'));
+          b.classList.add('chip-active');
+          libraryState.tdb = b.dataset.tdb;
+          libraryState.page = 1;
+          loadLibrary().catch(console.error);
+        });
+      });
+      updateTdbFilterVisibility();
+    }
 
     // Library tab chips (data-libtab) — only used on /coverage
     document.querySelectorAll('[data-libtab]').forEach((b) => {

@@ -382,6 +382,24 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   margin: 0 4px;
   user-select: none;
 }
+/* v1.10.20: secondary chip row (TDB MATCH filter). Smaller chips,
+   subtle label, sits below the primary status row. */
+.chips-secondary {
+  margin-top: 6px;
+  align-items: center;
+  font-size: var(--t-tiny);
+}
+.chips-secondary .chips-label {
+  color: var(--fg-mute);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-right: 6px;
+}
+.chip-tiny {
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
 
 /* ---- Tables ---- */
 
