@@ -259,6 +259,10 @@ def _library_main_query(
                         "AND pi.local_theme_file = 0 "
                         "AND lf.file_path IS NULL "
                         "AND p.media_folder IS NULL")
+    elif status == "downloaded":
+        # motif has the theme file on disk (placed or not). Mirrors the
+        # DL pill being lit in the row.
+        where_extra += " AND lf.file_path IS NOT NULL"
     elif status == "placed":
         where_extra += " AND p.media_folder IS NOT NULL"
     elif status == "unplaced":
@@ -1695,7 +1699,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|placed|unplaced|failures|not_in_plex)$"),
+        status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|failures|not_in_plex)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         db: Path = Depends(get_db_path),

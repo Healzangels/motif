@@ -370,6 +370,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(109,255,181,0.06); }
 .chip-warn { border-color: rgba(255,107,107,0.35); }
 .chip-warn.chip-active { color: var(--red); border-color: var(--red); background: rgba(255,107,107,0.08); }
+.chip-sep {
+  color: var(--bg-ridge);
+  align-self: center;
+  margin: 0 4px;
+  user-select: none;
+}
 
 /* ---- Tables ---- */
 
@@ -732,6 +738,18 @@ pre code, .codeblock {
   color: var(--green);
   border-color: rgba(143,228,150,0.4);
   background: rgba(143,228,150,0.06);
+}
+/* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
+   as the regular T badge but de-emphasized — informational rows aren't
+   actionable so they shouldn't compete with normal rows. */
+.link-badge-themerrdb-only {
+  color: var(--green-deep);
+  border-color: rgba(109,255,181,0.25);
+  background: transparent;
+  opacity: 0.7;
+}
+.row-not-in-plex td {
+  opacity: 0.85;
 }
 
 /* ---- Failure glyphs ---- */

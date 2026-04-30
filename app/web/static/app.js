@@ -2253,10 +2253,13 @@
   }
 
   function renderLibraryRowNotInPlex(it) {
-    // ThemerrDB row with no matching plex_items. Distinct styling: muted
-    // title with a (NOT IN PLEX) tag, dim '?' source badge, no DL/PL/LINK
-    // pills. Actions: INFO + DOWNLOAD (still useful — fetches the file
-    // into /themes; placement is skipped since there's no Plex folder).
+    // ThemerrDB row with no matching plex_items — informational only.
+    // Title is in ThemerrDB but not in the user's Plex library, so
+    // download/place don't make sense (no Plex folder to target). Show
+    // a dim T badge so the source is unambiguous, and provide INFO +
+    // IMDb link so the user can decide whether to add the title to
+    // Plex manually. PURGE is offered if motif somehow already has a
+    // local file for this row (legacy from earlier installs).
     const themeMt = it.theme_media_type;
     const themeId = it.theme_tmdb;
     const downloaded = !!it.file_path;
@@ -2265,20 +2268,11 @@
       ? `<a href="https://www.imdb.com/title/${htmlEscape(imdb)}" target="_blank" rel="noopener">${htmlEscape(imdb)}</a>`
       : '<span class="muted">—</span>';
 
-    const titleGlyphs = [];
-    if (it.job_in_flight) {
-      titleGlyphs.push(
-        `<span class="title-glyph title-glyph-pending" title="${htmlEscape(it.job_in_flight)}">⟳</span>`
-      );
-    }
-
     const acts = [
       `<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`,
     ];
     if (downloaded) {
-      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="0" title="motif downloaded this even though you don't own the title — purge to remove">× PURGE</button>`);
-    } else {
-      acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}" title="download into /themes (placement skipped — no Plex folder)">DOWNLOAD</button>`);
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="0" title="motif has a stale local file for a title you don't own in Plex — purge to remove">× PURGE</button>`);
     }
 
     const selKey = libKey(it);
@@ -2288,15 +2282,14 @@
         <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
           <div class="title-cell">
-            ${titleGlyphs.join('')}
             <span class="title-cell-name muted">${htmlEscape(it.plex_title)}</span>
-            <span class="muted small" style="margin-left:6px">(not in Plex)</span>
+            <span class="muted small" style="margin-left:6px">(not in your Plex library)</span>
           </div>
         </td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>
-        <td class="col-state"><span class="link-badge link-badge-cloud" title="ThemerrDB has this title but it's not in your Plex library">?</span></td>
-        <td class="col-state"><span class="state-pill ${downloaded ? 'on' : ''}"></span></td>
-        <td class="col-state"><span class="state-pill" title="no Plex folder to place into"></span></td>
+        <td class="col-state"><span class="link-badge link-badge-themerrdb-only" title="ThemerrDB-tracked title; not in your Plex library">T</span></td>
+        <td class="col-state"><span class="state-pill" title="not applicable"></span></td>
+        <td class="col-state"><span class="state-pill" title="not applicable"></span></td>
         <td class="col-state"><span class="link-glyph link-glyph-none">—</span></td>
         <td class="col-imdb">${imdbLink}</td>
         <td class="col-actions"><div class="row-actions">${acts.join('')}</div></td>
