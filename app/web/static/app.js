@@ -2254,13 +2254,23 @@
       //     Clears the override and fetches from ThemerrDB. Result will be T.
       //   T row, already downloaded — label RE-DL, action 'redl'.
       //   T row, not downloaded yet  — label DOWNLOAD, action 'redl'.
+      //
+      // v1.10.11: hide the button entirely while a job is in flight or
+      // the row is awaiting placement approval. Pre-1.10.11 it would
+      // briefly show as 'DOWNLOAD' on a freshly-uploaded/URL row (the
+      // initial download is in progress, file_path not yet populated)
+      // — redundant with the spinner glyph and a click could race the
+      // worker. Once the download lands the row re-renders with
+      // RE-DL as expected.
       const isManual = it.provenance === 'manual';
       const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
-      if (isManual && isThemerrDb) {
-        acts.push(`<button class="btn btn-tiny" data-act="revert" data-mt="${themeMt}" data-id="${themeId}" title="clear override and download from ThemerrDB">DOWNLOAD</button>`);
-      } else {
-        const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
-        acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
+      if (!lockManualActions) {
+        if (isManual && isThemerrDb) {
+          acts.push(`<button class="btn btn-tiny" data-act="revert" data-mt="${themeMt}" data-id="${themeId}" title="clear override and download from ThemerrDB">DOWNLOAD</button>`);
+        } else {
+          const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
+          acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
+        }
       }
     }
     acts.push(urlBtn);
