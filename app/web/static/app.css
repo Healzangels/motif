@@ -399,11 +399,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 
 .col-state { width: 40px; text-align: center; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
-.col-actions { width: 200px; text-align: right; }
+.col-actions { width: 260px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Library row actions — keep buttons in a single horizontal line, no wrap.
+   Nowrap ensures the row height stays consistent. */
+.row-actions {
+  display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
+  justify-content: flex-end;
+}
+.row-actions .btn-tiny { white-space: nowrap; }
 
 /* Library page banner highlighting "N missing themes" available from ThemerrDB
    for the active tab. */
@@ -425,7 +433,9 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .lib-col-section  { width: 240px; }
 .lib-col-type     { width: 80px; }
 .lib-col-mgd      { width: 70px; text-align: center; }
+.lib-col-role     { width: 140px; }
 .lib-col-num      { width: 90px; text-align: center; font-variant-numeric: tabular-nums; }
+.lib-col-role select { font-size: var(--t-tiny); padding: 4px 8px; width: 100%; }
 .lib-col-actions  { width: 120px; text-align: right; }
 .libraries-table td.lib-locations,
 .libraries-table th.lib-locations { overflow: hidden; text-overflow: ellipsis; }

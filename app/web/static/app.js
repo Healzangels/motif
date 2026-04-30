@@ -523,6 +523,26 @@
     });
   }
 
+  async function forgetTheme(mediaType, tmdbId, title, isOrphan) {
+    const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
+    const orphanWarning = isOrphan
+      ? '\n\nThis is an adopted/manual entry. The themes row will be deleted permanently;'
+      + ' future syncs will NOT recreate it.'
+      : '\n\nMotif will lose track of the local theme. The Plex placements will be removed.'
+      + ' If ThemerrDB has this title, it will reappear as missing on next view.';
+    const ok = confirm(`Remove ${labelTitle}?${orphanWarning}\n\nThis cannot be undone.`);
+    if (!ok) return;
+    try {
+      const r = await fetch(`/api/items/${mediaType}/${tmdbId}/forget`, { method: 'POST' });
+      if (!r.ok && r.status !== 204) {
+        const t = await r.text().catch(() => '');
+        throw new Error(`${r.status}: ${t || r.statusText}`);
+      }
+    } catch (e) {
+      alert('Remove failed: ' + e.message);
+    }
+  }
+
   async function deleteOrphan(mediaType, tmdbId, title) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
     const ok = confirm(
@@ -906,6 +926,12 @@
       const locations = (s.location_paths || []).map(htmlEscape).join('<br>') || '<span class="muted">—</span>';
       const isAnime = !!s.is_anime;
       const is4k = !!s.is_4k;
+      // Derive a single "role" from the underlying flag pair so the dropdown
+      // can present one decision per section instead of two checkboxes.
+      const role = isAnime && is4k ? 'anime_4k'
+                 : isAnime         ? 'anime'
+                 : is4k            ? '4k'
+                 :                   'standard';
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}">
           <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
@@ -913,11 +939,13 @@
           <td class="lib-col-mgd">
             <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
           </td>
-          <td class="lib-col-mgd">
-            <input type="checkbox" data-section-flag="${htmlEscape(s.section_id)}" data-flag="anime" ${isAnime ? 'checked' : ''} title="treat this section as the Anime tab" />
-          </td>
-          <td class="lib-col-mgd">
-            <input type="checkbox" data-section-flag="${htmlEscape(s.section_id)}" data-flag="4k" ${is4k ? 'checked' : ''} title="treat this section as the 4K variant" />
+          <td class="lib-col-role">
+            <select class="input" data-section-role="${htmlEscape(s.section_id)}" title="which Movies/TV/Anime tab does this section feed">
+              <option value="standard"${role === 'standard' ? ' selected' : ''}>standard</option>
+              <option value="4k"${role === '4k' ? ' selected' : ''}>4k</option>
+              <option value="anime"${role === 'anime' ? ' selected' : ''}>anime</option>
+              <option value="anime_4k"${role === 'anime_4k' ? ' selected' : ''}>anime 4k</option>
+            </select>
           </td>
           <td class="lib-col-num">${fmt.num(s.placed_count)}</td>
           <td class="lib-col-num">${s.copies_count > 0 ? '<span class="accent">'+fmt.num(s.copies_count)+'</span>' : fmt.num(s.copies_count)}</td>
@@ -930,9 +958,9 @@
       if (s.type === 'movie') movieRows.push(row); else tvRows.push(row);
     }
     $('#libraries-movies-body').innerHTML = movieRows.join('') ||
-      '<tr><td colspan="9" class="muted center">no movie sections discovered</td></tr>';
+      '<tr><td colspan="8" class="muted center">no movie sections discovered</td></tr>';
     $('#libraries-tv-body').innerHTML = tvRows.join('') ||
-      '<tr><td colspan="9" class="muted center">no TV sections discovered</td></tr>';
+      '<tr><td colspan="8" class="muted center">no TV sections discovered</td></tr>';
   }
 
   function bindLibraries() {
@@ -959,7 +987,7 @@
 
     document.addEventListener('change', async (e) => {
       const tog = e.target.closest('input[data-section-toggle]');
-      const flag = e.target.closest('input[data-section-flag]');
+      const roleSel = e.target.closest('select[data-section-role]');
       if (tog) {
         const fd = new FormData();
         fd.append('included', tog.checked ? 'true' : 'false');
@@ -969,17 +997,15 @@
           alert('Update failed: ' + err.message);
           tog.checked = !tog.checked;
         }
-      } else if (flag) {
-        const sid = flag.dataset.sectionFlag;
-        const which = flag.dataset.flag;
-        const body = which === 'anime'
-          ? { is_anime: flag.checked }
-          : { is_4k: flag.checked };
+      } else if (roleSel) {
+        const sid = roleSel.dataset.sectionRole;
+        const role = roleSel.value;
         try {
-          await api('POST', `/api/libraries/${encodeURIComponent(sid)}/flags`, body);
+          await api('POST', `/api/libraries/${encodeURIComponent(sid)}/flags`, { role });
         } catch (err) {
-          alert('Flag update failed: ' + err.message);
-          flag.checked = !flag.checked;
+          alert('Role update failed: ' + err.message);
+          // Revert: re-fetch to pick up authoritative state
+          loadLibraries().catch(()=>{});
         }
       }
     });
@@ -1844,19 +1870,30 @@
 
     const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
 
-    // Actions
-    let actions;
+    // Actions: kept in a flex row so they don't wrap. Build an array and
+    // join inside the .row-actions wrapper.
+    //   DOWNLOAD / RE-DL — present when motif tracks the theme; label
+    //                      reflects whether a local file exists yet.
+    //   URL              — set/replace YouTube URL via override
+    //   UPLOAD           — drop a manual MP3 in
+    //   DEL              — present only when there's something to remove
+    //                      (motif local file exists, OR row is orphan).
+    //                      P-agent-only items get no DEL since motif doesn't
+    //                      manage that file — Plex put it there.
+    const acts = [];
     const urlBtn = `<button class="btn btn-tiny btn-warn" data-act="manual-url" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="provide a YouTube URL">URL</button>`;
     const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="upload an MP3 file">UPLOAD</button>`;
-    if (!themed) {
-      actions = `${urlBtn} ${upBtn}`;
-    } else {
-      const isOrphan = it.upstream_source === 'plex_orphan';
-      const delBtn = isOrphan
-        ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" title="delete">× DEL</button>`
-        : '';
-      actions = `<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">RE-DL</button> ${urlBtn} ${upBtn} ${delBtn}`;
+    const isOrphan = it.upstream_source === 'plex_orphan';
+    if (themed && themeId !== null && themeId !== undefined) {
+      const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
+      acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
     }
+    acts.push(urlBtn);
+    acts.push(upBtn);
+    if (downloaded || isOrphan) {
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="forget" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="${isOrphan ? '1' : '0'}" title="${isOrphan ? 'delete orphan + files' : 'remove local theme (Plex agent fallback remains)'}">DEL</button>`);
+    }
+    const actions = `<div class="row-actions">${acts.join('')}</div>`;
 
     return `
       <tr${rowExtra}>
@@ -1987,6 +2024,11 @@
         redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'delete-orphan') {
         await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
+        await loadLibrary().catch(()=>{});
+      } else if (act === 'forget') {
+        await forgetTheme(btn.dataset.mt, btn.dataset.id,
+                          btn.dataset.title || '',
+                          btn.dataset.orphan === '1');
         await loadLibrary().catch(()=>{});
       } else if (act === 'upload-theme') {
         openUploadDialog({

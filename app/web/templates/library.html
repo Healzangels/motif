@@ -34,8 +34,8 @@
          class="input" autocomplete="off" />
   <div class="chips" role="tablist">
     <button class="chip chip-active" data-status="all">ALL</button>
-    <button class="chip" data-status="themed">THEMED</button>
-    <button class="chip" data-status="untheme">PLEX-ONLY</button>
+    <button class="chip" data-status="themed">THEMERRDB</button>
+    <button class="chip" data-status="plex_agent">PLEX AGENT</button>
     <button class="chip" data-status="placed">PLACED</button>
     <button class="chip" data-status="unplaced">UNPLACED</button>
     <button class="chip chip-warn" data-status="failures">FAILURES</button>
@@ -118,6 +118,38 @@
         <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
         <button class="btn" type="button" id="override-cancel">// CANCEL</button>
         <span class="form-status" id="override-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
+
+<!-- Manual YouTube URL dialog for Plex items that ThemerrDB doesn't cover.
+     Triggered by the // URL action button on rows. -->
+<dialog class="dlg" id="manual-url-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// MANUAL YOUTUBE URL</h2>
+      <button class="dlg-close" id="manual-url-dlg-close" type="button">×</button>
+    </header>
+    <div class="dlg-meta" id="manual-url-dlg-meta"></div>
+    <form id="manual-url-form">
+      <input type="hidden" id="manual-url-rk" />
+      <label class="form-label">
+        <span class="form-label-text">// YOUTUBE URL</span>
+        <input class="input" type="url" id="manual-url-input"
+               placeholder="https://www.youtube.com/watch?v=…"
+               required autocomplete="off" />
+        <p class="form-hint">
+          Paste a YouTube URL and motif will download it as the theme for
+          this Plex item. The URL is recorded as a manual override that
+          ThemerrDB syncs won't touch. You can replace it later via the
+          same dialog.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
+        <button class="btn" type="button" id="manual-url-cancel">// CANCEL</button>
+        <span class="form-status" id="manual-url-status"></span>
       </div>
     </form>
   </article>

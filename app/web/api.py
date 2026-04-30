@@ -1013,7 +1013,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Path = Depends(get_db_path),
     ):
         """Toggle the user-applied flags (is_anime, is_4k) on a Plex section.
-        Body: {"is_anime": bool, "is_4k": bool} — either field optional."""
+        Accepts either:
+          - legacy {"is_anime": bool, "is_4k": bool} — either field optional.
+          - v1.8.2 {"role": "standard"|"4k"|"anime"|"anime_4k"} — sets both
+            flags atomically based on the role mapping.
+        """
         _require_admin(request)
         try:
             body = await request.json()
@@ -1023,12 +1027,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="body must be a JSON object")
         sets = []
         params = []
-        if "is_anime" in body:
+        if "role" in body:
+            role = str(body["role"])
+            role_map = {
+                "standard":  (0, 0),
+                "4k":        (0, 1),
+                "anime":     (1, 0),
+                "anime_4k":  (1, 1),
+            }
+            if role not in role_map:
+                raise HTTPException(status_code=400,
+                                    detail=f"invalid role: {role}")
+            anime_v, fourk_v = role_map[role]
             sets.append("is_anime = ?")
-            params.append(1 if bool(body["is_anime"]) else 0)
-        if "is_4k" in body:
+            params.append(anime_v)
             sets.append("is_4k = ?")
-            params.append(1 if bool(body["is_4k"]) else 0)
+            params.append(fourk_v)
+        else:
+            if "is_anime" in body:
+                sets.append("is_anime = ?")
+                params.append(1 if bool(body["is_anime"]) else 0)
+            if "is_4k" in body:
+                sets.append("is_4k = ?")
+                params.append(1 if bool(body["is_4k"]) else 0)
         if not sets:
             return {"ok": True, "no_op": True}
         params.append(section_id)
@@ -1318,7 +1339,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|themed|untheme|placed|unplaced|failures)$"),
+        status: str = Query("all", pattern="^(all|themed|untheme|plex_agent|placed|unplaced|failures)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         db: Path = Depends(get_db_path),
@@ -1343,9 +1364,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             where_extra += " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
             params.extend([f"%{q}%", q])
         if status == "themed":
-            where_extra += " AND t.tmdb_id IS NOT NULL"
+            # "Themed" = covered by ThemerrDB. Plex_orphan rows have a
+            # themes record but came from the user (adopted/manual upload),
+            # not from ThemerrDB — exclude them so the chip's count matches
+            # what's actually downloadable from upstream.
+            where_extra += (" AND t.tmdb_id IS NOT NULL "
+                            "AND t.upstream_source != 'plex_orphan'")
         elif status == "untheme":
-            where_extra += " AND t.tmdb_id IS NULL"
+            # "PLEX-ONLY" = no ThemerrDB record AND no motif-managed row
+            where_extra += (" AND (t.tmdb_id IS NULL "
+                            "OR t.upstream_source = 'plex_orphan')")
+        elif status == "plex_agent":
+            # Plex's own agent populated a theme; motif hasn't downloaded
+            # one. Matches the P badge.
+            where_extra += " AND pi.has_theme = 1 AND lf.file_path IS NULL"
         elif status == "placed":
             where_extra += " AND p.media_folder IS NOT NULL"
         elif status == "unplaced":
@@ -1393,7 +1425,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
              AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
             LEFT JOIN local_files lf
               ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
-            WHERE {tab_where} AND lf.file_path IS NULL
+            WHERE {tab_where}
+              AND lf.file_path IS NULL
+              AND t.upstream_source != 'plex_orphan'
         """
         sql_rows = (
             f"{sql_select} {sql_from} {sql_where} "
@@ -1445,7 +1479,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
                 LEFT JOIN local_files lf
                   ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
-                WHERE {tab_where} AND lf.file_path IS NULL
+                WHERE {tab_where}
+                  AND lf.file_path IS NULL
+                  AND t.upstream_source != 'plex_orphan'
             """).fetchall()
             for r in rows:
                 # Dedupe: skip if a download is already pending/running
@@ -1824,6 +1860,90 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "override": dict(ovr) if ovr else None,
             "events": [dict(e) for e in recent_events],
         }
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/forget")
+    async def api_forget_item(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """Remove motif's tracking of a theme.
+
+        - For real ThemerrDB rows: unlinks placement files (theme.mp3 in each
+          Plex folder), unlinks the canonical, drops local_files + placements
+          rows. Keeps the themes row so the next sync can re-detect it. If
+          ThemerrDB still covers the title it will reappear as missing.
+        - For plex_orphan rows: same file cleanup PLUS drops the themes row
+          (FK CASCADE handles children). The orphan won't recreate on its own.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            theme = conn.execute(
+                "SELECT upstream_source, title FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if theme is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            placements = conn.execute(
+                "SELECT media_folder FROM placements "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchall()
+            local = conn.execute(
+                "SELECT file_path FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+
+        # Unlink placement files (hardlinks have independent inodes; deleting
+        # the canonical alone wouldn't remove these copies in Plex folders).
+        unlinked = 0
+        for pr in placements:
+            try:
+                p = Path(pr["media_folder"]) / "theme.mp3"
+                if p.is_file():
+                    p.unlink()
+                    unlinked += 1
+            except OSError as e:
+                log.warning("forget: could not unlink %s: %s", pr["media_folder"], e)
+        themes_dir = settings.themes_dir
+        if local and themes_dir:
+            try:
+                p = themes_dir / local["file_path"]
+                if p.is_file():
+                    p.unlink()
+            except OSError as e:
+                log.warning("forget: could not unlink canonical %s: %s",
+                            local["file_path"], e)
+
+        is_orphan = theme["upstream_source"] == "plex_orphan"
+        with get_conn(db) as conn:
+            if is_orphan:
+                # Full delete; FK CASCADE clears children
+                conn.execute(
+                    "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+            else:
+                # Keep themes row, drop motif's tracking only
+                conn.execute(
+                    "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+                conn.execute(
+                    "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Forget by {request.state.user}",
+                  detail={"title": theme["title"],
+                          "orphan_dropped": is_orphan,
+                          "placements_unlinked": unlinked,
+                          "placements_total": len(placements)})
+        return {"ok": True, "orphan_dropped": is_orphan,
+                "placements_unlinked": unlinked}
 
     @app.delete("/api/items/{media_type}/{tmdb_id}", status_code=204)
     async def api_delete_item(
