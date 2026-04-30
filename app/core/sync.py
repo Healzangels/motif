@@ -355,6 +355,44 @@ def _enqueue_download(
 _SYNC_BATCH = 50
 
 
+def _plex_supplies_theme(
+    conn: sqlite3.Connection, media_type: str, tmdb_id: int,
+) -> bool:
+    """v1.10.16: True iff Plex's own agent supplies a theme for this
+    title and motif doesn't manage the file. Used by sync to skip the
+    auto-download for P-agent items so we honour the user's 'Plex-first'
+    preference.
+
+    Conditions (all must hold):
+      - plex_items row exists for this (media_type, tmdb_id) — the
+        title is in the user's Plex library.
+      - pi.has_theme = 1 — Plex says the item has a theme.
+      - pi.local_theme_file = 0 — there's no theme.mp3 sidecar at the
+        Plex folder.
+      - no local_files row — motif hasn't downloaded for this item.
+      - no placements row — motif hasn't placed for this item.
+    Falls back to False (= proceed with download) if plex_items hasn't
+    been enumerated yet (fresh install) — safe default.
+    """
+    row = conn.execute(
+        """SELECT 1
+             FROM plex_items pi
+             LEFT JOIN local_files lf
+               ON lf.media_type = ? AND lf.tmdb_id = ?
+             LEFT JOIN placements p
+               ON p.media_type = ? AND p.tmdb_id = ?
+            WHERE pi.guid_tmdb = ?
+              AND pi.media_type = (CASE ? WHEN 'tv' THEN 'show' ELSE 'movie' END)
+              AND pi.has_theme = 1
+              AND pi.local_theme_file = 0
+              AND lf.file_path IS NULL
+              AND p.media_folder IS NULL
+            LIMIT 1""",
+        (media_type, tmdb_id, media_type, tmdb_id, tmdb_id, media_type),
+    ).fetchone()
+    return row is not None
+
+
 def _flush_sync_batch(
     db_path,
     batch: list[tuple[str, int, dict, str]],
@@ -380,9 +418,17 @@ def _flush_sync_batch(
                 upstream_source=upstream_source,
                 sync_ts=sync_ts,
             )
+            # v1.10.16: Plex-first default — when Plex is already supplying
+            # a theme for this title (P-agent state) and motif doesn't
+            # manage the file yet, skip the auto-download. The user can
+            # still kick a download manually from the row's primary
+            # button (which prompts for confirmation per v1.10.14).
+            # 'auto' here means motif initiated the enqueue; manual
+            # /redownload calls bypass this gate.
+            plex_supplies = _plex_supplies_theme(conn, media_type, tmdb_id)
             if is_new:
                 stats.new_count += 1
-                if enqueue_downloads:
+                if enqueue_downloads and not plex_supplies:
                     _enqueue_download(
                         conn, media_type=media_type, tmdb_id=tmdb_id,
                         reason="new", auto_place=auto_place_override,
@@ -426,7 +472,9 @@ def _flush_sync_batch(
                         ),
                     )
                 else:
-                    if enqueue_downloads:
+                    # Same Plex-first gate as the is_new branch above:
+                    # don't pull a fresh download for a P-agent item.
+                    if enqueue_downloads and not plex_supplies:
                         _enqueue_download(
                             conn, media_type=media_type, tmdb_id=tmdb_id,
                             reason="url_changed",
