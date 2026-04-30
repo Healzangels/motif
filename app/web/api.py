@@ -535,6 +535,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type IN ('sync','plex_enum')
                      AND status IN ('pending','running')) AS sync_in_flight,
+                  -- Local files with no placement = items waiting placement
+                  -- approval (typically because a sidecar already exists at
+                  -- the Plex folder; user must approve overwrite via /pending).
+                  (SELECT COUNT(*) FROM local_files lf
+                   LEFT JOIN placements p
+                     ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                   WHERE p.media_folder IS NULL) AS pending_placements,
                   (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total,
                   (SELECT COUNT(*) FROM themes
@@ -584,6 +591,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "running": row["running"],
                 "failed": row["failed"],
                 "sync_in_flight": row["sync_in_flight"],
+                "pending_placements": row["pending_placements"],
             },
             "storage": {
                 "hardlinks": row["hardlinks"],

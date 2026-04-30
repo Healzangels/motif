@@ -111,6 +111,26 @@
         adaptLibraryFourkToggle(ta);
       }
 
+      // Pending-placements indicator: light the dot on the PENDING nav
+      // link whenever there are items awaiting placement approval.
+      // Surfaces the workflow even when the user is mid-action on /movies.
+      const pendingDot = document.getElementById('nav-attn-pending');
+      const pendingCount = (stats.queue && stats.queue.pending_placements) || 0;
+      if (pendingDot) pendingDot.style.display = pendingCount > 0 ? '' : 'none';
+      // Library-page banner: show a click-through when there are pending
+      // placements. Subtle vs the missing-themes banner; same JS refresh
+      // cadence (every loadLibrary tick, plus the 15s topbar poll).
+      const pendingBanner = document.getElementById('library-pending-banner');
+      if (pendingBanner) {
+        if (pendingCount > 0) {
+          document.getElementById('library-pending-count').textContent =
+            fmt.num(pendingCount);
+          pendingBanner.style.display = '';
+        } else {
+          pendingBanner.style.display = 'none';
+        }
+      }
+
       // Drive dry-run banner
       const banner = $('#dry-run-banner');
       if (banner) {
@@ -1764,6 +1784,27 @@
   }
 
   async function pendingApprove(keys) {
+    // Confirm explicitly when any selected item will overwrite a sidecar.
+    // /api/pending populates plex_local_theme; we check it here so the
+    // user sees a clear warning instead of just the row badge.
+    const targetItems = keys === 'all'
+      ? pendingState.items.slice()
+      : pendingState.items.filter((it) => keys.includes(pendingKey(it)));
+    const overwrites = targetItems.filter((it) => it.plex_local_theme);
+    if (overwrites.length > 0) {
+      const titles = overwrites.slice(0, 8)
+        .map((it) => `  • ${it.title || '?'}${it.year ? ' (' + it.year + ')' : ''}`)
+        .join('\n');
+      const more = overwrites.length > 8
+        ? `\n  ... and ${overwrites.length - 8} more`
+        : '';
+      const ok = confirm(
+        `${overwrites.length} item(s) will OVERWRITE an existing theme.mp3 ` +
+        `in their Plex folders:\n\n${titles}${more}\n\n` +
+        `Motif will unlink the existing file and replace it with the new download. ` +
+        `Proceed?`);
+      if (!ok) return null;
+    }
     const body = keys === 'all' ? { all: true } : { items: pendingItemsForKeys(keys) };
     const res = await api('POST', '/api/pending/place', body);
     pendingState.selected.clear();

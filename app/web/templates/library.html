@@ -17,6 +17,18 @@
 
 <input type="hidden" id="library-tab" value="{{ tab }}" />
 
+<!-- Pending-placements banner — present whenever motif has downloads
+     waiting for user approval (typically because a Plex-folder sidecar
+     would be overwritten). Click through to /pending. -->
+<a id="library-pending-banner" class="missing-banner" href="/pending"
+   style="display:none;border-color:var(--cyan);background:rgba(109,211,255,0.06);color:var(--fg);text-decoration:none">
+  <span class="missing-banner-glyph" style="color:var(--cyan)">▸</span>
+  <span class="missing-banner-text">
+    <strong id="library-pending-count">0</strong> downloads waiting placement approval —
+    review at <code>/pending</code>.
+  </span>
+</a>
+
 <!-- Missing-themes banner — shown when N>0 ThemerrDB-tracked items in this
      tab haven't been downloaded yet. Updates after every sync so users
      immediately see new themable items. -->
