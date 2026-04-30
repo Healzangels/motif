@@ -1452,6 +1452,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "page": page, "per_page": per_page,
                 "tab": tab, "fourk": fourk, "items": items}
 
+    @app.post("/api/library/download-batch")
+    async def api_library_download_batch(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """Enqueue download jobs for an explicit list of items. Body:
+        {"items": [{"media_type": "...", "tmdb_id": ...}, ...]}.
+        Skips items already downloaded or already enqueued. Returns
+        {ok, enqueued, skipped}.
+        """
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        items = body.get("items") if isinstance(body, dict) else None
+        if not isinstance(items, list) or not items:
+            raise HTTPException(status_code=400, detail="items must be a non-empty list")
+        enqueued = 0
+        skipped = 0
+        with get_conn(db) as conn:
+            for it in items:
+                if not isinstance(it, dict):
+                    skipped += 1
+                    continue
+                mt = str(it.get("media_type", ""))
+                tid = it.get("tmdb_id")
+                if mt not in ("movie", "tv") or not isinstance(tid, int):
+                    skipped += 1
+                    continue
+                # Skip if there's already a pending/running download
+                existing = conn.execute(
+                    "SELECT 1 FROM jobs WHERE job_type = 'download' "
+                    "AND media_type = ? AND tmdb_id = ? "
+                    "AND status IN ('pending','running')",
+                    (mt, tid),
+                ).fetchone()
+                if existing:
+                    skipped += 1
+                    continue
+                # Verify the theme actually exists
+                theme = conn.execute(
+                    "SELECT 1 FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                    (mt, tid),
+                ).fetchone()
+                if not theme:
+                    skipped += 1
+                    continue
+                conn.execute(
+                    "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
+                    "                  created_at, next_run_at) "
+                    "VALUES ('download', ?, ?, '{\"reason\":\"bulk_select\"}', 'pending', ?, ?)",
+                    (mt, tid, now_iso(), now_iso()),
+                )
+                enqueued += 1
+        log_event(db, level="INFO", component="api",
+                  message=f"Bulk download-batch by {request.state.user}",
+                  detail={"enqueued": enqueued, "skipped": skipped,
+                          "requested": len(items)})
+        return {"ok": True, "enqueued": enqueued, "skipped": skipped}
+
     @app.post("/api/library/download-missing")
     async def api_library_download_missing(
         request: Request, db: Path = Depends(get_db_path),

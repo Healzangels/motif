@@ -43,6 +43,18 @@
   </div>
 </section>
 
+<!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
+     checkbox. // DOWNLOAD SELECTED enqueues download jobs only for items
+     that have a ThemerrDB row; non-themed selected rows are skipped. -->
+<div id="library-bulk-bar" class="missing-banner" style="display:none;border-color:var(--green-deep);background:rgba(109,255,181,0.04)">
+  <span class="missing-banner-glyph" style="color:var(--green-bright)">▸</span>
+  <span class="missing-banner-text">
+    <strong id="library-selected-count">0</strong> selected
+  </span>
+  <button class="btn btn-tiny" id="library-clear-selection-btn" type="button">// CLEAR</button>
+  <button class="btn btn-tiny btn-warn" id="library-download-selected-btn" type="button">// DOWNLOAD SELECTED</button>
+</div>
+
 <section class="block">
   <header class="block-head">
     <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span></h2>
@@ -51,6 +63,7 @@
   <table class="table">
     <thead>
       <tr>
+        <th class="col-state"><input type="checkbox" id="library-select-all" title="select all on this page" /></th>
         <th class="col-title">TITLE</th>
         <th class="col-year">YEAR</th>
         <th class="col-state">SRC</th>
@@ -62,7 +75,7 @@
       </tr>
     </thead>
     <tbody id="library-body">
-      <tr><td colspan="8" class="muted center">loading…</td></tr>
+      <tr><td colspan="9" class="muted center">loading…</td></tr>
     </tbody>
   </table>
 </section>
@@ -126,6 +139,18 @@
 
 <!-- Manual YouTube URL dialog for Plex items that ThemerrDB doesn't cover.
      Triggered by the // URL action button on rows. -->
+<dialog class="dlg" id="info-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// THEMERRDB INFO</h2>
+      <button class="dlg-close" id="info-dlg-close" type="button">×</button>
+    </header>
+    <div id="info-dlg-body">
+      <p class="muted">loading…</p>
+    </div>
+  </article>
+</dialog>
+
 <dialog class="dlg" id="manual-url-dlg">
   <article class="dlg-body">
     <header class="dlg-head">

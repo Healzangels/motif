@@ -1769,7 +1769,14 @@
     perPage: 50,
     q: "",
     status: "all",
+    // Set of "media_type:tmdb_id" keys checked via the per-row checkbox.
+    // Survives pagination (we restore checkboxes on render).
+    selected: new Set(),
   };
+
+  function libKey(it) {
+    return `${it.theme_media_type || it.plex_media_type}:${it.theme_tmdb || it.rating_key}`;
+  }
 
   async function loadLibrary() {
     const tabEl = document.getElementById('library-tab');
@@ -1784,7 +1791,7 @@
     if (libraryState.q) params.set('q', libraryState.q);
     if (libraryState.status !== 'all') params.set('status', libraryState.status);
     const tbody = document.getElementById('library-body');
-    tbody.innerHTML = `<tr><td colspan="8" class="muted center">loading…</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="muted center">loading…</td></tr>`;
     let data;
     try {
       data = await api('GET', '/api/library?' + params.toString());
@@ -1794,10 +1801,11 @@
     }
     libraryState.items = data.items || [];
     if (data.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="muted center">no items — make sure the relevant Plex sections are enabled in /libraries and run REFRESH FROM PLEX</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" class="muted center">no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX</td></tr>';
     } else {
       tbody.innerHTML = data.items.map(renderLibraryRow).join('');
     }
+    updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
     if (cntEl) cntEl.textContent =
       `· ${fmt.num(data.total)} match${data.total === 1 ? '' : 'es'}`;
@@ -1902,6 +1910,7 @@
     if (themed && themeId !== null && themeId !== undefined) {
       const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
       acts.push(`<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">${dlLabel}</button>`);
+      acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
     }
     acts.push(urlBtn);
     acts.push(upBtn);
@@ -1910,8 +1919,11 @@
     }
     const actions = `<div class="row-actions">${acts.join('')}</div>`;
 
+    const selKey = libKey(it);
+    const selected = libraryState.selected.has(selKey);
     return `
       <tr${rowExtra}>
+        <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
           <div class="title-cell">
             ${titleGlyphs.join('')}
@@ -1927,6 +1939,17 @@
         <td class="col-actions">${actions}</td>
       </tr>
     `;
+  }
+
+  function updateLibrarySelectionUi() {
+    const bar = document.getElementById('library-bulk-bar');
+    const cnt = document.getElementById('library-selected-count');
+    const all = document.getElementById('library-select-all');
+    if (!bar || !cnt) return;
+    const n = libraryState.selected.size;
+    cnt.textContent = fmt.num(n);
+    bar.style.display = n > 0 ? '' : 'none';
+    if (all) all.checked = false;  // sync state-all is reset on render
   }
 
   function bindLibrary() {
@@ -2030,13 +2053,76 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
     });
 
-    // Row clicks: redl, upload-theme, manual-url, delete-orphan, override
+    // Per-row select checkbox toggle
+    document.getElementById('library-body')?.addEventListener('change', (e) => {
+      const cb = e.target.closest('input[data-lib-select]');
+      if (!cb) return;
+      const k = cb.dataset.libSelect;
+      if (cb.checked) libraryState.selected.add(k);
+      else libraryState.selected.delete(k);
+      updateLibrarySelectionUi();
+    });
+
+    // Select-all on the visible page
+    document.getElementById('library-select-all')?.addEventListener('change', (e) => {
+      const on = e.currentTarget.checked;
+      document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
+        cb.checked = on;
+        const k = cb.dataset.libSelect;
+        if (on) libraryState.selected.add(k);
+        else libraryState.selected.delete(k);
+      });
+      updateLibrarySelectionUi();
+    });
+
+    // Bulk-bar buttons
+    document.getElementById('library-clear-selection-btn')?.addEventListener('click', () => {
+      libraryState.selected.clear();
+      document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
+        cb.checked = false;
+      });
+      updateLibrarySelectionUi();
+    });
+    document.getElementById('library-download-selected-btn')?.addEventListener('click', async (e) => {
+      // Build the items list. Only entries whose key looks like
+      // "<movie|tv>:<numeric>" can be downloaded — Plex-only items keyed
+      // by rating_key get filtered out (no themes row to download from).
+      const items = [];
+      for (const k of libraryState.selected) {
+        const parts = k.split(':');
+        if (parts.length !== 2) continue;
+        const id = Number(parts[1]);
+        if (!Number.isFinite(id)) continue;
+        items.push({ media_type: parts[0], tmdb_id: id });
+      }
+      if (items.length === 0) {
+        alert('Nothing downloadable in selection (Plex-only items have no ThemerrDB record).');
+        return;
+      }
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// QUEUING';
+      try {
+        const r = await api('POST', '/api/library/download-batch', { items });
+        btn.textContent = `// ${r.enqueued} QUEUED`;
+        libraryState.selected.clear();
+        setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      } catch (err) {
+        alert('Bulk download failed: ' + err.message);
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+    });
+
+    // Row clicks: redl, upload-theme, manual-url, delete-orphan, override, info
     document.getElementById('library-body')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act]');
       if (!btn) return;
       const act = btn.dataset.act;
       if (act === 'redl') {
         redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+      } else if (act === 'info') {
+        openInfoDialog(btn.dataset.mt, btn.dataset.id).catch(console.error);
       } else if (act === 'delete-orphan') {
         await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
         await loadLibrary().catch(()=>{});
@@ -2067,6 +2153,84 @@
       }
     });
   }
+
+  // ---- ThemerrDB info dialog ----
+
+  async function openInfoDialog(mediaType, tmdbId) {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    const body = document.getElementById('info-dlg-body');
+    body.innerHTML = '<p class="muted">loading…</p>';
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+    let data;
+    try {
+      data = await api('GET', `/api/items/${mediaType}/${tmdbId}`);
+    } catch (e) {
+      body.innerHTML = `<p class="accent-red">${htmlEscape(e.message)}</p>`;
+      return;
+    }
+    const t = data.theme || {};
+    const ovr = data.override;
+    const lf = data.local_file;
+    const placements = data.placements || [];
+    const ytUrl = ovr?.youtube_url || t.youtube_url || '';
+    const ytId = ovr?.youtube_video_id || t.youtube_video_id ||
+                 (ytUrl ? (ytUrl.match(/[?&]v=([^&]+)/) || [])[1] : '');
+    const imdb = t.imdb_id ? `<a href="https://www.imdb.com/title/${htmlEscape(t.imdb_id)}" target="_blank" rel="noopener">${htmlEscape(t.imdb_id)}</a>` : '<span class="muted">—</span>';
+    const tmdbLink = t.tmdb_id && t.tmdb_id > 0
+      ? `<a href="https://www.themoviedb.org/${mediaType === 'tv' ? 'tv' : 'movie'}/${t.tmdb_id}" target="_blank" rel="noopener">${t.tmdb_id}</a>`
+      : '<span class="muted">orphan</span>';
+    const ytLink = ytUrl
+      ? `<a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener">${htmlEscape(ytUrl)}</a>`
+      : '<span class="muted">—</span>';
+    const failBlock = t.failure_kind
+      ? `<dt>last failure</dt><dd class="accent-red">${htmlEscape(t.failure_kind)}${t.failure_message ? ' · ' + htmlEscape(t.failure_message) : ''}</dd>`
+      : '';
+    const ovrBlock = ovr
+      ? `<dt>override</dt><dd>${htmlEscape(ovr.youtube_url || '')}<br><span class="muted small">set by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(ovr.set_at || '')}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
+      : '';
+    const placedBlock = placements.length
+      ? `<dt>placed in</dt><dd>${placements.map(p => `<div class="muted small">${htmlEscape(p.media_folder)} <span class="muted">(${htmlEscape(p.placement_kind)})</span></div>`).join('')}</dd>`
+      : '';
+    const dlBlock = lf
+      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.file_path)} · ${fmt.num(lf.file_size)}B · ${htmlEscape(lf.provenance)}</dd>`
+      : '';
+    body.innerHTML = `
+      <h3>${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
+      <dl class="dlg-grid">
+        <dt>imdb</dt><dd>${imdb}</dd>
+        <dt>tmdb</dt><dd>${tmdbLink}</dd>
+        <dt>upstream</dt><dd>${htmlEscape(t.upstream_source || '')}</dd>
+        <dt>youtube url</dt><dd>${ytLink}</dd>
+        <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
+        <dt>added</dt><dd class="muted small">${htmlEscape(t.youtube_added_at || '—')}</dd>
+        <dt>edited</dt><dd class="muted small">${htmlEscape(t.youtube_edited_at || '—')}</dd>
+        ${failBlock}
+        ${ovrBlock}
+        ${dlBlock}
+        ${placedBlock}
+      </dl>
+      ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
+        <iframe width="100%" height="220" src="https://www.youtube.com/embed/${htmlEscape(ytId)}"
+                frameborder="0" allowfullscreen
+                style="background:#000"></iframe></div>` : ''}
+    `;
+  }
+
+  function closeInfoDialog() {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
+  }
+
+  function bindInfoDialog() {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    document.getElementById('info-dlg-close')?.addEventListener('click', closeInfoDialog);
+  }
+
 
   // ---- Manual YouTube URL dialog (Coverage tab) ----
 
@@ -2212,6 +2376,7 @@
     bindLibrary();
     bindUploadDialog();
     bindManualUrlDialog();
+    bindInfoDialog();
 
     // TVDB test key handler
     const tvdbBtn = document.getElementById('tvdb-test-btn');
