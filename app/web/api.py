@@ -600,9 +600,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def queue_page(request: Request):
         return templates.TemplateResponse(request, "queue.html")
 
-    @app.get("/scans", response_class=HTMLResponse)
-    async def scans_page(request: Request):
-        return templates.TemplateResponse(request, "scans.html")
+    # /scans page removed in v1.10.22 — adopt is now inline in the
+    # library row actions (per the v1.10.9+ ADOPT button). The backend
+    # /api/scans endpoints below stay for direct API callers and as a
+    # fallback path for hash-match adoption from a real scan run, but
+    # there's no UI surface and no /scans HTML route.
 
     @app.get("/pending", response_class=HTMLResponse)
     async def pending_page(request: Request):

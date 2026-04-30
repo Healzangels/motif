@@ -78,7 +78,7 @@
     const path = window.location.pathname;
     const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
                   '/anime': 'anime', '/queue': 'queue',
-                  '/pending': 'pending', '/scans': 'scans',
+                  '/pending': 'pending',
                   '/settings': 'settings' };
     const k = map[path];
     if (!k) return;
@@ -2232,7 +2232,7 @@
         srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
       }
     } else if (sidecarOnly) {
-      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (run /scans → ADOPT to take ownership)">M</span>';
+      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (click ADOPT to take ownership)">M</span>';
     } else if (it.plex_has_theme) {
       srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
     } else {
