@@ -98,6 +98,19 @@
         }
       }
 
+      // Adaptive nav: hide tabs that have no managed sections backing them.
+      // Anime is the only optional content tab; Movies/TV always render
+      // (even empty) so users land somewhere familiar after first install.
+      if (stats.tab_availability) {
+        const ta = stats.tab_availability;
+        const animeNav = document.querySelector('.nav a[data-nav="anime"]');
+        if (animeNav) {
+          const hasAnime = ta.anime.standard || ta.anime.fourk;
+          animeNav.style.display = hasAnime ? '' : 'none';
+        }
+        adaptLibraryFourkToggle(ta);
+      }
+
       // Drive dry-run banner
       const banner = $('#dry-run-banner');
       if (banner) {
@@ -1939,6 +1952,28 @@
         <td class="col-actions">${actions}</td>
       </tr>
     `;
+  }
+
+  function adaptLibraryFourkToggle(ta) {
+    // Hide the STANDARD/4K toggle when only one variant exists for the
+    // active tab. If only 4K exists, auto-flip libraryState.fourk so the
+    // page actually shows content. Idempotent — safe to call repeatedly.
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return;
+    const tab = tabEl.value;
+    const av = ta && ta[tab];
+    if (!av) return;
+    const toggle = document.querySelector('.chips[aria-label="resolution"]');
+    if (!toggle) return;
+    const both = av.standard && av.fourk;
+    toggle.style.display = both ? '' : 'none';
+    if (!both && av.fourk && !av.standard && libraryState.fourk === false) {
+      libraryState.fourk = true;
+      loadLibrary().catch(()=>{});
+    } else if (!both && av.standard && !av.fourk && libraryState.fourk === true) {
+      libraryState.fourk = false;
+      loadLibrary().catch(()=>{});
+    }
   }
 
   function updateLibrarySelectionUi() {

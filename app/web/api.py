@@ -541,7 +541,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE failure_kind IN ('video_private','video_removed','video_age_restricted','geo_blocked')
                   ) AS failures_unavailable,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind = 'cookies_expired') AS failures_cookies,
-                  (SELECT COUNT(*) FROM themes WHERE upstream_source = 'plex_orphan') AS orphans_total
+                  (SELECT COUNT(*) FROM themes WHERE upstream_source = 'plex_orphan') AS orphans_total,
+                  -- Tab availability for adaptive nav/toggle rendering.
+                  -- A "tab" is present if at least one *included* section
+                  -- with the matching flag pair exists. The Movies and TV
+                  -- tabs explicitly exclude anime-flagged sections.
+                  EXISTS (SELECT 1 FROM plex_sections
+                          WHERE included = 1 AND type = 'movie'
+                            AND is_anime = 0 AND is_4k = 0) AS movies_std,
+                  EXISTS (SELECT 1 FROM plex_sections
+                          WHERE included = 1 AND type = 'movie'
+                            AND is_anime = 0 AND is_4k = 1) AS movies_4k,
+                  EXISTS (SELECT 1 FROM plex_sections
+                          WHERE included = 1 AND type = 'show'
+                            AND is_anime = 0 AND is_4k = 0) AS tv_std,
+                  EXISTS (SELECT 1 FROM plex_sections
+                          WHERE included = 1 AND type = 'show'
+                            AND is_anime = 0 AND is_4k = 1) AS tv_4k,
+                  EXISTS (SELECT 1 FROM plex_sections
+                          WHERE included = 1
+                            AND is_anime = 1 AND is_4k = 0) AS anime_std,
+                  EXISTS (SELECT 1 FROM plex_sections
+                          WHERE included = 1
+                            AND is_anime = 1 AND is_4k = 1) AS anime_4k
             """).fetchone()
             last_sync = conn.execute("""
                 SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1
@@ -581,6 +603,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "config": {
                 "paths_ready": settings.is_paths_ready(),
                 "themes_dir": str(settings.themes_dir) if settings.is_paths_ready() else None,
+            },
+            "tab_availability": {
+                "movies": {"standard": bool(row["movies_std"]),
+                           "fourk":   bool(row["movies_4k"])},
+                "tv":     {"standard": bool(row["tv_std"]),
+                           "fourk":   bool(row["tv_4k"])},
+                "anime":  {"standard": bool(row["anime_std"]),
+                           "fourk":   bool(row["anime_4k"])},
             },
             "dry_run": is_dry_run(db, default=settings.dry_run_default),
             "last_sync": dict(last_sync) if last_sync else None,
