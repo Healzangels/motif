@@ -1505,9 +1505,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             FROM plex_items pi
             INNER JOIN plex_sections ps
               ON ps.section_id = pi.section_id AND ps.included = 1
-            LEFT JOIN themes t
-              ON t.tmdb_id = pi.guid_tmdb
-             AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+            -- Themes match: prefer a real ThemerrDB row by tmdb_id; fall back
+            -- to a plex_orphan keyed by imdb_id (manual-url / upload-theme /
+            -- scan-adopt all populate guid_imdb on the orphan from plex_items).
+            -- Picks at most one row, ordered: ThemerrDB-real > orphan, latest first.
+            LEFT JOIN themes t ON t.id = (
+                SELECT t2.id FROM themes t2
+                WHERE t2.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+                  AND (
+                    (t2.tmdb_id = pi.guid_tmdb AND pi.guid_tmdb IS NOT NULL
+                     AND t2.upstream_source != 'plex_orphan')
+                    OR (t2.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL
+                        AND t2.upstream_source = 'plex_orphan')
+                  )
+                ORDER BY CASE WHEN t2.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
+                         t2.id DESC
+                LIMIT 1
+            )
             LEFT JOIN local_files lf
               ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
             LEFT JOIN placements p

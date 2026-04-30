@@ -1987,6 +1987,10 @@
     // Title-cell glyphs
     const titleGlyphs = [];
     let rowExtra = '';
+    // Awaiting-placement-approval state: motif has the download but the
+    // place job was deferred (typically because a sidecar exists at the
+    // Plex folder that approval would overwrite).
+    const awaitingApproval = !it.job_in_flight && !!it.file_path && !it.media_folder;
     if (it.job_in_flight) {
       // Theme has a pending or running download/place job — pulse a cyan
       // glyph so users can watch their just-clicked URL/upload land. Pairs
@@ -1996,6 +2000,10 @@
                      :                                   'processing';
       titleGlyphs.push(
         `<span class="title-glyph title-glyph-pending" title="${htmlEscape(jobLabel)}">⟳</span>`
+      );
+    } else if (awaitingApproval) {
+      titleGlyphs.push(
+        `<a class="title-glyph title-glyph-await" title="awaiting placement approval — click to review at /pending" href="/pending">!</a>`
       );
     }
     if (it.failure_kind) {
@@ -2034,8 +2042,23 @@
     //                      P-agent-only items get no DEL since motif doesn't
     //                      manage that file — Plex put it there.
     const acts = [];
-    const urlBtn = `<button class="btn btn-tiny btn-warn" data-act="manual-url" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="provide a YouTube URL">URL</button>`;
-    const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="upload an MP3 file">UPLOAD</button>`;
+    // Disable URL + UPLOAD when motif is busy on this item — either a
+    // download/place job is in flight, or a download finished and is
+    // awaiting placement approval. Adding another override mid-flight
+    // would race the worker.
+    const lockManualActions = !!it.job_in_flight || awaitingApproval;
+    const lockTitle = it.job_in_flight
+      ? 'wait for current job to finish'
+      : (awaitingApproval ? 'pending placement approval — review at /pending'
+                          : '');
+    const urlAttrs = lockManualActions
+      ? ` disabled title="${htmlEscape(lockTitle)}"`
+      : ' title="provide a YouTube URL"';
+    const upAttrs = lockManualActions
+      ? ` disabled title="${htmlEscape(lockTitle)}"`
+      : ' title="upload an MP3 file"';
+    const urlBtn = `<button class="btn btn-tiny btn-warn" data-act="manual-url" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}"${urlAttrs}>URL</button>`;
+    const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}"${upAttrs}>UPLOAD</button>`;
     const isOrphan = it.upstream_source === 'plex_orphan';
     if (themed && themeId !== null && themeId !== undefined) {
       acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
