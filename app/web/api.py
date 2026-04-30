@@ -205,6 +205,101 @@ def _require_admin(request: Request) -> Principal:
     return p
 
 
+def _library_not_in_plex(
+    db: Path, *, tab: str, fourk: bool,
+    q: str, page: int, per_page: int,
+) -> dict:
+    """Return ThemerrDB rows whose tmdb_id has no matching plex_items
+    in the requested tab. Synthesizes plex-shaped fields so the frontend
+    renderer treats them as just-another-row, with not_in_plex=1 driving
+    the distinct visual treatment.
+
+    Anime tab returns empty — themes table has no anime signal so we
+    can't tell which ThemerrDB rows would belong there.
+    """
+    if tab == "anime":
+        return {"total": 0, "missing_count": 0,
+                "page": page, "per_page": per_page,
+                "tab": tab, "fourk": fourk, "items": [],
+                "plex_enumerated": True, "plex_scan_stale": False,
+                "last_plex_enum_at": None, "last_sync_at": None}
+    media_type = "movie" if tab == "movies" else "tv"
+    plex_media_type = "movie" if tab == "movies" else "show"
+    params: list = [media_type, plex_media_type, 1 if fourk else 0]
+    q_where = ""
+    if q:
+        q_where = " AND (t.title LIKE ? OR t.imdb_id = ?)"
+        params.extend([f"%{q}%", q])
+    base_where = f"""
+        WHERE t.media_type = ?
+          AND t.upstream_source != 'plex_orphan'
+          AND NOT EXISTS (
+              SELECT 1 FROM plex_items pi2
+              INNER JOIN plex_sections ps2
+                ON ps2.section_id = pi2.section_id AND ps2.included = 1
+              WHERE pi2.guid_tmdb = t.tmdb_id
+                AND pi2.media_type = ?
+                AND ps2.is_anime = 0
+                AND ps2.is_4k = ?
+          )
+          {q_where}
+    """
+    sql_count = f"SELECT COUNT(*) FROM themes t {base_where}"
+    sql_rows = f"""
+        SELECT
+            ('themerrdb-' || t.media_type || '-' || t.tmdb_id) AS rating_key,
+            NULL AS section_id,
+            (CASE t.media_type WHEN 'tv' THEN 'show' ELSE t.media_type END) AS plex_media_type,
+            t.title AS plex_title,
+            t.year, t.imdb_id AS guid_imdb, t.tmdb_id AS guid_tmdb,
+            NULL AS folder_path,
+            NULL AS plex_has_theme,
+            NULL AS plex_local_theme,
+            NULL AS section_title,
+            t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
+            t.title AS theme_title, t.youtube_url, t.youtube_video_id,
+            t.failure_kind, t.failure_message, t.upstream_source,
+            lf.file_path, lf.source_video_id, lf.provenance,
+            p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
+            (SELECT j.job_type FROM jobs j
+             WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
+               AND j.job_type IN ('download', 'place')
+               AND j.status IN ('pending', 'running')
+             ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
+                      j.id DESC
+             LIMIT 1) AS job_in_flight,
+            1 AS not_in_plex
+        FROM themes t
+        LEFT JOIN local_files lf
+          ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+        LEFT JOIN placements p
+          ON p.media_type = t.media_type AND p.tmdb_id = t.tmdb_id
+        {base_where}
+        ORDER BY t.title COLLATE NOCASE
+        LIMIT ? OFFSET ?
+    """
+    offset = (page - 1) * per_page
+    with get_conn(db) as conn:
+        total = conn.execute(sql_count, params).fetchone()[0]
+        rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
+        last_plex_enum_at = conn.execute(
+            """SELECT MAX(finished_at) FROM jobs
+               WHERE job_type = 'plex_enum' AND status = 'success'"""
+        ).fetchone()[0]
+        last_sync_at = conn.execute(
+            """SELECT MAX(finished_at) FROM sync_runs
+               WHERE status = 'success'"""
+        ).fetchone()[0]
+    items = [dict(r) for r in rows]
+    return {"total": total, "missing_count": 0,
+            "page": page, "per_page": per_page,
+            "tab": tab, "fourk": fourk, "items": items,
+            "plex_enumerated": True,
+            "plex_scan_stale": False,
+            "last_plex_enum_at": last_plex_enum_at,
+            "last_sync_at": last_sync_at}
+
+
 # -------- App factory --------
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -1418,14 +1513,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|placed|unplaced|failures)$"),
+        status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|placed|unplaced|failures|not_in_plex)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         db: Path = Depends(get_db_path),
     ):
         """Unified browse: every item Plex sees in the requested tab/sub-tab,
         joined to themes / local_files / placements so the UI can show the
-        full theme-status picture in one row."""
+        full theme-status picture in one row.
+
+        v1.10.1: status=not_in_plex switches to a different query shape that
+        returns ThemerrDB rows whose tmdb_id has no matching plex_items in
+        this tab. Rows are synthesized into the plex-shaped schema so the
+        frontend renderer can handle them uniformly (with not_in_plex=1
+        distinguishing them visually). Skipped on anime tab — themes table
+        has no anime signal.
+        """
+        if status == "not_in_plex":
+            return _library_not_in_plex(db, tab=tab, fourk=fourk,
+                                        q=q, page=page, per_page=per_page)
         # Tab → media_type + flag filter. Anime/4K are user-applied flags
         # (Settings → PLEX → LIBRARY SECTIONS), independent of section title.
         # The Movies and TV tabs explicitly EXCLUDE anime-flagged sections.
