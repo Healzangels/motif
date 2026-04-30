@@ -2388,22 +2388,51 @@
   }
 
   // Rapid-poll mode: after the user kicks off a manual URL or upload,
-  // poll loadLibrary every 3s for ~60s so the row reflects the download/
-  // place transitions (queued → running → placed) without waiting for
-  // the regular 30s tick. Re-arming resets the deadline.
+  // poll loadLibrary every ~5s for up to 60s so the row reflects the
+  // download → place transitions without waiting for the regular 30s
+  // tick.
+  //
+  // v1.10.7: 'often times when on the tab within a library the page
+  // will continue to do a quick reload which is disruptive'. Three
+  // changes to keep polling out of the user's way:
+  //   1. Bumped interval 3s → 5s.
+  //   2. Skip the tick when the user is interacting (search input
+  //      focused, an open <dialog>, or text is selected). The next
+  //      tick still fires, so the row eventually catches up.
+  //   3. Auto-stop early once no visible row has job_in_flight set
+  //      (state is stable; nothing left to watch transition).
   let libraryRapidTimer = null;
   let libraryRapidUntil = 0;
   function libraryRapidPoll(durationMs = 60000) {
     libraryRapidUntil = Date.now() + durationMs;
-    if (libraryRapidTimer) return;  // already polling
-    libraryRapidTimer = setInterval(() => {
+    if (libraryRapidTimer) return;
+    libraryRapidTimer = setInterval(async () => {
       if (Date.now() > libraryRapidUntil) {
         clearInterval(libraryRapidTimer);
         libraryRapidTimer = null;
         return;
       }
-      loadLibrary().catch(() => {});
-    }, 3000);
+      // Skip ticks where the user is doing something — re-rendering the
+      // whole tbody mid-interaction is the disruptive behavior.
+      const ae = document.activeElement;
+      const typingInSearch = ae && ae.id === 'library-search';
+      const dialogOpen = !!document.querySelector('dialog[open]');
+      const sel = window.getSelection && window.getSelection();
+      const hasTextSelection = !!(sel && sel.toString().length > 0);
+      if (typingInSearch || dialogOpen || hasTextSelection) return;
+
+      try {
+        await loadLibrary();
+      } catch (_) { /* network blip — try again next tick */ }
+      // Auto-stop: if none of the rendered rows have a job in flight,
+      // there's nothing left to watch transition — drop polling so we
+      // don't keep flickering the tbody for nothing.
+      const stillBusy = (libraryState.items || []).some(it => !!it.job_in_flight);
+      if (!stillBusy) {
+        clearInterval(libraryRapidTimer);
+        libraryRapidTimer = null;
+      }
+    }, 5000);
   }
 
   function updateLibrarySelectionUi() {
@@ -2910,7 +2939,19 @@
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
     if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
-    if (path === '/movies' || path === '/tv' || path === '/anime')
-      setInterval(() => loadLibrary().catch(() => {}), 30000);
+    if (path === '/movies' || path === '/tv' || path === '/anime') {
+      // v1.10.7: skip the background tick when the user is interacting
+      // with the page so the table doesn't redraw out from under them.
+      // The rapid-poll path already has the same guard.
+      setInterval(() => {
+        const ae = document.activeElement;
+        const typingInSearch = ae && ae.id === 'library-search';
+        const dialogOpen = !!document.querySelector('dialog[open]');
+        const sel = window.getSelection && window.getSelection();
+        const hasTextSelection = !!(sel && sel.toString().length > 0);
+        if (typingInSearch || dialogOpen || hasTextSelection) return;
+        loadLibrary().catch(() => {});
+      }, 30000);
+    }
   });
 })();
