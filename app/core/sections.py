@@ -41,7 +41,10 @@ def refresh_sections(
     Rules:
     - If included_titles is non-empty, only sections with matching titles are
       included; everything else is excluded.
-    - Otherwise, all sections are included EXCEPT those in excluded_titles.
+    - Else if excluded_titles is non-empty, all sections are included EXCEPT
+      those in the exclude list (legacy v1.4.x behavior).
+    - Otherwise, sections are unchecked by default and the user opts in via
+      the Libraries page.
     - Sections seen in this sync get last_seen_at updated.
     - Sections not seen are left untouched (stale rows kept for UI).
     """
@@ -55,8 +58,10 @@ def refresh_sections(
         for s in discovered:
             if included_titles:
                 included = s.title in included_titles
-            else:
+            elif excluded_titles:
                 included = s.title not in excluded_titles
+            else:
+                included = False
 
             existing = conn.execute(
                 "SELECT included FROM plex_sections WHERE section_id = ?",

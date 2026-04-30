@@ -143,9 +143,12 @@ def _upsert_theme(
     """Insert or update one theme row.
     Returns (is_new, url_changed, old_video_id_if_changed)."""
     imdb_id = record.get("imdb_id") or None
-    title = record.get("title") or ""
-    original_title = record.get("original_title") or None
-    rd = record.get("release_date") or ""
+    # TMDB uses different field names for movies vs TV: title/release_date for
+    # movies, name/first_air_date for TV. ThemerrDB stores records as-is, so
+    # accept either shape.
+    title = record.get("title") or record.get("name") or ""
+    original_title = record.get("original_title") or record.get("original_name") or None
+    rd = record.get("release_date") or record.get("first_air_date") or ""
     year = rd[:4] if rd else None
     yt_url = record.get("youtube_theme_url") or None
     yt_vid = extract_video_id(yt_url)
