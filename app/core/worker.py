@@ -390,7 +390,6 @@ class Worker:
         # Apply rate limit
         self.bucket.acquire()
 
-        from .canonical import canonical_theme_subdir
         media_root = (self.settings.movies_themes_dir if media_type == "movie"
                       else self.settings.tv_themes_dir)
         out_dir = media_root / canonical_theme_subdir(theme["title"], theme["year"])
