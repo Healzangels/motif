@@ -847,6 +847,21 @@ pre code, .codeblock {
   background: rgba(255,184,74,0.05);
   vertical-align: middle;
 }
+/* v1.10.30: 'Nx' pill shown when a single library row collapses
+   multiple plex_items entries (same theme placed into multiple
+   sections / folders). Greenish to read as 'fine, not a problem'
+   rather than warning. */
+.copies-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  color: var(--green);
+  border: 1px solid rgba(109,255,181,0.35);
+  background: rgba(109,255,181,0.06);
+  vertical-align: middle;
+}
 /* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
    as the regular T badge but de-emphasized — informational rows aren't
    actionable so they shouldn't compete with normal rows. */
