@@ -2304,19 +2304,23 @@
         : '';
     })();
 
-    // v1.10.19 Option B row actions — every relevant action visible,
-    // grouped by intent with subtle '·' dividers. Replaces the v1.10.13
-    // primary+overflow popover the user didn't like.
+    // v1.10.24 Option C row actions — collapse the wide button row into
+    // categorized menu buttons so each row stays in-bounds:
+    //   [ⓘ INFO]  ·  [SOURCE ▾]  [PLACE ▾]  [REMOVE ▾]
     //
-    //   [ⓘ INFO]  ·  [source group]  ·  [replace group]  ·  [destruct group]
+    // SOURCE ▾  — where the theme comes from
+    //               DOWNLOAD/RE-DL/REVERT, URL, UPLOAD, ADOPT,
+    //               REPLACE w/ TDB
+    // PLACE ▾   — push the canonical to Plex's folder
+    //               REPLACE (when downloaded but not placed),
+    //               RE-PUSH (when already placed)
+    // REMOVE ▾  — destructive
+    //               DEL, UNMANAGE, × PURGE
     //
-    //   source group:    DOWNLOAD/RE-DL,  REVERT,  URL,  UPLOAD,  ADOPT
-    //   replace group:   REPLACE,  REPLACE w/ TDB
-    //   destruct group:  DEL,  UNMANAGE,  × PURGE
-    //
-    // Groups that have no buttons get suppressed (no leading divider).
-    // While a job is in flight (lockManualActions), every action button
-    // is disabled. INFO stays clickable.
+    // Native <details>/<summary> popover, same pattern as v1.10.13's
+    // overflow with click-outside-close handler. Empty menus are
+    // suppressed so untracked rows don't get a useless PLACE/REMOVE
+    // button. INFO stays as its own clickable button.
     const lockManualActions = !!it.job_in_flight || awaitingApproval;
     const lockTitle = it.job_in_flight
       ? 'wait for current job to finish'
@@ -2325,11 +2329,6 @@
     const isOrphan = it.upstream_source === 'plex_orphan';
     const isManual = it.provenance === 'manual';
     const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
-    // v1.10.19: source_kind is the authoritative discriminator (v1.10.12).
-    // Pre-1.10.19 REVERT showed on every isManual+isThemerrDb row, which
-    // mis-fired on A (adopted) rows — there's no user_overrides to
-    // revert. Now REVERT is gated to source_kind='url' (or the legacy
-    // null-fallback path's url heuristic).
     const sourceKindForActions = (() => {
       if (it.source_kind) return it.source_kind;
       if (!isManual) return null;
@@ -2340,7 +2339,7 @@
     })();
     const isManualPlacement = placed && placedProv === 'manual';
 
-    function btnHtml(act, label, tip, extras = {}) {
+    function menuItemHtml(act, label, tip, extras = {}) {
       const dataset = [
         extras.rk !== undefined ? `data-rk="${htmlEscape(extras.rk)}"` : '',
         extras.mt !== undefined ? `data-mt="${htmlEscape(extras.mt)}"` : '',
@@ -2358,76 +2357,43 @@
       return `<button class="${cls}" data-act="${act}" ${dataset}${titleAttr}>${label}</button>`;
     }
 
-    // Group 1: read
-    const readGroup = [];
-    if (themed && themeId !== null && themeId !== undefined) {
-      readGroup.push(
-        `<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`
-      );
-    }
-
-    // Group 2: source actions (where the theme comes from)
-    const sourceGroup = [];
+    // SOURCE menu
+    const sourceItems = [];
     if (sidecarOnly) {
-      sourceGroup.push(btnHtml(
+      sourceItems.push(menuItemHtml(
         'adopt-sidecar', 'ADOPT',
         "take ownership of the existing theme.mp3 sidecar; motif manages it from now on",
         { rk: it.rating_key },
       ));
     }
     if (themed && themeId !== null && themeId !== undefined && !sidecarOnly) {
-      // DOWNLOAD/RE-DL: hidden when an in-flight job is running per
-      // v1.10.11; the rest of the group's buttons stay (disabled).
       if (!lockManualActions) {
         const dlLabel = downloaded ? 'RE-DL' : 'DOWNLOAD';
         const dlTip = downloaded ? 're-download from ThemerrDB' : 'download from ThemerrDB';
-        sourceGroup.push(btnHtml(
+        sourceItems.push(menuItemHtml(
           'redl', dlLabel, dlTip, { mt: themeMt, id: themeId },
         ));
       }
-      // REVERT only on URL-sourced rows. Adopt rows have no user_override
-      // so REVERT is meaningless there — would have looked like a UA bug.
       if (sourceKindForActions === 'url') {
-        sourceGroup.push(btnHtml(
+        sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
           'clear manual URL override and download from ThemerrDB',
           { mt: themeMt, id: themeId, warn: true },
         ));
       }
     }
-    sourceGroup.push(btnHtml(
-      'manual-url', 'URL',
+    sourceItems.push(menuItemHtml(
+      'manual-url', 'SET URL',
       'provide a YouTube URL (manual override)',
       { rk: it.rating_key, warn: true },
     ));
-    sourceGroup.push(btnHtml(
-      'upload-theme', 'UPLOAD',
+    sourceItems.push(menuItemHtml(
+      'upload-theme', 'UPLOAD MP3',
       'upload an MP3 file as the theme',
       { rk: it.rating_key },
     ));
-
-    // Group 3: replace / push-to-Plex
-    const replaceGroup = [];
-    if (themed && downloaded && !placed) {
-      replaceGroup.push(btnHtml(
-        'replace', 'REPLACE',
-        "push motif's downloaded theme back into the Plex folder (no re-download)",
-        { mt: themeMt, id: themeId, warn: true },
-      ));
-    }
-    // v1.10.21: RE-PUSH on placed rows — same /replace endpoint
-    // (force-place from canonical, no re-download). Useful when Plex
-    // didn't pick up the theme on its own and the user wants to
-    // re-trigger placement without nuking the canonical first.
-    if (themed && downloaded && placed) {
-      replaceGroup.push(btnHtml(
-        'replace', 'RE-PUSH',
-        "force motif to re-place the canonical at the Plex folder (no re-download)",
-        { mt: themeMt, id: themeId, warn: true },
-      ));
-    }
     if (isThemerrDb && (sidecarOnly || isManualPlacement)) {
-      replaceGroup.push(btnHtml(
+      sourceItems.push(menuItemHtml(
         'replace-with-themerrdb', 'REPLACE w/ TDB',
         sidecarOnly
           ? "overwrite the existing sidecar with motif's ThemerrDB download"
@@ -2436,24 +2402,43 @@
       ));
     }
 
-    // Group 4: destructive
-    const destructGroup = [];
+    // PLACE menu — single-action category, but rendered as a menu for
+    // visual symmetry with the others. Hidden entirely when there's
+    // nothing to push.
+    const placeItems = [];
+    if (themed && downloaded && !placed) {
+      placeItems.push(menuItemHtml(
+        'replace', 'PUSH TO PLEX',
+        "push motif's downloaded theme into the Plex folder (no re-download)",
+        { mt: themeMt, id: themeId, warn: true },
+      ));
+    }
+    if (themed && downloaded && placed) {
+      placeItems.push(menuItemHtml(
+        'replace', 'RE-PUSH',
+        "force motif to re-place the canonical at the Plex folder (no re-download)",
+        { mt: themeMt, id: themeId, warn: true },
+      ));
+    }
+
+    // REMOVE menu
+    const removeItems = [];
     if (placed) {
-      destructGroup.push(btnHtml(
+      removeItems.push(menuItemHtml(
         'unplace', 'DEL',
-        "remove from Plex folder; canonical stays (use REPLACE to put it back)",
+        "remove from Plex folder; canonical stays (PUSH TO PLEX puts it back)",
         { mt: themeMt, id: themeId, danger: true },
       ));
     }
     if (placed && downloaded) {
-      destructGroup.push(btnHtml(
+      removeItems.push(menuItemHtml(
         'unmanage', 'UNMANAGE',
         "drop motif's tracking + delete the canonical; leave the Plex-folder theme.mp3 alone (row flips to M)",
         { mt: themeMt, id: themeId, danger: true },
       ));
     }
     if (downloaded || isOrphan) {
-      destructGroup.push(btnHtml(
+      removeItems.push(menuItemHtml(
         'purge', '× PURGE',
         isOrphan ? 'delete everything: orphan record + files'
                  : 'delete everything: motif drops the canonical + tracking',
@@ -2461,11 +2446,26 @@
       ));
     }
 
-    const groups = [readGroup, sourceGroup, replaceGroup, destructGroup]
-      .filter((g) => g.length > 0);
-    const actions = `<div class="row-actions">${
-      groups.map((g) => g.join('')).join('<span class="row-actions-sep" aria-hidden="true">·</span>')
-    }</div>`;
+    function menuButtonHtml(label, items, kindClass) {
+      if (!items.length) return '';
+      // <details>/<summary> popover — open/close native, click-outside
+      // close handled by the global listener bound below.
+      const cls = `row-menu ${kindClass || ''}`.trim();
+      return `<details class="${cls}">`
+        + `<summary class="btn btn-tiny" title="${htmlEscape(label)} actions">${htmlEscape(label)} ▾</summary>`
+        + `<div class="row-menu-panel">${items.join('')}</div>`
+        + `</details>`;
+    }
+
+    const acts = [];
+    if (themed && themeId !== null && themeId !== undefined) {
+      acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
+    }
+    acts.push(menuButtonHtml('SOURCE', sourceItems));
+    acts.push(menuButtonHtml('PLACE', placeItems));
+    acts.push(menuButtonHtml('REMOVE', removeItems, 'row-menu-danger'));
+
+    const actions = `<div class="row-actions">${acts.filter(Boolean).join('')}</div>`;
 
     const selKey = libKey(it);
     const selected = libraryState.selected.has(selKey);
@@ -2813,9 +2813,15 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
     });
 
-    // (v1.10.19 — overflow popover removed; Option B groups all actions
-    // inline with '·' dividers, so click-outside-close is no longer
-    // needed.)
+    // v1.10.24: close any open row-menu popover when the user clicks
+    // anywhere outside it. Native <details> handles open/close on the
+    // summary itself but doesn't auto-dismiss on outside click.
+    document.addEventListener('click', (e) => {
+      const inside = e.target.closest('.row-menu');
+      document.querySelectorAll('.row-menu[open]').forEach((d) => {
+        if (d !== inside) d.removeAttribute('open');
+      });
+    });
 
     // v1.10.14: helpers to look up the row a button belongs to and
     // detect Plex-agent rows. Used to gate destructive overrides
@@ -2848,6 +2854,14 @@
     document.getElementById('library-body')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act]');
       if (!btn) return;
+      // v1.10.24: action buttons inside a row-menu popover should close
+      // the menu after firing. Schedule the close after the click
+      // handler runs so other handlers see the open state if they
+      // care.
+      const menuParent = e.target.closest('.row-menu');
+      if (menuParent) {
+        setTimeout(() => menuParent.removeAttribute('open'), 0);
+      }
       const act = btn.dataset.act;
       // P-agent override gate: prompt before actions that would replace
       // Plex's own theme with motif content.

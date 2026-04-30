@@ -456,14 +456,39 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   justify-content: flex-end;
 }
 .row-actions .btn-tiny { white-space: nowrap; }
-/* v1.10.19 Option B layout: subtle '·' divider between action groups
-   (read · source · replace · destructive). The dividers help the eye
-   group related buttons without taking layout space. */
-.row-actions-sep {
-  color: var(--bg-ridge);
-  margin: 0 4px;
+/* v1.10.24 Option C: per-row menu buttons (SOURCE / PLACE / REMOVE).
+   Native <details>/<summary> popover; CSS positions the panel and a
+   global click-outside handler closes any open one. */
+.row-menu { position: relative; display: inline-block; }
+.row-menu > summary {
+  list-style: none;
+  cursor: pointer;
   user-select: none;
-  font-weight: 700;
+}
+.row-menu > summary::-webkit-details-marker { display: none; }
+.row-menu > summary::marker { content: ''; }
+.row-menu-danger > summary {
+  color: var(--red);
+  border-color: var(--red);
+}
+.row-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  background: var(--bg-deep);
+  border: 1px solid var(--bg-ridge);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
+  min-width: 160px;
+}
+.row-menu-panel .btn-tiny {
+  text-align: left;
+  width: 100%;
+  display: block;
 }
 
 /* Library page banner highlighting "N missing themes" available from ThemerrDB
