@@ -287,7 +287,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -697,6 +697,35 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
+    """v12 re-disambiguates U vs A on legacy rows.
+
+    The v11 backfill couldn't tell apart two cases that look identical in
+    local_files alone (provenance='manual', source_video_id is an 11-char
+    YouTube id):
+      (a) the user provided a manual URL — should be 'url' (U badge)
+      (b) the user adopted a sidecar that resolved to a real ThemerrDB
+          title (canonical filename uses the upstream youtube id) —
+          should be 'adopt' (A badge)
+    The disambiguator: case (a) writes a user_overrides row, case (b)
+    doesn't. Re-run the classification using that signal.
+
+    User feedback: 'I'm also seeing files from previous tests showing
+    as uploaded U instead of A adopted'.
+    """
+    log.info("Migrating to schema v12 (U vs A disambiguation via user_overrides)")
+    conn.executescript("""
+        UPDATE local_files
+           SET source_kind = 'adopt'
+         WHERE source_kind = 'url'
+           AND NOT EXISTS (
+               SELECT 1 FROM user_overrides uo
+                WHERE uo.media_type = local_files.media_type
+                  AND uo.tmdb_id = local_files.tmdb_id
+           );
+    """)
+
+
 def _migrate_v10_to_v11(conn: sqlite3.Connection) -> None:
     """v11 adds local_files.source_kind so the row badge can show T/U/A
     without guessing.
@@ -845,6 +874,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 10:
                     _migrate_v10_to_v11(conn)
                     current = 11
+                elif current == 11:
+                    _migrate_v11_to_v12(conn)
+                    current = 12
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

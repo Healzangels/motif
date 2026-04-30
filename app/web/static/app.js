@@ -2338,10 +2338,18 @@
       'upload an MP3 file as the theme',
       { rk: it.rating_key },
     ));
-    if (sidecarOnly && isThemerrDb) {
+    // v1.10.14: REPLACE w/ TDB also offered on motif-managed manual
+    // rows (U / A) when ThemerrDB tracks the title — lets the user
+    // swap their manual choice for the upstream version without
+    // first DELing. Hidden when ThemerrDB doesn't have the title
+    // (no point — there's nothing to replace from).
+    const isManualPlacement = placed && placedProv === 'manual';
+    if (isThemerrDb && (sidecarOnly || isManualPlacement)) {
       overflow.push(overflowItemHtml(
         'replace-with-themerrdb', 'REPLACE w/ TDB',
-        "overwrite the existing sidecar with motif's ThemerrDB download",
+        sidecarOnly
+          ? "overwrite the existing sidecar with motif's ThemerrDB download"
+          : "swap your manual theme for the ThemerrDB download",
         { rk: it.rating_key, warn: true },
       ));
     }
@@ -2700,6 +2708,33 @@
       });
     });
 
+    // v1.10.14: helpers to look up the row a button belongs to and
+    // detect Plex-agent rows. Used to gate destructive overrides
+    // (DOWNLOAD / URL / UPLOAD) behind a confirmation when Plex is
+    // already supplying a theme — the user wants Plex's own themes to
+    // win by default and only override on explicit opt-in.
+    function findItemForButton(btn) {
+      const rk = btn.dataset.rk;
+      const mt = btn.dataset.mt;
+      const id = btn.dataset.id;
+      return (libraryState.items || []).find((it) =>
+        (rk && it.rating_key === rk) ||
+        (mt && id && it.theme_media_type === mt
+              && String(it.theme_tmdb) === String(id))
+      );
+    }
+    function isPlexAgentRow(it) {
+      return !!it && !it.media_folder && !it.plex_local_theme && !!it.plex_has_theme;
+    }
+    function confirmPlexAgentOverride(action, title) {
+      return confirm(
+        `Plex is already supplying a theme for "${title || 'this item'}".\n\n`
+        + `Motif's default is to defer to Plex when it has its own theme. `
+        + `Are you sure you want to ${action}?\n\n`
+        + `(This will replace what Plex currently plays with motif's version.)`
+      );
+    }
+
     // Row clicks: redl, upload-theme, manual-url, delete-orphan, override, info
     document.getElementById('library-body')?.addEventListener('click', async (e) => {
       // Action buttons inside an overflow panel should also close the
@@ -2713,6 +2748,20 @@
         setTimeout(() => overflowParent.removeAttribute('open'), 0);
       }
       const act = btn.dataset.act;
+      // P-agent override gate: prompt before actions that would replace
+      // Plex's own theme with motif content.
+      if (act === 'redl' || act === 'manual-url' || act === 'upload-theme'
+          || act === 'revert' || act === 'replace-with-themerrdb') {
+        const it = findItemForButton(btn);
+        if (isPlexAgentRow(it)) {
+          const verb = act === 'redl'                  ? 'download from ThemerrDB'
+                     : act === 'manual-url'            ? 'set a manual YouTube URL'
+                     : act === 'upload-theme'          ? 'upload an MP3'
+                     : act === 'revert'                ? 'revert to ThemerrDB'
+                     :                                   "replace with ThemerrDB's version";
+          if (!confirmPlexAgentOverride(verb, btn.dataset.title)) return;
+        }
+      }
       if (act === 'redl') {
         redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'revert') {
