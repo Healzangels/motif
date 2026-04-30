@@ -2415,6 +2415,17 @@
         { mt: themeMt, id: themeId, warn: true },
       ));
     }
+    // v1.10.21: RE-PUSH on placed rows — same /replace endpoint
+    // (force-place from canonical, no re-download). Useful when Plex
+    // didn't pick up the theme on its own and the user wants to
+    // re-trigger placement without nuking the canonical first.
+    if (themed && downloaded && placed) {
+      replaceGroup.push(btnHtml(
+        'replace', 'RE-PUSH',
+        "force motif to re-place the canonical at the Plex folder (no re-download)",
+        { mt: themeMt, id: themeId, warn: true },
+      ));
+    }
     if (isThemerrDb && (sidecarOnly || isManualPlacement)) {
       replaceGroup.push(btnHtml(
         'replace-with-themerrdb', 'REPLACE w/ TDB',
@@ -2914,8 +2925,21 @@
         });
       } else if (act === 'adopt-sidecar') {
         // v1.10.9: inline adopt — claim the sidecar at this Plex folder.
+        // v1.10.21: surface the match kind in the confirm prompt so the
+        // user knows whether the result will be linked to a ThemerrDB
+        // record (REPLACE w/ TDB available after) or a pure orphan
+        // (file is the source of truth, no TDB alternative).
         const title = btn.dataset.title || 'this item';
-        if (!confirm(`Adopt the existing theme.mp3 for "${title}"?\n\nMotif will hardlink the file into /themes and manage it from now on.`)) return;
+        const it = findItemForButton(btn);
+        const tdbTracked = !!(it && it.upstream_source
+                              && it.upstream_source !== 'plex_orphan');
+        const matchNote = tdbTracked
+          ? "✓ TMDB-matched: this title is in ThemerrDB. After adopt you'll be able to REPLACE w/ TDB later."
+          : "✗ No ThemerrDB record: your file becomes the source of truth (no TDB alternative).";
+        if (!confirm(
+          `Adopt the existing theme.mp3 for "${title}"?\n\n${matchNote}\n\n`
+          + `Motif will hardlink the file into /themes and manage it from now on.`
+        )) return;
         try {
           await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/adopt-sidecar`);
           libraryRapidPoll();

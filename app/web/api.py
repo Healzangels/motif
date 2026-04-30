@@ -2454,6 +2454,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "events": [dict(e) for e in recent_events],
         }
 
+    def _enqueue_section_refresh_for_item(
+        conn, media_type: str, tmdb_id: int,
+    ) -> int:
+        """v1.10.21: enqueue a per-section plex_enum for every Plex section
+        that holds this item, so cached plex_items.local_theme_file +
+        has_theme reflect post-destructive reality. Returns the number
+        of jobs enqueued (0 when there's already an enum in flight or
+        the item isn't in any tracked section).
+
+        Why: motif's place / unplace / unmanage / forget mutate state
+        on disk that plex_items doesn't know about until the next enum.
+        Without a refresh, an UNMANAGE row would render as untracked
+        instead of M (sidecar) because plex_items.local_theme_file is
+        stale. A scoped enum is cheap (200-row batches per v1.9.6).
+        Dedupes against any pending/running plex_enum globally.
+        """
+        plex_mt = "show" if media_type == "tv" else "movie"
+        existing = conn.execute(
+            "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
+            "AND status IN ('pending','running')"
+        ).fetchone()
+        if existing:
+            return 0
+        sections = conn.execute(
+            "SELECT DISTINCT section_id FROM plex_items "
+            "WHERE guid_tmdb = ? AND media_type = ?",
+            (tmdb_id, plex_mt),
+        ).fetchall()
+        enq = 0
+        for s in sections:
+            conn.execute(
+                "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                (json.dumps({"section_id": s["section_id"],
+                             "scope": "post_destructive"}),
+                 now_iso(), now_iso()),
+            )
+            enq += 1
+        return enq
+
     @app.post("/api/items/{media_type}/{tmdb_id}/unplace")
     async def api_unplace_item(
         request: Request, media_type: MediaType, tmdb_id: int,
@@ -2505,6 +2545,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WHERE folder_path = ?",
                     (folder,),
                 )
+            # v1.10.21: scope a plex_enum to this item's section(s) so
+            # the next library load sees the post-DEL state via Plex,
+            # not just our optimistic flag-clear above.
+            _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Unplaced by {request.state.user}",
@@ -2636,6 +2680,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # plex_items.local_theme_file intentionally NOT cleared — the
             # sidecar at the Plex folder is still present (we left it
             # alone), and the row should now render as M (unmanaged).
+            # v1.10.21: kick a per-section enum so the next library
+            # load picks up the live local_theme_file flag from Plex
+            # (which was likely 0 before motif placed, then never
+            # re-stat'd to 1 after the place — a stale 0 would render
+            # the row as untracked instead of M).
+            _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
 
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -2731,6 +2781,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WHERE folder_path = ?",
                     (folder,),
                 )
+            # v1.10.21: kick a per-section enum so cached flags refresh.
+            _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
 
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
