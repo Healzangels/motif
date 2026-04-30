@@ -1179,7 +1179,11 @@
         } catch {}
       }
       const checked = scansState.selectedIds.has(f.id) ? 'checked' : '';
-      const decision = f.decision === 'pending' ? '–' : htmlEscape(f.decision);
+      // Display "lock" for the keep_existing internal value (cosmetic relabel
+      // that doesn't touch the DB enum).
+      const decisionLabel = f.decision === 'pending' ? '–'
+                           : f.decision === 'keep_existing' ? 'lock'
+                           : htmlEscape(f.decision);
       const isAdopted = !!f.adopted_at;
       const actions = isAdopted
         ? '<span class="muted small">DONE</span>'
@@ -1187,8 +1191,7 @@
              <option value="">–</option>
              <option value="adopt">adopt</option>
              <option value="replace">replace</option>
-             <option value="keep_existing">keep</option>
-             <option value="ignore">ignore</option>
+             <option value="keep_existing">lock</option>
            </select>`;
       return `<tr data-finding="${f.id}">
         <td><input type="checkbox" data-select="${f.id}" ${checked} ${isAdopted ? 'disabled' : ''} /></td>
@@ -1196,7 +1199,7 @@
         <td title="${htmlEscape(f.media_folder)}">${folder}</td>
         <td>${resolved}</td>
         <td><code class="small">${htmlEscape(f.file_sha256.substring(0, 12))}…</code></td>
-        <td>${decision}</td>
+        <td>${decisionLabel}</td>
         <td>${actions}</td>
       </tr>`;
     }).join('');
@@ -1302,7 +1305,8 @@
         const decision = btn.dataset.bulk;
         const ids = Array.from(scansState.selectedIds);
         if (!ids.length) return;
-        if (!confirm(`Apply "${decision}" to ${ids.length} finding(s)?`)) return;
+        const label = decision === 'keep_existing' ? 'lock' : decision;
+        if (!confirm(`Apply "${label}" to ${ids.length} finding(s)?`)) return;
         try {
           const r = await api('POST', '/api/scans/findings/decisions/bulk',
                               { finding_ids: ids, decision });

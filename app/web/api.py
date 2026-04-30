@@ -791,7 +791,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         body = await request.json()
         decision = body.get("decision")
-        if decision not in ("adopt", "replace", "keep_existing", "ignore"):
+        if decision not in ("adopt", "replace", "keep_existing"):
             raise HTTPException(status_code=400,
                                 detail=f"invalid decision: {decision}")
         with get_conn(db) as conn:
@@ -827,7 +827,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         decision = body.get("decision")
         if not isinstance(ids, list) or not ids:
             raise HTTPException(status_code=400, detail="finding_ids must be non-empty list")
-        if decision not in ("adopt", "replace", "keep_existing", "ignore"):
+        if decision not in ("adopt", "replace", "keep_existing"):
             raise HTTPException(status_code=400,
                                 detail=f"invalid decision: {decision}")
         enqueued = 0

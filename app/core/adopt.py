@@ -1,8 +1,8 @@
 """
 Adoption operations — apply user decisions to scan_findings.
 
-Each scan finding has a `decision` ∈ {pending, adopt, replace, keep_existing, ignore}.
-This module turns those decisions into concrete file-system + DB operations:
+Each scan finding has a `decision` ∈ {pending, adopt, replace, keep_existing}.
+The UI surfaces `keep_existing` as "LOCK" — same enum value, clearer label.
 
   adopt          — hardlink the existing theme.mp3 into motif's themes_dir
                    (or copy if cross-FS), record local_files + placements rows.
@@ -11,9 +11,15 @@ This module turns those decisions into concrete file-system + DB operations:
   replace        — enqueue a download job for this theme's youtube_url, which
                    will overwrite the existing file when placement happens.
                    Only valid for non-orphan findings.
-  keep_existing  — record a user_overrides row marking 'manual' provenance,
-                   so future placements won't overwrite this theme.
-  ignore         — record decision but don't touch the filesystem.
+  keep_existing  — (UI label: LOCK) record a user_overrides row marking
+                   'manual' provenance, so future placements won't overwrite
+                   this theme.
+
+Legacy: pre-v1.6.1 also accepted 'ignore' (a soft "dismiss this finding"
+that left no DB side-effects). The CHECK constraint on scan_findings still
+permits the value so historical rows stay valid, but the API and UI no
+longer expose it — the same effect is implicit by leaving findings in
+the 'pending' state.
 
 All operations are recorded as completed by stamping the scan_findings row's
 adopt_outcome and adopted_at fields.
@@ -42,7 +48,7 @@ def adopt_finding(db_path: Path, finding_id: int, decision: str,
                   *, decided_by: str, settings) -> dict:
     """Apply a user decision to a scan_finding. Returns the outcome dict
     that gets stored in adopt_outcome and surfaced to the UI."""
-    if decision not in ("adopt", "replace", "keep_existing", "ignore"):
+    if decision not in ("adopt", "replace", "keep_existing"):
         raise AdoptError(f"unknown decision: {decision}")
 
     with get_conn(db_path) as conn:
@@ -64,8 +70,6 @@ def adopt_finding(db_path: Path, finding_id: int, decision: str,
             outcome = _do_replace(db_path, finding, settings, decided_by)
         elif decision == "keep_existing":
             outcome = _do_keep(db_path, finding, decided_by)
-        elif decision == "ignore":
-            outcome = {"action": "ignore"}
         else:
             raise AdoptError(f"unknown decision: {decision}")
     except Exception as e:
