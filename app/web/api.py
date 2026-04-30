@@ -1029,7 +1029,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rows = conn.execute("""
                 SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
-                       lf.rel_path, lf.file_size, lf.downloaded_at,
+                       lf.file_path, lf.file_size, lf.downloaded_at,
                        lf.source_video_id, lf.provenance
                 FROM local_files lf
                 JOIN themes t
@@ -1126,11 +1126,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if placed:
                     continue
                 row = conn.execute(
-                    "SELECT rel_path FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    "SELECT file_path FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 ).fetchone()
                 if row and themes_dir:
-                    abs_path = themes_dir / row["rel_path"]
+                    abs_path = themes_dir / row["file_path"]
                     try:
                         if abs_path.is_file():
                             abs_path.unlink()
@@ -1411,7 +1411,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             ).fetchall()
             local_row = conn.execute(
-                "SELECT rel_path FROM local_files "
+                "SELECT file_path FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
@@ -1433,11 +1433,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         themes_dir = settings.themes_dir
         if local_row and themes_dir:
             try:
-                p = themes_dir / local_row["rel_path"]
+                p = themes_dir / local_row["file_path"]
                 if p.is_file():
                     p.unlink()
             except OSError as e:
-                log.warning("Could not unlink canonical %s: %s", local_row["rel_path"], e)
+                log.warning("Could not unlink canonical %s: %s", local_row["file_path"], e)
 
         # Drop the theme row; FK ON DELETE CASCADE handles local_files,
         # placements, pending_updates, user_overrides in one transaction.
