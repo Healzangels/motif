@@ -2067,27 +2067,28 @@
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
-    if (cntEl) cntEl.textContent =
-      `· ${fmt.num(data.total)} match${data.total === 1 ? '' : 'es'}`;
-
-    // Missing-themes banner. v1.10.0: only show after Plex has been
-    // enumerated at least once — pre-scan, the missing_count is comparing
-    // ThemerrDB against an empty/stale plex_items snapshot, which is
-    // misleading. Show a "scan needed" hint instead.
-    const banner = document.getElementById('library-missing-banner');
-    const scanHint = document.getElementById('library-scan-hint');
-    if (banner) {
-      const n = data.missing_count || 0;
-      const enumerated = !!data.plex_enumerated;
-      if (enumerated && n > 0) {
-        document.getElementById('library-missing-count').textContent = fmt.num(n);
-        const staleEl = document.getElementById('library-missing-stale');
-        if (staleEl) staleEl.style.display = data.plex_scan_stale ? '' : 'none';
-        banner.style.display = '';
-      } else {
-        banner.style.display = 'none';
+    if (cntEl) {
+      // v1.10.10: when the user is on THEMERRDB ONLY, label the count
+      // with the media type so it's obvious the chip is tab-scoped (the
+      // SQL filter is by t.media_type — a /movies tab will never include
+      // tv rows, but the label removes any ambiguity for the user).
+      let scope = '';
+      if (libraryState.status === 'not_in_plex') {
+        if (libraryState.tab === 'movies') scope = ' ThemerrDB-only movies';
+        else if (libraryState.tab === 'tv') scope = ' ThemerrDB-only shows';
+        else scope = ' ThemerrDB-only items';
       }
+      cntEl.textContent =
+        `· ${fmt.num(data.total)}${scope || ' match' + (data.total === 1 ? '' : 'es')}`;
     }
+
+    // v1.10.10: missing-themes banner removed. The chip filters
+    // (THEMERRDB / DOWNLOADED / READY TO PLACE) and per-row actions
+    // give the user direct paths to every action the banner offered,
+    // so a separate "X downloads available" callout was just noise
+    // (and it was firing on the FAILURES tab too where it made no
+    // sense). The scan-needed hint stays — different concept.
+    const scanHint = document.getElementById('library-scan-hint');
     if (scanHint) {
       scanHint.style.display = data.plex_enumerated ? 'none' : '';
     }
@@ -2559,24 +2560,9 @@
       loadLibrary().catch(console.error);
     });
 
-    // Missing-themes bulk download
-    document.getElementById('library-download-missing-btn')?.addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      const orig = btn.textContent;
-      btn.textContent = '// QUEUING';
-      try {
-        const r = await api('POST', '/api/library/download-missing', {
-          tab: libraryState.tab, fourk: libraryState.fourk,
-        });
-        btn.textContent = `// ${r.enqueued} QUEUED`;
-        setTimeout(() => loadLibrary().catch(()=>{}), 1500);
-        libraryRapidPoll();
-      } catch (err) {
-        alert('Bulk download failed: ' + err.message);
-      }
-      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
-    });
+    // (v1.10.10) // DOWNLOAD ALL handler removed alongside the
+    // missing-themes banner; /api/library/download-missing endpoint is
+    // still available for scripted callers but no UI binds to it.
 
     // Per-row select checkbox toggle
     document.getElementById('library-body')?.addEventListener('change', (e) => {

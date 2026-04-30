@@ -44,21 +44,13 @@
   </span>
 </div>
 
-<!-- Missing-themes banner — shown when N>0 ThemerrDB-tracked items in this
-     tab haven't been downloaded yet AND a Plex scan has happened so the
-     comparison is real. Stale-advisory appears when sync ran more recently
-     than the last Plex enum (1.10.0+). -->
-<div id="library-missing-banner" class="missing-banner" style="display:none">
-  <span class="missing-banner-glyph">▸</span>
-  <span class="missing-banner-text">
-    <strong id="library-missing-count">0</strong> missing themes available from ThemerrDB
-    in this tab — click to enqueue all.
-    <span id="library-missing-stale" class="muted small" style="display:none;margin-left:8px">
-      (sync newer than last Plex scan — REFRESH FROM PLEX for accurate count)
-    </span>
-  </span>
-  <button class="btn btn-tiny btn-warn" id="library-download-missing-btn" type="button">// DOWNLOAD ALL</button>
-</div>
+<!-- Missing-themes banner removed in v1.10.10 — the chip filters
+     (THEMERRDB / DOWNLOADED / IN PLEX FOLDER / READY TO PLACE) plus
+     the per-row actions (DOWNLOAD / RE-DL / ADOPT / REPLACE w/ TDB)
+     give the user direct paths to every action the banner offered.
+     The bulk-download endpoint /api/library/download-missing still
+     exists for scripted callers but no UI exposes it. -->
+
 
 <section class="filterbar">
   <input type="text" id="library-search" placeholder="search title or imdb id…"
