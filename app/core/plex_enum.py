@@ -65,11 +65,80 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
             log.info("plex_enum: section %s — %d items (%d new, %d updated)",
                      s["title"], len(items), ins, upd)
 
+    # v1.10.8: detect Plex folder renames/moves and re-link the canonical
+    # theme. plex_items.folder_path now reflects the current Plex-side
+    # location; placements.media_folder reflects where motif previously
+    # placed the hardlink. When they diverge, the OLD path is stale —
+    # update the placement to the new path and enqueue a place job so
+    # Plex finds the theme in its current folder.
+    relinked = reconcile_placement_paths(db_path)
+    stats["relinked"] = relinked
+
     log_event(db_path, level="INFO", component="plex_enum",
               message=f"Enumerated {stats['sections']} sections, "
                       f"{stats['items_seen']} items "
-                      f"({stats['inserted']} new, {stats['updated']} updated)")
+                      f"({stats['inserted']} new, {stats['updated']} updated"
+                      f"{', ' + str(relinked) + ' relinked' if relinked else ''})")
     return stats
+
+
+def reconcile_placement_paths(db_path: Path) -> int:
+    """Find placements whose media_folder no longer matches the current
+    plex_items.folder_path for that (media_type, tmdb_id), update the
+    placement to the new path, and enqueue a forced place job so the
+    canonical theme gets hardlinked into the new folder.
+
+    Returns the number of placements relinked.
+
+    Triggered at the end of every plex_enum run. The cost is one
+    indexed JOIN against plex_items + an UPDATE per divergent row,
+    so it scales with active placements (typically tens to low
+    hundreds), not the full Plex catalog.
+    """
+    enqueued = 0
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            """SELECT p.media_type, p.tmdb_id,
+                      p.media_folder AS old_folder,
+                      pi.folder_path AS new_folder
+               FROM placements p
+               INNER JOIN plex_items pi
+                 ON pi.guid_tmdb = p.tmdb_id
+                AND pi.media_type = (CASE p.media_type WHEN 'tv' THEN 'show' ELSE 'movie' END)
+               WHERE pi.folder_path IS NOT NULL
+                 AND pi.folder_path != ''
+                 AND p.media_folder != pi.folder_path"""
+        ).fetchall()
+        for r in rows:
+            # Cancel any in-flight place to avoid racing the new one.
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
+                     AND status IN ('pending','running')""",
+                (now_iso(), r["media_type"], r["tmdb_id"]),
+            )
+            # Update the placement row in-place. Composite PK is
+            # (media_type, tmdb_id, media_folder); changing media_folder
+            # rewrites the row identity to point at the new location.
+            conn.execute(
+                """UPDATE placements SET media_folder = ?
+                   WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
+                (r["new_folder"], r["media_type"], r["tmdb_id"], r["old_folder"]),
+            )
+            conn.execute(
+                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload,
+                                     status, created_at, next_run_at)
+                   VALUES ('place', ?, ?, '{"force":true,"reason":"folder_relocated"}',
+                           'pending', ?, ?)""",
+                (r["media_type"], r["tmdb_id"], now_iso(), now_iso()),
+            )
+            log_event(db_path, level="INFO", component="plex_enum",
+                      media_type=r["media_type"], tmdb_id=r["tmdb_id"],
+                      message=f"Plex folder moved; relinking theme",
+                      detail={"old_folder": r["old_folder"],
+                              "new_folder": r["new_folder"]})
+            enqueued += 1
+    return enqueued
 
 
 # Tunable: how many items per write transaction. Smaller = more lock
