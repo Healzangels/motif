@@ -226,7 +226,12 @@ class Worker:
     # -- Job handlers --
 
     def _do_plex_enum(self, job: sqlite3.Row) -> None:
-        """Walk every managed Plex section, upsert plex_items rows."""
+        """Re-enumerate Plex library items.
+
+        Payload may carry {"section_id": "..."} to scope to one section
+        (per-section REFRESH from /settings#plex). Default: every managed
+        section.
+        """
         from .plex_enum import run_plex_enum
         from .plex import PlexConfig
         if not (self.settings.plex_enabled and self.settings.plex_url
@@ -234,13 +239,20 @@ class Worker:
             log_event(self.settings.db_path, level="WARNING", component="plex_enum",
                       message="Skipped: Plex not configured")
             return
+        only_section: str | None = None
+        try:
+            payload = json.loads(job["payload"] or "{}")
+            if isinstance(payload, dict) and payload.get("section_id"):
+                only_section = str(payload["section_id"])
+        except (TypeError, ValueError):
+            pass
         cfg = PlexConfig(
             url=self.settings.plex_url,
             token=self.settings.plex_token,
             movie_section=self.settings.plex_movie_section,
             tv_section=self.settings.plex_tv_section,
         )
-        run_plex_enum(self.settings.db_path, cfg)
+        run_plex_enum(self.settings.db_path, cfg, only_section_id=only_section)
 
     def _do_sync(self, job: sqlite3.Row) -> None:
         # Optional payload overrides:

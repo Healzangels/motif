@@ -433,9 +433,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .lib-col-section  { width: 240px; }
 .lib-col-type     { width: 80px; }
 .lib-col-mgd      { width: 70px; text-align: center; }
-.lib-col-role     { width: 140px; }
+.lib-col-id       { width: 70px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
+.lib-col-role     { width: 110px; }
 .lib-col-num      { width: 90px; text-align: center; font-variant-numeric: tabular-nums; }
-.lib-col-role select { font-size: var(--t-tiny); padding: 4px 8px; width: 100%; }
+/* Constrain the role <select> so it stops eating horizontal space — the
+   value labels are short. */
+.lib-col-role select {
+  font-size: var(--t-tiny); padding: 4px 8px; width: auto; min-width: 100px;
+}
 .lib-col-actions  { width: 120px; text-align: right; }
 .libraries-table td.lib-locations,
 .libraries-table th.lib-locations { overflow: hidden; text-overflow: ellipsis; }

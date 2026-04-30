@@ -926,14 +926,13 @@
       const locations = (s.location_paths || []).map(htmlEscape).join('<br>') || '<span class="muted">—</span>';
       const isAnime = !!s.is_anime;
       const is4k = !!s.is_4k;
-      // Derive a single "role" from the underlying flag pair so the dropdown
-      // can present one decision per section instead of two checkboxes.
       const role = isAnime && is4k ? 'anime_4k'
                  : isAnime         ? 'anime'
                  : is4k            ? '4k'
                  :                   'standard';
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}">
+          <td class="lib-col-id">${htmlEscape(s.section_id)}</td>
           <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
           <td class="lib-col-type"><span class="muted">${htmlEscape(s.type)}</span></td>
           <td class="lib-col-mgd">
@@ -947,20 +946,18 @@
               <option value="anime_4k"${role === 'anime_4k' ? ' selected' : ''}>anime 4k</option>
             </select>
           </td>
-          <td class="lib-col-num">${fmt.num(s.placed_count)}</td>
-          <td class="lib-col-num">${s.copies_count > 0 ? '<span class="accent">'+fmt.num(s.copies_count)+'</span>' : fmt.num(s.copies_count)}</td>
           <td class="lib-locations" style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${locations}</td>
           <td class="lib-col-actions">
-            <span class="muted" style="font-size:var(--t-tiny)">id=${htmlEscape(s.section_id)}</span>
+            <button class="btn btn-tiny" data-section-refresh="${htmlEscape(s.section_id)}" title="re-enumerate just this section from Plex">REFRESH</button>
           </td>
         </tr>
       `;
       if (s.type === 'movie') movieRows.push(row); else tvRows.push(row);
     }
     $('#libraries-movies-body').innerHTML = movieRows.join('') ||
-      '<tr><td colspan="8" class="muted center">no movie sections discovered</td></tr>';
+      '<tr><td colspan="7" class="muted center">no movie sections discovered</td></tr>';
     $('#libraries-tv-body').innerHTML = tvRows.join('') ||
-      '<tr><td colspan="8" class="muted center">no TV sections discovered</td></tr>';
+      '<tr><td colspan="7" class="muted center">no TV sections discovered</td></tr>';
   }
 
   function bindLibraries() {
@@ -983,6 +980,24 @@
         refresh.textContent = orig;
         loadLibraries().catch(console.error);
       }, 1500);
+    });
+
+    // Per-section refresh button — enumerate just this section from Plex
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-section-refresh]');
+      if (!btn) return;
+      const sid = btn.dataset.sectionRefresh;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '…';
+      try {
+        await api('POST', `/api/libraries/${encodeURIComponent(sid)}/refresh`);
+        btn.textContent = '✓';
+        setTimeout(() => loadLibraries().catch(()=>{}), 4000);
+      } catch (err) {
+        alert('Refresh failed: ' + err.message);
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
     });
 
     document.addEventListener('change', async (e) => {
@@ -1813,22 +1828,22 @@
     const downloaded = !!it.file_path;
     const placed = !!it.media_folder;
 
-    // Source badge — three motif-tracked provenance categories plus a
-    // "Plex agent" category for items where Plex itself has a theme that
-    // motif didn't put there.
-    //   M = manually uploaded (file or URL)
-    //   A = motif auto-downloaded from ThemerrDB
-    //   P = Plex agent / pre-existing theme (Plex got it from somewhere
-    //       other than motif — its built-in agent or a sidecar from
-    //       before motif's adoption)
-    //   — = no theme yet
+    // Source badge. Motif "tracks" an item when it has either a local_files
+    // row (the canonical lives in themes_dir) OR a placements row (motif
+    // hardlinked theme.mp3 into the Plex folder). Either signal is enough
+    // to claim ownership and override the P fallback.
+    //   M = manually uploaded (file or URL); provenance == 'manual'
+    //   T = ThemerrDB-sourced (motif downloaded auto)
+    //   P = Plex agent / pre-existing theme that motif doesn't track
+    //   — = no theme anywhere
+    const motifTracks = !!(it.file_path || it.media_folder);
     let srcCell;
-    if (it.provenance === 'manual') {
+    if (motifTracks && it.provenance === 'manual') {
       srcCell = '<span class="link-badge link-badge-manual" title="manually uploaded (file or YouTube URL)">M</span>';
-    } else if (it.file_path) {
-      srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB" style="color:var(--green-bright);border-color:var(--green-deep)">A</span>';
+    } else if (motifTracks) {
+      srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
     } else if (it.plex_has_theme) {
-      srcCell = '<span class="link-badge link-badge-cloud" title="theme already present in Plex (Plex agent / sidecar)">P</span>';
+      srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
     } else {
       srcCell = '<span class="muted" title="no theme">—</span>';
     }

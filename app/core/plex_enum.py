@@ -25,13 +25,22 @@ from .sections import list_sections
 log = logging.getLogger(__name__)
 
 
-def run_plex_enum(db_path: Path, plex_cfg: PlexConfig) -> dict:
-    """Enumerate every managed Plex section, upsert plex_items. Returns
-    a stats dict. Failures on individual sections are logged and skipped
-    so a single broken section doesn't kill the whole pass."""
+def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
+                   *, only_section_id: str | None = None) -> dict:
+    """Enumerate Plex sections, upsert plex_items. Returns stats.
+
+    `only_section_id`: scope the enumeration to one section (used by the
+    per-section REFRESH button on /settings#plex). Default is every
+    managed section.
+
+    Failures on individual sections are logged and skipped so a single
+    broken section doesn't kill the whole pass.
+    """
     stats = {"sections": 0, "items_seen": 0, "inserted": 0, "updated": 0, "errors": 0}
     sections = list_sections(db_path)
     managed = [s for s in sections if s["included"]]
+    if only_section_id:
+        managed = [s for s in managed if s["section_id"] == only_section_id]
     if not managed:
         log.info("plex_enum: no managed sections, nothing to do")
         return stats

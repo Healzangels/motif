@@ -218,6 +218,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
     templates = Jinja2Templates(directory=str(template_dir))
 
+    # Make __version__ available to every template (rendered into the brand
+    # badge at top-left). Centralising here means individual route handlers
+    # don't need to remember to pass it.
+    from .. import __version__ as motif_version
+    templates.env.globals["motif_version"] = motif_version
+
     app.add_middleware(AuthMiddleware, settings=settings)
 
     def get_db_path() -> Path:
@@ -1339,7 +1345,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|themed|untheme|plex_agent|placed|unplaced|failures)$"),
+        status: str = Query("all", pattern="^(all|themed|plex_agent|untracked|placed|unplaced|failures)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         db: Path = Depends(get_db_path),
@@ -1364,20 +1370,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             where_extra += " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
             params.extend([f"%{q}%", q])
         if status == "themed":
-            # "Themed" = covered by ThemerrDB. Plex_orphan rows have a
-            # themes record but came from the user (adopted/manual upload),
-            # not from ThemerrDB — exclude them so the chip's count matches
-            # what's actually downloadable from upstream.
+            # ThemerrDB-tracked. Excludes plex_orphan rows (orphans/manual
+            # uploads aren't from upstream).
             where_extra += (" AND t.tmdb_id IS NOT NULL "
                             "AND t.upstream_source != 'plex_orphan'")
-        elif status == "untheme":
-            # "PLEX-ONLY" = no ThemerrDB record AND no motif-managed row
-            where_extra += (" AND (t.tmdb_id IS NULL "
-                            "OR t.upstream_source = 'plex_orphan')")
         elif status == "plex_agent":
-            # Plex's own agent populated a theme; motif hasn't downloaded
-            # one. Matches the P badge.
-            where_extra += " AND pi.has_theme = 1 AND lf.file_path IS NULL"
+            # Plex's agent has a theme but motif doesn't track it. Matches
+            # the P badge.
+            where_extra += (" AND pi.has_theme = 1 "
+                            "AND lf.file_path IS NULL "
+                            "AND p.media_folder IS NULL")
+        elif status == "untracked":
+            # No ThemerrDB record AND no Plex theme AND no motif tracking —
+            # candidates for manual URL or upload to flesh out the catalog.
+            where_extra += (" AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan') "
+                            "AND pi.has_theme = 0 "
+                            "AND lf.file_path IS NULL "
+                            "AND p.media_folder IS NULL")
         elif status == "placed":
             where_extra += " AND p.media_folder IS NOT NULL"
         elif status == "unplaced":
@@ -1713,6 +1722,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"rating_key": rating_key, "title": pi["title"]})
         return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
                 "youtube_url": canonical_url}
+
+    @app.post("/api/libraries/{section_id}/refresh")
+    async def api_libraries_section_refresh(
+        request: Request, section_id: str,
+        db: Path = Depends(get_db_path),
+    ):
+        """Re-enumerate a single Plex section. Lighter than the global plex_enum
+        (which walks every managed section). Useful when a particular library
+        had recent additions and the user wants the unified view to reflect
+        them without waiting for the next sync."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT type, included FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="section not found")
+            if not row["included"]:
+                raise HTTPException(status_code=409,
+                                    detail="section is not managed (toggle MGD first)")
+            existing = conn.execute(
+                "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
+                "AND status IN ('pending','running')"
+            ).fetchone()
+            if existing:
+                return {"ok": True, "job_id": existing["id"], "already_queued": True}
+            cur = conn.execute(
+                "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                (json.dumps({"section_id": section_id}), now_iso(), now_iso()),
+            )
+        log_event(db, level="INFO", component="api",
+                  message=f"Per-section refresh ({section_id}) by {request.state.user}")
+        return {"ok": True, "job_id": cur.lastrowid}
 
     @app.post("/api/library/refresh")
     async def api_library_refresh(request: Request, db: Path = Depends(get_db_path)):
