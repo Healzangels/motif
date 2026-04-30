@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS themes (
     failure_kind         TEXT,
     failure_message      TEXT,
     failure_at           TEXT,
+    -- v1.10.32: normalized title (normalize_title in app/core/normalize.py)
+    -- for the title-fallback library match. Populated by sync.
+    title_norm           TEXT,
     UNIQUE (media_type, tmdb_id)
 );
 
@@ -51,6 +54,12 @@ CREATE INDEX IF NOT EXISTS idx_themes_video ON themes (youtube_video_id);
 CREATE INDEX IF NOT EXISTS idx_themes_title ON themes (title);
 CREATE INDEX IF NOT EXISTS idx_themes_failure ON themes (failure_kind) WHERE failure_kind IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_themes_orphan ON themes (upstream_source) WHERE upstream_source = 'plex_orphan';
+-- v1.10.32: title_norm holds normalize_title() output ('Twelve Monkeys'
+-- → '12 monkeys'). Lets the library JOIN match by normalized title+year
+-- as a last-resort fallback when Plex's GUIDs disagree with ThemerrDB.
+CREATE INDEX IF NOT EXISTS idx_themes_title_norm
+    ON themes (media_type, title_norm, year)
+    WHERE title_norm IS NOT NULL AND year IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS local_files (
     media_type      TEXT NOT NULL,
@@ -195,6 +204,11 @@ CREATE TABLE IF NOT EXISTS plex_items (
     --     own tracking, this lets the SRC badge differentiate cloud-only
     --     Plex themes (P) from local sidecars motif doesn't track (M).
     local_theme_file INTEGER NOT NULL DEFAULT 0,
+    -- v1.10.32: same normalized-title cache as themes.title_norm.
+    -- Lets the library JOIN's title-fallback compare apples-to-apples
+    -- without re-running normalize_title() on every row. Populated by
+    -- plex_enum.
+    title_norm       TEXT,
     first_seen_at    TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
@@ -203,6 +217,9 @@ CREATE INDEX IF NOT EXISTS idx_plex_items_type    ON plex_items (media_type);
 CREATE INDEX IF NOT EXISTS idx_plex_items_imdb    ON plex_items (guid_imdb);
 CREATE INDEX IF NOT EXISTS idx_plex_items_tmdb    ON plex_items (guid_tmdb);
 CREATE INDEX IF NOT EXISTS idx_plex_items_title   ON plex_items (title COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_plex_items_title_norm
+    ON plex_items (media_type, title_norm, year)
+    WHERE title_norm IS NOT NULL AND year IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS pending_updates (
     media_type        TEXT NOT NULL,
@@ -287,7 +304,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -697,6 +714,60 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
+    """v13 adds title_norm columns to themes + plex_items.
+
+    The library JOIN already matches Plex items to ThemerrDB themes by
+    (guid_tmdb / tmdb_id) and (guid_imdb / imdb_id). When Plex's GUIDs
+    disagree with ThemerrDB (different tmdb assignment, stale Plex
+    metadata, localized titles), the row stays untracked even though
+    a title-level match exists. Example user report: ThemerrDB has
+    'Twelve Monkeys (1995)', Plex has '12 Monkeys (1995)' — same film,
+    but the local row reads as untracked.
+
+    Backfill normalized titles via app.core.normalize:normalize_title
+    so the library JOIN can fall back to (media_type, title_norm, year)
+    when the GUID match misses. Indexes added in the canonical SCHEMA
+    backfill on the same path.
+    """
+    log.info("Migrating to schema v13 (title_norm + indexes)")
+    # Column adds (idempotent — guard against repeat application by
+    # checking PRAGMA table_info, since SQLite has no IF NOT EXISTS for
+    # ADD COLUMN).
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(themes)")}
+    if "title_norm" not in cols:
+        conn.execute("ALTER TABLE themes ADD COLUMN title_norm TEXT")
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(plex_items)")}
+    if "title_norm" not in cols:
+        conn.execute("ALTER TABLE plex_items ADD COLUMN title_norm TEXT")
+
+    # Backfill — import locally to avoid a circular import at module
+    # load (normalize.py is a leaf module, but db.py is imported very
+    # early in the boot sequence).
+    from .normalize import normalize_title
+    for row in conn.execute(
+        "SELECT id, title FROM themes WHERE title_norm IS NULL"
+    ).fetchall():
+        try:
+            tn = normalize_title(row[1] or "")
+        except Exception:
+            tn = (row[1] or "").lower()
+        conn.execute(
+            "UPDATE themes SET title_norm = ? WHERE id = ?", (tn, row[0]),
+        )
+    for row in conn.execute(
+        "SELECT rating_key, title FROM plex_items WHERE title_norm IS NULL"
+    ).fetchall():
+        try:
+            tn = normalize_title(row[1] or "")
+        except Exception:
+            tn = (row[1] or "").lower()
+        conn.execute(
+            "UPDATE plex_items SET title_norm = ? WHERE rating_key = ?",
+            (tn, row[0]),
+        )
+
+
 def _migrate_v11_to_v12(conn: sqlite3.Connection) -> None:
     """v12 re-disambiguates U vs A on legacy rows.
 
@@ -877,6 +948,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 11:
                     _migrate_v11_to_v12(conn)
                     current = 12
+                elif current == 12:
+                    _migrate_v12_to_v13(conn)
+                    current = 13
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

@@ -183,6 +183,14 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
         batch = enriched[batch_start:batch_start + _UPSERT_BATCH]
         with get_conn(db_path) as conn, transaction(conn):
             for it, sidecar in batch:
+                # v1.10.32: precompute the normalized title so the library
+                # JOIN's title-fallback can match against themes.title_norm
+                # without re-running normalize_title at query time.
+                try:
+                    from .normalize import normalize_title
+                    tn = normalize_title(it.title or "")
+                except Exception:
+                    tn = (it.title or "").lower()
                 existing = conn.execute(
                     "SELECT 1 FROM plex_items WHERE rating_key = ?",
                     (it.rating_key,),
@@ -193,12 +201,12 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
                               section_id = ?, media_type = ?, title = ?, year = ?,
                               guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
                               folder_path = ?, has_theme = ?, local_theme_file = ?,
-                              last_seen_at = ?
+                              title_norm = ?, last_seen_at = ?
                            WHERE rating_key = ?""",
                         (it.section_id, it.media_type, it.title, it.year,
                          it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
                          it.folder_path, 1 if it.has_theme else 0, sidecar,
-                         now, it.rating_key),
+                         tn, now, it.rating_key),
                     )
                     updated += 1
                 else:
@@ -206,12 +214,13 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
                         """INSERT INTO plex_items
                            (rating_key, section_id, media_type, title, year,
                             guid_imdb, guid_tmdb, guid_tvdb, folder_path,
-                            has_theme, local_theme_file, first_seen_at, last_seen_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            has_theme, local_theme_file, title_norm,
+                            first_seen_at, last_seen_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (it.rating_key, it.section_id, it.media_type, it.title,
                          it.year, it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
                          it.folder_path, 1 if it.has_theme else 0, sidecar,
-                         now, now),
+                         tn, now, now),
                     )
                     inserted += 1
     return inserted, updated

@@ -348,6 +348,26 @@ def _library_main_query(
                  AND t2.upstream_source != 'plex_orphan')
                 OR (t2.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL
                     AND t2.upstream_source = 'plex_orphan')
+                -- v1.10.32: title+year fallback. Fires only when Plex's
+                -- guid_tmdb didn't match anything in themes (e.g.
+                -- 'Twelve Monkeys' in TDB but Plex has '12 Monkeys'
+                -- with a stale tmdb pointing elsewhere). Constrained
+                -- to ThemerrDB-real rows so we don't accidentally
+                -- claim an orphan row by title.
+                OR (
+                  t2.upstream_source != 'plex_orphan'
+                  AND pi.title_norm IS NOT NULL
+                  AND t2.title_norm = pi.title_norm
+                  AND pi.year IS NOT NULL
+                  AND t2.year = pi.year
+                  AND NOT EXISTS (
+                    SELECT 1 FROM themes t3
+                    WHERE t3.media_type = t2.media_type
+                      AND ((t3.tmdb_id = pi.guid_tmdb AND pi.guid_tmdb IS NOT NULL
+                            AND t3.upstream_source != 'plex_orphan')
+                           OR (t3.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL))
+                  )
+                )
               )
             ORDER BY CASE WHEN t2.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
                      t2.id DESC

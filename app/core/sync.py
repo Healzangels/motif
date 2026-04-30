@@ -239,19 +239,30 @@ def _upsert_theme(
             ).fetchone()
             is_new = False
 
+    # v1.10.32: precompute the normalized title so the library JOIN's
+    # title-fallback (when Plex GUIDs disagree with ThemerrDB) can
+    # match without re-running normalize_title() at query time.
+    try:
+        from .normalize import normalize_title
+        title_norm = normalize_title(title or "")
+    except Exception:
+        title_norm = (title or "").lower()
+
     if is_new:
         conn.execute(
             """
             INSERT INTO themes (
                 media_type, tmdb_id, imdb_id, title, original_title, year, release_date,
                 youtube_url, youtube_video_id, youtube_added_at, youtube_edited_at,
-                upstream_source, raw_json, last_seen_sync_at, first_seen_sync_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                upstream_source, raw_json, last_seen_sync_at, first_seen_sync_at,
+                title_norm
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 media_type, tmdb_id, imdb_id, title, original_title, year, rd or None,
                 yt_url, yt_vid, yt_added, yt_edited,
                 upstream_source, _safe_json(record), sync_ts, sync_ts,
+                title_norm,
             ),
         )
     else:
@@ -271,12 +282,14 @@ def _upsert_theme(
                 """
                 UPDATE themes SET
                     imdb_id = ?, title = ?, original_title = ?, year = ?, release_date = ?,
-                    upstream_source = ?, raw_json = ?, last_seen_sync_at = ?
+                    upstream_source = ?, raw_json = ?, last_seen_sync_at = ?,
+                    title_norm = ?
                 WHERE media_type = ? AND tmdb_id = ?
                 """,
                 (
                     imdb_id, title, original_title, year, rd or None,
                     upstream_source, _safe_json(record), sync_ts,
+                    title_norm,
                     media_type, tmdb_id,
                 ),
             )
@@ -287,13 +300,13 @@ def _upsert_theme(
                 imdb_id = ?, title = ?, original_title = ?, year = ?, release_date = ?,
                 youtube_url = ?, youtube_video_id = ?, youtube_added_at = ?,
                 youtube_edited_at = ?, upstream_source = ?, raw_json = ?,
-                last_seen_sync_at = ?
+                last_seen_sync_at = ?, title_norm = ?
             WHERE media_type = ? AND tmdb_id = ?
             """,
             (
                 imdb_id, title, original_title, year, rd or None,
                 yt_url, yt_vid, yt_added, yt_edited,
-                upstream_source, _safe_json(record), sync_ts,
+                upstream_source, _safe_json(record), sync_ts, title_norm,
                 media_type, tmdb_id,
             ),
         )
