@@ -206,9 +206,40 @@ def _require_admin(request: Request) -> Principal:
     return p
 
 
+# v1.10.15: column-sort whitelist. Each entry maps the ?sort= value
+# accepted by /api/library to a SQL ORDER BY snippet for the main row
+# query. Wrapping in a whitelist keeps the param SQL-injection-safe.
+# 'src' uses a CASE expression that mirrors the badge precedence:
+# T → U → A → M → P → — so sort-by-source groups rows visually the same
+# way the SRC column does.
+_LIBRARY_SORTS_MAIN = {
+    "title": "pi.title COLLATE NOCASE",
+    "year":  "pi.year",
+    "imdb":  "pi.guid_imdb",
+    "src": (
+        "CASE "
+        "WHEN p.provenance = 'auto' THEN 1 "
+        "WHEN p.provenance = 'manual' AND lf.source_kind = 'adopt' THEN 2 "
+        "WHEN p.provenance = 'manual' THEN 3 "
+        "WHEN pi.local_theme_file = 1 THEN 4 "
+        "WHEN pi.has_theme = 1 THEN 5 "
+        "ELSE 6 END"
+    ),
+    "dl":    "CASE WHEN lf.file_path IS NOT NULL THEN 0 ELSE 1 END",
+    "pl":    "CASE WHEN p.media_folder IS NOT NULL THEN 0 ELSE 1 END",
+    "link":  "CASE p.placement_kind WHEN 'hardlink' THEN 0 WHEN 'copy' THEN 1 ELSE 2 END",
+}
+_LIBRARY_SORTS_NOT_IN_PLEX = {
+    "title": "t.title COLLATE NOCASE",
+    "year":  "t.year",
+    "imdb":  "t.imdb_id",
+}
+
+
 def _library_main_query(
     db: Path, *, tab: str, fourk: bool, q: str, status: str,
     page: int, per_page: int,
+    sort: str = "title", sort_dir: str = "asc",
 ) -> dict:
     """Sync helper for /api/library — runs all SQL in one threadpool call
     so the FastAPI event loop isn't blocked. v1.10.2 perf pass:
@@ -343,10 +374,12 @@ def _library_main_query(
           AND lf.file_path IS NULL
           AND t.upstream_source != 'plex_orphan'
     """
-    sql_rows = (
-        f"{sql_select} {sql_from} {sql_where} "
-        f"ORDER BY pi.title COLLATE NOCASE LIMIT ? OFFSET ?"
-    )
+    order_expr = _LIBRARY_SORTS_MAIN.get(sort, _LIBRARY_SORTS_MAIN["title"])
+    direction = "DESC" if sort_dir == "desc" else "ASC"
+    # Stable secondary sort by title so equal primary keys (lots of NULLs
+    # in src/link) don't shuffle on every render.
+    order_clause = f"ORDER BY {order_expr} {direction}, pi.title COLLATE NOCASE ASC"
+    sql_rows = f"{sql_select} {sql_from} {sql_where} {order_clause} LIMIT ? OFFSET ?"
     # Single round-trip for the three banner-meta scalars added in v1.10.0.
     # Was three separate queries per request — now one. Each scalar is
     # already independently indexed; combining is purely a round-trip win.
@@ -385,6 +418,7 @@ def _library_main_query(
 def _library_not_in_plex(
     db: Path, *, tab: str, fourk: bool,
     q: str, page: int, per_page: int,
+    sort: str = "title", sort_dir: str = "asc",
 ) -> dict:
     """Return ThemerrDB rows whose tmdb_id has no matching plex_items
     in the requested tab. Synthesizes plex-shaped fields so the frontend
@@ -422,6 +456,11 @@ def _library_not_in_plex(
           {q_where}
     """
     sql_count = f"SELECT COUNT(*) FROM themes t {base_where}"
+    order_expr = _LIBRARY_SORTS_NOT_IN_PLEX.get(
+        sort, _LIBRARY_SORTS_NOT_IN_PLEX["title"],
+    )
+    direction = "DESC" if sort_dir == "desc" else "ASC"
+    order_clause = f"ORDER BY {order_expr} {direction}, t.title COLLATE NOCASE ASC"
     sql_rows = f"""
         SELECT
             ('themerrdb-' || t.media_type || '-' || t.tmdb_id) AS rating_key,
@@ -452,7 +491,7 @@ def _library_not_in_plex(
         LEFT JOIN placements p
           ON p.media_type = t.media_type AND p.tmdb_id = t.tmdb_id
         {base_where}
-        ORDER BY t.title COLLATE NOCASE
+        {order_clause}
         LIMIT ? OFFSET ?
     """
     offset = (page - 1) * per_page
@@ -1713,6 +1752,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|failures|not_in_plex)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
+        sort: str = Query("title", pattern="^(title|year|src|dl|pl|link|imdb)$"),
+        sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
         db: Path = Depends(get_db_path),
     ):
         """Unified browse: every item Plex sees in the requested tab/sub-tab,
@@ -1730,10 +1771,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return await run_in_threadpool(
                 _library_not_in_plex, db, tab=tab, fourk=fourk,
                 q=q, page=page, per_page=per_page,
+                sort=sort, sort_dir=sort_dir,
             )
         return await run_in_threadpool(
             _library_main_query, db, tab=tab, fourk=fourk,
             q=q, status=status, page=page, per_page=per_page,
+            sort=sort, sort_dir=sort_dir,
         )
 
     @app.post("/api/library/download-batch")

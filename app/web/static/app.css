@@ -396,6 +396,20 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-bottom: 1px solid var(--line);
   text-transform: uppercase;
 }
+/* v1.10.15: clickable sort headers. Hover gives a subtle highlight,
+   active column lights green to match the chip-active palette. */
+.table th.col-sort {
+  cursor: pointer;
+  user-select: none;
+}
+.table th.col-sort:hover { color: var(--fg); }
+.table th.col-sort-active { color: var(--green-bright); }
+.table th .sort-indicator {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 10px;
+  width: 8px;
+}
 .table td {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);

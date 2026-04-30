@@ -2029,6 +2029,9 @@
     perPage: 50,
     q: "",
     status: "all",
+    // v1.10.15: column sort state. sort key whitelisted server-side.
+    sort: "title",
+    sortDir: "asc",
     // Set of "media_type:tmdb_id" keys checked via the per-row checkbox.
     // Survives pagination (we restore checkboxes on render).
     selected: new Set(),
@@ -2036,6 +2039,16 @@
 
   function libKey(it) {
     return `${it.theme_media_type || it.plex_media_type}:${it.theme_tmdb || it.rating_key}`;
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll('th.col-sort').forEach((th) => {
+      const ind = th.querySelector('.sort-indicator');
+      if (!ind) return;
+      const isActive = th.dataset.sort === libraryState.sort;
+      th.classList.toggle('col-sort-active', isActive);
+      ind.textContent = isActive ? (libraryState.sortDir === 'desc' ? '▼' : '▲') : '';
+    });
   }
 
   async function loadLibrary() {
@@ -2050,6 +2063,12 @@
     });
     if (libraryState.q) params.set('q', libraryState.q);
     if (libraryState.status !== 'all') params.set('status', libraryState.status);
+    if (libraryState.sort && libraryState.sort !== 'title') {
+      params.set('sort', libraryState.sort);
+    }
+    if (libraryState.sortDir && libraryState.sortDir !== 'asc') {
+      params.set('sort_dir', libraryState.sortDir);
+    }
     const tbody = document.getElementById('library-body');
     tbody.innerHTML = `<tr><td colspan="9" class="muted center">loading…</td></tr>`;
     let data;
@@ -2631,6 +2650,26 @@
       libraryState.page = Number(b.dataset.libPage);
       loadLibrary().catch(console.error);
     });
+
+    // v1.10.15: column sort. Click a th[data-sort] to sort. Re-clicking
+    // the active column toggles asc → desc → asc. Switching columns
+    // resets to asc. The active column shows a ▲/▼ indicator.
+    document.querySelectorAll('th.col-sort').forEach((th) => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (!key) return;
+        if (libraryState.sort === key) {
+          libraryState.sortDir = libraryState.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          libraryState.sort = key;
+          libraryState.sortDir = 'asc';
+        }
+        libraryState.page = 1;  // reset to first page on sort change
+        updateSortIndicators();
+        loadLibrary().catch(console.error);
+      });
+    });
+    updateSortIndicators();
 
     // (v1.10.10) // DOWNLOAD ALL handler removed alongside the
     // missing-themes banner; /api/library/download-missing endpoint is
