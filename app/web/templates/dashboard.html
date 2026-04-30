@@ -1,16 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}ThemerrDB{% endblock %}
 {% block content %}
 <section class="hero">
   <div class="hero-row">
-    <h1 class="title">SIGNAL ACQUIRED</h1>
-    <div class="sync-actions">
-      <button class="btn" id="sync-download-place-btn" title="run sync, download new themes, place into Plex immediately">// SYNC + PLACE</button>
-      <button class="btn" id="sync-download-only-btn" title="run sync and download new themes, but stage them in /pending for review">// DOWNLOAD ONLY</button>
-      <button class="btn" id="sync-place-staged-btn" title="approve placement of every theme currently staged in /pending">// PLACE STAGED</button>
-    </div>
+    <h1 class="title">THEMERRDB</h1>
+    <button class="btn" id="sync-now-btn" title="pull latest ThemerrDB metadata; downloads + placement happen from /movies, /tv, or /coverage">// SYNC</button>
   </div>
-  <p class="muted">tracking motifdb · synced daily at 13:00 utc</p>
+  <p class="muted">tracking motifdb · pulled daily at 13:00 utc · download/place from /movies /tv /coverage</p>
 </section>
 
 <section class="grid grid-stats" id="stats-grid">

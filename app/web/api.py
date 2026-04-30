@@ -231,20 +231,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/movies", response_class=HTMLResponse)
     async def movies_page(request: Request):
-        return templates.TemplateResponse(request, "library.html", {
-            "tab": "movies", "title": "Movies",
+        # ThemerrDB-only browse. Plex catalog (incl. items not in ThemerrDB)
+        # lives under /coverage now.
+        return templates.TemplateResponse(request, "browse.html", {
+            "media_type": "movie", "title": "Movies",
         })
 
     @app.get("/tv", response_class=HTMLResponse)
     async def tv_page(request: Request):
-        return templates.TemplateResponse(request, "library.html", {
-            "tab": "tv", "title": "TV",
-        })
-
-    @app.get("/anime", response_class=HTMLResponse)
-    async def anime_page(request: Request):
-        return templates.TemplateResponse(request, "library.html", {
-            "tab": "anime", "title": "Anime",
+        return templates.TemplateResponse(request, "browse.html", {
+            "media_type": "tv", "title": "TV Shows",
         })
 
     @app.get("/coverage", response_class=HTMLResponse)
@@ -253,7 +249,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/libraries", response_class=HTMLResponse)
     async def libraries_page(request: Request):
-        return templates.TemplateResponse(request, "libraries.html")
+        # Libraries content lives under Settings → PLEX in v1.7+. Keep the
+        # old route as a 302 redirect so bookmarks still land somewhere
+        # useful.
+        return RedirectResponse("/settings#plex", status_code=302)
 
     @app.get("/queue", response_class=HTMLResponse)
     async def queue_page(request: Request):
@@ -1445,6 +1444,104 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
                 "file_path": rel_path, "size": len(data)}
 
+    @app.post("/api/plex_items/{rating_key}/manual-url")
+    async def api_manual_url(
+        request: Request, rating_key: str,
+        db: Path = Depends(get_db_path),
+    ):
+        """Assign a YouTube URL to a Plex item as a manual theme source.
+
+        Creates a plex_orphan themes row if no themes row exists for this
+        Plex item (matched via guid_tmdb), writes a user_overrides row, and
+        enqueues a download. The URL becomes the authoritative source for
+        the item — ThemerrDB syncs won't overwrite it (per v1.5.4 sync
+        guard).
+        """
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        url = (body or {}).get("youtube_url", "")
+        if not url:
+            raise HTTPException(status_code=400, detail="youtube_url required")
+        vid = extract_video_id(url)
+        if not vid:
+            raise HTTPException(status_code=400, detail="invalid YouTube URL")
+        canonical_url = f"https://www.youtube.com/watch?v={vid}"
+
+        with get_conn(db) as conn:
+            pi = conn.execute(
+                "SELECT * FROM plex_items WHERE rating_key = ?",
+                (rating_key,),
+            ).fetchone()
+            if pi is None:
+                raise HTTPException(status_code=404,
+                                    detail="plex_items row not found; refresh from plex")
+            theme_media_type = "tv" if pi["media_type"] == "show" else "movie"
+            theme = None
+            if pi["guid_tmdb"]:
+                theme = conn.execute(
+                    "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                    (theme_media_type, pi["guid_tmdb"]),
+                ).fetchone()
+            if theme is None:
+                row = conn.execute(
+                    "SELECT MIN(tmdb_id) AS lo FROM themes "
+                    "WHERE media_type = ? AND tmdb_id < 0",
+                    (theme_media_type,),
+                ).fetchone()
+                min_tmdb = row["lo"] if row and row["lo"] is not None else 0
+                tmdb_id = min(min_tmdb, 0) - 1
+                conn.execute(
+                    """INSERT INTO themes
+                         (media_type, tmdb_id, imdb_id, title, year,
+                          upstream_source, last_seen_sync_at, first_seen_sync_at)
+                       VALUES (?, ?, ?, ?, ?, 'plex_orphan', ?, ?)""",
+                    (theme_media_type, tmdb_id, pi["guid_imdb"],
+                     pi["title"], pi["year"], now_iso(), now_iso()),
+                )
+            else:
+                tmdb_id = theme["tmdb_id"]
+
+            conn.execute(
+                """INSERT INTO user_overrides (media_type, tmdb_id, youtube_url,
+                                               set_at, set_by, note)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                       youtube_url = excluded.youtube_url,
+                       set_at = excluded.set_at,
+                       set_by = excluded.set_by,
+                       note = excluded.note""",
+                (theme_media_type, tmdb_id, canonical_url, now_iso(),
+                 request.state.user, f"manual url for plex rk={rating_key}"),
+            )
+            conn.execute(
+                "UPDATE themes SET failure_kind = NULL, failure_message = NULL, "
+                "failure_at = NULL WHERE media_type = ? AND tmdb_id = ?",
+                (theme_media_type, tmdb_id),
+            )
+            # Cancel any in-flight download, enqueue a fresh one
+            conn.execute(
+                "UPDATE jobs SET status = 'cancelled', finished_at = ? "
+                "WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ? "
+                "  AND status IN ('pending','failed')",
+                (now_iso(), theme_media_type, tmdb_id),
+            )
+            conn.execute(
+                "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
+                "                  created_at, next_run_at) "
+                "VALUES ('download', ?, ?, '{\"reason\":\"manual_url\"}', 'pending', ?, ?)",
+                (theme_media_type, tmdb_id, now_iso(), now_iso()),
+            )
+
+        log_event(db, level="INFO", component="api",
+                  media_type=theme_media_type, tmdb_id=tmdb_id,
+                  message=f"Manual URL set by {request.state.user}: {canonical_url}",
+                  detail={"rating_key": rating_key, "title": pi["title"]})
+        return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
+                "youtube_url": canonical_url}
+
     @app.post("/api/library/refresh")
     async def api_library_refresh(request: Request, db: Path = Depends(get_db_path)):
         """Manually enqueue a plex_enum job (refresh the unified browse cache)."""
@@ -1900,16 +1997,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/sync/now")
     async def api_sync_now(request: Request, db: Path = Depends(get_db_path)):
         _require_admin(request)
-        # Optional body: {"download_only": bool}. True forces downloads to
-        # land in /pending; False forces auto-place; absent uses the global
-        # placement.auto_place default.
+        # Optional body:
+        #   {"metadata_only": true}  — pull ThemerrDB updates only;
+        #                              do NOT enqueue any download jobs.
+        #   {"download_only": true}  — sync + download, but stage in /pending
+        #                              instead of auto-placing.
+        #   {"download_only": false} — sync + download + auto-place.
+        # Default (no body): metadata_only behaviour, matching the v1.7+
+        # dashboard's single SYNC button.
         try:
             body = await request.json()
         except Exception:
             body = {}
         payload: dict = {}
-        if isinstance(body, dict) and "download_only" in body:
-            payload["auto_place"] = not bool(body["download_only"])
+        if isinstance(body, dict):
+            if body.get("metadata_only"):
+                payload["enqueue_downloads"] = False
+            elif "download_only" in body:
+                payload["auto_place"] = not bool(body["download_only"])
         payload_json = json.dumps(payload) if payload else "{}"
         with get_conn(db) as conn:
             existing = conn.execute(

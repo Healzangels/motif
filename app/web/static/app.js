@@ -54,10 +54,8 @@
   function highlightNav() {
     const path = window.location.pathname;
     const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
-                  '/anime': 'anime',
                   '/coverage': 'coverage', '/queue': 'queue',
                   '/pending': 'pending', '/scans': 'scans',
-                  '/libraries': 'libraries',
                   '/settings': 'settings' };
     const k = map[path];
     if (!k) return;
@@ -187,46 +185,22 @@
   }
 
   function bindDashboard() {
-    const dlPlaceBtn = $('#sync-download-place-btn');
-    const dlOnlyBtn = $('#sync-download-only-btn');
-    const placeStagedBtn = $('#sync-place-staged-btn');
-    if (!dlPlaceBtn && !dlOnlyBtn && !placeStagedBtn) return;
-
-    async function runSync(btn, originalLabel, body) {
+    const syncBtn = $('#sync-now-btn');
+    if (!syncBtn) return;
+    syncBtn.addEventListener('click', async (ev) => {
+      const btn = ev.currentTarget;
       btn.disabled = true;
       btn.textContent = '// QUEUED';
       try {
-        await api('POST', '/api/sync/now', body);
+        // metadata_only: don't auto-enqueue downloads. Downloads happen
+        // explicitly from /movies, /tv, or /coverage.
+        await api('POST', '/api/sync/now', { metadata_only: true });
       } catch (e) {
         alert('Sync failed: ' + e.message);
       }
       setTimeout(() => {
         btn.disabled = false;
-        btn.textContent = originalLabel;
-        loadDashboard().catch(console.error);
-      }, 1500);
-    }
-
-    dlPlaceBtn?.addEventListener('click', (ev) => {
-      runSync(ev.currentTarget, '// SYNC + PLACE', { download_only: false });
-    });
-    dlOnlyBtn?.addEventListener('click', (ev) => {
-      runSync(ev.currentTarget, '// DOWNLOAD ONLY', { download_only: true });
-    });
-    placeStagedBtn?.addEventListener('click', async (ev) => {
-      const btn = ev.currentTarget;
-      btn.disabled = true;
-      const orig = btn.textContent;
-      btn.textContent = '// PLACING';
-      try {
-        const res = await api('POST', '/api/pending/place', { all: true });
-        if (res.enqueued === 0) alert('Nothing staged to place.');
-      } catch (e) {
-        alert('Place staged failed: ' + e.message);
-      }
-      setTimeout(() => {
-        btn.disabled = false;
-        btn.textContent = orig;
+        btn.textContent = '// SYNC';
         loadDashboard().catch(console.error);
       }, 1500);
     });
@@ -1762,15 +1736,16 @@
 
     // Actions
     let actions;
+    const urlBtn = `<button class="btn btn-tiny btn-warn" data-act="manual-url" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="provide a YouTube URL">URL</button>`;
+    const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="upload an MP3 file">UPLOAD</button>`;
     if (!themed) {
-      actions = `<button class="btn btn-tiny btn-warn" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}">UPLOAD</button>`;
+      actions = `${urlBtn} ${upBtn}`;
     } else {
       const isOrphan = it.upstream_source === 'plex_orphan';
       const delBtn = isOrphan
         ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" title="delete">× DEL</button>`
         : '';
-      const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="replace with manual MP3">UPLOAD</button>`;
-      actions = `<button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">RE-DL</button> ${upBtn} ${delBtn}`;
+      actions = `<button class="btn btn-tiny" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">RE-DL</button> ${urlBtn} ${upBtn} ${delBtn}`;
     }
 
     return `
@@ -1808,13 +1783,31 @@
       });
     });
 
-    // Status filter chips
-    document.querySelectorAll('.chips [data-status]').forEach((b) => {
+    // Status filter chips (scoped to library section to avoid collision
+    // with browse.html's status chips)
+    document.querySelectorAll('#library-body, #library-pager').length &&
+      document.querySelectorAll('[data-status]').forEach((b) => {
+        // Only bind on the library page (skip if no library tbody)
+        if (!document.getElementById('library-body')) return;
+        b.addEventListener('click', () => {
+          document.querySelectorAll('[data-status]').forEach((x) =>
+            x.classList.remove('chip-active'));
+          b.classList.add('chip-active');
+          libraryState.status = b.dataset.status;
+          libraryState.page = 1;
+          loadLibrary().catch(console.error);
+        });
+      });
+
+    // Library tab chips (data-libtab) — only used on /coverage
+    document.querySelectorAll('[data-libtab]').forEach((b) => {
       b.addEventListener('click', () => {
-        document.querySelectorAll('.chips [data-status]').forEach((x) =>
+        document.querySelectorAll('[data-libtab]').forEach((x) =>
           x.classList.remove('chip-active'));
         b.classList.add('chip-active');
-        libraryState.status = b.dataset.status;
+        libraryState.tab = b.dataset.libtab;
+        const tabEl = document.getElementById('library-tab');
+        if (tabEl) tabEl.value = libraryState.tab;
         libraryState.page = 1;
         loadLibrary().catch(console.error);
       });
@@ -1857,7 +1850,7 @@
       loadLibrary().catch(console.error);
     });
 
-    // Row clicks: redl, upload-theme, delete-orphan, override
+    // Row clicks: redl, upload-theme, manual-url, delete-orphan, override
     document.getElementById('library-body')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act]');
       if (!btn) return;
@@ -1873,6 +1866,12 @@
           title: btn.dataset.title || '',
           year: btn.dataset.year || '',
         });
+      } else if (act === 'manual-url') {
+        openManualUrlDialog({
+          ratingKey: btn.dataset.rk,
+          title: btn.dataset.title || '',
+          year: btn.dataset.year || '',
+        });
       } else if (act === 'open-override') {
         openOverrideDialog({
           mediaType: btn.dataset.mt,
@@ -1880,6 +1879,62 @@
           kindHuman: btn.dataset.kindHuman || 'failure',
           message: btn.dataset.msg || '',
         });
+      }
+    });
+  }
+
+  // ---- Manual YouTube URL dialog (Coverage tab) ----
+
+  function openManualUrlDialog({ ratingKey, title, year }) {
+    const dlg = document.getElementById('manual-url-dlg');
+    if (!dlg) return;
+    document.getElementById('manual-url-rk').value = ratingKey;
+    const meta = document.getElementById('manual-url-dlg-meta');
+    const ylabel = year ? ` (${htmlEscape(year)})` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
+    document.getElementById('manual-url-input').value = '';
+    document.getElementById('manual-url-status').textContent = '';
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+  }
+
+  function closeManualUrlDialog() {
+    const dlg = document.getElementById('manual-url-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
+  }
+
+  function bindManualUrlDialog() {
+    const dlg = document.getElementById('manual-url-dlg');
+    if (!dlg) return;
+    document.getElementById('manual-url-dlg-close')?.addEventListener('click', closeManualUrlDialog);
+    document.getElementById('manual-url-cancel')?.addEventListener('click', closeManualUrlDialog);
+    const form = document.getElementById('manual-url-form');
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const status = document.getElementById('manual-url-status');
+      const rk = document.getElementById('manual-url-rk').value;
+      const url = document.getElementById('manual-url-input').value.trim();
+      if (!YOUTUBE_URL_RE.test(url)) {
+        status.textContent = '✗ enter a valid YouTube URL';
+        status.classList.remove('ok'); status.classList.add('err');
+        return;
+      }
+      status.textContent = 'saving…';
+      status.classList.remove('err', 'ok');
+      try {
+        await api('POST', `/api/plex_items/${encodeURIComponent(rk)}/manual-url`,
+                  { youtube_url: url });
+        status.textContent = '✓ saved · download queued';
+        status.classList.add('ok');
+        setTimeout(() => {
+          closeManualUrlDialog();
+          loadLibrary().catch(()=>{});
+        }, 700);
+      } catch (err) {
+        status.textContent = '✗ ' + err.message;
+        status.classList.add('err');
       }
     });
   }
@@ -1971,6 +2026,7 @@
     bindOverrideDialog();
     bindLibrary();
     bindUploadDialog();
+    bindManualUrlDialog();
 
     // TVDB test key handler
     const tvdbBtn = document.getElementById('tvdb-test-btn');
@@ -2012,7 +2068,9 @@
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
     if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
-    if (path === '/movies' || path === '/tv' || path === '/anime')
+    // /coverage hosts the unified Plex catalog table (loaded via loadLibrary
+    // when the coverage page injects the right elements).
+    if (path === '/coverage')
       setInterval(() => loadLibrary().catch(() => {}), 30000);
   });
 })();

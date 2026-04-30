@@ -133,7 +133,7 @@
                placeholder="Home Movies, Music Videos" autocomplete="off" />
         <p class="form-hint">
           Comma-separated section TITLES to ignore. You can also flip individual
-          sections from the <a href="/libraries">/libraries</a> page.
+          sections from the LIBRARY SECTIONS table below.
         </p>
       </label>
 
@@ -150,6 +150,56 @@
       <button class="btn btn-warn" data-save="plex">// SAVE PLEX</button>
       <span class="form-status" data-save-status="plex"></span>
     </div>
+  </div>
+</section>
+
+<!-- ============================ LIBRARIES (within PLEX tab) ============================ -->
+<!-- Discovered Plex sections, with managed-toggle checkbox per row. Same JS
+     handlers (bindLibraries) drive this — same element IDs as the legacy
+     /libraries page. -->
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// LIBRARY SECTIONS</h2>
+    <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// REFRESH FROM PLEX</button>
+  </header>
+  <div class="block-body" style="padding:0">
+    <p class="muted small" style="padding:10px 18px">
+      Plex sections motif knows about. Toggle MGD to enable/disable management
+      per section. Disabled sections are excluded from sync, scans, and the
+      Coverage tab's Plex catalog.
+    </p>
+    <table class="table libraries-table">
+      <thead>
+        <tr>
+          <th class="lib-col-section">SECTION</th>
+          <th class="lib-col-type">TYPE</th>
+          <th class="lib-col-mgd">MGD</th>
+          <th class="lib-col-num">PLACED</th>
+          <th class="lib-col-num">COPIES</th>
+          <th class="lib-locations">LOCATIONS</th>
+          <th class="lib-col-actions">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="libraries-movies-body">
+        <tr><td colspan="7" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+    <table class="table libraries-table" style="margin-top:24px">
+      <thead>
+        <tr>
+          <th class="lib-col-section">TV / SHOW SECTION</th>
+          <th class="lib-col-type">TYPE</th>
+          <th class="lib-col-mgd">MGD</th>
+          <th class="lib-col-num">PLACED</th>
+          <th class="lib-col-num">COPIES</th>
+          <th class="lib-locations">LOCATIONS</th>
+          <th class="lib-col-actions">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="libraries-tv-body">
+        <tr><td colspan="7" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
   </div>
 </section>
 

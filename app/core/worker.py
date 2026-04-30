@@ -243,18 +243,26 @@ class Worker:
         run_plex_enum(self.settings.db_path, cfg)
 
     def _do_sync(self, job: sqlite3.Row) -> None:
-        # Optional payload override: {"auto_place": true|false}. When absent,
-        # download jobs enqueued by this sync inherit the global setting.
+        # Optional payload overrides:
+        #   {"auto_place": true|false} — per-sync override of the global
+        #     placement.auto_place setting for downloads enqueued by this run.
+        #   {"enqueue_downloads": false} — metadata-only sync; do NOT enqueue
+        #     any download jobs at all (downloads are user-initiated from the
+        #     /movies, /tv, or /coverage pages).
         auto_place_override: bool | None = None
+        enqueue_downloads = True
         try:
             payload = json.loads(job["payload"] or "{}")
             if "auto_place" in payload:
                 auto_place_override = bool(payload["auto_place"])
+            if payload.get("enqueue_downloads") is False:
+                enqueue_downloads = False
         except (TypeError, ValueError):
             pass
         run_sync(
             self.settings.db_path, self.settings.motifdb_base_url,
             auto_place_override=auto_place_override,
+            enqueue_downloads=enqueue_downloads,
         )
         # Auto-enqueue a plex_enum after every sync so the unified browse view
         # stays current. Dedupe so concurrent syncs don't pile up.

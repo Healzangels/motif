@@ -347,7 +347,9 @@ def _enqueue_download(
 # ----- Public entry point -----
 
 
-def run_sync(db_path, base_url: str, *, auto_place_override: bool | None = None) -> SyncStats:
+def run_sync(db_path, base_url: str, *,
+             auto_place_override: bool | None = None,
+             enqueue_downloads: bool = True) -> SyncStats:
     """Run a full ThemerrDB sync. Returns stats.
 
     `auto_place_override=None` lets the worker fall back to the global
@@ -355,6 +357,12 @@ def run_sync(db_path, base_url: str, *, auto_place_override: bool | None = None)
     True or False stamps that decision onto every download enqueued by this
     run (so a "download only" sync always lands in /pending regardless of
     the global default, and vice versa).
+
+    `enqueue_downloads=False` (v1.7+ default of the dashboard SYNC button)
+    runs sync metadata-only: themes rows are upserted but no download jobs
+    are enqueued. The user triggers downloads explicitly from /movies, /tv,
+    or /coverage. pending_updates rows are still recorded for items whose
+    ThemerrDB URL changed since last sync.
     """
     stats = SyncStats()
     sync_ts = now_iso()
@@ -403,10 +411,11 @@ def run_sync(db_path, base_url: str, *, auto_place_override: bool | None = None)
                         )
                         if is_new:
                             stats.new_count += 1
-                            _enqueue_download(
-                                conn, media_type=media_type, tmdb_id=int(tmdb_id),
-                                reason="new", auto_place=auto_place_override,
-                            )
+                            if enqueue_downloads:
+                                _enqueue_download(
+                                    conn, media_type=media_type, tmdb_id=int(tmdb_id),
+                                    reason="new", auto_place=auto_place_override,
+                                )
                         elif url_changed:
                             stats.updated_count += 1
                             # If we already have a downloaded local file OR the
@@ -452,11 +461,12 @@ def run_sync(db_path, base_url: str, *, auto_place_override: bool | None = None)
                                 )
                             else:
                                 # No local file yet — just enqueue the download
-                                _enqueue_download(
-                                    conn, media_type=media_type, tmdb_id=int(tmdb_id),
-                                    reason="url_changed",
-                                    auto_place=auto_place_override,
-                                )
+                                if enqueue_downloads:
+                                    _enqueue_download(
+                                        conn, media_type=media_type, tmdb_id=int(tmdb_id),
+                                        reason="url_changed",
+                                        auto_place=auto_place_override,
+                                    )
 
         with get_conn(db_path) as conn:
             conn.execute(

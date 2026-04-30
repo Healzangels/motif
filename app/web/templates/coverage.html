@@ -94,4 +94,118 @@
     </tbody>
   </table>
 </section>
+
+<!-- ============================ PLEX CATALOG ============================ -->
+<!-- Every item Plex sees in your enabled library sections, joined to themes
+     so you can see which already have a theme and assign one to those that
+     don't (via YouTube URL or manual MP3 upload). -->
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// PLEX CATALOG <span class="muted" id="library-count">…</span></h2>
+    <div style="display:flex;gap:8px">
+      <div class="chips" role="tablist" aria-label="library tab">
+        <button class="chip chip-active" data-libtab="movies">MOVIES</button>
+        <button class="chip" data-libtab="tv">TV</button>
+        <button class="chip" data-libtab="anime">ANIME</button>
+      </div>
+      <div class="chips" role="tablist" aria-label="resolution">
+        <button class="chip chip-active" data-fourk="0">STANDARD</button>
+        <button class="chip" data-fourk="1">4K</button>
+      </div>
+      <button class="btn btn-tiny" id="library-refresh-btn" type="button">// REFRESH FROM PLEX</button>
+    </div>
+  </header>
+  <div class="block-body" style="padding:0">
+    <!-- The library table is fed by JS via /api/library; the <input type="hidden">
+         carries the active tab so existing loadLibrary() picks it up unchanged. -->
+    <input type="hidden" id="library-tab" value="movies" />
+    <div style="padding:12px 18px;display:flex;gap:12px;flex-wrap:wrap">
+      <input type="text" id="library-search" placeholder="search title or imdb id…"
+             class="input" autocomplete="off" style="flex:1;min-width:240px" />
+      <div class="chips" role="tablist">
+        <button class="chip chip-active" data-status="all">ALL</button>
+        <button class="chip" data-status="themed">THEMED</button>
+        <button class="chip" data-status="untheme">PLEX-ONLY</button>
+        <button class="chip" data-status="placed">PLACED</button>
+        <button class="chip" data-status="unplaced">UNPLACED</button>
+        <button class="chip chip-warn" data-status="failures">FAILURES</button>
+      </div>
+    </div>
+    <table class="table">
+      <thead>
+        <tr>
+          <th class="col-title">TITLE</th>
+          <th class="col-year">YEAR</th>
+          <th class="col-state">SRC</th>
+          <th class="col-state">DL</th>
+          <th class="col-state">PL</th>
+          <th class="col-state">LINK</th>
+          <th class="col-imdb">IMDB</th>
+          <th class="col-actions">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="library-body">
+        <tr><td colspan="8" class="muted center">refresh from plex to populate this table</td></tr>
+      </tbody>
+    </table>
+    <div class="pager" id="library-pager" style="padding:12px 18px"></div>
+  </div>
+</section>
+
+<dialog class="dlg" id="upload-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// UPLOAD THEME</h2>
+      <button class="dlg-close" id="upload-dlg-close" type="button">×</button>
+    </header>
+    <div class="dlg-meta" id="upload-dlg-meta"></div>
+    <form id="upload-form" enctype="multipart/form-data">
+      <input type="hidden" id="upload-rk" />
+      <label class="form-label">
+        <span class="form-label-text">// MP3 FILE</span>
+        <input class="input" type="file" id="upload-file" accept="audio/mpeg,audio/mp3,.mp3" required />
+        <p class="form-hint">
+          Upload a theme MP3 for this Plex item directly. Max 50 MiB. The
+          file is saved into the canonical themes directory and hardlinked
+          into the matching Plex folder.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// UPLOAD &amp; PLACE</button>
+        <button class="btn" type="button" id="upload-cancel">// CANCEL</button>
+        <span class="form-status" id="upload-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
+
+<dialog class="dlg" id="manual-url-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// MANUAL YOUTUBE URL</h2>
+      <button class="dlg-close" id="manual-url-dlg-close" type="button">×</button>
+    </header>
+    <div class="dlg-meta" id="manual-url-dlg-meta"></div>
+    <form id="manual-url-form">
+      <input type="hidden" id="manual-url-rk" />
+      <label class="form-label">
+        <span class="form-label-text">// YOUTUBE URL</span>
+        <input class="input" type="url" id="manual-url-input"
+               placeholder="https://www.youtube.com/watch?v=…"
+               required autocomplete="off" />
+        <p class="form-hint">
+          Paste a YouTube URL and motif will download it as the theme for
+          this Plex item. The URL is recorded as a manual override that
+          ThemerrDB syncs won't touch. You can replace it later via the
+          same dialog.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
+        <button class="btn" type="button" id="manual-url-cancel">// CANCEL</button>
+        <span class="form-status" id="manual-url-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
 {% endblock %}
