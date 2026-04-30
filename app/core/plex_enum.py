@@ -94,11 +94,21 @@ def reconcile_placement_paths(db_path: Path) -> int:
     indexed JOIN against plex_items + an UPDATE per divergent row,
     so it scales with active placements (typically tens to low
     hundreds), not the full Plex catalog.
+
+    v1.10.39: hardened against UNIQUE-constraint failures. The JOIN
+    can produce multiple candidate new_folders per placement (Plex
+    sometimes lists one movie under multiple ratingKeys, each with
+    its own folder_path). Picking one new_folder via DISTINCT and
+    detecting the case where the destination row already exists
+    avoids the 'UNIQUE constraint failed' that pre-1.10.39 left
+    plex_enum jobs in the failed state.
     """
     enqueued = 0
     with get_conn(db_path) as conn:
+        # DISTINCT collapses cases where the same (mt, tmdb, old, new)
+        # tuple appears multiple times via different ratingKeys.
         rows = conn.execute(
-            """SELECT p.media_type, p.tmdb_id,
+            """SELECT DISTINCT p.media_type, p.tmdb_id,
                       p.media_folder AS old_folder,
                       pi.folder_path AS new_folder
                FROM placements p
@@ -109,35 +119,86 @@ def reconcile_placement_paths(db_path: Path) -> int:
                  AND pi.folder_path != ''
                  AND p.media_folder != pi.folder_path"""
         ).fetchall()
+        # If a placement already covers one of the candidate new_folders
+        # (multi-ratingKey case), don't move that placement — just drop
+        # the stale row(s) pointing at folders Plex no longer reports.
+        # Build a set of currently-Plex-reported folders per (mt, tmdb).
+        plex_paths_by_item: dict[tuple, set[str]] = {}
+        for pi in conn.execute(
+            """SELECT pi.guid_tmdb AS tmdb_id, pi.media_type AS pi_mt,
+                      pi.folder_path
+               FROM plex_items pi
+               WHERE pi.folder_path IS NOT NULL AND pi.folder_path != ''"""
+        ).fetchall():
+            mt = "tv" if pi["pi_mt"] == "show" else "movie"
+            key = (mt, pi["tmdb_id"])
+            plex_paths_by_item.setdefault(key, set()).add(pi["folder_path"])
+
         for r in rows:
-            # Cancel any in-flight place to avoid racing the new one.
-            conn.execute(
-                """UPDATE jobs SET status = 'cancelled', finished_at = ?
-                   WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
-                     AND status IN ('pending','running')""",
-                (now_iso(), r["media_type"], r["tmdb_id"]),
-            )
-            # Update the placement row in-place. Composite PK is
-            # (media_type, tmdb_id, media_folder); changing media_folder
-            # rewrites the row identity to point at the new location.
-            conn.execute(
-                """UPDATE placements SET media_folder = ?
-                   WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
-                (r["new_folder"], r["media_type"], r["tmdb_id"], r["old_folder"]),
-            )
-            conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload,
-                                     status, created_at, next_run_at)
-                   VALUES ('place', ?, ?, '{"force":true,"reason":"folder_relocated"}',
-                           'pending', ?, ?)""",
-                (r["media_type"], r["tmdb_id"], now_iso(), now_iso()),
-            )
-            log_event(db_path, level="INFO", component="plex_enum",
-                      media_type=r["media_type"], tmdb_id=r["tmdb_id"],
-                      message=f"Plex folder moved; relinking theme",
-                      detail={"old_folder": r["old_folder"],
-                              "new_folder": r["new_folder"]})
-            enqueued += 1
+            old_folder = r["old_folder"]
+            new_folder = r["new_folder"]
+            mt = r["media_type"]
+            tmdb_id = r["tmdb_id"]
+            current_plex_paths = plex_paths_by_item.get((mt, tmdb_id), set())
+
+            # Skip if the placement's current folder is still in Plex's
+            # reported set — Plex just exposes another ratingKey at a
+            # different folder, but the existing placement is still
+            # valid.
+            if old_folder in current_plex_paths:
+                continue
+
+            try:
+                # Cancel any in-flight place to avoid racing the new one.
+                conn.execute(
+                    """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                       WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
+                         AND status IN ('pending','running')""",
+                    (now_iso(), mt, tmdb_id),
+                )
+                existing_at_new = conn.execute(
+                    "SELECT 1 FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?",
+                    (mt, tmdb_id, new_folder),
+                ).fetchone()
+                if existing_at_new:
+                    # Destination row already exists — UPDATE would
+                    # violate the composite UNIQUE. Drop the stale
+                    # old_folder row instead; the destination row
+                    # already covers it.
+                    conn.execute(
+                        """DELETE FROM placements
+                           WHERE media_type = ? AND tmdb_id = ?
+                             AND media_folder = ?""",
+                        (mt, tmdb_id, old_folder),
+                    )
+                else:
+                    conn.execute(
+                        """UPDATE placements SET media_folder = ?
+                           WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
+                        (new_folder, mt, tmdb_id, old_folder),
+                    )
+                conn.execute(
+                    """INSERT INTO jobs (job_type, media_type, tmdb_id, payload,
+                                         status, created_at, next_run_at)
+                       VALUES ('place', ?, ?, '{"force":true,"reason":"folder_relocated"}',
+                               'pending', ?, ?)""",
+                    (mt, tmdb_id, now_iso(), now_iso()),
+                )
+                log_event(db_path, level="INFO", component="plex_enum",
+                          media_type=mt, tmdb_id=tmdb_id,
+                          message="Plex folder moved; relinking theme",
+                          detail={"old_folder": old_folder,
+                                  "new_folder": new_folder,
+                                  "kind": "delete-stale" if existing_at_new
+                                          else "rename-in-place"})
+                enqueued += 1
+            except Exception as e:
+                # One bad row shouldn't kill the whole reconcile pass.
+                # Log + continue; the next plex_enum will retry.
+                log.warning("reconcile_placement_paths: skipping row "
+                            "(mt=%s tmdb=%s %s -> %s): %s",
+                            mt, tmdb_id, old_folder, new_folder, e)
     return enqueued
 
 
