@@ -2436,8 +2436,17 @@
         { rk: it.rating_key },
       ));
     }
+    // v1.10.41: detect P-agent rows so SOURCE shows REPLACE w/ TDB
+    // instead of DOWNLOAD. The user's mental model on those rows is
+    // 'replace Plex's existing theme', not 'fetch one from scratch'.
+    const isPlexAgent = !placed && !it.plex_local_theme && !!it.plex_has_theme;
+
     if (themed && themeId !== null && themeId !== undefined && !sidecarOnly) {
-      if (!lockManualActions) {
+      // P-agent themed rows: REPLACE w/ TDB takes the slot DOWNLOAD
+      // would normally fill — added below in the shared REPLACE block.
+      // Suppress the standalone DOWNLOAD button there to avoid two
+      // buttons that fire near-identical actions.
+      if (!isPlexAgent && !lockManualActions) {
         // v1.10.29: tooltip names which source the download fetches —
         // ThemerrDB by default, the manual URL when an override is
         // active. Either way the URL is visible in the Info dialog.
@@ -2475,12 +2484,16 @@
       'upload an MP3 file as the theme',
       { rk: it.rating_key },
     ));
-    if (isThemerrDb && (sidecarOnly || isManualPlacement)) {
+    // REPLACE w/ TDB — fires whenever the user is swapping motif's
+    // ThemerrDB download in for an existing theme from another
+    // source. v1.10.41 added isPlexAgent to this set so P-agent
+    // rows use this label instead of DOWNLOAD.
+    if (isThemerrDb && (sidecarOnly || isManualPlacement || isPlexAgent)) {
       sourceItems.push(menuItemHtml(
         'replace-with-themerrdb', 'REPLACE w/ TDB',
-        sidecarOnly
-          ? "overwrite the existing sidecar with motif's ThemerrDB download"
-          : "swap your manual theme for the ThemerrDB download",
+        sidecarOnly    ? "overwrite the existing sidecar with motif's ThemerrDB download"
+        : isPlexAgent  ? "replace Plex's agent-supplied theme with motif's ThemerrDB download"
+        :                "swap your manual theme for the ThemerrDB download",
         { rk: it.rating_key, warn: true },
       ));
     }
