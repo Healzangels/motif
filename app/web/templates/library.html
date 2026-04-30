@@ -5,7 +5,11 @@
   <div class="hero-row">
     <h1 class="title">{{ title|upper }}</h1>
     <div class="sync-actions">
-      <div class="chips" role="tablist" aria-label="resolution">
+      <!-- v1.10.5: default hidden so we don't flash STANDARD/4K on first
+           paint when the user only has one variant. adaptLibraryFourkToggle
+           reveals it after /api/stats confirms both standard + 4k sections
+           exist for this tab. -->
+      <div class="chips" role="tablist" aria-label="resolution" style="display:none">
         <button class="chip chip-active" data-fourk="0">// STANDARD</button>
         <button class="chip" data-fourk="1">// 4K</button>
       </div>

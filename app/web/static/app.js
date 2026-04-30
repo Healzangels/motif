@@ -2232,17 +2232,31 @@
     if (downloaded && !placed && themed) {
       acts.push(`<button class="btn btn-tiny" data-act="replace" data-mt="${themeMt}" data-id="${themeId}" title="push motif's downloaded theme back into the Plex folder (no re-download)">REPLACE</button>`);
     }
+    // Destructive actions (DEL, PURGE) are also locked when a job is in
+    // flight — clicking them mid-download/place would race the worker
+    // and could leave dangling files or stale DB rows. Use the same
+    // lockManualActions/awaitingApproval guard as URL/UPLOAD above.
+    const destructiveAttrs = lockManualActions
+      ? ` disabled title="${htmlEscape(lockTitle)}"`
+      : '';
     // DEL: remove placement only (Plex stops playing motif's theme).
     //      Canonical stays so REPLACE can put it back. Shown when there's
     //      a placement to remove.
     if (placed) {
-      acts.push(`<button class="btn btn-tiny btn-danger" data-act="unplace" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" title="remove from Plex folder; canonical stays (use REPLACE to put it back)">DEL</button>`);
+      const delTitle = lockManualActions
+        ? lockTitle
+        : "remove from Plex folder; canonical stays (use REPLACE to put it back)";
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="unplace" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}"${lockManualActions ? ' disabled' : ''} title="${htmlEscape(delTitle)}">DEL</button>`);
     }
     // PURGE: remove everything — placement, canonical, plus the themes
     //        row when it's a plex_orphan. The "× PURGE" label hints at
     //        the destructive scope.
     if (downloaded || isOrphan) {
-      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="${isOrphan ? '1' : '0'}" title="${isOrphan ? 'delete everything: orphan record + files' : 'delete everything: motif drops the canonical + tracking'}">× PURGE</button>`);
+      const purgeTitle = lockManualActions
+        ? lockTitle
+        : (isOrphan ? 'delete everything: orphan record + files'
+                    : 'delete everything: motif drops the canonical + tracking');
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="${isOrphan ? '1' : '0'}"${lockManualActions ? ' disabled' : ''} title="${htmlEscape(purgeTitle)}">× PURGE</button>`);
     }
     const actions = `<div class="row-actions">${acts.join('')}</div>`;
 
