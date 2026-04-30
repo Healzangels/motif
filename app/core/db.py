@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS placements (
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     job_type        TEXT NOT NULL
-                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt')),
+                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum')),
     media_type      TEXT,
     tmdb_id         INTEGER,
     payload         TEXT,
@@ -154,6 +154,29 @@ CREATE TABLE IF NOT EXISTS plex_sections (
     discovered_at   TEXT NOT NULL,
     last_seen_at    TEXT NOT NULL
 );
+
+-- v7+: cache of every Plex library item we've discovered. Joined to themes
+-- in the unified browse view; not FK'd to plex_sections so a section deletion
+-- doesn't cascade-wipe history.
+CREATE TABLE IF NOT EXISTS plex_items (
+    rating_key      TEXT PRIMARY KEY,
+    section_id      TEXT NOT NULL,
+    media_type      TEXT NOT NULL CHECK (media_type IN ('movie', 'show')),
+    title           TEXT NOT NULL,
+    year            TEXT,
+    guid_imdb       TEXT,
+    guid_tmdb       INTEGER,
+    guid_tvdb       INTEGER,
+    folder_path     TEXT NOT NULL DEFAULT '',
+    has_theme       INTEGER NOT NULL DEFAULT 0,
+    first_seen_at   TEXT NOT NULL,
+    last_seen_at    TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_plex_items_section ON plex_items (section_id);
+CREATE INDEX IF NOT EXISTS idx_plex_items_type    ON plex_items (media_type);
+CREATE INDEX IF NOT EXISTS idx_plex_items_imdb    ON plex_items (guid_imdb);
+CREATE INDEX IF NOT EXISTS idx_plex_items_tmdb    ON plex_items (guid_tmdb);
+CREATE INDEX IF NOT EXISTS idx_plex_items_title   ON plex_items (title COLLATE NOCASE);
 
 CREATE TABLE IF NOT EXISTS pending_updates (
     media_type        TEXT NOT NULL,
@@ -238,7 +261,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -569,6 +592,73 @@ def _migrate_v5_to_v6(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v6 (canonical layout switch — no schema changes)")
 
 
+def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
+    """v7 adds plex_items: a cache of every item Plex sees in managed sections.
+
+    motif's themes table is keyed off ThemerrDB; plex_items is keyed off Plex's
+    rating_key. The unified browse view in v1.6 LEFT JOINs the two so users
+    can see every Plex item with a "has theme support?" badge, even when
+    ThemerrDB doesn't cover the title. Manual MP3 upload then targets a
+    plex_items row directly.
+
+    Schema is purely additive — existing v6 data is untouched.
+    """
+    log.info("Migrating to schema v7 (plex_items table)")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS plex_items (
+            rating_key      TEXT PRIMARY KEY,
+            section_id      TEXT NOT NULL,
+            media_type      TEXT NOT NULL CHECK (media_type IN ('movie', 'show')),
+            title           TEXT NOT NULL,
+            year            TEXT,
+            guid_imdb       TEXT,
+            guid_tmdb       INTEGER,
+            guid_tvdb       INTEGER,
+            folder_path     TEXT NOT NULL DEFAULT '',
+            has_theme       INTEGER NOT NULL DEFAULT 0,
+            first_seen_at   TEXT NOT NULL,
+            last_seen_at    TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_plex_items_section ON plex_items (section_id);
+        CREATE INDEX IF NOT EXISTS idx_plex_items_type    ON plex_items (media_type);
+        CREATE INDEX IF NOT EXISTS idx_plex_items_imdb    ON plex_items (guid_imdb);
+        CREATE INDEX IF NOT EXISTS idx_plex_items_tmdb    ON plex_items (guid_tmdb);
+        CREATE INDEX IF NOT EXISTS idx_plex_items_title   ON plex_items (title COLLATE NOCASE);
+    """)
+    # widen jobs.job_type to include 'plex_enum'
+    conn.executescript("""
+        CREATE TABLE jobs__new (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type        TEXT NOT NULL CHECK (
+                job_type IN ('sync', 'download', 'place', 'refresh', 'relink',
+                             'scan', 'adopt', 'plex_enum')
+            ),
+            media_type      TEXT,
+            tmdb_id         INTEGER,
+            payload         TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending'
+                               CHECK (status IN ('pending', 'running',
+                                                 'success', 'failed', 'cancelled')),
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            last_error      TEXT,
+            created_at      TEXT NOT NULL,
+            next_run_at     TEXT NOT NULL,
+            started_at      TEXT,
+            finished_at     TEXT
+        );
+        INSERT INTO jobs__new (id, job_type, media_type, tmdb_id, payload, status,
+                               attempts, last_error, created_at, next_run_at,
+                               started_at, finished_at)
+            SELECT id, job_type, media_type, tmdb_id, payload, status,
+                   attempts, last_error, created_at, next_run_at,
+                   started_at, finished_at FROM jobs;
+        DROP TABLE jobs;
+        ALTER TABLE jobs__new RENAME TO jobs;
+        CREATE INDEX IF NOT EXISTS idx_jobs_status_next ON jobs (status, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_item       ON jobs (media_type, tmdb_id);
+    """)
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
@@ -613,6 +703,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 5:
                     _migrate_v5_to_v6(conn)
                     current = 6
+                elif current == 6:
+                    _migrate_v6_to_v7(conn)
+                    current = 7
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

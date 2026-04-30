@@ -26,6 +26,43 @@ from .normalize import editions_equal, titles_equal, PlusMode
 log = logging.getLogger(__name__)
 
 
+def _safe_int(s: str | None) -> int | None:
+    if s is None:
+        return None
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_guids(el) -> dict[str, str]:
+    """Plex returns <Guid id="imdb://tt..."/>, <Guid id="tmdb://12345"/>, etc.
+    Returns {agent: id_value}."""
+    out: dict[str, str] = {}
+    for g in el.iter("Guid"):
+        gid = g.get("id", "")
+        if "://" not in gid:
+            continue
+        agent, val = gid.split("://", 1)
+        out[agent.lower()] = val
+    return out
+
+
+def _extract_folder_path(el) -> str:
+    """For movies: parent dir of first Part.file. For shows: first
+    Location.path. Empty string when neither is available."""
+    for part in el.iter("Part"):
+        f = part.get("file", "")
+        if f:
+            i = f.rfind("/")
+            return f[:i] if i > 0 else f
+    for loc in el.iter("Location"):
+        p = loc.get("path", "")
+        if p:
+            return p
+    return ""
+
+
 @dataclass
 class PlexSection:
     section_id: str
@@ -45,6 +82,21 @@ class PlexCandidate:
     edition_title: str
     has_theme: bool
     section_id: str | None = None  # which section this candidate came from
+
+
+@dataclass
+class PlexLibraryItem:
+    """A full record for a Plex library item — what we cache in plex_items."""
+    rating_key: str
+    section_id: str
+    media_type: str  # 'movie' or 'show'
+    title: str
+    year: str  # "" if missing
+    guid_imdb: str | None  # tt-id or None
+    guid_tmdb: int | None
+    guid_tvdb: int | None
+    folder_path: str  # absolute path of the item's media folder
+    has_theme: bool  # what Plex itself says
 
 
 @dataclass
@@ -386,6 +438,50 @@ class PlexClient:
         for c in cands:
             c.section_id = section_id
         return cands
+
+    def enumerate_section_items(
+        self, *, section_id: str, media_type: str,
+    ) -> list[PlexLibraryItem]:
+        """Full enumeration of one library section. Returns one PlexLibraryItem
+        per content row, with GUIDs and folder paths extracted.
+
+        For movies, folder_path is the parent dir of the first Part.file.
+        For shows, folder_path is the show-level Location/path."""
+        type_id = "1" if media_type == "movie" else "2"
+        # `includeGuids=1` makes Plex emit <Guid id="..."/> children; otherwise
+        # only the deprecated `guid` attr is present (and it's only one source).
+        r = self._get(
+            f"/library/sections/{section_id}/all",
+            params={"type": type_id, "includeGuids": "1"},
+        )
+        if r is None or r.status_code != 200:
+            return []
+        try:
+            root = ET.fromstring(r.text)
+        except ET.ParseError:
+            return []
+        out: list[PlexLibraryItem] = []
+        for el in list(root):
+            if el.tag not in ("Video", "Directory"):
+                continue
+            rk = el.get("ratingKey")
+            if not rk:
+                continue
+            guids = _extract_guids(el)
+            folder = _extract_folder_path(el)
+            out.append(PlexLibraryItem(
+                rating_key=rk,
+                section_id=section_id,
+                media_type=media_type,
+                title=el.get("title", ""),
+                year=el.get("year", "") or "",
+                guid_imdb=guids.get("imdb"),
+                guid_tmdb=_safe_int(guids.get("tmdb")),
+                guid_tvdb=_safe_int(guids.get("tvdb")),
+                folder_path=folder,
+                has_theme=el.get("theme") is not None,
+            ))
+        return out
 
     def get_item_paths(self, rating_key: str) -> list[str]:
         """Return all file paths for an item (for finding the media folder)."""

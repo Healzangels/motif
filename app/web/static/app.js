@@ -54,8 +54,9 @@
   function highlightNav() {
     const path = window.location.pathname;
     const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
+                  '/anime': 'anime',
                   '/coverage': 'coverage', '/queue': 'queue',
-                  '/scans': 'scans',
+                  '/pending': 'pending', '/scans': 'scans',
                   '/libraries': 'libraries',
                   '/settings': 'settings' };
     const k = map[path];
@@ -1651,6 +1652,299 @@
   }
 
 
+  // ---- Library (unified Plex-items browse) ----
+
+  const libraryState = {
+    tab: null,
+    fourk: false,
+    page: 1,
+    perPage: 50,
+    q: "",
+    status: "all",
+  };
+
+  async function loadLibrary() {
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return;
+    libraryState.tab = tabEl.value;
+    const params = new URLSearchParams({
+      tab: libraryState.tab,
+      fourk: libraryState.fourk ? 'true' : 'false',
+      page: libraryState.page,
+      per_page: libraryState.perPage,
+    });
+    if (libraryState.q) params.set('q', libraryState.q);
+    if (libraryState.status !== 'all') params.set('status', libraryState.status);
+    const tbody = document.getElementById('library-body');
+    tbody.innerHTML = `<tr><td colspan="8" class="muted center">loading…</td></tr>`;
+    let data;
+    try {
+      data = await api('GET', '/api/library?' + params.toString());
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="8" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    libraryState.items = data.items || [];
+    if (data.items.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="8" class="muted center">no items — make sure the relevant Plex sections are enabled in /libraries and run REFRESH FROM PLEX</td></tr>';
+    } else {
+      tbody.innerHTML = data.items.map(renderLibraryRow).join('');
+    }
+    document.getElementById('library-count').textContent =
+      `· ${fmt.num(data.total)} match${data.total === 1 ? '' : 'es'}`;
+    const totalPages = Math.max(1, Math.ceil(data.total / libraryState.perPage));
+    document.getElementById('library-pager').innerHTML = `
+      <button data-lib-page="${libraryState.page - 1}" ${libraryState.page <= 1 ? 'disabled' : ''}>« prev</button>
+      <span>page ${libraryState.page} / ${totalPages}</span>
+      <button data-lib-page="${libraryState.page + 1}" ${libraryState.page >= totalPages ? 'disabled' : ''}>next »</button>
+    `;
+  }
+
+  function renderLibraryRow(it) {
+    const themed = it.theme_tmdb !== null && it.theme_tmdb !== undefined;
+    const themeMt = it.theme_media_type;
+    const themeId = it.theme_tmdb;
+    const downloaded = !!it.file_path;
+    const placed = !!it.media_folder;
+
+    // Source badge
+    let srcCell;
+    if (!themed) {
+      srcCell = '<span class="link-badge link-badge-orphan" title="Plex-only — no ThemerrDB record">P</span>';
+    } else if (it.upstream_source === 'plex_orphan') {
+      srcCell = '<span class="link-badge link-badge-orphan" title="adopted/manual">O</span>';
+    } else if (it.provenance === 'manual') {
+      srcCell = '<span class="link-badge link-badge-manual" title="manual override">M</span>';
+    } else {
+      srcCell = '<span class="muted" title="ThemerrDB-tracked">T</span>';
+    }
+
+    const dl = downloaded ? 'on' : '';
+    const pl = placed ? 'on' : '';
+    let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
+    if (it.placement_kind === 'hardlink') {
+      linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink">=</span>';
+    } else if (it.placement_kind === 'copy') {
+      linkCell = '<span class="link-glyph link-glyph-copy" title="copy">C</span>';
+    }
+
+    // Title-cell glyphs
+    const titleGlyphs = [];
+    let rowExtra = '';
+    if (it.failure_kind) {
+      const human = {
+        'cookies_expired': 'YouTube cookies expired',
+        'video_private': 'Video is private',
+        'video_removed': 'Video was removed',
+        'video_age_restricted': 'Age-restricted',
+        'geo_blocked': 'Geo-blocked',
+        'network_error': 'Network error',
+        'unknown': 'Unknown failure'
+      }[it.failure_kind] || it.failure_kind;
+      titleGlyphs.push(
+        `<button class="title-glyph title-glyph-fail" title="${htmlEscape(human)}" `
+        + `data-act="open-override" data-mt="${themeMt}" data-id="${themeId}" `
+        + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`
+      );
+      rowExtra = ' class="row-failure"';
+    }
+
+    const imdb = it.guid_imdb || '';
+    const imdbLink = imdb
+      ? `<a href="https://www.imdb.com/title/${htmlEscape(imdb)}" target="_blank" rel="noopener">${htmlEscape(imdb)}</a>`
+      : '<span class="muted">—</span>';
+
+    const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
+
+    // Actions
+    let actions;
+    if (!themed) {
+      actions = `<button class="btn btn-tiny btn-warn" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}">UPLOAD</button>`;
+    } else {
+      const isOrphan = it.upstream_source === 'plex_orphan';
+      const delBtn = isOrphan
+        ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" title="delete">× DEL</button>`
+        : '';
+      const upBtn = `<button class="btn btn-tiny" data-act="upload-theme" data-rk="${htmlEscape(it.rating_key)}" data-title="${htmlEscape(it.plex_title)}" data-year="${htmlEscape(it.year || '')}" title="replace with manual MP3">UPLOAD</button>`;
+      actions = `<button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${themeMt}" data-id="${themeId}">RE-DL</button> ${upBtn} ${delBtn}`;
+    }
+
+    return `
+      <tr${rowExtra}>
+        <td>
+          <div class="title-cell">
+            ${titleGlyphs.join('')}
+            <span class="title-cell-name">${htmlEscape(it.plex_title)}${sectionLabel}</span>
+          </div>
+        </td>
+        <td class="col-year">${htmlEscape(it.year || '')}</td>
+        <td class="col-state">${srcCell}</td>
+        <td class="col-state"><span class="state-pill ${dl}"></span></td>
+        <td class="col-state"><span class="state-pill ${pl}"></span></td>
+        <td class="col-state">${linkCell}</td>
+        <td class="col-imdb">${imdbLink}</td>
+        <td class="col-actions">${actions}</td>
+      </tr>
+    `;
+  }
+
+  function bindLibrary() {
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return;
+
+    // 4K toggle
+    document.querySelectorAll('.chips [data-fourk]').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        b.classList.add('chip-active');
+        libraryState.fourk = b.dataset.fourk === '1';
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+      });
+    });
+
+    // Status filter chips
+    document.querySelectorAll('.chips [data-status]').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.chips [data-status]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        b.classList.add('chip-active');
+        libraryState.status = b.dataset.status;
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+      });
+    });
+
+    // Search debounce
+    const search = document.getElementById('library-search');
+    let dt;
+    search?.addEventListener('input', () => {
+      clearTimeout(dt);
+      dt = setTimeout(() => {
+        libraryState.q = search.value.trim();
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+      }, 250);
+    });
+
+    // Refresh
+    document.getElementById('library-refresh-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// ENQUEUED';
+      try {
+        await api('POST', '/api/library/refresh');
+        // Poll for ~30s for the enum to finish, then refresh the list
+        setTimeout(() => loadLibrary().catch(()=>{}), 5000);
+        setTimeout(() => loadLibrary().catch(()=>{}), 15000);
+      } catch (err) {
+        alert('Refresh failed: ' + err.message);
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 6000);
+    });
+
+    // Pager
+    document.getElementById('library-pager')?.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-lib-page]');
+      if (!b || b.disabled) return;
+      libraryState.page = Number(b.dataset.libPage);
+      loadLibrary().catch(console.error);
+    });
+
+    // Row clicks: redl, upload-theme, delete-orphan, override
+    document.getElementById('library-body')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      if (act === 'redl') {
+        redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+      } else if (act === 'delete-orphan') {
+        await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
+        await loadLibrary().catch(()=>{});
+      } else if (act === 'upload-theme') {
+        openUploadDialog({
+          ratingKey: btn.dataset.rk,
+          title: btn.dataset.title || '',
+          year: btn.dataset.year || '',
+        });
+      } else if (act === 'open-override') {
+        openOverrideDialog({
+          mediaType: btn.dataset.mt,
+          tmdbId: btn.dataset.id,
+          kindHuman: btn.dataset.kindHuman || 'failure',
+          message: btn.dataset.msg || '',
+        });
+      }
+    });
+  }
+
+  // ---- Manual upload dialog ----
+
+  function openUploadDialog({ ratingKey, title, year }) {
+    const dlg = document.getElementById('upload-dlg');
+    if (!dlg) return;
+    document.getElementById('upload-rk').value = ratingKey;
+    const meta = document.getElementById('upload-dlg-meta');
+    const ylabel = year ? ` (${htmlEscape(year)})` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
+    document.getElementById('upload-file').value = '';
+    document.getElementById('upload-status').textContent = '';
+    if (typeof dlg.showModal === 'function') dlg.showModal();
+    else dlg.setAttribute('open', '');
+  }
+
+  function closeUploadDialog() {
+    const dlg = document.getElementById('upload-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
+  }
+
+  function bindUploadDialog() {
+    const dlg = document.getElementById('upload-dlg');
+    if (!dlg) return;
+    document.getElementById('upload-dlg-close')?.addEventListener('click', closeUploadDialog);
+    document.getElementById('upload-cancel')?.addEventListener('click', closeUploadDialog);
+    const form = document.getElementById('upload-form');
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const status = document.getElementById('upload-status');
+      const rk = document.getElementById('upload-rk').value;
+      const fileEl = document.getElementById('upload-file');
+      const file = fileEl.files && fileEl.files[0];
+      if (!file) {
+        status.textContent = '✗ choose a file first';
+        status.classList.add('err');
+        return;
+      }
+      status.textContent = 'uploading…';
+      status.classList.remove('err', 'ok');
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        const r = await fetch(`/api/plex_items/${encodeURIComponent(rk)}/upload-theme`, {
+          method: 'POST', body: fd,
+        });
+        if (!r.ok) {
+          const t = await r.text().catch(() => '');
+          throw new Error(`${r.status}: ${t || r.statusText}`);
+        }
+        status.textContent = '✓ uploaded · placement queued';
+        status.classList.add('ok');
+        setTimeout(() => {
+          closeUploadDialog();
+          loadLibrary().catch(()=>{});
+        }, 700);
+      } catch (err) {
+        status.textContent = '✗ ' + err.message;
+        status.classList.add('err');
+      }
+    });
+  }
+
+
   // ---- Bootstrap ----
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -1671,6 +1965,8 @@
     bindScans();
     bindPending();
     bindOverrideDialog();
+    bindLibrary();
+    bindUploadDialog();
 
     // TVDB test key handler
     const tvdbBtn = document.getElementById('tvdb-test-btn');
@@ -1705,11 +2001,14 @@
     loadLibraries().catch(console.error);
     loadConfigIntoForms().catch(console.error);
     loadPending().catch(console.error);
+    loadLibrary().catch(console.error);
 
     // Auto-refresh on relevant pages
     const path = window.location.pathname;
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
     if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
+    if (path === '/movies' || path === '/tv' || path === '/anime')
+      setInterval(() => loadLibrary().catch(() => {}), 30000);
   });
 })();

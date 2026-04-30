@@ -231,14 +231,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/movies", response_class=HTMLResponse)
     async def movies_page(request: Request):
-        return templates.TemplateResponse(request, "browse.html", {
-            "media_type": "movie", "title": "Movies",
+        return templates.TemplateResponse(request, "library.html", {
+            "tab": "movies", "title": "Movies",
         })
 
     @app.get("/tv", response_class=HTMLResponse)
     async def tv_page(request: Request):
-        return templates.TemplateResponse(request, "browse.html", {
-            "media_type": "tv", "title": "TV Shows",
+        return templates.TemplateResponse(request, "library.html", {
+            "tab": "tv", "title": "TV",
+        })
+
+    @app.get("/anime", response_class=HTMLResponse)
+    async def anime_page(request: Request):
+        return templates.TemplateResponse(request, "library.html", {
+            "tab": "anime", "title": "Anime",
         })
 
     @app.get("/coverage", response_class=HTMLResponse)
@@ -1251,6 +1257,211 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": True}
 
     # --- JSON: items ---
+
+    @app.get("/api/library")
+    async def api_library(
+        tab: str = Query(..., pattern="^(movies|tv|anime)$"),
+        fourk: bool = Query(False),
+        q: str = Query(""),
+        status: str = Query("all", pattern="^(all|themed|untheme|placed|unplaced|failures)$"),
+        page: int = Query(1, ge=1),
+        per_page: int = Query(50, ge=1, le=200),
+        db: Path = Depends(get_db_path),
+    ):
+        """Unified browse: every item Plex sees in the requested tab/sub-tab,
+        joined to themes / local_files / placements so the UI can show the
+        full theme-status picture in one row."""
+        # Tab → media_type + section title filter
+        if tab == "movies":
+            tab_where = "pi.media_type = 'movie' AND lower(ps.title) NOT LIKE '%anime%'"
+        elif tab == "tv":
+            tab_where = "pi.media_type = 'show' AND lower(ps.title) NOT LIKE '%anime%'"
+        else:  # anime
+            tab_where = "lower(ps.title) LIKE '%anime%'"
+        tab_where += " AND lower(ps.title) LIKE '%4k%'" if fourk else \
+                     " AND lower(ps.title) NOT LIKE '%4k%'"
+
+        params: list = []
+        where_extra = ""
+        if q:
+            where_extra += " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
+            params.extend([f"%{q}%", q])
+        if status == "themed":
+            where_extra += " AND t.tmdb_id IS NOT NULL"
+        elif status == "untheme":
+            where_extra += " AND t.tmdb_id IS NULL"
+        elif status == "placed":
+            where_extra += " AND p.media_folder IS NOT NULL"
+        elif status == "unplaced":
+            where_extra += " AND lf.file_path IS NOT NULL AND p.media_folder IS NULL"
+        elif status == "failures":
+            where_extra += " AND t.failure_kind IS NOT NULL"
+
+        sql_select = """
+            SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
+                   pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
+                   pi.folder_path, pi.has_theme AS plex_has_theme,
+                   ps.title AS section_title,
+                   t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
+                   t.title AS theme_title, t.youtube_url, t.youtube_video_id,
+                   t.failure_kind, t.failure_message, t.upstream_source,
+                   lf.file_path, lf.source_video_id, lf.provenance,
+                   p.media_folder, p.placement_kind
+        """
+        sql_from = """
+            FROM plex_items pi
+            INNER JOIN plex_sections ps
+              ON ps.section_id = pi.section_id AND ps.included = 1
+            LEFT JOIN themes t
+              ON t.tmdb_id = pi.guid_tmdb
+             AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+            LEFT JOIN local_files lf
+              ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+            LEFT JOIN placements p
+              ON p.media_type = t.media_type AND p.tmdb_id = t.tmdb_id
+        """
+        sql_where = f"WHERE {tab_where}{where_extra}"
+        sql_count = f"SELECT COUNT(*) {sql_from} {sql_where}"
+        sql_rows = (
+            f"{sql_select} {sql_from} {sql_where} "
+            f"ORDER BY pi.title COLLATE NOCASE LIMIT ? OFFSET ?"
+        )
+        offset = (page - 1) * per_page
+        with get_conn(db) as conn:
+            total = conn.execute(sql_count, params).fetchone()[0]
+            rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
+        items = [dict(r) for r in rows]
+        return {"total": total, "page": page, "per_page": per_page,
+                "tab": tab, "fourk": fourk, "items": items}
+
+    @app.post("/api/plex_items/{rating_key}/upload-theme")
+    async def api_upload_theme(
+        request: Request, rating_key: str,
+        db: Path = Depends(get_db_path),
+    ):
+        """Manual MP3 upload for a Plex item that ThemerrDB doesn't cover.
+        Creates a plex_orphan themes row if one doesn't exist for this Plex
+        item, writes the file to the canonical layout, and enqueues placement.
+        """
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409, detail="themes_dir not configured; visit /settings")
+
+        form = await request.form()
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(status_code=400, detail="multipart 'file' required")
+        # Read the upload up-front (simpler than streaming for typical theme sizes)
+        data = await upload.read()
+        if not data:
+            raise HTTPException(status_code=400, detail="empty file")
+        if len(data) > 50 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="file > 50 MiB")
+
+        # Look up the Plex item
+        with get_conn(db) as conn:
+            pi = conn.execute(
+                "SELECT * FROM plex_items WHERE rating_key = ?",
+                (rating_key,),
+            ).fetchone()
+            if pi is None:
+                raise HTTPException(status_code=404,
+                                    detail="plex_items row not found; refresh /libraries")
+            theme_media_type = "tv" if pi["media_type"] == "show" else "movie"
+            # Match an existing themes row by tmdb GUID, else allocate orphan
+            theme = None
+            if pi["guid_tmdb"]:
+                theme = conn.execute(
+                    "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                    (theme_media_type, pi["guid_tmdb"]),
+                ).fetchone()
+            tmdb_id: int
+            if theme is None:
+                # Allocate synthetic negative tmdb_id (consistent with orphan adopt)
+                row = conn.execute(
+                    "SELECT MIN(tmdb_id) AS lo FROM themes "
+                    "WHERE media_type = ? AND tmdb_id < 0",
+                    (theme_media_type,),
+                ).fetchone()
+                min_tmdb = row["lo"] if row and row["lo"] is not None else 0
+                tmdb_id = min(min_tmdb, 0) - 1
+                conn.execute(
+                    """INSERT INTO themes
+                         (media_type, tmdb_id, imdb_id, title, year,
+                          upstream_source, last_seen_sync_at, first_seen_sync_at)
+                       VALUES (?, ?, ?, ?, ?, 'plex_orphan', ?, ?)""",
+                    (theme_media_type, tmdb_id, pi["guid_imdb"],
+                     pi["title"], pi["year"], now_iso(), now_iso()),
+                )
+            else:
+                tmdb_id = theme["tmdb_id"]
+
+        # Write the file under the canonical layout
+        from ..core.canonical import canonical_theme_subdir
+        media_root = (settings.movies_themes_dir if theme_media_type == "movie"
+                      else settings.tv_themes_dir)
+        out_dir = media_root / canonical_theme_subdir(pi["title"], pi["year"])
+        out_dir.mkdir(parents=True, exist_ok=True)
+        target = out_dir / "theme.mp3"
+        target.write_bytes(data)
+
+        # Compute sha256 + insert local_files
+        import hashlib
+        sha = hashlib.sha256(data).hexdigest()
+        rel_path = str(target.relative_to(settings.themes_dir))
+
+        with get_conn(db) as conn:
+            conn.execute(
+                """INSERT INTO local_files
+                     (media_type, tmdb_id, file_path, file_sha256, file_size,
+                      downloaded_at, source_video_id, provenance)
+                   VALUES (?, ?, ?, ?, ?, ?, '', 'manual')
+                   ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                       file_path = excluded.file_path,
+                       file_sha256 = excluded.file_sha256,
+                       file_size = excluded.file_size,
+                       downloaded_at = excluded.downloaded_at,
+                       provenance = excluded.provenance""",
+                (theme_media_type, tmdb_id, rel_path, sha, len(data), now_iso()),
+            )
+            # Clear any prior failure on the row (a manual upload obviates it)
+            conn.execute(
+                "UPDATE themes SET failure_kind = NULL, failure_message = NULL, "
+                "failure_at = NULL WHERE media_type = ? AND tmdb_id = ?",
+                (theme_media_type, tmdb_id),
+            )
+            # Enqueue placement
+            conn.execute(
+                "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
+                "                  created_at, next_run_at) "
+                "VALUES ('place', ?, ?, '{}', 'pending', ?, ?)",
+                (theme_media_type, tmdb_id, now_iso(), now_iso()),
+            )
+
+        log_event(db, level="INFO", component="api",
+                  media_type=theme_media_type, tmdb_id=tmdb_id,
+                  message=f"Manual upload by {request.state.user}: {len(data)} bytes",
+                  detail={"rating_key": rating_key, "title": pi["title"]})
+        return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
+                "file_path": rel_path, "size": len(data)}
+
+    @app.post("/api/library/refresh")
+    async def api_library_refresh(request: Request, db: Path = Depends(get_db_path)):
+        """Manually enqueue a plex_enum job (refresh the unified browse cache)."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            existing = conn.execute(
+                "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
+                "AND status IN ('pending','running')"
+            ).fetchone()
+            if existing:
+                return {"ok": True, "job_id": existing["id"], "already_queued": True}
+            cur = conn.execute(
+                "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
+                (now_iso(), now_iso()),
+            )
+            return {"ok": True, "job_id": cur.lastrowid}
 
     @app.get("/api/items")
     async def api_items(

@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-row">
+    <h1 class="title">{{ title|upper }}</h1>
+    <div class="sync-actions">
+      <div class="chips" role="tablist" aria-label="resolution">
+        <button class="chip chip-active" data-fourk="0">// STANDARD</button>
+        <button class="chip" data-fourk="1">// 4K</button>
+      </div>
+      <button class="btn btn-tiny" id="library-refresh-btn" type="button">// REFRESH FROM PLEX</button>
+    </div>
+  </div>
+  <p class="muted">every {{ tab }} item Plex sees · theme status + manual upload</p>
+</section>
+
+<input type="hidden" id="library-tab" value="{{ tab }}" />
+
+<section class="filterbar">
+  <input type="text" id="library-search" placeholder="search title or imdb id…"
+         class="input" autocomplete="off" />
+  <div class="chips" role="tablist">
+    <button class="chip chip-active" data-status="all">ALL</button>
+    <button class="chip" data-status="themed">THEMED</button>
+    <button class="chip" data-status="untheme">PLEX-ONLY</button>
+    <button class="chip" data-status="placed">PLACED</button>
+    <button class="chip" data-status="unplaced">UNPLACED</button>
+    <button class="chip chip-warn" data-status="failures">FAILURES</button>
+  </div>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span></h2>
+    <div class="pager" id="library-pager"></div>
+  </header>
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="col-title">TITLE</th>
+        <th class="col-year">YEAR</th>
+        <th class="col-state">SRC</th>
+        <th class="col-state">DL</th>
+        <th class="col-state">PL</th>
+        <th class="col-state">LINK</th>
+        <th class="col-imdb">IMDB</th>
+        <th class="col-actions">ACTIONS</th>
+      </tr>
+    </thead>
+    <tbody id="library-body">
+      <tr><td colspan="8" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<dialog class="dlg" id="upload-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// UPLOAD THEME</h2>
+      <button class="dlg-close" id="upload-dlg-close" type="button">×</button>
+    </header>
+    <div class="dlg-meta" id="upload-dlg-meta"></div>
+    <form id="upload-form" enctype="multipart/form-data">
+      <input type="hidden" id="upload-rk" />
+      <label class="form-label">
+        <span class="form-label-text">// MP3 FILE</span>
+        <input class="input" type="file" id="upload-file" accept="audio/mpeg,audio/mp3,.mp3" required />
+        <p class="form-hint">
+          Drop a theme MP3 for this Plex item. ThemerrDB doesn't track this
+          title, so motif will record it as a manual entry, hardlink the file
+          into the Plex folder, and trigger a refresh. Maximum 50 MiB.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// UPLOAD &amp; PLACE</button>
+        <button class="btn" type="button" id="upload-cancel">// CANCEL</button>
+        <span class="form-status" id="upload-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
+
+<dialog class="dlg" id="override-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// MANUAL YOUTUBE URL OVERRIDE</h2>
+      <button class="dlg-close" id="override-dlg-close" type="button">×</button>
+    </header>
+    <div class="dlg-meta" id="override-dlg-meta"></div>
+    <form id="override-form">
+      <input type="hidden" id="override-mt" />
+      <input type="hidden" id="override-id" />
+      <label class="form-label">
+        <span class="form-label-text">// MANUAL YOUTUBE URL</span>
+        <input class="input" type="url" id="override-url"
+               placeholder="https://www.youtube.com/watch?v=…"
+               required autocomplete="off" />
+        <p class="form-hint">
+          ThemerrDB's link doesn't work. Provide your own YouTube URL and
+          motif will download from there instead. Sets a manual override that
+          future ThemerrDB syncs won't touch.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
+        <button class="btn" type="button" id="override-cancel">// CANCEL</button>
+        <span class="form-status" id="override-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
+{% endblock %}

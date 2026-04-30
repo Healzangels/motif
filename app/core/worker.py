@@ -216,12 +216,31 @@ class Worker:
             self._do_scan(job)
         elif jt == "adopt":
             self._do_adopt(job)
+        elif jt == "plex_enum":
+            self._do_plex_enum(job)
         else:
             self._mark_failed(job["id"], f"unknown job type: {jt}")
             return
         self._mark_done(job["id"])
 
     # -- Job handlers --
+
+    def _do_plex_enum(self, job: sqlite3.Row) -> None:
+        """Walk every managed Plex section, upsert plex_items rows."""
+        from .plex_enum import run_plex_enum
+        from .plex import PlexConfig
+        if not (self.settings.plex_enabled and self.settings.plex_url
+                and self.settings.plex_token):
+            log_event(self.settings.db_path, level="WARNING", component="plex_enum",
+                      message="Skipped: Plex not configured")
+            return
+        cfg = PlexConfig(
+            url=self.settings.plex_url,
+            token=self.settings.plex_token,
+            movie_section=self.settings.plex_movie_section,
+            tv_section=self.settings.plex_tv_section,
+        )
+        run_plex_enum(self.settings.db_path, cfg)
 
     def _do_sync(self, job: sqlite3.Row) -> None:
         # Optional payload override: {"auto_place": true|false}. When absent,
@@ -237,6 +256,19 @@ class Worker:
             self.settings.db_path, self.settings.motifdb_base_url,
             auto_place_override=auto_place_override,
         )
+        # Auto-enqueue a plex_enum after every sync so the unified browse view
+        # stays current. Dedupe so concurrent syncs don't pile up.
+        with get_conn(self.settings.db_path) as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM jobs WHERE job_type = 'plex_enum' "
+                "AND status IN ('pending','running')"
+            ).fetchone()
+            if not existing:
+                conn.execute(
+                    "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                    "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
+                    (now_iso(), now_iso()),
+                )
 
     def _do_scan(self, job: sqlite3.Row) -> None:
         """Run a Plex folder scan. Payload optionally carries
