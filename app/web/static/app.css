@@ -405,6 +405,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* Library page banner highlighting "N missing themes" available from ThemerrDB
+   for the active tab. */
+.missing-banner {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px; margin-bottom: 16px;
+  border: 1px solid var(--amber); border-left-width: 4px;
+  background: rgba(255,184,74,0.05);
+  font-size: var(--t-small);
+}
+.missing-banner-glyph { color: var(--amber); font-size: 18px; }
+.missing-banner-text { flex: 1; color: var(--fg); }
+.missing-banner-text strong { color: var(--amber); font-variant-numeric: tabular-nums; }
+
 /* Libraries page: paired movie/TV tables with shared column widths so the
    two blocks align visually. Sized to fit header text + typical content. */
 .libraries-table { table-layout: fixed; }

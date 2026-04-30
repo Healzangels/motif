@@ -17,6 +17,18 @@
 
 <input type="hidden" id="library-tab" value="{{ tab }}" />
 
+<!-- Missing-themes banner — shown when N>0 ThemerrDB-tracked items in this
+     tab haven't been downloaded yet. Updates after every sync so users
+     immediately see new themable items. -->
+<div id="library-missing-banner" class="missing-banner" style="display:none">
+  <span class="missing-banner-glyph">▸</span>
+  <span class="missing-banner-text">
+    <strong id="library-missing-count">0</strong> missing themes available from ThemerrDB
+    in this tab — click to enqueue all.
+  </span>
+  <button class="btn btn-tiny btn-warn" id="library-download-missing-btn" type="button">// DOWNLOAD ALL</button>
+</div>
+
 <section class="filterbar">
   <input type="text" id="library-search" placeholder="search title or imdb id…"
          class="input" autocomplete="off" />

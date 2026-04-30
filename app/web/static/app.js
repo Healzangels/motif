@@ -54,6 +54,7 @@
   function highlightNav() {
     const path = window.location.pathname;
     const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
+                  '/anime': 'anime',
                   '/coverage': 'coverage', '/queue': 'queue',
                   '/pending': 'pending', '/scans': 'scans',
                   '/settings': 'settings' };
@@ -666,7 +667,9 @@
   }
 
   async function loadCoverage() {
-    if (!$('#movies-missing-body')) return;
+    // Guards on the storage stat card — present on both /coverage AND
+    // /dashboard since the coverage cards moved up to the dash hero in v1.8.
+    if (!$('#storage-hardlinks')) return;
 
     // Storage waste section (independent of Plex)
     try {
@@ -681,47 +684,56 @@
         orphanEl.textContent = fmt.num(stats.storage.orphans || 0);
       }
 
-      if (stats.storage.copies > 0) {
-        $('#copies-block').style.display = '';
-        const copies = await api('GET', '/api/storage/copies');
-        $('#copies-body').innerHTML = copies.items.map((c) => `
-          <tr>
-            <td>${htmlEscape(c.title)}</td>
-            <td class="col-year">${htmlEscape(c.year || '')}</td>
-            <td style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${htmlEscape(c.media_folder)}</td>
-            <td class="col-year">${fmtBytes(c.file_size)}</td>
-            <td class="col-actions">
-              <button class="btn btn-tiny" data-act="relink" data-mt="${c.media_type}" data-id="${c.tmdb_id}">RELINK</button>
-            </td>
-          </tr>
-        `).join('') || '<tr><td colspan="5" class="muted center">no copies</td></tr>';
-      } else {
-        $('#copies-block').style.display = 'none';
+      const copiesBlock = $('#copies-block');
+      if (copiesBlock) {
+        if (stats.storage.copies > 0) {
+          copiesBlock.style.display = '';
+          const copies = await api('GET', '/api/storage/copies');
+          $('#copies-body').innerHTML = copies.items.map((c) => `
+            <tr>
+              <td>${htmlEscape(c.title)}</td>
+              <td class="col-year">${htmlEscape(c.year || '')}</td>
+              <td style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${htmlEscape(c.media_folder)}</td>
+              <td class="col-year">${fmtBytes(c.file_size)}</td>
+              <td class="col-actions">
+                <button class="btn btn-tiny" data-act="relink" data-mt="${c.media_type}" data-id="${c.tmdb_id}">RELINK</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="5" class="muted center">no copies</td></tr>';
+        } else {
+          copiesBlock.style.display = 'none';
+        }
       }
     } catch (e) {
       console.error('storage stats failed', e);
     }
 
-    // Plex coverage report
+    // Plex coverage report — populates the stat cards on every page that
+    // includes them; missing-themes tables only render when present.
     let data;
     try {
       data = await api('GET', '/api/coverage/plex');
     } catch (e) {
-      $('#movies-missing-body').innerHTML = `<tr><td colspan="4" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      const mb = $('#movies-missing-body');
+      if (mb) mb.innerHTML = `<tr><td colspan="4" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
       return;
     }
     if (!data.enabled) {
-      $('#movies-missing-body').innerHTML = '<tr><td colspan="4" class="muted">Plex integration disabled</td></tr>';
+      const mb = $('#movies-missing-body');
+      if (mb) mb.innerHTML = '<tr><td colspan="4" class="muted">Plex integration disabled</td></tr>';
       return;
     }
     if (data.error) {
-      $('#movies-missing-body').innerHTML = `<tr><td colspan="4" class="accent-red">Plex error: ${htmlEscape(data.error)}</td></tr>`;
+      const mb = $('#movies-missing-body');
+      if (mb) mb.innerHTML = `<tr><td colspan="4" class="accent-red">Plex error: ${htmlEscape(data.error)}</td></tr>`;
       return;
     }
 
     const renderMissing = (items, bodyId) => {
+      const tbody = $(bodyId);
+      if (!tbody) return;
       const missing = items.filter((it) => !it.has_theme && it.motif_available);
-      $(bodyId).innerHTML = missing.length ? missing.map((it) => `
+      tbody.innerHTML = missing.length ? missing.map((it) => `
         <tr>
           <td>${htmlEscape(it.title)}</td>
           <td class="col-year">${htmlEscape(it.year || '')}</td>
@@ -837,12 +849,20 @@
         return (Date.now() - last.getTime()) > 1000 * 60 * 60 * 24 * 7;
       })();
       const locations = (s.location_paths || []).map(htmlEscape).join('<br>') || '<span class="muted">—</span>';
+      const isAnime = !!s.is_anime;
+      const is4k = !!s.is_4k;
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}">
           <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
           <td class="lib-col-type"><span class="muted">${htmlEscape(s.type)}</span></td>
           <td class="lib-col-mgd">
             <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
+          </td>
+          <td class="lib-col-mgd">
+            <input type="checkbox" data-section-flag="${htmlEscape(s.section_id)}" data-flag="anime" ${isAnime ? 'checked' : ''} title="treat this section as the Anime tab" />
+          </td>
+          <td class="lib-col-mgd">
+            <input type="checkbox" data-section-flag="${htmlEscape(s.section_id)}" data-flag="4k" ${is4k ? 'checked' : ''} title="treat this section as the 4K variant" />
           </td>
           <td class="lib-col-num">${fmt.num(s.placed_count)}</td>
           <td class="lib-col-num">${s.copies_count > 0 ? '<span class="accent">'+fmt.num(s.copies_count)+'</span>' : fmt.num(s.copies_count)}</td>
@@ -855,9 +875,9 @@
       if (s.type === 'movie') movieRows.push(row); else tvRows.push(row);
     }
     $('#libraries-movies-body').innerHTML = movieRows.join('') ||
-      '<tr><td colspan="7" class="muted center">no movie sections discovered</td></tr>';
+      '<tr><td colspan="9" class="muted center">no movie sections discovered</td></tr>';
     $('#libraries-tv-body').innerHTML = tvRows.join('') ||
-      '<tr><td colspan="7" class="muted center">no TV sections discovered</td></tr>';
+      '<tr><td colspan="9" class="muted center">no TV sections discovered</td></tr>';
   }
 
   function bindLibraries() {
@@ -883,15 +903,29 @@
     });
 
     document.addEventListener('change', async (e) => {
-      const cb = e.target.closest('input[data-section-toggle]');
-      if (!cb) return;
-      const fd = new FormData();
-      fd.append('included', cb.checked ? 'true' : 'false');
-      try {
-        await api('POST', `/api/libraries/${encodeURIComponent(cb.dataset.sectionToggle)}/include`, fd);
-      } catch (err) {
-        alert('Update failed: ' + err.message);
-        cb.checked = !cb.checked;  // revert
+      const tog = e.target.closest('input[data-section-toggle]');
+      const flag = e.target.closest('input[data-section-flag]');
+      if (tog) {
+        const fd = new FormData();
+        fd.append('included', tog.checked ? 'true' : 'false');
+        try {
+          await api('POST', `/api/libraries/${encodeURIComponent(tog.dataset.sectionToggle)}/include`, fd);
+        } catch (err) {
+          alert('Update failed: ' + err.message);
+          tog.checked = !tog.checked;
+        }
+      } else if (flag) {
+        const sid = flag.dataset.sectionFlag;
+        const which = flag.dataset.flag;
+        const body = which === 'anime'
+          ? { is_anime: flag.checked }
+          : { is_4k: flag.checked };
+        try {
+          await api('POST', `/api/libraries/${encodeURIComponent(sid)}/flags`, body);
+        } catch (err) {
+          alert('Flag update failed: ' + err.message);
+          flag.checked = !flag.checked;
+        }
       }
     });
   }
@@ -1668,8 +1702,21 @@
     } else {
       tbody.innerHTML = data.items.map(renderLibraryRow).join('');
     }
-    document.getElementById('library-count').textContent =
+    const cntEl = document.getElementById('library-count');
+    if (cntEl) cntEl.textContent =
       `· ${fmt.num(data.total)} match${data.total === 1 ? '' : 'es'}`;
+
+    // Missing-themes banner
+    const banner = document.getElementById('library-missing-banner');
+    if (banner) {
+      const n = data.missing_count || 0;
+      if (n > 0) {
+        document.getElementById('library-missing-count').textContent = fmt.num(n);
+        banner.style.display = '';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
     const totalPages = Math.max(1, Math.ceil(data.total / libraryState.perPage));
     document.getElementById('library-pager').innerHTML = `
       <button data-lib-page="${libraryState.page - 1}" ${libraryState.page <= 1 ? 'disabled' : ''}>« prev</button>
@@ -1685,16 +1732,24 @@
     const downloaded = !!it.file_path;
     const placed = !!it.media_folder;
 
-    // Source badge
+    // Source badge — three motif-tracked provenance categories plus a
+    // "Plex agent" category for items where Plex itself has a theme that
+    // motif didn't put there.
+    //   M = manually uploaded (file or URL)
+    //   A = motif auto-downloaded from ThemerrDB
+    //   P = Plex agent / pre-existing theme (Plex got it from somewhere
+    //       other than motif — its built-in agent or a sidecar from
+    //       before motif's adoption)
+    //   — = no theme yet
     let srcCell;
-    if (!themed) {
-      srcCell = '<span class="link-badge link-badge-orphan" title="Plex-only — no ThemerrDB record">P</span>';
-    } else if (it.upstream_source === 'plex_orphan') {
-      srcCell = '<span class="link-badge link-badge-orphan" title="adopted/manual">O</span>';
-    } else if (it.provenance === 'manual') {
-      srcCell = '<span class="link-badge link-badge-manual" title="manual override">M</span>';
+    if (it.provenance === 'manual') {
+      srcCell = '<span class="link-badge link-badge-manual" title="manually uploaded (file or YouTube URL)">M</span>';
+    } else if (it.file_path) {
+      srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB" style="color:var(--green-bright);border-color:var(--green-deep)">A</span>';
+    } else if (it.plex_has_theme) {
+      srcCell = '<span class="link-badge link-badge-cloud" title="theme already present in Plex (Plex agent / sidecar)">P</span>';
     } else {
-      srcCell = '<span class="muted" title="ThemerrDB-tracked">T</span>';
+      srcCell = '<span class="muted" title="no theme">—</span>';
     }
 
     const dl = downloaded ? 'on' : '';
@@ -1848,6 +1903,24 @@
       if (!b || b.disabled) return;
       libraryState.page = Number(b.dataset.libPage);
       loadLibrary().catch(console.error);
+    });
+
+    // Missing-themes bulk download
+    document.getElementById('library-download-missing-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// QUEUING';
+      try {
+        const r = await api('POST', '/api/library/download-missing', {
+          tab: libraryState.tab, fourk: libraryState.fourk,
+        });
+        btn.textContent = `// ${r.enqueued} QUEUED`;
+        setTimeout(() => loadLibrary().catch(()=>{}), 1500);
+      } catch (err) {
+        alert('Bulk download failed: ' + err.message);
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
     });
 
     // Row clicks: redl, upload-theme, manual-url, delete-orphan, override
@@ -2068,9 +2141,7 @@
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
     if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
-    // /coverage hosts the unified Plex catalog table (loaded via loadLibrary
-    // when the coverage page injects the right elements).
-    if (path === '/coverage')
+    if (path === '/movies' || path === '/tv' || path === '/anime' || path === '/coverage')
       setInterval(() => loadLibrary().catch(() => {}), 30000);
   });
 })();

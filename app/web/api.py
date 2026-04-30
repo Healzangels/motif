@@ -231,16 +231,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/movies", response_class=HTMLResponse)
     async def movies_page(request: Request):
-        # ThemerrDB-only browse. Plex catalog (incl. items not in ThemerrDB)
-        # lives under /coverage now.
-        return templates.TemplateResponse(request, "browse.html", {
-            "media_type": "movie", "title": "Movies",
+        return templates.TemplateResponse(request, "library.html", {
+            "tab": "movies", "title": "Movies",
         })
 
     @app.get("/tv", response_class=HTMLResponse)
     async def tv_page(request: Request):
-        return templates.TemplateResponse(request, "browse.html", {
-            "media_type": "tv", "title": "TV Shows",
+        return templates.TemplateResponse(request, "library.html", {
+            "tab": "tv", "title": "TV",
+        })
+
+    @app.get("/anime", response_class=HTMLResponse)
+    async def anime_page(request: Request):
+        return templates.TemplateResponse(request, "library.html", {
+            "tab": "anime", "title": "Anime",
         })
 
     @app.get("/coverage", response_class=HTMLResponse)
@@ -995,6 +999,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           f"by {request.state.principal.username}")
         return {"ok": True, "included": val}
 
+    @app.post("/api/libraries/{section_id}/flags")
+    async def api_set_library_flags(
+        request: Request, section_id: str,
+        db: Path = Depends(get_db_path),
+    ):
+        """Toggle the user-applied flags (is_anime, is_4k) on a Plex section.
+        Body: {"is_anime": bool, "is_4k": bool} — either field optional."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be a JSON object")
+        sets = []
+        params = []
+        if "is_anime" in body:
+            sets.append("is_anime = ?")
+            params.append(1 if bool(body["is_anime"]) else 0)
+        if "is_4k" in body:
+            sets.append("is_4k = ?")
+            params.append(1 if bool(body["is_4k"]) else 0)
+        if not sets:
+            return {"ok": True, "no_op": True}
+        params.append(section_id)
+        with get_conn(db) as conn:
+            cur = conn.execute(
+                f"UPDATE plex_sections SET {', '.join(sets)} WHERE section_id = ?",
+                params,
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="section not found")
+            row = conn.execute(
+                "SELECT is_anime, is_4k FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
+        log_event(db, level="INFO", component="api",
+                  message=f"Library section {section_id} flags updated by "
+                          f"{request.state.principal.username}",
+                  detail={"is_anime": bool(row["is_anime"]),
+                          "is_4k": bool(row["is_4k"])})
+        return {"ok": True, "is_anime": bool(row["is_anime"]),
+                "is_4k": bool(row["is_4k"])}
+
     @app.post("/api/libraries/refresh")
     async def api_refresh_libraries(
         request: Request, db: Path = Depends(get_db_path),
@@ -1270,15 +1318,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Unified browse: every item Plex sees in the requested tab/sub-tab,
         joined to themes / local_files / placements so the UI can show the
         full theme-status picture in one row."""
-        # Tab → media_type + section title filter
+        # Tab → media_type + flag filter. Anime/4K are user-applied flags
+        # (Settings → PLEX → LIBRARY SECTIONS), independent of section title.
+        # The Movies and TV tabs explicitly EXCLUDE anime-flagged sections.
         if tab == "movies":
-            tab_where = "pi.media_type = 'movie' AND lower(ps.title) NOT LIKE '%anime%'"
+            tab_where = "pi.media_type = 'movie' AND ps.is_anime = 0"
         elif tab == "tv":
-            tab_where = "pi.media_type = 'show' AND lower(ps.title) NOT LIKE '%anime%'"
-        else:  # anime
-            tab_where = "lower(ps.title) LIKE '%anime%'"
-        tab_where += " AND lower(ps.title) LIKE '%4k%'" if fourk else \
-                     " AND lower(ps.title) NOT LIKE '%4k%'"
+            tab_where = "pi.media_type = 'show' AND ps.is_anime = 0"
+        else:  # anime — both movie- and show-typed anime sections allowed
+            tab_where = "ps.is_anime = 1"
+        tab_where += " AND ps.is_4k = 1" if fourk else " AND ps.is_4k = 0"
 
         params: list = []
         where_extra = ""
@@ -1321,6 +1370,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         sql_where = f"WHERE {tab_where}{where_extra}"
         sql_count = f"SELECT COUNT(*) {sql_from} {sql_where}"
+        # Missing-themes count: themed (joined themes row exists) AND no
+        # local_files row. Drives the "you have N missing themes" banner +
+        # the DOWNLOAD MISSING bulk action. Ignores `q`/`status` filters so
+        # the banner reflects the whole tab regardless of UI filtering.
+        # We use the unfiltered tab predicate only.
+        sql_missing_count = f"""
+            SELECT COUNT(*)
+            FROM plex_items pi
+            INNER JOIN plex_sections ps
+              ON ps.section_id = pi.section_id AND ps.included = 1
+            INNER JOIN themes t
+              ON t.tmdb_id = pi.guid_tmdb
+             AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+            LEFT JOIN local_files lf
+              ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+            WHERE {tab_where} AND lf.file_path IS NULL
+        """
         sql_rows = (
             f"{sql_select} {sql_from} {sql_where} "
             f"ORDER BY pi.title COLLATE NOCASE LIMIT ? OFFSET ?"
@@ -1328,10 +1394,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         offset = (page - 1) * per_page
         with get_conn(db) as conn:
             total = conn.execute(sql_count, params).fetchone()[0]
+            missing_count = conn.execute(sql_missing_count).fetchone()[0]
             rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
         items = [dict(r) for r in rows]
-        return {"total": total, "page": page, "per_page": per_page,
+        return {"total": total, "missing_count": missing_count,
+                "page": page, "per_page": per_page,
                 "tab": tab, "fourk": fourk, "items": items}
+
+    @app.post("/api/library/download-missing")
+    async def api_library_download_missing(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """Enqueue a download job for every plex_item in the requested tab
+        whose ThemerrDB theme exists but motif hasn't downloaded yet.
+        Body: {tab, fourk}."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        tab = body.get("tab", "movies")
+        fourk = bool(body.get("fourk", False))
+        if tab not in ("movies", "tv", "anime"):
+            raise HTTPException(status_code=400, detail="invalid tab")
+        if tab == "movies":
+            tab_where = "pi.media_type = 'movie' AND ps.is_anime = 0"
+        elif tab == "tv":
+            tab_where = "pi.media_type = 'show' AND ps.is_anime = 0"
+        else:
+            tab_where = "ps.is_anime = 1"
+        tab_where += " AND ps.is_4k = 1" if fourk else " AND ps.is_4k = 0"
+
+        enqueued = 0
+        with get_conn(db) as conn:
+            rows = conn.execute(f"""
+                SELECT t.media_type, t.tmdb_id
+                FROM plex_items pi
+                INNER JOIN plex_sections ps
+                  ON ps.section_id = pi.section_id AND ps.included = 1
+                INNER JOIN themes t
+                  ON t.tmdb_id = pi.guid_tmdb
+                 AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
+                LEFT JOIN local_files lf
+                  ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+                WHERE {tab_where} AND lf.file_path IS NULL
+            """).fetchall()
+            for r in rows:
+                # Dedupe: skip if a download is already pending/running
+                existing = conn.execute(
+                    "SELECT 1 FROM jobs WHERE job_type = 'download' "
+                    "AND media_type = ? AND tmdb_id = ? "
+                    "AND status IN ('pending','running')",
+                    (r["media_type"], r["tmdb_id"]),
+                ).fetchone()
+                if existing:
+                    continue
+                conn.execute(
+                    "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
+                    "                  created_at, next_run_at) "
+                    "VALUES ('download', ?, ?, '{\"reason\":\"bulk_missing\"}', 'pending', ?, ?)",
+                    (r["media_type"], r["tmdb_id"], now_iso(), now_iso()),
+                )
+                enqueued += 1
+        log_event(db, level="INFO", component="api",
+                  message=f"Bulk download-missing by {request.state.user}",
+                  detail={"tab": tab, "fourk": fourk, "enqueued": enqueued})
+        return {"ok": True, "enqueued": enqueued, "tab": tab, "fourk": fourk}
 
     @app.post("/api/plex_items/{rating_key}/upload-theme")
     async def api_upload_theme(

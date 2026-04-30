@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}ThemerrDB{% endblock %}
+{% block title %}Dashboard{% endblock %}
 {% block content %}
 <section class="hero">
   <div class="hero-row">
-    <h1 class="title">THEMERRDB</h1>
-    <button class="btn" id="sync-now-btn" title="pull latest ThemerrDB metadata; downloads + placement happen from /movies, /tv, or /coverage">// SYNC</button>
+    <h1 class="title">DASH</h1>
+    <button class="btn" id="sync-now-btn" title="pull latest ThemerrDB metadata; downloads + placement happen from /movies, /tv, /anime">// SYNC</button>
   </div>
-  <p class="muted">tracking motifdb · pulled daily at 13:00 utc · download/place from /movies /tv /coverage</p>
+  <p class="muted">themerrdb pull daily at 13:00 utc · download/place from movies / tv / anime tabs</p>
 </section>
 
 <section class="grid grid-stats" id="stats-grid">
@@ -53,6 +53,45 @@
   <article class="stat stat-mini">
     <header class="stat-head"><span class="stat-label">FAILURES</span></header>
     <div class="stat-num accent-red" data-stat="queue.failed">—</div>
+  </article>
+</section>
+
+<!-- ============================ PLEX COVERAGE ============================ -->
+<!-- Moved here in v1.8.0 from /coverage. The graph stats cross-reference what
+     Plex sees against motif's themes catalog. Click-through to Movies/TV for
+     actionable rows. -->
+<section class="grid grid-stats">
+  <article class="stat">
+    <header class="stat-head"><span class="stat-label">PLEX MOVIES</span></header>
+    <div class="stat-num" id="plex-movies-total">—</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-movies-with-theme">—</b> with theme</span>
+      <span class="muted"><b id="plex-movies-motif">—</b> motif available</span>
+    </footer>
+  </article>
+  <article class="stat">
+    <header class="stat-head"><span class="stat-label">PLEX TV</span></header>
+    <div class="stat-num" id="plex-tv-total">—</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-tv-with-theme">—</b> with theme</span>
+      <span class="muted"><b id="plex-tv-motif">—</b> motif available</span>
+    </footer>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">HARDLINKS</span></header>
+    <div class="stat-num ok" id="storage-hardlinks">—</div>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">COPIES</span></header>
+    <div class="stat-num accent" id="storage-copies">—</div>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">WASTED ON COPIES</span></header>
+    <div class="stat-num accent-red" id="storage-wasted">—</div>
+  </article>
+  <article class="stat stat-mini">
+    <header class="stat-head"><span class="stat-label">ORPHANS</span></header>
+    <div class="stat-num accent" id="orphan-count">—</div>
   </article>
 </section>
 

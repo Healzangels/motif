@@ -151,6 +151,10 @@ CREATE TABLE IF NOT EXISTS plex_sections (
     language        TEXT,
     location_paths  TEXT,
     included        INTEGER NOT NULL DEFAULT 1,
+    -- v8+: user-applied flags driving the Movies/TV/Anime tab partition.
+    -- These are independent: a section can be 4K, anime, both, or neither.
+    is_anime        INTEGER NOT NULL DEFAULT 0,
+    is_4k           INTEGER NOT NULL DEFAULT 0,
     discovered_at   TEXT NOT NULL,
     last_seen_at    TEXT NOT NULL
 );
@@ -261,7 +265,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -659,6 +663,19 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _migrate_v7_to_v8(conn: sqlite3.Connection) -> None:
+    """v8 adds is_anime + is_4k flags to plex_sections — user-applied
+    classifiers that drive the Movies / TV / Anime tab partition. Both
+    default to 0 so existing installs keep their old behaviour until the
+    user opts in via Settings → PLEX → LIBRARY SECTIONS.
+    """
+    log.info("Migrating to schema v8 (plex_sections is_anime + is_4k flags)")
+    conn.executescript("""
+        ALTER TABLE plex_sections ADD COLUMN is_anime INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE plex_sections ADD COLUMN is_4k    INTEGER NOT NULL DEFAULT 0;
+    """)
+
+
 def init_db(db_path: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
     with sqlite3.connect(db_path) as conn:
@@ -706,6 +723,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 6:
                     _migrate_v6_to_v7(conn)
                     current = 7
+                elif current == 7:
+                    _migrate_v7_to_v8(conn)
+                    current = 8
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
