@@ -658,30 +658,22 @@
 
   async function purgeTheme(mediaType, tmdbId, title, isOrphan) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
-    // v1.10.27: detect U/A rows and warn the user that the
-    // Plex-folder file is preserved (vs T which deletes everything).
-    // libraryState.items has the source_kind for the row we clicked.
-    const it = (libraryState.items || []).find((x) =>
-      x.theme_media_type === mediaType
-        && String(x.theme_tmdb) === String(tmdbId));
-    const sourceKind = it && it.source_kind;
-    const isUserOwned = (sourceKind === 'url'
-                        || sourceKind === 'upload'
-                        || sourceKind === 'adopt');
-    let warning;
-    if (isUserOwned) {
-      warning = '\n\nThis is a user-provided / adopted theme. Motif will:'
-        + '\n  • drop its tracking + canonical (/data/media/themes/...)'
-        + '\n  • LEAVE the file at the Plex folder alone'
-        + '\n\nThe row will flip back to M (unmanaged sidecar) and you can ADOPT again.';
-    } else if (isOrphan) {
-      warning = '\n\nThis is an adopted/manual entry. The themes row will be deleted'
-        + ' permanently; future syncs will NOT recreate it.';
+    // v1.10.38: PURGE is full destruction — delete both motif's
+    // canonical at /data/media/themes AND the placement in the Plex
+    // folder. If you want to keep the Plex-folder file but stop
+    // managing the theme, use UNMANAGE instead.
+    let warning = '\n\nMotif will delete BOTH:'
+      + '\n  • the canonical at /data/media/themes/...'
+      + '\n  • the theme.mp3 in the Plex folder';
+    if (isOrphan) {
+      warning += '\n\nThis is a user-provided / adopted entry — the themes row'
+        + ' will also be deleted; the file is gone. To restore, SET URL /'
+        + ' UPLOAD MP3, or drop a sidecar back at the Plex folder and ADOPT.';
     } else {
-      warning = '\n\nMotif drops the canonical file in /data/media/themes AND the placement'
-        + ' in the Plex folder. If ThemerrDB has this title, it will reappear as'
-        + ' missing on next view; URL/UPLOAD again to restore.';
+      warning += '\n\nIf ThemerrDB still tracks the title, the row will flip'
+        + ' back to —; DOWNLOAD becomes available in the SOURCE menu.';
     }
+    warning += '\n\nUse UNMANAGE if you want to keep the Plex-folder file.';
     const ok = confirm(`Purge ${labelTitle}?${warning}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {

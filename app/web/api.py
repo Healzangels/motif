@@ -2799,23 +2799,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, media_type: MediaType, tmdb_id: int,
         db: Path = Depends(get_db_path),
     ):
-        """Remove motif's tracking of a theme.
+        """PURGE: full destruction of motif's theme presence for an item.
 
-        - For ThemerrDB-sourced rows (T): unlinks placement files
-          (theme.mp3 in each Plex folder), unlinks the canonical,
-          drops local_files + placements rows. Keeps the themes row
-          so the next sync can re-detect it.
-        - For plex_orphan rows: same file cleanup + drop themes row.
-        - v1.10.27: for user-provided / adopted rows (U / A — i.e.
-          local_files.source_kind in {url, upload, adopt}), the
-          file at the Plex folder is preserved. The user owns/
-          provided that file, and PURGE was deleting their content.
-          Now PURGE on U/A drops the canonical + tracking only,
-          leaving the Plex-folder theme.mp3 alone — the row flips
-          to M (unmanaged sidecar) and ADOPT becomes available
-          again. Effectively the same shape as UNMANAGE, but the
-          UI has both buttons since users reach for PURGE
-          intuitively for 'remove from motif'.
+        Deletes BOTH the canonical at /themes/<media>/<Title (Year)>/theme.mp3
+        AND the placement file(s) at every Plex media folder. Drops
+        local_files + placements rows. For plex_orphan rows, also drops
+        the themes row (FK CASCADE clears children).
+
+        After PURGE the row's source flips to '—' (no theme anywhere).
+        - If ThemerrDB still has the title, DOWNLOAD becomes available
+          via the SOURCE menu.
+        - If the row was user-provided (URL / upload / adopt), the file
+          is entirely gone — the user must SET URL / UPLOAD MP3 / drop
+          a sidecar back at the Plex folder before ADOPT becomes
+          available.
+
+        v1.10.38: reverted v1.10.27's source_kind=URL/upload/adopt
+        preservation. Per user feedback, PURGE should always be the
+        full-destruction action; UNMANAGE is the keep-the-file action.
         """
         _require_admin(request)
         with get_conn(db) as conn:
@@ -2832,35 +2833,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             ).fetchall()
             local = conn.execute(
-                "SELECT file_path, source_kind FROM local_files "
+                "SELECT file_path FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
 
-        preserve_plex_file = (local is not None
-                              and local["source_kind"] in ("url", "upload", "adopt"))
-
+        # Unlink every placement file — for hardlink placements the
+        # canonical's inode is also released; for copy placements each
+        # path is independent and needs its own unlink. Errors logged
+        # and skipped so a partial filesystem failure doesn't block the
+        # DB cleanup.
         unlinked = 0
         affected_folders: list[str] = []
-        if preserve_plex_file:
-            # User-provided/adopted file — keep the Plex-folder copy
-            # so the row can flip to M. We still record the folder
-            # paths for the post-destructive enum below.
-            for pr in placements:
+        for pr in placements:
+            try:
+                p = Path(pr["media_folder"]) / "theme.mp3"
+                if p.is_file():
+                    p.unlink()
+                    unlinked += 1
                 affected_folders.append(pr["media_folder"])
-        else:
-            for pr in placements:
-                try:
-                    p = Path(pr["media_folder"]) / "theme.mp3"
-                    if p.is_file():
-                        p.unlink()
-                        unlinked += 1
-                    affected_folders.append(pr["media_folder"])
-                except OSError as e:
-                    log.warning("forget: could not unlink %s: %s",
-                                pr["media_folder"], e)
-        # Always drop motif's canonical — the user-owned file at the
-        # Plex folder (if any) lives at a different path.
+            except OSError as e:
+                log.warning("forget: could not unlink %s: %s",
+                            pr["media_folder"], e)
         themes_dir = settings.themes_dir
         if local and themes_dir:
             try:
@@ -2887,33 +2881,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
-            # Only clear plex_items flags when we actually deleted the
-            # Plex-folder file. For preserve_plex_file=True the file is
-            # still there — leave local_theme_file=1 so the row renders
-            # as M after the post-destructive enum.
-            if not preserve_plex_file:
-                for folder in affected_folders:
-                    conn.execute(
-                        "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
-                        "WHERE folder_path = ?",
-                        (folder,),
-                    )
-            # v1.10.28: only run the section enum when the file is
-            # still on disk (UNMANAGE / U/A PURGE). When motif just
-            # deleted the file, an enum would re-fetch has_theme=1
-            # from Plex's stale cache and bring back a phantom P
-            # badge. In that case our optimistic flag clear above
-            # is the correct UI; a per-item Plex refresh below kicks
-            # Plex to re-evaluate so its cache catches up over time.
-            if preserve_plex_file:
-                _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
-        if not preserve_plex_file:
-            # Best-effort outside the txn so a slow Plex doesn't hold
-            # the writer lock.
-            try:
-                _trigger_plex_item_refresh(media_type, tmdb_id)
-            except Exception as e:
-                log.debug("plex item refresh skipped: %s", e)
+            # Optimistic flag clear — Plex's metadata cache may still
+            # report theme=true for some time, but our local view should
+            # reflect 'no theme' immediately. The per-item Plex refresh
+            # below kicks Plex to re-evaluate so its cache catches up.
+            for folder in affected_folders:
+                conn.execute(
+                    "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
+                    "WHERE folder_path = ?",
+                    (folder,),
+                )
+        # v1.10.28: skip the section enum (it would re-fetch has_theme
+        # from Plex's stale cache and bring back a phantom P badge);
+        # trigger a per-item refresh instead so Plex updates its cache.
+        try:
+            _trigger_plex_item_refresh(media_type, tmdb_id)
+        except Exception as e:
+            log.debug("plex item refresh skipped: %s", e)
 
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -2921,11 +2905,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"title": theme["title"],
                           "orphan_dropped": is_orphan,
                           "placements_unlinked": unlinked,
-                          "placements_total": len(placements),
-                          "preserved_plex_file": preserve_plex_file})
+                          "placements_total": len(placements)})
         return {"ok": True, "orphan_dropped": is_orphan,
-                "placements_unlinked": unlinked,
-                "preserved_plex_file": preserve_plex_file}
+                "placements_unlinked": unlinked}
 
     @app.delete("/api/items/{media_type}/{tmdb_id}", status_code=204)
     async def api_delete_item(
