@@ -2260,15 +2260,15 @@
         ${placedBlock}
       </dl>
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
-        <iframe width="100%" height="220" src="https://www.youtube.com/embed/${htmlEscape(ytId)}"
-                frameborder="0" allow="encrypted-media" allowfullscreen
-                style="background:#000"></iframe>
-        <p class="muted small" style="margin-top:6px">
-          Some videos disable embedded preview (YouTube error 153). The
-          download itself is unaffected — yt-dlp pulls audio directly.
-          Click <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener">${htmlEscape(ytUrl)}</a>
-          to watch on YouTube.
-        </p>
+        <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
+           style="display:block;text-decoration:none">
+          <img src="https://img.youtube.com/vi/${htmlEscape(ytId)}/hqdefault.jpg"
+               alt="YouTube thumbnail" loading="lazy"
+               style="width:100%;max-width:480px;display:block;margin:0 auto;border:1px solid var(--line)" />
+          <p class="muted small" style="margin-top:6px;text-align:center">
+            ▸ click to watch on YouTube
+          </p>
+        </a>
       </div>` : ''}
     `;
   }
