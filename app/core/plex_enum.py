@@ -72,53 +72,77 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
     return stats
 
 
-def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int]:
-    """Upsert one batch of items. Returns (inserted_count, updated_count).
+# Tunable: how many items per write transaction. Smaller = more lock
+# release windows for concurrent API writes; larger = fewer transaction
+# round-trips. 200 keeps a 10K-item section under ~50 batches with
+# negligible perf cost vs the single-transaction baseline.
+_UPSERT_BATCH = 200
 
-    Side effect: stats `folder_path/theme.mp3` per item to record whether a
-    sidecar exists. Cheap (~1ms per item) and only happens during enum so
-    the unified browse view can show M for sidecars motif doesn't track.
+
+def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int]:
+    """Upsert one section's items into plex_items. Returns
+    (inserted_count, updated_count).
+
+    Two performance properties matter on large libraries (10K+ items):
+      - Sidecar stat() (folder_path/theme.mp3 existence) happens BEFORE
+        the DB transaction opens — filesystem I/O is sequential but
+        doesn't hold a write lock.
+      - The DB writes are batched in transactions of `_UPSERT_BATCH`
+        rows. Each batch ends with COMMIT, releasing the BEGIN IMMEDIATE
+        lock so concurrent API writers (log_event in particular) don't
+        stall for the entire enum duration.
+    Pre-1.9.6 this was a single 10K-row transaction that soft-locked
+    the API for 10+ seconds per enum.
     """
+    # Phase 1: stat sidecars outside the transaction. List of (item, sidecar)
+    # pairs.
+    enriched: list[tuple[PlexLibraryItem, int]] = []
+    for it in items:
+        sidecar = 0
+        if it.folder_path:
+            try:
+                sidecar = 1 if (Path(it.folder_path) / "theme.mp3").is_file() else 0
+            except OSError:
+                sidecar = 0
+        enriched.append((it, sidecar))
+
+    # Phase 2: batched upserts.
     inserted = 0
     updated = 0
     now = now_iso()
-    with get_conn(db_path) as conn, transaction(conn):
-        for it in items:
-            sidecar = 0
-            if it.folder_path:
-                try:
-                    sidecar = 1 if (Path(it.folder_path) / "theme.mp3").is_file() else 0
-                except OSError:
-                    sidecar = 0
-            existing = conn.execute(
-                "SELECT 1 FROM plex_items WHERE rating_key = ?",
-                (it.rating_key,),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    """UPDATE plex_items SET
-                          section_id = ?, media_type = ?, title = ?, year = ?,
-                          guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
-                          folder_path = ?, has_theme = ?, local_theme_file = ?,
-                          last_seen_at = ?
-                       WHERE rating_key = ?""",
-                    (it.section_id, it.media_type, it.title, it.year,
-                     it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                     it.folder_path, 1 if it.has_theme else 0, sidecar,
-                     now, it.rating_key),
-                )
-                updated += 1
-            else:
-                conn.execute(
-                    """INSERT INTO plex_items
-                       (rating_key, section_id, media_type, title, year,
-                        guid_imdb, guid_tmdb, guid_tvdb, folder_path,
-                        has_theme, local_theme_file, first_seen_at, last_seen_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (it.rating_key, it.section_id, it.media_type, it.title,
-                     it.year, it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                     it.folder_path, 1 if it.has_theme else 0, sidecar,
-                     now, now),
-                )
-                inserted += 1
+    for batch_start in range(0, len(enriched), _UPSERT_BATCH):
+        batch = enriched[batch_start:batch_start + _UPSERT_BATCH]
+        with get_conn(db_path) as conn, transaction(conn):
+            for it, sidecar in batch:
+                existing = conn.execute(
+                    "SELECT 1 FROM plex_items WHERE rating_key = ?",
+                    (it.rating_key,),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """UPDATE plex_items SET
+                              section_id = ?, media_type = ?, title = ?, year = ?,
+                              guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
+                              folder_path = ?, has_theme = ?, local_theme_file = ?,
+                              last_seen_at = ?
+                           WHERE rating_key = ?""",
+                        (it.section_id, it.media_type, it.title, it.year,
+                         it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
+                         it.folder_path, 1 if it.has_theme else 0, sidecar,
+                         now, it.rating_key),
+                    )
+                    updated += 1
+                else:
+                    conn.execute(
+                        """INSERT INTO plex_items
+                           (rating_key, section_id, media_type, title, year,
+                            guid_imdb, guid_tmdb, guid_tvdb, folder_path,
+                            has_theme, local_theme_file, first_seen_at, last_seen_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (it.rating_key, it.section_id, it.media_type, it.title,
+                         it.year, it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
+                         it.folder_path, 1 if it.has_theme else 0, sidecar,
+                         now, now),
+                    )
+                    inserted += 1
     return inserted, updated
