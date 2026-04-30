@@ -658,13 +658,31 @@
 
   async function purgeTheme(mediaType, tmdbId, title, isOrphan) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
-    const orphanWarning = isOrphan
-      ? '\n\nThis is an adopted/manual entry. The themes row will be deleted'
-      + ' permanently; future syncs will NOT recreate it.'
-      : '\n\nMotif drops the canonical file in /data/media/themes AND the placement'
-      + ' in the Plex folder. If ThemerrDB has this title, it will reappear as'
-      + ' missing on next view; URL/UPLOAD again to restore.';
-    const ok = confirm(`Purge ${labelTitle}?${orphanWarning}\n\nThis cannot be undone.`);
+    // v1.10.27: detect U/A rows and warn the user that the
+    // Plex-folder file is preserved (vs T which deletes everything).
+    // libraryState.items has the source_kind for the row we clicked.
+    const it = (libraryState.items || []).find((x) =>
+      x.theme_media_type === mediaType
+        && String(x.theme_tmdb) === String(tmdbId));
+    const sourceKind = it && it.source_kind;
+    const isUserOwned = (sourceKind === 'url'
+                        || sourceKind === 'upload'
+                        || sourceKind === 'adopt');
+    let warning;
+    if (isUserOwned) {
+      warning = '\n\nThis is a user-provided / adopted theme. Motif will:'
+        + '\n  • drop its tracking + canonical (/data/media/themes/...)'
+        + '\n  • LEAVE the file at the Plex folder alone'
+        + '\n\nThe row will flip back to M (unmanaged sidecar) and you can ADOPT again.';
+    } else if (isOrphan) {
+      warning = '\n\nThis is an adopted/manual entry. The themes row will be deleted'
+        + ' permanently; future syncs will NOT recreate it.';
+    } else {
+      warning = '\n\nMotif drops the canonical file in /data/media/themes AND the placement'
+        + ' in the Plex folder. If ThemerrDB has this title, it will reappear as'
+        + ' missing on next view; URL/UPLOAD again to restore.';
+    }
+    const ok = confirm(`Purge ${labelTitle}?${warning}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
       const r = await fetch(`/api/items/${mediaType}/${tmdbId}/forget`, { method: 'POST' });

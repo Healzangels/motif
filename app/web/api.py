@@ -2703,12 +2703,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """Remove motif's tracking of a theme.
 
-        - For real ThemerrDB rows: unlinks placement files (theme.mp3 in each
-          Plex folder), unlinks the canonical, drops local_files + placements
-          rows. Keeps the themes row so the next sync can re-detect it. If
-          ThemerrDB still covers the title it will reappear as missing.
-        - For plex_orphan rows: same file cleanup PLUS drops the themes row
-          (FK CASCADE handles children). The orphan won't recreate on its own.
+        - For ThemerrDB-sourced rows (T): unlinks placement files
+          (theme.mp3 in each Plex folder), unlinks the canonical,
+          drops local_files + placements rows. Keeps the themes row
+          so the next sync can re-detect it.
+        - For plex_orphan rows: same file cleanup + drop themes row.
+        - v1.10.27: for user-provided / adopted rows (U / A — i.e.
+          local_files.source_kind in {url, upload, adopt}), the
+          file at the Plex folder is preserved. The user owns/
+          provided that file, and PURGE was deleting their content.
+          Now PURGE on U/A drops the canonical + tracking only,
+          leaving the Plex-folder theme.mp3 alone — the row flips
+          to M (unmanaged sidecar) and ADOPT becomes available
+          again. Effectively the same shape as UNMANAGE, but the
+          UI has both buttons since users reach for PURGE
+          intuitively for 'remove from motif'.
         """
         _require_admin(request)
         with get_conn(db) as conn:
@@ -2725,24 +2734,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             ).fetchall()
             local = conn.execute(
-                "SELECT file_path FROM local_files "
+                "SELECT file_path, source_kind FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
 
-        # Unlink placement files (hardlinks have independent inodes; deleting
-        # the canonical alone wouldn't remove these copies in Plex folders).
+        preserve_plex_file = (local is not None
+                              and local["source_kind"] in ("url", "upload", "adopt"))
+
         unlinked = 0
         affected_folders: list[str] = []
-        for pr in placements:
-            try:
-                p = Path(pr["media_folder"]) / "theme.mp3"
-                if p.is_file():
-                    p.unlink()
-                    unlinked += 1
+        if preserve_plex_file:
+            # User-provided/adopted file — keep the Plex-folder copy
+            # so the row can flip to M. We still record the folder
+            # paths for the post-destructive enum below.
+            for pr in placements:
                 affected_folders.append(pr["media_folder"])
-            except OSError as e:
-                log.warning("forget: could not unlink %s: %s", pr["media_folder"], e)
+        else:
+            for pr in placements:
+                try:
+                    p = Path(pr["media_folder"]) / "theme.mp3"
+                    if p.is_file():
+                        p.unlink()
+                        unlinked += 1
+                    affected_folders.append(pr["media_folder"])
+                except OSError as e:
+                    log.warning("forget: could not unlink %s: %s",
+                                pr["media_folder"], e)
+        # Always drop motif's canonical — the user-owned file at the
+        # Plex folder (if any) lives at a different path.
         themes_dir = settings.themes_dir
         if local and themes_dir:
             try:
@@ -2756,13 +2776,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
             if is_orphan:
-                # Full delete; FK CASCADE clears children
                 conn.execute(
                     "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
             else:
-                # Keep themes row, drop motif's tracking only
                 conn.execute(
                     "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
@@ -2771,19 +2789,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
-            # Clear the plex_items theme flags for every folder we just
-            # unlinked from. Without this, /api/library would see
-            # has_theme=1 from the cached enum and slap a stale P badge
-            # on what's now an empty folder. Plex's own metadata catches
-            # up after the next refresh; this just keeps the UI honest
-            # in the meantime.
-            for folder in affected_folders:
-                conn.execute(
-                    "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
-                    "WHERE folder_path = ?",
-                    (folder,),
-                )
-            # v1.10.21: kick a per-section enum so cached flags refresh.
+            # Only clear plex_items flags when we actually deleted the
+            # Plex-folder file. For preserve_plex_file=True the file is
+            # still there — leave local_theme_file=1 so the row renders
+            # as M after the post-destructive enum.
+            if not preserve_plex_file:
+                for folder in affected_folders:
+                    conn.execute(
+                        "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
+                        "WHERE folder_path = ?",
+                        (folder,),
+                    )
             _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
 
         log_event(db, level="INFO", component="api",
@@ -2792,9 +2808,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"title": theme["title"],
                           "orphan_dropped": is_orphan,
                           "placements_unlinked": unlinked,
-                          "placements_total": len(placements)})
+                          "placements_total": len(placements),
+                          "preserved_plex_file": preserve_plex_file})
         return {"ok": True, "orphan_dropped": is_orphan,
-                "placements_unlinked": unlinked}
+                "placements_unlinked": unlinked,
+                "preserved_plex_file": preserve_plex_file}
 
     @app.delete("/api/items/{media_type}/{tmdb_id}", status_code=204)
     async def api_delete_item(
