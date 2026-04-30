@@ -2456,6 +2456,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "events": [dict(e) for e in recent_events],
         }
 
+    def _trigger_plex_item_refresh(
+        media_type: str, tmdb_id: int,
+    ) -> int:
+        """v1.10.28: ask Plex to re-run its metadata agent on each
+        rating_key tracking this item, so the server-side has_theme
+        cache reflects motif having just deleted the file. Returns
+        the count of refresh requests fired.
+
+        Without this, after PURGE/DEL on a T row our optimistic
+        clear of plex_items.has_theme=0 survived only until the
+        next plex_enum, which re-fetches from Plex's API. Plex
+        was still reporting theme=true (its metadata cache hadn't
+        re-scanned the now-empty folder), so the row came back as
+        a phantom P (Plex agent / cloud). A targeted refresh kicks
+        Plex to re-evaluate immediately.
+
+        Best-effort — failures (Plex offline, auth issue) log and
+        return without raising. The fallback path is the user
+        clicking REFRESH FROM PLEX manually.
+        """
+        if not (settings.plex_enabled and settings.plex_token):
+            return 0
+        plex_mt = "show" if media_type == "tv" else "movie"
+        with get_conn(settings.db_path) as conn:
+            rks = conn.execute(
+                "SELECT rating_key FROM plex_items "
+                "WHERE guid_tmdb = ? AND media_type = ?",
+                (tmdb_id, plex_mt),
+            ).fetchall()
+        if not rks:
+            return 0
+        cfg = PlexConfig(
+            url=settings.plex_url, token=settings.plex_token,
+            movie_section=settings.plex_movie_section,
+            tv_section=settings.plex_tv_section, enabled=True,
+        )
+        n = 0
+        try:
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:  # type: ignore[arg-type]
+                for r in rks:
+                    try:
+                        if plex.refresh(r["rating_key"]):
+                            n += 1
+                    except Exception as e:
+                        log.debug("plex refresh failed for rk=%s: %s",
+                                  r["rating_key"], e)
+        except Exception as e:
+            log.warning("plex client init failed for refresh: %s", e)
+        return n
+
     def _enqueue_section_refresh_for_item(
         conn, media_type: str, tmdb_id: int,
     ) -> int:
@@ -2547,10 +2597,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WHERE folder_path = ?",
                     (folder,),
                 )
-            # v1.10.21: scope a plex_enum to this item's section(s) so
-            # the next library load sees the post-DEL state via Plex,
-            # not just our optimistic flag-clear above.
-            _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
+            # v1.10.28: skip the section enum here — see the matching
+            # comment in api_forget_item. DEL deletes the Plex-folder
+            # file; running plex_enum would re-fetch has_theme=1 from
+            # Plex's cached metadata and bring back a phantom P badge.
+            # Trigger a per-item Plex refresh below instead so Plex's
+            # cache catches up.
+        try:
+            _trigger_plex_item_refresh(media_type, tmdb_id)
+        except Exception as e:
+            log.debug("plex item refresh skipped: %s", e)
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Unplaced by {request.state.user}",
@@ -2800,7 +2856,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "WHERE folder_path = ?",
                         (folder,),
                     )
-            _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
+            # v1.10.28: only run the section enum when the file is
+            # still on disk (UNMANAGE / U/A PURGE). When motif just
+            # deleted the file, an enum would re-fetch has_theme=1
+            # from Plex's stale cache and bring back a phantom P
+            # badge. In that case our optimistic flag clear above
+            # is the correct UI; a per-item Plex refresh below kicks
+            # Plex to re-evaluate so its cache catches up over time.
+            if preserve_plex_file:
+                _enqueue_section_refresh_for_item(conn, media_type, tmdb_id)
+        if not preserve_plex_file:
+            # Best-effort outside the txn so a slow Plex doesn't hold
+            # the writer lock.
+            try:
+                _trigger_plex_item_refresh(media_type, tmdb_id)
+            except Exception as e:
+                log.debug("plex item refresh skipped: %s", e)
 
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
