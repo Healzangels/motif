@@ -23,12 +23,20 @@ _FS_BAD = set('/\\:*?"<>|')
 
 
 def sanitize_for_filesystem(s: str) -> str:
-    """Replace filesystem-unsafe chars in a single path segment with `_`,
+    """Replace filesystem-unsafe chars in a single path segment with `-`,
     collapse repeated whitespace, and strip leading/trailing `.` and space
-    (Windows + macOS quirks)."""
+    (Windows + macOS quirks).
+
+    v1.10.23: switched the replacement char from `_` to `-` to match
+    Plex's own folder convention. Plex Media Server names directories
+    like `Mission: Impossible (1996)` as `Mission - Impossible (1996)`,
+    so motif's /themes mirror now matches that shape. Existing
+    `_`-substituted folders are renamed in place by
+    relocate_legacy_canonical_files on the next startup.
+    """
     if not s:
         return "untitled"
-    out = "".join("_" if ch in _FS_BAD else ch for ch in s)
+    out = "".join("-" if ch in _FS_BAD else ch for ch in s)
     out = re.sub(r"\s+", " ", out).strip(". ")
     return out or "untitled"
 
