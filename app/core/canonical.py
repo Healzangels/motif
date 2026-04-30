@@ -117,3 +117,49 @@ def relocate_legacy_canonical_files(db_path: Path, themes_dir: Path | None) -> d
     if stats["moved"] or stats["errors"] or stats["missing"]:
         log.info("Canonical layout relocate: %s", stats)
     return stats
+
+
+def backfill_hash_match_provenance(db_path: Path) -> dict:
+    """One-shot fix-up: for every scan_findings row where the user adopted
+    a hash_match or exact_match, mark the corresponding local_files +
+    placements row as provenance='auto'. Pre-1.8.6 the adopt path
+    hardcoded 'manual' for every kind, so hash_match adoptions were
+    showing M badges instead of T.
+
+    Idempotent — only updates rows that are currently 'manual', and only
+    when the scan_findings record agrees that this came from a hash/exact
+    match.
+    """
+    stats = {"local_files_fixed": 0, "placements_fixed": 0}
+    with get_conn(db_path) as conn:
+        try:
+            findings = conn.execute("""
+                SELECT sf.theme_id, t.media_type, t.tmdb_id
+                FROM scan_findings sf
+                JOIN themes t ON t.id = sf.theme_id
+                WHERE sf.decision = 'adopt'
+                  AND sf.finding_kind IN ('hash_match', 'exact_match')
+                  AND sf.adopted_at IS NOT NULL
+                  AND sf.theme_id IS NOT NULL
+            """).fetchall()
+        except Exception as e:
+            # Likely scan_findings table doesn't exist yet (fresh install) —
+            # nothing to backfill.
+            log.debug("backfill_hash_match_provenance skipped: %s", e)
+            return stats
+        for r in findings:
+            cur = conn.execute(
+                "UPDATE local_files SET provenance = 'auto' "
+                "WHERE media_type = ? AND tmdb_id = ? AND provenance = 'manual'",
+                (r["media_type"], r["tmdb_id"]),
+            )
+            stats["local_files_fixed"] += cur.rowcount
+            cur = conn.execute(
+                "UPDATE placements SET provenance = 'auto' "
+                "WHERE media_type = ? AND tmdb_id = ? AND provenance = 'manual'",
+                (r["media_type"], r["tmdb_id"]),
+            )
+            stats["placements_fixed"] += cur.rowcount
+    if stats["local_files_fixed"] or stats["placements_fixed"]:
+        log.info("Hash-match provenance backfill: %s", stats)
+    return stats

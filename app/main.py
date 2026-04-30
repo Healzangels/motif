@@ -116,8 +116,15 @@ def main() -> int:
     # per-item subfolder layout (mirrors Plex's "Title (Year)" convention).
     # Idempotent: rows already in the new layout are skipped.
     if settings.is_paths_ready():
-        from .core.canonical import relocate_legacy_canonical_files
+        from .core.canonical import (
+            relocate_legacy_canonical_files,
+            backfill_hash_match_provenance,
+        )
         relocate_legacy_canonical_files(settings.db_path, settings.themes_dir)
+        # v1.8.6: pre-fix adopt rows hardcoded provenance='manual' for every
+        # finding kind, so hash_match adoptions showed M badges instead of
+        # T. Backfill any historical rows so the badge matches the data.
+        backfill_hash_match_provenance(settings.db_path)
 
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).

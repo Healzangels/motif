@@ -164,24 +164,30 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     except OSError as e:
         raise AdoptError(f"placement failed: {e}") from e
 
+    # Provenance: hash/exact matches share content with motif's canonical
+    # (same sha as what ThemerrDB would produce), so they earn the 'auto'
+    # provenance — T badge in the UI. Everything else (orphans, content
+    # mismatches) is user-curated and gets 'manual' (M badge).
+    provenance = "auto" if finding_kind in ("hash_match", "exact_match") else "manual"
+
     # Record local_files and placements
     with get_conn(db_path) as conn:
         conn.execute(
             """INSERT OR REPLACE INTO local_files
                  (media_type, tmdb_id, theme_id, file_path, file_sha256,
                   file_size, downloaded_at, source_video_id, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'manual')""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (media_type, tmdb_id, theme_id,
              str(canonical_path), finding["file_sha256"], finding["file_size"],
-             now_iso(), canonical_name.replace(".mp3", "")),
+             now_iso(), canonical_name.replace(".mp3", ""), provenance),
         )
         conn.execute(
             """INSERT OR REPLACE INTO placements
                  (media_type, tmdb_id, theme_id, media_folder, placed_at,
                   placement_kind, plex_refreshed, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, 0, 'manual')""",
+               VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
             (media_type, tmdb_id, theme_id,
-             finding["media_folder"], now_iso(), placement_kind),
+             finding["media_folder"], now_iso(), placement_kind, provenance),
         )
 
     return {
