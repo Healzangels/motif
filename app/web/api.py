@@ -1451,7 +1451,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    t.title AS theme_title, t.youtube_url, t.youtube_video_id,
                    t.failure_kind, t.failure_message, t.upstream_source,
                    lf.file_path, lf.source_video_id, lf.provenance,
-                   p.media_folder, p.placement_kind
+                   p.media_folder, p.placement_kind,
+                   -- In-flight job indicator: which type of job is currently
+                   -- pending/running for this theme. The MIN aggregates so
+                   -- we get a single value per row even if multiple jobs
+                   -- queued. NULL = nothing in flight.
+                   (SELECT j.job_type FROM jobs j
+                    WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
+                      AND j.job_type IN ('download', 'place')
+                      AND j.status IN ('pending', 'running')
+                    ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
+                             j.id DESC
+                    LIMIT 1) AS job_in_flight
         """
         sql_from = """
             FROM plex_items pi

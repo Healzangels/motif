@@ -586,6 +586,12 @@
     try {
       await api('POST', `/api/items/${mediaType}/${tmdbId}/redownload`);
       if (btn) btn.textContent = 'QUEUED';
+      // If we're on /movies, /tv, /anime, light up rapid-poll so the row
+      // updates as the download/place transitions land.
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
     } catch (e) {
       alert('Re-download failed: ' + e.message);
       if (btn) btn.disabled = false;
@@ -1894,6 +1900,17 @@
     // Title-cell glyphs
     const titleGlyphs = [];
     let rowExtra = '';
+    if (it.job_in_flight) {
+      // Theme has a pending or running download/place job — pulse a cyan
+      // glyph so users can watch their just-clicked URL/upload land. Pairs
+      // with the rapid-poll mode kicked off by manual actions.
+      const jobLabel = it.job_in_flight === 'download' ? 'downloading'
+                     : it.job_in_flight === 'place'    ? 'placing into Plex folder'
+                     :                                   'processing';
+      titleGlyphs.push(
+        `<span class="title-glyph title-glyph-pending" title="${htmlEscape(jobLabel)}">⟳</span>`
+      );
+    }
     if (it.failure_kind) {
       const human = {
         'cookies_expired': 'YouTube cookies expired',
@@ -1987,6 +2004,25 @@
       libraryState.fourk = false;
       loadLibrary().catch(()=>{});
     }
+  }
+
+  // Rapid-poll mode: after the user kicks off a manual URL or upload,
+  // poll loadLibrary every 3s for ~60s so the row reflects the download/
+  // place transitions (queued → running → placed) without waiting for
+  // the regular 30s tick. Re-arming resets the deadline.
+  let libraryRapidTimer = null;
+  let libraryRapidUntil = 0;
+  function libraryRapidPoll(durationMs = 60000) {
+    libraryRapidUntil = Date.now() + durationMs;
+    if (libraryRapidTimer) return;  // already polling
+    libraryRapidTimer = setInterval(() => {
+      if (Date.now() > libraryRapidUntil) {
+        clearInterval(libraryRapidTimer);
+        libraryRapidTimer = null;
+        return;
+      }
+      loadLibrary().catch(() => {});
+    }, 3000);
   }
 
   function updateLibrarySelectionUi() {
@@ -2095,6 +2131,7 @@
         });
         btn.textContent = `// ${r.enqueued} QUEUED`;
         setTimeout(() => loadLibrary().catch(()=>{}), 1500);
+        libraryRapidPoll();
       } catch (err) {
         alert('Bulk download failed: ' + err.message);
       }
@@ -2156,6 +2193,7 @@
         btn.textContent = `// ${r.enqueued} QUEUED`;
         libraryState.selected.clear();
         setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+        libraryRapidPoll();
       } catch (err) {
         alert('Bulk download failed: ' + err.message);
       }
@@ -2335,6 +2373,7 @@
         setTimeout(() => {
           closeManualUrlDialog();
           loadLibrary().catch(()=>{});
+          libraryRapidPoll();  // catch the download → place transitions
         }, 700);
       } catch (err) {
         status.textContent = '✗ ' + err.message;
@@ -2399,6 +2438,7 @@
         setTimeout(() => {
           closeUploadDialog();
           loadLibrary().catch(()=>{});
+          libraryRapidPoll();  // watch the place job land
         }, 700);
       } catch (err) {
         status.textContent = '✗ ' + err.message;
