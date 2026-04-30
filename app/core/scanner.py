@@ -319,7 +319,15 @@ def _classify(ctx: ScanContext, media_type: str, parsed, title_norm: str,
             ).fetchone()
 
             if local and local["file_path"]:
+                # local_files.file_path can be either:
+                #   - absolute (legacy adopt.py rows pre-v1.5.6)
+                #   - relative to themes_dir (worker downloads + post-v1.5.6
+                #     canonical layout migration)
+                # Resolve against themes_dir if relative so the inode
+                # comparison below actually finds the file.
                 local_path = Path(local["file_path"])
+                if not local_path.is_absolute():
+                    local_path = ctx.themes_dir / local_path
                 # Compare hashes if available
                 if local["file_sha256"] and local["file_sha256"] == file_sha256:
                     # Same content. Check inode to distinguish exact_match

@@ -35,8 +35,8 @@
   <div class="block-body">
     <div class="scan-summary" id="scan-summary"></div>
     <div class="scan-filters" style="margin:18px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-      <button class="btn btn-tiny scan-filter-btn scan-filter-active" data-filter-kind="">ALL</button>
-      <button class="btn btn-tiny scan-filter-btn" data-filter-kind="exact_match">EXACT</button>
+      <button class="btn btn-tiny scan-filter-btn scan-filter-active" data-filter-kind="" title="findings that need a decision (hides exact_match — those are already linked)">TODO</button>
+      <button class="btn btn-tiny scan-filter-btn" data-filter-kind="exact_match" title="already adopted and hardlinked — no action needed">EXACT</button>
       <button class="btn btn-tiny scan-filter-btn" data-filter-kind="hash_match">HASH MATCH</button>
       <button class="btn btn-tiny scan-filter-btn" data-filter-kind="content_mismatch">MISMATCH</button>
       <button class="btn btn-tiny scan-filter-btn" data-filter-kind="orphan_resolvable">ORPHAN (RESOLVED)</button>

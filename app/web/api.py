@@ -831,12 +831,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 kind: Optional[str] = None,
                                 decision: Optional[str] = None,
                                 q: Optional[str] = None,
+                                exclude_exact: bool = True,
                                 offset: int = 0, limit: int = 100):
         sql = "SELECT * FROM scan_findings WHERE scan_run_id = ?"
         params: list = [scan_id]
         if kind:
             sql += " AND finding_kind = ?"
             params.append(kind)
+        elif exclude_exact:
+            # Default view hides exact_match findings — those are already
+            # adopted+hardlinked, no action needed. The EXACT chip flips
+            # exclude_exact=False to opt into seeing them.
+            sql += " AND finding_kind != 'exact_match'"
         if decision:
             sql += " AND decision = ?"
             params.append(decision)
