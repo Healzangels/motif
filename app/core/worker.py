@@ -305,6 +305,7 @@ class Worker:
             self.settings.db_path, self.settings.motifdb_base_url,
             auto_place_override=auto_place_override,
             enqueue_downloads=enqueue_downloads,
+            cookies_file=self.settings.cookies_file,
         )
         # Auto-enqueue a plex_enum after every sync so the unified browse view
         # stays current. Dedupe so concurrent syncs don't pile up.

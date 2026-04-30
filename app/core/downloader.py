@@ -112,6 +112,59 @@ class DownloadResult:
     video_id: str
 
 
+def probe_youtube_url(
+    youtube_url: str,
+    *,
+    cookies_file: Path | None = None,
+    timeout_seconds: float = 15.0,
+) -> FailureKind | None:
+    """v1.10.43: cheap availability check — extract metadata without
+    downloading. Returns None when the URL is reachable + playable;
+    a FailureKind otherwise. Used by sync to flag dead / cookied /
+    restricted ThemerrDB URLs before the user tries to download.
+
+    yt-dlp's extract_info(download=False) does an HTTP fetch of the
+    /watch page + cipher decode (~0.5–1.5 s per URL on a warm DNS
+    cache). Caller is responsible for batching / rate-limiting; the
+    sync flow only probes new + url_changed entries to keep the
+    cost bounded.
+
+    `cookies_file` is honored when provided so cookies-required
+    videos resolve correctly when the user has cookies.txt set up
+    (otherwise we'd flag every age-restricted item as cookies_expired
+    even though the user has the file).
+    """
+    if yt_dlp is None:
+        return FailureKind.UNKNOWN
+    if not youtube_url:
+        return FailureKind.UNKNOWN
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "noprogress": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "socket_timeout": timeout_seconds,
+        # Cheap probe — don't fetch playlist metadata or comments.
+        "extract_flat": False,
+        "playlistend": 1,
+    }
+    if cookies_file and cookies_file.is_file():
+        opts["cookiefile"] = str(cookies_file)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+    except yt_dlp.utils.DownloadError as e:
+        return classify_yt_dlp_error(str(e))
+    except Exception as e:  # network blip, redirect loop, etc.
+        return classify_yt_dlp_error(str(e))
+    # extract_info returned a dict — playable. (Age-restricted videos
+    # without cookies typically raise DownloadError; if we get here
+    # the metadata fetch succeeded.)
+    if info is None:
+        return FailureKind.UNKNOWN
+    return None
+
+
 def _opts(
     *,
     output_path: Path,

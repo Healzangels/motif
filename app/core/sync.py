@@ -27,11 +27,13 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Iterator
 
 import httpx
 
 from .db import get_conn, transaction
+from .downloader import FailureKind, probe_youtube_url
 from .events import log_event, now_iso
 from .normalize import titles_equal
 
@@ -406,6 +408,74 @@ def _plex_supplies_theme(
     return row is not None
 
 
+def _probe_phase(
+    db_path,
+    targets: list[tuple[str, int, str]],
+    *,
+    cookies_file: Path | None,
+    cap: int,
+    stats: SyncStats,
+) -> None:
+    """v1.10.43: probe each (mt, tmdb_id, url) tuple via yt-dlp's
+    metadata-only path and stamp themes.failure_kind so the UI's
+    TDB pill can render red/amber for dead/cookied URLs without
+    waiting for an actual download attempt.
+
+    Bounded by `cap` to keep a fresh-install sync from blocking
+    on tens of thousands of probes. Targets beyond the cap are
+    skipped and pick up on the next sync's new+url_changed set
+    over time.
+    """
+    if not targets:
+        return
+    probed = 0
+    flagged = 0
+    cleared = 0
+    for media_type, tmdb_id, yt_url in targets:
+        if probed >= cap:
+            break
+        probed += 1
+        try:
+            failure = probe_youtube_url(yt_url, cookies_file=cookies_file)
+        except Exception as e:
+            log.debug("probe failed for %s: %s", yt_url, e)
+            continue
+        with get_conn(db_path) as conn, transaction(conn):
+            if failure is None:
+                # Probe succeeded — clear any prior failure flag so the
+                # row's TDB pill goes back to green if the URL was
+                # previously broken and ThemerrDB has now updated to
+                # a working one.
+                cur = conn.execute(
+                    "UPDATE themes SET failure_kind = NULL, "
+                    "                  failure_message = NULL, "
+                    "                  failure_at = NULL "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "  AND failure_kind IS NOT NULL",
+                    (media_type, tmdb_id),
+                )
+                cleared += cur.rowcount
+            else:
+                conn.execute(
+                    "UPDATE themes SET failure_kind = ?, "
+                    "                  failure_message = ?, "
+                    "                  failure_at = ? "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (failure.value, f"sync probe: {failure.human}",
+                     now_iso(), media_type, tmdb_id),
+                )
+                flagged += 1
+    log_event(
+        db_path, level="INFO", component="sync",
+        message=f"Sync probe: probed {probed} URLs "
+                f"({flagged} flagged, {cleared} cleared, "
+                f"{max(0, len(targets) - probed)} skipped)",
+        detail={"probed": probed, "flagged": flagged,
+                "cleared": cleared, "cap": cap,
+                "candidates": len(targets)},
+    )
+
+
 def _flush_sync_batch(
     db_path,
     batch: list[tuple[str, int, dict, str]],
@@ -414,10 +484,16 @@ def _flush_sync_batch(
     enqueue_downloads: bool,
     auto_place_override: bool | None,
     stats: SyncStats,
+    probe_targets: list | None = None,
 ) -> None:
     """Process one batch of fetched ThemerrDB records inside a single txn.
 
     `batch` is a list of (media_type, tmdb_id, record, upstream_source).
+    `probe_targets` (v1.10.43): optional list to which we append
+    (media_type, tmdb_id, youtube_url) tuples for items that are
+    new or whose YouTube URL changed in this sync. The caller runs
+    the actual probe pass after all batches commit so the writer
+    lock isn't held during the per-URL HTTP work.
     """
     if not batch:
         return
@@ -431,6 +507,12 @@ def _flush_sync_batch(
                 upstream_source=upstream_source,
                 sync_ts=sync_ts,
             )
+            # v1.10.43: collect new + url-changed entries for the
+            # post-sync availability probe.
+            if (is_new or url_changed) and probe_targets is not None:
+                yt_url = record.get("youtube_theme_url")
+                if yt_url:
+                    probe_targets.append((media_type, tmdb_id, yt_url))
             # v1.10.16: Plex-first default — when Plex is already supplying
             # a theme for this title (P-agent state) and motif doesn't
             # manage the file yet, skip the auto-download. The user can
@@ -497,7 +579,10 @@ def _flush_sync_batch(
 
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
-             enqueue_downloads: bool = True) -> SyncStats:
+             enqueue_downloads: bool = True,
+             probe_urls: bool = True,
+             probe_cap: int = 100,
+             cookies_file: Path | None = None) -> SyncStats:
     """Run a full ThemerrDB sync. Returns stats.
 
     `auto_place_override=None` lets the worker fall back to the global
@@ -511,9 +596,17 @@ def run_sync(db_path, base_url: str, *,
     are enqueued. The user triggers downloads explicitly from /movies, /tv,
     or /coverage. pending_updates rows are still recorded for items whose
     ThemerrDB URL changed since last sync.
+
+    v1.10.43 — `probe_urls=True` runs a yt-dlp metadata-only probe on
+    new + url_changed YouTube URLs after the sync writes commit, so
+    dead / cookied / restricted URLs surface as red / amber TDB pills
+    before the user tries to download. `probe_cap` bounds how many
+    URLs we probe per sync (default 100) — keeps a fresh-install sync
+    from spending hours on probes; later syncs catch up incrementally.
     """
     stats = SyncStats()
     sync_ts = now_iso()
+    probe_targets: list[tuple[str, int, str]] = []
 
     with get_conn(db_path) as conn:
         run_id = conn.execute(
@@ -554,6 +647,7 @@ def run_sync(db_path, base_url: str, *,
                             enqueue_downloads=enqueue_downloads,
                             auto_place_override=auto_place_override,
                             stats=stats,
+                            probe_targets=probe_targets if probe_urls else None,
                         )
                         batch.clear()
                         # Yield the writer lock briefly so concurrent API
@@ -566,8 +660,17 @@ def run_sync(db_path, base_url: str, *,
                         enqueue_downloads=enqueue_downloads,
                         auto_place_override=auto_place_override,
                         stats=stats,
+                        probe_targets=probe_targets if probe_urls else None,
                     )
                     batch.clear()
+
+        # v1.10.43: post-sync availability probe. Runs OUTSIDE the
+        # writer lock so the per-URL HTTP work doesn't stall API
+        # writers. Each probe persists its own failure_kind via a
+        # short transaction.
+        if probe_urls and probe_targets:
+            _probe_phase(db_path, probe_targets, cookies_file=cookies_file,
+                         cap=probe_cap, stats=stats)
 
         with get_conn(db_path) as conn:
             conn.execute(
