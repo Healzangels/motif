@@ -245,12 +245,17 @@ def place_theme(
     strict_edition: bool = True,
     plus_mode: PlusMode = "separator",
     skip_if_plex_has_theme: bool = True,
+    force_overwrite: bool = False,
     analyze_after: bool = True,
 ) -> PlacementOutcome:
     """
     Place `source_file` as theme.mp3 in the matched media folder.
     Skip if the destination already has a theme (case-insensitive) or if
     Plex already exposes one.
+
+    `force_overwrite=True` bypasses BOTH skip conditions — used when the
+    user explicitly approves placement from /pending knowing it will
+    overwrite an existing sidecar.
     """
     # 1. Find target folder
     find = find_target_folder(
@@ -262,9 +267,9 @@ def place_theme(
 
     target = find.folder
 
-    # 2. Skip if Plex already has a theme
+    # 2. Skip if Plex already has a theme (unless force_overwrite)
     rk: str | None = None
-    if plex and plex.cfg.enabled and skip_if_plex_has_theme:
+    if plex and plex.cfg.enabled and skip_if_plex_has_theme and not force_overwrite:
         rk = plex.resolve_rating_key(
             media_type=media_type, title=title, year=year, edition_raw=edition_raw,
         )
@@ -274,13 +279,22 @@ def place_theme(
                 target_folder=target, plex_rating_key=rk,
             )
 
-    # 3. Skip if a theme file is already in the folder
+    # 3. Skip if a theme file is already in the folder (unless force_overwrite,
+    # in which case we unlink it before linking the new one)
     existing = find_existing_theme_file(target)
     if existing:
-        return PlacementOutcome(
-            False, None, f"existing_theme:{existing.name}",
-            target_folder=target, plex_rating_key=rk,
-        )
+        if not force_overwrite:
+            return PlacementOutcome(
+                False, None, f"existing_theme:{existing.name}",
+                target_folder=target, plex_rating_key=rk,
+            )
+        try:
+            existing.unlink()
+        except OSError as e:
+            return PlacementOutcome(
+                False, None, f"placement_error:could not remove existing {existing.name}: {e}",
+                target_folder=target, plex_rating_key=rk,
+            )
 
     # 4. Place
     dst = target / "theme.mp3"

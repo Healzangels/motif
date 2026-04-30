@@ -577,6 +577,17 @@ class Worker:
         if not source_file.exists():
             raise RuntimeError(f"source file missing: {source_file}")
 
+        # Optional payload override: {"force": true} bypasses the
+        # plex_has_theme skip. /pending APPROVE writes this so the user's
+        # explicit "yes, replace the existing theme" actually does that.
+        force_overwrite = False
+        try:
+            payload = json.loads(job["payload"] or "{}")
+            if isinstance(payload, dict) and payload.get("force"):
+                force_overwrite = True
+        except (TypeError, ValueError):
+            pass
+
         index = self._index_for(media_type)
         plex_client = self._plex_client()
         try:
@@ -590,7 +601,8 @@ class Worker:
                 plex=plex_client,
                 strict_edition=self.settings.strict_edition_match,
                 plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
-                skip_if_plex_has_theme=True,
+                skip_if_plex_has_theme=not force_overwrite,
+                force_overwrite=force_overwrite,
                 analyze_after=self.settings.plex_analyze_after,
             )
         finally:

@@ -1720,10 +1720,15 @@
       const sourceLabel = it.provenance === 'manual' ? 'MANUAL' :
                           (it.upstream_source === 'plex_orphan' ? 'ORPHAN' : 'THEMERRDB');
       const dlAt = it.downloaded_at ? fmt.time(it.downloaded_at) : '—';
+      // Sidecar warning: a theme.mp3 already exists at the Plex folder.
+      // Approval will overwrite it (force=true on the place job).
+      const overwriteBadge = it.plex_local_theme
+        ? ' <span class="link-badge" title="approving will overwrite an existing theme.mp3 in the Plex folder" style="color:var(--amber);border-color:var(--amber)">⚠ OVERWRITES</span>'
+        : '';
       return `
         <tr>
           <td><input type="checkbox" data-pending-key="${htmlEscape(k)}" ${checked} /></td>
-          <td><strong>${htmlEscape(it.title || '—')}</strong></td>
+          <td><strong>${htmlEscape(it.title || '—')}</strong>${overwriteBadge}</td>
           <td class="col-year">${htmlEscape(it.year || '—')}</td>
           <td><span class="muted">${htmlEscape(it.media_type)}</span></td>
           <td><span class="muted small">${sourceLabel}</span></td>
@@ -1895,24 +1900,32 @@
     const themeMt = it.theme_media_type;
     const themeId = it.theme_tmdb;
     const downloaded = !!it.file_path;
-    const placed = !!it.media_folder;
 
-    // Source badge — four distinct categories now (U split out from M):
-    //   T = ThemerrDB-sourced; motif auto-downloaded
-    //   U = User-uploaded — motif tracks via UI upload, URL, or scan-adopt;
-    //       provenance='manual' on the local_files row
-    //   M = Manual sidecar — a theme.mp3 file lives at the Plex folder but
-    //       motif doesn't track it (run /scans to adopt)
-    //   P = Plex agent / cloud — Plex thinks the item has a theme, but no
-    //       local sidecar and motif doesn't track it
+    // Source badge — reflects what Plex is *actually playing*, not just
+    // what motif has staged. T/U only fire when motif has a placement
+    // (theme.mp3 hardlinked into the Plex folder); a download that hasn't
+    // landed yet keeps the previous SRC (sidecar/cloud/—) so users aren't
+    // misled about which file Plex would serve.
+    //   T = ThemerrDB-sourced; motif placed an auto download
+    //   U = User-uploaded — motif placed it (UI upload/URL/scan-adopt);
+    //       placements.provenance='manual'
+    //   M = Manual sidecar — file at the Plex folder that motif doesn't
+    //       manage (run /scans → ADOPT to take ownership)
+    //   P = Plex agent / cloud
     //   — = no theme anywhere
-    const motifTracks = !!(it.file_path || it.media_folder);
-    const sidecarOnly = !motifTracks && !!it.plex_local_theme;
+    //
+    // The DL pill still lights as soon as motif has a local_files row,
+    // so "downloaded but not placed" is visible (DL on, PL off, SRC = M
+    // / P / —) — distinct from "downloaded and placed" (DL + PL on,
+    // SRC = T / U).
+    const placed = !!it.media_folder;
+    const placedProv = it.placement_provenance;
+    const sidecarOnly = !placed && !!it.plex_local_theme;
     let srcCell;
-    if (motifTracks && it.provenance === 'manual') {
-      srcCell = '<span class="link-badge" title="user-uploaded — motif manages this file (UI upload, URL, or scan adopt)" style="color:var(--magenta);border-color:var(--magenta)">U</span>';
-    } else if (motifTracks) {
-      srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
+    if (placed && placedProv === 'manual') {
+      srcCell = '<span class="link-badge" title="user-uploaded — motif placed this (UI upload, URL, or scan adopt)" style="color:var(--magenta);border-color:var(--magenta)">U</span>';
+    } else if (placed) {
+      srcCell = '<span class="link-badge" title="motif downloaded from ThemerrDB and placed" style="color:var(--green-bright);border-color:var(--green-deep)">T</span>';
     } else if (sidecarOnly) {
       srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (run /scans → ADOPT to take ownership)">M</span>';
     } else if (it.plex_has_theme) {

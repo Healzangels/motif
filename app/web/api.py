@@ -1158,18 +1158,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         global placement.auto_place is False, or when a sync was kicked off
         with download_only=true."""
         with get_conn(db) as conn:
+            # Aggregate plex_items so we can flag rows whose Plex folder
+            # already has a sidecar theme.mp3 — approval would overwrite it.
+            # MAX over plex_items.local_theme_file in case a theme covers
+            # multiple folders (rare, but defensive).
             rows = conn.execute("""
                 SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
                        lf.file_path, lf.file_size, lf.downloaded_at,
-                       lf.source_video_id, lf.provenance
+                       lf.source_video_id, lf.provenance,
+                       COALESCE(MAX(pi.local_theme_file), 0) AS plex_local_theme,
+                       COALESCE(MAX(pi.has_theme), 0) AS plex_has_theme
                 FROM local_files lf
                 JOIN themes t
                   ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id
                 LEFT JOIN placements p
                   ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                LEFT JOIN plex_items pi
+                  ON pi.guid_tmdb = t.tmdb_id
+                 AND pi.media_type = (CASE t.media_type WHEN 'tv' THEN 'show' ELSE t.media_type END)
                 WHERE p.media_folder IS NULL
-                ORDER BY lf.downloaded_at DESC
+                GROUP BY t.media_type, t.tmdb_id
+                ORDER BY MAX(lf.downloaded_at) DESC
             """).fetchall()
         return {"items": [dict(r) for r in rows]}
 
@@ -1218,10 +1228,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ).fetchone()
                 if existing:
                     continue
+                # User-approved placements bypass the plex_has_theme guard:
+                # the user explicitly chose to use motif's file, even if a
+                # sidecar exists. force=true makes the worker pass
+                # skip_if_plex_has_theme=False to placement.
                 conn.execute(
                     """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
                                          created_at, next_run_at)
-                       VALUES ('place', ?, ?, '{}', 'pending', ?, ?)""",
+                       VALUES ('place', ?, ?, '{"force":true,"reason":"approved_from_pending"}',
+                               'pending', ?, ?)""",
                     (media_type, tmdb_id, now_iso(), now_iso()),
                 )
                 enqueued += 1
@@ -1465,7 +1480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    t.title AS theme_title, t.youtube_url, t.youtube_video_id,
                    t.failure_kind, t.failure_message, t.upstream_source,
                    lf.file_path, lf.source_video_id, lf.provenance,
-                   p.media_folder, p.placement_kind,
+                   p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
                    -- In-flight job indicator: which type of job is currently
                    -- pending/running for this theme. The MIN aggregates so
                    -- we get a single value per row even if multiple jobs
