@@ -2391,19 +2391,26 @@
     }
     if (themed && themeId !== null && themeId !== undefined && !sidecarOnly) {
       if (!lockManualActions) {
-        // v1.10.26: always 'DOWNLOAD' regardless of whether a local
-        // file already exists. The action is the same either way —
-        // fetch whatever video is in the Info section. Pre-1.10.26
-        // we toggled to 'RE-DL' on already-downloaded rows, which
-        // confused users into thinking it was a different operation.
+        // v1.10.29: tooltip names which source the download fetches —
+        // ThemerrDB by default, the manual URL when an override is
+        // active. Either way the URL is visible in the Info dialog.
+        const dlSource = (sourceKindForActions === 'url')
+          ? 'manual URL override'
+          : 'ThemerrDB';
+        const dlTip = downloaded
+          ? `Re-download (from ${dlSource}; overwrites local)`
+          : `Download (from ${dlSource}; see Info for the URL)`;
         sourceItems.push(menuItemHtml(
-          'redl', 'DOWNLOAD',
-          downloaded ? 're-download from ThemerrDB (overwrites local)'
-                     : 'download from ThemerrDB',
-          { mt: themeMt, id: themeId },
+          'redl', 'DOWNLOAD', dlTip, { mt: themeMt, id: themeId },
         ));
       }
-      if (sourceKindForActions === 'url') {
+      // v1.10.29: REVERT only when both:
+      //   (a) source_kind='url' — there's a user_overrides row to clear
+      //   (b) isThemerrDb — there's an upstream record to fall back on
+      // For an orphan with a manual URL there's nothing to revert to;
+      // pre-1.10.29 the button would have errored or 'reverted' to
+      // nothing.
+      if (sourceKindForActions === 'url' && isThemerrDb) {
         sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
           'clear manual URL override and download from ThemerrDB',
@@ -2498,11 +2505,19 @@
 
     const selKey = libKey(it);
     const selected = libraryState.selected.has(selKey);
+    // v1.10.29: hover-tooltip on the title cell shows the Plex folder
+    // path so duplicate rows (same title+year, different folders) can
+    // be told apart. Plex sometimes lists the same movie twice in a
+    // section when the user has multiple file versions; the row data
+    // looks identical but folder_path differs.
+    const titleTooltip = it.folder_path
+      ? `Plex folder: ${it.folder_path}`
+      : '';
     return `
       <tr${rowExtra}>
         <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
-          <div class="title-cell">
+          <div class="title-cell" title="${htmlEscape(titleTooltip)}">
             ${titleGlyphs.join('')}
             <span class="title-cell-name">${htmlEscape(it.plex_title)}${editionLabel}${sectionLabel}</span>
           </div>
