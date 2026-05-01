@@ -700,6 +700,28 @@ class Worker:
                      outcome.kind, outcome.plex_rating_key,
                      1 if outcome.plex_refreshed else 0, placement_provenance),
                 )
+                # v1.10.46: Plex's first refresh sometimes lands before
+                # the filesystem watcher / local-media-assets agent has
+                # re-stat'd the folder, so the new theme.mp3 isn't
+                # picked up. The user then has to manually click
+                # 'Refresh Metadata' in Plex to force the pickup.
+                # Schedule a second refresh ~10s out to give Plex's
+                # filesystem cache time to commit; plex.refresh is
+                # cheap and idempotent on Plex's side.
+                if outcome.plex_rating_key and self.settings.plex_analyze_after:
+                    delayed_iso = (
+                        datetime.now(timezone.utc)
+                        + timedelta(seconds=10)
+                    ).isoformat(timespec="seconds")
+                    conn.execute(
+                        """INSERT INTO jobs (job_type, media_type, tmdb_id, payload,
+                                              status, created_at, next_run_at)
+                           VALUES ('refresh', ?, ?, ?, 'pending', ?, ?)""",
+                        (media_type, tmdb_id,
+                         json.dumps({"rating_key": outcome.plex_rating_key,
+                                     "reason": "post_place_double_refresh"}),
+                         now_iso(), delayed_iso),
+                    )
         log_event(
             self.settings.db_path,
             level="INFO" if outcome.placed else "DEBUG",
