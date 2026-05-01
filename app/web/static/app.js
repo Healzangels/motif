@@ -2641,7 +2641,13 @@
       srcCell = '<span class="muted" title="no theme">—</span>';
     }
 
-    const dl = downloaded ? 'on' : '';
+    // v1.11.62: 'broken' DL state — motif's local_files row says we
+    // have a canonical, but a stat-check (server-side) found the file
+    // missing. The placement in the Plex folder is still there, so
+    // the row should call out 'still in plex, not downloaded' and
+    // surface a RESTORE FROM PLEX action.
+    const dlBroken = !!it.canonical_missing && !!it.file_path;
+    const dl = dlBroken ? 'broken' : (downloaded ? 'on' : '');
     const pl = placed ? 'on' : '';
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
     if (it.placement_kind === 'hardlink') {
@@ -2670,6 +2676,14 @@
     } else if (awaitingApproval) {
       titleGlyphs.push(
         `<a class="title-glyph title-glyph-await" title="awaiting placement approval — click to review at /pending" href="/pending">!</a>`
+      );
+    }
+    // v1.11.62: 'DL broken' glyph — motif's canonical was deleted but
+    // the placement in the Plex folder is still there. Click jumps to
+    // the dl_missing filter so the user can find every affected row.
+    if (dlBroken) {
+      titleGlyphs.push(
+        `<a class="title-glyph title-glyph-broken" title="canonical missing under /themes — placement in Plex folder is still there. Open RESTORE FROM PLEX in PLACE menu to recover." href="/${libraryState.tab}?status=dl_missing">↺</a>`
       );
     }
     // v1.10.50: only show the ! glyph when the failure hasn't been
@@ -3000,6 +3014,19 @@
       placeItems.push(menuItemHtml(
         'replace', 'RE-PUSH',
         "force motif to re-place the canonical at the Plex folder (no re-download)",
+        { mt: themeMt, id: themeId, warn: true, bypassLock: true },
+      ));
+    }
+    // v1.11.62: RESTORE FROM PLEX — the inverse of PUSH TO PLEX.
+    // The canonical under <themes_dir>/<file_path> is gone but the
+    // placement in the Plex folder survives. We hardlink (or copy
+    // on cross-FS) the placement back to the canonical location and
+    // resume managing it. Same bypassLock semantics as PUSH TO PLEX
+    // since this is the resolution action for the dlBroken state.
+    if (themed && dlBroken && placed) {
+      placeItems.push(menuItemHtml(
+        'restore-canonical', 'RESTORE FROM PLEX',
+        "the canonical /themes copy is gone but the Plex-folder file is still there — recreate the canonical from it (hardlink, or copy on cross-FS)",
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
@@ -3760,6 +3787,21 @@
         await loadLibrary().catch(()=>{});
       } else if (act === 'replace') {
         await replaceTheme(btn.dataset.mt, btn.dataset.id, btn);
+      } else if (act === 'restore-canonical') {
+        // v1.11.62: recreate the missing canonical from the surviving
+        // placement file. Hardlink first, copy fallback on cross-FS.
+        const title = btn.dataset.title || 'this item';
+        if (!confirm(`Restore the canonical /themes copy for "${title}" from the existing Plex-folder file?\n\nMotif will hardlink (or copy on cross-FS) the placement back to <themes_dir>/<canonical_path>.`)) return;
+        try {
+          const r = await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/restore-canonical`);
+          if (r.skipped && r.skipped.length) {
+            const reasons = r.skipped.map((s) => `${s.section_id}: ${s.reason}`).join('\n');
+            alert(`Restored ${r.restored}; skipped:\n${reasons}`);
+          }
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Restore failed: ' + e.message);
+        }
       } else if (act === 'purge') {
         await purgeTheme(btn.dataset.mt, btn.dataset.id,
                          btn.dataset.title || '',

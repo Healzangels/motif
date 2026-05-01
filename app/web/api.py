@@ -242,6 +242,7 @@ def _library_main_query(
     page: int, per_page: int,
     sort: str = "title", sort_dir: str = "asc",
     tdb: str = "any",
+    themes_dir: Path | None = None,
 ) -> dict:
     """Sync helper for /api/library — runs all SQL in one threadpool call
     so the FastAPI event loop isn't blocked. v1.10.2 perf pass:
@@ -312,6 +313,16 @@ def _library_main_query(
         where_extra += " AND p.media_folder IS NOT NULL"
     elif status == "unplaced":
         where_extra += " AND lf.file_path IS NOT NULL AND p.media_folder IS NULL"
+    elif status == "dl_missing":
+        # v1.11.62: rows where motif HAS a local_files entry pointing
+        # at a canonical that no longer exists on disk. The placement
+        # in the Plex folder (hardlink / copy) survives, so the row
+        # reads as "still in Plex, not downloaded". Filter is applied
+        # post-SQL via the canonical_missing stat in _annotate_canonical_state
+        # — SQL just narrows to candidate rows (must have lf.file_path
+        # AND p.media_folder, otherwise canonical_missing is irrelevant).
+        where_extra += (" AND lf.file_path IS NOT NULL "
+                        "AND p.media_folder IS NOT NULL")
     elif status == "failures":
         # v1.10.50: only un-acknowledged failures land in this filter.
         # Acked rows keep their red TDB pill but don't show up here —
@@ -479,10 +490,20 @@ def _library_main_query(
               WHERE status = 'success')                            AS last_sync_at
     """
     offset = (page - 1) * per_page
+    # v1.11.62: dl_missing requires post-SQL stat-check, which means
+    # SQL pagination would lie about the total. For that filter,
+    # fetch every candidate (no LIMIT) and paginate in Python below.
+    sql_rows_unbounded = f"{sql_select} {sql_from} {sql_where} {order_clause}"
     with get_conn(db) as conn:
-        total = conn.execute(sql_count, count_params).fetchone()[0]
-        missing_count = conn.execute(sql_missing_count).fetchone()[0]
-        rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
+        if status == "dl_missing":
+            total = -1  # filled in after stat-check
+            missing_count = conn.execute(sql_missing_count).fetchone()[0]
+            all_rows = conn.execute(sql_rows_unbounded, params).fetchall()
+            rows = all_rows  # paginate later
+        else:
+            total = conn.execute(sql_count, count_params).fetchone()[0]
+            missing_count = conn.execute(sql_missing_count).fetchone()[0]
+            rows = conn.execute(sql_rows, params + [per_page, offset]).fetchall()
         meta = conn.execute(sql_meta).fetchone()
     plex_enumerated = bool(meta["plex_enumerated"])
     last_plex_enum_at = meta["last_plex_enum_at"]
@@ -493,6 +514,16 @@ def _library_main_query(
         and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
     )
     items = [dict(r) for r in rows]
+    # v1.11.62: stat the canonical for each row that has a local_files
+    # entry, so the UI can render a 'DL broken' state when motif's
+    # canonical was deleted out from under it but the placement
+    # survives. Cheap (one stat per row, current page only); skipped
+    # entirely when themes_dir isn't configured.
+    items = _annotate_canonical_state(items, themes_dir=themes_dir)
+    if status == "dl_missing":
+        items = [it for it in items if it.get("canonical_missing")]
+        total = len(items)
+        items = items[offset:offset + per_page]
     return {"total": total, "missing_count": missing_count,
             "page": page, "per_page": per_page,
             "tab": tab, "fourk": fourk, "items": items,
@@ -500,6 +531,27 @@ def _library_main_query(
             "plex_scan_stale": plex_scan_stale,
             "last_plex_enum_at": last_plex_enum_at,
             "last_sync_at": last_sync_at}
+
+
+def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None) -> list[dict]:
+    """Add canonical_missing=True to each row whose lf.file_path points
+    at a file that no longer exists under themes_dir. Best-effort —
+    OSError on stat (permissions, dead mount) treats as missing.
+    """
+    if not themes_dir:
+        for it in items:
+            it["canonical_missing"] = False
+        return items
+    for it in items:
+        rel = it.get("file_path")
+        if not rel:
+            it["canonical_missing"] = False
+            continue
+        try:
+            it["canonical_missing"] = not (themes_dir / rel).is_file()
+        except OSError:
+            it["canonical_missing"] = True
+    return items
 
 
 def _library_not_in_plex(
@@ -1552,6 +1604,127 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return {"ok": True}
 
+    @app.post("/api/items/{media_type}/{tmdb_id}/restore-canonical")
+    async def api_restore_canonical(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.11.62: restore motif's canonical from a surviving placement.
+
+        Use case: the file under <themes_dir>/<file_path> got deleted
+        (manually, by an external sweep, etc.) but the placement copy
+        in the Plex media folder is still there. Re-create the
+        canonical from the placement so motif resumes managing the
+        file — hardlink first, fall back to copy on cross-FS, and
+        update local_files.file_size / file_sha256 if the surviving
+        placement differs from what we recorded.
+
+        Iterates every (section_id) where local_files exists for this
+        item; restores each one independently. Sections whose
+        canonical IS still on disk are skipped (no-op).
+        """
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409,
+                                detail="themes_dir not configured")
+        themes_dir = settings.themes_dir
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                """SELECT lf.section_id, lf.file_path, lf.file_size,
+                          lf.file_sha256, p.media_folder, p.placement_kind
+                   FROM local_files lf
+                   LEFT JOIN placements p
+                     ON p.media_type = lf.media_type
+                    AND p.tmdb_id = lf.tmdb_id
+                    AND p.section_id = lf.section_id
+                   WHERE lf.media_type = ? AND lf.tmdb_id = ?""",
+                (media_type, tmdb_id),
+            ).fetchall()
+        if not rows:
+            raise HTTPException(status_code=404,
+                                detail="no local_files row for this item")
+        from ..core.plex_enum import _candidate_local_paths
+        import hashlib
+        import os
+        import shutil
+        restored = 0
+        skipped: list[dict] = []
+        for r in rows:
+            canonical = themes_dir / r["file_path"]
+            if canonical.is_file():
+                skipped.append({"section_id": r["section_id"],
+                                "reason": "canonical_already_present"})
+                continue
+            if not r["media_folder"]:
+                skipped.append({"section_id": r["section_id"],
+                                "reason": "no_placement"})
+                continue
+            # Find a readable placement file (try host→container
+            # translations the same way plex_enum does)
+            placement_src: Path | None = None
+            for cand in _candidate_local_paths(r["media_folder"]):
+                p = cand / "theme.mp3"
+                try:
+                    if p.is_file():
+                        placement_src = p
+                        break
+                except OSError:
+                    continue
+            if placement_src is None:
+                skipped.append({"section_id": r["section_id"],
+                                "reason": "placement_file_missing"})
+                continue
+            try:
+                canonical.parent.mkdir(parents=True, exist_ok=True)
+                kind = "hardlink"
+                try:
+                    os.link(placement_src, canonical)
+                except OSError as e:
+                    if e.errno != 18:  # EXDEV (cross-device)
+                        raise
+                    shutil.copy2(placement_src, canonical)
+                    kind = "copy"
+            except OSError as e:
+                log.warning("restore-canonical: %s/%s section=%s failed: %s",
+                            media_type, tmdb_id, r["section_id"], e)
+                skipped.append({"section_id": r["section_id"],
+                                "reason": f"link_failed:{e}"})
+                continue
+            # Re-stat for accurate file_size + sha256
+            try:
+                size = canonical.stat().st_size
+                h = hashlib.sha256()
+                with canonical.open("rb") as f:
+                    for chunk in iter(lambda: f.read(1024 * 1024), b""):
+                        h.update(chunk)
+                sha = h.hexdigest()
+            except OSError:
+                size, sha = r["file_size"], r["file_sha256"]
+            with get_conn(db) as conn:
+                conn.execute(
+                    """UPDATE local_files SET file_size = ?, file_sha256 = ?,
+                                              downloaded_at = ?
+                       WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                    (size, sha, now_iso(),
+                     media_type, tmdb_id, r["section_id"]),
+                )
+                # If a placement existed but its kind was 'copy' and
+                # we just made a hardlink, update placements too.
+                if r["placement_kind"] != kind:
+                    conn.execute(
+                        """UPDATE placements SET placement_kind = ?
+                           WHERE media_type = ? AND tmdb_id = ?
+                             AND section_id = ?""",
+                        (kind, media_type, tmdb_id, r["section_id"]),
+                    )
+            restored += 1
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Canonical restored from placement by "
+                          f"{request.state.principal.username}",
+                  detail={"restored": restored, "skipped": skipped})
+        return {"ok": True, "restored": restored, "skipped": skipped}
+
     # --- Libraries ---
 
     @app.get("/api/libraries")
@@ -2162,7 +2335,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|failures|not_in_plex)$"),
+        status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|dl_missing|failures|not_in_plex)$"),
         tdb: str = Query("any", pattern="^(any|tracked|untracked)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
@@ -2193,6 +2366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _library_main_query, db, tab=tab, fourk=fourk,
             q=q, status=status, tdb=tdb, page=page, per_page=per_page,
             sort=sort, sort_dir=sort_dir,
+            themes_dir=settings.themes_dir if settings.is_paths_ready() else None,
         )
 
     @app.post("/api/library/download-batch")
@@ -3165,19 +3339,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # affected folder so the flag reflects the actual on-disk
             # state, and scope the UPDATE by media_type so a TV/movie
             # folder-name collision doesn't accidentally flip a sibling
-            # section's row. If the stat returns false (e.g. the file
-            # was a cross-FS copy that got deleted alongside the
-            # canonical) we set local_theme_file=0 explicitly so the
-            # SRC badge becomes — instead of a misleading M.
+            # section's row.
+            # v1.11.62: stat goes through folder_has_theme_sidecar which
+            # tries common host→container path translations and matches
+            # any theme.<audio-ext>. Pre-fix the plain Path(folder) /
+            # "theme.mp3" stat returned False on Unraid (Plex's
+            # /mnt/user/data/... isn't reachable from the container) AND
+            # missed every non-mp3 sidecar — so an UNMANAGE on a U-source
+            # row left local_theme_file=0 and the SRC badge fell to —
+            # instead of M, even though the file was visibly still in
+            # the Plex folder.
+            from ..core.plex_enum import folder_has_theme_sidecar
             plex_type = "show" if media_type == "tv" else "movie"
             for pr in placements:
                 folder = pr["media_folder"]
-                try:
-                    sidecar_present = (
-                        Path(folder) / "theme.mp3"
-                    ).is_file()
-                except OSError:
-                    sidecar_present = False
+                sidecar_present = folder_has_theme_sidecar(folder)
                 conn.execute(
                     "UPDATE plex_items SET local_theme_file = ? "
                     "WHERE folder_path = ? AND media_type = ?",

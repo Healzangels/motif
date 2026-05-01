@@ -234,6 +234,15 @@ _PATH_PREFIX_TRANSLATIONS: tuple[tuple[str, str], ...] = (
 )
 
 
+# v1.11.62: extension set + helpers shared with the unmanage / forget
+# endpoints in api.py so a Plex-folder-perspective sidecar re-stat
+# uses the same translation table as plex_enum.
+SIDECAR_AUDIO_EXTS = {
+    ".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".oga", ".opus",
+    ".wav", ".wma", ".aac", ".aif", ".aiff", ".alac",
+}
+
+
 def _candidate_local_paths(folder_path: str):
     """Yield Path candidates for a folder_path returned by Plex,
     starting with the literal value and falling through common
@@ -245,6 +254,33 @@ def _candidate_local_paths(folder_path: str):
     for src, dst in _PATH_PREFIX_TRANSLATIONS:
         if folder_path.startswith(src):
             yield Path(dst + folder_path[len(src):])
+
+
+def folder_has_theme_sidecar(folder_path: str) -> bool:
+    """Public helper: True if any theme.<audio-ext> exists at
+    folder_path (or any of its host→container translations).
+    Mirrors the inline check used by _upsert_items' Phase 1."""
+    if not folder_path:
+        return False
+    for candidate in _candidate_local_paths(folder_path):
+        try:
+            if not candidate.is_dir():
+                continue
+            for entry in candidate.iterdir():
+                try:
+                    if not entry.is_file():
+                        continue
+                except OSError:
+                    continue
+                name = entry.name.lower()
+                if not name.startswith("theme."):
+                    continue
+                if name[len("theme"):] in SIDECAR_AUDIO_EXTS:
+                    return True
+            return False
+        except OSError:
+            continue
+    return False
 
 
 def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
@@ -264,50 +300,11 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     the API for 10+ seconds per enum.
     """
     # Phase 1: stat sidecars outside the transaction. List of (item, sidecar)
-    # pairs.
-    # v1.11.52: detection now matches any "theme.<audio-ext>" — case-
-    # insensitive — instead of a hardcoded enum of seven extensions.
-    # Plex accepts a broader set than what we hardcoded; matching on the
-    # "theme." prefix + a known audio extension catches everything.
-    # v1.11.61: also try common host→container path prefix translations
-    # before giving up on iterdir, AND parallelize the per-item stat
-    # across a thread pool. The path translation handles the Unraid
-    # case where Plex returns /mnt/user/data/... but motif's container
-    # has /data → /mnt/user/data — without it the show looked themeless
-    # to motif but the place worker (which uses FolderIndex from the
-    # container's perspective) found the file just fine. The thread
-    # pool drops a 1200-show enum from ~3min sequential to ~15-20s.
-    AUDIO_EXTS = {
-        ".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".oga", ".opus",
-        ".wav", ".wma", ".aac", ".aif", ".aiff", ".alac",
-    }
-
-    def _has_theme_sidecar(folder_path: str) -> int:
-        if not folder_path:
-            return 0
-        for candidate in _candidate_local_paths(folder_path):
-            try:
-                if not candidate.is_dir():
-                    continue
-                for entry in candidate.iterdir():
-                    try:
-                        if not entry.is_file():
-                            continue
-                    except OSError:
-                        continue
-                    name = entry.name.lower()
-                    if not name.startswith("theme."):
-                        continue
-                    ext = name[len("theme"):]
-                    if ext in AUDIO_EXTS:
-                        return 1
-                # Folder existed but no theme.* matched — no need to
-                # try other candidates.
-                return 0
-            except OSError:
-                continue
-        return 0
-
+    # pairs. v1.11.62: parallelized + the per-folder check now goes
+    # through folder_has_theme_sidecar (host→container path translation
+    # + broad extension match). Same helper is reused by api.py's
+    # unmanage/forget endpoints so the post-mutation re-stat sees the
+    # same files plex_enum does.
     enriched: list[tuple[PlexLibraryItem, int]] = []
     if items:
         from concurrent.futures import ThreadPoolExecutor
@@ -315,8 +312,10 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
         # fast local disk a 1200-show enum is too much serial work.
         with ThreadPoolExecutor(max_workers=16,
                                 thread_name_prefix="motif-sidecar") as ex:
-            sidecars = list(ex.map(_has_theme_sidecar,
-                                   (it.folder_path for it in items)))
+            sidecars = list(ex.map(
+                lambda fp: 1 if folder_has_theme_sidecar(fp) else 0,
+                (it.folder_path for it in items),
+            ))
         for it, sc in zip(items, sidecars):
             enriched.append((it, sc))
 
