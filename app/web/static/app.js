@@ -732,24 +732,41 @@
     }
   }
 
-  async function purgeTheme(mediaType, tmdbId, title, isOrphan) {
+  async function purgeTheme(mediaType, tmdbId, title, isOrphan, dlOnly) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
     // v1.10.38: PURGE is full destruction — delete both motif's
     // canonical at /data/media/themes AND the placement in the Plex
     // folder. If you want to keep the Plex-folder file but stop
     // managing the theme, use UNMANAGE instead.
-    let warning = '\n\nMotif will delete BOTH:'
-      + '\n  • the canonical at /data/media/themes/...'
-      + '\n  • the theme.mp3 in the Plex folder';
-    if (isOrphan) {
-      warning += '\n\nThis is a user-provided / adopted entry — the themes row'
-        + ' will also be deleted; the file is gone. To restore, SET URL /'
-        + ' UPLOAD MP3, or drop a sidecar back at the Plex folder and ADOPT.';
+    // v1.11.8: when there's no current placement (DL-only state — row
+    // was placed and the user already DEL'd it), the warning shifts to
+    // emphasize that PUSH TO PLEX won't be available afterward — the
+    // user has to re-acquire the audio via DOWNLOAD / SET URL / UPLOAD
+    // / ADOPT before any future placement.
+    let warning;
+    if (dlOnly && !isOrphan) {
+      warning = '\n\n⚠ WARNING — this row is DL-only (downloaded, not placed).'
+        + '\n\nMotif will delete the canonical at /data/media/themes/...'
+        + '\n\nAfter PURGE you CANNOT use PUSH TO PLEX to restore this theme.'
+        + '\nTo re-place, you must FIRST re-acquire the audio via one of:'
+        + '\n  • SOURCE → DOWNLOAD (re-fetch from ThemerrDB)'
+        + '\n  • SOURCE → SET URL (provide a manual YouTube URL)'
+        + '\n  • SOURCE → UPLOAD MP3 (upload a local file)'
+        + '\n  • drop a theme.mp3 sidecar at the Plex folder and SOURCE → ADOPT';
     } else {
-      warning += '\n\nIf ThemerrDB still tracks the title, the row will flip'
-        + ' back to —; DOWNLOAD becomes available in the SOURCE menu.';
+      warning = '\n\nMotif will delete BOTH:'
+        + '\n  • the canonical at /data/media/themes/...'
+        + '\n  • the theme.mp3 in the Plex folder';
+      if (isOrphan) {
+        warning += '\n\nThis is a user-provided / adopted entry — the themes row'
+          + ' will also be deleted; the file is gone. To restore, SET URL /'
+          + ' UPLOAD MP3, or drop a sidecar back at the Plex folder and ADOPT.';
+      } else {
+        warning += '\n\nIf ThemerrDB still tracks the title, the row will flip'
+          + ' back to —; DOWNLOAD becomes available in the SOURCE menu.';
+      }
+      warning += '\n\nUse UNMANAGE if you want to keep the Plex-folder file.';
     }
-    warning += '\n\nUse UNMANAGE if you want to keep the Plex-folder file.';
     const ok = confirm(`Purge ${labelTitle}?${warning}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
@@ -2465,9 +2482,16 @@
         'network_error': 'Network error',
         'unknown': 'Unknown failure'
       }[it.failure_kind] || it.failure_kind;
+      // v1.11.8: clicking the red ! glyph acknowledges the failure
+      // (silent — clears the alert state, leaves failure_kind so the
+      // TDB pill stays red). Pre-fix this opened the SET URL prompt,
+      // which was a footgun for failures that aren't URL-fixable
+      // (e.g. cookies_expired or geo_blocked) and confused users who
+      // just wanted to dismiss the warning glyph.
+      const ackTip = `${human} — click to acknowledge`;
       titleGlyphs.push(
-        `<button class="title-glyph title-glyph-fail" title="${htmlEscape(human)}" `
-        + `data-act="open-override" data-mt="${themeMt}" data-id="${themeId}" `
+        `<button class="title-glyph title-glyph-fail" title="${htmlEscape(ackTip)}" `
+        + `data-act="clear-failure" data-mt="${themeMt}" data-id="${themeId}" `
         + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`
       );
       rowExtra = ' class="row-failure"';
@@ -2514,10 +2538,10 @@
         if (window.__motif_cookies_present) {
           return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title; cookies.txt is configured. The cookies_expired flag will clear on the next successful probe or download.">TDB</span>';
         }
-        return ' <span class="tdb-pill tdb-pill-cookies" title="ThemerrDB has this title but the YouTube URL needs a cookies.txt file — drop it at the path configured in Settings → PATHS to recover">TDB ⚠</span>';
+        return ' <span class="tdb-pill tdb-pill-cookies" title="ThemerrDB has this title but the YouTube URL needs cookies. Recovery options:&#10;  • drop a valid cookies.txt at the path in Settings → PATHS (preferred — fixes every cookies-blocked title at once)&#10;  • SOURCE → SET URL to override with a non-restricted YouTube URL&#10;  • SOURCE → UPLOAD MP3 to bypass YouTube entirely&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT">TDB ⚠</span>';
       }
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
-        return ' <span class="tdb-pill tdb-pill-dead" title="ThemerrDB has this title but the YouTube URL is unavailable — set a manual URL via SET URL to recover">TDB ✗</span>';
+        return ' <span class="tdb-pill tdb-pill-dead" title="ThemerrDB has this title but the YouTube URL is unavailable (removed / private / age-locked / geo-blocked). Recovery options:&#10;  • SOURCE → SET URL to provide a working YouTube URL&#10;  • SOURCE → UPLOAD MP3 to upload a local audio file&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT&#10;The TDB pill stays red so you remember the upstream URL is broken.">TDB ✗</span>';
       }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — REPLACE w/ TDB available in the SOURCE menu">TDB</span>';
     })();
@@ -2565,6 +2589,11 @@
         `data-title="${htmlEscape(it.plex_title)}"`,
         `data-year="${htmlEscape(it.year || '')}"`,
         extras.orphan !== undefined ? `data-orphan="${extras.orphan ? '1' : '0'}"` : '',
+        // v1.11.8: data-dl-only flags the DL-only PURGE case so the
+        // confirm dialog can show the stronger warning ("after PURGE
+        // you cannot PUSH TO PLEX"). Default '0' when absent so
+        // btn.dataset.dlOnly === '1' is a clean predicate.
+        extras.dlOnly !== undefined ? `data-dl-only="${extras.dlOnly}"` : '',
       ].filter(Boolean).join(' ');
       const cls = extras.danger ? 'btn btn-tiny btn-danger'
                 : extras.warn   ? 'btn btn-tiny btn-warn'
@@ -2743,11 +2772,24 @@
       ));
     }
     if (downloaded || isOrphan) {
+      // v1.11.8: surface PURGE on the DL-only state too. After a DEL
+      // (unplaced) the row is "downloaded but not placed" — pre-fix
+      // the menu showed PUSH TO PLEX without a way to also drop the
+      // canonical. PURGE was technically already added (downloaded ||
+      // isOrphan covers !placed && downloaded) but the description
+      // didn't make clear what happens to the recovery path.
+      const purgeDesc = isOrphan
+        ? 'delete everything: orphan record + files (cannot be undone)'
+        : (placed
+            ? 'delete everything: canonical + Plex-folder file + tracking'
+            : 'delete the downloaded canonical (no PUSH TO PLEX after this — '
+              + 'recover via DOWNLOAD / SET URL / UPLOAD MP3 / ADOPT)');
       removeItems.push(menuItemHtml(
         'purge', '× PURGE',
-        isOrphan ? 'delete everything: orphan record + files'
-                 : 'delete everything: motif drops the canonical + tracking',
-        { mt: themeMt, id: themeId, orphan: isOrphan, danger: true },
+        purgeDesc,
+        { mt: themeMt, id: themeId, orphan: isOrphan,
+          danger: true,
+          dlOnly: !placed && downloaded ? '1' : '0' },
       ));
     }
 
@@ -3408,7 +3450,8 @@
       } else if (act === 'purge') {
         await purgeTheme(btn.dataset.mt, btn.dataset.id,
                          btn.dataset.title || '',
-                         btn.dataset.orphan === '1');
+                         btn.dataset.orphan === '1',
+                         btn.dataset.dlOnly === '1');
         await loadLibrary().catch(()=>{});
       } else if (act === 'clear-failure') {
         // v1.10.42: silent acknowledge — no confirm prompt, the
