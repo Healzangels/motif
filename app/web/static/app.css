@@ -661,8 +661,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-radius: 4px;
   background: var(--bg-elev);
 }
-.src-key-compact .link-badge { cursor: help; }
-.src-key-compact .muted { cursor: help; padding: 0 2px; }
+/* v1.11.70: cursor: pointer (was: help) on the SRC legend badges
+   since v1.11.66 turned them all into <button> filters. The help
+   cursor lingered from the v1.11.20 read-only legend and beat the
+   newer .src-key-btn { cursor: pointer } rule on specificity. */
+.src-key-compact .link-badge { cursor: pointer; }
+.src-key-compact .muted { cursor: default; padding: 0 2px; }
 .src-key-label {
   letter-spacing: 0.6px;
   margin-right: 2px;
