@@ -2824,7 +2824,7 @@
       const sp = new URLSearchParams(window.location.search);
       const wantStatus = sp.get('status');
       if (wantStatus) {
-        const valid = new Set(['all','themed','manual','plex_agent','untracked',
+        const valid = new Set(['all','has_theme','themed','manual','plex_agent','untracked',
                                'downloaded','placed','unplaced','failures',
                                'not_in_plex']);
         if (valid.has(wantStatus)) {

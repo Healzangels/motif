@@ -291,6 +291,18 @@ def _library_main_query(
                         "AND pi.local_theme_file = 0 "
                         "AND lf.file_path IS NULL "
                         "AND p.media_folder IS NULL")
+    elif status == "has_theme":
+        # v1.10.54: any theme source — T (ThemerrDB-tracked + maybe
+        # downloaded), U/A (motif-managed manual), M (sidecar), P
+        # (Plex agent), or a downloaded canonical waiting for
+        # placement. Inverse of UNTRACKED.
+        where_extra += (" AND ("
+                        "  (t.tmdb_id IS NOT NULL AND t.upstream_source != 'plex_orphan')"
+                        "  OR pi.local_theme_file = 1"
+                        "  OR pi.has_theme = 1"
+                        "  OR p.media_folder IS NOT NULL"
+                        "  OR lf.file_path IS NOT NULL"
+                        ")")
     elif status == "downloaded":
         # motif has the theme file on disk (placed or not). Mirrors the
         # DL pill being lit in the row.
@@ -1856,7 +1868,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|failures|not_in_plex)$"),
+        status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|failures|not_in_plex)$"),
         tdb: str = Query("any", pattern="^(any|tracked|untracked)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
