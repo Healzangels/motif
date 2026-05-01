@@ -2836,6 +2836,16 @@
         `<a class="title-glyph title-glyph-broken" title="canonical missing under /themes — placement in Plex folder is still there. Open RESTORE FROM PLEX in PLACE menu to recover." href="/${libraryState.tab}?status=dl_missing">↺</a>`
       );
     }
+    // v1.11.74: green ↑ glyph when ThemerrDB has a new YouTube URL
+    // for this title (pending_update=1). Click jumps to the UPDATES
+    // filter on the current tab so the user can review every
+    // affected row at once. ACCEPT / KEEP buttons live in the
+    // SOURCE menu below.
+    if (it.pending_update) {
+      titleGlyphs.push(
+        `<a class="title-glyph title-glyph-update" title="ThemerrDB updated this theme's URL — click to filter this tab to all UPDATES. Use ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu." href="/${libraryState.tab}?status=updates">↑</a>`
+      );
+    }
     // v1.10.50: only show the ! glyph when the failure hasn't been
     // acknowledged. Acked rows keep their red TDB pill (still failing
     // upstream) but no longer pull attention; they're hidden from the
@@ -3107,6 +3117,24 @@
       sourceItems.push(menuItemHtml(
         'clear-failure', 'ACK FAILURE',
         "removes the ! glyph and excludes the row from FAILURES; TDB pill stays red so you know the upstream URL is still broken",
+        { mt: themeMt, id: themeId },
+      ));
+    }
+    // v1.11.74: ACCEPT UPDATE / KEEP CURRENT — surfaced when
+    // ThemerrDB has a new YouTube URL for this theme (pending_update
+    // flag from /api/library). ACCEPT downloads the new URL and
+    // overwrites motif's canonical; KEEP marks the diff declined so
+    // the ↑ glyph clears without changing files.
+    if (it.pending_update && themed
+        && themeId !== null && themeId !== undefined) {
+      sourceItems.push(menuItemHtml(
+        'accept-update', 'ACCEPT UPDATE',
+        'replace motif\'s current theme with a fresh download from the new ThemerrDB URL',
+        { mt: themeMt, id: themeId, warn: true, tone: 'themerrdb' },
+      ));
+      sourceItems.push(menuItemHtml(
+        'decline-update', 'KEEP CURRENT',
+        'leave motif\'s current theme alone; clears the ↑ glyph and stops alerting on this update',
         { mt: themeMt, id: themeId },
       ));
     }
@@ -3979,6 +4007,26 @@
         await loadLibrary().catch(()=>{});
       } else if (act === 'replace') {
         await replaceTheme(btn.dataset.mt, btn.dataset.id, btn);
+      } else if (act === 'accept-update') {
+        // v1.11.74: same flow as the browse-page ACCEPT button —
+        // helper handles the API call + alerting; we just reload
+        // the library so the ↑ glyph clears and the new theme
+        // metadata appears.
+        try {
+          await acceptUpdate(btn.dataset.mt, btn.dataset.id, btn);
+          await loadLibrary().catch(() => {});
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Accept failed: ' + e.message);
+        }
+      } else if (act === 'decline-update') {
+        try {
+          await declineUpdate(btn.dataset.mt, btn.dataset.id, btn);
+          await loadLibrary().catch(() => {});
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Decline failed: ' + e.message);
+        }
       } else if (act === 'restore-canonical') {
         // v1.11.62: recreate the missing canonical from the surviving
         // placement file. Hardlink first, copy fallback on cross-FS.

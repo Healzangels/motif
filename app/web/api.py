@@ -328,6 +328,20 @@ def _library_main_query(
         # Acked rows keep their red TDB pill but don't show up here —
         # they're 'I know, dealt with it' state.
         where_extra += " AND t.failure_kind IS NOT NULL AND t.failure_acked_at IS NULL"
+    elif status == "updates":
+        # v1.11.74: items where ThemerrDB upstream changed the YouTube
+        # URL since motif's last download. The pending_updates table
+        # carries the diff with decision='pending'; ACCEPT replaces
+        # motif's copy with a fresh download from the new URL, KEEP
+        # leaves the current one alone (decision='declined'). Topbar
+        # 'N UPD' badge counts these globally; this filter narrows
+        # the library page to just the rows that are eligible.
+        where_extra += (" AND EXISTS ("
+                        "  SELECT 1 FROM pending_updates pu"
+                        "   WHERE pu.media_type = t.media_type"
+                        "     AND pu.tmdb_id = t.tmdb_id"
+                        "     AND pu.decision = 'pending'"
+                        ")")
 
     # v1.10.20: secondary 'TDB MATCH' filter, stacks on top of `status`.
     # 'tracked' means ThemerrDB has the title (the row's joined themes
@@ -362,7 +376,17 @@ def _library_main_query(
                   AND j.status IN ('pending', 'running')
                 ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
                          j.id DESC
-                LIMIT 1) AS job_in_flight
+                LIMIT 1) AS job_in_flight,
+               -- v1.11.74: 1 if there's a pending TDB-update for this
+               -- (media_type, tmdb_id), 0 otherwise. Drives the green
+               -- ↑ glyph + the SOURCE menu's ACCEPT UPDATE / KEEP
+               -- CURRENT items added in the same release.
+               (CASE WHEN EXISTS (
+                  SELECT 1 FROM pending_updates pu
+                   WHERE pu.media_type = t.media_type
+                     AND pu.tmdb_id = t.tmdb_id
+                     AND pu.decision = 'pending'
+                ) THEN 1 ELSE 0 END) AS pending_update
     """
     # v1.11.0: every per-row JOIN to placements / local_files matches
     # by section_id = pi.section_id, so a row on the standard library
@@ -2335,7 +2359,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab: str = Query(..., pattern="^(movies|tv|anime)$"),
         fourk: bool = Query(False),
         q: str = Query(""),
-        status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|dl_missing|failures|not_in_plex)$"),
+        status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|dl_missing|failures|updates|not_in_plex)$"),
         tdb: str = Query("any", pattern="^(any|tracked|untracked)$"),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
