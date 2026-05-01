@@ -517,7 +517,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .lib-col-type     { width: 80px; }
 .lib-col-mgd      { width: 70px; text-align: center; }
 .lib-col-id       { width: 70px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
-.lib-col-role     { width: 130px; }
+.lib-col-role     { width: 200px; }
 .lib-col-num      { width: 90px; text-align: center; font-variant-numeric: tabular-nums; }
 /* v1.11.6: A / 4K toggle pills replace the role <select>. Pills sit in a
    horizontal flex row inside the role cell so adding additional flag
@@ -564,6 +564,16 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   box-shadow: 0 0 0 1px rgba(255, 184, 74, 0.30), 0 0 8px rgba(255, 184, 74, 0.22);
 }
 .lib-flag-pill:active:not(:disabled) { transform: translateY(1px); }
+
+/* v1.11.13: inline role label so the saved role (including 'standard' =
+   no pills active) is always visible. Updates live as pills toggle. */
+.lib-flag-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  color: var(--fg-dim);
+  margin-left: 8px;
+  letter-spacing: 0.4px;
+}
 
 .lib-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;

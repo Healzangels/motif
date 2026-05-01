@@ -1207,6 +1207,19 @@
                                   data-section-id="${htmlEscape(s.section_id)}"
                                   aria-pressed="${is4k ? 'true' : 'false'}"
                                   title="4K library — feeds the 4K toggle on its tab">4K</button>`;
+      // v1.11.13: explicit role label so 'standard' (= no pills active)
+      // is visible. Pre-fix users sometimes thought a section was set
+      // to standard but the saved is_4k flag was 1 from an earlier
+      // save — the absence of an active pill meant nothing was clicked,
+      // not that the section WAS standard. The label updates live as
+      // pills toggle (handler below) so the displayed role matches what
+      // SAVE will send.
+      const roleLabel = (() => {
+        if (isAnime && is4k) return 'anime 4K';
+        if (isAnime) return 'anime';
+        if (is4k) return '4K';
+        return 'standard';
+      })();
       const row = `
         <tr style="${stale ? 'opacity:0.45' : ''}" data-section-row="${htmlEscape(s.section_id)}">
           <td class="lib-col-id">${htmlEscape(s.section_id)}</td>
@@ -1216,7 +1229,7 @@
             <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
           </td>
           <td class="lib-col-role">
-            <div class="lib-flag-group">${animePill}${fourkPill}</div>
+            <div class="lib-flag-group">${animePill}${fourkPill}<span class="lib-flag-label" data-section-role-label="${htmlEscape(s.section_id)}">${roleLabel}</span></div>
           </td>
           <td class="lib-locations" style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${locations}</td>
           <td class="lib-col-actions">
@@ -1289,6 +1302,26 @@
       const sid = tog.dataset.sectionToggle;
       if (!librariesDirty[sid]) librariesDirty[sid] = {};
       librariesDirty[sid].included = tog.checked;
+      // v1.11.13: when MGD turns ON, also re-assert the current role so
+      // SAVE always lands the section in the visible state — even if the
+      // user didn't touch the pills. Pre-fix a user who enabled MGD on a
+      // section that had been previously saved as 4K (gold pill active)
+      // could click SAVE without touching the 4K pill and get a section
+      // that was 'managed but with the wrong role' (4K instead of the
+      // standard they expected if no pill was active in their head).
+      if (tog.checked) {
+        const row = tog.closest('tr');
+        if (row) {
+          const animePill = row.querySelector('button[data-section-flag="anime"]');
+          const fourkPill = row.querySelector('button[data-section-flag="4k"]');
+          const isAnime = animePill && animePill.getAttribute('aria-pressed') === 'true';
+          const is4k = fourkPill && fourkPill.getAttribute('aria-pressed') === 'true';
+          librariesDirty[sid].role = (isAnime && is4k) ? 'anime_4k'
+                                   : isAnime           ? 'anime'
+                                   : is4k              ? '4k'
+                                   :                     'standard';
+        }
+      }
       updateLibrariesSaveButton();
     });
     // v1.11.6: A / 4K pill toggles. Each pill flips its own aria-pressed
@@ -1315,6 +1348,14 @@
                  :                     'standard';
       if (!librariesDirty[sid]) librariesDirty[sid] = {};
       librariesDirty[sid].role = role;
+      // v1.11.13: keep the inline role label in sync as pills toggle.
+      const label = row.querySelector('span[data-section-role-label]');
+      if (label) {
+        label.textContent = (isAnime && is4k) ? 'anime 4K'
+                          : isAnime           ? 'anime'
+                          : is4k              ? '4K'
+                          :                     'standard';
+      }
       updateLibrariesSaveButton();
     });
 
