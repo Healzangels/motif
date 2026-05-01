@@ -395,10 +395,38 @@ class Worker:
             self._do_adopt(job)
         elif jt == "plex_enum":
             self._do_plex_enum(job)
+        elif jt == "themes_scan":
+            self._do_themes_scan(job)
         else:
             self._mark_failed(job["id"], f"unknown job type: {jt}")
             return
         self._mark_done(job["id"])
+
+    def _do_themes_scan(self, job: sqlite3.Row) -> None:
+        """v1.12.0: walk themes_dir for manual-import candidates and
+        write import_findings. If matching.auto_place_unambiguous_imports
+        is enabled, also apply auto_place / auto_adopt outcomes
+        immediately so a bulk drop just works without per-row clicks.
+        Conflict / multi-section / orphan / flat_layout always wait
+        for explicit user approval.
+        """
+        from .themes_scanner import scan_themes_dir
+        if not self.settings.is_paths_ready():
+            log.warning("themes_scan skipped: themes_dir not configured")
+            return
+        scan_themes_dir(
+            self.settings.db_path, self.settings.themes_dir,
+            cancel_check=lambda: _is_cancelled(self.settings.db_path,
+                                               job["id"]),
+        )
+        if self.settings.cfg.matching.auto_place_unambiguous_imports:
+            from .import_apply import apply_unambiguous_findings
+            applied = apply_unambiguous_findings(
+                self.settings.db_path, self.settings,
+                decided_by="auto",
+            )
+            log.info("themes_scan: auto-applied %d unambiguous findings",
+                     applied)
 
     # -- Job handlers --
 
@@ -1240,7 +1268,7 @@ class Worker:
 
 # -------- Entry point --------
 
-_LONG_JOB_TYPES = ("sync", "plex_enum", "scan")
+_LONG_JOB_TYPES = ("sync", "plex_enum", "scan", "themes_scan")
 _GENERAL_JOB_TYPES = ("download", "place", "refresh", "relink", "adopt")
 
 
