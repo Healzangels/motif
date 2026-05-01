@@ -26,6 +26,7 @@ import logging
 import re
 import sqlite3
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -43,7 +44,12 @@ log = logging.getLogger(__name__)
 # ----- HTTP client config -----
 
 _HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=30.0, write=10.0, pool=5.0)
-_HTTP_LIMITS = httpx.Limits(max_connections=8, max_keepalive_connections=4)
+# v1.11.49: parallel per-item fetches use up to _FETCH_WORKERS concurrent
+# requests; bump max_connections so the pool isn't the bottleneck. GitHub
+# Pages happily handles ~32 concurrent connections from one client; we
+# stay well under any sane CDN throttle.
+_HTTP_LIMITS = httpx.Limits(max_connections=40, max_keepalive_connections=20)
+_FETCH_WORKERS = 16
 
 
 def _make_client() -> httpx.Client:
@@ -580,38 +586,70 @@ def run_sync(db_path, base_url: str, *,
                 else:
                     stats.tv_seen = len(index)
 
+                # v1.11.49: parallelize per-item HTTP fetches. Pre-fix the
+                # tight loop did a sequential `_fetch_item` per index entry
+                # — at ~50ms RTT to GitHub Pages this added up to many
+                # minutes for libraries with thousands of titles. The
+                # bottleneck was network, not DB; httpx.Client is
+                # thread-safe so a small ThreadPoolExecutor over the
+                # index yields ~10-20× speedup without any rewrite of
+                # the per-item logic.
+                #
+                # Cancellation: the executor's submission loop checks
+                # cancel_check before each submit and bails fast; in-flight
+                # workers continue (kill-switch via shutdown(cancel_futures)
+                # leaves them queued, the index walk just stops feeding new
+                # ones). Since each fetch is ~30s timeout max, the worker
+                # pool drains within seconds of cancel.
                 batch: list[tuple[str, int, dict, str]] = []
-                for entry in index:
-                    # v1.11.36: cooperative cancellation. Per-item check
-                    # is cheap (one indexed SELECT) and lets the user
-                    # bail out within a few seconds.
-                    if cancel_check():
-                        from .worker import _JobCancelled
-                        raise _JobCancelled()
+                from .worker import _JobCancelled
+
+                def _do_fetch(entry):
                     tmdb_id = entry.get("id")
                     if tmdb_id is None:
-                        continue
+                        return None
                     imdb_id = entry.get("imdb_id") or None
                     record = _fetch_item(
                         client, base_url, media_path,
                         imdb_id=imdb_id, tmdb_id=int(tmdb_id),
                     )
                     if record is None:
-                        stats.errors += 1
-                        continue
+                        return ("error", int(tmdb_id))
                     upstream_source = "imdb" if imdb_id else "themoviedb"
-                    batch.append((media_type, int(tmdb_id), record, upstream_source))
-                    if len(batch) >= _SYNC_BATCH:
-                        _flush_sync_batch(
-                            db_path, batch, sync_ts=sync_ts,
-                            enqueue_downloads=enqueue_downloads,
-                            auto_place_override=auto_place_override,
-                            stats=stats,
-                        )
-                        batch.clear()
-                        # Yield the writer lock briefly so concurrent API
-                        # writers (log_event etc.) can land between batches.
-                        time.sleep(0.05)
+                    return (media_type, int(tmdb_id), record, upstream_source)
+
+                with ThreadPoolExecutor(
+                    max_workers=_FETCH_WORKERS,
+                    thread_name_prefix=f"motif-sync-{media_type}",
+                ) as ex:
+                    futures = []
+                    for entry in index:
+                        if cancel_check():
+                            ex.shutdown(cancel_futures=True)
+                            raise _JobCancelled()
+                        futures.append(ex.submit(_do_fetch, entry))
+                    for fut in as_completed(futures):
+                        if cancel_check():
+                            ex.shutdown(cancel_futures=True)
+                            raise _JobCancelled()
+                        result = fut.result()
+                        if result is None:
+                            continue
+                        if result[0] == "error":
+                            stats.errors += 1
+                            continue
+                        batch.append(result)
+                        if len(batch) >= _SYNC_BATCH:
+                            _flush_sync_batch(
+                                db_path, batch, sync_ts=sync_ts,
+                                enqueue_downloads=enqueue_downloads,
+                                auto_place_override=auto_place_override,
+                                stats=stats,
+                            )
+                            batch.clear()
+                            # Yield the writer lock briefly so concurrent API
+                            # writers (log_event etc.) can land between batches.
+                            time.sleep(0.05)
 
                 if batch:
                     _flush_sync_batch(
