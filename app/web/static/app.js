@@ -334,7 +334,21 @@
       //     (it's the only ThemerrDB sync trigger)
       const enumActive = q.plex_enum_active || {};
       const enumSectionIds = new Set(q.plex_enum_running_section_ids || []);
+      // 'anyEnumRunning' = there's a section actively running RIGHT
+      // NOW (status='running'). Used for per-section REFRESH buttons
+      // since once a specific section finishes, the user can fire
+      // it again immediately.
       const anyEnumRunning = enumSectionIds.size > 0;
+      // v1.11.75: 'anyEnumInFlight' = there's any plex_enum job in
+      // pending OR running state. Used for layoutLocked + the
+      // settings global REFRESH so the lock holds through the
+      // ENTIRE enum window (incl. brief gaps where the worker is
+      // between running jobs but more are queued). Pre-fix the lock
+      // released between running sections and the user could see
+      // the per-section MGD checkboxes / SAVE button briefly
+      // re-enable while 'REFRESHING PLEX…' was still showing in the
+      // topbar — confusing.
+      const anyEnumInFlight = plexEnumBusy;
       // Stash for the empty-state message in loadLibrary().
       window.__motif_enum_active = enumActive;
       const lockBtn = (btn, locked, busyText) => {
@@ -364,12 +378,12 @@
         lockBtn(libRefreshBtn, tabBusy,
           `// REFRESHING ${libraryRefreshLabel()}…`);
       }
-      // Settings global REFRESH FROM PLEX — lock if ANY enum is running.
-      // No specific scope here (it covers every included section), so
-      // the generic 'REFRESHING PLEX' text stays correct.
+      // Settings global REFRESH FROM PLEX — locked through the whole
+      // enum window (pending OR running) so the button doesn't
+      // flicker enabled between sections.
       lockBtn(
         document.getElementById('refresh-libraries-btn'),
-        anyEnumRunning, '// REFRESHING PLEX…',
+        anyEnumInFlight, '// REFRESHING PLEX…',
       );
       // Dashboard SYNC — only the ThemerrDB sync drives this.
       lockBtn(
@@ -382,10 +396,13 @@
         lockBtn(b, enumSectionIds.has(sid), '…');
       });
       // Lock per-section MGD checkboxes + A/4K flag pills + libraries
-      // SAVE only when something is actively touching THAT section, OR
-      // any sync (themerrdb / plex_enum) is in flight at all. This
-      // keeps layout changes safe while letting the user navigate.
-      const layoutLocked = themerrdbBusy || anyEnumRunning;
+      // SAVE while ANY sync (themerrdb / plex_enum) is in flight at
+      // all — pending OR running. v1.11.75: switched from
+      // anyEnumRunning (running-only) to anyEnumInFlight so the
+      // lock holds across brief gaps between running sections.
+      // Pre-fix the user saw MGD checkboxes / SAVE re-enable between
+      // sections while 'REFRESHING PLEX…' was still showing.
+      const layoutLocked = themerrdbBusy || anyEnumInFlight;
       document.querySelectorAll('input[data-section-toggle]').forEach((cb) => {
         cb.disabled = layoutLocked;
       });
