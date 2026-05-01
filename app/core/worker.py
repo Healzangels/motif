@@ -937,37 +937,45 @@ class Worker:
         index = self._index_for_section(section_id)
         plex_client = self._plex_client()
         # v1.11.39: pre-resolve rating_key + has_theme from plex_items
-        # so place_theme doesn't have to hit Plex for them. Saves two
-        # Plex API calls per placement (resolve_rating_key +
-        # item_has_theme); plex_items is the cached view from
-        # plex_enum and already carries both. Plex still gets called
-        # ONCE per placement for the post-place refresh — that's the
-        # only call we actually need.
+        # so place_theme doesn't have to hit Plex for them.
+        # v1.11.68: also resolve through pi.theme_id (the v1.11.43 /
+        # v1.11.64 stamp) so orphan-backed rows (SET URL / UPLOAD MP3
+        # / adopt without a TDB match — synthetic-negative tmdb_id)
+        # correctly find their plex_items row. Pre-fix the SELECT was
+        # WHERE guid_tmdb=? which only worked for non-orphan rows;
+        # orphans matched nothing, cached_rk stayed None, and
+        # placement fell back to FolderIndex title+year matching that
+        # ignored the {edition-4K} suffix on the actual Plex folder.
+        # Also pull folder_path so place_theme can target that folder
+        # directly when available — skips the strict_edition mismatch
+        # entirely for known-rk placements.
         plex_mt = "show" if media_type == "tv" else "movie"
         with get_conn(self.settings.db_path) as conn:
             pi = conn.execute(
-                "SELECT rating_key, has_theme FROM plex_items "
-                "WHERE guid_tmdb = ? AND media_type = ? "
-                "  AND section_id = ? "
-                "  AND folder_path = (SELECT media_folder FROM placements "
-                "                       WHERE media_type = ? AND tmdb_id = ? "
-                "                         AND section_id = ? LIMIT 1) "
-                "LIMIT 1",
-                (tmdb_id, plex_mt, section_id,
-                 media_type, tmdb_id, section_id),
+                """SELECT pi.rating_key, pi.has_theme, pi.folder_path
+                   FROM plex_items pi
+                   INNER JOIN themes t
+                     ON t.id = pi.theme_id
+                    AND t.media_type = ?
+                    AND t.tmdb_id = ?
+                   WHERE pi.section_id = ?
+                   LIMIT 1""",
+                (media_type, tmdb_id, section_id),
             ).fetchone()
             if pi is None:
-                # Folder-path fallback hit nothing (no placement yet for
-                # this row) — pick any plex_items row in this section
-                # that matches the tmdb id.
+                # Fall back to the v1.11.39 path (covers freshly-
+                # downloaded T rows whose pi.theme_id may not have
+                # caught up yet via resolve_theme_ids).
                 pi = conn.execute(
-                    "SELECT rating_key, has_theme FROM plex_items "
-                    "WHERE guid_tmdb = ? AND media_type = ? AND section_id = ? "
-                    "LIMIT 1",
+                    "SELECT rating_key, has_theme, folder_path "
+                    "FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? "
+                    "  AND section_id = ? LIMIT 1",
                     (tmdb_id, plex_mt, section_id),
                 ).fetchone()
         cached_rk = pi["rating_key"] if pi else None
         cached_has_theme = bool(pi and pi["has_theme"])
+        cached_folder_path = (pi["folder_path"] if pi else None) or None
         try:
             outcome = place_theme(
                 media_type=media_type,
@@ -979,6 +987,7 @@ class Worker:
                 plex=plex_client,
                 cached_rk=cached_rk,
                 cached_has_theme=cached_has_theme,
+                cached_folder_path=cached_folder_path,
                 strict_edition=self.settings.strict_edition_match,
                 plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
                 skip_if_plex_has_theme=not force_overwrite,

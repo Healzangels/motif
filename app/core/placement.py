@@ -244,6 +244,7 @@ def place_theme(
     plex: PlexClient | None,
     cached_rk: str | None = None,
     cached_has_theme: bool = False,
+    cached_folder_path: str | None = None,
     strict_edition: bool = True,
     plus_mode: PlusMode = "separator",
     skip_if_plex_has_theme: bool = True,
@@ -259,20 +260,44 @@ def place_theme(
     user explicitly approves placement from /pending knowing it will
     overwrite an existing sidecar.
 
-    v1.11.39: callers pass `cached_rk` + `cached_has_theme` from
-    plex_items so this function makes ONE Plex API call (the
-    post-place refresh) instead of three (resolve + has_theme +
-    refresh). plex_items is refreshed by plex_enum and is the
-    authoritative source for these values; live calls just added
-    Plex-server load with no information gain.
+    v1.11.68: when `cached_folder_path` is supplied (the worker pulls
+    plex_items.folder_path alongside rating_key), use it as the
+    target folder directly — skip FolderIndex title+year+edition
+    matching entirely. This dodges the strict_edition false-negative
+    where a Plex folder carries a {edition-4K} or {edition-Theatrical}
+    tag but the theme row has no edition recorded (typical for
+    SET URL / UPLOAD MP3 on orphan rows). The pre-fix path made
+    placement reach for FolderIndex with edition_raw="" and reject
+    every {edition-X} folder, leaving the download stuck in /pending
+    forever with reason='no_match'.
     """
     # 1. Find target folder
-    find = find_target_folder(
-        index, title=title, year=year, edition_raw=edition_raw,
-        strict_edition=strict_edition, plus_mode=plus_mode,
-    )
+    find: FindResult | None = None
+    if cached_folder_path:
+        # Path translation already happens for stat/iterdir via
+        # plex_enum._candidate_local_paths; mirror it here so the
+        # placement target resolves whether Plex reports
+        # /data/media/... (container view) or /mnt/user/data/...
+        # (Unraid host view).
+        from .plex_enum import _candidate_local_paths
+        for cand in _candidate_local_paths(cached_folder_path):
+            if cand.is_dir():
+                find = FindResult(MatchResult.EXACT, cand,
+                                  reason="cached_folder_path")
+                break
+    if find is None:
+        find = find_target_folder(
+            index, title=title, year=year, edition_raw=edition_raw,
+            strict_edition=strict_edition, plus_mode=plus_mode,
+        )
     if find.folder is None:
-        return PlacementOutcome(False, None, find.reason or "no_match")
+        # v1.11.68: emit the enum-key reason ('no_match') so /pending's
+        # last_place_attempt_reason switch matches. The human-readable
+        # 'no matching folder' string used pre-fix made the /pending
+        # render fall through to its generic 'No place job queued —
+        # click APPROVE' message instead of the specific 'No Plex
+        # folder matched this title' branch.
+        return PlacementOutcome(False, None, "no_match")
 
     target = find.folder
 
