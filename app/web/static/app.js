@@ -2907,8 +2907,14 @@
       // 'url' as the indicator.
       const hasDownloadUrl = !!it.youtube_url
         || sourceKindForActions === 'url';
-      if (!isPlexAgent && !lockManualActions && !tdbDeadForDownload
-          && hasDownloadUrl) {
+      // v1.11.63: also exclude isManualPlacement (covers A/U rows).
+      // The dedicated REPLACE-w/-TDB block further down already
+      // handles those cases with a single explicit 'replace adopted/
+      // manual file with TDB' action; without this exclusion the
+      // SOURCE menu showed 'TDB' twice on adopted rows (once as
+      // RE-DL, once as REPLACE w/ TDB), confusingly back to back.
+      if (!isPlexAgent && !isManualPlacement && !lockManualActions
+          && !tdbDeadForDownload && hasDownloadUrl) {
         // v1.11.11: button label is just "TDB" so the source is named
         // explicitly (was "DOWNLOAD" — ambiguous about WHERE the audio
         // comes from). The description spells out the placement
@@ -2998,8 +3004,20 @@
     // PLACE menu — single-action category, but rendered as a menu for
     // visual symmetry with the others. Hidden entirely when there's
     // nothing to push.
+    // v1.11.63: PUSH / RE-PUSH / RESTORE are mutually exclusive based
+    // on the current canonical+placement state:
+    //   downloaded && !placed → PUSH TO PLEX (canonical only, push it out)
+    //   downloaded && placed && !dlBroken → RE-PUSH (force re-place)
+    //   dlBroken && placed → RESTORE FROM PLEX (no canonical to push;
+    //                        recover it from the surviving placement)
+    // Pre-fix RE-PUSH stayed visible alongside RESTORE FROM PLEX even
+    // though there's no canonical to re-push, and PUSH TO PLEX was
+    // theoretically reachable on a row whose 'downloaded' flag was
+    // truthy only because file_path was non-null (ignoring the
+    // missing canonical). Now: if the canonical is gone, PUSH/RE-PUSH
+    // are suppressed; if the canonical is present, RESTORE is suppressed.
     const placeItems = [];
-    if (themed && downloaded && !placed) {
+    if (themed && downloaded && !placed && !dlBroken) {
       // v1.10.34: bypassLock=true so this stays clickable in the
       // 'downloaded but not placed' state (a.k.a. awaitingApproval).
       // Pushing IS the resolution action there — locking it forced
@@ -3010,19 +3028,13 @@
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
-    if (themed && downloaded && placed) {
+    if (themed && downloaded && placed && !dlBroken) {
       placeItems.push(menuItemHtml(
         'replace', 'RE-PUSH',
         "force motif to re-place the canonical at the Plex folder (no re-download)",
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
-    // v1.11.62: RESTORE FROM PLEX — the inverse of PUSH TO PLEX.
-    // The canonical under <themes_dir>/<file_path> is gone but the
-    // placement in the Plex folder survives. We hardlink (or copy
-    // on cross-FS) the placement back to the canonical location and
-    // resume managing it. Same bypassLock semantics as PUSH TO PLEX
-    // since this is the resolution action for the dlBroken state.
     if (themed && dlBroken && placed) {
       placeItems.push(menuItemHtml(
         'restore-canonical', 'RESTORE FROM PLEX',

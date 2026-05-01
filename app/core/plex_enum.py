@@ -305,19 +305,53 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     # + broad extension match). Same helper is reused by api.py's
     # unmanage/forget endpoints so the post-mutation re-stat sees the
     # same files plex_enum does.
+    # v1.11.63: per-future timeout + progress logging. Pre-fix one
+    # hung folder (dead NFS mount, stalled SMB read, anything where
+    # iterdir() never returns) blocked the whole ex.map indefinitely
+    # — the user's plex_enum job sat 'running' forever with no further
+    # log output. Now: 30s timeout per folder via as_completed; on
+    # timeout we mark sidecar=0 (rather than blocking) and log the
+    # offending folder so the user can investigate. Periodic progress
+    # log every 200 items so a long enum visibly advances.
+    import time as _t
     enriched: list[tuple[PlexLibraryItem, int]] = []
     if items:
-        from concurrent.futures import ThreadPoolExecutor
-        # 16-way parallelism: per-item stat is I/O-bound, even on
-        # fast local disk a 1200-show enum is too much serial work.
+        from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FutTimeout
+        sidecar_results: dict[int, int] = {}
+        log.info("plex_enum: Phase 1 (sidecar stat) on %d items", len(items))
+        phase1_start = _t.monotonic()
         with ThreadPoolExecutor(max_workers=16,
                                 thread_name_prefix="motif-sidecar") as ex:
-            sidecars = list(ex.map(
-                lambda fp: 1 if folder_has_theme_sidecar(fp) else 0,
-                (it.folder_path for it in items),
-            ))
-        for it, sc in zip(items, sidecars):
-            enriched.append((it, sc))
+            futures = {
+                ex.submit(folder_has_theme_sidecar, it.folder_path): idx
+                for idx, it in enumerate(items)
+            }
+            done = 0
+            for fut in as_completed(futures, timeout=None):
+                idx = futures[fut]
+                try:
+                    sidecar_results[idx] = 1 if fut.result(timeout=30) else 0
+                except _FutTimeout:
+                    log.warning(
+                        "plex_enum: sidecar stat timeout for %r — "
+                        "treating as no-sidecar (likely stalled mount)",
+                        items[idx].folder_path,
+                    )
+                    sidecar_results[idx] = 0
+                except Exception as e:
+                    log.warning(
+                        "plex_enum: sidecar stat error for %r: %s",
+                        items[idx].folder_path, e,
+                    )
+                    sidecar_results[idx] = 0
+                done += 1
+                if done % 200 == 0:
+                    log.info("plex_enum: Phase 1 progress %d/%d (%.1fs)",
+                             done, len(items), _t.monotonic() - phase1_start)
+        log.info("plex_enum: Phase 1 done in %.1fs",
+                 _t.monotonic() - phase1_start)
+        for idx, it in enumerate(items):
+            enriched.append((it, sidecar_results.get(idx, 0)))
 
     # Phase 2: batched upserts.
     inserted = 0
