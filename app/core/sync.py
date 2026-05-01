@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import re
 import sqlite3
 import time
@@ -647,9 +648,20 @@ def run_sync(db_path, base_url: str, *,
                                 stats=stats,
                             )
                             batch.clear()
-                            # Yield the writer lock briefly so concurrent API
-                            # writers (log_event etc.) can land between batches.
-                            time.sleep(0.05)
+                            # v1.11.54: yield the writer lock for ~250ms
+                            # with jitter between batches. Pre-fix the 50ms
+                            # gap left an 80% lock duty cycle — the
+                            # general worker's BEGIN IMMEDIATE timed out
+                            # at 30s and the v1.11.51 retry path had to
+                            # absorb repeated 'database is locked' for
+                            # the entire sync. With ~200ms per batch
+                            # transaction + 250ms yield, duty cycle drops
+                            # to ~45% and other writers (event flusher,
+                            # job claim, log_event) reliably get a
+                            # window. Total sync wall-clock cost on a
+                            # ~5K-item run: ~25s extra; well worth not
+                            # wedging the rest of the app.
+                            time.sleep(0.25 + random.uniform(0, 0.05))
 
                 if batch:
                     _flush_sync_batch(

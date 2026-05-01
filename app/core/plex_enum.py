@@ -269,11 +269,18 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     inserted = 0
     updated = 0
     now = now_iso()
+    import time as _t
     for batch_start in range(0, len(enriched), _UPSERT_BATCH):
         # v1.11.36: cooperative cancellation between upsert batches.
         if cancel_check():
             from .worker import _JobCancelled
             raise _JobCancelled()
+        # v1.11.54: yield ~150ms between batches so the writer lock
+        # has gaps for concurrent claim/log_event/event-flusher
+        # writes. Pre-fix the back-to-back transactions held the
+        # writer at near-100% duty cycle through a 10K-row enum.
+        if batch_start > 0:
+            _t.sleep(0.15)
         batch = enriched[batch_start:batch_start + _UPSERT_BATCH]
         with get_conn(db_path) as conn, transaction(conn):
             for it, sidecar in batch:
@@ -383,10 +390,12 @@ def resolve_theme_ids(db_path: Path, *, chunk_size: int = 500) -> int:
             cur = conn.execute(sql, (chunk_size, offset))
             total += cur.rowcount
         offset += chunk_size
-        # Yield the writer lock briefly so concurrent API requests
-        # (auth session-touch, log_event, /api/stats) can land
-        # between chunks.
-        _time.sleep(0.05)
+        # v1.11.54: yield ~250ms between chunks (was 50ms). Each chunk
+        # holds BEGIN IMMEDIATE for ~1-2s on a 15K-row plex_items;
+        # 50ms gap kept the writer at 95%+ duty cycle and starved
+        # other workers' claim attempts. 250ms keeps the resolve
+        # progressing without monopolizing the lock.
+        _time.sleep(0.25)
     log.info("resolve_theme_ids: scanned %d plex_items rows (chunk_size=%d)",
              total, chunk_size)
     return total
