@@ -580,6 +580,27 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
             "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
             (now_iso(), media_type, tmdb_id),
         )
+        # v1.11.43: keep the denormalized plex_items.theme_id column in
+        # sync with the just-written themes row, so the library renderer
+        # picks up the new state on the very next /api/library refresh
+        # without waiting for plex_enum's resolve_theme_ids to catch up.
+        # Pre-fix the row appeared to "do nothing" after adopt — the
+        # lib query joins themes via pi.theme_id (v1.11.26 cache), so
+        # if it was NULL or pointing at an old plex_orphan row the
+        # adopted lf+p rows weren't visible until the next enum
+        # (~tens of seconds to minutes on large libraries). Scoped to
+        # the section being adopted so a per-section adopt doesn't
+        # touch sibling sections that may legitimately resolve
+        # differently.
+        plex_media_type = "show" if media_type == "tv" else "movie"
+        conn.execute(
+            """UPDATE plex_items SET theme_id = ?
+               WHERE section_id = ?
+                 AND media_type = ?
+                 AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND folder_path = ?))""",
+            (theme_id, section_id, plex_media_type, tmdb_id,
+             finding["media_folder"]),
+        )
 
     return {
         "action": "adopt",
