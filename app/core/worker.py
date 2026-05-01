@@ -1024,21 +1024,40 @@ class Worker:
                 # at increasing intervals give every reasonable
                 # filesystem-cache + agent-debounce timing a chance
                 # to land before the user has to do anything.
+                # v1.11.57: trimmed to two follow-ups (15s + 60s) and
+                # coalesced at enqueue time. Pre-fix every place fired
+                # three jobs (10s/30s/90s) that stacked visibly in
+                # /queue while waiting their next_run_at; with even one
+                # concurrent download the user saw 6+ pending refreshes
+                # at once. Two delays still bracket Plex's local-media-
+                # assets debounce (15s for the fast path, 60s for the
+                # slow agent), and the _do_refresh handler now skips
+                # itself + cancels siblings once Plex shows has_theme.
                 if outcome.plex_rating_key and self.settings.plex_analyze_after:
-                    base = datetime.now(timezone.utc)
-                    for delay_s in (10, 30, 90):
-                        delayed_iso = (
-                            base + timedelta(seconds=delay_s)
-                        ).isoformat(timespec="seconds")
-                        conn.execute(
-                            """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
-                                                  payload, status, created_at, next_run_at)
-                               VALUES ('refresh', ?, ?, ?, ?, 'pending', ?, ?)""",
-                            (media_type, tmdb_id, section_id,
-                             json.dumps({"rating_key": outcome.plex_rating_key,
-                                         "reason": f"post_place_refresh_+{delay_s}s"}),
-                             now_iso(), delayed_iso),
-                        )
+                    existing = conn.execute(
+                        """SELECT 1 FROM jobs
+                           WHERE job_type = 'refresh'
+                             AND media_type = ? AND tmdb_id = ?
+                             AND section_id = ?
+                             AND status IN ('pending','running')
+                           LIMIT 1""",
+                        (media_type, tmdb_id, section_id),
+                    ).fetchone()
+                    if not existing:
+                        base = datetime.now(timezone.utc)
+                        for delay_s in (15, 60):
+                            delayed_iso = (
+                                base + timedelta(seconds=delay_s)
+                            ).isoformat(timespec="seconds")
+                            conn.execute(
+                                """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                                      payload, status, created_at, next_run_at)
+                                   VALUES ('refresh', ?, ?, ?, ?, 'pending', ?, ?)""",
+                                (media_type, tmdb_id, section_id,
+                                 json.dumps({"rating_key": outcome.plex_rating_key,
+                                             "reason": f"post_place_refresh_+{delay_s}s"}),
+                                 now_iso(), delayed_iso),
+                            )
         # v1.11.24: stamp the place outcome on the local_files row so
         # /pending can render the actual reason ('existing_theme:',
         # 'plex_has_theme', 'no_match', 'placement_error:') instead of
@@ -1085,12 +1104,47 @@ class Worker:
         )
 
     def _do_refresh(self, job: sqlite3.Row) -> None:
+        # v1.11.57: dedupe — skip the refresh if Plex already shows
+        # the theme. Pre-fix every download fired three follow-up
+        # refresh jobs (10s/30s/90s) regardless of whether the first
+        # one already convinced Plex to pick up the theme; the user
+        # saw 2-3 stacked 'refresh' rows in /queue per download. If
+        # plex_items.has_theme = 1 by the time this job runs, the
+        # earlier refresh worked and there's nothing to do. Cancels
+        # any sibling pending refreshes for the same item too so
+        # the queue doesn't keep firing them.
+        rk = None
+        try:
+            payload = json.loads(job["payload"] or "{}")
+            rk = payload.get("rating_key")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        if rk:
+            with get_conn(self.settings.db_path) as conn:
+                row = conn.execute(
+                    "SELECT has_theme FROM plex_items WHERE rating_key = ?",
+                    (rk,),
+                ).fetchone()
+                if row and row["has_theme"]:
+                    log.info("Job %d (refresh): Plex already has the theme "
+                             "for rk=%s — skipping; cancelling sibling refreshes",
+                             job["id"], rk)
+                    # Drop any sibling pending refreshes targeting this item
+                    if job["media_type"] and job["tmdb_id"]:
+                        conn.execute(
+                            """UPDATE jobs SET status = 'cancelled',
+                                                finished_at = ?,
+                                                last_error = 'plex already has theme'
+                               WHERE job_type = 'refresh'
+                                 AND media_type = ? AND tmdb_id = ?
+                                 AND status = 'pending'""",
+                            (now_iso(), job["media_type"], job["tmdb_id"]),
+                        )
+                    return
         plex = self._plex_client()
         if not plex:
             return
         try:
-            payload = json.loads(job["payload"] or "{}")
-            rk = payload.get("rating_key")
             if rk:
                 plex.refresh(rk)
         finally:
