@@ -3446,6 +3446,61 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchall()
+            # v1.12.1: collect every plex_items.rating_key pointing at
+            # this theme BEFORE the delete cascade fires. The post-
+            # delete flag clear at the bottom of this handler clears
+            # by rating_key — that's the only stable identifier that
+            # survives the delete and reliably covers all three
+            # 'how the row reaches this theme' paths:
+            #   1. pi.theme_id stamp (set by adopt/SET URL/UPLOAD MP3
+            #      via v1.11.43 / v1.11.64; ON DELETE SET NULL would
+            #      strip this once we drop the themes row, so we
+            #      memo-ize before delete)
+            #   2. pi.folder_path matches a placement we're about to
+            #      unlink
+            #   3. (pi.guid_tmdb, media_type) matches the theme's id
+            #      (the only path that worked in v1.11.60 — broken
+            #      for synthetic-negative orphan tmdb_ids)
+            # Pre-fix: PURGE on an upload/URL/adopt row left
+            # pi.local_theme_file=1 forever because the orphan's
+            # synthetic tmdb_id never matched pi.guid_tmdb (which
+            # holds Plex's real id), so the row kept rendering as
+            # L (or M pre-v1.12.0) with ADOPT shown — confusing
+            # since the user had just said 'destroy this'.
+            theme_id_pk_for_clear = conn.execute(
+                "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            theme_id_pk_for_clear = (
+                theme_id_pk_for_clear["id"] if theme_id_pk_for_clear else None
+            )
+            plex_mt = "show" if media_type == "tv" else "movie"
+            placement_folders = [pr["media_folder"] for pr in placements]
+            rk_clear: set[str] = set()
+            # Path 1: theme_id stamp
+            if theme_id_pk_for_clear is not None:
+                for r in conn.execute(
+                    "SELECT rating_key FROM plex_items WHERE theme_id = ?",
+                    (theme_id_pk_for_clear,),
+                ).fetchall():
+                    rk_clear.add(r["rating_key"])
+            # Path 2: placement folder_path match
+            if placement_folders:
+                qmarks = ",".join("?" for _ in placement_folders)
+                for r in conn.execute(
+                    f"SELECT rating_key FROM plex_items "
+                    f"WHERE folder_path IN ({qmarks}) AND media_type = ?",
+                    (*placement_folders, plex_mt),
+                ).fetchall():
+                    rk_clear.add(r["rating_key"])
+            # Path 3: real-tmdb match (covers the non-orphan case
+            # where motif never had to allocate a synthetic id)
+            for r in conn.execute(
+                "SELECT rating_key FROM plex_items "
+                "WHERE guid_tmdb = ? AND media_type = ?",
+                (tmdb_id, plex_mt),
+            ).fetchall():
+                rk_clear.add(r["rating_key"])
             # v1.10.57: snapshot content-hash → URL mapping per section
             # so a future ADOPT (any section) can restore the URL.
             if locals_rows:
@@ -3521,27 +3576,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
-            # Optimistic flag clear — Plex's metadata cache may still
-            # report theme=true for some time, but our local view
-            # should reflect 'no theme' immediately. The per-item
-            # Plex refresh below kicks Plex to re-evaluate so its
-            # cache catches up.
-            # v1.11.60: clear by (guid_tmdb, media_type) instead of
-            # by placement folder_path. PURGE on a P-source row has
-            # no placements (motif never placed a file), so the old
-            # folder-keyed clear was a no-op and pi.has_theme stayed
-            # 1 → row kept rendering as P even though the user just
-            # said 'no theme here'. Same fix covers cases where
-            # placements.media_folder didn't exactly match
-            # plex_items.folder_path due to trailing-slash or
-            # case-folding differences. PURGE is destructive +
-            # explicit; trust the user's intent.
-            plex_mt = "show" if media_type == "tv" else "movie"
-            conn.execute(
-                "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
-                "WHERE guid_tmdb = ? AND media_type = ?",
-                (tmdb_id, plex_mt),
-            )
+            # v1.12.1: clear pi.local_theme_file + has_theme by the
+            # rating_key set we memo-ized BEFORE delete (see the
+            # theme_id_pk_for_clear / rk_clear collection above).
+            # Pre-fix the WHERE guid_tmdb=? clause silently missed
+            # every orphan-backed row because the orphan's synthetic
+            # negative tmdb_id never matches pi.guid_tmdb (which
+            # holds Plex's real id, or NULL).
+            if rk_clear:
+                qmarks = ",".join("?" for _ in rk_clear)
+                conn.execute(
+                    f"UPDATE plex_items SET local_theme_file = 0, "
+                    f"                      has_theme = 0 "
+                    f"WHERE rating_key IN ({qmarks})",
+                    tuple(rk_clear),
+                )
         # v1.10.28: skip the section enum (it would re-fetch has_theme
         # from Plex's stale cache and bring back a phantom P badge);
         # trigger a per-item refresh instead so Plex updates its cache.
@@ -3630,21 +3679,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Drop the theme row; FK ON DELETE CASCADE handles local_files,
         # placements, pending_updates, user_overrides in one transaction.
-        # v1.11.60: also clear plex_items.local_theme_file/has_theme for
-        # any rows that pointed at this theme. Same reasoning as the
-        # forget endpoint — without this the row keeps rendering as P
-        # (or M) until the next plex_enum re-stamps from Plex's cache.
+        # v1.12.1: collect every plex_items.rating_key pointing at
+        # this theme BEFORE the delete cascade fires, then clear the
+        # post-delete flags by rating_key. Same reasoning as the
+        # forget endpoint fix — guid_tmdb-keyed clears miss
+        # synthetic-negative orphan tmdb_ids entirely.
+        plex_mt = "show" if media_type == "tv" else "movie"
+        placement_folders = [pr["media_folder"] for pr in placement_rows]
+        rk_clear: set[str] = set()
         with get_conn(db) as conn:
+            theme_id_pk_for_clear = conn.execute(
+                "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            theme_id_pk_for_clear = (
+                theme_id_pk_for_clear["id"] if theme_id_pk_for_clear else None
+            )
+            if theme_id_pk_for_clear is not None:
+                for r in conn.execute(
+                    "SELECT rating_key FROM plex_items WHERE theme_id = ?",
+                    (theme_id_pk_for_clear,),
+                ).fetchall():
+                    rk_clear.add(r["rating_key"])
+            if placement_folders:
+                qmarks = ",".join("?" for _ in placement_folders)
+                for r in conn.execute(
+                    f"SELECT rating_key FROM plex_items "
+                    f"WHERE folder_path IN ({qmarks}) AND media_type = ?",
+                    (*placement_folders, plex_mt),
+                ).fetchall():
+                    rk_clear.add(r["rating_key"])
+            for r in conn.execute(
+                "SELECT rating_key FROM plex_items "
+                "WHERE guid_tmdb = ? AND media_type = ?",
+                (tmdb_id, plex_mt),
+            ).fetchall():
+                rk_clear.add(r["rating_key"])
+
             conn.execute(
                 "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             )
-            plex_mt = "show" if media_type == "tv" else "movie"
-            conn.execute(
-                "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
-                "WHERE guid_tmdb = ? AND media_type = ?",
-                (tmdb_id, plex_mt),
-            )
+            if rk_clear:
+                qmarks = ",".join("?" for _ in rk_clear)
+                conn.execute(
+                    f"UPDATE plex_items SET local_theme_file = 0, "
+                    f"                      has_theme = 0 "
+                    f"WHERE rating_key IN ({qmarks})",
+                    tuple(rk_clear),
+                )
 
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
