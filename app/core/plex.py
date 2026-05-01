@@ -139,11 +139,20 @@ class PlexClient:
 
     # ---- Internal HTTP ----
 
-    def _get(self, path: str, params: dict | None = None) -> httpx.Response | None:
+    def _get(self, path: str, params: dict | None = None,
+             timeout: float | None = None) -> httpx.Response | None:
+        # v1.11.21: per-call timeout override + warning-level error log.
+        # Pre-fix the HTTP error was logged at debug, so timeouts on
+        # /library/sections/{id}/all (which can take 30-60s on a large
+        # section) surfaced as a silent 'no response' in the worker log.
         try:
-            return self._client.get(path, params=params)
+            kwargs: dict = {"params": params}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            return self._client.get(path, **kwargs)
         except httpx.HTTPError as e:
-            log.debug("Plex GET failed: %s", e)
+            log.warning("Plex GET %s failed: %s: %s",
+                        path, type(e).__name__, e)
             return None
 
     def _put(self, path: str, params: dict | None = None) -> int | None:
@@ -490,64 +499,98 @@ class PlexClient:
         self, url: str, section_id: str, media_type: str,
         *, params: dict[str, str], label: str,
     ) -> tuple[list[PlexLibraryItem], "ET.Element | None"]:
-        r = self._get(url, params=params)
-        if r is None or r.status_code != 200:
-            log.warning(
-                "enumerate_section_items[%s]: section %s GET %s returned %s (%s)",
-                label, section_id, url,
-                r.status_code if r is not None else "no response",
-                "no response" if r is None else (r.text[:200] if r.text else ""),
-            )
-            return [], None
-        try:
-            root = ET.fromstring(r.text)
-        except ET.ParseError as e:
-            log.warning(
-                "enumerate_section_items[%s]: section %s XML parse failed: %s",
-                label, section_id, e,
-            )
-            return [], None
-        container_size = root.get("size", "?")
-        container_total = root.get("totalSize", "?")
-        log.info(
-            "enumerate_section_items[%s]: section %s (type=%s) "
-            "MediaContainer size=%s totalSize=%s",
-            label, section_id, media_type, container_size, container_total,
-        )
+        # v1.11.21: paginated fetch with a generous per-call timeout.
+        # Pre-fix the unpaginated /all on a large section (10K+ shows
+        # with locations + GUIDs) blew past the client-wide 10s timeout
+        # and the worker logged 'no response'. Plex pages by passing
+        # X-Plex-Container-Start / X-Plex-Container-Size as either
+        # query params or headers — query params keep the call URL
+        # self-describing in the docker log.
+        page_size = 500
+        per_call_timeout = 120.0
         out: list[PlexLibraryItem] = []
         skipped_no_rk = 0
         tag_counts: dict[str, int] = {}
-        for el in list(root):
-            tag_counts[el.tag] = tag_counts.get(el.tag, 0) + 1
-            if el.tag not in ("Video", "Directory"):
-                continue
-            rk = el.get("ratingKey")
-            if not rk:
-                skipped_no_rk += 1
-                continue
-            guids = _extract_guids(el)
-            folder = _extract_folder_path(el)
-            out.append(PlexLibraryItem(
-                rating_key=rk,
-                section_id=section_id,
-                media_type=media_type,
-                title=el.get("title", ""),
-                year=el.get("year", "") or "",
-                guid_imdb=guids.get("imdb"),
-                guid_tmdb=_safe_int(guids.get("tmdb")),
-                guid_tvdb=_safe_int(guids.get("tvdb")),
-                folder_path=folder,
-                has_theme=el.get("theme") is not None,
-            ))
+        merged_root: "ET.Element | None" = None
+        total_size: int | None = None
+        offset = 0
+        while True:
+            page_params = dict(params)
+            page_params["X-Plex-Container-Start"] = str(offset)
+            page_params["X-Plex-Container-Size"] = str(page_size)
+            r = self._get(url, params=page_params, timeout=per_call_timeout)
+            if r is None or r.status_code != 200:
+                log.warning(
+                    "enumerate_section_items[%s]: section %s GET %s "
+                    "(start=%d, size=%d) returned %s (%s)",
+                    label, section_id, url, offset, page_size,
+                    r.status_code if r is not None else "no response",
+                    "no response" if r is None else (r.text[:200] if r.text else ""),
+                )
+                return [], None
+            try:
+                root = ET.fromstring(r.text)
+            except ET.ParseError as e:
+                log.warning(
+                    "enumerate_section_items[%s]: section %s XML parse failed "
+                    "at offset %d: %s",
+                    label, section_id, offset, e,
+                )
+                return [], None
+            if merged_root is None:
+                merged_root = root
+            container_size = int(root.get("size", "0") or 0)
+            container_total = root.get("totalSize")
+            if total_size is None and container_total is not None:
+                try:
+                    total_size = int(container_total)
+                except ValueError:
+                    total_size = None
+            log.info(
+                "enumerate_section_items[%s]: section %s (type=%s) "
+                "page start=%d size=%d totalSize=%s",
+                label, section_id, media_type, offset, container_size,
+                container_total,
+            )
+            page_children = list(root)
+            for el in page_children:
+                tag_counts[el.tag] = tag_counts.get(el.tag, 0) + 1
+                if el.tag not in ("Video", "Directory"):
+                    continue
+                rk = el.get("ratingKey")
+                if not rk:
+                    skipped_no_rk += 1
+                    continue
+                guids = _extract_guids(el)
+                folder = _extract_folder_path(el)
+                out.append(PlexLibraryItem(
+                    rating_key=rk,
+                    section_id=section_id,
+                    media_type=media_type,
+                    title=el.get("title", ""),
+                    year=el.get("year", "") or "",
+                    guid_imdb=guids.get("imdb"),
+                    guid_tmdb=_safe_int(guids.get("tmdb")),
+                    guid_tvdb=_safe_int(guids.get("tvdb")),
+                    folder_path=folder,
+                    has_theme=el.get("theme") is not None,
+                ))
+            if container_size < page_size:
+                break  # last page
+            if total_size is not None and (offset + container_size) >= total_size:
+                break  # caught up to totalSize
+            if not page_children:
+                break  # defensive: empty page protects against infinite loop
+            offset += container_size
         if not out:
             log.warning(
                 "enumerate_section_items[%s]: section %s returned 0 usable items "
-                "(media_type=%s, root tag=%s, total children=%d, "
-                "tag_counts=%s, skipped_no_rk=%d, body bytes=%d)",
-                label, section_id, media_type, root.tag, len(list(root)),
-                tag_counts, skipped_no_rk, len(r.text or ""),
+                "(media_type=%s, total children seen=%d, tag_counts=%s, "
+                "skipped_no_rk=%d, total_size=%s)",
+                label, section_id, media_type,
+                sum(tag_counts.values()), tag_counts, skipped_no_rk, total_size,
             )
-        return out, root
+        return out, merged_root
 
     def get_item_paths(self, rating_key: str) -> list[str]:
         """Return all file paths for an item (for finding the media folder)."""
