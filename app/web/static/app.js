@@ -2636,9 +2636,19 @@
         // btn.dataset.dlOnly === '1' is a clean predicate.
         extras.dlOnly !== undefined ? `data-dl-only="${extras.dlOnly}"` : '',
       ].filter(Boolean).join(' ');
-      const cls = extras.danger ? 'btn btn-tiny btn-danger'
-                : extras.warn   ? 'btn btn-tiny btn-warn'
-                :                 'btn btn-tiny';
+      // v1.11.14: extras.tone tints the source menu entries to match
+      // the SRC column badge colors so the user can read at a glance
+      // which source state each action lands them in:
+      //   themerrdb = T (green) — TDB download / re-download / revert
+      //   user      = U (violet) — SET URL / UPLOAD MP3
+      //   adopt     = A (cyan) — ADOPT
+      //   manual    = M (magenta)
+      //   cloud     = P (amber)
+      // Falls back to the existing danger / warn / plain styling.
+      const tone = extras.tone ? ` lib-source-${extras.tone}` : '';
+      const cls = extras.danger ? `btn btn-tiny btn-danger${tone}`
+                : extras.warn   ? `btn btn-tiny btn-warn${tone}`
+                :                 `btn btn-tiny${tone}`;
       // v1.10.34: extras.bypassLock lets actions like PUSH TO PLEX
       // remain clickable when the row is awaitingApproval (downloaded
       // but not placed). That state IS what PUSH TO PLEX resolves;
@@ -2663,7 +2673,7 @@
       sourceItems.push(menuItemHtml(
         'adopt-sidecar', 'ADOPT',
         "take ownership of the existing theme.mp3 sidecar; motif manages it from now on",
-        { rk: it.rating_key },
+        { rk: it.rating_key, tone: 'adopt' },
       ));
     }
     // v1.10.41: detect P-agent rows so SOURCE shows REPLACE w/ TDB
@@ -2714,7 +2724,7 @@
           ? `source from ${dlSource} and overwrite the existing canonical (the placement updates with it)`
           : `source from ${dlSource}; download and place into the Plex folder`;
         sourceItems.push(menuItemHtml(
-          'redl', 'TDB', dlTip, { mt: themeMt, id: themeId },
+          'redl', 'TDB', dlTip, { mt: themeMt, id: themeId, tone: 'themerrdb' },
         ));
       }
       // v1.10.29: REVERT only when both:
@@ -2727,7 +2737,7 @@
         sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
           'clear manual URL override and download from ThemerrDB',
-          { mt: themeMt, id: themeId, warn: true },
+          { mt: themeMt, id: themeId, warn: true, tone: 'themerrdb' },
         ));
       }
     }
@@ -2748,12 +2758,12 @@
     sourceItems.push(menuItemHtml(
       'manual-url', 'SET URL',
       'provide a YouTube URL (manual override)',
-      { rk: it.rating_key, warn: true },
+      { rk: it.rating_key, warn: true, tone: 'user' },
     ));
     sourceItems.push(menuItemHtml(
       'upload-theme', 'UPLOAD MP3',
       'upload an MP3 file as the theme',
-      { rk: it.rating_key },
+      { rk: it.rating_key, tone: 'user' },
     ));
     // REPLACE w/ TDB — fires whenever the user is swapping motif's
     // ThemerrDB download in for an existing theme from another
@@ -2782,7 +2792,7 @@
       sourceItems.push(menuItemHtml(
         'replace-with-themerrdb', 'TDB',
         replaceTip,
-        { rk: it.rating_key, warn: true },
+        { rk: it.rating_key, warn: true, tone: 'themerrdb' },
       ));
     }
 

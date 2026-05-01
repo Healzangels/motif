@@ -405,17 +405,57 @@ def _library_main_query(
           ON ps.section_id = pi.section_id AND ps.included = 1
     """
     sql_where = f"WHERE {tab_where}{where_extra}"
-    # Fast-path COUNT: status='all' AND tdb='any' (the default tab load)
-    # only references plex_items/plex_sections columns, so we can skip
-    # the heavy LEFT JOIN themes correlated subquery + lf/p joins. The
-    # tdb filter requires the themes join, so it falls through to the
-    # full-join path when set.
+    # v1.11.14: COUNT path now picks the minimum FROM for the requested
+    # filter. The heavy LEFT JOIN themes correlated subquery (×N rows on
+    # an N-item library) was firing for every filter chip click in
+    # v1.11.0+, making "downloaded", "manual", "placed", etc. take
+    # 30+ seconds on a 10K-item library. Filters that don't reference
+    # t.* in the WHERE skip the themes JOIN; lf and p use pi.guid_tmdb
+    # directly (loses orphan-adopted matches in COUNT only — the row
+    # query keeps the full themes JOIN for accuracy).
+    needs_themes_for_count = (
+        status in ("themed", "untracked", "has_theme", "failures")
+        or tdb != "any"
+    )
+    needs_lf_for_count = status in (
+        "manual", "plex_agent", "untracked", "has_theme",
+        "downloaded", "unplaced",
+    )
+    needs_p_for_count = status in (
+        "manual", "plex_agent", "untracked", "has_theme",
+        "placed", "unplaced",
+    )
     if status == "all" and tdb == "any":
         sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
                      f"WHERE {tab_where}{where_pi_only}")
         count_params = params
-    else:
+    elif needs_themes_for_count:
+        # Filter references t.* (themed, untracked, has_theme, failures,
+        # or any tdb!='any') — fall back to the full FROM with the
+        # correlated subquery.
         sql_count = f"SELECT COUNT(*) {sql_from} {sql_where}"
+        count_params = params
+    else:
+        # Build a slim FROM with only the JOINs the WHERE references.
+        # lf / p use pi.guid_tmdb directly (good enough for COUNT;
+        # orphan-adopted items are rare and miscount slightly here).
+        slim_parts = [sql_from_pi_only.strip()]
+        if needs_p_for_count:
+            slim_parts.append(
+                "LEFT JOIN placements p\n"
+                "  ON p.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)\n"
+                " AND p.tmdb_id = pi.guid_tmdb\n"
+                " AND p.section_id = pi.section_id"
+            )
+        if needs_lf_for_count:
+            slim_parts.append(
+                "LEFT JOIN local_files lf\n"
+                "  ON lf.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)\n"
+                " AND lf.tmdb_id = pi.guid_tmdb\n"
+                " AND lf.section_id = pi.section_id"
+            )
+        slim_from = "\n        ".join(slim_parts)
+        sql_count = f"SELECT COUNT(*) {slim_from} {sql_where}"
         count_params = params
 
     sql_missing_count = f"""

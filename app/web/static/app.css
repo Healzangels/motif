@@ -575,6 +575,42 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   letter-spacing: 0.4px;
 }
 
+/* v1.11.14: tint the SOURCE menu items so the action color matches
+   the SRC column badge for the state the action lands the row in.
+   Visual at-a-glance link between the action and its result. */
+.btn.lib-source-themerrdb {
+  color: var(--green-bright);
+  border-color: var(--green-deep);
+}
+.btn.lib-source-themerrdb:hover:not(:disabled) {
+  background: rgba(109,255,181,0.10);
+  border-color: var(--green-bright);
+}
+.btn.lib-source-user {
+  color: var(--violet);
+  border-color: rgba(196,109,255,0.55);
+}
+.btn.lib-source-user:hover:not(:disabled) {
+  background: rgba(196,109,255,0.10);
+  border-color: var(--violet);
+}
+.btn.lib-source-adopt {
+  color: var(--cyan);
+  border-color: rgba(109,211,255,0.5);
+}
+.btn.lib-source-adopt:hover:not(:disabled) {
+  background: rgba(109,211,255,0.10);
+  border-color: var(--cyan);
+}
+.btn.lib-source-manual {
+  color: var(--magenta);
+  border-color: rgba(255,122,214,0.4);
+}
+.btn.lib-source-cloud {
+  color: var(--amber);
+  border-color: rgba(255,184,74,0.5);
+}
+
 .lib-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
   font-size: var(--t-tiny);
