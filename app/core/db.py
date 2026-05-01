@@ -42,6 +42,14 @@ CREATE TABLE IF NOT EXISTS themes (
     failure_kind         TEXT,
     failure_message      TEXT,
     failure_at           TEXT,
+    -- v1.10.50: when set, the user has acknowledged the current
+    -- failure_kind (or implicitly cleared it via SET URL / UPLOAD /
+    -- ADOPT). The TDB pill still paints red so the user knows the
+    -- TDB-side URL is broken, but the ! glyph + FAILURES filter
+    -- exclude these rows. Cleared automatically when failure_kind
+    -- changes to a different value (so a brand-new failure
+    -- re-alerts).
+    failure_acked_at     TEXT,
     -- v1.10.32: normalized title (normalize_title in app/core/normalize.py)
     -- for the title-fallback library match. Populated by sync.
     title_norm           TEXT,
@@ -304,7 +312,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -714,6 +722,27 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
+    """v15: add themes.failure_acked_at to split 'TDB URL is broken'
+    from 'user has acknowledged the failure'.
+
+    Pre-1.10.50, ACK FAILURE nulled failure_kind which made the TDB
+    pill go green even though the upstream URL was still dead. Per
+    user feedback the pill should stay red (still failing) while ACK
+    only removes the ! glyph + FAILURES-filter membership. Manual
+    workarounds (SET URL, UPLOAD, ADOPT) also implicitly ack so the
+    alert clears even though TDB's URL remains dead.
+
+    The new column is just a timestamp; failure_kind keeps the kind.
+    A new failure_kind value (different from any prior) clears
+    failure_acked_at so a different failure re-alerts.
+    """
+    log.info("Migrating to schema v15 (themes.failure_acked_at)")
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(themes)")}
+    if "failure_acked_at" not in cols:
+        conn.execute("ALTER TABLE themes ADD COLUMN failure_acked_at TEXT")
+
+
 def _migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
     """v14: add 'probe' to jobs.job_type CHECK constraint.
 
@@ -1004,6 +1033,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 13:
                     _migrate_v13_to_v14(conn)
                     current = 14
+                elif current == 14:
+                    _migrate_v14_to_v15(conn)
+                    current = 15
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

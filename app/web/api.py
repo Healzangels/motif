@@ -300,7 +300,10 @@ def _library_main_query(
     elif status == "unplaced":
         where_extra += " AND lf.file_path IS NOT NULL AND p.media_folder IS NULL"
     elif status == "failures":
-        where_extra += " AND t.failure_kind IS NOT NULL"
+        # v1.10.50: only un-acknowledged failures land in this filter.
+        # Acked rows keep their red TDB pill but don't show up here —
+        # they're 'I know, dealt with it' state.
+        where_extra += " AND t.failure_kind IS NOT NULL AND t.failure_acked_at IS NULL"
 
     # v1.10.20: secondary 'TDB MATCH' filter, stacks on top of `status`.
     # 'tracked' means ThemerrDB has the title (the row's joined themes
@@ -325,7 +328,7 @@ def _library_main_query(
                ps.title AS section_title,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
-               t.failure_kind, t.failure_message, t.upstream_source,
+               t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
                lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
                p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
                (SELECT j.job_type FROM jobs j
@@ -519,7 +522,7 @@ def _library_not_in_plex(
             NULL AS section_title,
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,
-            t.failure_kind, t.failure_message, t.upstream_source,
+            t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
             lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
             p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
             (SELECT j.job_type FROM jobs j
@@ -913,11 +916,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
                    WHERE p.media_folder IS NULL) AS pending_placements,
                   (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
-                  (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total,
+                  -- v1.10.50: exclude acked rows from the topbar
+                  -- failure counts. Acked = the user dealt with it
+                  -- (manual URL/upload/adopt or explicit ACK); the
+                  -- TDB pill keeps its red state but the row is no
+                  -- longer 'needs attention'.
+                  (SELECT COUNT(*) FROM themes
+                   WHERE failure_kind IS NOT NULL
+                     AND failure_acked_at IS NULL) AS failures_total,
                   (SELECT COUNT(*) FROM themes
                    WHERE failure_kind IN ('video_private','video_removed','video_age_restricted','geo_blocked')
+                     AND failure_acked_at IS NULL
                   ) AS failures_unavailable,
-                  (SELECT COUNT(*) FROM themes WHERE failure_kind = 'cookies_expired') AS failures_cookies,
+                  (SELECT COUNT(*) FROM themes
+                   WHERE failure_kind = 'cookies_expired'
+                     AND failure_acked_at IS NULL) AS failures_cookies,
                   (SELECT COUNT(*) FROM themes WHERE upstream_source = 'plex_orphan') AS orphans_total,
                   -- Tab availability for adaptive nav/toggle rendering.
                   -- A "tab" is present if at least one *included* section
@@ -2154,11 +2167,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        source_kind = excluded.source_kind""",
                 (theme_media_type, tmdb_id, rel_path, sha, len(data), now_iso()),
             )
-            # Clear any prior failure on the row (a manual upload obviates it)
+            # v1.10.50: implicit ack on a manual upload — the user is
+            # routing around the broken TDB URL. Stamp acked_at so the
+            # ! glyph + FAILURES filter exclude the row, but keep
+            # failure_kind so the TDB pill stays red (TDB's URL is
+            # still broken even though motif now uses a manual file).
             conn.execute(
-                "UPDATE themes SET failure_kind = NULL, failure_message = NULL, "
-                "failure_at = NULL WHERE media_type = ? AND tmdb_id = ?",
-                (theme_media_type, tmdb_id),
+                "UPDATE themes SET failure_acked_at = ? "
+                "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
+                (now_iso(), theme_media_type, tmdb_id),
             )
             # Enqueue placement
             conn.execute(
@@ -2247,10 +2264,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (theme_media_type, tmdb_id, canonical_url, now_iso(),
                  request.state.user, f"manual url for plex rk={rating_key}"),
             )
+            # v1.10.50: implicit ack on manual URL — same reasoning as
+            # upload-theme. The user has provided a working source, so
+            # stop alerting; keep failure_kind so the TDB pill stays red.
             conn.execute(
-                "UPDATE themes SET failure_kind = NULL, failure_message = NULL, "
-                "failure_at = NULL WHERE media_type = ? AND tmdb_id = ?",
-                (theme_media_type, tmdb_id),
+                "UPDATE themes SET failure_acked_at = ? "
+                "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
+                (now_iso(), theme_media_type, tmdb_id),
             )
             # Cancel any in-flight download, enqueue a fresh one
             conn.execute(
@@ -3075,38 +3095,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, media_type: MediaType, tmdb_id: int,
         db: Path = Depends(get_db_path),
     ):
-        """v1.10.42: acknowledge / dismiss the failure flag on a theme.
+        """v1.10.50: acknowledge a failure without pretending it's gone.
 
-        Clears themes.failure_kind / failure_message / failure_at — the
-        red ⚠ glyph in the title cell and the red TDB ✗ pill go away.
-        Doesn't fix the underlying problem (the YouTube URL is still
-        dead) — it's purely a 'I know, stop showing me the warning'
-        action. Future failed downloads will re-set the flag.
+        Sets themes.failure_acked_at = now() — the ! glyph and the
+        FAILURES filter exclude the row, but the TDB pill keeps its
+        red 'TDB ✗' (or amber 'TDB ⚠') so the user knows the
+        upstream URL is still broken. failure_kind is preserved.
+
+        The underlying URL stays dead until the next sync probe
+        finds an updated one or the user provides a manual override.
+        Future probes / downloads that produce a *different*
+        failure_kind clear failure_acked_at so the user gets
+        re-alerted on the new condition.
         """
         _require_admin(request)
         with get_conn(db) as conn:
             row = conn.execute(
-                "SELECT failure_kind, title FROM themes "
+                "SELECT failure_kind, failure_acked_at, title FROM themes "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="theme not found")
             if row["failure_kind"] is None:
-                return {"ok": True, "no_op": True}
+                return {"ok": True, "no_op": True,
+                        "note": "no failure to acknowledge"}
+            if row["failure_acked_at"]:
+                return {"ok": True, "no_op": True,
+                        "note": "already acknowledged"}
             conn.execute(
-                "UPDATE themes SET failure_kind = NULL, failure_message = NULL, "
-                "                  failure_at = NULL "
+                "UPDATE themes SET failure_acked_at = ? "
                 "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                (now_iso(), media_type, tmdb_id),
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Failure acknowledged on '{row['title']}' "
                           f"by {request.state.principal.username}",
-                  detail={"prior_failure_kind": row["failure_kind"]})
+                  detail={"failure_kind": row["failure_kind"]})
         return {"ok": True, "title": row["title"],
-                "cleared_kind": row["failure_kind"]}
+                "acked_kind": row["failure_kind"]}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/redownload")
     async def api_redownload(

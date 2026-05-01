@@ -455,13 +455,22 @@ class Worker:
             )
         except DownloadError as e:
             kind = e.kind if hasattr(e, "kind") else FailureKind.UNKNOWN
-            # Persist the failure on the theme row so the UI can show a badge
+            # Persist the failure on the theme row so the UI can show a badge.
+            # v1.10.50: when the new failure_kind differs from what was
+            # previously acked, clear failure_acked_at so the user gets
+            # alerted on the new condition. Same kind as before keeps
+            # the existing ack (no spam).
             with get_conn(self.settings.db_path) as conn:
                 conn.execute(
                     """UPDATE themes SET failure_kind = ?, failure_message = ?,
-                                          failure_at = ?
+                                          failure_at = ?,
+                                          failure_acked_at = CASE
+                                              WHEN failure_kind = ? THEN failure_acked_at
+                                              ELSE NULL
+                                          END
                        WHERE media_type = ? AND tmdb_id = ?""",
-                    (kind.value, str(e)[:500], now_iso(), media_type, tmdb_id),
+                    (kind.value, str(e)[:500], now_iso(),
+                     kind.value, media_type, tmdb_id),
                 )
                 # v1.10.40: also cancel any pending follow-up place job
                 # we might have already enqueued (e.g. force_place=true
@@ -492,11 +501,14 @@ class Worker:
                 raise _JobPermanentFailure(str(e)) from e
             raise
 
-        # Success — clear any previous failure on this theme
+        # Success — clear any previous failure on this theme.
+        # v1.10.50: also drop failure_acked_at since the row is no
+        # longer failing at all. A future re-failure starts fresh
+        # (alerts again).
         with get_conn(self.settings.db_path) as conn:
             conn.execute(
                 """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
-                                      failure_at = NULL
+                                      failure_at = NULL, failure_acked_at = NULL
                    WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL""",
                 (media_type, tmdb_id),
             )
@@ -778,24 +790,32 @@ class Worker:
             return
         with get_conn(self.settings.db_path) as conn, transaction(conn):
             if failure is None:
-                # URL is reachable + playable. Clear any prior failure
-                # flag so the row's TDB pill goes green again.
+                # URL is reachable + playable. Clear failure_kind +
+                # failure_acked_at so the row's TDB pill goes green
+                # and any future re-failure alerts again.
                 conn.execute(
                     "UPDATE themes SET failure_kind = NULL, "
                     "                  failure_message = NULL, "
-                    "                  failure_at = NULL "
+                    "                  failure_at = NULL, "
+                    "                  failure_acked_at = NULL "
                     "WHERE media_type = ? AND tmdb_id = ? "
                     "  AND failure_kind IS NOT NULL",
                     (media_type, tmdb_id),
                 )
             else:
+                # v1.10.50: same as the download-fail path — keep
+                # an existing ack only if the kind hasn't changed.
                 conn.execute(
                     "UPDATE themes SET failure_kind = ?, "
                     "                  failure_message = ?, "
-                    "                  failure_at = ? "
+                    "                  failure_at = ?, "
+                    "                  failure_acked_at = CASE "
+                    "                      WHEN failure_kind = ? THEN failure_acked_at "
+                    "                      ELSE NULL "
+                    "                  END "
                     "WHERE media_type = ? AND tmdb_id = ?",
                     (failure.value, f"sync probe: {failure.human}",
-                     now_iso(), media_type, tmdb_id),
+                     now_iso(), failure.value, media_type, tmdb_id),
                 )
 
     def _do_relink(self, job: sqlite3.Row) -> None:

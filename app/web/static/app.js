@@ -2324,7 +2324,11 @@
         `<a class="title-glyph title-glyph-await" title="awaiting placement approval — click to review at /pending" href="/pending">!</a>`
       );
     }
-    if (it.failure_kind) {
+    // v1.10.50: only show the ! glyph when the failure hasn't been
+    // acknowledged. Acked rows keep their red TDB pill (still failing
+    // upstream) but no longer pull attention; they're hidden from the
+    // FAILURES filter for the same reason.
+    if (it.failure_kind && !it.failure_acked_at) {
       const human = {
         'cookies_expired': 'YouTube cookies expired',
         'video_private': 'Video is private',
@@ -2505,10 +2509,13 @@
     // the red ! glyph + red TDB ✗ go away. Doesn't fix anything;
     // 'I know, stop showing me the warning'. Re-fires on the next
     // failed download attempt.
-    if (it.failure_kind && themed && themeId !== null && themeId !== undefined) {
+    // v1.10.50: only show ACK FAILURE while the row is unacked.
+    // Re-acking a previously-acked failure is a no-op.
+    if (it.failure_kind && !it.failure_acked_at
+        && themed && themeId !== null && themeId !== undefined) {
       sourceItems.push(menuItemHtml(
         'clear-failure', 'ACK FAILURE',
-        'acknowledge / dismiss the failure flag (the underlying problem stays — set a manual URL or wait for ThemerrDB to update)',
+        "removes the ! glyph and excludes the row from FAILURES; TDB pill stays red so you know the upstream URL is still broken",
         { mt: themeMt, id: themeId },
       ));
     }
@@ -2760,6 +2767,36 @@
   function bindLibrary() {
     const tabEl = document.getElementById('library-tab');
     if (!tabEl) return;
+
+    // v1.10.50: pre-load library state from URL query params so a
+    // deep-link like /movies?status=failures (the topbar failure
+    // badge target) lands with the filter already active. Falls
+    // through to the chip-active states for the matching value.
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const wantStatus = sp.get('status');
+      if (wantStatus) {
+        const valid = new Set(['all','themed','manual','plex_agent','untracked',
+                               'downloaded','placed','unplaced','failures',
+                               'not_in_plex']);
+        if (valid.has(wantStatus)) {
+          libraryState.status = wantStatus;
+          document.querySelectorAll('[data-status]').forEach((x) =>
+            x.classList.toggle('chip-active', x.dataset.status === wantStatus));
+        }
+      }
+      const wantTdb = sp.get('tdb');
+      if (wantTdb && ['any','tracked','untracked'].includes(wantTdb)) {
+        libraryState.tdb = wantTdb;
+        document.querySelectorAll('[data-tdb]').forEach((x) =>
+          x.classList.toggle('chip-active', x.dataset.tdb === wantTdb));
+      }
+      if (sp.get('fourk') === 'true' || sp.get('fourk') === '1') {
+        libraryState.fourk = true;
+        document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+          x.classList.toggle('chip-active', x.dataset.fourk === '1'));
+      }
+    } catch (_) { /* URLSearchParams not supported — skip */ }
 
     // 4K toggle
     document.querySelectorAll('.chips [data-fourk]').forEach((b) => {

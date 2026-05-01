@@ -362,6 +362,15 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
             (media_type, tmdb_id, theme_id,
              finding["media_folder"], now_iso(), placement_kind, provenance),
         )
+        # v1.10.50: implicit ack — adopting a sidecar is the user
+        # routing around whatever was broken on the TDB side. Keep
+        # failure_kind so the TDB pill stays red but stop alerting.
+        # No-op when there's no failure to ack.
+        conn.execute(
+            "UPDATE themes SET failure_acked_at = ? "
+            "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
+            (now_iso(), media_type, tmdb_id),
+        )
 
     return {
         "action": "adopt",
