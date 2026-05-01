@@ -87,9 +87,15 @@ CREATE TABLE IF NOT EXISTS local_files (
     source_video_id TEXT NOT NULL,
     provenance      TEXT NOT NULL DEFAULT 'auto'
                        CHECK (provenance IN ('auto', 'manual')),
+    -- v1.12.0: 'import' added — sourced from a themes_dir manual
+    -- import (user dropped <themes_dir>/<subdir>/<Title (Year)>/theme.mp3
+    -- and the import scanner matched it against Plex). Distinct from
+    -- 'adopt' which is "motif claimed an existing sidecar at the
+    -- Plex folder"; 'import' starts at the canonical and pushes outward.
     source_kind     TEXT
                        CHECK (source_kind IN ('themerrdb', 'url',
-                                              'upload', 'adopt')
+                                              'upload', 'adopt',
+                                              'import')
                               OR source_kind IS NULL),
     -- v1.11.24: last place worker outcome for this row. The /pending
     -- view reads this to surface the actual reason a download is
@@ -159,7 +165,7 @@ CREATE INDEX IF NOT EXISTS idx_placements_section ON placements (section_id);
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     job_type        TEXT NOT NULL
-                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum')),
+                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum','themes_scan')),
     media_type      TEXT,
     tmdb_id         INTEGER,
     section_id      TEXT,
@@ -379,6 +385,71 @@ CREATE INDEX IF NOT EXISTS idx_scan_findings_run ON scan_findings (scan_run_id, 
 CREATE INDEX IF NOT EXISTS idx_scan_findings_kind ON scan_findings (finding_kind, decision);
 CREATE INDEX IF NOT EXISTS idx_scan_findings_hash ON scan_findings (file_sha256);
 
+-- v1.12.0: themes_dir manual import findings.
+-- The user drops <themes_dir>/<section_subdir>/<Title (Year)>/theme.<ext>
+-- and the import scanner walks the tree, parses titles, and matches
+-- against plex_items + themes. Each row is a candidate awaiting a
+-- decision; the /import page surfaces them with bulk approve.
+--
+-- Distinct from scan_findings (which scans Plex media folders for
+-- existing sidecars to ADOPT). This is the inverse direction:
+-- canonical exists in /themes, decide whether/how to push to Plex.
+--
+-- match_kind:
+--   auto_place         — Plex has the item, no existing theme, ready to push
+--   auto_adopt         — Plex has the item with an existing sidecar that
+--                        matches our import by content (sha equal); just
+--                        record DB rows, no file movement
+--   conflict_overwrite — Plex has the item with a DIFFERENT existing
+--                        sidecar; approving would overwrite their file
+--   conflict_plex_agent— Plex agent supplies a P-theme with no sidecar;
+--                        approving overrides Plex's choice
+--   multi_section      — Title matches plex_items in multiple sections
+--                        (e.g., 4K + standard); auto-place to all unless
+--                        the user picks
+--   orphan             — no Plex match at all; sit and wait
+--   flat_layout        — file is at <themes_dir>/<Title>/theme.mp3
+--                        (no section subdir); user must move it
+CREATE TABLE IF NOT EXISTS import_findings (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    scanned_at          TEXT NOT NULL,
+    -- relative path under themes_dir, e.g. "movies/Matilda (1996)/theme.mp3"
+    file_path           TEXT NOT NULL UNIQUE,
+    file_size           INTEGER NOT NULL,
+    file_mtime          TEXT NOT NULL,
+    file_sha256         TEXT NOT NULL,
+    parsed_title        TEXT,
+    parsed_year         TEXT,
+    parsed_section_subdir TEXT,
+    match_kind          TEXT NOT NULL
+                          CHECK (match_kind IN
+                            ('auto_place','auto_adopt',
+                             'conflict_overwrite','conflict_plex_agent',
+                             'multi_section','orphan','flat_layout')),
+    -- JSON list of {section_id, rating_key, media_type, folder_path,
+    -- has_theme, local_theme_file} — every plex_items match. Empty
+    -- list for orphan / flat_layout.
+    match_candidates    TEXT NOT NULL DEFAULT '[]',
+    -- JSON list of section_ids that should receive the placement when
+    -- approved. For multi-section the user can prune; default is all
+    -- candidates.
+    target_section_ids  TEXT NOT NULL DEFAULT '[]',
+    decision            TEXT NOT NULL DEFAULT 'pending'
+                          CHECK (decision IN
+                            ('pending','approved','declined','purged')),
+    decision_at         TEXT,
+    decision_by         TEXT,
+    -- Free-form note: 'overwrite confirmed', 'declined: keep existing',
+    -- post-decision outcome JSON, etc.
+    note                TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_import_findings_kind
+    ON import_findings (match_kind, decision);
+CREATE INDEX IF NOT EXISTS idx_import_findings_decision
+    ON import_findings (decision);
+CREATE INDEX IF NOT EXISTS idx_import_findings_sha
+    ON import_findings (file_sha256);
+
 CREATE TABLE IF NOT EXISTS tvdb_lookup_cache (
     cache_key      TEXT PRIMARY KEY,
     response_json  TEXT NOT NULL,
@@ -399,7 +470,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -817,6 +888,27 @@ def _migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
     raise RuntimeError(
         "v1.11.36 added jobs.cancel_requested. Dev mode: delete "
         "/config/motif.db and restart."
+    )
+
+
+def _migrate_v21_to_v22(conn: sqlite3.Connection) -> None:
+    """v22: dev-mode hard stop.
+
+    v1.12.0 adds:
+      - 'import' to local_files.source_kind CHECK constraint
+      - import_findings table (themes_dir manual-import scan results)
+      - 'themes_scan' to jobs.job_type CHECK constraint
+
+    Reshapes that span CHECK constraints; per dev-mode policy we
+    hard-stop and ask the user to wipe rather than rebuilding the
+    tables in-place. Sync + plex_enum + the new themes_scan
+    repopulate everything on first run.
+    """
+    raise RuntimeError(
+        "v1.12.0 adds import_findings + extends source_kind/job_type "
+        "CHECK constraints. Dev mode: delete /config/motif.db and "
+        "restart; the new themes_scan auto-fires when local_files "
+        "is empty."
     )
 
 
@@ -1245,6 +1337,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 20:
                     _migrate_v20_to_v21(conn)
                     current = 21
+                elif current == 21:
+                    _migrate_v21_to_v22(conn)
+                    current = 22
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
