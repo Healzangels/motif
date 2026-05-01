@@ -3385,30 +3385,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # v1.10.31: optimistically set plex_items.local_theme_file=1
             # for every folder we just unmanaged from. The sidecar at
             # those paths still exists (we deleted only the canonical),
-            # so the row should render as M immediately. v1.11.11:
-            # rather than blanket-set local_theme_file=1, re-stat each
-            # affected folder so the flag reflects the actual on-disk
-            # state, and scope the UPDATE by media_type so a TV/movie
-            # folder-name collision doesn't accidentally flip a sibling
-            # section's row.
-            # v1.11.62: stat goes through folder_has_theme_sidecar which
-            # tries common host→container path translations and matches
-            # any theme.<audio-ext>. Pre-fix the plain Path(folder) /
-            # "theme.mp3" stat returned False on Unraid (Plex's
-            # /mnt/user/data/... isn't reachable from the container) AND
-            # missed every non-mp3 sidecar — so an UNMANAGE on a U-source
-            # row left local_theme_file=0 and the SRC badge fell to —
-            # instead of M, even though the file was visibly still in
-            # the Plex folder.
+            # so the row should render as M immediately.
+            # v1.11.62: stat goes through folder_has_theme_sidecar
+            # which tries common host→container path translations and
+            # matches any theme.<audio-ext>.
+            # v1.11.78: route the UPDATE through pi.theme_id +
+            # pi.rating_key instead of WHERE folder_path=? .
+            # Pre-fix the WHERE clause string-matched
+            # placements.media_folder (motif's container view, e.g.
+            # /data/media/...) against plex_items.folder_path (Plex's
+            # view, which on Unraid is often /mnt/user/data/...). The
+            # strings didn't match, the UPDATE found zero rows, and
+            # local_theme_file stayed at 0 — the row fell back to '—'
+            # instead of the expected M. Linking via theme_id sidesteps
+            # the path-string mismatch entirely; folder_has_theme_sidecar
+            # still uses each pi.folder_path for the actual stat (with
+            # its own translation table to find the file).
             from ..core.plex_enum import folder_has_theme_sidecar
             plex_type = "show" if media_type == "tv" else "movie"
-            for pr in placements:
-                folder = pr["media_folder"]
-                sidecar_present = folder_has_theme_sidecar(folder)
+            theme_id_pk_row = conn.execute(
+                "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            theme_id_pk = theme_id_pk_row["id"] if theme_id_pk_row else None
+            pi_rows = []
+            if theme_id_pk is not None:
+                pi_rows = conn.execute(
+                    "SELECT rating_key, folder_path FROM plex_items "
+                    "WHERE theme_id = ? AND media_type = ?",
+                    (theme_id_pk, plex_type),
+                ).fetchall()
+            for pi_row in pi_rows:
+                sidecar_present = folder_has_theme_sidecar(
+                    pi_row["folder_path"] or "",
+                )
                 conn.execute(
                     "UPDATE plex_items SET local_theme_file = ? "
-                    "WHERE folder_path = ? AND media_type = ?",
-                    (1 if sidecar_present else 0, folder, plex_type),
+                    "WHERE rating_key = ?",
+                    (1 if sidecar_present else 0, pi_row["rating_key"]),
                 )
             # v1.11.47: dropped the post-unmanage _enqueue_section_refresh_for_item
             # call. The optimistic re-stat above already updates

@@ -1417,6 +1417,12 @@
           : `/api/jobs/${encodeURIComponent(id)}/cancel`;
         await api('POST', url);
         await loadQueue().catch(()=>{});
+        // v1.11.78: poke the topbar past /api/stats's 1s TTL so the
+        // 'SYNCING WITH …' label, the failed-job dot, and per-button
+        // locks update the same frame as the cancel completes.
+        // Pre-fix the user had to refresh the page to see the topbar
+        // status reflect 'IDLE' after a force-cancel.
+        setTimeout(refreshTopbarStatus, 1100);
       } catch (err) {
         alert('Cancel failed: ' + err.message);
         btn.disabled = false;
