@@ -284,4 +284,48 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
                          tn, now, now),
                     )
                     inserted += 1
+    # v1.11.26: stamp theme_id once per enum so /api/library's row
+    # query becomes a direct PK lookup instead of running a heavy
+    # correlated subquery on every page render.
+    resolve_theme_ids(db_path)
     return inserted, updated
+
+
+def resolve_theme_ids(db_path: Path) -> int:
+    """Bulk-populate plex_items.theme_id for every row whose match
+    against themes can be resolved by tmdb_id, imdb_id, or
+    (title_norm + year). Called at the end of plex_enum and sync so
+    the cached column stays fresh.
+
+    Returns the number of plex_items rows whose theme_id changed.
+    """
+    sql = """
+        UPDATE plex_items SET theme_id = (
+            SELECT t.id FROM themes t
+            WHERE t.media_type = (CASE plex_items.media_type
+                                       WHEN 'show' THEN 'tv'
+                                       ELSE plex_items.media_type END)
+              AND (
+                (t.tmdb_id = plex_items.guid_tmdb
+                 AND plex_items.guid_tmdb IS NOT NULL
+                 AND t.upstream_source != 'plex_orphan')
+                OR (t.imdb_id = plex_items.guid_imdb
+                    AND plex_items.guid_imdb IS NOT NULL
+                    AND t.upstream_source = 'plex_orphan')
+                OR (t.title_norm = plex_items.title_norm
+                    AND t.year = plex_items.year
+                    AND t.upstream_source != 'plex_orphan'
+                    AND plex_items.title_norm IS NOT NULL
+                    AND plex_items.year IS NOT NULL)
+              )
+            ORDER BY
+                CASE WHEN t.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
+                t.id DESC
+            LIMIT 1
+        )
+    """
+    with get_conn(db_path) as conn, transaction(conn):
+        cur = conn.execute(sql)
+        changed = cur.rowcount
+    log.info("resolve_theme_ids: scanned %d plex_items rows", changed)
+    return changed

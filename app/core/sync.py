@@ -615,6 +615,16 @@ def run_sync(db_path, base_url: str, *,
                     )
                     batch.clear()
 
+        # v1.11.26: refresh plex_items.theme_id now that themes has
+        # absorbed the new / updated rows from this sync. Keeps the
+        # /api/library JOIN's PK lookup column in sync with the latest
+        # themes data without waiting for the next plex_enum.
+        try:
+            from .plex_enum import resolve_theme_ids
+            resolve_theme_ids(db_path)
+        except Exception as e:
+            log.warning("post-sync resolve_theme_ids failed: %s", e)
+
         with get_conn(db_path) as conn:
             conn.execute(
                 """

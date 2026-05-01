@@ -363,33 +363,14 @@ def _library_main_query(
         FROM plex_items pi
         INNER JOIN plex_sections ps
           ON ps.section_id = pi.section_id AND ps.included = 1
-        LEFT JOIN themes t ON t.id = (
-            SELECT t2.id FROM themes t2
-            WHERE t2.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
-              AND (
-                (t2.tmdb_id = pi.guid_tmdb AND pi.guid_tmdb IS NOT NULL
-                 AND t2.upstream_source != 'plex_orphan')
-                OR (t2.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL
-                    AND t2.upstream_source = 'plex_orphan')
-                OR (
-                  t2.upstream_source != 'plex_orphan'
-                  AND pi.title_norm IS NOT NULL
-                  AND t2.title_norm = pi.title_norm
-                  AND pi.year IS NOT NULL
-                  AND t2.year = pi.year
-                  AND NOT EXISTS (
-                    SELECT 1 FROM themes t3
-                    WHERE t3.media_type = t2.media_type
-                      AND ((t3.tmdb_id = pi.guid_tmdb AND pi.guid_tmdb IS NOT NULL
-                            AND t3.upstream_source != 'plex_orphan')
-                           OR (t3.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL))
-                  )
-                )
-              )
-            ORDER BY CASE WHEN t2.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
-                     t2.id DESC
-            LIMIT 1
-        )
+        -- v1.11.26: themes match comes from the denormalized
+        -- pi.theme_id column (populated by plex_enum + sync via
+        -- resolve_theme_ids). Pre-fix this was a per-row correlated
+        -- subquery with 3-OR clauses + NOT EXISTS + ORDER BY + LIMIT
+        -- 1 that ran ×N for every page render, taking 20+ seconds on
+        -- a 4K-item library. The lookup is now a single PK touch per
+        -- row.
+        LEFT JOIN themes t ON t.id = pi.theme_id
         LEFT JOIN placements p
           ON p.media_type = t.media_type
          AND p.tmdb_id = t.tmdb_id

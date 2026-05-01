@@ -271,6 +271,15 @@ CREATE TABLE IF NOT EXISTS plex_items (
     guid_tvdb        INTEGER,
     folder_path      TEXT NOT NULL DEFAULT '',
     has_theme        INTEGER NOT NULL DEFAULT 0,
+    -- v1.11.26: denormalized themes-row id, populated by plex_enum when
+    -- the item is first discovered and refreshed when sync upserts a new
+    -- themes row that matches. Pre-fix /api/library re-ran a heavy
+    -- correlated subquery (3-OR clauses + NOT EXISTS + ORDER BY + LIMIT
+    -- 1) per pi row on every page render, so a 4K-item TV section made
+    -- the row query take 20+ seconds. With this column the unified
+    -- browse query becomes 'LEFT JOIN themes t ON t.id = pi.theme_id'
+    -- — a single PK lookup per row.
+    theme_id         INTEGER REFERENCES themes (id) ON DELETE SET NULL,
     -- v9+: result of stat()'ing folder_path/theme.mp3 during plex_enum.
     -- 1 = a sidecar file exists at the Plex folder; combined with motif's
     --     own tracking, this lets the SRC badge differentiate cloud-only
@@ -383,7 +392,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 19
+CURRENT_SCHEMA_VERSION = 20
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -790,6 +799,18 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v9 (plex_items.local_theme_file)")
     conn.executescript(
         "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
+def _migrate_v19_to_v20(conn: sqlite3.Connection) -> None:
+    """v20: dev-mode hard stop.
+
+    v1.11.26 added plex_items.theme_id (denormalized themes match cache).
+    Wipe /config/motif.db and let plex_enum + sync repopulate.
+    """
+    raise RuntimeError(
+        "v1.11.26 added plex_items.theme_id. Dev mode: delete "
+        "/config/motif.db and restart. plex_enum + sync repopulate."
     )
 
 
@@ -1200,6 +1221,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 18:
                     _migrate_v18_to_v19(conn)
                     current = 19
+                elif current == 19:
+                    _migrate_v19_to_v20(conn)
+                    current = 20
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
