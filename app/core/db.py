@@ -93,6 +93,26 @@ CREATE TABLE IF NOT EXISTS local_files (
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
 );
 
+-- v1.10.57: history of local_files rows that got removed via unmanage
+-- or forget. Lets adopt_folder restore the original youtube_url when
+-- the sidecar's sha256 matches a previously-tracked file — so the
+-- U → unmanage → M → adopt → A path doesn't lose the user's URL.
+-- Keyed by content hash so the lookup works even if the new orphan
+-- row gets a different synthetic tmdb_id.
+CREATE TABLE IF NOT EXISTS local_files_history (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_sha256     TEXT NOT NULL,
+    media_type      TEXT,
+    tmdb_id         INTEGER,
+    source_kind     TEXT,
+    source_video_id TEXT,
+    youtube_url     TEXT,
+    saved_at        TEXT NOT NULL,
+    saved_reason    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_local_files_history_sha
+    ON local_files_history (file_sha256, saved_at DESC);
+
 CREATE TABLE IF NOT EXISTS placements (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
@@ -312,7 +332,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -722,6 +742,32 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
+    """v16: add local_files_history table.
+
+    Stores a snapshot of local_files (+ user_overrides.youtube_url) at
+    unmanage / forget time, keyed by file_sha256. adopt_folder looks
+    this up by sha256 to restore U → M → A loop's original
+    youtube_url so the user's metadata isn't silently lost.
+    """
+    log.info("Migrating to schema v16 (local_files_history)")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS local_files_history (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_sha256     TEXT NOT NULL,
+            media_type      TEXT,
+            tmdb_id         INTEGER,
+            source_kind     TEXT,
+            source_video_id TEXT,
+            youtube_url     TEXT,
+            saved_at        TEXT NOT NULL,
+            saved_reason    TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_local_files_history_sha
+            ON local_files_history (file_sha256, saved_at DESC);
+    """)
+
+
 def _migrate_v14_to_v15(conn: sqlite3.Connection) -> None:
     """v15: add themes.failure_acked_at to split 'TDB URL is broken'
     from 'user has acknowledged the failure'.
@@ -1036,6 +1082,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 14:
                     _migrate_v14_to_v15(conn)
                     current = 15
+                elif current == 15:
+                    _migrate_v15_to_v16(conn)
+                    current = 16
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

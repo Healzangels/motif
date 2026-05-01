@@ -125,6 +125,17 @@ def adopt_folder(
         "resolved_metadata": json.dumps(metadata),
     }
     outcome = _do_adopt(db_path, finding, settings, decided_by)
+    # v1.10.57: if a previous unmanage / forget recorded a URL for
+    # this exact file content (sha256 match), restore it. The newly-
+    # adopted row promotes from A → U with the original youtube_url
+    # back in user_overrides + themes, source_kind='url'.
+    restored = _maybe_restore_url_history(
+        db_path,
+        media_type=outcome.get("media_type"),
+        tmdb_id=outcome.get("tmdb_id"),
+        sha256=sha256,
+        decided_by=decided_by,
+    )
     log_event(db_path, level="INFO", component="adopt",
               media_type=outcome.get("media_type"),
               tmdb_id=outcome.get("tmdb_id"),
@@ -132,8 +143,78 @@ def adopt_folder(
               detail={"folder_path": str(folder_path),
                       "sha256": sha256,
                       "kind": finding_kind,
-                      "decided_by": decided_by})
+                      "decided_by": decided_by,
+                      "restored_from_history": restored})
+    if restored:
+        outcome["restored_from_history"] = restored
     return outcome
+
+
+def _maybe_restore_url_history(
+    db_path: Path, *,
+    media_type: str | None, tmdb_id: int | None,
+    sha256: str, decided_by: str,
+) -> dict | None:
+    """v1.10.57: look up local_files_history by sha256 and, if a prior
+    URL-sourced entry matches, restore the youtube_url onto the
+    just-adopted row. Promotes the row from A back to U because the
+    file content is byte-identical to what was previously
+    URL-downloaded.
+
+    Returns a small dict describing what was restored (for logging),
+    or None when there's no usable history match.
+
+    Only acts on history rows whose source_kind was 'url' — for
+    'upload' the URL was empty anyway, and for 'themerrdb'/'adopt'
+    there's no original-URL semantic to preserve. Picks the most
+    recent saved_at when multiple matches exist.
+    """
+    if not sha256 or media_type is None or tmdb_id is None:
+        return None
+    with get_conn(db_path) as conn:
+        hist = conn.execute(
+            """SELECT source_kind, source_video_id, youtube_url, saved_at
+               FROM local_files_history
+               WHERE file_sha256 = ?
+                 AND source_kind = 'url'
+                 AND youtube_url IS NOT NULL
+                 AND youtube_url != ''
+               ORDER BY saved_at DESC
+               LIMIT 1""",
+            (sha256,),
+        ).fetchone()
+        if hist is None:
+            return None
+        url = hist["youtube_url"]
+        # Promote: write user_overrides + flip local_files.source_kind
+        # to 'url' so the row's badge becomes U instead of A.
+        conn.execute(
+            """INSERT INTO user_overrides
+                 (media_type, tmdb_id, youtube_url, set_at, set_by, note)
+               VALUES (?, ?, ?, ?, ?, 'restored from local_files_history on adopt')
+               ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                   youtube_url = excluded.youtube_url,
+                   set_at = excluded.set_at,
+                   set_by = excluded.set_by,
+                   note = excluded.note""",
+            (media_type, tmdb_id, url, now_iso(), decided_by),
+        )
+        conn.execute(
+            "UPDATE themes SET youtube_url = ? "
+            "WHERE media_type = ? AND tmdb_id = ? "
+            "  AND (youtube_url IS NULL OR youtube_url = '')",
+            (url, media_type, tmdb_id),
+        )
+        conn.execute(
+            "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (hist["source_video_id"] or "", media_type, tmdb_id),
+        )
+    return {
+        "youtube_url": url,
+        "source_kind": "url",
+        "history_saved_at": hist["saved_at"],
+    }
 
 
 def replace_with_themerrdb(

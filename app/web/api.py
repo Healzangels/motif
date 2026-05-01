@@ -2803,7 +2803,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if theme is None:
                 raise HTTPException(status_code=404, detail="theme not found")
             local = conn.execute(
-                "SELECT file_path FROM local_files "
+                "SELECT file_path, file_sha256, source_kind, source_video_id "
+                "FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
@@ -2811,6 +2812,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(
                     status_code=409,
                     detail="not motif-managed (no local_files row)",
+                )
+            # v1.10.57: capture the youtube_url that was driving this
+            # row (from user_overrides if the source was a manual URL,
+            # else from the themes record) and stash everything in
+            # local_files_history keyed by file_sha256. adopt_folder
+            # later looks this up to restore the URL on a re-adopt
+            # of the same file content.
+            override_row = conn.execute(
+                "SELECT youtube_url FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            theme_yt = conn.execute(
+                "SELECT youtube_url FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            saved_youtube_url = (
+                (override_row and override_row["youtube_url"])
+                or (theme_yt and theme_yt["youtube_url"])
+            )
+            if local["file_sha256"]:
+                conn.execute(
+                    """INSERT INTO local_files_history
+                         (file_sha256, media_type, tmdb_id, source_kind,
+                          source_video_id, youtube_url, saved_at, saved_reason)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'unmanage')""",
+                    (local["file_sha256"], media_type, tmdb_id,
+                     local["source_kind"], local["source_video_id"],
+                     saved_youtube_url, now_iso()),
                 )
             # v1.10.31: snapshot the placement folders before deletion so
             # we can optimistically flip plex_items.local_theme_file=1 on
@@ -2926,10 +2957,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             ).fetchall()
             local = conn.execute(
-                "SELECT file_path FROM local_files "
+                "SELECT file_path, file_sha256, source_kind, source_video_id "
+                "FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
+            # v1.10.57: stash content-hash → URL mapping in
+            # local_files_history so a future ADOPT of a file with the
+            # same sha256 (e.g. user re-uploads or re-downloads the
+            # exact same audio) can restore the URL automatically.
+            if local and local["file_sha256"]:
+                override_row = conn.execute(
+                    "SELECT youtube_url FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                theme_yt = conn.execute(
+                    "SELECT youtube_url FROM themes "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                saved_youtube_url = (
+                    (override_row and override_row["youtube_url"])
+                    or (theme_yt and theme_yt["youtube_url"])
+                )
+                conn.execute(
+                    """INSERT INTO local_files_history
+                         (file_sha256, media_type, tmdb_id, source_kind,
+                          source_video_id, youtube_url, saved_at, saved_reason)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, 'forget')""",
+                    (local["file_sha256"], media_type, tmdb_id,
+                     local["source_kind"], local["source_video_id"],
+                     saved_youtube_url, now_iso()),
+                )
 
         # Unlink every placement file — for hardlink placements the
         # canonical's inode is also released; for copy placements each
