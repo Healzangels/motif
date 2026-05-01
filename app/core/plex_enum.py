@@ -232,15 +232,16 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     """
     # Phase 1: stat sidecars outside the transaction. List of (item, sidecar)
     # pairs.
-    # v1.11.27: extended detection to every theme-audio extension Plex
-    # accepts (theme.mp3, theme.m4a, theme.flac, theme.ogg, theme.wav,
-    # theme.opus, theme.m4b). Pre-fix only theme.mp3 was checked, so
-    # any other-format sidecar made the SRC badge fall through to P
-    # (Plex agent) even though motif could see the file existed.
-    # Case-insensitive so Theme.MP3 / THEME.mp3 are also caught.
-    THEME_NAMES = {
-        "theme.mp3", "theme.m4a", "theme.m4b", "theme.flac",
-        "theme.ogg", "theme.wav", "theme.opus",
+    # v1.11.52: detection now matches any "theme.<audio-ext>" — case-
+    # insensitive — instead of a hardcoded enum of seven extensions.
+    # Pre-fix a TV show with theme.aac / theme.wma fell through to P
+    # (Plex agent) because the file wasn't in the allowlist. Plex
+    # itself accepts a broader set than what we hardcoded; matching on
+    # the "theme." prefix + a known audio extension catches everything
+    # Plex actually plays without us having to chase the format list.
+    AUDIO_EXTS = {
+        ".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".oga", ".opus",
+        ".wav", ".wma", ".aac", ".aif", ".aiff", ".alac",
     }
     enriched: list[tuple[PlexLibraryItem, int]] = []
     for it in items:
@@ -250,8 +251,14 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                 folder = Path(it.folder_path)
                 if folder.is_dir():
                     for entry in folder.iterdir():
-                        if (entry.is_file()
-                                and entry.name.lower() in THEME_NAMES):
+                        if not entry.is_file():
+                            continue
+                        name = entry.name.lower()
+                        # name layout: theme<ext>
+                        if not name.startswith("theme."):
+                            continue
+                        ext = name[len("theme"):]
+                        if ext in AUDIO_EXTS:
                             sidecar = 1
                             break
             except OSError:
