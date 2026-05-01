@@ -114,6 +114,23 @@
     if (cached) applyTabAvailability(JSON.parse(cached));
   } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
 
+  // v1.11.48: optimistic topbar paint helper for sync/refresh click
+  // handlers. /api/stats has a 1s TTL cache, so an immediate
+  // refreshTopbarStatus right after enqueue often hits a stale
+  // entry and misses the freshly-pending row. This sets the label
+  // and dot directly so feedback lands the same frame as the click,
+  // then queues a real refresh past the cache TTL to reconcile.
+  function paintTopbarSyncing(label) {
+    const topbarText = $('#topbar-status-text');
+    if (topbarText) topbarText.textContent = label;
+    const topbarDot = $('#topbar-status .dot');
+    if (topbarDot) {
+      topbarDot.classList.remove('dot-red');
+      topbarDot.classList.add('dot-amber');
+    }
+    setTimeout(refreshTopbarStatus, 1100);
+  }
+
   async function refreshTopbarStatus() {
     try {
       const stats = await api('GET', '/api/stats');
@@ -134,12 +151,26 @@
       const downloadBusy = q.download_in_flight > 0;
       const placeBusy = q.place_in_flight > 0;
       const scanBusy = q.scan_in_flight > 0;
+      // v1.11.48: banner text reflects the user's mental model
+      // post-click. Pre-fix the "SYNCING WITH X" text only fired
+      // on _running (status='running'), so the 1-2s window between
+      // job enqueue and worker pickup left the banner showing the
+      // generic "{N}R / {M}P" fallback — the user clicked SYNC
+      // and saw nothing change. Now: prefer _running when
+      // available (avoids claiming concurrent activity that's
+      // actually queued behind a different long-thread job), but
+      // fall back to _in_flight when nothing's running so a
+      // freshly-enqueued job lights the banner immediately.
       let txt;
       if (themerrdbRunning && plexEnumRunning) {
         txt = 'SYNCING THEMERRDB + PLEX';
       } else if (themerrdbRunning) {
         txt = 'SYNCING WITH THEMERRDB';
       } else if (plexEnumRunning) {
+        txt = 'SYNCING WITH PLEX';
+      } else if (themerrdbBusy) {
+        txt = 'SYNCING WITH THEMERRDB';
+      } else if (plexEnumBusy) {
         txt = 'SYNCING WITH PLEX';
       } else if (downloadBusy) {
         txt = `DOWNLOADING ${q.download_in_flight}`;
@@ -447,10 +478,7 @@
         setSyncButtonState('idle');
         return;
       }
-      // v1.11.23: kick the topbar status immediately so 'SYNCING WITH
-      // THEMERRDB' appears as soon as the user clicks, instead of
-      // waiting up to 15s for the next poll tick.
-      refreshTopbarStatus();
+      paintTopbarSyncing('SYNCING WITH THEMERRDB');
       // v1.11.47: poll only themerrdb_sync_in_flight (was sync_in_flight,
       // which includes plex_enum). The dashboard SYNC button represents
       // a ThemerrDB sync only; if a plex_enum runs concurrently the
@@ -1351,9 +1379,9 @@
         // included section. Stats poll's plex_enum_in_flight signal owns
         // the re-enable; reload the table opportunistically as the jobs
         // drain so the user sees updated counts.
-        // v1.11.23: also fire an immediate topbar refresh so the
-        // 'SYNCING WITH PLEX' banner appears now, not on the next tick.
-        refreshTopbarStatus();
+        // v1.11.48: optimistic topbar paint to dodge the /api/stats
+        // 1s TTL cache (see paintTopbarSyncing).
+        paintTopbarSyncing('SYNCING WITH PLEX');
         setTimeout(() => loadLibraries().catch(()=>{}), 5000);
         setTimeout(() => loadLibraries().catch(()=>{}), 15000);
       } catch (e) {
@@ -1376,8 +1404,9 @@
       btn.textContent = '…';
       try {
         await api('POST', `/api/libraries/${encodeURIComponent(sid)}/refresh`);
-        // v1.11.23: immediate topbar refresh.
-        refreshTopbarStatus();
+        // v1.11.48: optimistic paint (see paintTopbarSyncing) to
+        // beat the /api/stats 1s TTL cache.
+        paintTopbarSyncing('SYNCING WITH PLEX');
         setTimeout(() => loadLibraries().catch(()=>{}), 4000);
       } catch (err) {
         alert('Refresh failed: ' + err.message);
@@ -3354,10 +3383,7 @@
           tab: libraryState.tab,
           fourk: !!libraryState.fourk,
         });
-        // v1.11.23: immediate topbar refresh so the user sees
-        // 'SYNCING WITH PLEX' as soon as they click instead of
-        // waiting for the next 15s tick.
-        refreshTopbarStatus();
+        paintTopbarSyncing('SYNCING WITH PLEX');
         setTimeout(() => loadLibrary().catch(()=>{}), 5000);
         setTimeout(() => loadLibrary().catch(()=>{}), 15000);
       } catch (err) {
