@@ -307,13 +307,21 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
     return inserted, updated
 
 
-def resolve_theme_ids(db_path: Path) -> int:
+def resolve_theme_ids(db_path: Path, *, chunk_size: int = 500) -> int:
     """Bulk-populate plex_items.theme_id for every row whose match
     against themes can be resolved by tmdb_id, imdb_id, or
     (title_norm + year). Called at the end of plex_enum and sync so
     the cached column stays fresh.
 
-    Returns the number of plex_items rows whose theme_id changed.
+    v1.11.35: chunked by rating_key in transactions of `chunk_size`
+    rows so the writer lock releases between chunks. Pre-fix the
+    single bulk UPDATE with the per-row correlated subquery held
+    BEGIN IMMEDIATE for 30-60s on a 4K-item plex_items, blocking
+    the auth middleware's session-touch UPDATE long enough to fire
+    'database is locked' and 500 the user's request mid-sync.
+
+    Returns the total number of plex_items rows whose theme_id was
+    rewritten across all chunks.
     """
     sql = """
         UPDATE plex_items SET theme_id = (
@@ -339,9 +347,29 @@ def resolve_theme_ids(db_path: Path) -> int:
                 t.id DESC
             LIMIT 1
         )
+        WHERE rating_key IN (
+            SELECT rating_key FROM plex_items
+            ORDER BY rating_key
+            LIMIT ? OFFSET ?
+        )
     """
-    with get_conn(db_path) as conn, transaction(conn):
-        cur = conn.execute(sql)
-        changed = cur.rowcount
-    log.info("resolve_theme_ids: scanned %d plex_items rows", changed)
-    return changed
+    import time as _time
+    total = 0
+    offset = 0
+    with get_conn(db_path) as conn:
+        # Get the row count up-front so we can stop cleanly.
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM plex_items"
+        ).fetchone()[0]
+    while offset < row_count:
+        with get_conn(db_path) as conn, transaction(conn):
+            cur = conn.execute(sql, (chunk_size, offset))
+            total += cur.rowcount
+        offset += chunk_size
+        # Yield the writer lock briefly so concurrent API requests
+        # (auth session-touch, log_event, /api/stats) can land
+        # between chunks.
+        _time.sleep(0.05)
+    log.info("resolve_theme_ids: scanned %d plex_items rows (chunk_size=%d)",
+             total, chunk_size)
+    return total

@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -240,12 +241,19 @@ def lookup_session(db_path: Path, session_id: str) -> str | None:
         ).fetchone()
         if row is None:
             return None
-        # Touch last_seen_at — but only every minute or so to avoid write churn.
-        # Cheap: just always update; sqlite is fast enough for this.
-        conn.execute(
-            "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
-            (now_iso, session_id),
-        )
+        # v1.11.35: best-effort touch. Pre-fix this UPDATE could trip
+        # 'database is locked' during a long writer (sync /
+        # resolve_theme_ids) and propagate up the auth middleware as
+        # a 500, locking the user out of the UI mid-sync. Skipping
+        # the touch is harmless — the session still authenticates
+        # via the SELECT above; last_seen_at lags by one request.
+        try:
+            conn.execute(
+                "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+                (now_iso, session_id),
+            )
+        except sqlite3.OperationalError as e:
+            log.debug("session touch skipped (db busy): %s", e)
     return row["username"]
 
 

@@ -945,6 +945,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type = 'plex_enum'
                      AND status IN ('pending','running')) AS plex_enum_in_flight,
+                  -- v1.11.35: 'running' alone (no pending) so the topbar
+                  -- banner only claims activity that's actually
+                  -- happening right now. Pre-fix the banner said
+                  -- 'SYNCING THEMERRDB + PLEX' when sync was running
+                  -- and plex_enum was queued behind it — misleading
+                  -- because the worker is single-threaded so plex_enum
+                  -- doesn't start until sync finishes.
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'sync'
+                     AND status = 'running') AS themerrdb_sync_running,
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'plex_enum'
+                     AND status = 'running') AS plex_enum_running,
                   -- v1.11.7: per-job-type counts so the topbar status
                   -- can report what's actually being worked on. Cheaper
                   -- than per-type subqueries because the index on
@@ -1066,6 +1079,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "sync_in_flight": row["sync_in_flight"],
                 "themerrdb_sync_in_flight": row["themerrdb_sync_in_flight"],
                 "plex_enum_in_flight": row["plex_enum_in_flight"],
+                "themerrdb_sync_running": row["themerrdb_sync_running"],
+                "plex_enum_running": row["plex_enum_running"],
                 "download_in_flight": row["download_in_flight"],
                 "place_in_flight": row["place_in_flight"],
                 "scan_in_flight": row["scan_in_flight"],

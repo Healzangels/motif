@@ -121,17 +121,25 @@
       // (sync / plex_enum / download / place / scan) drive the topbar
       // text. Priority: sync > download > place > scan > idle.
       const q = stats.queue || {};
+      // v1.11.35: banner text reflects what's *actually running*, not
+      // what's queued. _in_flight (pending OR running) drives the
+      // button locks; _running (status='running' only) drives the
+      // banner so we don't claim 'SYNCING WITH PLEX' while plex_enum
+      // is queued behind a sync that hasn't finished yet (the worker
+      // is single-threaded today).
       const plexEnumBusy = q.plex_enum_in_flight > 0;
       const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
+      const plexEnumRunning = (q.plex_enum_running || 0) > 0;
+      const themerrdbRunning = (q.themerrdb_sync_running || 0) > 0;
       const downloadBusy = q.download_in_flight > 0;
       const placeBusy = q.place_in_flight > 0;
       const scanBusy = q.scan_in_flight > 0;
       let txt;
-      if (themerrdbBusy && plexEnumBusy) {
+      if (themerrdbRunning && plexEnumRunning) {
         txt = 'SYNCING THEMERRDB + PLEX';
-      } else if (themerrdbBusy) {
+      } else if (themerrdbRunning) {
         txt = 'SYNCING WITH THEMERRDB';
-      } else if (plexEnumBusy) {
+      } else if (plexEnumRunning) {
         txt = 'SYNCING WITH PLEX';
       } else if (downloadBusy) {
         txt = `DOWNLOADING ${q.download_in_flight}`;
