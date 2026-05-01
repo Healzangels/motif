@@ -3129,6 +3129,17 @@
         });
       });
       updateTdbFilterVisibility();
+      // v1.11.18: SRC legend open/closed preference persists across
+      // page loads so users who collapse it stay collapsed. Default
+      // open on the user's first visit so the key is discoverable.
+      const srcKey = document.getElementById('library-src-key');
+      if (srcKey) {
+        const stored = localStorage.getItem('motif:src_key_open');
+        srcKey.open = (stored === null) ? true : (stored === '1');
+        srcKey.addEventListener('toggle', () => {
+          localStorage.setItem('motif:src_key_open', srcKey.open ? '1' : '0');
+        });
+      }
     }
 
     // Library tab chips (data-libtab) — only used on /coverage
