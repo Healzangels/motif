@@ -219,7 +219,28 @@ class Worker:
         except Exception as e:
             log.warning("Orphan-job recovery failed at startup: %s", e)
         while not self.stop_event.is_set():
-            job = self._claim_next_job()
+            # v1.11.51: catch *every* exception around the claim +
+            # bookkeeping path so a transient sqlite3.OperationalError
+            # ('database is locked') doesn't kill the worker thread.
+            # Pre-fix the long sync's batch flushes contended with the
+            # general worker's BEGIN IMMEDIATE long enough for one
+            # claim attempt to time out at busy_timeout=30s; the
+            # OperationalError propagated out of run() and the thread
+            # died for the rest of the process lifetime, leaving every
+            # download / place / adopt job queue-stuck until the next
+            # container restart.
+            try:
+                job = self._claim_next_job()
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower():
+                    log.warning("Claim hit DB-lock contention; backing off 5s")
+                    self.stop_event.wait(5.0)
+                    continue
+                raise
+            except Exception as e:
+                log.exception("Claim crashed: %s — backing off 5s", e)
+                self.stop_event.wait(5.0)
+                continue
             if job is None:
                 # No work — back off briefly
                 self.stop_event.wait(2.0)
@@ -232,14 +253,37 @@ class Worker:
                 self._dispatch(job)
             except _JobCancelled:
                 log.info("Job %s cancelled by user", job["id"])
-                self._mark_cancelled(job["id"])
+                self._safe_mark(self._mark_cancelled, job["id"])
             except _JobPermanentFailure as e:
                 log.info("Job %s permanently failed: %s", job["id"], e)
-                self._mark_failed_terminal(job["id"], str(e))
+                self._safe_mark(self._mark_failed_terminal, job["id"], str(e))
             except Exception as e:
                 log.exception("Job %s crashed: %s", job["id"], e)
-                self._mark_failed(job["id"], str(e))
+                self._safe_mark(self._mark_failed, job["id"], str(e))
         log.info("Worker loop stopped")
+
+    def _safe_mark(self, fn, *args) -> None:
+        """v1.11.51: book-keeping helpers (_mark_done / _mark_failed /
+        _mark_cancelled) all open their own get_conn → BEGIN IMMEDIATE.
+        If the writer lock is contended the BEGIN raises 'database is
+        locked' and the exception propagates up to run(), killing the
+        worker thread. Retry with a short backoff so transient
+        contention doesn't take the worker down between jobs.
+        """
+        delays = (0.25, 1.0, 4.0, 10.0)
+        for d in delays:
+            try:
+                fn(*args)
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                log.warning("Bookkeeping (%s) DB-locked; retrying in %.1fs",
+                            fn.__name__, d)
+                self.stop_event.wait(d)
+        # Last attempt — let the exception propagate this time, and
+        # the run() loop's OperationalError catch above will absorb it.
+        fn(*args)
 
     def _claim_next_job(self) -> sqlite3.Row | None:
         # v1.11.36: optional job_type_filter scopes claim to the worker's
@@ -1184,6 +1228,27 @@ def start_worker(settings: Settings, stop_event: threading.Event) -> list[thread
     + FolderIndex cache so they don't share mutable state.
     """
     threads: list[threading.Thread] = []
+
+    def _supervised(worker: "Worker", label: str) -> None:
+        """v1.11.51: outer-most supervisor. The run() loop catches
+        OperationalError + Exception around claim/dispatch (no thread
+        death from DB lock contention), but if anything ever DOES
+        escape — e.g. an OSError on the events queue, an error inside
+        a bookkeeping path that the inner catch missed — we don't
+        want the worker to silently disappear for the rest of the
+        process lifetime. Loop the run() call until the stop_event
+        fires, with a short backoff between failures so a persistent
+        bug doesn't busy-spin.
+        """
+        while not stop_event.is_set():
+            try:
+                worker.run()
+                return  # clean exit (stop_event set)
+            except Exception as e:
+                log.exception("Worker %s crashed at top level: %s — "
+                              "restarting in 10s", label, e)
+                stop_event.wait(10.0)
+
     for label, types in (("long", _LONG_JOB_TYPES),
                          ("general", _GENERAL_JOB_TYPES)):
         bucket = TokenBucket(
@@ -1193,7 +1258,8 @@ def start_worker(settings: Settings, stop_event: threading.Event) -> list[thread
         )
         w = Worker(settings=settings, stop_event=stop_event, bucket=bucket,
                    job_type_filter=types, name=f"motif-worker-{label}")
-        t = threading.Thread(target=w.run, name=f"motif-worker-{label}", daemon=True)
+        t = threading.Thread(target=_supervised, args=(w, label),
+                             name=f"motif-worker-{label}", daemon=True)
         t.start()
         threads.append(t)
     return threads
