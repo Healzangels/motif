@@ -2610,6 +2610,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (theme_media_type, pi["guid_tmdb"]),
                 ).fetchone()
             tmdb_id: int
+            theme_id_pk: int
             if theme is None:
                 # Allocate synthetic negative tmdb_id (consistent with orphan adopt)
                 row = conn.execute(
@@ -2619,7 +2620,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ).fetchone()
                 min_tmdb = row["lo"] if row and row["lo"] is not None else 0
                 tmdb_id = min(min_tmdb, 0) - 1
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO themes
                          (media_type, tmdb_id, imdb_id, title, year,
                           upstream_source, last_seen_sync_at, first_seen_sync_at)
@@ -2627,8 +2628,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (theme_media_type, tmdb_id, pi["guid_imdb"],
                      pi["title"], pi["year"], now_iso(), now_iso()),
                 )
+                theme_id_pk = cur.lastrowid
             else:
                 tmdb_id = theme["tmdb_id"]
+                theme_id_pk = theme["id"]
+            # v1.11.64: stamp pi.theme_id immediately. See manual-url
+            # endpoint for the long-form rationale; without this the
+            # library JOIN doesn't pick up the new orphan + uploaded
+            # file until the next plex_enum runs resolve_theme_ids.
+            conn.execute(
+                "UPDATE plex_items SET theme_id = ? WHERE rating_key = ?",
+                (theme_id_pk, rating_key),
+            )
 
         # v1.11.0: write the upload under the section's themes_subdir.
         from ..core.canonical import canonical_theme_subdir
@@ -2742,7 +2753,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ).fetchone()
                 min_tmdb = row["lo"] if row and row["lo"] is not None else 0
                 tmdb_id = min(min_tmdb, 0) - 1
-                conn.execute(
+                cur = conn.execute(
                     """INSERT INTO themes
                          (media_type, tmdb_id, imdb_id, title, year,
                           upstream_source, last_seen_sync_at, first_seen_sync_at)
@@ -2750,8 +2761,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (theme_media_type, tmdb_id, pi["guid_imdb"],
                      pi["title"], pi["year"], now_iso(), now_iso()),
                 )
+                theme_id_pk = cur.lastrowid
             else:
                 tmdb_id = theme["tmdb_id"]
+                theme_id_pk = theme["id"]
+
+            # v1.11.64: stamp pi.theme_id immediately so the library JOIN
+            # picks up the new orphan on the very next /api/library
+            # refresh — the lib query joins through pi.theme_id (the
+            # v1.11.26 denormalized cache) and won't see local_files /
+            # placements rows under a synthetic-negative tmdb_id until
+            # the next plex_enum's resolve_theme_ids re-stamps the
+            # column. Same fix v1.11.43 added for adopt; missed here
+            # for SET URL / UPLOAD MP3, so manual URL + upload on
+            # P-source rows looked like the action did nothing.
+            conn.execute(
+                "UPDATE plex_items SET theme_id = ? WHERE rating_key = ?",
+                (theme_id_pk, rating_key),
+            )
 
             conn.execute(
                 """INSERT INTO user_overrides (media_type, tmdb_id, youtube_url,
