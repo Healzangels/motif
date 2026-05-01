@@ -248,6 +248,8 @@ class Worker:
             self._do_adopt(job)
         elif jt == "plex_enum":
             self._do_plex_enum(job)
+        elif jt == "probe":
+            self._do_probe(job)
         else:
             self._mark_failed(job["id"], f"unknown job type: {jt}")
             return
@@ -305,7 +307,6 @@ class Worker:
             self.settings.db_path, self.settings.motifdb_base_url,
             auto_place_override=auto_place_override,
             enqueue_downloads=enqueue_downloads,
-            cookies_file=self.settings.cookies_file,
         )
         # Auto-enqueue a plex_enum after every sync so the unified browse view
         # stays current. Dedupe so concurrent syncs don't pile up.
@@ -719,6 +720,61 @@ class Worker:
                 plex.refresh(rk)
         finally:
             plex.close()
+
+    def _do_probe(self, job: sqlite3.Row) -> None:
+        """v1.10.45: probe a single ThemerrDB youtube_url for availability
+        and stamp themes.failure_kind so the library's TDB pill paints
+        red/amber for dead/cookied URLs ahead of any download attempt.
+
+        Replaces the v1.10.43 inline _probe_phase + 100-cap. Sync now
+        enqueues one probe job per new + url_changed entry; the worker
+        chews through them between higher-priority work (downloads/
+        place/etc.). Probe jobs are deprioritized via next_run_at = +60s
+        at enqueue time so claim_next_job (which orders by next_run_at)
+        won't pick a probe over a download whose next_run_at = now.
+        """
+        from .downloader import probe_youtube_url, FailureKind  # local import
+        media_type = job["media_type"]
+        tmdb_id = job["tmdb_id"]
+        if media_type is None or tmdb_id is None:
+            return
+        with get_conn(self.settings.db_path) as conn:
+            theme = conn.execute(
+                "SELECT youtube_url FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+        if theme is None or not theme["youtube_url"]:
+            return  # row gone or no URL — nothing to probe
+        try:
+            failure = probe_youtube_url(
+                theme["youtube_url"],
+                cookies_file=self.settings.cookies_file,
+            )
+        except Exception as e:
+            log.debug("probe failed for %s/%s: %s", media_type, tmdb_id, e)
+            return
+        with get_conn(self.settings.db_path) as conn, transaction(conn):
+            if failure is None:
+                # URL is reachable + playable. Clear any prior failure
+                # flag so the row's TDB pill goes green again.
+                conn.execute(
+                    "UPDATE themes SET failure_kind = NULL, "
+                    "                  failure_message = NULL, "
+                    "                  failure_at = NULL "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "  AND failure_kind IS NOT NULL",
+                    (media_type, tmdb_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE themes SET failure_kind = ?, "
+                    "                  failure_message = ?, "
+                    "                  failure_at = ? "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (failure.value, f"sync probe: {failure.human}",
+                     now_iso(), media_type, tmdb_id),
+                )
 
     def _do_relink(self, job: sqlite3.Row) -> None:
         """Retry hardlinking for placements that fell back to copy.

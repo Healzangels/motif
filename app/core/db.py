@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS placements (
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     job_type        TEXT NOT NULL
-                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum')),
+                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum','probe')),
     media_type      TEXT,
     tmdb_id         INTEGER,
     payload         TEXT,
@@ -304,7 +304,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -714,6 +714,56 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v13_to_v14(conn: sqlite3.Connection) -> None:
+    """v14: add 'probe' to jobs.job_type CHECK constraint.
+
+    SQLite can't ALTER a CHECK in place — rebuild the table preserving
+    every column + index. Mirrors the v6 rebuild that added 'plex_enum'.
+
+    Probe is the v1.10.45 background URL-availability job: yt-dlp
+    metadata-only check on a single (media_type, tmdb_id) so the
+    library's TDB pill can paint dead/cookied URLs ahead of any
+    download attempt. Replaces the old 100-cap inline probe phase.
+    """
+    log.info("Migrating to schema v14 (jobs CHECK + 'probe' type)")
+    conn.executescript("""
+        CREATE TABLE jobs__v14 (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_type        TEXT NOT NULL CHECK (
+                job_type IN ('sync', 'download', 'place', 'refresh', 'relink',
+                             'scan', 'adopt', 'plex_enum', 'probe')
+            ),
+            media_type      TEXT,
+            tmdb_id         INTEGER,
+            payload         TEXT,
+            status          TEXT NOT NULL DEFAULT 'pending'
+                               CHECK (status IN ('pending', 'running',
+                                                 'success', 'failed', 'cancelled',
+                                                 'done')),
+            attempts        INTEGER NOT NULL DEFAULT 0,
+            last_error      TEXT,
+            created_at      TEXT NOT NULL,
+            next_run_at     TEXT NOT NULL,
+            started_at      TEXT,
+            finished_at     TEXT
+        );
+        INSERT INTO jobs__v14 (id, job_type, media_type, tmdb_id, payload, status,
+                               attempts, last_error, created_at, next_run_at,
+                               started_at, finished_at)
+            SELECT id, job_type, media_type, tmdb_id, payload, status,
+                   attempts, last_error, created_at, next_run_at,
+                   started_at, finished_at FROM jobs;
+        DROP TABLE jobs;
+        ALTER TABLE jobs__v14 RENAME TO jobs;
+        CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status, next_run_at);
+        CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs (job_type, status);
+        CREATE INDEX IF NOT EXISTS idx_jobs_item ON jobs (media_type, tmdb_id);
+        CREATE INDEX IF NOT EXISTS idx_jobs_type_status_finished
+            ON jobs (job_type, status, finished_at);
+        ANALYZE;
+    """)
+
+
 def _migrate_v12_to_v13(conn: sqlite3.Connection) -> None:
     """v13 adds title_norm columns to themes + plex_items.
 
@@ -951,6 +1001,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 12:
                     _migrate_v12_to_v13(conn)
                     current = 13
+                elif current == 13:
+                    _migrate_v13_to_v14(conn)
+                    current = 14
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
