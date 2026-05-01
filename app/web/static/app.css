@@ -895,6 +895,12 @@ pre code, .codeblock {
   padding: 2px 6px;
   border: 1px solid;
   border-radius: 0;
+  /* v1.11.25: explicit default cursor so SRC column badges don't pick
+     up the 'help' cursor from any inherited/UA-stylesheet rule that
+     fires on title= attributes. The legend block (.src-key-compact)
+     overrides this back to cursor:help since hover-for-info is the
+     intent there. */
+  cursor: default;
 }
 .link-badge-hardlink {
   color: var(--green);
