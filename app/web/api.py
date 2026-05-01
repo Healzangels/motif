@@ -375,8 +375,16 @@ def _library_main_query(
         )
         LEFT JOIN local_files lf
           ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+        -- v1.10.48: match placement.media_folder to this row's
+        -- pi.folder_path. Pre-1.10.48 the JOIN was on (mt, tmdb)
+        -- only, so a placement made at /4kmovies/Matilda would paint
+        -- the standard /movies/Matilda row as PL=on (and conversely),
+        -- bleeding state across sections that share the same theme.
+        -- Now each row reflects placement only for ITS own folder.
         LEFT JOIN placements p
-          ON p.media_type = t.media_type AND p.tmdb_id = t.tmdb_id
+          ON p.media_type = t.media_type
+         AND p.tmdb_id = t.tmdb_id
+         AND p.media_folder = pi.folder_path
     """
     sql_from_pi_only = """
         FROM plex_items pi
