@@ -86,38 +86,18 @@
   </div>
 </section>
 
-<!-- v1.11.18: SRC column legend. Compact key row showing what each
-     letter+color in the SRC column means. Click the heading to
-     collapse / expand; preference persists in localStorage. -->
-<details class="src-key" id="library-src-key">
-  <summary>// SRC KEY</summary>
-  <div class="src-key-row">
-    <span class="src-key-item">
-      <span class="link-badge link-badge-themerrdb" aria-hidden="true">T</span>
-      <span class="src-key-text">ThemerrDB — motif manages the download</span>
-    </span>
-    <span class="src-key-item">
-      <span class="link-badge link-badge-user" aria-hidden="true">U</span>
-      <span class="src-key-text">user-provided — manual URL or uploaded MP3</span>
-    </span>
-    <span class="src-key-item">
-      <span class="link-badge link-badge-adopt" aria-hidden="true">A</span>
-      <span class="src-key-text">adopted — motif claimed an existing local sidecar</span>
-    </span>
-    <span class="src-key-item">
-      <span class="link-badge link-badge-manual" aria-hidden="true">M</span>
-      <span class="src-key-text">manual sidecar — theme.mp3 at the Plex folder, motif doesn't own it (ADOPT to take over)</span>
-    </span>
-    <span class="src-key-item">
-      <span class="link-badge link-badge-cloud" aria-hidden="true">P</span>
-      <span class="src-key-text">Plex agent — Plex's metadata supplies the theme (no local file)</span>
-    </span>
-    <span class="src-key-item">
-      <span class="muted" aria-hidden="true">—</span>
-      <span class="src-key-text">no theme anywhere (eligible for DOWNLOAD / SET URL / UPLOAD MP3)</span>
-    </span>
-  </div>
-</details>
+<!-- v1.11.20: compact SRC legend — single inline row, hover each
+     badge for the long-form description so the table doesn't lose
+     12pt of vertical to a key block. -->
+<div class="src-key-compact" aria-label="SRC column legend">
+  <span class="src-key-label muted small">SRC:</span>
+  <span class="link-badge link-badge-themerrdb" title="ThemerrDB — motif manages the download">T</span>
+  <span class="link-badge link-badge-user" title="user-provided — manual URL or uploaded MP3">U</span>
+  <span class="link-badge link-badge-adopt" title="adopted — motif claimed an existing local sidecar">A</span>
+  <span class="link-badge link-badge-manual" title="manual sidecar — theme.mp3 at the Plex folder, motif doesn't own it (ADOPT to take over)">M</span>
+  <span class="link-badge link-badge-cloud" title="Plex agent — Plex's metadata supplies the theme (no local file)">P</span>
+  <span class="muted" title="no theme anywhere (eligible for DOWNLOAD / SET URL / UPLOAD MP3)">—</span>
+</div>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
      checkbox or the table-header select-all. v1.10.49: ADOPT SELECTED

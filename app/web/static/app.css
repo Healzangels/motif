@@ -611,52 +611,26 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-color: rgba(255,184,74,0.5);
 }
 
-/* v1.11.18: SRC column legend on the library tabs. Compact, foldable,
-   styled as a faint <details> block sitting above RESULTS so it
-   doesn't crowd the experienced user's view but stays one click away. */
-.src-key {
-  margin: 0 0 12px 0;
-  padding: 0;
+/* v1.11.20: compact single-row SRC legend on the library tabs. Each
+   badge re-uses the actual link-badge class from the SRC column so
+   the swatch is byte-identical to a real row. Long-form descriptions
+   live in the title= tooltip instead of a wall of inline text. */
+.src-key-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px 0;
+  padding: 6px 10px;
   border: 1px dashed var(--line);
   border-radius: 4px;
   background: var(--bg-elev);
 }
-.src-key > summary {
-  list-style: none;
-  cursor: pointer;
-  padding: 8px 14px;
-  font-family: var(--font-mono);
-  font-size: var(--t-tiny);
-  color: var(--fg-dim);
+.src-key-compact .link-badge { cursor: help; }
+.src-key-compact .muted { cursor: help; padding: 0 2px; }
+.src-key-label {
   letter-spacing: 0.6px;
-  user-select: none;
+  margin-right: 2px;
 }
-.src-key > summary::-webkit-details-marker { display: none; }
-.src-key > summary::before {
-  content: "▸";
-  display: inline-block;
-  width: 1em;
-  margin-right: 4px;
-  color: var(--fg-mute);
-  transition: transform 100ms ease;
-}
-.src-key[open] > summary::before { transform: rotate(90deg); }
-.src-key > summary:hover { color: var(--fg); }
-.src-key-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px 22px;
-  padding: 4px 14px 12px 14px;
-  border-top: 1px dashed var(--line);
-  font-size: var(--t-tiny);
-  color: var(--fg-dim);
-}
-.src-key-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.src-key-text { color: var(--fg-dim); }
 
 .lib-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
