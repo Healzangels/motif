@@ -57,35 +57,39 @@ def compute_section_themes_subdir(
 ) -> str:
     """v1.11.0: filesystem-safe slug for a Plex section's themes subdir.
 
-    Mirrors the section's user-visible identity. Examples (assuming a
-    Plex section title of "Movies"):
-      - movie / not anime / not 4k    → "movies"
-      - movie / not anime /     4k    → "movies-4k"
-      - movie /     anime / not 4k    → "movies-anime"
-      - movie /     anime /     4k    → "movies-anime-4k"
-      - show  / not anime / not 4k    → "tv"          (if title='TV Shows')
-                                      → "<slug>"      (otherwise)
+    v1.11.45: 4K and anime variants now use fixed category names so the
+    on-disk tree reads cleanly regardless of what the user named the
+    Plex section. Pre-fix a section titled "4K Movies" computed a
+    slug of "4k-movies" and then got the "-4k" suffix appended,
+    producing "4k-movies-4k"; an anime section titled "Anime" became
+    "anime-anime" for the same reason.
 
-    The leading slug is a slugified section title so users with
-    multiple movie sections (e.g. "Movies" + "Documentaries") get
-    distinct subdirs ("movies" vs "documentaries"). 4k / anime
-    suffixes only attach when the corresponding flag is set so a
-    plain section keeps a clean URL.
+    Examples:
+      - movie / not anime / not 4k    → slugified title (e.g. "movies",
+                                        "documentaries") so multiple plain
+                                        sections still land in distinct dirs
+      - movie / not anime /     4k    → "4kmovies"
+      - show  / not anime / not 4k    → slugified title (e.g. "tv")
+      - show  / not anime /     4k    → "4ktv"
+      - any   /     anime / not 4k    → "anime"
+      - any   /     anime /     4k    → "4kanime"
 
     Caller (sections._allocate_themes_subdir) is responsible for
     collision handling — if two sections compute the same subdir, the
-    second one gets a -2 / -3 / ... suffix until unique.
+    second one gets a -2 / -3 / ... suffix until unique. With the
+    category-fixed 4K/anime names, collisions only matter when a user
+    has e.g. two 4K movie libraries (rare).
     """
+    if is_anime and is_4k:
+        return "4kanime"
+    if is_anime:
+        return "anime"
+    if is_4k:
+        return "4ktv" if type_ == "show" else "4kmovies"
     raw = (title or "").strip().lower() or ("tv" if type_ == "show" else "movies")
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-") or (
         "tv" if type_ == "show" else "movies"
     )
-    if is_anime and is_4k:
-        return f"{slug}-anime-4k"
-    if is_anime:
-        return f"{slug}-anime"
-    if is_4k:
-        return f"{slug}-4k"
     return slug
 
 
