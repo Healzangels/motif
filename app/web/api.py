@@ -1515,6 +1515,164 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 enqueued += 1
         return {"ok": True, "enqueued": enqueued}
 
+    # --- v1.12.0: themes_dir manual-import scanner ---
+
+    @app.post("/api/import/scan")
+    async def api_import_scan(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """Enqueue a themes_scan job. Walks the configured themes_dir
+        and writes import_findings rows for every theme.* it finds
+        under <themes_dir>/<section_subdir>/<Title (Year)>/. Idempotent
+        — already-managed files (in local_files) are skipped, and
+        existing pending findings get re-classified against current
+        Plex state on each scan."""
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409,
+                                detail="themes_dir not configured")
+        existing = None
+        with get_conn(db) as conn:
+            existing = conn.execute(
+                "SELECT id FROM jobs WHERE job_type = 'themes_scan' "
+                "AND status IN ('pending','running') LIMIT 1"
+            ).fetchone()
+            if existing:
+                return {"ok": True, "job_id": existing["id"],
+                        "note": "scan already in flight"}
+            cur = conn.execute(
+                """INSERT INTO jobs (job_type, payload, status,
+                                     created_at, next_run_at)
+                   VALUES ('themes_scan', '{}', 'pending', ?, ?)""",
+                (now_iso(), now_iso()),
+            )
+            job_id = cur.lastrowid
+        log_event(db, level="INFO", component="import",
+                  message=f"Themes-dir scan queued by {request.state.user}",
+                  detail={"job_id": job_id})
+        return {"ok": True, "job_id": job_id}
+
+    @app.get("/api/import/findings")
+    async def api_import_findings(
+        decision: str = Query("pending",
+            pattern="^(pending|approved|declined|purged|all)$"),
+        match_kind: str = Query("",
+            pattern="^(|auto_place|auto_adopt|conflict_overwrite|"
+                    "conflict_plex_agent|multi_section|orphan|flat_layout)$"),
+        page: int = Query(1, ge=1),
+        per_page: int = Query(100, ge=1, le=500),
+        db: Path = Depends(get_db_path),
+    ):
+        """List import findings with filters. Default returns pending
+        only; ?decision=all returns every row including history."""
+        clauses: list[str] = []
+        params: list = []
+        if decision != "all":
+            clauses.append("decision = ?")
+            params.append(decision)
+        if match_kind:
+            clauses.append("match_kind = ?")
+            params.append(match_kind)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        offset = (page - 1) * per_page
+        with get_conn(db) as conn:
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM import_findings{where}",
+                params,
+            ).fetchone()[0]
+            # Per-kind counts to drive the chip filter UI on /import.
+            kind_counts = {
+                r["match_kind"]: r["n"]
+                for r in conn.execute(
+                    """SELECT match_kind, COUNT(*) AS n
+                       FROM import_findings WHERE decision = 'pending'
+                       GROUP BY match_kind"""
+                ).fetchall()
+            }
+            rows = conn.execute(
+                f"""SELECT * FROM import_findings{where}
+                    ORDER BY id DESC LIMIT ? OFFSET ?""",
+                params + [per_page, offset],
+            ).fetchall()
+        items = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["match_candidates"] = json.loads(d.get("match_candidates") or "[]")
+            except (TypeError, ValueError):
+                d["match_candidates"] = []
+            try:
+                d["target_section_ids"] = json.loads(d.get("target_section_ids") or "[]")
+            except (TypeError, ValueError):
+                d["target_section_ids"] = []
+            items.append(d)
+        return {"total": total, "page": page, "per_page": per_page,
+                "items": items, "kind_counts": kind_counts}
+
+    @app.post("/api/import/findings/{finding_id}/decision")
+    async def api_import_decision(
+        request: Request, finding_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """Apply approve/decline/purge to one import finding.
+        Body: {"decision": "approved"|"declined"|"purged",
+               "target_section_ids": [...optional...]}"""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        decision = body.get("decision", "")
+        target = body.get("target_section_ids") or None
+        from ..core.import_apply import apply_finding, ImportApplyError
+        try:
+            outcome = await run_in_threadpool(
+                apply_finding, db,
+                settings=settings,
+                finding_id=finding_id,
+                decision=decision,
+                decided_by=request.state.principal.username,
+                target_section_ids=target,
+            )
+        except ImportApplyError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return {"ok": True, "outcome": outcome}
+
+    @app.post("/api/import/findings/decisions/bulk")
+    async def api_import_decision_bulk(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """Bulk apply a single decision to many findings.
+        Body: {"finding_ids": [1,2,3], "decision": "approved"}"""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        ids = body.get("finding_ids") or []
+        decision = body.get("decision", "")
+        if not isinstance(ids, list) or not ids:
+            raise HTTPException(status_code=400,
+                                detail="finding_ids must be a non-empty list")
+        from ..core.import_apply import apply_finding, ImportApplyError
+        applied = 0
+        errors: list[dict] = []
+        for fid in ids:
+            try:
+                await run_in_threadpool(
+                    apply_finding, db,
+                    settings=settings,
+                    finding_id=int(fid),
+                    decision=decision,
+                    decided_by=request.state.principal.username,
+                )
+                applied += 1
+            except ImportApplyError as e:
+                errors.append({"finding_id": fid, "error": str(e)})
+            except Exception as e:
+                errors.append({"finding_id": fid, "error": str(e)})
+        return {"ok": True, "applied": applied, "errors": errors}
+
     # --- TMDB credentials test ---
 
     @app.post("/api/tmdb/test")
