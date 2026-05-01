@@ -4123,6 +4123,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             rows = conn.execute(sql, params).fetchall()
         return {"events": [dict(r) for r in rows]}
 
+    # v1.11.76: diagnostic endpoint for per-folder stat behavior. The
+    # M-vs-P false-positive on Unraid setups (Plex says theme=present
+    # via its metadata cache, motif's stat reads 0) is hard to debug
+    # without seeing exactly what Python's iterdir() actually returns
+    # for the problematic path. Dump everything the sidecar logic
+    # observes so the user can paste the JSON back when they hit the
+    # bug.
+    @app.get("/api/debug/stat-folder")
+    async def api_debug_stat_folder(
+        request: Request,
+        path: str = Query(..., description="absolute folder path"),
+    ):
+        _require_admin(request)
+        from ..core.plex_enum import (
+            _candidate_local_paths, stat_theme_sidecar,
+            SIDECAR_AUDIO_EXTS,
+        )
+        out = {
+            "input_path": path,
+            "candidates": [],
+            "sidecar_result": None,
+        }
+        for cand in _candidate_local_paths(path):
+            entry = {
+                "candidate": str(cand),
+                "exists": False,
+                "is_dir": False,
+                "iterdir_error": None,
+                "entries": [],
+            }
+            try:
+                entry["exists"] = cand.exists()
+            except OSError as e:
+                entry["iterdir_error"] = f"exists() raised: {e}"
+            try:
+                entry["is_dir"] = cand.is_dir()
+            except OSError as e:
+                entry["iterdir_error"] = f"is_dir() raised: {e}"
+            if entry["is_dir"]:
+                try:
+                    for ent in cand.iterdir():
+                        try:
+                            is_file = ent.is_file()
+                        except OSError as e:
+                            entry["entries"].append({
+                                "name": ent.name,
+                                "is_file": None,
+                                "stat_error": str(e),
+                            })
+                            continue
+                        item = {"name": ent.name, "is_file": is_file}
+                        nm = ent.name.lower()
+                        if is_file and nm.startswith("theme."):
+                            ext = nm[len("theme"):]
+                            item["theme_ext"] = ext
+                            item["matches_audio_ext"] = (
+                                ext in SIDECAR_AUDIO_EXTS
+                            )
+                        entry["entries"].append(item)
+                except OSError as e:
+                    entry["iterdir_error"] = f"iterdir() raised: {e}"
+            out["candidates"].append(entry)
+            # Stop at the first reachable candidate (mirrors
+            # stat_theme_sidecar's actual logic).
+            if entry["is_dir"]:
+                break
+        out["sidecar_result"] = stat_theme_sidecar(path)
+        return out
+
     # --- JSON: coverage ---
 
     @app.get("/api/coverage/plex")

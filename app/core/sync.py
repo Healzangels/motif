@@ -665,11 +665,31 @@ def run_sync(db_path, base_url: str, *,
                             ex.shutdown(cancel_futures=True)
                             raise _JobCancelled()
                         futures.append(ex.submit(_do_fetch, entry))
+                    # v1.11.76: visible per-item progress so the user can
+                    # see the sync is making forward progress (and how
+                    # fast). Pre-fix the only sync logs were the
+                    # opening 'index' line and the closing 'finished'
+                    # line — a slow connection looked indistinguishable
+                    # from a hang.
+                    completed = 0
+                    last_progress = time.monotonic()
+                    total = len(futures)
                     for fut in as_completed(futures):
                         if cancel_check():
                             ex.shutdown(cancel_futures=True)
                             raise _JobCancelled()
                         result = fut.result()
+                        completed += 1
+                        if completed == 1 or completed == total \
+                                or completed % 500 == 0 \
+                                or (time.monotonic() - last_progress) > 30.0:
+                            log.info(
+                                "sync %s progress: %d/%d "
+                                "(errors=%d, queued_for_flush=%d)",
+                                media_type, completed, total,
+                                stats.errors, len(batch),
+                            )
+                            last_progress = time.monotonic()
                         if result is None:
                             continue
                         if result[0] == "error":
