@@ -83,6 +83,7 @@ def adopt_folder(
     media_type: str,
     title: str,
     year: str,
+    section_id: str | None = None,
     imdb_id: str | None = None,
     tmdb_id: int | None = None,
     decided_by: str,
@@ -91,10 +92,12 @@ def adopt_folder(
     theme. Builds a synthetic finding-shaped dict and reuses _do_adopt so the
     file-placement and DB-write logic is shared with the /scans flow.
 
-    Behaves like an 'orphan_resolvable' finding when imdb_id or tmdb_id is
-    known, otherwise 'orphan_unresolved'. The metadata dict carries
-    title/year/imdb_id/tmdb_id so _create_orphan_theme stamps a real theme
-    row (with the real tmdb_id when available, else a synthetic negative).
+    v1.11.0: section_id determines which Plex section the adoption belongs
+    to (the staging file lands under that section's themes_subdir, and the
+    local_files / placements rows are keyed by it). When the caller doesn't
+    supply one, we resolve via plex_items.folder_path → section_id; if that
+    lookup fails too, the adopt is rejected so we never write a row keyed
+    to the wrong section.
     """
     if media_type not in ("movie", "tv"):
         raise AdoptError(f"unknown media_type: {media_type}")
@@ -102,6 +105,22 @@ def adopt_folder(
     if not sidecar.is_file():
         raise AdoptError(f"no theme.mp3 at {folder_path}")
     sha256, size = _hash_file(sidecar)
+
+    if not section_id:
+        plex_type = "show" if media_type == "tv" else "movie"
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT section_id FROM plex_items "
+                "WHERE folder_path = ? AND media_type = ? "
+                "ORDER BY last_seen_at DESC LIMIT 1",
+                (str(folder_path), plex_type),
+            ).fetchone()
+        if row is None:
+            raise AdoptError(
+                f"no plex_items row for {folder_path} — cannot infer section_id; "
+                "re-run plex_enum or pass section_id explicitly"
+            )
+        section_id = row["section_id"]
 
     metadata: dict = {"title": title, "year": year}
     if imdb_id:
@@ -115,6 +134,7 @@ def adopt_folder(
                     else "orphan_unresolved")
 
     finding = {
+        "section_id": section_id,
         "section_type": section_type,
         "finding_kind": finding_kind,
         "theme_id": None,
@@ -222,12 +242,18 @@ def replace_with_themerrdb(
     media_type: str,
     tmdb_id: int,
     decided_by: str,
+    section_id: str | None = None,
 ) -> dict:
     """Sidecar is currently in place but ThemerrDB has the title — fetch
     motif's authoritative download and overwrite. Cancels any in-flight
     download/place jobs for this item, enqueues a fresh download with
     force_place=true so the worker overwrites the sidecar without
     plex_has_theme guarding it.
+
+    v1.11.0: when section_id is provided the replace targets that one
+    section (via a single per-section download job). When omitted we
+    enqueue per-section jobs for every included section that owns
+    this item — same fan-out semantics as a sync-driven download.
     """
     if media_type not in ("movie", "tv"):
         raise AdoptError(f"unknown media_type: {media_type}")
@@ -244,27 +270,58 @@ def replace_with_themerrdb(
         if not theme["youtube_url"]:
             raise AdoptError("ThemerrDB record has no youtube_url")
 
-        conn.execute(
-            """UPDATE jobs SET status = 'cancelled', finished_at = ?
-               WHERE job_type IN ('download','place')
-                 AND media_type = ? AND tmdb_id = ?
-                 AND status IN ('pending','running')""",
-            (now_iso(), media_type, tmdb_id),
-        )
-        cur = conn.execute(
-            """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                 created_at, next_run_at)
-               VALUES ('download', ?, ?, ?, 'pending', ?, ?)""",
-            (media_type, tmdb_id,
-             json.dumps({"reason": "replace_with_themerrdb",
-                         "force_place": True}),
-             now_iso(), now_iso()),
-        )
+        # Cancel any in-flight downloads/places for this item across the
+        # affected sections — about to enqueue replacements with force_place.
+        if section_id:
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type IN ('download','place')
+                     AND media_type = ? AND tmdb_id = ? AND section_id = ?
+                     AND status IN ('pending','running')""",
+                (now_iso(), media_type, tmdb_id, section_id),
+            )
+            target_sections = [section_id]
+        else:
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type IN ('download','place')
+                     AND media_type = ? AND tmdb_id = ?
+                     AND status IN ('pending','running')""",
+                (now_iso(), media_type, tmdb_id),
+            )
+            plex_type = "show" if media_type == "tv" else "movie"
+            target_sections = [
+                r["section_id"] for r in conn.execute(
+                    """SELECT DISTINCT pi.section_id FROM plex_items pi
+                       JOIN plex_sections ps ON ps.section_id = pi.section_id
+                       WHERE pi.guid_tmdb = ? AND pi.media_type = ?
+                         AND ps.included = 1""",
+                    (tmdb_id, plex_type),
+                ).fetchall()
+            ]
+        if not target_sections:
+            raise AdoptError(
+                "no managed Plex sections own this item — enable a section in /settings"
+            )
+        job_ids: list[int] = []
+        for sid in target_sections:
+            cur = conn.execute(
+                """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                     payload, status, created_at, next_run_at)
+                   VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)""",
+                (media_type, tmdb_id, sid,
+                 json.dumps({"reason": "replace_with_themerrdb",
+                             "force_place": True}),
+                 now_iso(), now_iso()),
+            )
+            job_ids.append(cur.lastrowid)
     log_event(db_path, level="INFO", component="adopt",
               media_type=media_type, tmdb_id=tmdb_id,
               message="Replace-with-ThemerrDB enqueued",
-              detail={"job_id": cur.lastrowid, "decided_by": decided_by})
-    return {"action": "replace_with_themerrdb", "job_id": cur.lastrowid,
+              detail={"job_ids": job_ids, "section_ids": target_sections,
+                      "decided_by": decided_by})
+    return {"action": "replace_with_themerrdb", "job_ids": job_ids,
+            "section_ids": target_sections,
             "media_type": media_type, "tmdb_id": tmdb_id}
 
 
@@ -321,23 +378,33 @@ def adopt_finding(db_path: Path, finding_id: int, decision: str,
 
 def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     """Adopt the existing theme.mp3 — hardlink it (or copy if cross-FS) into
-    motif's themes_dir and record DB rows.
+    motif's per-section staging dir and record DB rows.
 
-    v1.10.13: writes into the canonical subfolder layout
-        themes_dir/<movies|tv>/<Title (Year)>/theme.mp3
-    matching the regular ThemerrDB download path. Pre-1.10.13 the adopt
-    path used a flat layout (themes_dir/movies/<vid>.mp3) which mixed
-    every adopted file into one directory; relocate_legacy_canonical_files
-    on next startup will migrate any pre-1.10.13 adopted files into the
-    subfolder layout. file_path is now stored relative to themes_dir
-    (matching the worker download path).
+    v1.11.0 layout:
+        themes_dir/<plex_sections.themes_subdir>/<Title (Year)>/theme.mp3
+
+    The owning section comes from the scan_findings.section_id (the scanner
+    walked exactly that section's location_paths to find this sidecar).
     """
+    section_id = finding["section_id"]
+    if not section_id:
+        raise AdoptError("scan finding missing section_id")
     media_type = "movie" if finding["section_type"] == "movie" else "tv"
     finding_kind = finding["finding_kind"]
     theme_id = finding["theme_id"]
 
-    media_root = (settings.movies_themes_dir if media_type == "movie"
-                  else settings.tv_themes_dir)
+    if not settings.is_paths_ready():
+        raise AdoptError("themes_dir not configured")
+    with get_conn(db_path) as conn:
+        sec = conn.execute(
+            "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
+            (section_id,),
+        ).fetchone()
+    if sec is None or not sec["themes_subdir"]:
+        raise AdoptError(
+            f"section {section_id} has no themes_subdir — re-discover sections in /settings"
+        )
+    media_root = settings.section_themes_dir_by_subdir(sec["themes_subdir"])
     if not media_root:
         raise AdoptError("themes_dir not configured")
 
@@ -427,20 +494,20 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     with get_conn(db_path) as conn:
         conn.execute(
             """INSERT OR REPLACE INTO local_files
-                 (media_type, tmdb_id, theme_id, file_path, file_sha256,
-                  file_size, downloaded_at, source_video_id, provenance,
-                  source_kind)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (media_type, tmdb_id, theme_id,
+                 (media_type, tmdb_id, section_id, theme_id, file_path,
+                  file_sha256, file_size, downloaded_at, source_video_id,
+                  provenance, source_kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (media_type, tmdb_id, section_id, theme_id,
              rel_path, finding["file_sha256"], finding["file_size"],
              now_iso(), source_vid, provenance, source_kind),
         )
         conn.execute(
             """INSERT OR REPLACE INTO placements
-                 (media_type, tmdb_id, theme_id, media_folder, placed_at,
-                  placement_kind, plex_refreshed, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
-            (media_type, tmdb_id, theme_id,
+                 (media_type, tmdb_id, section_id, theme_id, media_folder,
+                  placed_at, placement_kind, plex_refreshed, provenance)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+            (media_type, tmdb_id, section_id, theme_id,
              finding["media_folder"], now_iso(), placement_kind, provenance),
         )
         # v1.10.50: implicit ack — adopting a sidecar is the user

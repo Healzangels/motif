@@ -69,9 +69,16 @@ CREATE INDEX IF NOT EXISTS idx_themes_title_norm
     ON themes (media_type, title_norm, year)
     WHERE title_norm IS NOT NULL AND year IS NOT NULL;
 
+-- v1.11.0: section_id is part of the primary key. An item that lives in
+-- multiple Plex sections (e.g. Matilda in standard movies AND 4K movies)
+-- now has one local_files row per section, each pointing at a per-section
+-- staging path: <themes_dir>/<plex_sections.themes_subdir>/<Title (Year)>/
+-- theme.mp3. Files across sibling sections are hardlinked from the same
+-- inode (one physical download, N rows) so storage is unchanged.
 CREATE TABLE IF NOT EXISTS local_files (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
+    section_id      TEXT NOT NULL,
     theme_id        INTEGER,
     file_path       TEXT NOT NULL,
     file_sha256     TEXT,
@@ -80,18 +87,17 @@ CREATE TABLE IF NOT EXISTS local_files (
     source_video_id TEXT NOT NULL,
     provenance      TEXT NOT NULL DEFAULT 'auto'
                        CHECK (provenance IN ('auto', 'manual')),
-    -- v1.10.12: drives the T/U/A badge unambiguously. Pre-1.10.12 the UI
-    -- guessed via the source_video_id shape, which mis-classified an
-    -- adopted sidecar of a ThemerrDB-tracked title (canonical filename
-    -- uses the youtube id → looked like a URL override). Now the
-    -- creator stamps the right kind explicitly.
     source_kind     TEXT
                        CHECK (source_kind IN ('themerrdb', 'url',
                                               'upload', 'adopt')
                               OR source_kind IS NULL),
-    PRIMARY KEY (media_type, tmdb_id),
-    FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
+    PRIMARY KEY (media_type, tmdb_id, section_id),
+    FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE,
+    FOREIGN KEY (section_id) REFERENCES plex_sections (section_id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_local_files_item ON local_files (media_type, tmdb_id);
+CREATE INDEX IF NOT EXISTS idx_local_files_section ON local_files (section_id);
+CREATE INDEX IF NOT EXISTS idx_local_files_sha ON local_files (file_sha256) WHERE file_sha256 IS NOT NULL;
 
 -- v1.10.57: history of local_files rows that got removed via unmanage
 -- or forget. Lets adopt_folder restore the original youtube_url when
@@ -113,9 +119,16 @@ CREATE TABLE IF NOT EXISTS local_files_history (
 CREATE INDEX IF NOT EXISTS idx_local_files_history_sha
     ON local_files_history (file_sha256, saved_at DESC);
 
+-- v1.11.0: section_id is part of the primary key — a placement lives
+-- inside a specific Plex section's location_paths. Combined with
+-- media_folder this lets a multi-disk section (multiple location_paths)
+-- still hold one placement row per actual folder, while never
+-- conflating placements that happen to share folder names across two
+-- sections (e.g. /movies/Matilda (2022) vs /movies-4k/Matilda (2022)).
 CREATE TABLE IF NOT EXISTS placements (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
+    section_id      TEXT NOT NULL,
     theme_id        INTEGER,
     media_folder    TEXT NOT NULL,
     placed_at       TEXT NOT NULL,
@@ -124,17 +137,24 @@ CREATE TABLE IF NOT EXISTS placements (
     plex_refreshed  INTEGER NOT NULL DEFAULT 0,
     provenance      TEXT NOT NULL DEFAULT 'auto'
                        CHECK (provenance IN ('auto', 'manual', 'cloud')),
-    PRIMARY KEY (media_type, tmdb_id, media_folder),
-    FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
+    PRIMARY KEY (media_type, tmdb_id, section_id, media_folder),
+    FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE,
+    FOREIGN KEY (section_id) REFERENCES plex_sections (section_id) ON DELETE CASCADE
 );
+CREATE INDEX IF NOT EXISTS idx_placements_item ON placements (media_type, tmdb_id);
+CREATE INDEX IF NOT EXISTS idx_placements_section ON placements (section_id);
 
 -- Download / placement / sync queue. Workers consume from here.
+-- v1.11.0: section_id carries the per-section context for download/place/
+-- refresh/adopt jobs. NULL for section-agnostic jobs (sync, plex_enum
+-- without a section, scan, probe).
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     job_type        TEXT NOT NULL
                        CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum','probe')),
     media_type      TEXT,
     tmdb_id         INTEGER,
+    section_id      TEXT,
     payload         TEXT,
     status          TEXT NOT NULL DEFAULT 'pending'
                        CHECK (status IN ('pending', 'running', 'done', 'failed', 'cancelled')),
@@ -209,6 +229,12 @@ CREATE TABLE IF NOT EXISTS plex_sections (
     -- These are independent: a section can be 4K, anime, both, or neither.
     is_anime        INTEGER NOT NULL DEFAULT 0,
     is_4k           INTEGER NOT NULL DEFAULT 0,
+    -- v1.11.0: filesystem-safe slug used as the section's themes subdir.
+    -- The on-disk staging layout is <themes_dir>/<themes_subdir>/<Title (Year)>/
+    -- theme.mp3 so per-Plex-section files stay isolated. Computed from
+    -- (title, is_4k, is_anime, type) at section discovery time and stored
+    -- here so it's stable across title renames.
+    themes_subdir   TEXT NOT NULL DEFAULT '',
     discovered_at   TEXT NOT NULL,
     last_seen_at    TEXT NOT NULL
 );
@@ -332,7 +358,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -742,6 +768,29 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v17_to_v18(conn: sqlite3.Connection) -> None:
+    """v18: per-Plex-section themes layout.
+
+    v1.11.0 reshapes local_files, placements, plex_sections, and jobs to
+    carry section_id so each Plex section gets its own staging subdir +
+    its own per-row tracking. The data shape changes in ways that can't
+    be backfilled cleanly (one local_files row per item becomes N rows
+    per item-in-N-sections, files have to be re-staged into per-section
+    subdirs, etc.).
+
+    v1.11.0 ships as a fresh-start release: existing /config/motif.db
+    files must be deleted before first boot. After deletion, motif
+    re-runs sync + plex_enum + scan to repopulate everything from
+    upstream sources, in the new shape, automatically.
+    """
+    raise RuntimeError(
+        "v1.11.0 is a fresh-start release — the per-section themes layout "
+        "is not migratable from v1.10.x. Delete /config/motif.db (and its "
+        "-wal / -shm sidecars), then start motif. Sync + plex_enum + scan "
+        "will repopulate the database from upstream sources."
+    )
+
+
 def _migrate_v16_to_v17(conn: sqlite3.Connection) -> None:
     """v17: auto-ack any failure_kind that was stamped by a sync probe.
 
@@ -1106,6 +1155,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 16:
                     _migrate_v16_to_v17(conn)
                     current = 17
+                elif current == 17:
+                    _migrate_v17_to_v18(conn)
+                    current = 18
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

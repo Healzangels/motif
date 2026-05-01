@@ -345,12 +345,19 @@ def _library_main_query(
                p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
                (SELECT j.job_type FROM jobs j
                 WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
+                  AND j.section_id = pi.section_id
                   AND j.job_type IN ('download', 'place')
                   AND j.status IN ('pending', 'running')
                 ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
                          j.id DESC
                 LIMIT 1) AS job_in_flight
     """
+    # v1.11.0: every per-row JOIN to placements / local_files matches
+    # by section_id = pi.section_id, so a row on the standard library
+    # never sees the 4K library's placement / file (and vice versa).
+    # The pre-v1.11.0 v1.10.48 / v1.10.52 gymnastics that simulated
+    # per-section keying via media_folder + EXISTS subqueries are gone;
+    # the schema now genuinely keys these rows per-section.
     sql_from = """
         FROM plex_items pi
         INNER JOIN plex_sections ps
@@ -363,12 +370,6 @@ def _library_main_query(
                  AND t2.upstream_source != 'plex_orphan')
                 OR (t2.imdb_id = pi.guid_imdb AND pi.guid_imdb IS NOT NULL
                     AND t2.upstream_source = 'plex_orphan')
-                -- v1.10.32: title+year fallback. Fires only when Plex's
-                -- guid_tmdb didn't match anything in themes (e.g.
-                -- 'Twelve Monkeys' in TDB but Plex has '12 Monkeys'
-                -- with a stale tmdb pointing elsewhere). Constrained
-                -- to ThemerrDB-real rows so we don't accidentally
-                -- claim an orphan row by title.
                 OR (
                   t2.upstream_source != 'plex_orphan'
                   AND pi.title_norm IS NOT NULL
@@ -388,39 +389,14 @@ def _library_main_query(
                      t2.id DESC
             LIMIT 1
         )
-        -- v1.10.48: match placement.media_folder to this row's
-        -- pi.folder_path. Pre-1.10.48 the JOIN was on (mt, tmdb)
-        -- only, so a placement made at /4kmovies/Matilda would paint
-        -- the standard /movies/Matilda row as PL=on (and conversely),
-        -- bleeding state across sections that share the same theme.
-        -- Now each row reflects placement only for ITS own folder.
-        --
-        -- Note: placements JOIN runs BEFORE local_files so v1.10.52's
-        -- gate can reference p.media_folder.
         LEFT JOIN placements p
           ON p.media_type = t.media_type
          AND p.tmdb_id = t.tmdb_id
-         AND p.media_folder = pi.folder_path
-        -- v1.10.52: gate the local_files JOIN to 'this row claims the
-        -- canonical' — either there's a placement at this row's
-        -- folder, or no placement exists for this theme anywhere
-        -- (so the row is the awaiting-placement target). A row whose
-        -- theme is placed in a different section's folder reads
-        -- DL=off, PL=off, SRC=— (per-section local_files keying without
-        -- a per-section schema). Pre-1.10.52 standard Matilda showed
-        -- DL=on after a 4K upload because lf was shared across rows
-        -- of the same theme.
+         AND p.section_id = pi.section_id
         LEFT JOIN local_files lf
           ON lf.media_type = t.media_type
          AND lf.tmdb_id = t.tmdb_id
-         AND (
-            p.media_folder IS NOT NULL
-            OR NOT EXISTS (
-                SELECT 1 FROM placements pe
-                WHERE pe.media_type = t.media_type
-                  AND pe.tmdb_id = t.tmdb_id
-            )
-         )
+         AND lf.section_id = pi.section_id
     """
     sql_from_pi_only = """
         FROM plex_items pi
@@ -1398,14 +1374,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         with get_conn(db) as conn:
             rows = conn.execute("""
-                SELECT p.media_type, p.tmdb_id, p.media_folder, p.placed_at,
+                SELECT p.media_type, p.tmdb_id, p.section_id, p.media_folder, p.placed_at,
                        p.placement_kind, t.title, t.year,
                        lf.file_path AS source_path, lf.file_size
                 FROM placements p
                 JOIN themes t
                   ON t.media_type = p.media_type AND t.tmdb_id = p.tmdb_id
                 JOIN local_files lf
-                  ON lf.media_type = p.media_type AND lf.tmdb_id = p.tmdb_id
+                  ON lf.media_type = p.media_type
+                 AND lf.tmdb_id = p.tmdb_id
+                 AND lf.section_id = p.section_id
                 WHERE p.placement_kind = 'copy'
                 ORDER BY t.title COLLATE NOCASE
             """).fetchall()
@@ -1563,13 +1541,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "SELECT is_anime, is_4k FROM plex_sections WHERE section_id = ?",
                 (section_id,),
             ).fetchone()
+        # v1.11.0: re-derive themes_subdir whenever is_anime/is_4k change so
+        # the on-disk slug reflects the new role. Only the slug stored in
+        # plex_sections moves; nothing on-disk shifts here.
+        from .core.sections import reassign_themes_subdir
+        new_subdir = reassign_themes_subdir(db, section_id)
         log_event(db, level="INFO", component="api",
                   message=f"Library section {section_id} flags updated by "
                           f"{request.state.principal.username}",
                   detail={"is_anime": bool(row["is_anime"]),
-                          "is_4k": bool(row["is_4k"])})
+                          "is_4k": bool(row["is_4k"]),
+                          "themes_subdir": new_subdir})
         return {"ok": True, "is_anime": bool(row["is_anime"]),
-                "is_4k": bool(row["is_4k"])}
+                "is_4k": bool(row["is_4k"]),
+                "themes_subdir": new_subdir}
 
     @app.post("/api/libraries/refresh")
     async def api_refresh_libraries(
@@ -1641,23 +1626,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         so the user knows up front what approval will actually do.
         """
         with get_conn(db) as conn:
+            # v1.11.0: pending = local_files row exists for (item, section)
+            # but no placement for that (item, section). Each section is
+            # its own pending entry — Matilda 4K can be pending while
+            # Matilda standard is already placed, and vice versa.
             rows = conn.execute("""
                 SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
-                       lf.file_path, lf.file_size, lf.downloaded_at,
+                       lf.section_id, lf.file_path, lf.file_size, lf.downloaded_at,
                        lf.source_video_id, lf.provenance, lf.source_kind,
+                       ps.title AS section_title,
                        COALESCE(MAX(pi.local_theme_file), 0) AS plex_local_theme,
                        COALESCE(MAX(pi.has_theme), 0) AS plex_has_theme
                 FROM local_files lf
                 JOIN themes t
                   ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id
+                LEFT JOIN plex_sections ps
+                  ON ps.section_id = lf.section_id
                 LEFT JOIN placements p
-                  ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                  ON p.media_type = lf.media_type
+                 AND p.tmdb_id = lf.tmdb_id
+                 AND p.section_id = lf.section_id
                 LEFT JOIN plex_items pi
                   ON pi.guid_tmdb = t.tmdb_id
+                 AND pi.section_id = lf.section_id
                  AND pi.media_type = (CASE t.media_type WHEN 'tv' THEN 'show' ELSE t.media_type END)
                 WHERE p.media_folder IS NULL
-                GROUP BY t.media_type, t.tmdb_id
+                GROUP BY t.media_type, t.tmdb_id, lf.section_id
                 ORDER BY MAX(lf.downloaded_at) DESC
             """).fetchall()
         auto_place = settings.auto_place_default
@@ -1687,7 +1682,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             row = conn.execute("""
                 SELECT COUNT(*) FROM local_files lf
                 LEFT JOIN placements p
-                  ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                  ON p.media_type = lf.media_type
+                 AND p.tmdb_id = lf.tmdb_id
+                 AND p.section_id = lf.section_id
                 WHERE p.media_folder IS NULL
             """).fetchone()
         return {"count": row[0]}
@@ -1701,41 +1698,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = await request.json()
         except Exception:
             body = {}
-        targets: list[tuple[str, int]] = []
+        # v1.11.0: targets are (media_type, tmdb_id, section_id) triples.
+        # When the body identifies items by (mt, tmdb) only, we expand to
+        # every section that has a pending local_files row for that item.
+        targets: list[tuple[str, int, str]] = []
         with get_conn(db) as conn:
             if isinstance(body, dict) and body.get("all"):
                 rows = conn.execute("""
-                    SELECT lf.media_type, lf.tmdb_id FROM local_files lf
+                    SELECT lf.media_type, lf.tmdb_id, lf.section_id
+                    FROM local_files lf
                     LEFT JOIN placements p
-                      ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+                      ON p.media_type = lf.media_type
+                     AND p.tmdb_id = lf.tmdb_id
+                     AND p.section_id = lf.section_id
                     WHERE p.media_folder IS NULL
                 """).fetchall()
-                targets = [(r["media_type"], r["tmdb_id"]) for r in rows]
+                targets = [(r["media_type"], r["tmdb_id"], r["section_id"])
+                           for r in rows]
             elif isinstance(body, dict) and isinstance(body.get("items"), list):
                 for it in body["items"]:
-                    if isinstance(it, dict) and "media_type" in it and "tmdb_id" in it:
-                        targets.append((str(it["media_type"]), int(it["tmdb_id"])))
+                    if not (isinstance(it, dict)
+                            and "media_type" in it and "tmdb_id" in it):
+                        continue
+                    mt, tid = str(it["media_type"]), int(it["tmdb_id"])
+                    if "section_id" in it:
+                        targets.append((mt, tid, str(it["section_id"])))
+                    else:
+                        for r in conn.execute(
+                            """SELECT lf.section_id FROM local_files lf
+                               LEFT JOIN placements p
+                                 ON p.media_type = lf.media_type
+                                AND p.tmdb_id = lf.tmdb_id
+                                AND p.section_id = lf.section_id
+                               WHERE lf.media_type = ? AND lf.tmdb_id = ?
+                                 AND p.media_folder IS NULL""",
+                            (mt, tid),
+                        ).fetchall():
+                            targets.append((mt, tid, r["section_id"]))
             enqueued = 0
-            for media_type, tmdb_id in targets:
-                # Skip if a place job is already pending/running for this item
+            for media_type, tmdb_id, section_id in targets:
                 existing = conn.execute(
                     """SELECT id FROM jobs WHERE job_type = 'place'
-                       AND media_type = ? AND tmdb_id = ?
+                       AND media_type = ? AND tmdb_id = ? AND section_id = ?
                        AND status IN ('pending','running')""",
-                    (media_type, tmdb_id),
+                    (media_type, tmdb_id, section_id),
                 ).fetchone()
                 if existing:
                     continue
-                # User-approved placements bypass the plex_has_theme guard:
-                # the user explicitly chose to use motif's file, even if a
-                # sidecar exists. force=true makes the worker pass
-                # skip_if_plex_has_theme=False to placement.
                 conn.execute(
-                    """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                         created_at, next_run_at)
-                       VALUES ('place', ?, ?, '{"force":true,"reason":"approved_from_pending"}',
+                    """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                         payload, status, created_at, next_run_at)
+                       VALUES ('place', ?, ?, ?,
+                               '{"force":true,"reason":"approved_from_pending"}',
                                'pending', ?, ?)""",
-                    (media_type, tmdb_id, now_iso(), now_iso()),
+                    (media_type, tmdb_id, section_id, now_iso(), now_iso()),
                 )
                 enqueued += 1
         log_event(db, level="INFO", component="api",
@@ -1752,40 +1768,63 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = await request.json()
         except Exception:
             body = {}
-        targets: list[tuple[str, int]] = []
+        # v1.11.0: discard targets are (mt, tmdb, section_id?) — when
+        # section_id is omitted, drop every per-section local_files row
+        # for the item that's not already placed in that section.
+        targets: list[tuple[str, int, str | None]] = []
         if isinstance(body, dict) and isinstance(body.get("items"), list):
             for it in body["items"]:
-                if isinstance(it, dict) and "media_type" in it and "tmdb_id" in it:
-                    targets.append((str(it["media_type"]), int(it["tmdb_id"])))
+                if not (isinstance(it, dict)
+                        and "media_type" in it and "tmdb_id" in it):
+                    continue
+                mt, tid = str(it["media_type"]), int(it["tmdb_id"])
+                sid = str(it["section_id"]) if "section_id" in it else None
+                targets.append((mt, tid, sid))
         if not targets:
             return {"ok": True, "discarded": 0}
         themes_dir = settings.themes_dir
         discarded = 0
         with get_conn(db) as conn:
-            for media_type, tmdb_id in targets:
-                # Don't discard if already placed — that's a different operation
-                placed = conn.execute(
-                    "SELECT 1 FROM placements WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                ).fetchone()
-                if placed:
-                    continue
-                row = conn.execute(
-                    "SELECT file_path FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                ).fetchone()
-                if row and themes_dir:
-                    abs_path = themes_dir / row["file_path"]
-                    try:
-                        if abs_path.is_file():
-                            abs_path.unlink()
-                    except OSError as e:
-                        log.warning("Discard failed to unlink %s: %s", abs_path, e)
-                conn.execute(
-                    "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                )
-                discarded += 1
+            for media_type, tmdb_id, section_id in targets:
+                if section_id is None:
+                    candidates = conn.execute(
+                        """SELECT lf.section_id, lf.file_path
+                           FROM local_files lf
+                           LEFT JOIN placements p
+                             ON p.media_type = lf.media_type
+                            AND p.tmdb_id = lf.tmdb_id
+                            AND p.section_id = lf.section_id
+                           WHERE lf.media_type = ? AND lf.tmdb_id = ?
+                             AND p.media_folder IS NULL""",
+                        (media_type, tmdb_id),
+                    ).fetchall()
+                else:
+                    candidates = conn.execute(
+                        """SELECT lf.section_id, lf.file_path
+                           FROM local_files lf
+                           LEFT JOIN placements p
+                             ON p.media_type = lf.media_type
+                            AND p.tmdb_id = lf.tmdb_id
+                            AND p.section_id = lf.section_id
+                           WHERE lf.media_type = ? AND lf.tmdb_id = ?
+                             AND lf.section_id = ?
+                             AND p.media_folder IS NULL""",
+                        (media_type, tmdb_id, section_id),
+                    ).fetchall()
+                for c in candidates:
+                    if themes_dir:
+                        abs_path = themes_dir / c["file_path"]
+                        try:
+                            if abs_path.is_file():
+                                abs_path.unlink()
+                        except OSError as e:
+                            log.warning("Discard failed to unlink %s: %s", abs_path, e)
+                    conn.execute(
+                        "DELETE FROM local_files WHERE media_type = ? "
+                        "AND tmdb_id = ? AND section_id = ?",
+                        (media_type, tmdb_id, c["section_id"]),
+                    )
+                    discarded += 1
         log_event(db, level="INFO", component="api",
                   message=f"Bulk discard by {request.state.user}",
                   detail={"requested": len(targets), "discarded": discarded})
@@ -1954,6 +1993,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="items must be a non-empty list")
         enqueued = 0
         skipped = 0
+        from ..core.sync import _enqueue_download
         with get_conn(db) as conn:
             for it in items:
                 if not isinstance(it, dict):
@@ -1964,16 +2004,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if mt not in ("movie", "tv") or not isinstance(tid, int):
                     skipped += 1
                     continue
-                # Skip if there's already a pending/running download
-                existing = conn.execute(
-                    "SELECT 1 FROM jobs WHERE job_type = 'download' "
-                    "AND media_type = ? AND tmdb_id = ? "
-                    "AND status IN ('pending','running')",
-                    (mt, tid),
-                ).fetchone()
-                if existing:
-                    skipped += 1
-                    continue
                 # Verify the theme actually exists
                 theme = conn.execute(
                     "SELECT 1 FROM themes WHERE media_type = ? AND tmdb_id = ?",
@@ -1982,13 +2012,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if not theme:
                     skipped += 1
                     continue
-                conn.execute(
-                    "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
-                    "                  created_at, next_run_at) "
-                    "VALUES ('download', ?, ?, '{\"reason\":\"bulk_select\"}', 'pending', ?, ?)",
-                    (mt, tid, now_iso(), now_iso()),
+                # _enqueue_download fans out per-section + dedupes per-section
+                n = _enqueue_download(
+                    conn, media_type=mt, tmdb_id=tid, reason="bulk_select",
                 )
-                enqueued += 1
+                if n == 0:
+                    skipped += 1
+                else:
+                    enqueued += n
         log_event(db, level="INFO", component="api",
                   message=f"Bulk download-batch by {request.state.user}",
                   detail={"enqueued": enqueued, "skipped": skipped,
@@ -2020,9 +2051,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         tab_where += " AND ps.is_4k = 1" if fourk else " AND ps.is_4k = 0"
 
         enqueued = 0
+        from ..core.sync import _enqueue_download
         with get_conn(db) as conn:
+            # v1.11.0: missing = (theme exists) AND (this row's section
+            # has no local_files row). Per-section local_files match
+            # cleanly via lf.section_id = pi.section_id, so the LEFT JOIN
+            # nulls out exactly the (item, section) pairs we still need
+            # to download.
             rows = conn.execute(f"""
-                SELECT t.media_type, t.tmdb_id
+                SELECT DISTINCT t.media_type, t.tmdb_id
                 FROM plex_items pi
                 INNER JOIN plex_sections ps
                   ON ps.section_id = pi.section_id AND ps.included = 1
@@ -2030,28 +2067,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   ON t.tmdb_id = pi.guid_tmdb
                  AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)
                 LEFT JOIN local_files lf
-                  ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+                  ON lf.media_type = t.media_type
+                 AND lf.tmdb_id = t.tmdb_id
+                 AND lf.section_id = pi.section_id
                 WHERE {tab_where}
                   AND lf.file_path IS NULL
                   AND t.upstream_source != 'plex_orphan'
             """).fetchall()
             for r in rows:
-                # Dedupe: skip if a download is already pending/running
-                existing = conn.execute(
-                    "SELECT 1 FROM jobs WHERE job_type = 'download' "
-                    "AND media_type = ? AND tmdb_id = ? "
-                    "AND status IN ('pending','running')",
-                    (r["media_type"], r["tmdb_id"]),
-                ).fetchone()
-                if existing:
-                    continue
-                conn.execute(
-                    "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
-                    "                  created_at, next_run_at) "
-                    "VALUES ('download', ?, ?, '{\"reason\":\"bulk_missing\"}', 'pending', ?, ?)",
-                    (r["media_type"], r["tmdb_id"], now_iso(), now_iso()),
+                # _enqueue_download dedupes per-section internally
+                enqueued += _enqueue_download(
+                    conn, media_type=r["media_type"], tmdb_id=r["tmdb_id"],
+                    reason="bulk_missing",
                 )
-                enqueued += 1
         log_event(db, level="INFO", component="api",
                   message=f"Bulk download-missing by {request.state.user}",
                   detail={"tab": tab, "fourk": fourk, "enqueued": enqueued})
@@ -2099,6 +2127,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 media_type=media_type,
                 title=pi["title"],
                 year=str(pi["year"] or ""),
+                section_id=pi["section_id"],
                 imdb_id=pi["guid_imdb"],
                 tmdb_id=int(pi["guid_tmdb"]) if pi["guid_tmdb"] else None,
                 decided_by=request.state.principal.username,
@@ -2138,6 +2167,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 media_type=media_type,
                 tmdb_id=int(pi["guid_tmdb"]),
                 decided_by=request.state.principal.username,
+                section_id=pi["section_id"],
             )
         except AdoptError as e:
             raise HTTPException(status_code=409, detail=str(e))
@@ -2205,16 +2235,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             else:
                 tmdb_id = theme["tmdb_id"]
 
-        # Write the file under the canonical layout
+        # v1.11.0: write the upload under the section's themes_subdir.
         from ..core.canonical import canonical_theme_subdir
-        media_root = (settings.movies_themes_dir if theme_media_type == "movie"
-                      else settings.tv_themes_dir)
+        section_id = pi["section_id"]
+        with get_conn(db) as conn:
+            sec = conn.execute(
+                "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
+        if sec is None or not sec["themes_subdir"]:
+            raise HTTPException(status_code=409,
+                                detail=f"section {section_id} has no themes_subdir")
+        media_root = settings.section_themes_dir_by_subdir(sec["themes_subdir"])
         out_dir = media_root / canonical_theme_subdir(pi["title"], pi["year"])
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / "theme.mp3"
         target.write_bytes(data)
 
-        # Compute sha256 + insert local_files
+        # Compute sha256 + insert local_files (per-section)
         import hashlib
         sha = hashlib.sha256(data).hexdigest()
         rel_path = str(target.relative_to(settings.themes_dir))
@@ -2222,34 +2260,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with get_conn(db) as conn:
             conn.execute(
                 """INSERT INTO local_files
-                     (media_type, tmdb_id, file_path, file_sha256, file_size,
-                      downloaded_at, source_video_id, provenance, source_kind)
-                   VALUES (?, ?, ?, ?, ?, ?, '', 'manual', 'upload')
-                   ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                     (media_type, tmdb_id, section_id, file_path, file_sha256,
+                      file_size, downloaded_at, source_video_id, provenance,
+                      source_kind)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, '', 'manual', 'upload')
+                   ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                        file_path = excluded.file_path,
                        file_sha256 = excluded.file_sha256,
                        file_size = excluded.file_size,
                        downloaded_at = excluded.downloaded_at,
                        provenance = excluded.provenance,
                        source_kind = excluded.source_kind""",
-                (theme_media_type, tmdb_id, rel_path, sha, len(data), now_iso()),
+                (theme_media_type, tmdb_id, section_id, rel_path, sha, len(data),
+                 now_iso()),
             )
             # v1.10.50: implicit ack on a manual upload — the user is
             # routing around the broken TDB URL. Stamp acked_at so the
             # ! glyph + FAILURES filter exclude the row, but keep
-            # failure_kind so the TDB pill stays red (TDB's URL is
-            # still broken even though motif now uses a manual file).
+            # failure_kind so the TDB pill stays red.
             conn.execute(
                 "UPDATE themes SET failure_acked_at = ? "
                 "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
                 (now_iso(), theme_media_type, tmdb_id),
             )
-            # Enqueue placement
+            # Enqueue per-section placement
             conn.execute(
-                "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
-                "                  created_at, next_run_at) "
-                "VALUES ('place', ?, ?, '{}', 'pending', ?, ?)",
-                (theme_media_type, tmdb_id, now_iso(), now_iso()),
+                "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
+                "                  payload, status, created_at, next_run_at) "
+                "VALUES ('place', ?, ?, ?, '{}', 'pending', ?, ?)",
+                (theme_media_type, tmdb_id, section_id, now_iso(), now_iso()),
             )
 
         log_event(db, level="INFO", component="api",
@@ -2339,18 +2378,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
                 (now_iso(), theme_media_type, tmdb_id),
             )
-            # Cancel any in-flight download, enqueue a fresh one
+            # v1.11.0: cancel any in-flight downloads across sections,
+            # then enqueue a fresh per-section download via _enqueue_download
+            # (one job per managed section that owns this item).
             conn.execute(
                 "UPDATE jobs SET status = 'cancelled', finished_at = ? "
                 "WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ? "
                 "  AND status IN ('pending','failed')",
                 (now_iso(), theme_media_type, tmdb_id),
             )
-            conn.execute(
-                "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, "
-                "                  created_at, next_run_at) "
-                "VALUES ('download', ?, ?, '{\"reason\":\"manual_url\"}', 'pending', ?, ?)",
-                (theme_media_type, tmdb_id, now_iso(), now_iso()),
+            from ..core.sync import _enqueue_download
+            _enqueue_download(
+                conn, media_type=theme_media_type, tmdb_id=tmdb_id,
+                reason="manual_url",
             )
 
         log_event(db, level="INFO", component="api",
@@ -2563,12 +2603,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if t is None:
                 raise HTTPException(status_code=404, detail="not found")
-            lf = conn.execute(
-                "SELECT * FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+            # v1.11.0: per-section local_files — return the list so the
+            # UI can render one row per section. legacy `local_file`
+            # field still emitted (first row, or null) for older callers.
+            local_files = conn.execute(
+                "SELECT * FROM local_files WHERE media_type = ? AND tmdb_id = ? "
+                "ORDER BY section_id",
                 (media_type, tmdb_id),
-            ).fetchone()
+            ).fetchall()
             placements = conn.execute(
-                "SELECT * FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                "SELECT * FROM placements WHERE media_type = ? AND tmdb_id = ? "
+                "ORDER BY section_id, media_folder",
                 (media_type, tmdb_id),
             ).fetchall()
             ovr = conn.execute(
@@ -2580,18 +2625,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ORDER BY ts DESC LIMIT 25",
                 (media_type, tmdb_id),
             ).fetchall()
-        # Absolute file_path for the UI: local_files.file_path is stored
-        # relative to themes_dir. Compose it once on the server so the
-        # dialog can display the real on-disk path.
-        local_payload = None
-        if lf:
+        local_payloads: list[dict] = []
+        for lf in local_files:
             d = dict(lf)
             if settings.is_paths_ready() and d.get("file_path"):
                 d["abs_path"] = str(settings.themes_dir / d["file_path"])
-            local_payload = d
+            local_payloads.append(d)
         return {
             "theme": dict(t),
-            "local_file": local_payload,
+            "local_file": local_payloads[0] if local_payloads else None,
+            "local_files": local_payloads,
             "placements": [dict(p) for p in placements],
             "override": dict(ovr) if ovr else None,
             "events": [dict(e) for e in recent_events],
@@ -2768,29 +2811,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         _require_admin(request)
         with get_conn(db) as conn:
-            local = conn.execute(
-                "SELECT 1 FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+            # v1.11.0: enqueue one place job per section that has a
+            # local_files row for this item. Sections without staged
+            # content are skipped — re-download is a separate action.
+            sections = conn.execute(
+                "SELECT section_id FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
-            ).fetchone()
-            if local is None:
+            ).fetchall()
+            if not sections:
                 raise HTTPException(
                     status_code=409,
                     detail="no local file to replace from — re-download first",
                 )
-            # Cancel in-flight place jobs to avoid double placement
             conn.execute(
                 """UPDATE jobs SET status = 'cancelled', finished_at = ?
                    WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
                      AND status IN ('pending','running')""",
                 (now_iso(), media_type, tmdb_id),
             )
-            conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                     created_at, next_run_at)
-                   VALUES ('place', ?, ?, '{"force":true,"reason":"user_replace"}',
-                           'pending', ?, ?)""",
-                (media_type, tmdb_id, now_iso(), now_iso()),
-            )
+            for s in sections:
+                conn.execute(
+                    """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                         payload, status, created_at, next_run_at)
+                       VALUES ('place', ?, ?, ?,
+                               '{"force":true,"reason":"user_replace"}',
+                               'pending', ?, ?)""",
+                    (media_type, tmdb_id, s["section_id"], now_iso(), now_iso()),
+                )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Replace requested by {request.state.user}")
@@ -2830,23 +2878,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if theme is None:
                 raise HTTPException(status_code=404, detail="theme not found")
-            local = conn.execute(
-                "SELECT file_path, file_sha256, source_kind, source_video_id "
+            # v1.11.0: walk every per-section local_files row for this
+            # item — UNMANAGE drops motif from all of them at once.
+            locals_rows = conn.execute(
+                "SELECT section_id, file_path, file_sha256, source_kind, "
+                "       source_video_id "
                 "FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
-            ).fetchone()
-            if local is None:
+            ).fetchall()
+            if not locals_rows:
                 raise HTTPException(
                     status_code=409,
                     detail="not motif-managed (no local_files row)",
                 )
-            # v1.10.57: capture the youtube_url that was driving this
-            # row (from user_overrides if the source was a manual URL,
-            # else from the themes record) and stash everything in
-            # local_files_history keyed by file_sha256. adopt_folder
-            # later looks this up to restore the URL on a re-adopt
-            # of the same file content.
+            # v1.10.57: snapshot the youtube_url so a future re-adopt of
+            # the same file content can restore the URL. user_overrides /
+            # themes are section-agnostic, so we read once and stamp one
+            # history row per section snapshot.
             override_row = conn.execute(
                 "SELECT youtube_url FROM user_overrides "
                 "WHERE media_type = ? AND tmdb_id = ?",
@@ -2861,48 +2910,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (override_row and override_row["youtube_url"])
                 or (theme_yt and theme_yt["youtube_url"])
             )
-            if local["file_sha256"]:
-                conn.execute(
-                    """INSERT INTO local_files_history
-                         (file_sha256, media_type, tmdb_id, source_kind,
-                          source_video_id, youtube_url, saved_at, saved_reason)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'unmanage')""",
-                    (local["file_sha256"], media_type, tmdb_id,
-                     local["source_kind"], local["source_video_id"],
-                     saved_youtube_url, now_iso()),
-                )
-            # v1.10.31: snapshot the placement folders before deletion so
-            # we can optimistically flip plex_items.local_theme_file=1 on
-            # them. The hardlink at /movies/Foo/theme.mp3 survives motif
-            # deleting the canonical (different inode reference), but
-            # plex_items.local_theme_file may have been 0 — the placement
-            # was made by motif post-enum and we haven't re-stat'd. The
-            # async section enum will re-confirm later, but the row needs
-            # to render as M *now*.
+            for lr in locals_rows:
+                if lr["file_sha256"]:
+                    conn.execute(
+                        """INSERT INTO local_files_history
+                             (file_sha256, media_type, tmdb_id, source_kind,
+                              source_video_id, youtube_url, saved_at, saved_reason)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, 'unmanage')""",
+                        (lr["file_sha256"], media_type, tmdb_id,
+                         lr["source_kind"], lr["source_video_id"],
+                         saved_youtube_url, now_iso()),
+                    )
             placements = conn.execute(
                 "SELECT media_folder FROM placements "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchall()
 
-        # Delete the canonical only — leave Plex-folder placements intact.
+        # Delete the per-section canonicals — leave Plex-folder placements intact.
         themes_dir = settings.themes_dir
         if themes_dir:
-            try:
-                p = themes_dir / local["file_path"]
-                if p.is_file():
-                    p.unlink()
-                # Best-effort cleanup of empty parent dir (Title (Year)/).
-                # Don't recurse upward; only the immediate parent matters.
+            for lr in locals_rows:
                 try:
-                    parent = p.parent
-                    if parent.is_dir() and not any(parent.iterdir()):
-                        parent.rmdir()
-                except OSError:
-                    pass
-            except OSError as e:
-                log.warning("unmanage: could not unlink canonical %s: %s",
-                            local["file_path"], e)
+                    p = themes_dir / lr["file_path"]
+                    if p.is_file():
+                        p.unlink()
+                    try:
+                        parent = p.parent
+                        if parent.is_dir() and not any(parent.iterdir()):
+                            parent.rmdir()
+                    except OSError:
+                        pass
+                except OSError as e:
+                    log.warning("unmanage: could not unlink canonical %s: %s",
+                                lr["file_path"], e)
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
@@ -2984,17 +3025,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchall()
-            local = conn.execute(
-                "SELECT file_path, file_sha256, source_kind, source_video_id "
+            locals_rows = conn.execute(
+                "SELECT section_id, file_path, file_sha256, source_kind, "
+                "       source_video_id "
                 "FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
-            ).fetchone()
-            # v1.10.57: stash content-hash → URL mapping in
-            # local_files_history so a future ADOPT of a file with the
-            # same sha256 (e.g. user re-uploads or re-downloads the
-            # exact same audio) can restore the URL automatically.
-            if local and local["file_sha256"]:
+            ).fetchall()
+            # v1.10.57: snapshot content-hash → URL mapping per section
+            # so a future ADOPT (any section) can restore the URL.
+            if locals_rows:
                 override_row = conn.execute(
                     "SELECT youtube_url FROM user_overrides "
                     "WHERE media_type = ? AND tmdb_id = ?",
@@ -3009,21 +3049,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (override_row and override_row["youtube_url"])
                     or (theme_yt and theme_yt["youtube_url"])
                 )
-                conn.execute(
-                    """INSERT INTO local_files_history
-                         (file_sha256, media_type, tmdb_id, source_kind,
-                          source_video_id, youtube_url, saved_at, saved_reason)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, 'forget')""",
-                    (local["file_sha256"], media_type, tmdb_id,
-                     local["source_kind"], local["source_video_id"],
-                     saved_youtube_url, now_iso()),
-                )
+                for lr in locals_rows:
+                    if lr["file_sha256"]:
+                        conn.execute(
+                            """INSERT INTO local_files_history
+                                 (file_sha256, media_type, tmdb_id, source_kind,
+                                  source_video_id, youtube_url, saved_at, saved_reason)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, 'forget')""",
+                            (lr["file_sha256"], media_type, tmdb_id,
+                             lr["source_kind"], lr["source_video_id"],
+                             saved_youtube_url, now_iso()),
+                        )
 
-        # Unlink every placement file — for hardlink placements the
-        # canonical's inode is also released; for copy placements each
-        # path is independent and needs its own unlink. Errors logged
-        # and skipped so a partial filesystem failure doesn't block the
-        # DB cleanup.
+        # Unlink every placement file across all sections.
         unlinked = 0
         affected_folders: list[str] = []
         for pr in placements:
@@ -3037,14 +3075,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 log.warning("forget: could not unlink %s: %s",
                             pr["media_folder"], e)
         themes_dir = settings.themes_dir
-        if local and themes_dir:
-            try:
-                p = themes_dir / local["file_path"]
-                if p.is_file():
-                    p.unlink()
-            except OSError as e:
-                log.warning("forget: could not unlink canonical %s: %s",
-                            local["file_path"], e)
+        if themes_dir:
+            for lr in locals_rows:
+                try:
+                    p = themes_dir / lr["file_path"]
+                    if p.is_file():
+                        p.unlink()
+                    try:
+                        parent = p.parent
+                        if parent.is_dir() and not any(parent.iterdir()):
+                            parent.rmdir()
+                    except OSError:
+                        pass
+                except OSError as e:
+                    log.warning("forget: could not unlink canonical %s: %s",
+                                lr["file_path"], e)
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
@@ -3283,16 +3328,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
-            conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                     created_at, next_run_at)
-                   VALUES ('download', ?, ?, '{"reason":"manual"}', 'pending', ?, ?)""",
-                (media_type, tmdb_id, now_iso(), now_iso()),
+            from ..core.sync import _enqueue_download
+            n = _enqueue_download(
+                conn, media_type=media_type, tmdb_id=tmdb_id,
+                reason="manual",
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
-                  message=f"Manual re-download requested by {request.state.user}")
-        return {"ok": True}
+                  message=f"Manual re-download requested by {request.state.user} "
+                          f"({n} sections)")
+        return {"ok": True, "enqueued_sections": n}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/override")
     async def api_override(
@@ -3357,18 +3402,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE media_type = ? AND tmdb_id = ?""",
                 (media_type, tmdb_id),
             )
-            # Cancel any in-flight download for this item, then enqueue fresh
+            # Cancel any in-flight download for this item, then enqueue
+            # one fresh per-section download via _enqueue_download.
             conn.execute(
                 """UPDATE jobs SET status = 'cancelled', finished_at = ?
                    WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
                      AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
-            conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                     created_at, next_run_at)
-                   VALUES ('download', ?, ?, '{"reason":"override"}', 'pending', ?, ?)""",
-                (media_type, tmdb_id, now_iso(), now_iso()),
+            from ..core.sync import _enqueue_download
+            _enqueue_download(
+                conn, media_type=media_type, tmdb_id=tmdb_id,
+                reason="override",
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,

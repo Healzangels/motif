@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .canonical import compute_section_themes_subdir
 from .db import get_conn
 from .plex import PlexClient, PlexSection
 
@@ -26,6 +27,69 @@ log = logging.getLogger(__name__)
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _allocate_themes_subdir(
+    conn, *, title: str, type_: str, is_anime: bool, is_4k: bool,
+    own_section_id: str | None = None,
+) -> str:
+    """v1.11.0: pick a unique themes_subdir slug for a section.
+
+    Computes the candidate slug via compute_section_themes_subdir,
+    then checks plex_sections for collisions (excluding own_section_id
+    when updating). On collision appends `-2`, `-3`, ... until unique.
+    """
+    base = compute_section_themes_subdir(
+        title, type_=type_, is_anime=is_anime, is_4k=is_4k,
+    )
+    candidate = base
+    suffix = 2
+    while True:
+        if own_section_id is None:
+            existing = conn.execute(
+                "SELECT 1 FROM plex_sections WHERE themes_subdir = ?",
+                (candidate,),
+            ).fetchone()
+        else:
+            existing = conn.execute(
+                "SELECT 1 FROM plex_sections "
+                "WHERE themes_subdir = ? AND section_id != ?",
+                (candidate, own_section_id),
+            ).fetchone()
+        if existing is None:
+            return candidate
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+
+
+def reassign_themes_subdir(
+    db_path: Path, section_id: str,
+) -> str | None:
+    """v1.11.0: recompute themes_subdir for a section after the user
+    toggles is_anime / is_4k. Returns the new subdir, or None when the
+    section doesn't exist. The on-disk staging tree under the OLD
+    subdir is left in place — callers (worker / API) that move files
+    are responsible for re-staging if the rename actually shifts the
+    storage location.
+    """
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT title, type, is_anime, is_4k FROM plex_sections "
+            "WHERE section_id = ?",
+            (section_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        new_subdir = _allocate_themes_subdir(
+            conn, title=row["title"], type_=row["type"],
+            is_anime=bool(row["is_anime"]), is_4k=bool(row["is_4k"]),
+            own_section_id=section_id,
+        )
+        conn.execute(
+            "UPDATE plex_sections SET themes_subdir = ? WHERE section_id = ?",
+            (new_subdir, section_id),
+        )
+    return new_subdir
 
 
 def refresh_sections(
@@ -64,24 +128,36 @@ def refresh_sections(
                 included = False
 
             existing = conn.execute(
-                "SELECT included FROM plex_sections WHERE section_id = ?",
+                "SELECT included, themes_subdir, is_anime, is_4k "
+                "FROM plex_sections WHERE section_id = ?",
                 (s.section_id,),
             ).fetchone()
 
             if existing is None:
+                # v1.11.0: compute the section's themes_subdir slug here
+                # so it's stable across title renames. is_anime/is_4k
+                # default to 0 at first discovery; if the user later
+                # toggles a flag we recompute via api flag-update.
+                subdir = _allocate_themes_subdir(
+                    conn, title=s.title, type_=s.type,
+                    is_anime=False, is_4k=False,
+                )
                 conn.execute(
                     """INSERT INTO plex_sections
                        (section_id, uuid, title, type, agent, language,
-                        location_paths, included, discovered_at, last_seen_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        location_paths, included, themes_subdir,
+                        discovered_at, last_seen_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (s.section_id, s.uuid, s.title, s.type, s.agent, s.language,
                      json.dumps(s.location_paths), 1 if included else 0,
-                     now, now),
+                     subdir, now, now),
                 )
             else:
                 # Preserve any user-driven include/exclude override that may
                 # have been set in the UI; only update metadata that came
                 # from Plex. The env-var rules apply only on FIRST DISCOVERY.
+                # If the section title changed we leave themes_subdir alone
+                # (rewriting it would orphan the on-disk staging files).
                 conn.execute(
                     """UPDATE plex_sections SET
                           uuid = ?, title = ?, type = ?, agent = ?, language = ?,

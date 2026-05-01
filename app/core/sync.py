@@ -331,32 +331,56 @@ def _enqueue_download(
     tmdb_id: int,
     reason: str,
     auto_place: bool | None = None,
-) -> None:
-    """Add a download job, deduping against any pending/running job for the same item.
+) -> int:
+    """v1.11.0: enqueue one download job per (media_type, tmdb_id, section)
+    where this item lives — sections discovered via plex_items joined to
+    plex_sections (only INCLUDED sections). Items present in 0 sections
+    don't get any download job (nothing to drop the file into yet); the
+    next sync after plex_enum will pick them up.
 
-    `auto_place=None` means "use the global setting"; True/False writes an explicit
-    override into the job payload that the worker honors.
+    Dedupes against any existing pending/running download for the same
+    (item, section). Returns the count of jobs actually enqueued.
+
+    `auto_place=None` means "use the global setting"; True/False writes
+    an explicit override into the job payload that the worker honors.
     """
-    existing = conn.execute(
-        """
-        SELECT id FROM jobs
-        WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
-              AND status IN ('pending', 'running')
-        """,
-        (media_type, tmdb_id),
-    ).fetchone()
-    if existing:
-        return
-    payload: dict = {"reason": reason}
-    if auto_place is not None:
-        payload["auto_place"] = bool(auto_place)
-    conn.execute(
-        """
-        INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status, created_at, next_run_at)
-        VALUES ('download', ?, ?, ?, 'pending', ?, ?)
-        """,
-        (media_type, tmdb_id, json.dumps(payload), now_iso(), now_iso()),
-    )
+    plex_type = "show" if media_type == "tv" else "movie"
+    sections = conn.execute(
+        """SELECT DISTINCT pi.section_id
+           FROM plex_items pi
+           JOIN plex_sections ps ON ps.section_id = pi.section_id
+           WHERE pi.guid_tmdb = ?
+             AND pi.media_type = ?
+             AND ps.included = 1""",
+        (tmdb_id, plex_type),
+    ).fetchall()
+    enqueued = 0
+    for sec in sections:
+        section_id = sec["section_id"]
+        existing = conn.execute(
+            """
+            SELECT id FROM jobs
+            WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
+              AND section_id = ? AND status IN ('pending', 'running')
+            """,
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+        if existing:
+            continue
+        payload: dict = {"reason": reason}
+        if auto_place is not None:
+            payload["auto_place"] = bool(auto_place)
+        conn.execute(
+            """
+            INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                              payload, status, created_at, next_run_at)
+            VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)
+            """,
+            (media_type, tmdb_id, section_id, json.dumps(payload),
+             now_iso(), now_iso()),
+        )
+        enqueued += 1
+    return enqueued
 
 
 # ----- Public entry point -----

@@ -112,19 +112,10 @@ def main() -> int:
     if purged:
         log.info("Purged %d expired session(s)", purged)
 
-    # One-shot data migration: relocate flat <vid>.mp3 files into the new
-    # per-item subfolder layout (mirrors Plex's "Title (Year)" convention).
-    # Idempotent: rows already in the new layout are skipped.
-    if settings.is_paths_ready():
-        from .core.canonical import (
-            relocate_legacy_canonical_files,
-            backfill_hash_match_provenance,
-        )
-        relocate_legacy_canonical_files(settings.db_path, settings.themes_dir)
-        # v1.8.6: pre-fix adopt rows hardcoded provenance='manual' for every
-        # finding kind, so hash_match adoptions showed M badges instead of
-        # T. Backfill any historical rows so the badge matches the data.
-        backfill_hash_match_provenance(settings.db_path)
+    # v1.11.0: legacy startup data migrations (relocate_legacy_canonical_files,
+    # backfill_hash_match_provenance) are gone — the per-section themes layout
+    # is a fresh-start release; the DB is repopulated from upstream sources by
+    # sync + plex_enum + scan after the v17 → v18 migration's hard-stop fires.
 
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).

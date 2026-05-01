@@ -115,19 +115,44 @@ class Settings:
     def themes_dir(self) -> Path | None:
         """The configured themes output directory, or None if not yet set
         on first run. Consumers should check `is_paths_ready()` before
-        attempting any download/placement."""
+        attempting any download/placement.
+
+        v1.11.0: this is now the *root* of the per-section staging tree.
+        Actual theme files live at <themes_dir>/<section.themes_subdir>/
+        <Title (Year)>/theme.mp3. Use `section_themes_dir(section_id)`
+        or `section_themes_dir_by_subdir(subdir)` to compute the per-
+        section subdir.
+        """
         v = self._cfg.paths.themes_dir
         return Path(v) if v else None
 
-    @property
-    def movies_themes_dir(self) -> Path | None:
+    def section_themes_dir_by_subdir(self, subdir: str) -> Path | None:
+        """v1.11.0: themes_dir/<subdir>. Used by callers that already
+        have the precomputed plex_sections.themes_subdir slug. Returns
+        None when themes_dir is not configured yet."""
         td = self.themes_dir
-        return (td / "movies") if td else None
+        if td is None or not subdir:
+            return None
+        return td / subdir
 
-    @property
-    def tv_themes_dir(self) -> Path | None:
+    def section_themes_dir(self, db_path: Path, section_id: str) -> Path | None:
+        """v1.11.0: themes_dir for a given Plex section, derived by
+        looking up the section's themes_subdir in plex_sections. Returns
+        None when themes_dir is not configured or the section is unknown.
+        Cheap lookup (PK on section_id) — callers may cache for tight loops.
+        """
+        from .core.db import get_conn
         td = self.themes_dir
-        return (td / "tv") if td else None
+        if td is None:
+            return None
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
+        if row is None or not row["themes_subdir"]:
+            return None
+        return td / row["themes_subdir"]
 
     @property
     def cookies_file(self) -> Path:
