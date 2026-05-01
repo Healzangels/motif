@@ -860,6 +860,12 @@ pre code, .codeblock {
   background: rgba(255,184,74,0.05);
   vertical-align: middle;
 }
+/* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
+   overwrite something the user might care about; info (cyan) for
+   policy-driven holds; muted for transient queued state. */
+.pending-reason-warn  { color: var(--amber); font-size: var(--t-tiny); }
+.pending-reason-info  { color: var(--cyan); font-size: var(--t-tiny); }
+.pending-reason-muted { color: var(--fg-mute); font-size: var(--t-tiny); }
 /* v1.10.33: at-a-glance 'TDB' pill on each library row so users can
    see whether ThemerrDB has the title without opening the SOURCE
    menu. Green for tracked, dim grey for not. Slightly smaller than

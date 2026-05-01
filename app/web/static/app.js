@@ -1918,7 +1918,7 @@
     try {
       data = await api('GET', '/api/pending');
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="7" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
       return;
     }
     pendingState.items = data.items || [];
@@ -1930,28 +1930,35 @@
       if (!liveKeys.has(k)) pendingState.selected.delete(k);
     }
     if (pendingState.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="muted center">no staged downloads — everything is either placed or unsynced</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="muted center">no staged downloads — everything is either placed or unsynced</td></tr>';
       updatePendingBulkBar();
       return;
     }
+    // v1.10.47: reason cell colours by reason_kind so the most
+    // destructive cases (overwrite an existing file) read amber/red,
+    // and benign cases (auto-place off, queued) stay muted.
+    const REASON_CLASS = {
+      overwrites_sidecar: 'pending-reason-warn',
+      overwrites_plex_agent: 'pending-reason-warn',
+      auto_place_off: 'pending-reason-info',
+      queued: 'pending-reason-muted',
+    };
     const rows = pendingState.items.map((it) => {
       const k = pendingKey(it);
       const checked = pendingState.selected.has(k) ? 'checked' : '';
       const sourceLabel = it.provenance === 'manual' ? 'MANUAL' :
                           (it.upstream_source === 'plex_orphan' ? 'ORPHAN' : 'THEMERRDB');
       const dlAt = it.downloaded_at ? fmt.time(it.downloaded_at) : '—';
-      // Sidecar warning: a theme.mp3 already exists at the Plex folder.
-      // Approval will overwrite it (force=true on the place job).
-      const overwriteBadge = it.plex_local_theme
-        ? ' <span class="link-badge" title="approving will overwrite an existing theme.mp3 in the Plex folder" style="color:var(--amber);border-color:var(--amber)">⚠ OVERWRITES</span>'
-        : '';
+      const reasonCls = REASON_CLASS[it.reason_kind] || 'pending-reason-muted';
+      const reasonText = it.reason || '—';
       return `
         <tr>
           <td><input type="checkbox" data-pending-key="${htmlEscape(k)}" ${checked} /></td>
-          <td><strong>${htmlEscape(it.title || '—')}</strong>${overwriteBadge}</td>
+          <td><strong>${htmlEscape(it.title || '—')}</strong></td>
           <td class="col-year">${htmlEscape(it.year || '—')}</td>
           <td><span class="muted">${htmlEscape(it.media_type)}</span></td>
           <td><span class="muted small">${sourceLabel}</span></td>
+          <td><span class="${reasonCls}">${htmlEscape(reasonText)}</span></td>
           <td><span class="muted small">${dlAt}</span></td>
           <td class="col-actions">
             <button class="btn btn-tiny" data-pending-approve="${htmlEscape(k)}">APPROVE</button>

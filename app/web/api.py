@@ -1545,12 +1545,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """List items downloaded into the staging area but not yet placed
         into a Plex media folder. These are awaiting user approval when the
         global placement.auto_place is False, or when a sync was kicked off
-        with download_only=true."""
+        with download_only=true.
+
+        v1.10.47: each item now carries a `reason` text explaining why it
+        landed on /pending instead of auto-placing. Computed from row
+        state (plex_local_theme + plex_has_theme + auto_place_default)
+        so the user knows up front what approval will actually do.
+        """
         with get_conn(db) as conn:
-            # Aggregate plex_items so we can flag rows whose Plex folder
-            # already has a sidecar theme.mp3 — approval would overwrite it.
-            # MAX over plex_items.local_theme_file in case a theme covers
-            # multiple folders (rare, but defensive).
             rows = conn.execute("""
                 SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
@@ -1570,7 +1572,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 GROUP BY t.media_type, t.tmdb_id
                 ORDER BY MAX(lf.downloaded_at) DESC
             """).fetchall()
-        return {"items": [dict(r) for r in rows]}
+        auto_place = settings.auto_place_default
+        items: list[dict] = []
+        for r in rows:
+            d = dict(r)
+            # Reason precedence: existing-sidecar > plex-agent > auto-place
+            # disabled > unknown (worker probably hasn't picked it up yet).
+            if d["plex_local_theme"]:
+                d["reason"] = "Existing theme.mp3 at the Plex folder — approval will overwrite it"
+                d["reason_kind"] = "overwrites_sidecar"
+            elif d["plex_has_theme"]:
+                d["reason"] = "Plex's agent already supplies a theme — approval will replace it"
+                d["reason_kind"] = "overwrites_plex_agent"
+            elif not auto_place:
+                d["reason"] = "Auto-place is disabled in Settings — every download awaits approval"
+                d["reason_kind"] = "auto_place_off"
+            else:
+                d["reason"] = "Awaiting placement — the worker should pick it up shortly"
+                d["reason_kind"] = "queued"
+            items.append(d)
+        return {"items": items}
 
     @app.get("/api/pending/count")
     async def api_pending_count(db: Path = Depends(get_db_path)):
