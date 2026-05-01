@@ -2571,18 +2571,33 @@
       if (!isThemerrDbAvail) {
         return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
       }
+      // v1.11.16: include the actual failure_kind + failure_message in
+      // the pill tooltip when something failed, so hover gives concrete
+      // 'error info' (was: a generic recovery list with no indication
+      // of which specific reason applied to THIS row).
+      const kindHuman = {
+        'cookies_expired': 'cookies expired or missing',
+        'video_private': 'video is private',
+        'video_removed': 'video was removed from YouTube',
+        'video_age_restricted': 'video is age-restricted',
+        'geo_blocked': 'video is geo-blocked in this region',
+        'network_error': 'network error reaching YouTube',
+        'unknown': 'unknown failure',
+      };
+      const why = kindHuman[it.failure_kind] || it.failure_kind || '';
+      const detail = it.failure_message
+        ? `&#10;detail: ${htmlEscape(it.failure_message)}`
+        : '';
       if (it.failure_kind === 'cookies_expired') {
-        // v1.10.44: when cookies are present on disk the user has
-        // already done their part — show green and let the next
-        // probe / download attempt either confirm or re-flag. Only
-        // amber when the file genuinely isn't there.
         if (window.__motif_cookies_present) {
-          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title; cookies.txt is configured. The cookies_expired flag will clear on the next successful probe or download.">TDB</span>';
+          // Cookies are configured — the next download attempt should
+          // succeed and clear the flag. Stay green.
+          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title; cookies.txt is configured. The cookies_expired flag will clear on the next successful download attempt.">TDB</span>';
         }
-        return ' <span class="tdb-pill tdb-pill-cookies" title="ThemerrDB has this title but the YouTube URL needs cookies. Recovery options:&#10;  • drop a valid cookies.txt at the path in Settings → PATHS (preferred — fixes every cookies-blocked title at once)&#10;  • SOURCE → SET URL to override with a non-restricted YouTube URL&#10;  • SOURCE → UPLOAD MP3 to bypass YouTube entirely&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT">TDB ⚠</span>';
+        return ` <span class="tdb-pill tdb-pill-cookies" title="Reason: ${htmlEscape(why)}${detail}&#10;&#10;Recovery options:&#10;  • drop a valid cookies.txt at the path in Settings → PATHS (preferred — fixes every cookies-blocked title at once)&#10;  • SOURCE → SET URL to override with a non-restricted YouTube URL&#10;  • SOURCE → UPLOAD MP3 to bypass YouTube entirely&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT">TDB ⚠</span>`;
       }
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
-        return ' <span class="tdb-pill tdb-pill-dead" title="ThemerrDB has this title but the YouTube URL is unavailable (removed / private / age-locked / geo-blocked). Recovery options:&#10;  • SOURCE → SET URL to provide a working YouTube URL&#10;  • SOURCE → UPLOAD MP3 to upload a local audio file&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT&#10;The TDB pill stays red so you remember the upstream URL is broken.">TDB ✗</span>';
+        return ` <span class="tdb-pill tdb-pill-dead" title="Reason: ${htmlEscape(why)}${detail}&#10;&#10;Recovery options:&#10;  • SOURCE → SET URL to provide a working YouTube URL&#10;  • SOURCE → UPLOAD MP3 to upload a local audio file&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT&#10;&#10;The TDB pill stays red so you remember the upstream URL is broken.">TDB ✗</span>`;
       }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — REPLACE w/ TDB available in the SOURCE menu">TDB</span>';
     })();
