@@ -1039,8 +1039,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             dry = is_dry_run(db, default=settings.dry_run_default)
         return row, last_sync, enum_running_rows, dry
 
+    # v1.11.37: short-TTL cache for /api/stats. Topbar polls every 15s
+    # AND every page that wires sync/refresh fires it on click — under
+    # an active sync this added up to multiple full-table-scan queries
+    # per second, contending for the writer lock and dragging UI
+    # navigation. A 1-second cache collapses overlapping calls into
+    # one DB hit. The cache key is the db path so multi-tenant isn't
+    # broken (single-tenant install has one key).
+    _stats_cache: dict = {"key": None, "ts": 0.0, "value": None}
+    _stats_cache_ttl = 1.0
+
     @app.get("/api/stats")
     async def api_stats(db: Path = Depends(get_db_path)):
+        import time as _t
+        now = _t.monotonic()
+        cached = _stats_cache
+        if (cached["key"] == str(db)
+                and (now - cached["ts"]) < _stats_cache_ttl
+                and cached["value"] is not None):
+            return cached["value"]
         row, last_sync, enum_running_rows, dry = await run_in_threadpool(_stats_sync, db)
         # v1.11.27: aggregate the per-section enum_running rows into a
         # tab-variant map and a section_id list so the UI can lock
@@ -1061,7 +1078,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 tab = "tv"
             variant = "fourk" if r["is_4k"] else "standard"
             plex_enum_active[tab][variant] = True
-        return {
+        response = {
             "movies": {
                 "total": row["movies_total"],
                 "downloaded": row["movies_dl"],
@@ -1125,6 +1142,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "dry_run": dry,
             "last_sync": dict(last_sync) if last_sync else None,
         }
+        # Stash for the next caller within the TTL window.
+        _stats_cache["key"] = str(db)
+        _stats_cache["ts"] = now
+        _stats_cache["value"] = response
+        return response
 
     # --- Dry-run toggle ---
 

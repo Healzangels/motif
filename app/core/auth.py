@@ -239,21 +239,15 @@ def lookup_session(db_path: Path, session_id: str) -> str | None:
                WHERE id = ? AND expires_at > ?""",
             (session_id, now_iso),
         ).fetchone()
-        if row is None:
-            return None
-        # v1.11.35: best-effort touch. Pre-fix this UPDATE could trip
-        # 'database is locked' during a long writer (sync /
-        # resolve_theme_ids) and propagate up the auth middleware as
-        # a 500, locking the user out of the UI mid-sync. Skipping
-        # the touch is harmless — the session still authenticates
-        # via the SELECT above; last_seen_at lags by one request.
-        try:
-            conn.execute(
-                "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
-                (now_iso, session_id),
-            )
-        except sqlite3.OperationalError as e:
-            log.debug("session touch skipped (db busy): %s", e)
+    if row is None:
+        return None
+    # v1.11.37: dropped the per-request UPDATE sessions SET last_seen_at
+    # touch. Even with the v1.11.35 try/except, the UPDATE still
+    # WAITED on the writer lock during a long sync — every
+    # authenticated request blocked up to busy_timeout, making the
+    # whole UI feel softlocked. last_seen_at is diagnostic-only
+    # (no security or expiry logic depends on it); the SELECT above
+    # is authoritative for authentication.
     return row["username"]
 
 
