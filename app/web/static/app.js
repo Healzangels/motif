@@ -1439,6 +1439,11 @@
       }
       status.classList.add(failed === 0 ? 'ok' : 'err');
       updateLibrariesSaveButton();
+      // v1.11.32: kick the topbar so adaptive nav (MOVIES / TV / ANIME
+      // visibility) and the standard/4K toggle reflect the new flag
+      // state immediately. Pre-fix the user had to wait up to 15s for
+      // the next stats poll to surface a freshly-enabled tab.
+      refreshTopbarStatus();
       // Re-fetch authoritative state, in case anything diverged
       setTimeout(() => loadLibraries().catch(()=>{}), 600);
       // v1.11.4: keep the message up longer when there's a failure so
