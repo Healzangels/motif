@@ -555,10 +555,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   box-shadow: 0 0 0 1px rgba(255, 122, 184, 0.25), 0 0 8px rgba(255, 122, 184, 0.18);
 }
 .lib-flag-pill-4k.is-active {
-  background: rgba(0, 200, 255, 0.18);
-  color: #5ce0ff;
-  border-color: #5ce0ff;
-  box-shadow: 0 0 0 1px rgba(92, 224, 255, 0.25), 0 0 8px rgba(92, 224, 255, 0.18);
+  /* v1.11.9: gold instead of cyan — better separation from the green
+     dashboard accent, and reads as a "premium tier" affordance which
+     is what the 4K library role represents. */
+  background: rgba(255, 184, 74, 0.18);
+  color: #ffce6b;
+  border-color: #ffb84a;
+  box-shadow: 0 0 0 1px rgba(255, 184, 74, 0.30), 0 0 8px rgba(255, 184, 74, 0.22);
 }
 .lib-flag-pill:active:not(:disabled) { transform: translateY(1px); }
 

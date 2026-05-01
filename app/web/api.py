@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Optional
 
 import json
+import sqlite3
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -43,7 +44,7 @@ from ..core.auth import (
     setup_complete,
 )
 from ..core.config_file import validate as validate_config
-from ..core.db import get_conn
+from ..core.db import get_conn, transaction
 from ..core.events import log_event, now_iso
 from ..core.plex import PlexClient, PlexConfig
 from ..core.runtime import is_dry_run, set_dry_run
@@ -1513,6 +1514,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           - legacy {"is_anime": bool, "is_4k": bool} — either field optional.
           - v1.8.2 {"role": "standard"|"4k"|"anime"|"anime_4k"} — sets both
             flags atomically based on the role mapping.
+        v1.11.9: every step (read-current, data-guard, UPDATE flags,
+        reassign themes_subdir) now runs in one BEGIN IMMEDIATE
+        transaction so an IntegrityError on the partial UNIQUE INDEX
+        rolls back cleanly instead of leaving the flags committed but
+        the slug stale (which surfaced as "x N of N failed: 500" on
+        the SAVE button while the pill state still appeared updated).
+        Exceptions also log server-side so 500s aren't opaque.
         """
         _require_admin(request)
         try:
@@ -1548,63 +1556,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 params.append(1 if bool(body["is_4k"]) else 0)
         if not sets:
             return {"ok": True, "no_op": True}
-        # v1.11.3 fix: read current flags first. If the requested values
-        # match what's already stored, this is a no-op — no UPDATE, no
-        # subdir rewrite, no data-guard check. Without this, clicking
-        # SAVE after picking the same role the section already had would
-        # 409 once the section accumulated any local_files / placements
-        # (false positive on a no-op).
-        with get_conn(db) as conn:
-            current = conn.execute(
-                "SELECT is_anime, is_4k FROM plex_sections WHERE section_id = ?",
-                (section_id,),
-            ).fetchone()
-        if current is None:
-            raise HTTPException(status_code=404, detail="section not found")
-        # Build the {column: requested_value} map from `sets`/`params` so
-        # we can compare without re-parsing.
-        requested = dict(zip([s.split(" = ")[0] for s in sets], params))
-        unchanged = all(
-            int(current[col]) == int(val) for col, val in requested.items()
-        )
-        if unchanged:
-            return {"ok": True, "no_op": True,
-                    "is_anime": bool(current["is_anime"]),
-                    "is_4k": bool(current["is_4k"])}
-        # Real change requested. Refuse if the section has staged files
-        # or placements — the slug rewrite would orphan their on-disk
-        # paths. User must UNMANAGE / FORGET first.
-        with get_conn(db) as conn:
-            existing = conn.execute(
-                "SELECT (SELECT COUNT(*) FROM local_files WHERE section_id = ?) "
-                "  AS lf_count, "
-                "  (SELECT COUNT(*) FROM placements WHERE section_id = ?) "
-                "  AS pl_count",
-                (section_id, section_id),
-            ).fetchone()
-        if existing and (existing["lf_count"] or existing["pl_count"]):
+        from .core.sections import _allocate_themes_subdir
+        try:
+            with get_conn(db) as conn, transaction(conn):
+                current = conn.execute(
+                    "SELECT title, type, is_anime, is_4k "
+                    "FROM plex_sections WHERE section_id = ?",
+                    (section_id,),
+                ).fetchone()
+                if current is None:
+                    raise HTTPException(status_code=404, detail="section not found")
+                requested = dict(zip([s.split(" = ")[0] for s in sets], params))
+                unchanged = all(
+                    int(current[col]) == int(val) for col, val in requested.items()
+                )
+                if unchanged:
+                    return {"ok": True, "no_op": True,
+                            "is_anime": bool(current["is_anime"]),
+                            "is_4k": bool(current["is_4k"])}
+                # Real change requested. Refuse if the section has staged
+                # files or placements — the slug rewrite would orphan
+                # their on-disk paths.
+                existing = conn.execute(
+                    "SELECT (SELECT COUNT(*) FROM local_files WHERE section_id = ?) "
+                    "  AS lf_count, "
+                    "  (SELECT COUNT(*) FROM placements WHERE section_id = ?) "
+                    "  AS pl_count",
+                    (section_id, section_id),
+                ).fetchone()
+                if existing and (existing["lf_count"] or existing["pl_count"]):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            f"section has {existing['lf_count']} staged file(s) and "
+                            f"{existing['pl_count']} placement(s) — UNMANAGE or FORGET "
+                            "those rows before flipping is_4k / is_anime"
+                        ),
+                    )
+                # Apply the flag flip first…
+                conn.execute(
+                    f"UPDATE plex_sections SET {', '.join(sets)} "
+                    "WHERE section_id = ?",
+                    (*params, section_id),
+                )
+                # …then derive the new themes_subdir from the *post-update*
+                # row and apply it. Both writes are inside the same
+                # BEGIN IMMEDIATE so either both land or neither does.
+                row = conn.execute(
+                    "SELECT title, type, is_anime, is_4k "
+                    "FROM plex_sections WHERE section_id = ?",
+                    (section_id,),
+                ).fetchone()
+                new_subdir = _allocate_themes_subdir(
+                    conn, title=row["title"], type_=row["type"],
+                    is_anime=bool(row["is_anime"]), is_4k=bool(row["is_4k"]),
+                    own_section_id=section_id,
+                )
+                conn.execute(
+                    "UPDATE plex_sections SET themes_subdir = ? "
+                    "WHERE section_id = ?",
+                    (new_subdir, section_id),
+                )
+        except HTTPException:
+            raise
+        except sqlite3.IntegrityError as e:
+            log.warning("section %s flags update hit IntegrityError: %s",
+                        section_id, e)
             raise HTTPException(
                 status_code=409,
-                detail=(
-                    f"section has {existing['lf_count']} staged file(s) and "
-                    f"{existing['pl_count']} placement(s) — UNMANAGE or FORGET "
-                    "those rows before flipping is_4k / is_anime"
-                ),
+                detail=f"themes_subdir collision while updating section: {e}",
             )
-        params.append(section_id)
-        with get_conn(db) as conn:
-            cur = conn.execute(
-                f"UPDATE plex_sections SET {', '.join(sets)} WHERE section_id = ?",
-                params,
-            )
-            if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="section not found")
-            row = conn.execute(
-                "SELECT is_anime, is_4k FROM plex_sections WHERE section_id = ?",
-                (section_id,),
-            ).fetchone()
-        from .core.sections import reassign_themes_subdir
-        new_subdir = reassign_themes_subdir(db, section_id)
+        except Exception as e:
+            log.exception("section %s flags update failed", section_id)
+            raise HTTPException(status_code=500, detail=f"flags update: {e}")
         log_event(db, level="INFO", component="api",
                   message=f"Library section {section_id} flags updated by "
                           f"{request.state.principal.username}",
