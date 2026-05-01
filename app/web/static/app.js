@@ -3852,7 +3852,18 @@
         }
       } else if (act === 'replace-with-themerrdb') {
         const title = btn.dataset.title || 'this item';
-        if (!confirm(`Replace the existing theme for "${title}" with the ThemerrDB download?\n\nMotif will fetch from upstream and overwrite the current sidecar.`)) return;
+        // v1.11.55: skip the per-action confirm when the row is a
+        // P-agent — the upstream P-agent override gate at line 3737
+        // already asked the same question ('Plex is supplying a
+        // theme; replace with motif's version?'). Pre-fix the user
+        // got two near-identical confirms back to back. The gate
+        // doesn't fire for sidecarOnly (M) or isManualPlacement
+        // rows, so this confirm still runs in those cases where
+        // the gate gave no warning.
+        const it = findItemForButton(btn);
+        if (!isPlexAgentRow(it)) {
+          if (!confirm(`Replace the existing theme for "${title}" with the ThemerrDB download?\n\nMotif will fetch from upstream and overwrite the current sidecar.`)) return;
+        }
         try {
           await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/replace-with-themerrdb`);
           libraryRapidPoll();
