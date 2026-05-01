@@ -448,42 +448,82 @@ class PlexClient:
         For movies, folder_path is the parent dir of the first Part.file.
         For shows, folder_path is the show-level Location/path.
 
-        v1.11.10: dropped the explicit `type=` filter on the request.
-        Some Plex setups (custom agents, certain show-section variants
-        like 'TV Shows by Original Air Date') returned 0 children for
-        type=2 even when the section had thousands of items. Plex
-        returns the natural-level rows for the section without the
-        filter, and our existing iteration already filters by tag
-        (Video / Directory) so spurious children are skipped.
+        v1.11.19: two-shot enumeration to handle Plex's inconsistent
+        behavior between section variants:
+          1. First try with explicit type=1 (movie) or type=2 (show).
+             This is the canonical call for typed sections and works
+             on every standard install.
+          2. If the typed call returns 0 children, fall back to /all
+             with no type filter. Some custom-agent variants ('TV
+             Shows by Original Air Date', etc.) returned 0 for
+             type=2 even when the section had thousands of items;
+             v1.10.x lived with this, v1.11.10 'fixed' it by always
+             dropping the filter, which then broke standard show
+             sections (those return EPISODES instead of shows for an
+             unfiltered call). Trying typed-first then unfiltered
+             covers both populations.
         """
-        # `includeGuids=1` makes Plex emit <Guid id="..."/> children; otherwise
-        # only the deprecated `guid` attr is present (and it's only one source).
-        r = self._get(
-            f"/library/sections/{section_id}/all",
-            params={"includeGuids": "1"},
+        type_id = "1" if media_type == "movie" else "2"
+        url = f"/library/sections/{section_id}/all"
+        items, root = self._fetch_section_items(
+            url, section_id, media_type,
+            params={"type": type_id, "includeGuids": "1"},
+            label=f"type={type_id}",
         )
+        if items:
+            return items
+        # Fallback: drop the type filter. Logged so we can tell which
+        # path served each section over time.
+        log.info(
+            "enumerate_section_items: section %s typed call returned 0; "
+            "retrying without type filter",
+            section_id,
+        )
+        items, _ = self._fetch_section_items(
+            url, section_id, media_type,
+            params={"includeGuids": "1"},
+            label="no-type",
+        )
+        return items
+
+    def _fetch_section_items(
+        self, url: str, section_id: str, media_type: str,
+        *, params: dict[str, str], label: str,
+    ) -> tuple[list[PlexLibraryItem], "ET.Element | None"]:
+        r = self._get(url, params=params)
         if r is None or r.status_code != 200:
             log.warning(
-                "enumerate_section_items: section %s returned %s (%s)",
-                section_id,
+                "enumerate_section_items[%s]: section %s GET %s returned %s (%s)",
+                label, section_id, url,
                 r.status_code if r is not None else "no response",
                 "no response" if r is None else (r.text[:200] if r.text else ""),
             )
-            return []
+            return [], None
         try:
             root = ET.fromstring(r.text)
         except ET.ParseError as e:
             log.warning(
-                "enumerate_section_items: section %s XML parse failed: %s",
-                section_id, e,
+                "enumerate_section_items[%s]: section %s XML parse failed: %s",
+                label, section_id, e,
             )
-            return []
+            return [], None
+        container_size = root.get("size", "?")
+        container_total = root.get("totalSize", "?")
+        log.info(
+            "enumerate_section_items[%s]: section %s (type=%s) "
+            "MediaContainer size=%s totalSize=%s",
+            label, section_id, media_type, container_size, container_total,
+        )
         out: list[PlexLibraryItem] = []
+        skipped_no_rk = 0
+        tag_counts: dict[str, int] = {}
         for el in list(root):
+            tag_counts[el.tag] = tag_counts.get(el.tag, 0) + 1
             if el.tag not in ("Video", "Directory"):
                 continue
             rk = el.get("ratingKey")
             if not rk:
+                skipped_no_rk += 1
                 continue
             guids = _extract_guids(el)
             folder = _extract_folder_path(el)
@@ -501,11 +541,13 @@ class PlexClient:
             ))
         if not out:
             log.warning(
-                "enumerate_section_items: section %s returned 0 items "
-                "(media_type=%s, root tag=%s, child count=%d)",
-                section_id, media_type, root.tag, len(list(root)),
+                "enumerate_section_items[%s]: section %s returned 0 usable items "
+                "(media_type=%s, root tag=%s, total children=%d, "
+                "tag_counts=%s, skipped_no_rk=%d, body bytes=%d)",
+                label, section_id, media_type, root.tag, len(list(root)),
+                tag_counts, skipped_no_rk, len(r.text or ""),
             )
-        return out
+        return out, root
 
     def get_item_paths(self, rating_key: str) -> list[str]:
         """Return all file paths for an item (for finding the media folder)."""
