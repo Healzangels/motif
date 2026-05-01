@@ -2261,6 +2261,21 @@
     // stamped at insert time. The svid heuristic stays as a fallback
     // for rows older than the migration that didn't get backfilled
     // confidently.
+    // v1.10.53: SRC badge leads with source_kind (the authoritative
+    // sticker on the canonical) instead of placedProv. Pre-1.10.53 a
+    // re-download on top of an adopted row could update local_files
+    // (provenance=auto, source_kind=themerrdb) while leaving the
+    // placement row at provenance=manual (because place_theme
+    // skipped the placement when force=False and a sidecar
+    // already existed). The old logic gated on placedProv first
+    // and then used source_kind only inside the manual branch, so
+    // 'manual placement + themerrdb local_files' rendered as U.
+    // Now: source_kind tells the truth about who owns the canonical;
+    // placedProv only matters for legacy rows with no source_kind.
+    //   themerrdb → T
+    //   adopt     → A
+    //   url/upload→ U
+    //   null      → fall back to placedProv + svid heuristic
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
     const sidecarOnly = !placed && !!it.plex_local_theme;
@@ -2269,17 +2284,19 @@
     const svid = it.source_video_id || '';
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
     let srcCell;
-    if (placed && placedProv === 'auto') {
-      // T can come from a real ThemerrDB download or a hash/exact
-      // match adopt (byte-identical to the upstream); both are 'auto'.
+    if (placed && sourceKind === 'themerrdb') {
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+    } else if (placed && sourceKind === 'adopt') {
+      srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+    } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
+      srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+    } else if (placed && placedProv === 'auto') {
+      // Legacy rows (source_kind NULL) — provenance='auto' === T.
       srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
     } else if (placed && placedProv === 'manual') {
-      let kind = sourceKind;
-      if (!kind) {
-        // Pre-1.10.12 fallback heuristic.
-        const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
-        kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
-      }
+      // Legacy fallback heuristic for rows without source_kind.
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
+      const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
       if (kind === 'adopt') {
         srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
       } else {
@@ -2479,7 +2496,18 @@
       // would normally fill — added below in the shared REPLACE block.
       // Suppress the standalone DOWNLOAD button there to avoid two
       // buttons that fire near-identical actions.
-      if (!isPlexAgent && !lockManualActions) {
+      // v1.10.53: hide DOWNLOAD when the TDB URL is in the
+      // permanent-failure set (red 'TDB ✗'). Pre-1.10.53 the button
+      // was visible on adopted rows whose TDB had been ack'd —
+      // clicking it could either re-fail (expected) or get a
+      // transient yt-dlp success that left the row in a confused
+      // state (placement manual + local_files themerrdb, badge
+      // flickering). Same exclusion REPLACE w/ TDB already had
+      // (v1.10.51). cookies_expired stays clickable since the
+      // user can drop a cookies.txt to recover.
+      const tdbDeadForDownload = it.failure_kind
+        && TDB_DEAD_FAILURES.has(it.failure_kind);
+      if (!isPlexAgent && !lockManualActions && !tdbDeadForDownload) {
         // v1.10.29: tooltip names which source the download fetches —
         // ThemerrDB by default, the manual URL when an override is
         // active. Either way the URL is visible in the Info dialog.
@@ -3317,13 +3345,22 @@
         // user knows whether the result will be linked to a ThemerrDB
         // record (REPLACE w/ TDB available after) or a pure orphan
         // (file is the source of truth, no TDB alternative).
+        // v1.10.53: third case — TMDB-matched but the YouTube URL is
+        // dead (red TDB ✗ pill). REPLACE w/ TDB won't work until
+        // ThemerrDB updates the URL.
         const title = btn.dataset.title || 'this item';
         const it = findItemForButton(btn);
         const tdbTracked = !!(it && it.upstream_source
                               && it.upstream_source !== 'plex_orphan');
-        const matchNote = tdbTracked
-          ? "✓ TMDB-matched: this title is in ThemerrDB. After adopt you'll be able to REPLACE w/ TDB later."
-          : "✗ No ThemerrDB record: your file becomes the source of truth (no TDB alternative).";
+        const tdbDead = !!(it && it.failure_kind && new Set([
+          'video_private', 'video_removed',
+          'video_age_restricted', 'geo_blocked',
+        ]).has(it.failure_kind));
+        const matchNote = !tdbTracked
+          ? "✗ No ThemerrDB record: your file becomes the source of truth (no TDB alternative)."
+          : tdbDead
+            ? "⚠ TMDB-matched but the YouTube URL is unavailable (video removed / private / restricted).\n  REPLACE w/ TDB won't work until ThemerrDB updates the URL — your file is effectively the source of truth."
+            : "✓ TMDB-matched: this title is in ThemerrDB. After adopt you'll be able to REPLACE w/ TDB later.";
         if (!confirm(
           `Adopt the existing theme.mp3 for "${title}"?\n\n${matchNote}\n\n`
           + `Motif will hardlink the file into /themes and manage it from now on.`
