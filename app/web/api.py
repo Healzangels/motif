@@ -1754,9 +1754,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
                        lf.section_id, lf.file_path, lf.file_size, lf.downloaded_at,
                        lf.source_video_id, lf.provenance, lf.source_kind,
+                       lf.last_place_attempt_at, lf.last_place_attempt_reason,
                        ps.title AS section_title,
                        COALESCE(MAX(pi.local_theme_file), 0) AS plex_local_theme,
-                       COALESCE(MAX(pi.has_theme), 0) AS plex_has_theme
+                       COALESCE(MAX(pi.has_theme), 0) AS plex_has_theme,
+                       (SELECT 1 FROM jobs j
+                         WHERE j.media_type = lf.media_type
+                           AND j.tmdb_id = lf.tmdb_id
+                           AND j.section_id = lf.section_id
+                           AND j.job_type = 'place'
+                           AND j.status IN ('pending','running')
+                         LIMIT 1) AS place_pending
                 FROM local_files lf
                 JOIN themes t
                   ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id
@@ -1778,9 +1786,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         items: list[dict] = []
         for r in rows:
             d = dict(r)
-            # Reason precedence: existing-sidecar > plex-agent > auto-place
-            # disabled > unknown (worker probably hasn't picked it up yet).
-            if d["plex_local_theme"]:
+            # v1.11.24: reason precedence reads the actual place worker
+            # outcome stamped on local_files first, falling back to the
+            # pre-attempt heuristics. Pre-fix the worker would log
+            # 'Skipped placement: existing_theme:theme.mp3' but /pending
+            # still showed 'Awaiting placement — the worker should pick
+            # it up shortly' because the reason logic checked
+            # plex_items.local_theme_file (often stale) instead of the
+            # actual outcome.
+            attempt_reason = (d.get("last_place_attempt_reason") or "")
+            place_pending = bool(d.get("place_pending"))
+            if attempt_reason.startswith("existing_theme:"):
+                fname = attempt_reason.split(":", 1)[1] or "theme.mp3"
+                d["reason"] = (f"Existing {fname} at the Plex folder — "
+                               f"approval will overwrite it")
+                d["reason_kind"] = "overwrites_sidecar"
+            elif attempt_reason == "plex_has_theme":
+                d["reason"] = ("Plex's agent already supplies a theme — "
+                               "approval will replace it")
+                d["reason_kind"] = "overwrites_plex_agent"
+            elif attempt_reason.startswith("placement_error:"):
+                d["reason"] = ("Last place attempt failed — "
+                               + attempt_reason.split(":", 1)[1].strip())
+                d["reason_kind"] = "placement_error"
+            elif attempt_reason == "no_match":
+                d["reason"] = ("No Plex folder matched this title — "
+                               "the section may not be scanned yet")
+                d["reason_kind"] = "no_match"
+            elif d["plex_local_theme"]:
                 d["reason"] = "Existing theme.mp3 at the Plex folder — approval will overwrite it"
                 d["reason_kind"] = "overwrites_sidecar"
             elif d["plex_has_theme"]:
@@ -1789,9 +1822,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             elif not auto_place:
                 d["reason"] = "Auto-place is disabled in Settings — every download awaits approval"
                 d["reason_kind"] = "auto_place_off"
-            else:
+            elif place_pending:
                 d["reason"] = "Awaiting placement — the worker should pick it up shortly"
                 d["reason_kind"] = "queued"
+            else:
+                d["reason"] = "No place job queued — click APPROVE to place now"
+                d["reason_kind"] = "no_job"
             items.append(d)
         return {"items": items}
 

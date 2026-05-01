@@ -853,23 +853,67 @@ class Worker:
                 # re-stat'd the folder, so the new theme.mp3 isn't
                 # picked up. The user then has to manually click
                 # 'Refresh Metadata' in Plex to force the pickup.
-                # Schedule a second refresh ~10s out to give Plex's
-                # filesystem cache time to commit; plex.refresh is
-                # cheap and idempotent on Plex's side.
+                # v1.11.24: schedule THREE follow-up refreshes (10s,
+                # 30s, 90s) in addition to the immediate refresh in
+                # place_theme. A single +10s delay wasn't always
+                # enough on TV-show sections — Plex's local-media-
+                # assets agent occasionally took 30-60s to notice the
+                # new theme.mp3, so the user had to manually click
+                # 'Refresh Metadata' to force pickup. Three retries
+                # at increasing intervals give every reasonable
+                # filesystem-cache + agent-debounce timing a chance
+                # to land before the user has to do anything.
                 if outcome.plex_rating_key and self.settings.plex_analyze_after:
-                    delayed_iso = (
-                        datetime.now(timezone.utc)
-                        + timedelta(seconds=10)
-                    ).isoformat(timespec="seconds")
-                    conn.execute(
-                        """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
-                                              payload, status, created_at, next_run_at)
-                           VALUES ('refresh', ?, ?, ?, ?, 'pending', ?, ?)""",
-                        (media_type, tmdb_id, section_id,
-                         json.dumps({"rating_key": outcome.plex_rating_key,
-                                     "reason": "post_place_double_refresh"}),
-                         now_iso(), delayed_iso),
-                    )
+                    base = datetime.now(timezone.utc)
+                    for delay_s in (10, 30, 90):
+                        delayed_iso = (
+                            base + timedelta(seconds=delay_s)
+                        ).isoformat(timespec="seconds")
+                        conn.execute(
+                            """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                                  payload, status, created_at, next_run_at)
+                               VALUES ('refresh', ?, ?, ?, ?, 'pending', ?, ?)""",
+                            (media_type, tmdb_id, section_id,
+                             json.dumps({"rating_key": outcome.plex_rating_key,
+                                         "reason": f"post_place_refresh_+{delay_s}s"}),
+                             now_iso(), delayed_iso),
+                        )
+        # v1.11.24: stamp the place outcome on the local_files row so
+        # /pending can render the actual reason ('existing_theme:',
+        # 'plex_has_theme', 'no_match', 'placement_error:') instead of
+        # falling through to the generic 'Awaiting placement — the
+        # worker should pick it up shortly'. Also propagate hints to
+        # plex_items where applicable so the existing reason logic
+        # (which reads pi.local_theme_file / pi.has_theme) gets a
+        # nudge.
+        try:
+            with get_conn(self.settings.db_path) as conn:
+                conn.execute(
+                    "UPDATE local_files SET last_place_attempt_at = ?, "
+                    "                       last_place_attempt_reason = ? "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (now_iso(),
+                     ("placed" if outcome.placed else (outcome.reason or "unknown")),
+                     media_type, tmdb_id, section_id),
+                )
+                if not outcome.placed and outcome.target_folder:
+                    plex_type = "show" if media_type == "tv" else "movie"
+                    folder_str = str(outcome.target_folder)
+                    if (outcome.reason or "").startswith("existing_theme:"):
+                        conn.execute(
+                            "UPDATE plex_items SET local_theme_file = 1 "
+                            "WHERE folder_path = ? AND media_type = ?",
+                            (folder_str, plex_type),
+                        )
+                    elif outcome.reason == "plex_has_theme":
+                        conn.execute(
+                            "UPDATE plex_items SET has_theme = 1, "
+                            "                     local_theme_file = 0 "
+                            "WHERE folder_path = ? AND media_type = ?",
+                            (folder_str, plex_type),
+                        )
+        except Exception as e:
+            log.debug("place outcome stamp failed: %s", e)
         log_event(
             self.settings.db_path,
             level="INFO" if outcome.placed else "DEBUG",

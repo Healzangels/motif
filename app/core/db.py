@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS local_files (
                        CHECK (source_kind IN ('themerrdb', 'url',
                                               'upload', 'adopt')
                               OR source_kind IS NULL),
+    -- v1.11.24: last place worker outcome for this row. The /pending
+    -- view reads this to surface the actual reason a download is
+    -- still unplaced ('existing_theme:theme.mp3', 'plex_has_theme',
+    -- 'no_match', 'placement_error:...') instead of a generic
+    -- 'worker should pick it up shortly'. NULL = no place attempt
+    -- yet (truly queued).
+    last_place_attempt_at      TEXT,
+    last_place_attempt_reason  TEXT,
     PRIMARY KEY (media_type, tmdb_id, section_id),
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE,
     FOREIGN KEY (section_id) REFERENCES plex_sections (section_id) ON DELETE CASCADE
@@ -375,7 +383,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 19
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -785,6 +793,20 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v18_to_v19(conn: sqlite3.Connection) -> None:
+    """v19: dev-mode hard stop.
+
+    v1.11.24 added local_files.last_place_attempt_at + reason. Per the
+    dev-mode policy, no migration path — wipe /config/motif.db and let
+    sync + plex_enum + scan repopulate.
+    """
+    raise RuntimeError(
+        "v1.11.24 changed local_files (added last_place_attempt_at + "
+        "last_place_attempt_reason). Dev mode: delete /config/motif.db "
+        "and restart. sync + plex_enum + scan will repopulate."
+    )
+
+
 def _migrate_v17_to_v18(conn: sqlite3.Connection) -> None:
     """v18: per-Plex-section themes layout.
 
@@ -1175,6 +1197,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 17:
                     _migrate_v17_to_v18(conn)
                     current = 18
+                elif current == 18:
+                    _migrate_v18_to_v19(conn)
+                    current = 19
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
