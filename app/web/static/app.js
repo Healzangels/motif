@@ -1226,8 +1226,12 @@
       // walks to its next safe yield point.
       const cancellable = (j.status === 'pending' || j.status === 'running');
       const cancelling = j.cancel_requested && j.status === 'running';
+      // v1.11.53: when a row is stuck in 'cancelling…' (worker thread
+      // wedged on DB-lock contention or a long Plex call) the user
+      // needs an escape hatch. × FORCE hits /api/jobs/{id}/cancel?force=true
+      // which marks the row cancelled regardless of cooperative state.
       const actionCell = cancelling
-        ? '<span class="muted small">cancelling…</span>'
+        ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" data-force="1" title="worker isn't responding to the cooperative cancel; mark cancelled directly">× FORCE</button>`
         : (cancellable
             ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" title="cancel this job (running jobs bail at the next safe yield)">× CANCEL</button>`
             : '');
@@ -1271,11 +1275,18 @@
       if (!btn || !$('#jobs-body')) return;
       const id = btn.dataset.jobId;
       if (!id) return;
-      if (!confirm(`Cancel job ${id}? Running jobs bail at the next safe yield (a few seconds).`)) return;
+      const forced = btn.dataset.force === '1';
+      const prompt = forced
+        ? `Force-cancel job ${id}? The worker may be stuck on a stalled DB write or Plex call — this marks the job cancelled in the queue regardless of whether the worker thread ever responds.`
+        : `Cancel job ${id}? Running jobs bail at the next safe yield (a few seconds).`;
+      if (!confirm(prompt)) return;
       btn.disabled = true;
       btn.textContent = '…';
       try {
-        await api('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`);
+        const url = forced
+          ? `/api/jobs/${encodeURIComponent(id)}/cancel?force=true`
+          : `/api/jobs/${encodeURIComponent(id)}/cancel`;
+        await api('POST', url);
         await loadQueue().catch(()=>{});
       } catch (err) {
         alert('Cancel failed: ' + err.message);

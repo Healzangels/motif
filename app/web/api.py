@@ -3680,6 +3680,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/jobs/{job_id}/cancel")
     async def api_cancel_job(
         request: Request, job_id: int,
+        force: bool = Query(False),
         db: Path = Depends(get_db_path),
     ):
         """v1.11.36: cooperative job cancellation.
@@ -3691,11 +3692,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           notices on the next safe yield (between sync batches /
           plex_enum sections / scan iterations / etc.) and bails out.
         - Already-finished jobs (done / failed / cancelled) return 409.
+
+        v1.11.53: ?force=true escalates to a hard cancel — the row
+        flips straight to status='cancelled' regardless of the
+        cooperative path. Used when the worker thread has wedged
+        (DB lock contention, stuck on a Plex API call, etc.) and
+        the cancel_requested flag never gets read. The UI surfaces
+        a × FORCE button on rows already marked cancelling so the
+        user has a one-click escape from a stuck-cancelling job.
         """
         _require_admin(request)
         with get_conn(db) as conn:
             row = conn.execute(
-                "SELECT status FROM jobs WHERE id = ?", (job_id,),
+                "SELECT status, cancel_requested FROM jobs WHERE id = ?",
+                (job_id,),
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="job not found")
@@ -3711,11 +3721,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
                 outcome = "cancelled"
             elif status_now == "running":
-                conn.execute(
-                    "UPDATE jobs SET cancel_requested = 1 WHERE id = ?",
-                    (job_id,),
-                )
-                outcome = "cancel_requested"
+                if force:
+                    conn.execute(
+                        "UPDATE jobs SET status = 'cancelled', "
+                        "                finished_at = ?, "
+                        "                last_error = 'force-cancelled by user', "
+                        "                cancel_requested = 0 "
+                        "WHERE id = ?",
+                        (now_iso(), job_id),
+                    )
+                    outcome = "force_cancelled"
+                else:
+                    conn.execute(
+                        "UPDATE jobs SET cancel_requested = 1 WHERE id = ?",
+                        (job_id,),
+                    )
+                    outcome = "cancel_requested"
             else:
                 raise HTTPException(
                     status_code=409,
@@ -3724,7 +3745,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log_event(db, level="INFO", component="api",
                   message=f"Job {job_id} cancellation requested by "
                           f"{request.state.principal.username}",
-                  detail={"prev_status": status_now, "outcome": outcome})
+                  detail={"prev_status": status_now, "outcome": outcome,
+                          "force": bool(force)})
         return {"ok": True, "outcome": outcome, "prev_status": status_now}
 
     @app.get("/api/events")
