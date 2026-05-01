@@ -325,7 +325,7 @@
       // Dashboard SYNC — only the ThemerrDB sync drives this.
       lockBtn(
         document.getElementById('sync-now-btn'),
-        themerrdbBusy, '// SYNCING TDB…',
+        themerrdbBusy, '// SYNCING WITH THEMERRDB…',
       );
       // Per-section REFRESH — lock only if THIS section is enumerating.
       document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
@@ -452,10 +452,10 @@
     if (!btn) return;
     if (state === 'idle') {
       btn.disabled = false;
-      btn.textContent = '// SYNC';
+      btn.textContent = '// SYNC THEMERRDB';
     } else if (state === 'running') {
       btn.disabled = true;
-      btn.textContent = '// SYNCING…';
+      btn.textContent = '// SYNCING WITH THEMERRDB…';
     } else if (state === 'done') {
       btn.disabled = true;
       btn.textContent = '✓ DONE';

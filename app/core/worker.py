@@ -197,6 +197,25 @@ class Worker:
                 if cur.rowcount:
                     log.info("Reclaimed %d orphan 'running' job(s) at startup",
                              cur.rowcount)
+                # v1.11.50: also reset orphan sync_runs rows. The jobs
+                # table is reclaimed above so the worker re-runs the
+                # sync, but sync_runs has its own status field that
+                # only run_sync flips. If the worker died mid-sync,
+                # the row stayed 'running' forever — /api/stats's
+                # last_sync_at lookup ignores it (it filters on
+                # status='success'), but the /queue / sync history
+                # view shows the zombie row indefinitely. Mark these
+                # as failed so the UI is honest about what happened.
+                cur2 = conn.execute(
+                    "UPDATE sync_runs SET status = 'failed', "
+                    "  finished_at = COALESCE(finished_at, ?), "
+                    "  error = COALESCE(error, 'worker restarted mid-sync') "
+                    "WHERE status = 'running'",
+                    (now_iso(),),
+                )
+                if cur2.rowcount:
+                    log.info("Marked %d orphan sync_runs row(s) failed at startup",
+                             cur2.rowcount)
         except Exception as e:
             log.warning("Orphan-job recovery failed at startup: %s", e)
         while not self.stop_event.is_set():
