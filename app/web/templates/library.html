@@ -110,6 +110,59 @@
   <button type="button" class="link-badge link-badge-cloud src-key-btn"
           data-src-filter="P"
           title="Plex agent / cloud — Plex supplies its own theme; no local file. Click to filter to P-source rows.">P</button>
+  <span class="src-key-sep" aria-hidden="true">·</span>
+  <!-- v1.11.79: compound P/X buttons. The diagonal-split SVG is inlined
+       so the legend swatch matches the row badge exactly. Each fires
+       click-to-filter the same way the single-letter buttons do. -->
+  <button type="button" class="src-key-btn src-key-btn-compound-wrap"
+          data-src-filter="P/T"
+          title="P/T — motif manages a ThemerrDB-sourced theme AND Plex Pass cloud version is also likely available (TDB-tracked title, so Plex's own theme service probably has it too). Deleting the local file would fall back to cloud rather than going themeless.">
+    <svg viewBox="0 0 38 18" width="38" height="18" role="img" aria-label="P/T">
+      <polygon points="0,0 0,18 38,18" fill="rgba(255,184,74,0.10)"/>
+      <polygon points="0,0 38,0 38,18" fill="rgba(109,255,181,0.10)"/>
+      <line x1="0" y1="0" x2="38" y2="18" stroke="rgba(0,0,0,0.45)" stroke-width="1"/>
+      <text x="6" y="14" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#ffb84a">P</text>
+      <text x="26" y="10" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#9affc9">T</text>
+      <rect x="0.5" y="0.5" width="37" height="17" rx="2" fill="none" stroke="rgba(45,140,92,0.7)" stroke-width="1"/>
+    </svg>
+  </button>
+  <button type="button" class="src-key-btn src-key-btn-compound-wrap"
+          data-src-filter="P/A"
+          title="P/A — motif adopted a sidecar AND Plex Pass cloud version is also likely available. Deleting the local file would fall back to cloud rather than going themeless.">
+    <svg viewBox="0 0 38 18" width="38" height="18" role="img" aria-label="P/A">
+      <polygon points="0,0 0,18 38,18" fill="rgba(255,184,74,0.10)"/>
+      <polygon points="0,0 38,0 38,18" fill="rgba(109,211,255,0.10)"/>
+      <line x1="0" y1="0" x2="38" y2="18" stroke="rgba(0,0,0,0.45)" stroke-width="1"/>
+      <text x="6" y="14" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#ffb84a">P</text>
+      <text x="26" y="10" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#6dd3ff">A</text>
+      <rect x="0.5" y="0.5" width="37" height="17" rx="2" fill="none" stroke="rgba(109,211,255,0.55)" stroke-width="1"/>
+    </svg>
+  </button>
+  <button type="button" class="src-key-btn src-key-btn-compound-wrap"
+          data-src-filter="P/M"
+          title="P/M — loose sidecar Plex picks up AND Plex Pass cloud version is also likely available. Deleting the sidecar would fall back to cloud rather than going themeless.">
+    <svg viewBox="0 0 38 18" width="38" height="18" role="img" aria-label="P/M">
+      <polygon points="0,0 0,18 38,18" fill="rgba(255,184,74,0.10)"/>
+      <polygon points="0,0 38,0 38,18" fill="rgba(255,122,214,0.10)"/>
+      <line x1="0" y1="0" x2="38" y2="18" stroke="rgba(0,0,0,0.45)" stroke-width="1"/>
+      <text x="6" y="14" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#ffb84a">P</text>
+      <text x="25" y="10" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#ff7ad6">M</text>
+      <rect x="0.5" y="0.5" width="37" height="17" rx="2" fill="none" stroke="rgba(255,122,214,0.5)" stroke-width="1"/>
+    </svg>
+  </button>
+  <button type="button" class="src-key-btn src-key-btn-compound-wrap"
+          data-src-filter="P/U"
+          title="P/U — user-provided theme (URL/upload) AND Plex Pass cloud version is also likely available. Deleting the local file would fall back to cloud rather than going themeless.">
+    <svg viewBox="0 0 38 18" width="38" height="18" role="img" aria-label="P/U">
+      <polygon points="0,0 0,18 38,18" fill="rgba(255,184,74,0.10)"/>
+      <polygon points="0,0 38,0 38,18" fill="rgba(196,109,255,0.10)"/>
+      <line x1="0" y1="0" x2="38" y2="18" stroke="rgba(0,0,0,0.45)" stroke-width="1"/>
+      <text x="6" y="14" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#ffb84a">P</text>
+      <text x="26" y="10" font-family="JetBrains Mono, ui-monospace, monospace" font-size="10" font-weight="700" fill="#c46dff">U</text>
+      <rect x="0.5" y="0.5" width="37" height="17" rx="2" fill="none" stroke="rgba(196,109,255,0.6)" stroke-width="1"/>
+    </svg>
+  </button>
+  <span class="src-key-sep" aria-hidden="true">·</span>
   <button type="button" class="link-badge src-key-btn src-key-btn-none"
           data-src-filter="-"
           title="No theme anywhere — eligible for TDB / SET URL / UPLOAD MP3 / ADOPT. Click to filter to no-source rows.">—</button>
