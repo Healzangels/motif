@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
   <h1 class="title">LOGS</h1>
-  <p class="muted">live job queue and event stream</p>
+  <p class="muted">live job queue + event stream · cancel a running or pending job from the ACTION column · auto-refreshes every 5 s</p>
 </section>
 
 <section class="block block-split">
@@ -25,9 +25,9 @@
     <div class="jobs-scroll">
       <table class="table table-tight">
         <thead>
-          <tr><th>ID</th><th>TYPE</th><th>ITEM</th><th>STATE</th><th>TIME</th><th>NOTE</th></tr>
+          <tr><th>ID</th><th>TYPE</th><th>ITEM</th><th>STATE</th><th>TIME</th><th>NOTE</th><th>ACTION</th></tr>
         </thead>
-        <tbody id="jobs-body"><tr><td colspan="6" class="muted center">loading…</td></tr></tbody>
+        <tbody id="jobs-body"><tr><td colspan="7" class="muted center">loading…</td></tr></tbody>
       </table>
     </div>
   </div>

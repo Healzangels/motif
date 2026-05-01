@@ -543,7 +543,8 @@ def _flush_sync_batch(
 
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
-             enqueue_downloads: bool = True) -> SyncStats:
+             enqueue_downloads: bool = True,
+             cancel_check=lambda: False) -> SyncStats:
     """Run a full ThemerrDB sync. Returns stats.
 
     `auto_place_override=None` lets the worker fall back to the global
@@ -581,6 +582,12 @@ def run_sync(db_path, base_url: str, *,
 
                 batch: list[tuple[str, int, dict, str]] = []
                 for entry in index:
+                    # v1.11.36: cooperative cancellation. Per-item check
+                    # is cheap (one indexed SELECT) and lets the user
+                    # bail out within a few seconds.
+                    if cancel_check():
+                        from .worker import _JobCancelled
+                        raise _JobCancelled()
                     tmdb_id = entry.get("id")
                     if tmdb_id is None:
                         continue

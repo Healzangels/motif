@@ -145,9 +145,9 @@ def main() -> int:
     # Force the session key to be created/loaded so it's ready for the web layer
     settings.resolve_session_key()
 
-    # Start worker
+    # Start workers (long + general — see start_worker docstring).
     stop_event = threading.Event()
-    worker_thread = start_worker(settings, stop_event)
+    worker_threads = start_worker(settings, stop_event)
 
     # Start scheduler
     scheduler = start_scheduler(settings)
@@ -186,7 +186,8 @@ def main() -> int:
         server.run()
     finally:
         stop_event.set()
-        worker_thread.join(timeout=10.0)
+        for _t in worker_threads:
+            _t.join(timeout=10.0)
         log.info("motif stopped")
     return 0
 

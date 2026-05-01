@@ -3676,6 +3676,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ).fetchall()
         return {"jobs": [dict(r) for r in rows]}
 
+    @app.post("/api/jobs/{job_id}/cancel")
+    async def api_cancel_job(
+        request: Request, job_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.11.36: cooperative job cancellation.
+
+        - Pending jobs flip to status='cancelled' immediately (the
+          worker's pre-dispatch cancel-check or this endpoint catches
+          them before they ever run).
+        - Running jobs get cancel_requested=1; the worker handler
+          notices on the next safe yield (between sync batches /
+          plex_enum sections / scan iterations / etc.) and bails out.
+        - Already-finished jobs (done / failed / cancelled) return 409.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT status FROM jobs WHERE id = ?", (job_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="job not found")
+            status_now = row["status"]
+            if status_now == "pending":
+                conn.execute(
+                    "UPDATE jobs SET status = 'cancelled', "
+                    "                finished_at = ?, "
+                    "                last_error = 'cancelled by user', "
+                    "                cancel_requested = 0 "
+                    "WHERE id = ?",
+                    (now_iso(), job_id),
+                )
+                outcome = "cancelled"
+            elif status_now == "running":
+                conn.execute(
+                    "UPDATE jobs SET cancel_requested = 1 WHERE id = ?",
+                    (job_id,),
+                )
+                outcome = "cancel_requested"
+            else:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"job is already in terminal state '{status_now}'",
+                )
+        log_event(db, level="INFO", component="api",
+                  message=f"Job {job_id} cancellation requested by "
+                          f"{request.state.principal.username}",
+                  detail={"prev_status": status_now, "outcome": outcome})
+        return {"ok": True, "outcome": outcome, "prev_status": status_now}
+
     @app.get("/api/events")
     async def api_events(
         limit: int = Query(200, ge=1, le=1000),

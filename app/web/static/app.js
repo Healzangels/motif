@@ -1187,7 +1187,19 @@
     if (!$('#jobs-body')) return;
     const path = queueFilter === 'all' ? '/api/jobs' : `/api/jobs?status=${queueFilter}`;
     const data = await api('GET', path);
-    $('#jobs-body').innerHTML = data.jobs.map((j) => `
+    $('#jobs-body').innerHTML = data.jobs.map((j) => {
+      // v1.11.36: cancel button on pending / running rows.
+      // cancel_requested=1 + status='running' shows 'CANCELLING…' so
+      // the user knows their click registered while the worker
+      // walks to its next safe yield point.
+      const cancellable = (j.status === 'pending' || j.status === 'running');
+      const cancelling = j.cancel_requested && j.status === 'running';
+      const actionCell = cancelling
+        ? '<span class="muted small">cancelling…</span>'
+        : (cancellable
+            ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" title="cancel this job (running jobs bail at the next safe yield)">× CANCEL</button>`
+            : '');
+      return `
       <tr>
         <td>${htmlEscape(j.id)}</td>
         <td>${htmlEscape(j.job_type)}</td>
@@ -1195,8 +1207,10 @@
         <td><span class="event-level event-level-${j.status === 'failed' ? 'ERROR' : (j.status === 'running' ? 'WARNING' : 'INFO')}">${htmlEscape(j.status)}</span></td>
         <td class="muted">${htmlEscape(fmt.time(j.created_at))}</td>
         <td class="muted" title="${htmlEscape(j.last_error ?? '')}">${htmlEscape((j.last_error ?? '').slice(0, 60))}</td>
+        <td>${actionCell}</td>
       </tr>
-    `).join('') || '<tr><td colspan="6" class="muted center">no jobs</td></tr>';
+    `;
+    }).join('') || '<tr><td colspan="7" class="muted center">no jobs</td></tr>';
 
     const evs = await api('GET', '/api/events?limit=200');
     $('#event-stream-full').innerHTML = evs.events.map((e) => `
@@ -1218,6 +1232,24 @@
         queueFilter = c.dataset.jobfilter;
         loadQueue().catch(console.error);
       });
+    });
+    // v1.11.36: cancel-job click handler. Posts to /api/jobs/{id}/cancel.
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act="cancel-job"]');
+      if (!btn || !$('#jobs-body')) return;
+      const id = btn.dataset.jobId;
+      if (!id) return;
+      if (!confirm(`Cancel job ${id}? Running jobs bail at the next safe yield (a few seconds).`)) return;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        await api('POST', `/api/jobs/${encodeURIComponent(id)}/cancel`);
+        await loadQueue().catch(()=>{});
+      } catch (err) {
+        alert('Cancel failed: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = '× CANCEL';
+      }
     });
   }
 

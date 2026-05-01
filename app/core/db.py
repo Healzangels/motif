@@ -172,7 +172,14 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at      TEXT NOT NULL,
     started_at      TEXT,
     finished_at     TEXT,
-    next_run_at     TEXT
+    next_run_at     TEXT,
+    -- v1.11.36: cooperative cancellation flag. UI sets this to 1 via
+    -- POST /api/jobs/{id}/cancel; the worker handlers check it at
+    -- safe yield points (between sync batches, between plex_enum
+    -- sections / pages, etc.) and bail with status='cancelled' on
+    -- the next check. Pending jobs flip straight to 'cancelled'
+    -- without ever running.
+    cancel_requested INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status, next_run_at);
@@ -392,7 +399,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 20
+CURRENT_SCHEMA_VERSION = 21
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -799,6 +806,17 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v9 (plex_items.local_theme_file)")
     conn.executescript(
         "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
+def _migrate_v20_to_v21(conn: sqlite3.Connection) -> None:
+    """v21: dev-mode hard stop.
+
+    v1.11.36 added jobs.cancel_requested. Wipe /config/motif.db.
+    """
+    raise RuntimeError(
+        "v1.11.36 added jobs.cancel_requested. Dev mode: delete "
+        "/config/motif.db and restart."
     )
 
 
@@ -1224,6 +1242,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 19:
                     _migrate_v19_to_v20(conn)
                     current = 20
+                elif current == 20:
+                    _migrate_v20_to_v21(conn)
+                    current = 21
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

@@ -58,6 +58,28 @@ class _JobPermanentFailure(Exception):
     provide a manual override or accept the failure."""
 
 
+class _JobCancelled(Exception):
+    """v1.11.36: raised by handlers (or check_cancel) when the user
+    requested cancellation via POST /api/jobs/{id}/cancel. The
+    dispatch loop catches this and marks the job 'cancelled' with
+    last_error='cancelled by user', no retry."""
+
+
+def _is_cancelled(db_path: Path, job_id: int) -> bool:
+    """Cheap point-check the cooperative cancel flag. Long-running
+    job handlers (sync, plex_enum, scan) call this between safe yield
+    points and raise _JobCancelled when it returns True."""
+    try:
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT cancel_requested FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        return bool(row and row["cancel_requested"])
+    except Exception:
+        return False  # never let cancel-check itself break a job
+
+
 # -------- Token bucket --------
 
 class TokenBucket:
@@ -94,6 +116,14 @@ class Worker:
     settings: Settings
     stop_event: threading.Event
     bucket: TokenBucket
+    # v1.11.36: optional job_type filter. When set, _claim_next_job
+    # only picks jobs whose job_type is in this set. Used to split
+    # the worker pool into a "long" worker (sync / plex_enum / scan)
+    # and a "general" worker (download / place / refresh / relink /
+    # adopt) so a long-running sync no longer blocks per-item work.
+    # When None the worker claims any job (single-worker mode).
+    job_type_filter: tuple[str, ...] | None = None
+    name: str = "motif-worker"
     # v1.11.0: per-section FolderIndex cache. Keyed by section_id so
     # placement only ever sees folders from the section that owns the
     # current download/place job — no more cross-section confusion.
@@ -176,12 +206,15 @@ class Worker:
                 self.stop_event.wait(2.0)
                 continue
             try:
+                # v1.11.36: pending jobs that were cancel_requested
+                # before they ever ran flip straight to 'cancelled'.
+                if _is_cancelled(self.settings.db_path, job["id"]):
+                    raise _JobCancelled()
                 self._dispatch(job)
+            except _JobCancelled:
+                log.info("Job %s cancelled by user", job["id"])
+                self._mark_cancelled(job["id"])
             except _JobPermanentFailure as e:
-                # v1.10.40: handler classified the error as permanent
-                # (e.g. YouTube video removed). Skip retry — mark
-                # the job 'failed' immediately. The themes row's
-                # failure_kind is already persisted by the handler.
                 log.info("Job %s permanently failed: %s", job["id"], e)
                 self._mark_failed_terminal(job["id"], str(e))
             except Exception as e:
@@ -190,24 +223,30 @@ class Worker:
         log.info("Worker loop stopped")
 
     def _claim_next_job(self) -> sqlite3.Row | None:
+        # v1.11.36: optional job_type_filter scopes claim to the worker's
+        # responsibilities. SQLite serializes the BEGIN IMMEDIATE so two
+        # workers can claim from the same queue without double-claiming
+        # — they just race for the lock and the loser sees the row's
+        # status flipped to 'running' before its own SELECT runs.
+        sql = (
+            "SELECT * FROM jobs "
+            "WHERE status = 'pending' "
+            "  AND (next_run_at IS NULL OR next_run_at <= ?)"
+        )
+        params: list = [now_iso()]
+        if self.job_type_filter:
+            placeholders = ",".join("?" for _ in self.job_type_filter)
+            sql += f" AND job_type IN ({placeholders})"
+            params.extend(self.job_type_filter)
+        sql += " ORDER BY id ASC LIMIT 1"
         with get_conn(self.settings.db_path) as conn, transaction(conn):
-            row = conn.execute(
-                """
-                SELECT * FROM jobs
-                WHERE status = 'pending'
-                  AND (next_run_at IS NULL OR next_run_at <= ?)
-                ORDER BY id ASC
-                LIMIT 1
-                """,
-                (now_iso(),),
-            ).fetchone()
+            row = conn.execute(sql, params).fetchone()
             if row is None:
                 return None
             conn.execute(
-                """
-                UPDATE jobs SET status = 'running', started_at = ?, attempts = attempts + 1
-                WHERE id = ?
-                """,
+                "UPDATE jobs SET status = 'running', started_at = ?, "
+                "                attempts = attempts + 1 "
+                "WHERE id = ?",
                 (now_iso(), row["id"]),
             )
             return row
@@ -232,6 +271,21 @@ class Worker:
                 "                last_error = ? "
                 "WHERE id = ?",
                 (now_iso(), err, job_id),
+            )
+
+    def _mark_cancelled(self, job_id: int) -> None:
+        """v1.11.36: terminal cancellation — sets status='cancelled'
+        with a recognizable last_error message and clears the
+        cancel_requested flag so a future re-run doesn't immediately
+        cancel again."""
+        with get_conn(self.settings.db_path) as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'cancelled', "
+                "                finished_at = ?, "
+                "                last_error = 'cancelled by user', "
+                "                cancel_requested = 0 "
+                "WHERE id = ?",
+                (now_iso(), job_id),
             )
 
     def _mark_failed(self, job_id: int, err: str) -> None:
@@ -312,7 +366,10 @@ class Worker:
             movie_section=self.settings.plex_movie_section,
             tv_section=self.settings.plex_tv_section,
         )
-        run_plex_enum(self.settings.db_path, cfg, only_section_id=only_section)
+        run_plex_enum(
+            self.settings.db_path, cfg, only_section_id=only_section,
+            cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
+        )
 
     def _do_sync(self, job: sqlite3.Row) -> None:
         # Optional payload overrides:
@@ -335,6 +392,7 @@ class Worker:
             self.settings.db_path, self.settings.motifdb_base_url,
             auto_place_override=auto_place_override,
             enqueue_downloads=enqueue_downloads,
+            cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
         )
         # Auto-enqueue a plex_enum after every sync so the unified browse view
         # stays current. Dedupe so concurrent syncs don't pile up.
@@ -367,10 +425,16 @@ class Worker:
             except Exception:
                 pass
         initiated_by = payload.get("initiated_by", "system")
+        # v1.11.36: cancel-check now ORs the per-job cancel_requested
+        # flag with the worker's stop_event so user-cancellation works
+        # alongside the existing shutdown semantics.
+        jid = job["id"]
+        db_path = self.settings.db_path
+        stop = self.stop_event
         run_scan(
-            self.settings.db_path, self.settings,
+            db_path, self.settings,
             initiated_by=initiated_by,
-            cancel_check=self.stop_event.is_set,
+            cancel_check=lambda: stop.is_set() or _is_cancelled(db_path, jid),
         )
 
     def _do_adopt(self, job: sqlite3.Row) -> None:
@@ -1047,13 +1111,36 @@ class Worker:
 
 # -------- Entry point --------
 
-def start_worker(settings: Settings, stop_event: threading.Event) -> threading.Thread:
-    bucket = TokenBucket(
-        rate=float(settings.download_rate_per_hour),
-        capacity=max(1, settings.download_rate_per_hour),
-        period=3600.0,
-    )
-    w = Worker(settings=settings, stop_event=stop_event, bucket=bucket)
-    t = threading.Thread(target=w.run, name="motif-worker", daemon=True)
-    t.start()
-    return t
+_LONG_JOB_TYPES = ("sync", "plex_enum", "scan")
+_GENERAL_JOB_TYPES = ("download", "place", "refresh", "relink", "adopt")
+
+
+def start_worker(settings: Settings, stop_event: threading.Event) -> list[threading.Thread]:
+    """v1.11.36: spawn TWO worker threads instead of one.
+
+    - 'long' worker handles sync / plex_enum / scan. These each run for
+      tens of seconds to minutes; pre-fix they blocked every download
+      / place behind them.
+    - 'general' worker handles download / place / refresh / relink /
+      adopt — short, frequent jobs that benefit from running in
+      parallel with the long jobs.
+
+    SQLite WAL handles write serialization; sync writes themes,
+    plex_enum writes plex_items, downloads / places write local_files
+    / placements — all disjoint. Each worker has its own TokenBucket
+    + FolderIndex cache so they don't share mutable state.
+    """
+    threads: list[threading.Thread] = []
+    for label, types in (("long", _LONG_JOB_TYPES),
+                         ("general", _GENERAL_JOB_TYPES)):
+        bucket = TokenBucket(
+            rate=float(settings.download_rate_per_hour),
+            capacity=max(1, settings.download_rate_per_hour),
+            period=3600.0,
+        )
+        w = Worker(settings=settings, stop_event=stop_event, bucket=bucket,
+                   job_type_filter=types, name=f"motif-worker-{label}")
+        t = threading.Thread(target=w.run, name=f"motif-worker-{label}", daemon=True)
+        t.start()
+        threads.append(t)
+    return threads

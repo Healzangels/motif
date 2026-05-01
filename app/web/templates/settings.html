@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
   <h1 class="title">SETTINGS</h1>
-  <p class="muted">all configuration · saved to /config/motif.yaml · live across restarts</p>
+  <p class="muted">all configuration · persisted to <code>/config/motif.yaml</code> · most values live-reload after SAVE · environment-variable overrides win over YAML where present (badge marks them)</p>
 </section>
 
 <nav class="tabs" role="tablist" id="settings-tabs">
@@ -35,10 +35,13 @@
                placeholder="/data/media/themes" autocomplete="off" />
         <p class="form-hint">
           Container-relative path where motif stores downloaded theme files.
-          Subdirectories <code>movies/</code> and <code>tv/</code> are auto-created.
-          Must be on the same filesystem as your Plex media folders for hardlinks
-          to work — typically <code>/data/media/themes</code> when /data is mounted
-          to <code>/mnt/user/data</code>.
+          One subdirectory per Plex section is auto-created (e.g.
+          <code>themes/movies/</code>, <code>themes/movies-4k/</code>,
+          <code>themes/tv-shows/</code>, <code>themes/anime/</code>) so each
+          library's staging tree mirrors the Plex section it belongs to.
+          Must be on the same filesystem as your Plex media folders for
+          hardlinks to work — typically <code>/data/media/themes</code> when
+          /data is mounted to <code>/mnt/user/data</code>.
         </p>
       </label>
 
@@ -122,8 +125,9 @@
         <span class="form-label-text">REFRESH PLEX AFTER PLACING</span>
         <p class="form-hint">
           When checked, motif tells Plex to re-scan an item's metadata after
-          dropping its theme.mp3, so the theme appears immediately.
-          Recommended.
+          dropping its theme.mp3 (immediate refresh + retries at +10s,
+          +30s, +90s) so Plex's local-media-assets agent picks up the
+          new theme without a manual click. Recommended.
         </p>
       </label>
 
@@ -296,8 +300,11 @@
           <option value="literal">literal — treat + as part of word</option>
         </select>
         <p class="form-hint">
-          How <code>+</code> in titles is handled. The default <code>separator</code>
-          mirrors the legacy merge-themes.sh behavior.
+          How <code>+</code> in titles is handled. <code>separator</code>
+          treats it as a word break (matches "X+Y" against folders named
+          "X Y"); <code>literal</code> requires the <code>+</code> in the
+          folder name. <code>separator</code> is the safer default for
+          most Plex layouts.
         </p>
       </label>
     </div>

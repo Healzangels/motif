@@ -26,7 +26,8 @@ log = logging.getLogger(__name__)
 
 
 def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
-                   *, only_section_id: str | None = None) -> dict:
+                   *, only_section_id: str | None = None,
+                   cancel_check=lambda: False) -> dict:
     """Enumerate Plex sections, upsert plex_items. Returns stats.
 
     `only_section_id`: scope the enumeration to one section (used by the
@@ -47,6 +48,10 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
 
     with PlexClient(plex_cfg) as client:
         for s in managed:
+            # v1.11.36: cooperative cancellation between sections.
+            if cancel_check():
+                from .worker import _JobCancelled
+                raise _JobCancelled()
             section_id = s["section_id"]
             section_type = s["type"]
             stats["sections"] += 1
@@ -59,7 +64,7 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 stats["errors"] += 1
                 continue
             stats["items_seen"] += len(items)
-            ins, upd = _upsert_items(db_path, items)
+            ins, upd = _upsert_items(db_path, items, cancel_check=cancel_check)
             stats["inserted"] += ins
             stats["updated"] += upd
             log.info("plex_enum: section %s — %d items (%d new, %d updated)",
@@ -209,7 +214,8 @@ def reconcile_placement_paths(db_path: Path) -> int:
 _UPSERT_BATCH = 200
 
 
-def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int]:
+def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
+                   *, cancel_check=lambda: False) -> tuple[int, int]:
     """Upsert one section's items into plex_items. Returns
     (inserted_count, updated_count).
 
@@ -257,6 +263,10 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
     updated = 0
     now = now_iso()
     for batch_start in range(0, len(enriched), _UPSERT_BATCH):
+        # v1.11.36: cooperative cancellation between upsert batches.
+        if cancel_check():
+            from .worker import _JobCancelled
+            raise _JobCancelled()
         batch = enriched[batch_start:batch_start + _UPSERT_BATCH]
         with get_conn(db_path) as conn, transaction(conn):
             for it, sidecar in batch:
