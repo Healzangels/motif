@@ -96,11 +96,27 @@
   async function refreshTopbarStatus() {
     try {
       const stats = await api('GET', '/api/stats');
-      const txt = `${stats.queue.running}r/${stats.queue.pending}p`;
+      // v1.11.5: when ANY sync is in flight, replace the queue counter
+      // with a banner-y status so the user can tell at a glance that
+      // Plex / ThemerrDB work is happening. The dot also goes amber
+      // for the duration so the indicator is visible peripherally.
+      const plexEnumBusy = (stats.queue && stats.queue.plex_enum_in_flight > 0);
+      const themerrdbBusy = (stats.queue && stats.queue.themerrdb_sync_in_flight > 0);
+      let txt;
+      if (themerrdbBusy && plexEnumBusy) {
+        txt = 'SYNCING THEMERRDB + PLEX';
+      } else if (themerrdbBusy) {
+        txt = 'SYNCING WITH THEMERRDB';
+      } else if (plexEnumBusy) {
+        txt = 'SYNCING WITH PLEX';
+      } else {
+        txt = `${stats.queue.running}r/${stats.queue.pending}p`;
+      }
       $('#topbar-status-text').textContent = txt;
       const dot = $('#topbar-status .dot');
       dot.classList.remove('dot-amber', 'dot-red');
       if (stats.queue.failed > 0) dot.classList.add('dot-red');
+      else if (themerrdbBusy || plexEnumBusy) dot.classList.add('dot-amber');
       else if (stats.queue.pending > 0) dot.classList.add('dot-amber');
 
       // Updates badge
@@ -177,73 +193,39 @@
       // Drive paths-not-configured banner
       updatePathsBanner(stats);
 
-      // v1.10.6: lock the SYNC + REFRESH FROM PLEX buttons while their
-      // corresponding worker job is running. Prevents spam-clicks and
-      // surfaces the in-flight state textually so the user knows the
-      // click registered.
-      const plexEnumBusy = (stats.queue && stats.queue.plex_enum_in_flight > 0);
-      const themerrdbBusy = (stats.queue && stats.queue.themerrdb_sync_in_flight > 0);
-      const refreshBtn = document.getElementById('library-refresh-btn');
-      if (refreshBtn) {
-        const orig = refreshBtn.dataset.origLabel || refreshBtn.textContent;
-        if (plexEnumBusy) {
-          if (!refreshBtn.dataset.origLabel) refreshBtn.dataset.origLabel = orig;
-          refreshBtn.disabled = true;
-          refreshBtn.textContent = '// REFRESHING…';
-        } else if (refreshBtn.dataset.origLabel) {
-          refreshBtn.disabled = false;
-          refreshBtn.textContent = refreshBtn.dataset.origLabel;
-        }
-      }
-      // v1.10.58: settings-page REFRESH FROM PLEX (top-right of LIBRARY
-      // SECTIONS) plus every per-section REFRESH button share one lock —
-      // they all enqueue plex_enum jobs, so any in-flight enum should
-      // disable the lot. The settings refresh kicks off plex_enum across
-      // every included section, so the per-section buttons would just
-      // queue duplicates if left clickable.
-      const settingsRefreshBtn = document.getElementById('refresh-libraries-btn');
-      if (settingsRefreshBtn) {
-        const orig = settingsRefreshBtn.dataset.origLabel || settingsRefreshBtn.textContent;
-        if (plexEnumBusy) {
-          if (!settingsRefreshBtn.dataset.origLabel) settingsRefreshBtn.dataset.origLabel = orig;
-          settingsRefreshBtn.disabled = true;
-          settingsRefreshBtn.textContent = '// REFRESHING…';
-        } else if (settingsRefreshBtn.dataset.origLabel) {
-          settingsRefreshBtn.disabled = false;
-          settingsRefreshBtn.textContent = settingsRefreshBtn.dataset.origLabel;
-        }
-      }
-      document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
-        const orig = b.dataset.origLabel || b.textContent;
-        if (plexEnumBusy) {
-          if (!b.dataset.origLabel) b.dataset.origLabel = orig;
-          b.disabled = true;
-          b.textContent = '…';
-        } else if (b.dataset.origLabel) {
-          b.disabled = false;
-          b.textContent = b.dataset.origLabel;
-          delete b.dataset.origLabel;
-        }
-      });
-      // SYNC button — disable during BOTH a ThemerrDB sync AND a Plex
-      // enum, per user request: 'when a refresh for a given library is
-      // occurring for plex lets disable the sync button so we don't
-      // allow spam clicking'. The button lives on /dashboard; lock here
-      // even when the user is on /movies because the topbar status
-      // poll fires on every page.
-      const syncBusy = plexEnumBusy || themerrdbBusy;
-      const syncBtn = document.getElementById('sync-now-btn');
-      if (syncBtn) {
-        const orig = syncBtn.dataset.origLabel || syncBtn.textContent;
+      // v1.11.5: every sync/refresh button shares one lock — when EITHER
+      // a ThemerrDB sync or a Plex enum is in flight, all of:
+      //   - dashboard SYNC button
+      //   - movies/tv/anime page REFRESH FROM PLEX
+      //   - settings-page REFRESH FROM PLEX (LIBRARY SECTIONS top-right)
+      //   - per-section REFRESH buttons
+      // are disabled and text-stamped with the operation in flight.
+      // Pre-v1.11.5 the page/settings/per-section refreshes only locked
+      // on plex_enum, so during a ThemerrDB sync the user could fire a
+      // concurrent Plex enum and end up with two sync banners running.
+      const syncBusy = themerrdbBusy || plexEnumBusy;
+      const busyLabel = themerrdbBusy
+        ? '// SYNCING TDB…'
+        : (plexEnumBusy ? '// REFRESHING PLEX…' : null);
+      const lockBtn = (btn, busyText) => {
+        if (!btn) return;
+        const orig = btn.dataset.origLabel || btn.textContent;
         if (syncBusy) {
-          if (!syncBtn.dataset.origLabel) syncBtn.dataset.origLabel = orig;
-          syncBtn.disabled = true;
-          syncBtn.textContent = themerrdbBusy ? '// SYNCING…' : '// REFRESHING…';
-        } else if (syncBtn.dataset.origLabel) {
-          syncBtn.disabled = false;
-          syncBtn.textContent = syncBtn.dataset.origLabel;
+          if (!btn.dataset.origLabel) btn.dataset.origLabel = orig;
+          btn.disabled = true;
+          btn.textContent = busyText;
+        } else if (btn.dataset.origLabel) {
+          btn.disabled = false;
+          btn.textContent = btn.dataset.origLabel;
+          delete btn.dataset.origLabel;
         }
-      }
+      };
+      lockBtn(document.getElementById('library-refresh-btn'), busyLabel || '');
+      lockBtn(document.getElementById('refresh-libraries-btn'), busyLabel || '');
+      lockBtn(document.getElementById('sync-now-btn'), busyLabel || '');
+      document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
+        lockBtn(b, '…');
+      });
     } catch (e) {
       $('#topbar-status-text').textContent = 'OFFLINE';
     }
