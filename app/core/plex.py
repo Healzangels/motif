@@ -457,88 +457,47 @@ class PlexClient:
         For movies, folder_path is the parent dir of the first Part.file.
         For shows, folder_path is the show-level Location/path.
 
-        v1.11.19: two-shot enumeration to handle Plex's inconsistent
-        behavior between section variants:
-          1. First try with explicit type=1 (movie) or type=2 (show).
-             This is the canonical call for typed sections and works
-             on every standard install.
-          2. If the typed call returns 0 children, fall back to /all
-             with no type filter. Some custom-agent variants ('TV
-             Shows by Original Air Date', etc.) returned 0 for
-             type=2 even when the section had thousands of items;
-             v1.10.x lived with this, v1.11.10 'fixed' it by always
-             dropping the filter, which then broke standard show
-             sections (those return EPISODES instead of shows for an
-             unfiltered call). Trying typed-first then unfiltered
-             covers both populations.
+        Plex pages results via X-Plex-Container-Start / X-Plex-Container-Size;
+        we walk pages of 500 to keep each fetch comfortably under the
+        per-call timeout. The explicit type=1 (movie) / type=2 (show)
+        filter ensures the response is at the section's primary level
+        (movies / shows) instead of the leaf level (episodes).
         """
         type_id = "1" if media_type == "movie" else "2"
         url = f"/library/sections/{section_id}/all"
-        items, root = self._fetch_section_items(
-            url, section_id, media_type,
-            params={"type": type_id, "includeGuids": "1"},
-            label=f"type={type_id}",
-        )
-        if items:
-            return items
-        # Fallback: drop the type filter. Logged so we can tell which
-        # path served each section over time.
-        log.info(
-            "enumerate_section_items: section %s typed call returned 0; "
-            "retrying without type filter",
-            section_id,
-        )
-        items, _ = self._fetch_section_items(
-            url, section_id, media_type,
-            params={"includeGuids": "1"},
-            label="no-type",
-        )
-        return items
-
-    def _fetch_section_items(
-        self, url: str, section_id: str, media_type: str,
-        *, params: dict[str, str], label: str,
-    ) -> tuple[list[PlexLibraryItem], "ET.Element | None"]:
-        # v1.11.21: paginated fetch with a generous per-call timeout.
-        # Pre-fix the unpaginated /all on a large section (10K+ shows
-        # with locations + GUIDs) blew past the client-wide 10s timeout
-        # and the worker logged 'no response'. Plex pages by passing
-        # X-Plex-Container-Start / X-Plex-Container-Size as either
-        # query params or headers — query params keep the call URL
-        # self-describing in the docker log.
         page_size = 500
         per_call_timeout = 120.0
         out: list[PlexLibraryItem] = []
         skipped_no_rk = 0
         tag_counts: dict[str, int] = {}
-        merged_root: "ET.Element | None" = None
         total_size: int | None = None
         offset = 0
         while True:
-            page_params = dict(params)
-            page_params["X-Plex-Container-Start"] = str(offset)
-            page_params["X-Plex-Container-Size"] = str(page_size)
-            r = self._get(url, params=page_params, timeout=per_call_timeout)
+            params = {
+                "type": type_id,
+                "includeGuids": "1",
+                "X-Plex-Container-Start": str(offset),
+                "X-Plex-Container-Size": str(page_size),
+            }
+            r = self._get(url, params=params, timeout=per_call_timeout)
             if r is None or r.status_code != 200:
                 log.warning(
-                    "enumerate_section_items[%s]: section %s GET %s "
+                    "enumerate_section_items: section %s GET %s "
                     "(start=%d, size=%d) returned %s (%s)",
-                    label, section_id, url, offset, page_size,
+                    section_id, url, offset, page_size,
                     r.status_code if r is not None else "no response",
                     "no response" if r is None else (r.text[:200] if r.text else ""),
                 )
-                return [], None
+                return []
             try:
                 root = ET.fromstring(r.text)
             except ET.ParseError as e:
                 log.warning(
-                    "enumerate_section_items[%s]: section %s XML parse failed "
+                    "enumerate_section_items: section %s XML parse failed "
                     "at offset %d: %s",
-                    label, section_id, offset, e,
+                    section_id, offset, e,
                 )
-                return [], None
-            if merged_root is None:
-                merged_root = root
+                return []
             container_size = int(root.get("size", "0") or 0)
             container_total = root.get("totalSize")
             if total_size is None and container_total is not None:
@@ -547,10 +506,9 @@ class PlexClient:
                 except ValueError:
                     total_size = None
             log.info(
-                "enumerate_section_items[%s]: section %s (type=%s) "
+                "enumerate_section_items: section %s (type=%s) "
                 "page start=%d size=%d totalSize=%s",
-                label, section_id, media_type, offset, container_size,
-                container_total,
+                section_id, media_type, offset, container_size, container_total,
             )
             page_children = list(root)
             for el in page_children:
@@ -584,13 +542,13 @@ class PlexClient:
             offset += container_size
         if not out:
             log.warning(
-                "enumerate_section_items[%s]: section %s returned 0 usable items "
+                "enumerate_section_items: section %s returned 0 usable items "
                 "(media_type=%s, total children seen=%d, tag_counts=%s, "
                 "skipped_no_rk=%d, total_size=%s)",
-                label, section_id, media_type,
+                section_id, media_type,
                 sum(tag_counts.values()), tag_counts, skipped_no_rk, total_size,
             )
-        return out, merged_root
+        return out
 
     def get_item_paths(self, rating_key: str) -> list[str]:
         """Return all file paths for an item (for finding the media folder)."""
