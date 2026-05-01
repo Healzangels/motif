@@ -923,6 +923,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type = 'plex_enum'
                      AND status IN ('pending','running')) AS plex_enum_in_flight,
+                  -- v1.11.7: per-job-type counts so the topbar status
+                  -- can report what's actually being worked on. Cheaper
+                  -- than per-type subqueries because the index on
+                  -- (status, next_run_at) lets each one be a single seek.
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'download'
+                     AND status IN ('pending','running')) AS download_in_flight,
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'place'
+                     AND status IN ('pending','running')) AS place_in_flight,
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'probe'
+                     AND status IN ('pending','running')) AS probe_in_flight,
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'scan'
+                     AND status IN ('pending','running')) AS scan_in_flight,
                   -- Local files with no placement = items waiting placement
                   -- approval (typically because a sidecar already exists at
                   -- the Plex folder; user must approve overwrite via /pending).
@@ -997,6 +1013,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "sync_in_flight": row["sync_in_flight"],
                 "themerrdb_sync_in_flight": row["themerrdb_sync_in_flight"],
                 "plex_enum_in_flight": row["plex_enum_in_flight"],
+                "download_in_flight": row["download_in_flight"],
+                "place_in_flight": row["place_in_flight"],
+                "probe_in_flight": row["probe_in_flight"],
+                "scan_in_flight": row["scan_in_flight"],
                 "pending_placements": row["pending_placements"],
             },
             "storage": {

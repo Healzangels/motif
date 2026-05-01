@@ -96,12 +96,19 @@
   async function refreshTopbarStatus() {
     try {
       const stats = await api('GET', '/api/stats');
-      // v1.11.5: when ANY sync is in flight, replace the queue counter
-      // with a banner-y status so the user can tell at a glance that
-      // Plex / ThemerrDB work is happening. The dot also goes amber
-      // for the duration so the indicator is visible peripherally.
-      const plexEnumBusy = (stats.queue && stats.queue.plex_enum_in_flight > 0);
-      const themerrdbBusy = (stats.queue && stats.queue.themerrdb_sync_in_flight > 0);
+      // v1.11.7: replace the opaque "Nr/Mp" with a richer status that
+      // reports what kind of work is in flight. Priority (most → least
+      // attention-grabbing): sync > download > place > scan > probe >
+      // idle. Probes are a low-priority background sweep, so a probe
+      // backlog doesn't dominate the indicator the way a download
+      // backlog does. Failures still tint the dot red.
+      const q = stats.queue || {};
+      const plexEnumBusy = q.plex_enum_in_flight > 0;
+      const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
+      const downloadBusy = q.download_in_flight > 0;
+      const placeBusy = q.place_in_flight > 0;
+      const scanBusy = q.scan_in_flight > 0;
+      const probeBusy = q.probe_in_flight > 0;
       let txt;
       if (themerrdbBusy && plexEnumBusy) {
         txt = 'SYNCING THEMERRDB + PLEX';
@@ -109,15 +116,30 @@
         txt = 'SYNCING WITH THEMERRDB';
       } else if (plexEnumBusy) {
         txt = 'SYNCING WITH PLEX';
+      } else if (downloadBusy) {
+        txt = `DOWNLOADING ${q.download_in_flight}`;
+      } else if (placeBusy) {
+        txt = `PLACING ${q.place_in_flight}`;
+      } else if (scanBusy) {
+        txt = 'SCANNING DISK';
+      } else if (probeBusy) {
+        // Probe is a passive availability check — keep the wording
+        // distinct from real syncs so "PROBING 2173" doesn't read as
+        // an active block on user-facing work.
+        txt = `PROBING ${q.probe_in_flight}`;
+      } else if ((q.running || 0) > 0 || (q.pending || 0) > 0) {
+        txt = `${q.running || 0}R / ${q.pending || 0}P`;
       } else {
-        txt = `${stats.queue.running}r/${stats.queue.pending}p`;
+        txt = 'IDLE';
       }
       $('#topbar-status-text').textContent = txt;
       const dot = $('#topbar-status .dot');
       dot.classList.remove('dot-amber', 'dot-red');
-      if (stats.queue.failed > 0) dot.classList.add('dot-red');
-      else if (themerrdbBusy || plexEnumBusy) dot.classList.add('dot-amber');
-      else if (stats.queue.pending > 0) dot.classList.add('dot-amber');
+      const anyActive = themerrdbBusy || plexEnumBusy || downloadBusy
+                     || placeBusy || scanBusy || probeBusy;
+      if (q.failed > 0) dot.classList.add('dot-red');
+      else if (anyActive) dot.classList.add('dot-amber');
+      else if (q.pending > 0) dot.classList.add('dot-amber');
 
       // Updates badge
       const updBadge = $('#topbar-updates-badge');
