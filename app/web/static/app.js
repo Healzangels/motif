@@ -235,6 +235,24 @@
         statusEl?.removeAttribute('data-failed-link');
       }
 
+      // v1.11.77: per-media-type 'we have TDB data for this' flags.
+      // Pre-fix the TDB pill was gated on last_sync_at (a successful
+      // sync ever) — if the user cancelled the very first sync mid-
+      // way, last_sync_at stayed null forever and pills never
+      // rendered, even though themes had real data for items
+      // captured before the cancel. Now we gate on the themes count
+      // being > 0 for the row's media_type, so partial captures
+      // still light up the pills truthfully.
+      const movies_total = (stats.movies && stats.movies.total) || 0;
+      const tv_total = (stats.tv && stats.tv.total) || 0;
+      window.__motif_themes_have = {
+        movie: movies_total > 0,
+        tv: tv_total > 0,
+        // anime tab pulls from both depending on section type;
+        // either source qualifies it as 'we have data'.
+        any: (movies_total + tv_total) > 0,
+      };
+
       // Updates badge
       const updBadge = $('#topbar-updates-badge');
       if (updBadge) {
@@ -2685,13 +2703,10 @@
     if (scanHint) {
       scanHint.style.display = data.plex_enumerated ? 'none' : '';
     }
-    // v1.11.29: TDB pill is suppressed entirely until the first
-    // ThemerrDB sync has finished — pre-sync the themes table is
-    // empty, so every row would render as 'no TDB' which is
-    // misleading (we don't actually know yet). Stash the flag on
-    // window so renderLibraryRow's pill builder reads it without
-    // needing /api/library plumbed through.
-    window.__motif_first_sync_done = !!data.last_sync_at;
+    // v1.11.77: TDB pill gate now lives on window.__motif_themes_have
+    // (set during the topbar /api/stats tick) — keyed per media_type
+    // so a cancelled-mid-sync still renders pills for the side that
+    // got data. The previous last_sync_at gate is gone.
     const totalPages = Math.max(1, Math.ceil(data.total / libraryState.perPage));
     document.getElementById('library-pager').innerHTML = `
       <button data-lib-page="${libraryState.page - 1}" ${libraryState.page <= 1 ? 'disabled' : ''}>« prev</button>
@@ -2920,13 +2935,20 @@
     ]);
     const tdbAvailLabel = (() => {
       if (it.not_in_plex) return '';
-      // v1.11.29: hide the TDB pill entirely until the first
-      // ThemerrDB sync has finished. Pre-sync the themes table is
-      // empty so every row would render as 'no TDB', which is
-      // misleading — we don't actually know whether ThemerrDB tracks
-      // the title yet. Once last_sync_at is set we know the answer
-      // for every row and the pill can paint truthfully.
-      if (!window.__motif_first_sync_done) return '';
+      // v1.11.29: hide the TDB pill entirely until we have data for
+      // this row's media_type. Pre-sync the themes table is empty,
+      // so every row would render as 'no TDB' — misleading.
+      // v1.11.77: changed gate from last_sync_at (successful sync
+      // ever) to per-media-type themes count > 0, so partial
+      // captures (cancelled-mid-sync, sync only finished movies
+      // before TV index was reached, etc.) still light up the pills
+      // truthfully for the side that DID get data.
+      const rowMt = (it.theme_media_type === 'tv'
+                     || it.plex_media_type === 'show')
+                    ? 'tv' : 'movie';
+      const haveTdb = !!(window.__motif_themes_have
+                         && window.__motif_themes_have[rowMt]);
+      if (!haveTdb) return '';
       const isThemerrDbAvail = it.upstream_source
         && it.upstream_source !== 'plex_orphan';
       if (!isThemerrDbAvail) {

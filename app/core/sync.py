@@ -762,13 +762,42 @@ def run_sync(db_path, base_url: str, *,
         return stats
 
     except Exception as e:
+        # v1.11.77: persist partial stats on every termination path so
+        # the dashboard 'Last Sync' panel + the TDB-pill gating see
+        # how much of the upstream we actually captured before we
+        # bailed. Pre-fix the exception handler only wrote the
+        # status + error, leaving movies_seen / tv_seen / new_count
+        # / updated_count at 0 — the user couldn't tell whether a
+        # cancellation hit at item 1 or item 4000.
+        #
+        # _JobCancelled gets a distinct error string so the dashboard
+        # can call out 'cancelled' separately from generic failures
+        # without changing the sync_runs.status CHECK enum (which
+        # would force a DB wipe in dev mode). Status stays 'failed'
+        # for any non-clean exit; the error column distinguishes.
+        from .worker import _JobCancelled
+        err_text = ("cancelled by user"
+                    if isinstance(e, _JobCancelled) else str(e))
         with get_conn(db_path) as conn:
             conn.execute(
-                "UPDATE sync_runs SET finished_at = ?, status = 'failed', error = ? WHERE id = ?",
-                (now_iso(), str(e), run_id),
+                """UPDATE sync_runs SET
+                       finished_at = ?, status = 'failed', error = ?,
+                       movies_seen = ?, tv_seen = ?,
+                       new_count = ?, updated_count = ?
+                   WHERE id = ?""",
+                (now_iso(), err_text,
+                 stats.movies_seen, stats.tv_seen,
+                 stats.new_count, stats.updated_count, run_id),
             )
         log_event(
-            db_path, level="ERROR", component="sync",
-            message=f"Sync run #{run_id} failed: {e}",
+            db_path,
+            level="WARNING" if isinstance(e, _JobCancelled) else "ERROR",
+            component="sync",
+            message=f"Sync run #{run_id} {'cancelled' if isinstance(e, _JobCancelled) else 'failed'}: {err_text}",
+            detail={
+                "movies_seen": stats.movies_seen, "tv_seen": stats.tv_seen,
+                "new": stats.new_count, "updated": stats.updated_count,
+                "errors": stats.errors,
+            },
         )
         raise
