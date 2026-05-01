@@ -451,14 +451,18 @@
       // THEMERRDB' appears as soon as the user clicks, instead of
       // waiting up to 15s for the next poll tick.
       refreshTopbarStatus();
-      // Poll /api/stats until the sync + auto-enqueued plex_enum settle.
-      // Once neither job is in flight we flash DONE then revert.
+      // v1.11.47: poll only themerrdb_sync_in_flight (was sync_in_flight,
+      // which includes plex_enum). The dashboard SYNC button represents
+      // a ThemerrDB sync only; if a plex_enum runs concurrently the
+      // user shouldn't see SYNCING… stuck on this button until the
+      // unrelated enum drains. The two-thread worker pool runs sync
+      // and plex_enum in parallel anyway.
       if (syncWatcher) clearInterval(syncWatcher);
       let primed = false;
       syncWatcher = setInterval(async () => {
         try {
           const s = await api('GET', '/api/stats');
-          const inFlight = (s.queue && s.queue.sync_in_flight) || 0;
+          const inFlight = (s.queue && s.queue.themerrdb_sync_in_flight) || 0;
           if (inFlight > 0) primed = true;
           if (primed && inFlight === 0) {
             clearInterval(syncWatcher);
@@ -473,14 +477,14 @@
     // If the page loads while a sync is already in progress (left running
     // by another tab/session), reflect that.
     api('GET', '/api/stats').then((s) => {
-      if (s && s.queue && s.queue.sync_in_flight > 0) {
+      if (s && s.queue && (s.queue.themerrdb_sync_in_flight || 0) > 0) {
         setSyncButtonState('running');
         if (syncWatcher) clearInterval(syncWatcher);
         let primed = true;
         syncWatcher = setInterval(async () => {
           try {
             const s2 = await api('GET', '/api/stats');
-            const inFlight = (s2.queue && s2.queue.sync_in_flight) || 0;
+            const inFlight = (s2.queue && s2.queue.themerrdb_sync_in_flight) || 0;
             if (primed && inFlight === 0) {
               clearInterval(syncWatcher);
               syncWatcher = null;
