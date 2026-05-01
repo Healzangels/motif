@@ -3774,58 +3774,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/coverage/plex")
     async def api_coverage_plex(db: Path = Depends(get_db_path)):
+        """v1.11.38: serve from plex_items (populated by plex_enum) instead
+        of hitting Plex's /library/sections/{id}/all live on every
+        dashboard load. The previous live call used the client-wide
+        10s timeout — on a large section it'd ReadTimeout, the request
+        would hang ~10s, and dashboard → library navigation felt
+        sluggish even when the worker wasn't doing anything heavy.
+        plex_items is a DB-side mirror of the same data; refreshing
+        the cache is what plex_enum is for.
+        """
         if not settings.plex_enabled or not settings.plex_token:
             return {"enabled": False, "items": []}
-        cfg = PlexConfig(
-            url=settings.plex_url, token=settings.plex_token,
-            movie_section=settings.plex_movie_section,
-            tv_section=settings.plex_tv_section, enabled=True,
-        )
-        movies_in_plex: list = []
-        tv_in_plex: list = []
-        try:
-            with PlexClient(cfg) as plex:
-                for c in plex.list_section(media_type="movie"):
-                    movies_in_plex.append({
-                        "rating_key": c.rating_key, "title": c.title,
-                        "year": c.year, "has_theme": c.has_theme,
-                    })
-                for c in plex.list_section(media_type="tv"):
-                    tv_in_plex.append({
-                        "rating_key": c.rating_key, "title": c.title,
-                        "year": c.year, "has_theme": c.has_theme,
-                    })
-        except Exception as e:
-            return {"enabled": True, "error": str(e)}
-
-        # Cross-reference: which Plex items have themes available in ThemerrDB
-        # but aren't yet placed locally?
         with get_conn(db) as conn:
-            available_movies = {
-                (r["title"].lower(), r["year"]): dict(r)
-                for r in conn.execute(
-                    "SELECT title, year, tmdb_id FROM themes WHERE media_type='movie'"
-                ).fetchall()
-            }
-            available_tv = {
-                (r["title"].lower(), r["year"]): dict(r)
-                for r in conn.execute(
-                    "SELECT title, year, tmdb_id FROM themes WHERE media_type='tv'"
-                ).fetchall()
-            }
+            # Cross-reference plex_items + themes via the cached
+            # theme_id (v1.11.26). 'motif_available' is True iff the
+            # row resolves to a real (non-orphan) themes record.
+            movies_rows = conn.execute("""
+                SELECT pi.rating_key, pi.title, pi.year, pi.has_theme,
+                       t.tmdb_id, t.upstream_source
+                FROM plex_items pi
+                INNER JOIN plex_sections ps
+                  ON ps.section_id = pi.section_id AND ps.included = 1
+                LEFT JOIN themes t ON t.id = pi.theme_id
+                WHERE pi.media_type = 'movie'
+                ORDER BY pi.title COLLATE NOCASE
+            """).fetchall()
+            tv_rows = conn.execute("""
+                SELECT pi.rating_key, pi.title, pi.year, pi.has_theme,
+                       t.tmdb_id, t.upstream_source
+                FROM plex_items pi
+                INNER JOIN plex_sections ps
+                  ON ps.section_id = pi.section_id AND ps.included = 1
+                LEFT JOIN themes t ON t.id = pi.theme_id
+                WHERE pi.media_type = 'show'
+                ORDER BY pi.title COLLATE NOCASE
+            """).fetchall()
 
-        def annotate(items, available):
-            for it in items:
-                key = (it["title"].lower(), it["year"])
-                match = available.get(key)
-                it["motif_available"] = bool(match)
-                it["tmdb_id"] = match["tmdb_id"] if match else None
-            return items
+        def to_item(r):
+            return {
+                "rating_key": r["rating_key"],
+                "title": r["title"],
+                "year": r["year"],
+                "has_theme": bool(r["has_theme"]),
+                "motif_available": bool(
+                    r["tmdb_id"] is not None
+                    and r["upstream_source"] != "plex_orphan"
+                ),
+                "tmdb_id": r["tmdb_id"],
+            }
 
         return {
             "enabled": True,
-            "movies": annotate(movies_in_plex, available_movies),
-            "tv": annotate(tv_in_plex, available_tv),
+            "movies": [to_item(r) for r in movies_rows],
+            "tv": [to_item(r) for r in tv_rows],
         }
 
     # --- JSON: sync ---
