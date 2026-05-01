@@ -75,18 +75,18 @@ def main() -> int:
     # Seed motif.yaml on first run if missing (also handles v1.3.x migration)
     _bootstrap_config_file(settings)
 
-    # Create themes subdirs ONLY if the user has configured a path. On a
-    # fresh install with no env-var-driven themes_dir, the user must visit
-    # /settings to set the path before any download work happens. The
-    # web UI loads regardless.
+    # v1.11.0: only the themes_dir root is created here. Per-section
+    # subdirs (themes_dir/<themes_subdir>) are created on demand by the
+    # download / adopt / upload paths, after Plex section discovery has
+    # populated plex_sections.themes_subdir. Pre-creating them at boot
+    # would require enumerating Plex first, and we want the web UI up
+    # even on a totally fresh install.
     if settings.is_paths_ready():
         td = settings.themes_dir
         try:
             td.mkdir(parents=True, exist_ok=True)
-            settings.movies_themes_dir.mkdir(parents=True, exist_ok=True)
-            settings.tv_themes_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            log.error("Failed to create themes subdirs at %s: %s", td, e)
+            log.error("Failed to create themes_dir %s: %s", td, e)
 
     log.info("motif starting")
     log.info("  config_dir   = %s", settings.config_dir)

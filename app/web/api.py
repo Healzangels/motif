@@ -1140,12 +1140,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Re-read so env overrides are re-applied
         settings.reload()
 
-        # If themes_dir is now set, create subdirs
+        # v1.11.0: only the themes_dir root is precreated. Per-section
+        # subdirs land lazily as the worker / API write into them.
         if settings.is_paths_ready():
             try:
                 settings.themes_dir.mkdir(parents=True, exist_ok=True)
-                settings.movies_themes_dir.mkdir(parents=True, exist_ok=True)
-                settings.tv_themes_dir.mkdir(parents=True, exist_ok=True)
             except OSError as e:
                 log_event(db, level="WARNING", component="config",
                           message=f"Could not create themes subdirs: {e}")

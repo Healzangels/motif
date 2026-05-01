@@ -60,8 +60,6 @@ class ScanContext:
     db_path: Path
     scan_run_id: int
     themes_dir: Path
-    movies_themes_dir: Path
-    tv_themes_dir: Path
     plus_mode: str
     tmdb: TMDBClient
     cancel_check: callable  # () -> bool, returns True if scan should abort
@@ -97,8 +95,6 @@ def run_scan(db_path: Path, settings, *, initiated_by: str = "system",
         db_path=db_path,
         scan_run_id=scan_run_id,
         themes_dir=settings.themes_dir,
-        movies_themes_dir=settings.movies_themes_dir,
-        tv_themes_dir=settings.tv_themes_dir,
         plus_mode=settings.plus_equiv_mode,
         tmdb=tmdb,
         cancel_check=cancel_check,
