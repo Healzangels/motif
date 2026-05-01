@@ -259,13 +259,37 @@ def _candidate_local_paths(folder_path: str):
 def folder_has_theme_sidecar(folder_path: str) -> bool:
     """Public helper: True if any theme.<audio-ext> exists at
     folder_path (or any of its host→container translations).
-    Mirrors the inline check used by _upsert_items' Phase 1."""
+    Mirrors the inline check used by _upsert_items' Phase 1.
+
+    Convenience wrapper around stat_theme_sidecar() that maps the
+    indeterminate (None) result to False — usable when the caller
+    doesn't have a previous-known-good value to preserve.
+    """
+    out = stat_theme_sidecar(folder_path)
+    return bool(out)
+
+
+def stat_theme_sidecar(folder_path: str) -> bool | None:
+    """v1.11.67: returns True if a theme.<audio-ext> exists, False
+    if we successfully scanned the folder and confirmed no such
+    file, or None if EVERY candidate path raised OSError on either
+    is_dir() or iterdir() — i.e. we couldn't determine the answer.
+
+    Pre-fix, transient Unraid user-share / NFS hiccups produced a
+    silent False return that plex_enum committed to pi.local_theme_file=0,
+    which combined with Plex's (correctly cached) has_theme=1 made
+    the row render as P (Plex agent) when the file was really there.
+    Returning None lets callers preserve the previous-known value
+    instead of overwriting truth with a temporary fault.
+    """
     if not folder_path:
         return False
+    any_reachable = False
     for candidate in _candidate_local_paths(folder_path):
         try:
             if not candidate.is_dir():
                 continue
+            any_reachable = True
             for entry in candidate.iterdir():
                 try:
                     if not entry.is_file():
@@ -278,8 +302,15 @@ def folder_has_theme_sidecar(folder_path: str) -> bool:
                 if name[len("theme"):] in SIDECAR_AUDIO_EXTS:
                     return True
             return False
-        except OSError:
+        except OSError as e:
+            log.debug("stat_theme_sidecar: iterdir(%s) failed: %s",
+                      candidate, e)
             continue
+    if not any_reachable:
+        log.warning("stat_theme_sidecar: no candidate path reachable for "
+                    "%r — returning indeterminate (None)", folder_path)
+        return None
+    # We reached at least one candidate but it had no theme file
     return False
 
 
@@ -317,41 +348,81 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     enriched: list[tuple[PlexLibraryItem, int]] = []
     if items:
         from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as _FutTimeout
-        sidecar_results: dict[int, int] = {}
+        # v1.11.67: pre-fetch existing pi.local_theme_file for every
+        # rating_key we're about to enum, keyed by rk. When a per-item
+        # stat comes back indeterminate (transient Unraid share hiccup,
+        # NFS timeout, etc.) we preserve the previous value rather
+        # than stomping a known-good 1 with a transient 0. Pre-fix
+        # one bad iterdir() drove pi.local_theme_file=0 even though
+        # Plex (correctly) reported has_theme=1, leaving the row
+        # rendering as P (Plex agent) when the user's local theme.mp3
+        # was clearly there.
+        existing_local: dict[str, int] = {}
+        if items:
+            with get_conn(db_path) as conn:
+                rks = [it.rating_key for it in items]
+                # SQLite IN-clause limit ~999 — chunk just in case.
+                for i in range(0, len(rks), 500):
+                    chunk = rks[i:i + 500]
+                    qmarks = ",".join("?" for _ in chunk)
+                    for r in conn.execute(
+                        f"SELECT rating_key, local_theme_file "
+                        f"FROM plex_items WHERE rating_key IN ({qmarks})",
+                        chunk,
+                    ).fetchall():
+                        existing_local[r["rating_key"]] = int(r["local_theme_file"] or 0)
+
+        # sidecar_results values: 1 / 0 / None (indeterminate — use existing)
+        sidecar_results: dict[int, int | None] = {}
         log.info("plex_enum: Phase 1 (sidecar stat) on %d items", len(items))
         phase1_start = _t.monotonic()
         with ThreadPoolExecutor(max_workers=16,
                                 thread_name_prefix="motif-sidecar") as ex:
             futures = {
-                ex.submit(folder_has_theme_sidecar, it.folder_path): idx
+                ex.submit(stat_theme_sidecar, it.folder_path): idx
                 for idx, it in enumerate(items)
             }
             done = 0
             for fut in as_completed(futures, timeout=None):
                 idx = futures[fut]
                 try:
-                    sidecar_results[idx] = 1 if fut.result(timeout=30) else 0
+                    res = fut.result(timeout=30)
+                    if res is None:
+                        sidecar_results[idx] = None  # indeterminate
+                    else:
+                        sidecar_results[idx] = 1 if res else 0
                 except _FutTimeout:
                     log.warning(
                         "plex_enum: sidecar stat timeout for %r — "
-                        "treating as no-sidecar (likely stalled mount)",
+                        "preserving existing flag (likely stalled mount)",
                         items[idx].folder_path,
                     )
-                    sidecar_results[idx] = 0
+                    sidecar_results[idx] = None
                 except Exception as e:
                     log.warning(
-                        "plex_enum: sidecar stat error for %r: %s",
+                        "plex_enum: sidecar stat error for %r: %s — "
+                        "preserving existing flag",
                         items[idx].folder_path, e,
                     )
-                    sidecar_results[idx] = 0
+                    sidecar_results[idx] = None
                 done += 1
                 if done % 200 == 0:
                     log.info("plex_enum: Phase 1 progress %d/%d (%.1fs)",
                              done, len(items), _t.monotonic() - phase1_start)
         log.info("plex_enum: Phase 1 done in %.1fs",
                  _t.monotonic() - phase1_start)
+        # Resolve indeterminate (None) results against the previously-
+        # stored value so a transient stat fault doesn't downgrade a
+        # known-good local_theme_file=1 to 0.
         for idx, it in enumerate(items):
-            enriched.append((it, sidecar_results.get(idx, 0)))
+            res = sidecar_results.get(idx)
+            if res is None:
+                # Keep whatever was last in the DB (defaults to 0 on
+                # first enum). For a brand-new row we don't have one;
+                # 0 is the safe default.
+                enriched.append((it, existing_local.get(it.rating_key, 0)))
+            else:
+                enriched.append((it, res))
 
     # Phase 2: batched upserts.
     inserted = 0
