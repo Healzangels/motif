@@ -54,44 +54,60 @@ def canonical_theme_subdir(title: str, year: str | None) -> str:
 
 def compute_section_themes_subdir(
     title: str, *, type_: str, is_anime: bool, is_4k: bool,
+    location_paths: list[str] | None = None,
 ) -> str:
-    """v1.11.46: filesystem-safe slug derived directly from the Plex
-    section title, regardless of is_anime / is_4k flags. The user
-    names their section "4kmovies" or "Flex" or "Documentaries"; the
-    themes subdir mirrors that exactly (lowercased, with runs of
-    non-alphanumeric characters collapsed to a single hyphen).
+    """v1.11.58: themes subdir mirrors the Plex section's on-disk
+    library folder (basename of the first location_path), not the
+    section title. The user's mental model is "the themes folder
+    should match the library folder" — if Plex stores the library at
+    /data/media/4kmovies, themes land at <themes_dir>/4kmovies/.
 
-    Pre-v1.11.46 the slug was either category-fixed ("4kmovies",
-    "anime", ...) or title-with-suffix ("movies-4k", "anime-anime"),
-    both of which surprised users whose Plex section names already
-    encoded the category. The flags now only drive the tab partition
-    (Movies / TV / Anime) and the standard / 4K toggle within a tab —
-    they no longer touch the storage layout.
+    Pre-v1.11.58 the slug was derived from the section TITLE — so a
+    section named "4K Movies" sitting on a /data/media/4kmovies
+    folder produced themes/4k-movies/, which surprised users.
 
-    is_anime / is_4k stay in the signature so callers don't need to
-    change, but they're unused in the slug derivation.
+    Examples (location_path → slug):
+      - /data/media/4kmovies          → 4kmovies
+      - /data/media/movies            → movies
+      - /data/media/anime             → anime
+      - /data/media/tv-shows          → tv-shows
+      - /mnt/disk1/Documentaries      → documentaries
+      - /data/media/Movies (4K)       → movies-4k
 
-    Examples:
-      - "Movies"          → "movies"
-      - "4K Movies"       → "4k-movies"
-      - "Movies4K"        → "movies4k"
-      - "4kmovies"        → "4kmovies"
-      - "TV Shows"        → "tv-shows"
-      - "Flex"            → "flex"
-      - "Documentaries"   → "documentaries"
-      - "Anime"           → "anime"
-      - empty title       → "movies" (or "tv" for show-type)
+    Fallbacks (in order):
+      1. basename of location_paths[0] when non-empty
+      2. slugified title
+      3. "movies" (or "tv" for show-type) if everything else is empty
 
-    Caller (sections._allocate_themes_subdir) is responsible for
-    collision handling — if two sections compute the same subdir, the
-    second one gets a -2 / -3 / ... suffix until unique.
+    is_anime / is_4k stay in the signature for caller compatibility
+    but no longer affect the slug; the same is true of the title arg
+    when location_paths gives us a usable answer.
+
+    Caller (sections._allocate_themes_subdir) handles collisions by
+    appending -2 / -3 / ... when two sections compute the same slug.
     """
     del is_anime, is_4k  # unused — see docstring
-    raw = (title or "").strip().lower() or ("tv" if type_ == "show" else "movies")
-    slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-") or (
-        "tv" if type_ == "show" else "movies"
-    )
-    return slug
+    if location_paths:
+        for p in location_paths:
+            if not p:
+                continue
+            # basename of the path; tolerate trailing slashes
+            base = p.rstrip("/").rsplit("/", 1)[-1]
+            if not base:
+                continue
+            slug = _slugify(base)
+            if slug:
+                return slug
+    raw = (title or "").strip()
+    if raw:
+        slug = _slugify(raw)
+        if slug:
+            return slug
+    return "tv" if type_ == "show" else "movies"
+
+
+def _slugify(s: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")
 
 
 # v1.11.0: relocate_legacy_canonical_files and backfill_hash_match_provenance

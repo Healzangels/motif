@@ -117,6 +117,23 @@ def main() -> int:
     # is a fresh-start release; the DB is repopulated from upstream sources by
     # sync + plex_enum + scan after the v17 → v18 migration's hard-stop fires.
 
+    # v1.11.58: bring existing sections forward to the location-path-
+    # derived themes_subdir naming. Idempotent — sections already on
+    # the new naming are no-ops; rename failures (target exists, etc.)
+    # are logged and skipped so a partial migration never half-updates
+    # local_files.file_path. Only runs when themes_dir is configured.
+    if settings.is_paths_ready():
+        try:
+            from .core.sections import migrate_themes_subdirs_inplace
+            migrated = migrate_themes_subdirs_inplace(
+                settings.db_path, settings.themes_dir,
+            )
+            if migrated:
+                log.info("Themes subdir migration: %d section(s) updated",
+                         migrated)
+        except Exception as e:
+            log.warning("Themes subdir migration failed at startup: %s", e)
+
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).
     if settings.plex_enabled and settings.plex_url and settings.plex_token:

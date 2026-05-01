@@ -31,6 +31,7 @@ def _now() -> str:
 
 def _allocate_themes_subdir(
     conn, *, title: str, type_: str, is_anime: bool, is_4k: bool,
+    location_paths: list[str] | None = None,
     own_section_id: str | None = None,
 ) -> str:
     """v1.11.0: pick a unique themes_subdir slug for a section.
@@ -38,9 +39,14 @@ def _allocate_themes_subdir(
     Computes the candidate slug via compute_section_themes_subdir,
     then checks plex_sections for collisions (excluding own_section_id
     when updating). On collision appends `-2`, `-3`, ... until unique.
+
+    v1.11.58: now takes location_paths so the slug derives from the
+    on-disk library folder basename (matching the user's mental
+    model 'themes folder mirrors media folder').
     """
     base = compute_section_themes_subdir(
         title, type_=type_, is_anime=is_anime, is_4k=is_4k,
+        location_paths=location_paths,
     )
     candidate = base
     suffix = 2
@@ -74,15 +80,20 @@ def reassign_themes_subdir(
     """
     with get_conn(db_path) as conn:
         row = conn.execute(
-            "SELECT title, type, is_anime, is_4k FROM plex_sections "
-            "WHERE section_id = ?",
+            "SELECT title, type, is_anime, is_4k, location_paths "
+            "FROM plex_sections WHERE section_id = ?",
             (section_id,),
         ).fetchone()
         if row is None:
             return None
+        try:
+            locs = json.loads(row["location_paths"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            locs = []
         new_subdir = _allocate_themes_subdir(
             conn, title=row["title"], type_=row["type"],
             is_anime=bool(row["is_anime"]), is_4k=bool(row["is_4k"]),
+            location_paths=locs,
             own_section_id=section_id,
         )
         conn.execute(
@@ -138,9 +149,13 @@ def refresh_sections(
                 # so it's stable across title renames. is_anime/is_4k
                 # default to 0 at first discovery; if the user later
                 # toggles a flag we recompute via api flag-update.
+                # v1.11.58: pass location_paths so the slug derives
+                # from the on-disk library folder basename instead of
+                # the section title.
                 subdir = _allocate_themes_subdir(
                     conn, title=s.title, type_=s.type,
                     is_anime=False, is_4k=False,
+                    location_paths=s.location_paths,
                 )
                 conn.execute(
                     """INSERT INTO plex_sections
@@ -218,3 +233,96 @@ def set_section_inclusion(
             (1 if included else 0, section_id),
         )
     return cur.rowcount > 0
+
+
+def migrate_themes_subdirs_inplace(db_path: Path, themes_dir: Path) -> int:
+    """v1.11.58: one-shot recompute of every section's themes_subdir
+    against the latest naming rule (basename of location_paths[0]).
+    For each section whose subdir changed:
+      1. If <themes_dir>/<old> exists on disk, rename to <themes_dir>/<new>.
+         If <new> already exists we skip the move (would clobber); the
+         user can resolve manually. Failure to rename aborts this
+         section's migration to avoid leaving the DB pointing at a
+         folder that doesn't exist.
+      2. UPDATE plex_sections.themes_subdir.
+      3. UPDATE local_files.file_path (any row whose path begins with
+         '<old>/' is rewritten to '<new>/').
+
+    Idempotent: a section already on the new naming becomes a no-op.
+    Returns the count of sections actually migrated.
+    """
+    import os
+    migrated = 0
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT section_id, title, type, is_anime, is_4k, "
+            "       location_paths, themes_subdir "
+            "FROM plex_sections"
+        ).fetchall()
+    for r in rows:
+        try:
+            locs = json.loads(r["location_paths"] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            locs = []
+        # Compute the desired slug (without collision suffix — we'll
+        # apply that via _allocate_themes_subdir below)
+        from .canonical import compute_section_themes_subdir
+        desired_base = compute_section_themes_subdir(
+            r["title"], type_=r["type"],
+            is_anime=bool(r["is_anime"]), is_4k=bool(r["is_4k"]),
+            location_paths=locs,
+        )
+        old_subdir = r["themes_subdir"] or ""
+        if not old_subdir or desired_base == old_subdir:
+            continue
+        # Re-allocate (with collision check) to land on the final slug
+        with get_conn(db_path) as conn:
+            new_subdir = _allocate_themes_subdir(
+                conn, title=r["title"], type_=r["type"],
+                is_anime=bool(r["is_anime"]), is_4k=bool(r["is_4k"]),
+                location_paths=locs,
+                own_section_id=r["section_id"],
+            )
+        if new_subdir == old_subdir:
+            continue  # collision pushed us back to the same name
+
+        old_dir = themes_dir / old_subdir
+        new_dir = themes_dir / new_subdir
+        # Move the on-disk folder if the old one exists
+        if old_dir.exists():
+            if new_dir.exists():
+                log.warning(
+                    "Themes subdir migration: would move %s → %s but "
+                    "the destination already exists; skipping section %s",
+                    old_dir, new_dir, r["section_id"],
+                )
+                continue
+            try:
+                new_dir.parent.mkdir(parents=True, exist_ok=True)
+                os.rename(str(old_dir), str(new_dir))
+                log.info("Themes subdir migrated on disk: %s → %s",
+                         old_dir, new_dir)
+            except OSError as e:
+                log.warning(
+                    "Themes subdir migration: rename %s → %s failed: %s; "
+                    "leaving section %s on the old subdir",
+                    old_dir, new_dir, e, r["section_id"],
+                )
+                continue
+
+        # DB updates: section row + every local_files.file_path with
+        # the old prefix
+        with get_conn(db_path) as conn:
+            conn.execute(
+                "UPDATE plex_sections SET themes_subdir = ? WHERE section_id = ?",
+                (new_subdir, r["section_id"]),
+            )
+            conn.execute(
+                "UPDATE local_files SET file_path = ? || substr(file_path, ?) "
+                "WHERE file_path LIKE ?",
+                (new_subdir + "/", len(old_subdir) + 1, old_subdir + "/%"),
+            )
+        migrated += 1
+        log.info("Themes subdir migrated: section %s '%s' → '%s'",
+                 r["section_id"], old_subdir, new_subdir)
+    return migrated
