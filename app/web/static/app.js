@@ -2659,17 +2659,21 @@
         || sourceKindForActions === 'url';
       if (!isPlexAgent && !lockManualActions && !tdbDeadForDownload
           && hasDownloadUrl) {
-        // v1.10.29: tooltip names which source the download fetches —
-        // ThemerrDB by default, the manual URL when an override is
-        // active. Either way the URL is visible in the Info dialog.
+        // v1.11.11: button label is just "TDB" so the source is named
+        // explicitly (was "DOWNLOAD" — ambiguous about WHERE the audio
+        // comes from). The description spells out the placement
+        // semantics: source from ThemerrDB; if motif already has a
+        // theme on disk it's overwritten (canonical replaced + plex-
+        // folder hardlink updated), otherwise it's downloaded fresh
+        // and placed.
         const dlSource = (sourceKindForActions === 'url')
           ? 'manual URL override'
           : 'ThemerrDB';
         const dlTip = downloaded
-          ? `Re-download (from ${dlSource}; overwrites local)`
-          : `Download (from ${dlSource}; see Info for the URL)`;
+          ? `source from ${dlSource} and overwrite the existing canonical (the placement updates with it)`
+          : `source from ${dlSource}; download and place into the Plex folder`;
         sourceItems.push(menuItemHtml(
-          'redl', 'DOWNLOAD', dlTip, { mt: themeMt, id: themeId },
+          'redl', 'TDB', dlTip, { mt: themeMt, id: themeId },
         ));
       }
       // v1.10.29: REVERT only when both:
@@ -2723,11 +2727,20 @@
       && TDB_DEAD_FAILURES.has(it.failure_kind);
     if (isThemerrDb && !tdbDeadForReplace
         && (sidecarOnly || isManualPlacement || isPlexAgent)) {
+      // v1.11.11: button label is "TDB" (was "REPLACE w/ TDB") so the
+      // source is named explicitly and parallels the no-existing-theme
+      // version of the action. Description spells out the replace-on-
+      // collision semantics so clicking it on a sidecar / manual /
+      // Plex-agent row tells the user motif will confirm before
+      // overwriting and otherwise download + place fresh.
+      const replaceTip = sidecarOnly
+        ? "source from ThemerrDB; the existing local sidecar will be replaced (you'll be asked to confirm)"
+        : isPlexAgent
+          ? "source from ThemerrDB; Plex's agent-supplied theme will be replaced (you'll be asked to confirm)"
+          : "source from ThemerrDB; your manual theme will be replaced (you'll be asked to confirm)";
       sourceItems.push(menuItemHtml(
-        'replace-with-themerrdb', 'REPLACE w/ TDB',
-        sidecarOnly    ? "overwrite the existing sidecar with motif's ThemerrDB download"
-        : isPlexAgent  ? "replace Plex's agent-supplied theme with motif's ThemerrDB download"
-        :                "swap your manual theme for the ThemerrDB download",
+        'replace-with-themerrdb', 'TDB',
+        replaceTip,
         { rk: it.rating_key, warn: true },
       ));
     }

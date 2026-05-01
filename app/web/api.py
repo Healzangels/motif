@@ -3048,16 +3048,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # v1.10.31: optimistically set plex_items.local_theme_file=1
             # for every folder we just unmanaged from. The sidecar at
             # those paths still exists (we deleted only the canonical),
-            # so the row should render as M immediately. Without this,
-            # if local_theme_file was 0 from a stale enum the row would
-            # appear as untracked until the section enum below caught
-            # up — which left users thinking UNMANAGE behaved like
-            # PURGE.
+            # so the row should render as M immediately. v1.11.11:
+            # rather than blanket-set local_theme_file=1, re-stat each
+            # affected folder so the flag reflects the actual on-disk
+            # state, and scope the UPDATE by media_type so a TV/movie
+            # folder-name collision doesn't accidentally flip a sibling
+            # section's row. If the stat returns false (e.g. the file
+            # was a cross-FS copy that got deleted alongside the
+            # canonical) we set local_theme_file=0 explicitly so the
+            # SRC badge becomes — instead of a misleading M.
+            plex_type = "show" if media_type == "tv" else "movie"
             for pr in placements:
+                folder = pr["media_folder"]
+                try:
+                    sidecar_present = (
+                        Path(folder) / "theme.mp3"
+                    ).is_file()
+                except OSError:
+                    sidecar_present = False
                 conn.execute(
-                    "UPDATE plex_items SET local_theme_file = 1 "
-                    "WHERE folder_path = ?",
-                    (pr["media_folder"],),
+                    "UPDATE plex_items SET local_theme_file = ? "
+                    "WHERE folder_path = ? AND media_type = ?",
+                    (1 if sidecar_present else 0, folder, plex_type),
                 )
             # Section enum still queued so the live state confirms our
             # optimistic flip (preserve_plex_file=True path — the file
