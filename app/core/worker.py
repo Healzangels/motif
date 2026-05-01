@@ -819,17 +819,17 @@ class Worker:
                 strict_edition=self.settings.strict_edition_match,
                 plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
             )
-            plex_has = False
-            if self.settings.plex_enabled and self.settings.plex_token:
-                plex_client = self._plex_client()
-                if plex_client:
-                    try:
-                        plex_has = plex_client.has_theme(
-                            media_type=media_type, title=theme["title"],
-                            year=theme["year"] or "", edition_raw="",
-                        )
-                    finally:
-                        plex_client.close()
+            # v1.11.39: read has_theme from plex_items instead of
+            # firing live Plex API calls during a dry-run preview.
+            plex_mt = "show" if media_type == "tv" else "movie"
+            with get_conn(self.settings.db_path) as conn:
+                pi_row = conn.execute(
+                    "SELECT has_theme FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? "
+                    "  AND section_id = ? LIMIT 1",
+                    (tmdb_id, plex_mt, section_id),
+                ).fetchone()
+            plex_has = bool(pi_row and pi_row["has_theme"])
 
             if plex_has:
                 msg = f"DRY-RUN: would skip '{theme['title']}' — Plex already has theme"
@@ -873,6 +873,38 @@ class Worker:
 
         index = self._index_for_section(section_id)
         plex_client = self._plex_client()
+        # v1.11.39: pre-resolve rating_key + has_theme from plex_items
+        # so place_theme doesn't have to hit Plex for them. Saves two
+        # Plex API calls per placement (resolve_rating_key +
+        # item_has_theme); plex_items is the cached view from
+        # plex_enum and already carries both. Plex still gets called
+        # ONCE per placement for the post-place refresh — that's the
+        # only call we actually need.
+        plex_mt = "show" if media_type == "tv" else "movie"
+        with get_conn(self.settings.db_path) as conn:
+            pi = conn.execute(
+                "SELECT rating_key, has_theme FROM plex_items "
+                "WHERE guid_tmdb = ? AND media_type = ? "
+                "  AND section_id = ? "
+                "  AND folder_path = (SELECT media_folder FROM placements "
+                "                       WHERE media_type = ? AND tmdb_id = ? "
+                "                         AND section_id = ? LIMIT 1) "
+                "LIMIT 1",
+                (tmdb_id, plex_mt, section_id,
+                 media_type, tmdb_id, section_id),
+            ).fetchone()
+            if pi is None:
+                # Folder-path fallback hit nothing (no placement yet for
+                # this row) — pick any plex_items row in this section
+                # that matches the tmdb id.
+                pi = conn.execute(
+                    "SELECT rating_key, has_theme FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? AND section_id = ? "
+                    "LIMIT 1",
+                    (tmdb_id, plex_mt, section_id),
+                ).fetchone()
+        cached_rk = pi["rating_key"] if pi else None
+        cached_has_theme = bool(pi and pi["has_theme"])
         try:
             outcome = place_theme(
                 media_type=media_type,
@@ -882,6 +914,8 @@ class Worker:
                 source_file=source_file,
                 index=index,
                 plex=plex_client,
+                cached_rk=cached_rk,
+                cached_has_theme=cached_has_theme,
                 strict_edition=self.settings.strict_edition_match,
                 plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
                 skip_if_plex_has_theme=not force_overwrite,

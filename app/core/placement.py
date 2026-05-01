@@ -242,6 +242,8 @@ def place_theme(
     source_file: Path,
     index: FolderIndex,
     plex: PlexClient | None,
+    cached_rk: str | None = None,
+    cached_has_theme: bool = False,
     strict_edition: bool = True,
     plus_mode: PlusMode = "separator",
     skip_if_plex_has_theme: bool = True,
@@ -256,6 +258,13 @@ def place_theme(
     `force_overwrite=True` bypasses BOTH skip conditions — used when the
     user explicitly approves placement from /pending knowing it will
     overwrite an existing sidecar.
+
+    v1.11.39: callers pass `cached_rk` + `cached_has_theme` from
+    plex_items so this function makes ONE Plex API call (the
+    post-place refresh) instead of three (resolve + has_theme +
+    refresh). plex_items is refreshed by plex_enum and is the
+    authoritative source for these values; live calls just added
+    Plex-server load with no information gain.
     """
     # 1. Find target folder
     find = find_target_folder(
@@ -267,17 +276,14 @@ def place_theme(
 
     target = find.folder
 
-    # 2. Skip if Plex already has a theme (unless force_overwrite)
-    rk: str | None = None
-    if plex and plex.cfg.enabled and skip_if_plex_has_theme and not force_overwrite:
-        rk = plex.resolve_rating_key(
-            media_type=media_type, title=title, year=year, edition_raw=edition_raw,
+    # 2. Skip if Plex already has a theme (unless force_overwrite).
+    # Reads from cached_has_theme — set by the caller from plex_items.
+    rk: str | None = cached_rk
+    if skip_if_plex_has_theme and not force_overwrite and cached_has_theme:
+        return PlacementOutcome(
+            False, None, "plex_has_theme",
+            target_folder=target, plex_rating_key=rk,
         )
-        if rk and plex.item_has_theme(rk):
-            return PlacementOutcome(
-                False, None, "plex_has_theme",
-                target_folder=target, plex_rating_key=rk,
-            )
 
     # 3. Skip if a theme file is already in the folder (unless force_overwrite,
     # in which case we unlink it before linking the new one)
@@ -304,14 +310,12 @@ def place_theme(
         return PlacementOutcome(False, None, f"placement_error:{e}", target_folder=target)
 
     refreshed = False
-    if plex and plex.cfg.enabled and analyze_after:
-        # Re-resolve in case we didn't earlier
-        if rk is None:
-            rk = plex.resolve_rating_key(
-                media_type=media_type, title=title, year=year, edition_raw=edition_raw,
-            )
-        if rk:
-            refreshed = plex.refresh(rk)
+    if plex and plex.cfg.enabled and analyze_after and rk:
+        # The ONE remaining Plex call: tell the agent to re-scan so the
+        # newly-placed theme.mp3 gets picked up. v1.11.24 schedules
+        # additional retries at +10s/+30s/+90s from worker._do_place
+        # so we get multiple chances without hammering the API.
+        refreshed = plex.refresh(rk)
 
     return PlacementOutcome(
         True, kind, "placed",
