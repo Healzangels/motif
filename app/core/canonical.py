@@ -33,9 +33,7 @@ def sanitize_for_filesystem(s: str) -> str:
     v1.10.23: switched the replacement char from `_` to `-` to match
     Plex's own folder convention. Plex Media Server names directories
     like `Mission: Impossible (1996)` as `Mission - Impossible (1996)`,
-    so motif's /themes mirror now matches that shape. Existing
-    `_`-substituted folders are renamed in place by
-    relocate_legacy_canonical_files on the next startup.
+    so motif's /themes mirror matches that shape.
     """
     if not s:
         return "untitled"
@@ -74,9 +72,9 @@ def compute_section_themes_subdir(
     suffixes only attach when the corresponding flag is set so a
     plain section keeps a clean URL.
 
-    Caller (sections.refresh_sections) is responsible for collision
-    handling — if two sections compute the same subdir, the second
-    one gets the section_id appended.
+    Caller (sections._allocate_themes_subdir) is responsible for
+    collision handling — if two sections compute the same subdir, the
+    second one gets a -2 / -3 / ... suffix until unique.
     """
     raw = (title or "").strip().lower() or ("tv" if type_ == "show" else "movies")
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-") or (

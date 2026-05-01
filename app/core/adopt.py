@@ -225,6 +225,11 @@ def _maybe_restore_url_history(
             "  AND (youtube_url IS NULL OR youtube_url = '')",
             (url, media_type, tmdb_id),
         )
+        # v1.11.0 note: this UPDATE intentionally spans every per-section
+        # local_files row for the item — themes.youtube_url and
+        # user_overrides.youtube_url are item-scoped (not section-scoped),
+        # so the URL semantics flip uniformly across sections when one
+        # section's adopted file matches the historical hash.
         conn.execute(
             "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
             "WHERE media_type = ? AND tmdb_id = ?",
@@ -547,12 +552,19 @@ def _do_replace(db_path: Path, finding, settings, decided_by: str) -> dict:
         if not theme["youtube_url"]:
             raise AdoptError("theme has no youtube_url to download from")
 
+        # v1.11.0: scoped to the finding's section. Pre-fix this
+        # inserted a section-less download job which the worker rejects
+        # with _JobPermanentFailure.
+        section_id = finding["section_id"]
+        if not section_id:
+            raise AdoptError("scan finding missing section_id")
         conn.execute(
-            """INSERT INTO jobs (job_type, media_type, tmdb_id, status,
-                                 created_at, next_run_at)
-               VALUES ('download', ?, ?, 'pending', datetime('now'),
-                       datetime('now'))""",
-            (theme["media_type"], theme["tmdb_id"]),
+            """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                 payload, status, created_at, next_run_at)
+               VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)""",
+            (theme["media_type"], theme["tmdb_id"], section_id,
+             json.dumps({"reason": "scan_replace"}),
+             now_iso(), now_iso()),
         )
     return {
         "action": "replace",

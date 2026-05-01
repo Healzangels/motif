@@ -354,6 +354,20 @@ def _enqueue_download(
              AND ps.included = 1""",
         (tmdb_id, plex_type),
     ).fetchall()
+    if not sections:
+        # Nothing to enqueue — the item isn't in any included Plex
+        # section yet. Common during the window between sync (which
+        # creates the themes row) and plex_enum (which populates
+        # plex_items). User-initiated callers (manual_url, redownload,
+        # override, accept_update, etc.) should treat the 0 return as
+        # "queued nothing — Plex hasn't seen this item yet" and surface
+        # that to the user.
+        log.info(
+            "_enqueue_download: no included Plex section owns "
+            "(%s, %s) — skipping (reason=%s)",
+            media_type, tmdb_id, reason,
+        )
+        return 0
     enqueued = 0
     for sec in sections:
         section_id = sec["section_id"]

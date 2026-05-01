@@ -216,6 +216,13 @@ CREATE TABLE IF NOT EXISTS user_overrides (
     PRIMARY KEY (media_type, tmdb_id)
 );
 
+-- v1.11.0: plex_sections is treated as append-only at runtime — sections
+-- that disappear from Plex are kept with stale last_seen_at so the UI
+-- can show them dimmed. NEVER `DELETE FROM plex_sections` directly:
+-- local_files and placements FK on section_id ON DELETE CASCADE, so a
+-- delete here would silently drop every staged theme + placement for
+-- that section. To retire a section, set included=0 instead; once empty
+-- of local_files / placements it's effectively retired.
 CREATE TABLE IF NOT EXISTS plex_sections (
     section_id      TEXT PRIMARY KEY,
     uuid            TEXT,
@@ -230,14 +237,17 @@ CREATE TABLE IF NOT EXISTS plex_sections (
     is_anime        INTEGER NOT NULL DEFAULT 0,
     is_4k           INTEGER NOT NULL DEFAULT 0,
     -- v1.11.0: filesystem-safe slug used as the section's themes subdir.
-    -- The on-disk staging layout is <themes_dir>/<themes_subdir>/<Title (Year)>/
-    -- theme.mp3 so per-Plex-section files stay isolated. Computed from
-    -- (title, is_4k, is_anime, type) at section discovery time and stored
-    -- here so it's stable across title renames.
+    -- UNIQUE so collisions are caught by the engine and `_allocate_themes_subdir`
+    -- doesn't need its own race-free locking. Computed from
+    -- (title, is_4k, is_anime, type) at discovery / flag-toggle time.
     themes_subdir   TEXT NOT NULL DEFAULT '',
     discovered_at   TEXT NOT NULL,
     last_seen_at    TEXT NOT NULL
 );
+-- v1.11.0: empty themes_subdir is allowed for the brief window before
+-- _allocate_themes_subdir runs; the partial unique index excludes it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plex_sections_themes_subdir
+    ON plex_sections (themes_subdir) WHERE themes_subdir != '';
 
 -- v7+: cache of every Plex library item we've discovered. Joined to themes
 -- in the unified browse view; not FK'd to plex_sections so a section deletion

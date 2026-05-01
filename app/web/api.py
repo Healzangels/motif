@@ -1541,8 +1541,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (section_id,),
             ).fetchone()
         # v1.11.0: re-derive themes_subdir whenever is_anime/is_4k change so
-        # the on-disk slug reflects the new role. Only the slug stored in
-        # plex_sections moves; nothing on-disk shifts here.
+        # the on-disk slug reflects the new role. We refuse the toggle if
+        # any per-section data already references the old slug — the
+        # rewrite would orphan on-disk files and break local_files.file_path
+        # lookups. Caller must UNMANAGE / FORGET the affected items first.
+        with get_conn(db) as conn:
+            existing = conn.execute(
+                "SELECT (SELECT COUNT(*) FROM local_files WHERE section_id = ?) "
+                "  AS lf_count, "
+                "  (SELECT COUNT(*) FROM placements WHERE section_id = ?) "
+                "  AS pl_count",
+                (section_id, section_id),
+            ).fetchone()
+        if existing and (existing["lf_count"] or existing["pl_count"]):
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"section has {existing['lf_count']} staged file(s) and "
+                    f"{existing['pl_count']} placement(s) — UNMANAGE or FORGET "
+                    "those rows before flipping is_4k / is_anime"
+                ),
+            )
         from .core.sections import reassign_themes_subdir
         new_subdir = reassign_themes_subdir(db, section_id)
         log_event(db, level="INFO", component="api",
@@ -1898,13 +1917,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE media_type = ? AND tmdb_id = ?""",
                 (now_iso(), request.state.principal.username, media_type, tmdb_id),
             )
-            # Enqueue download
-            conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                     created_at, next_run_at)
-                   VALUES ('download', ?, ?, ?, 'pending', ?, ?)""",
-                (media_type, tmdb_id,
-                 '{"reason":"upstream_update_accepted"}', now_iso(), now_iso()),
+            # v1.11.0: per-section download fan-out via _enqueue_download.
+            # Pre-fix this inserted a section-less job that the worker
+            # rejects with _JobPermanentFailure, so accepted updates
+            # never re-downloaded.
+            from ..core.sync import _enqueue_download
+            _enqueue_download(
+                conn, media_type=media_type, tmdb_id=tmdb_id,
+                reason="upstream_update_accepted",
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -3163,11 +3183,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchall()
-            local_row = conn.execute(
+            # v1.11.0: per-section local_files — fetch all so we unlink
+            # every staging copy. Pre-fix only fetched the first row,
+            # leaking on-disk files in sibling sections after FK CASCADE
+            # dropped the DB rows.
+            local_rows = conn.execute(
                 "SELECT file_path FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
-            ).fetchone()
+            ).fetchall()
 
         # Unlink placement files (hardlinks have independent inodes; deleting
         # the canonical doesn't remove these). Best-effort; missing files are OK.
@@ -3180,17 +3204,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     unlinked += 1
             except OSError as e:
                 log.warning("Could not unlink placement %s: %s", pr["media_folder"], e)
-        # Unlink canonical (only safe to delete if no other theme references
-        # the same file_sha256 — but for orphans this is always unique by
-        # construction)
+        # Unlink every per-section canonical.
         themes_dir = settings.themes_dir
-        if local_row and themes_dir:
-            try:
-                p = themes_dir / local_row["file_path"]
-                if p.is_file():
-                    p.unlink()
-            except OSError as e:
-                log.warning("Could not unlink canonical %s: %s", local_row["file_path"], e)
+        if themes_dir:
+            for lr in local_rows:
+                try:
+                    p = themes_dir / lr["file_path"]
+                    if p.is_file():
+                        p.unlink()
+                    try:
+                        parent = p.parent
+                        if parent.is_dir() and not any(parent.iterdir()):
+                            parent.rmdir()
+                    except OSError:
+                        pass
+                except OSError as e:
+                    log.warning("Could not unlink canonical %s: %s",
+                                lr["file_path"], e)
 
         # Drop the theme row; FK ON DELETE CASCADE handles local_files,
         # placements, pending_updates, user_overrides in one transaction.
@@ -3250,11 +3280,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
-            conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                     created_at, next_run_at)
-                   VALUES ('download', ?, ?, '{"reason":"revert_to_themerrdb"}', 'pending', ?, ?)""",
-                (media_type, tmdb_id, now_iso(), now_iso()),
+            from ..core.sync import _enqueue_download
+            _enqueue_download(
+                conn, media_type=media_type, tmdb_id=tmdb_id,
+                reason="revert_to_themerrdb",
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
