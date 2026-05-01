@@ -2326,6 +2326,12 @@
     const res = await api('POST', '/api/pending/place', body);
     pendingState.selected.clear();
     await loadPending();
+    // v1.11.69: kick the topbar so the PENDING ● nav dot clears
+    // immediately after the action drains the queue. The topbar's
+    // own 30s poll would otherwise leave a stale lit dot for
+    // half a minute. Schedule past /api/stats's 1s TTL cache so
+    // the refresh sees the new pending_placements count.
+    setTimeout(refreshTopbarStatus, 1100);
     return res;
   }
 
@@ -2334,6 +2340,9 @@
     const res = await api('POST', '/api/pending/discard', { items: pendingItemsForKeys(keys) });
     pendingState.selected.clear();
     await loadPending();
+    // v1.11.69: discard drains the queue too; same topbar poke as
+    // pendingApprove so the PENDING ● clears immediately.
+    setTimeout(refreshTopbarStatus, 1100);
     return res;
   }
 
