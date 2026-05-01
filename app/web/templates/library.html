@@ -87,17 +87,37 @@
   </div>
 </section>
 
-<!-- v1.11.20: compact SRC legend — single inline row, hover each
-     badge for the long-form description so the table doesn't lose
-     12pt of vertical to a key block. -->
-<div class="src-key-compact" aria-label="SRC column legend">
+<!-- v1.12.0: SRC legend now click-to-filter. Each badge is a button
+     that toggles a src-letter filter on top of whatever status /
+     TDB-match filters are already active. Letters reflect the v1.12.0
+     taxonomy refresh: M → L (local sidecar in Plex folder), and the
+     new M means manual import (user dropped a file into <themes_dir>
+     and motif's import scanner placed it). -->
+<div class="src-key-compact" aria-label="SRC column legend (click to filter)">
   <span class="src-key-label muted small">SRC:</span>
-  <span class="link-badge link-badge-themerrdb" title="ThemerrDB — motif manages the download">T</span>
-  <span class="link-badge link-badge-user" title="user-provided — manual URL or uploaded MP3">U</span>
-  <span class="link-badge link-badge-adopt" title="adopted — motif claimed an existing local sidecar">A</span>
-  <span class="link-badge link-badge-manual" title="manual sidecar — theme.mp3 at the Plex folder, motif doesn't own it (ADOPT to take over)">M</span>
-  <span class="link-badge link-badge-cloud" title="Plex agent — Plex's metadata supplies the theme (no local file)">P</span>
-  <span class="muted" title="no theme anywhere (eligible for TDB / SET URL / UPLOAD MP3)">—</span>
+  <button type="button" class="link-badge link-badge-themerrdb src-key-btn"
+          data-src-filter="T"
+          title="ThemerrDB — motif downloads from upstream and manages the file. Click to filter to T-source rows.">T</button>
+  <button type="button" class="link-badge link-badge-user src-key-btn"
+          data-src-filter="U"
+          title="User-managed — manual YouTube URL or UI upload. Click to filter to U-source rows.">U</button>
+  <button type="button" class="link-badge link-badge-adopt src-key-btn"
+          data-src-filter="A"
+          title="Adopted — motif claimed an existing theme.mp3 from the Plex folder; the sidecar is the source of truth. Click to filter to A-source rows.">A</button>
+  <button type="button" class="link-badge link-badge-import src-key-btn"
+          data-src-filter="M"
+          title="Manual import — user dropped a theme into &lt;themes_dir&gt;/&lt;subdir&gt;/&lt;Title (Year)&gt;/theme.mp3 and the import scanner placed it. Click to filter to M-source rows.">M</button>
+  <button type="button" class="link-badge link-badge-local src-key-btn"
+          data-src-filter="L"
+          title="Local sidecar — theme.mp3 in the Plex folder that motif does not manage. Click ADOPT on a row to take ownership. Click here to filter to L-source rows.">L</button>
+  <button type="button" class="link-badge link-badge-cloud src-key-btn"
+          data-src-filter="P"
+          title="Plex agent / cloud — Plex supplies its own theme; no local file. Click TDB / SET URL / UPLOAD MP3 on a row to override. Click here to filter to P-source rows.">P</button>
+  <button type="button" class="link-badge src-key-btn src-key-btn-none"
+          data-src-filter="-"
+          title="No theme anywhere — eligible for TDB / SET URL / UPLOAD MP3 / ADOPT. Click to filter to no-source rows.">—</button>
+  <button type="button" class="src-key-clear muted small" data-src-filter=""
+          title="Clear the SRC filter">CLEAR</button>
 </div>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row

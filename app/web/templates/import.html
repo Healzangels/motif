@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Import{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-row">
+    <h1 class="title">IMPORT</h1>
+    <div class="sync-actions">
+      <button class="btn btn-tiny" id="import-rescan-btn" type="button"
+              title="walk <themes_dir> for new theme.* files and match each against Plex">// RUN IMPORT SCAN</button>
+    </div>
+  </div>
+  <p class="muted">drop themes into <code>&lt;themes_dir&gt;/&lt;subdir&gt;/&lt;Title (Year)&gt;/theme.&lt;ext&gt;</code> · scanner matches against Plex · review &amp; approve below</p>
+</section>
+
+<!-- Flat-layout banner: rendered by JS when any flat_layout findings
+     exist. Tells the user a file was found at the wrong depth and
+     needs to be moved into a section subdir. -->
+<div id="import-flat-banner" class="missing-banner"
+     style="display:none;border-color:var(--amber);background:rgba(255,184,74,0.08)">
+  <span class="missing-banner-glyph" style="color:var(--amber)">▸</span>
+  <span class="missing-banner-text">
+    <strong id="import-flat-count">0</strong> import file(s) found at the wrong depth —
+    expected <code>&lt;themes_dir&gt;/&lt;section_subdir&gt;/&lt;Title (Year)&gt;/theme.mp3</code>,
+    got <code>&lt;themes_dir&gt;/&lt;Title (Year)&gt;/theme.mp3</code>. Move them under a
+    section subdir (<span class="muted small" id="import-flat-subdirs"></span>)
+    and re-run the scan.
+  </span>
+</div>
+
+<section class="filterbar">
+  <div class="chips" role="tablist" aria-label="match kind filter">
+    <button class="chip chip-active" data-import-kind="">ALL</button>
+    <span class="chip-sep" aria-hidden="true">·</span>
+    <button class="chip chip-warn" data-import-kind="auto_place"
+            title="Plex has the title, no theme is there yet — approving will hardlink the canonical into the Plex folder">AUTO PLACE
+      <span class="chip-count" data-import-count="auto_place">0</span></button>
+    <button class="chip chip-warn" data-import-kind="auto_adopt"
+            title="Plex already has a sidecar that hashes identical to this import — approving just records DB rows, no file movement">AUTO ADOPT
+      <span class="chip-count" data-import-count="auto_adopt">0</span></button>
+    <span class="chip-sep" aria-hidden="true">·</span>
+    <button class="chip chip-warn" data-import-kind="conflict_overwrite"
+            title="Plex folder has a different sidecar — approving will overwrite their file">OVERWRITE
+      <span class="chip-count" data-import-count="conflict_overwrite">0</span></button>
+    <button class="chip chip-warn" data-import-kind="conflict_plex_agent"
+            title="Plex's agent supplies a P-theme — approving will override Plex's choice">vs P-AGENT
+      <span class="chip-count" data-import-count="conflict_plex_agent">0</span></button>
+    <button class="chip chip-warn" data-import-kind="multi_section"
+            title="Title matches Plex items in multiple sections (e.g. 4K + standard) — approving places into all by default">MULTI SECTION
+      <span class="chip-count" data-import-count="multi_section">0</span></button>
+    <span class="chip-sep" aria-hidden="true">·</span>
+    <button class="chip" data-import-kind="orphan"
+            title="No matching Plex item — file sits parked in <themes_dir> until a Plex match shows up. Use PURGE to delete it.">NO PLEX MATCH
+      <span class="chip-count" data-import-count="orphan">0</span></button>
+    <button class="chip" data-import-kind="flat_layout"
+            title="File is at <themes_dir>/<Title>/ instead of <themes_dir>/<section_subdir>/<Title>/. Move it into a section subdir.">FLAT LAYOUT
+      <span class="chip-count" data-import-count="flat_layout">0</span></button>
+  </div>
+  <div class="chips chips-secondary" role="tablist" aria-label="decision">
+    <span class="chips-label">DECISION:</span>
+    <button class="chip chip-tiny chip-active" data-import-decision="pending">PENDING</button>
+    <button class="chip chip-tiny" data-import-decision="approved">APPROVED</button>
+    <button class="chip chip-tiny" data-import-decision="declined">DECLINED</button>
+    <button class="chip chip-tiny" data-import-decision="purged">PURGED</button>
+    <button class="chip chip-tiny" data-import-decision="all">ALL</button>
+  </div>
+</section>
+
+<div id="import-bulk-bar" class="missing-banner"
+     style="display:none;border-color:var(--green-deep);background:rgba(109,255,181,0.04)">
+  <span class="missing-banner-glyph" style="color:var(--green-bright)">▸</span>
+  <span class="missing-banner-text">
+    <strong id="import-selected-count">0</strong> selected
+  </span>
+  <button class="btn btn-tiny" id="import-clear-selection-btn" type="button">// CLEAR</button>
+  <button class="btn btn-tiny btn-warn" id="import-approve-selected-btn" type="button"
+          title="apply the row's recommended action (place / adopt / overwrite as the kind dictates) for every selected finding">// APPROVE SELECTED</button>
+  <button class="btn btn-tiny btn-danger" id="import-decline-selected-btn" type="button">// DECLINE</button>
+  <button class="btn btn-tiny btn-danger" id="import-purge-selected-btn" type="button"
+          title="delete the canonical file under <themes_dir> for every selected finding (does not touch Plex-folder placements)">// PURGE</button>
+</div>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// FINDINGS <span class="muted" id="import-count">…</span></h2>
+  </header>
+  <table class="table">
+    <thead>
+      <tr>
+        <th class="col-state"><input type="checkbox" id="import-select-all" title="select all on this page" /></th>
+        <th class="col-title">FILE</th>
+        <th class="col-state">KIND</th>
+        <th class="col-state">PLEX MATCH</th>
+        <th class="col-state">DECISION</th>
+        <th class="col-actions">ACTIONS</th>
+      </tr>
+    </thead>
+    <tbody id="import-body">
+      <tr><td colspan="6" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -2397,6 +2397,11 @@
     // Stacks on top of `status` to slice further (e.g. MANUAL + TRACKED
     // shows the manual rows that have a TDB alternative for REPLACE).
     tdb: "any",
+    // v1.12.0: SRC letter filter (T / U / A / M / L / P / -). Empty
+    // string = no filter. Applied client-side to the current page
+    // after render, so total/pagination still reflect the underlying
+    // status+tdb filters.
+    srcFilter: "",
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2514,7 +2519,24 @@
         : 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
       tbody.innerHTML = `<tr><td colspan="9" class="muted center">${msg}</td></tr>`;
     } else {
-      tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
+      // v1.12.0: client-side SRC-letter filter. Applied after the
+      // server-side status/tdb pass so click-to-filter on the SRC
+      // legend narrows the visible page without changing total/
+      // pagination (those still reflect the underlying status+tdb
+      // counts the user can read at the top of the page).
+      let displayItems = dedupedItems;
+      if (libraryState.srcFilter) {
+        displayItems = dedupedItems.filter(
+          (it) => computeSrcLetter(it) === libraryState.srcFilter
+        );
+        if (displayItems.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match SRC = ${htmlEscape(libraryState.srcFilter)} on this page (filter applies to the current page; clear it to see all rows)</td></tr>`;
+        } else {
+          tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
+        }
+      } else {
+        tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
+      }
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
@@ -2558,6 +2580,32 @@
     `;
   }
 
+  // v1.12.0: standalone SRC-letter classifier. Mirrors the badge
+  // branch order in renderLibraryRow so the click-to-filter on the
+  // SRC legend agrees with what the row's badge actually shows.
+  // Returns one of T / U / A / M / L / P / - (literal dash).
+  function computeSrcLetter(it) {
+    const placed = !!it.media_folder;
+    const placedProv = it.placement_provenance;
+    const sidecarOnly = !placed && !!it.plex_local_theme;
+    const isOrphanRow = it.upstream_source === 'plex_orphan';
+    const sourceKind = it.source_kind || null;
+    const svid = it.source_video_id || '';
+    const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
+    if (placed && sourceKind === 'themerrdb') return 'T';
+    if (placed && sourceKind === 'adopt') return 'A';
+    if (placed && sourceKind === 'import') return 'M';
+    if (placed && (sourceKind === 'url' || sourceKind === 'upload')) return 'U';
+    if (placed && placedProv === 'auto') return 'T';
+    if (placed && placedProv === 'manual') {
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
+      return (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
+    }
+    if (sidecarOnly) return 'L';
+    if (it.plex_has_theme) return 'P';
+    return '-';
+  }
+
   function renderLibraryRow(it) {
     // v1.10.1: not_in_plex rows are ThemerrDB-only — synthesized into the
     // plex-shaped schema by the API. Render them with a distinct style and
@@ -2587,26 +2635,24 @@
     //       motif doesn't manage it.
     //   — = no theme anywhere.
     //
-    // v1.10.12: source_kind on local_files is the authoritative
-    // discriminator. 'themerrdb' / 'url' / 'upload' / 'adopt' are
-    // stamped at insert time. The svid heuristic stays as a fallback
-    // for rows older than the migration that didn't get backfilled
-    // confidently.
-    // v1.10.53: SRC badge leads with source_kind (the authoritative
-    // sticker on the canonical) instead of placedProv. Pre-1.10.53 a
-    // re-download on top of an adopted row could update local_files
-    // (provenance=auto, source_kind=themerrdb) while leaving the
-    // placement row at provenance=manual (because place_theme
-    // skipped the placement when force=False and a sidecar
-    // already existed). The old logic gated on placedProv first
-    // and then used source_kind only inside the manual branch, so
-    // 'manual placement + themerrdb local_files' rendered as U.
-    // Now: source_kind tells the truth about who owns the canonical;
-    // placedProv only matters for legacy rows with no source_kind.
-    //   themerrdb → T
-    //   adopt     → A
-    //   url/upload→ U
-    //   null      → fall back to placedProv + svid heuristic
+    // v1.12.0: SRC taxonomy refresh. M was overloaded — used to mean
+    // "loose theme.mp3 sidecar at Plex folder, motif doesn't own it".
+    // Renamed L (Local). New M is "Manual import" — user dropped a
+    // file into <themes_dir>/<subdir>/<Title (Year)>/theme.mp3 and
+    // the import scanner placed it.
+    //
+    //   T = ThemerrDB-managed (auto download from upstream)
+    //   U = User-managed (manual YouTube URL or UI upload)
+    //   A = Adopted sidecar (motif claimed an existing Plex-folder file)
+    //   M = Manual import (user dropped into themes_dir; scanner placed)
+    //   L = Local sidecar (file in Plex folder, motif doesn't manage —
+    //       click ADOPT to take ownership)
+    //   P = Plex agent / cloud (Plex supplies a theme; no local file)
+    //   — = no theme anywhere
+    //
+    // source_kind on local_files is the authoritative discriminator;
+    // the svid heuristic stays as a fallback for legacy rows that
+    // didn't get backfilled confidently.
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
     const sidecarOnly = !placed && !!it.plex_local_theme;
@@ -2615,30 +2661,43 @@
     const svid = it.source_video_id || '';
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
     let srcCell;
+    let srcLetter = '';
     if (placed && sourceKind === 'themerrdb') {
-      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="ThemerrDB — motif downloads from upstream and manages the file">T</span>';
+      srcLetter = 'T';
     } else if (placed && sourceKind === 'adopt') {
-      srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+      srcCell = '<span class="link-badge link-badge-adopt" title="Adopted — motif claimed an existing theme.mp3 from the Plex folder; the sidecar is the source of truth, no ThemerrDB link">A</span>';
+      srcLetter = 'A';
+    } else if (placed && sourceKind === 'import') {
+      srcCell = '<span class="link-badge link-badge-import" title="Manual import — user dropped this theme into <themes_dir> and motif's import scanner placed it into the Plex folder">M</span>';
+      srcLetter = 'M';
     } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
-      srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+      srcCell = '<span class="link-badge link-badge-user" title="User-managed — motif manages a user-provided theme (manual YouTube URL or UI upload)">U</span>';
+      srcLetter = 'U';
     } else if (placed && placedProv === 'auto') {
       // Legacy rows (source_kind NULL) — provenance='auto' === T.
-      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="ThemerrDB — motif downloads from upstream and manages the file">T</span>';
+      srcLetter = 'T';
     } else if (placed && placedProv === 'manual') {
       // Legacy fallback heuristic for rows without source_kind.
       const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
       const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
       if (kind === 'adopt') {
-        srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+        srcCell = '<span class="link-badge link-badge-adopt" title="Adopted — motif claimed an existing theme.mp3 from the Plex folder">A</span>';
+        srcLetter = 'A';
       } else {
-        srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+        srcCell = '<span class="link-badge link-badge-user" title="User-managed — motif manages a user-provided theme">U</span>';
+        srcLetter = 'U';
       }
     } else if (sidecarOnly) {
-      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (click ADOPT to take ownership)">M</span>';
+      srcCell = '<span class="link-badge link-badge-local" title="Local sidecar — theme.mp3 in the Plex folder, motif doesn't manage it. Click ADOPT to claim it.">L</span>';
+      srcLetter = 'L';
     } else if (it.plex_has_theme) {
-      srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
+      srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud — Plex supplies a theme, no local file. Click TDB / SET URL / UPLOAD MP3 to override.">P</span>';
+      srcLetter = 'P';
     } else {
-      srcCell = '<span class="muted" title="no theme">—</span>';
+      srcCell = '<span class="muted" title="No theme anywhere — TDB / SET URL / UPLOAD MP3 to add one">—</span>';
+      srcLetter = '-';
     }
 
     // v1.11.62: 'broken' DL state — motif's local_files row says we
@@ -3307,6 +3366,242 @@
     if (adoptBtn) adoptBtn.style.display = (!onFailures && hasSidecarOnly) ? '' : 'none';
   }
 
+  // ---- v1.12.0: /import page ----
+
+  const importState = {
+    matchKind: '',  // '' = all, else one of the match_kind enum values
+    decision: 'pending',
+    items: [],
+    kindCounts: {},
+    selected: new Set(),
+  };
+
+  async function loadImport() {
+    const tbody = document.getElementById('import-body');
+    if (!tbody) return;
+    tbody.innerHTML = '<tr><td colspan="6" class="muted center">loading…</td></tr>';
+    const params = new URLSearchParams({
+      decision: importState.decision,
+      per_page: '500',
+    });
+    if (importState.matchKind) params.set('match_kind', importState.matchKind);
+    let data;
+    try {
+      data = await api('GET', '/api/import/findings?' + params.toString());
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    importState.items = data.items || [];
+    importState.kindCounts = data.kind_counts || {};
+    // Update chip counts
+    document.querySelectorAll('[data-import-count]').forEach((el) => {
+      const k = el.dataset.importCount;
+      el.textContent = importState.kindCounts[k] || 0;
+    });
+    // Flat-layout banner
+    const flat = (importState.kindCounts['flat_layout'] || 0);
+    const banner = document.getElementById('import-flat-banner');
+    if (banner) {
+      banner.style.display = flat > 0 ? '' : 'none';
+      const cnt = document.getElementById('import-flat-count');
+      if (cnt) cnt.textContent = flat;
+    }
+    // Render
+    if (importState.items.length === 0) {
+      const empty = importState.decision === 'pending'
+        ? "no pending findings — run RUN IMPORT SCAN to walk &lt;themes_dir&gt; for new files"
+        : "no findings match this filter";
+      tbody.innerHTML = `<tr><td colspan="6" class="muted center">${empty}</td></tr>`;
+    } else {
+      tbody.innerHTML = importState.items.map(renderImportRow).join('');
+    }
+    document.getElementById('import-count').textContent =
+      `· ${importState.items.length} ${importState.decision}`;
+    updateImportBulkBar();
+  }
+
+  function renderImportRow(f) {
+    const checked = importState.selected.has(f.id) ? 'checked' : '';
+    const candidates = (f.match_candidates || []).slice(0, 3);
+    const candidatesHtml = candidates.length
+      ? candidates.map((c) =>
+          `<div class="muted small">[${htmlEscape(c.section_id)}] ${htmlEscape(c.folder_path || '?')}</div>`
+        ).join('') + (f.match_candidates.length > 3
+          ? `<div class="muted small">… +${f.match_candidates.length - 3} more</div>`
+          : '')
+      : '<span class="muted small">—</span>';
+    const kindLabel = {
+      'auto_place': '<span class="link-badge link-badge-themerrdb" title="Plex has the title, no theme yet — approve to place">PLACE</span>',
+      'auto_adopt': '<span class="link-badge link-badge-adopt" title="Plex sidecar matches our content — approve records DB rows only">ADOPT</span>',
+      'conflict_overwrite': '<span class="link-badge link-badge-import" title="Plex sidecar differs — approve will overwrite their file">OVERWRITE</span>',
+      'conflict_plex_agent': '<span class="link-badge link-badge-cloud" title="Plex agent supplies a theme — approve overrides Plex's choice">vs P-AGENT</span>',
+      'multi_section': '<span class="link-badge link-badge-themerrdb" title="title matches multiple sections — approve places into all">MULTI</span>',
+      'orphan': '<span class="link-badge link-badge-local" title="no Plex match — sit and wait, or PURGE to delete">ORPHAN</span>',
+      'flat_layout': '<span class="link-badge" style="border-color:var(--amber);color:var(--amber)" title="file at <themes_dir>/<Title>/ — move under a section subdir">FLAT</span>',
+    }[f.match_kind] || htmlEscape(f.match_kind);
+    const decisionPill = {
+      'pending':  '<span class="muted small">pending</span>',
+      'approved': '<span class="event-level event-level-INFO">approved</span>',
+      'declined': '<span class="muted small">declined</span>',
+      'purged':   '<span class="event-level event-level-ERROR">purged</span>',
+    }[f.decision] || f.decision;
+    const canApprove = (f.decision === 'pending'
+                       && f.match_kind !== 'orphan'
+                       && f.match_kind !== 'flat_layout');
+    const actions = f.decision === 'pending' ? `
+      ${canApprove ? `<button class="btn btn-tiny btn-warn" data-import-act="approve" data-id="${f.id}">// APPROVE</button>` : ''}
+      <button class="btn btn-tiny" data-import-act="decline" data-id="${f.id}">// DECLINE</button>
+      <button class="btn btn-tiny btn-danger" data-import-act="purge" data-id="${f.id}" title="delete this file under <themes_dir>">× PURGE</button>
+    ` : '';
+    return `
+      <tr>
+        <td><input type="checkbox" data-import-row-id="${f.id}" ${checked} /></td>
+        <td>
+          <div class="title-cell">
+            <span class="title-cell-name">${htmlEscape(f.parsed_title || '?')}${f.parsed_year ? ' (' + htmlEscape(f.parsed_year) + ')' : ''}</span>
+          </div>
+          <div class="muted small" style="font-family:var(--font-mono);font-size:var(--t-tiny)">${htmlEscape(f.file_path)}</div>
+        </td>
+        <td>${kindLabel}</td>
+        <td>${candidatesHtml}</td>
+        <td>${decisionPill}</td>
+        <td class="col-actions">${actions}</td>
+      </tr>
+    `;
+  }
+
+  function updateImportBulkBar() {
+    const bar = document.getElementById('import-bulk-bar');
+    const cnt = document.getElementById('import-selected-count');
+    if (!bar) return;
+    bar.style.display = importState.selected.size > 0 ? 'flex' : 'none';
+    if (cnt) cnt.textContent = importState.selected.size;
+  }
+
+  async function importDecide(ids, decision) {
+    if (!ids.length) return;
+    if (decision === 'purged') {
+      if (!confirm(`Purge ${ids.length} import file(s) under <themes_dir>? This deletes the canonical files; placements in Plex folders are NOT touched.`)) return;
+    } else if (decision === 'approved') {
+      if (!confirm(`Approve ${ids.length} import finding(s)? OVERWRITE-kind rows will replace existing Plex-folder sidecars without further prompts.`)) return;
+    }
+    try {
+      const r = await api('POST', '/api/import/findings/decisions/bulk',
+                         { finding_ids: ids, decision });
+      if (r.errors && r.errors.length) {
+        const sample = r.errors.slice(0, 5)
+          .map((e) => `#${e.finding_id}: ${e.error}`).join('\n');
+        alert(`Applied ${r.applied} of ${ids.length}. First errors:\n${sample}`);
+      }
+    } catch (e) {
+      alert('Bulk action failed: ' + e.message);
+      return;
+    }
+    importState.selected.clear();
+    await loadImport();
+  }
+
+  function bindImport() {
+    const tbody = document.getElementById('import-body');
+    if (!tbody) return;
+
+    document.getElementById('import-rescan-btn')?.addEventListener('click', async () => {
+      try {
+        await api('POST', '/api/import/scan');
+        // Optimistic poke — actual scan runs in worker thread
+        paintTopbarSyncing('IMPORT SCANNING');
+        setTimeout(() => loadImport().catch(() => {}), 1500);
+        setTimeout(() => loadImport().catch(() => {}), 5000);
+      } catch (e) {
+        alert('Scan failed: ' + e.message);
+      }
+    });
+
+    document.querySelectorAll('[data-import-kind]').forEach((c) => {
+      c.addEventListener('click', () => {
+        document.querySelectorAll('[data-import-kind]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        c.classList.add('chip-active');
+        importState.matchKind = c.dataset.importKind;
+        importState.selected.clear();
+        loadImport().catch(console.error);
+      });
+    });
+
+    document.querySelectorAll('[data-import-decision]').forEach((c) => {
+      c.addEventListener('click', () => {
+        document.querySelectorAll('[data-import-decision]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        c.classList.add('chip-active');
+        importState.decision = c.dataset.importDecision;
+        importState.selected.clear();
+        loadImport().catch(console.error);
+      });
+    });
+
+    document.getElementById('import-select-all')?.addEventListener('change', (e) => {
+      const on = e.target.checked;
+      importState.selected.clear();
+      if (on) {
+        for (const it of importState.items) importState.selected.add(it.id);
+      }
+      tbody.querySelectorAll('input[data-import-row-id]').forEach((el) => {
+        el.checked = on;
+      });
+      updateImportBulkBar();
+    });
+
+    tbody.addEventListener('change', (e) => {
+      const cb = e.target.closest('input[data-import-row-id]');
+      if (!cb) return;
+      const id = parseInt(cb.dataset.importRowId, 10);
+      if (cb.checked) importState.selected.add(id);
+      else importState.selected.delete(id);
+      updateImportBulkBar();
+    });
+
+    tbody.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-import-act]');
+      if (!btn) return;
+      const act = btn.dataset.importAct;
+      const id = parseInt(btn.dataset.id, 10);
+      const decision = ({
+        approve: 'approved',
+        decline: 'declined',
+        purge: 'purged',
+      })[act];
+      if (!decision) return;
+      btn.disabled = true;
+      btn.textContent = '…';
+      await importDecide([id], decision);
+    });
+
+    document.getElementById('import-clear-selection-btn')?.addEventListener('click', () => {
+      importState.selected.clear();
+      tbody.querySelectorAll('input[data-import-row-id]').forEach((el) => {
+        el.checked = false;
+      });
+      const all = document.getElementById('import-select-all');
+      if (all) all.checked = false;
+      updateImportBulkBar();
+    });
+    document.getElementById('import-approve-selected-btn')?.addEventListener('click',
+      () => importDecide(Array.from(importState.selected), 'approved'));
+    document.getElementById('import-decline-selected-btn')?.addEventListener('click',
+      () => importDecide(Array.from(importState.selected), 'declined'));
+    document.getElementById('import-purge-selected-btn')?.addEventListener('click',
+      () => importDecide(Array.from(importState.selected), 'purged'));
+
+    loadImport().catch(console.error);
+    // Light polling so a worker-side scan progresses visibly
+    setInterval(() => {
+      if (document.getElementById('import-body')) {
+        loadImport().catch(() => {});
+      }
+    }, 10000);
+  }
+
   function bindLibrary() {
     const tabEl = document.getElementById('library-tab');
     if (!tabEl) return;
@@ -3390,6 +3685,36 @@
         });
       });
       updateTdbFilterVisibility();
+    }
+
+    // v1.12.0: SRC legend buttons toggle a client-side SRC-letter
+    // filter on top of whatever status / TDB chips are already
+    // active. Clicking the active letter again or hitting CLEAR
+    // resets the filter. Pure client-side: pagination/total still
+    // reflect the underlying status+tdb pass.
+    if (document.getElementById('library-body')) {
+      document.querySelectorAll('[data-src-filter]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const want = b.dataset.srcFilter;
+          // Empty string === CLEAR. Same letter clicked again ===
+          // toggle off.
+          if (!want) {
+            libraryState.srcFilter = "";
+          } else if (libraryState.srcFilter === want) {
+            libraryState.srcFilter = "";
+          } else {
+            libraryState.srcFilter = want;
+          }
+          // Repaint active styling on the legend
+          document.querySelectorAll('[data-src-filter]').forEach((x) => {
+            const xVal = x.dataset.srcFilter;
+            const active = !!libraryState.srcFilter
+              && xVal === libraryState.srcFilter;
+            x.classList.toggle('src-key-btn-active', active);
+          });
+          loadLibrary().catch(console.error);
+        });
+      });
     }
 
     // Library tab chips (data-libtab) — only used on /coverage
@@ -3642,7 +3967,7 @@
       }
       if (candidates.length === 0) {
         alert('No sidecar-only rows in selection. ADOPT applies to rows '
-              + 'where Plex has a theme.mp3 but motif doesn\'t manage it (M badge).');
+              + 'where Plex has a theme.mp3 but motif doesn\'t manage it (L badge — Local sidecar).');
         return;
       }
       if (!confirm(`Adopt ${candidates.length} sidecar-only theme(s)?\n\n`
@@ -4160,6 +4485,7 @@
     bindConfigSaves();
     bindScans();
     bindPending();
+    bindImport();
     bindOverrideDialog();
     bindLibrary();
     bindUploadDialog();

@@ -738,6 +738,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def pending_page(request: Request):
         return templates.TemplateResponse(request, "pending.html")
 
+    @app.get("/import", response_class=HTMLResponse)
+    async def import_page(request: Request):
+        return templates.TemplateResponse(request, "import.html")
+
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
         _require_admin(request)

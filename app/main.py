@@ -134,6 +134,40 @@ def main() -> int:
         except Exception as e:
             log.warning("Themes subdir migration failed at startup: %s", e)
 
+    # v1.12.0: auto-enqueue a themes_scan when local_files is empty.
+    # The user just dropped a fresh DB (or this is a brand-new
+    # install), so anything sitting in <themes_dir> couldn't have
+    # been written by motif and is by definition a manual import.
+    # Run the scan once at boot so the /import page populates
+    # without requiring the user to click 'RUN IMPORT SCAN'.
+    # Safe to skip on every subsequent boot (local_files non-empty
+    # = motif has already started managing files; the user can
+    # trigger a rescan manually any time).
+    if settings.is_paths_ready():
+        try:
+            from .core.db import get_conn
+            with get_conn(settings.db_path) as conn:
+                lf_count = conn.execute(
+                    "SELECT COUNT(*) FROM local_files"
+                ).fetchone()[0]
+                already_queued = conn.execute(
+                    "SELECT 1 FROM jobs WHERE job_type = 'themes_scan' "
+                    "AND status IN ('pending','running') LIMIT 1"
+                ).fetchone()
+            if lf_count == 0 and not already_queued:
+                from .core.events import now_iso
+                with get_conn(settings.db_path) as conn:
+                    conn.execute(
+                        """INSERT INTO jobs (job_type, payload, status,
+                                             created_at, next_run_at)
+                           VALUES ('themes_scan', '{}', 'pending', ?, ?)""",
+                        (now_iso(), now_iso()),
+                    )
+                log.info("Themes-dir scan auto-queued at startup "
+                         "(local_files is empty)")
+        except Exception as e:
+            log.warning("Themes-scan auto-queue failed at startup: %s", e)
+
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).
     if settings.plex_enabled and settings.plex_url and settings.plex_token:

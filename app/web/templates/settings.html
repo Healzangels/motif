@@ -307,6 +307,22 @@
           most Plex layouts.
         </p>
       </label>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="matching.auto_place_unambiguous_imports" />
+        <span class="form-label-text">AUTO-PLACE UNAMBIGUOUS IMPORTS</span>
+        <p class="form-hint">
+          v1.12.0 / themes-dir manual-import scanner. When checked,
+          findings classified <code>auto_place</code> (Plex has the title,
+          no theme there yet) or <code>auto_adopt</code> (Plex sidecar
+          matches our import by content) get applied automatically by
+          the scanner — no <code>/import</code> approval click needed.
+          Conflict / multi-section / orphan / flat-layout findings
+          always require explicit user approval regardless of this
+          setting. Default <strong>off</strong> so a bulk drop never
+          silently overwrites anything.
+        </p>
+      </label>
     </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="matching">// SAVE MATCHING</button>
