@@ -332,7 +332,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -742,6 +742,24 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v16_to_v17(conn: sqlite3.Connection) -> None:
+    """v17: auto-ack any failure_kind that was stamped by a sync probe.
+
+    v1.10.59 fix: probe-detected failures should paint the TDB pill
+    red/amber but not increment the topbar's failures badge or require
+    user acknowledgement. Going forward _do_probe sets failure_acked_at
+    inline; this migration backfills already-flagged rows so the badge
+    drops to a sane state immediately after upgrade.
+    """
+    log.info("Migrating to schema v17 (auto-ack sync-probe failures)")
+    conn.execute(
+        "UPDATE themes SET failure_acked_at = COALESCE(failure_acked_at, datetime('now')) "
+        "WHERE failure_kind IS NOT NULL "
+        "  AND failure_acked_at IS NULL "
+        "  AND failure_message LIKE 'sync probe:%'"
+    )
+
+
 def _migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
     """v16: add local_files_history table.
 
@@ -1085,6 +1103,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 15:
                     _migrate_v15_to_v16(conn)
                     current = 16
+                elif current == 16:
+                    _migrate_v16_to_v17(conn)
+                    current = 17
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

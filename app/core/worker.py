@@ -162,12 +162,19 @@ class Worker:
 
     def _claim_next_job(self) -> sqlite3.Row | None:
         with get_conn(self.settings.db_path) as conn, transaction(conn):
+            # v1.10.59: probe jobs are explicitly deprioritized so a
+            # large sync-fed probe backlog can never starve real work
+            # (downloads/place/refresh/etc.). next_run_at gating still
+            # applies, but among due jobs non-probes always win, then
+            # ties break by id (FIFO).
             row = conn.execute(
                 """
                 SELECT * FROM jobs
                 WHERE status = 'pending'
                   AND (next_run_at IS NULL OR next_run_at <= ?)
-                ORDER BY id ASC LIMIT 1
+                ORDER BY CASE job_type WHEN 'probe' THEN 1 ELSE 0 END,
+                         id ASC
+                LIMIT 1
                 """,
                 (now_iso(),),
             ).fetchone()
@@ -814,19 +821,27 @@ class Worker:
                     (media_type, tmdb_id),
                 )
             else:
-                # v1.10.50: same as the download-fail path — keep
-                # an existing ack only if the kind hasn't changed.
+                # v1.10.59: probe-detected failures are auto-acked.
+                # The TDB pill (driven by failure_kind) still paints
+                # red/amber so the user sees broken/cookied URLs, but
+                # they don't push the topbar's failures badge or land
+                # in the Failures tab — those should only flag work
+                # the user actually triggered. A real download failure
+                # later (with the same kind) preserves the ack via the
+                # existing CASE. A different kind clears the ack so
+                # the genuine new failure surfaces.
+                ts = now_iso()
                 conn.execute(
                     "UPDATE themes SET failure_kind = ?, "
                     "                  failure_message = ?, "
                     "                  failure_at = ?, "
                     "                  failure_acked_at = CASE "
-                    "                      WHEN failure_kind = ? THEN failure_acked_at "
-                    "                      ELSE NULL "
+                    "                      WHEN failure_kind = ? THEN COALESCE(failure_acked_at, ?) "
+                    "                      ELSE ? "
                     "                  END "
                     "WHERE media_type = ? AND tmdb_id = ?",
                     (failure.value, f"sync probe: {failure.human}",
-                     now_iso(), failure.value, media_type, tmdb_id),
+                     ts, failure.value, ts, ts, media_type, tmdb_id),
                 )
 
     def _do_relink(self, job: sqlite3.Row) -> None:
