@@ -216,6 +216,31 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .btn-danger { color: var(--red); border-color: var(--red); }
 .btn-danger:hover { background: rgba(255,107,107,0.08); box-shadow: 0 0 10px rgba(255,107,107,0.15); }
 
+/* v1.12.1: suppress the persistent focus ring on mouse clicks while
+   keeping a visible one for keyboard navigation. Default browser
+   button :focus painted a cyan ring that survived dialog close
+   (e.g. clicking ⓘ → opening info dialog → closing it left the
+   ⓘ glowing; same on the dialog's × close). :focus-visible only
+   matches when the focus came from the keyboard, so mouse-driven
+   focus stops painting and keyboard accessibility stays intact. */
+.btn:focus,
+.dlg-close:focus,
+.title-glyph:focus,
+.chip:focus,
+.link-badge:focus,
+.src-key-btn:focus,
+.src-key-clear:focus { outline: none; box-shadow: none; }
+.btn:focus-visible,
+.dlg-close:focus-visible,
+.title-glyph:focus-visible,
+.chip:focus-visible,
+.link-badge:focus-visible,
+.src-key-btn:focus-visible,
+.src-key-clear:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
 .link-tiny { font-size: var(--t-tiny); letter-spacing: 0.15em; text-transform: uppercase; color: var(--fg-dim); }
 .link-tiny:hover { color: var(--green); }
 
