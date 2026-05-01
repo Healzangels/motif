@@ -214,6 +214,39 @@ def reconcile_placement_paths(db_path: Path) -> int:
 _UPSERT_BATCH = 200
 
 
+# v1.11.61: host→container path-prefix translations to try when Plex
+# returns a folder_path that doesn't exist inside motif's container.
+# Plex on Unraid (and similar setups) reports the host's mount path,
+# e.g. /mnt/user/data/media/anime/Show, while motif's container has
+# /data/ bind-mounted to /mnt/user/data on the host. The same file
+# is reachable under both paths from different vantage points; we
+# try the original first, then each translated form, and use the
+# first one that exists.
+#
+# Order matters — most-specific prefix first so /mnt/user/data/foo
+# becomes /data/foo (preferred) rather than /user/data/foo.
+_PATH_PREFIX_TRANSLATIONS: tuple[tuple[str, str], ...] = (
+    ("/mnt/user/data/", "/data/"),
+    ("/mnt/user/", "/"),
+    ("/mnt/cache/data/", "/data/"),
+    ("/mnt/cache/", "/"),
+    ("/mnt/disks/", "/"),
+)
+
+
+def _candidate_local_paths(folder_path: str):
+    """Yield Path candidates for a folder_path returned by Plex,
+    starting with the literal value and falling through common
+    host→container prefix translations. Caller iterates and uses
+    the first one whose .is_dir() returns True."""
+    if not folder_path:
+        return
+    yield Path(folder_path)
+    for src, dst in _PATH_PREFIX_TRANSLATIONS:
+        if folder_path.startswith(src):
+            yield Path(dst + folder_path[len(src):])
+
+
 def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                    *, cancel_check=lambda: False) -> tuple[int, int]:
     """Upsert one section's items into plex_items. Returns
@@ -234,36 +267,58 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     # pairs.
     # v1.11.52: detection now matches any "theme.<audio-ext>" — case-
     # insensitive — instead of a hardcoded enum of seven extensions.
-    # Pre-fix a TV show with theme.aac / theme.wma fell through to P
-    # (Plex agent) because the file wasn't in the allowlist. Plex
-    # itself accepts a broader set than what we hardcoded; matching on
-    # the "theme." prefix + a known audio extension catches everything
-    # Plex actually plays without us having to chase the format list.
+    # Plex accepts a broader set than what we hardcoded; matching on the
+    # "theme." prefix + a known audio extension catches everything.
+    # v1.11.61: also try common host→container path prefix translations
+    # before giving up on iterdir, AND parallelize the per-item stat
+    # across a thread pool. The path translation handles the Unraid
+    # case where Plex returns /mnt/user/data/... but motif's container
+    # has /data → /mnt/user/data — without it the show looked themeless
+    # to motif but the place worker (which uses FolderIndex from the
+    # container's perspective) found the file just fine. The thread
+    # pool drops a 1200-show enum from ~3min sequential to ~15-20s.
     AUDIO_EXTS = {
         ".mp3", ".m4a", ".m4b", ".flac", ".ogg", ".oga", ".opus",
         ".wav", ".wma", ".aac", ".aif", ".aiff", ".alac",
     }
-    enriched: list[tuple[PlexLibraryItem, int]] = []
-    for it in items:
-        sidecar = 0
-        if it.folder_path:
+
+    def _has_theme_sidecar(folder_path: str) -> int:
+        if not folder_path:
+            return 0
+        for candidate in _candidate_local_paths(folder_path):
             try:
-                folder = Path(it.folder_path)
-                if folder.is_dir():
-                    for entry in folder.iterdir():
+                if not candidate.is_dir():
+                    continue
+                for entry in candidate.iterdir():
+                    try:
                         if not entry.is_file():
                             continue
-                        name = entry.name.lower()
-                        # name layout: theme<ext>
-                        if not name.startswith("theme."):
-                            continue
-                        ext = name[len("theme"):]
-                        if ext in AUDIO_EXTS:
-                            sidecar = 1
-                            break
+                    except OSError:
+                        continue
+                    name = entry.name.lower()
+                    if not name.startswith("theme."):
+                        continue
+                    ext = name[len("theme"):]
+                    if ext in AUDIO_EXTS:
+                        return 1
+                # Folder existed but no theme.* matched — no need to
+                # try other candidates.
+                return 0
             except OSError:
-                sidecar = 0
-        enriched.append((it, sidecar))
+                continue
+        return 0
+
+    enriched: list[tuple[PlexLibraryItem, int]] = []
+    if items:
+        from concurrent.futures import ThreadPoolExecutor
+        # 16-way parallelism: per-item stat is I/O-bound, even on
+        # fast local disk a 1200-show enum is too much serial work.
+        with ThreadPoolExecutor(max_workers=16,
+                                thread_name_prefix="motif-sidecar") as ex:
+            sidecars = list(ex.map(_has_theme_sidecar,
+                                   (it.folder_path for it in items)))
+        for it, sc in zip(items, sidecars):
+            enriched.append((it, sc))
 
     # Phase 2: batched upserts.
     inserted = 0
