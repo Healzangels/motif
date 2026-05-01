@@ -1556,7 +1556,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 params.append(1 if bool(body["is_4k"]) else 0)
         if not sets:
             return {"ok": True, "no_op": True}
-        from .core.sections import _allocate_themes_subdir
+        from ..core.sections import _allocate_themes_subdir
         try:
             with get_conn(db) as conn, transaction(conn):
                 current = conn.execute(
