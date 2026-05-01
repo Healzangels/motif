@@ -4036,7 +4036,11 @@
   document.addEventListener('DOMContentLoaded', () => {
     highlightNav();
     refreshTopbarStatus();
-    setInterval(refreshTopbarStatus, 15000);
+    // v1.11.40: relaxed from 15s → 30s. /api/stats is now cached
+    // 1s server-side (v1.11.37) and event-driven refreshes fire
+    // immediately on sync/refresh button clicks, so background
+    // polling can be less aggressive without losing responsiveness.
+    setInterval(refreshTopbarStatus, 30000);
 
     bindDashboard();
     bindBrowse();
@@ -4093,9 +4097,13 @@
 
     // Auto-refresh on relevant pages
     const path = window.location.pathname;
-    if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 10000);
-    if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 5000);
-    if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 8000);
+    // v1.11.40: relaxed polling intervals across all pages. Each page
+    // already re-fetches eagerly after relevant user actions; the
+    // background poll just keeps stats fresh while the page sits
+    // open. Halving poll frequency cuts steady-state DB load.
+    if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 30000);
+    if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 10000);
+    if (path === '/pending') setInterval(() => loadPending().catch(() => {}), 15000);
     if (path === '/movies' || path === '/tv' || path === '/anime') {
       // v1.10.7: skip the background tick when the user is interacting
       // with the page so the table doesn't redraw out from under them.
