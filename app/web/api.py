@@ -640,7 +640,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/tv", response_class=HTMLResponse)
     async def tv_page(request: Request):
         return templates.TemplateResponse(request, "library.html", {
-            "tab": "tv", "title": "TV",
+            "tab": "tv", "title": "TV Shows",
         })
 
     @app.get("/anime", response_class=HTMLResponse)

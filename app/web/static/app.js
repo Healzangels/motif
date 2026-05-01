@@ -93,6 +93,27 @@
 
   // ---- Topbar status ----
 
+  function applyTabAvailability(ta) {
+    if (!ta) return;
+    const showHide = (sel, has) => {
+      const n = document.querySelector(sel);
+      if (n) n.style.display = has ? '' : 'none';
+    };
+    const has = (k) => !!(ta[k] && (ta[k].standard || ta[k].fourk));
+    showHide('.nav a[data-nav="movies"]', has('movies'));
+    showHide('.nav a[data-nav="tv"]',     has('tv'));
+    showHide('.nav a[data-nav="anime"]',  has('anime'));
+  }
+
+  // v1.11.33: restore tab visibility from localStorage immediately so
+  // returning users don't see the brief flicker between page paint and
+  // the first /api/stats response. The fresh response from
+  // refreshTopbarStatus will overwrite if it's newer.
+  try {
+    const cached = localStorage.getItem('motif:tab_availability');
+    if (cached) applyTabAvailability(JSON.parse(cached));
+  } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
+
   async function refreshTopbarStatus() {
     try {
       const stats = await api('GET', '/api/stats');
@@ -156,20 +177,16 @@
       }
 
       // v1.11.27: hide every tab's nav link when no managed section
-      // backs it. Pre-fix MOVIES and TV always rendered even on a
-      // fresh install with only an Anime section (or only a 4K-tagged
-      // movies library), making the tab look broken when clicked.
-      // Now MOVIES, TV, and ANIME each appear only when at least one
-      // included Plex section maps to them.
+      // backs it. v1.11.33: cache the availability map in localStorage
+      // so the next page load can paint nav from the cache before the
+      // first stats poll lands — eliminates the brief flicker where
+      // unconfigured tabs flashed visible.
       if (stats.tab_availability) {
         const ta = stats.tab_availability;
-        const showHide = (sel, has) => {
-          const n = document.querySelector(sel);
-          if (n) n.style.display = has ? '' : 'none';
-        };
-        showHide('.nav a[data-nav="movies"]', ta.movies.standard || ta.movies.fourk);
-        showHide('.nav a[data-nav="tv"]',     ta.tv.standard     || ta.tv.fourk);
-        showHide('.nav a[data-nav="anime"]',  ta.anime.standard  || ta.anime.fourk);
+        applyTabAvailability(ta);
+        try {
+          localStorage.setItem('motif:tab_availability', JSON.stringify(ta));
+        } catch (_) { /* private mode / quota — fine, we just lose the cache */ }
         adaptLibraryFourkToggle(ta);
       }
 
