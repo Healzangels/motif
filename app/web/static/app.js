@@ -210,6 +210,31 @@
       else if (anyActive) dot.classList.add('dot-amber');
       else if (q.pending > 0) dot.classList.add('dot-amber');
 
+      // v1.11.73: red dot → click jumps to /queue?status=failed.
+      // Pre-fix the user saw a red ● next to 'IDLE' with no
+      // explanation of what was wrong or how to clear it. Now the
+      // dot + status text get a tooltip, a pointer cursor, and a
+      // click handler when failed > 0; clicking lands on the
+      // failed-jobs filter where a CLEAR FAILED button can dismiss
+      // them in one action. Stash the count on window so /queue's
+      // CLEAR FAILED button can read it without an extra round
+      // trip.
+      const statusEl = $('#topbar-status');
+      const failed = q.failed || 0;
+      window.__motif_failed_count = failed;
+      if (failed > 0) {
+        const tip = `${failed} failed job(s) — click to review on /queue`;
+        if (dot) dot.title = tip;
+        $('#topbar-status-text').title = tip;
+        statusEl?.classList.add('topbar-status-clickable');
+        statusEl?.setAttribute('data-failed-link', '1');
+      } else {
+        if (dot) dot.removeAttribute('title');
+        $('#topbar-status-text').removeAttribute('title');
+        statusEl?.classList.remove('topbar-status-clickable');
+        statusEl?.removeAttribute('data-failed-link');
+      }
+
       // Updates badge
       const updBadge = $('#topbar-updates-badge');
       if (updBadge) {
@@ -1272,6 +1297,18 @@
     `;
     }).join('') || '<tr><td colspan="7" class="muted center">no jobs</td></tr>';
 
+    // v1.11.73: show CLEAR FAILED button only when at least one
+    // failed row exists across the WHOLE queue (not just the
+    // current filter view, otherwise switching to PENDING would
+    // hide the button while failed jobs still exist). Reads
+    // window.__motif_failed_count, set by refreshTopbarStatus.
+    const clearBtn = document.getElementById('jobs-clear-failed-btn');
+    if (clearBtn) {
+      const anyFailed = (window.__motif_failed_count || 0) > 0
+        || (data.jobs || []).some((j) => j.status === 'failed');
+      clearBtn.style.display = anyFailed ? '' : 'none';
+    }
+
     const evs = await api('GET', '/api/events?limit=200');
     $('#event-stream-full').innerHTML = evs.events.map((e) => `
       <li>
@@ -1285,6 +1322,18 @@
 
   function bindQueue() {
     if (!$('#jobs-body')) return;
+    // v1.11.73: honor ?status=failed (etc) on initial /queue load so
+    // the topbar 'red dot → click' shortcut lands on the right
+    // filter without an extra click.
+    const initialStatus = new URLSearchParams(window.location.search).get('status');
+    if (initialStatus && ['pending','running','failed','done'].includes(initialStatus)) {
+      queueFilter = initialStatus;
+      $$('.chip[data-jobfilter]').forEach((x) => x.classList.remove('chip-active'));
+      const target = document.querySelector(
+        `.chip[data-jobfilter="${initialStatus}"]`);
+      if (target) target.classList.add('chip-active');
+    }
+
     $$('.chip[data-jobfilter]').forEach((c) => {
       c.addEventListener('click', () => {
         $$('.chip[data-jobfilter]').forEach((x) => x.classList.remove('chip-active'));
@@ -1293,6 +1342,27 @@
         loadQueue().catch(console.error);
       });
     });
+
+    // v1.11.73: CLEAR FAILED dismisses every job in the failed state.
+    // Visible only when at least one failed job exists, hidden
+    // otherwise. Calls POST /api/jobs/clear-failed.
+    document.getElementById('jobs-clear-failed-btn')?.addEventListener('click',
+      async () => {
+        if (!confirm('Dismiss every failed job from the queue history? '
+                     + 'This only clears the queue rows — files and DB state '
+                     + 'for the underlying items are unaffected.')) return;
+        try {
+          const r = await api('POST', '/api/jobs/clear-failed');
+          if (r && typeof r.cleared === 'number') {
+            // Repaint immediately + re-poll the topbar so the red dot
+            // clears the same frame.
+            await loadQueue().catch(()=>{});
+            setTimeout(refreshTopbarStatus, 1100);
+          }
+        } catch (e) {
+          alert('Clear failed: ' + e.message);
+        }
+      });
     // v1.11.36: cancel-job click handler. Posts to /api/jobs/{id}/cancel.
     document.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act="cancel-job"]');
@@ -4252,6 +4322,20 @@
   document.addEventListener('DOMContentLoaded', () => {
     highlightNav();
     refreshTopbarStatus();
+
+    // v1.11.73: clicking the topbar dot/text when red navigates to
+    // the failed-jobs filter on /queue. The data-failed-link attr
+    // is toggled by refreshTopbarStatus based on q.failed > 0.
+    document.getElementById('topbar-status')?.addEventListener('click', (e) => {
+      // Don't hijack clicks on the logout link or update/failure badges
+      // they have their own hrefs.
+      if (e.target.closest('a')) return;
+      const el = e.currentTarget;
+      if (el.getAttribute('data-failed-link') === '1') {
+        window.location.href = '/queue?status=failed';
+      }
+    });
+
     // v1.11.40: relaxed from 15s → 30s. /api/stats is now cached
     // 1s server-side (v1.11.37) and event-driven refreshes fire
     // immediately on sync/refresh button clicks, so background

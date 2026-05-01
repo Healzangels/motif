@@ -227,6 +227,35 @@ def _upsert_theme(
             # at which point we've updated the children too and the
             # final state is consistent.
             conn.execute("PRAGMA defer_foreign_keys = ON")
+            # v1.11.73: clear any leftover rows at the TARGET (media_type,
+            # tmdb_id) before moving the orphan's rows there. Without this
+            # the UPDATE collides with phantom rows from prior failed sync
+            # attempts / DB-state edge cases (e.g. a user_overrides row
+            # stuck at (movie, 252) from an earlier code path) and the
+            # whole sync run dies on UNIQUE constraint failed. UNIQUE
+            # is NOT covered by defer_foreign_keys; v1.11.71's deferred
+            # FK fix only covered foreign-key violations.
+            #
+            # The orphan represents the user's most recent action
+            # (SET URL / UPLOAD / adopt happened recently); any
+            # pre-existing rows at the target tmdb are stale leftovers.
+            # Drop them so the UPDATEs always succeed.
+            conn.execute(
+                "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+            conn.execute(
+                "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+            conn.execute(
+                "DELETE FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+            conn.execute(
+                "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
             conn.execute(
                 "UPDATE themes SET tmdb_id = ?, upstream_source = ? "
                 "WHERE id = ?",

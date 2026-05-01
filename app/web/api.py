@@ -4056,6 +4056,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           "force": bool(force)})
         return {"ok": True, "outcome": outcome, "prev_status": status_now}
 
+    @app.post("/api/jobs/clear-failed")
+    async def api_clear_failed_jobs(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v1.11.73: dismiss every job currently in status='failed'.
+        Pure queue cleanup — file/DB state for the underlying items
+        is unaffected. Used by the /queue page's CLEAR FAILED button
+        and the topbar red-dot-click shortcut.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            cur = conn.execute(
+                "DELETE FROM jobs WHERE status = 'failed'"
+            )
+            cleared = cur.rowcount or 0
+        log_event(db, level="INFO", component="api",
+                  message=f"Cleared {cleared} failed job(s) by "
+                          f"{request.state.principal.username}",
+                  detail={"cleared": cleared})
+        return {"ok": True, "cleared": cleared}
+
     @app.get("/api/events")
     async def api_events(
         limit: int = Query(200, ge=1, le=1000),
