@@ -2955,6 +2955,116 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
     });
 
+    // v1.10.49: SELECT ALL FILTERED — pulls every page of the current
+    // filter and adds each row's key to libraryState.selected. Useful
+    // for 'manual + TDB tracked → DOWNLOAD ALL' and similar bulk
+    // workflows. Uses a high per_page (200, the API max) to keep
+    // round-trips bounded.
+    document.getElementById('library-select-all-filtered-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const origLabel = btn.textContent;
+      btn.textContent = '// LOADING…';
+      try {
+        const params = new URLSearchParams({
+          tab: libraryState.tab,
+          fourk: libraryState.fourk ? 'true' : 'false',
+          per_page: '200',
+        });
+        if (libraryState.q) params.set('q', libraryState.q);
+        if (libraryState.status !== 'all') params.set('status', libraryState.status);
+        if (libraryState.tdb && libraryState.tdb !== 'any') {
+          params.set('tdb', libraryState.tdb);
+        }
+        let page = 1;
+        let collected = 0;
+        while (true) {
+          params.set('page', String(page));
+          const data = await api('GET', '/api/library?' + params.toString());
+          for (const it of (data.items || [])) {
+            libraryState.selected.add(libKey(it));
+            collected++;
+          }
+          const total = data.total || 0;
+          const perPage = data.per_page || 200;
+          if (page * perPage >= total) break;
+          page++;
+          if (page > 200) break;  // safety; never expected
+        }
+        // Reflect new state in the visible page checkboxes.
+        document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
+          cb.checked = libraryState.selected.has(cb.dataset.libSelect);
+        });
+        updateLibrarySelectionUi();
+        btn.textContent = `// ${collected} SELECTED`;
+      } catch (err) {
+        alert('Select all filtered failed: ' + err.message);
+        btn.textContent = origLabel;
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }, 2500);
+    });
+
+    // v1.10.49: ADOPT SELECTED — bulk action for sidecar-only rows.
+    // Only fires the inline adopt-sidecar endpoint for selected rows
+    // that are actually sidecar-only (rows without a sidecar are
+    // silently skipped). Each row is rk-keyed so we look it up in
+    // libraryState.items / fall back to fetching per-row data.
+    document.getElementById('library-adopt-selected-btn')?.addEventListener('click', async (e) => {
+      const candidates = (libraryState.items || []).filter((it) => {
+        const k = libKey(it);
+        if (!libraryState.selected.has(k)) return false;
+        // sidecar-only state: no placement + a sidecar exists.
+        return !it.media_folder && !!it.plex_local_theme;
+      });
+      // Selections from "SELECT ALL FILTERED" cover items not in the
+      // current page — we can't tell their sidecar state without
+      // re-fetching. Tell the user to switch the filter to MANUAL or
+      // page through to scope correctly.
+      const onPageSelected = (libraryState.items || []).filter((it) =>
+        libraryState.selected.has(libKey(it))).length;
+      const offPageSelected = libraryState.selected.size - onPageSelected;
+      if (offPageSelected > 0) {
+        const ok = confirm(
+          `${offPageSelected} of your selected rows aren't on the visible page;\n`
+          + `motif can't tell whether those are sidecar-only without\n`
+          + `re-fetching. Continue and ADOPT only the ${candidates.length}\n`
+          + `sidecar-only rows on this page?\n\n`
+          + `Tip: switch the filter to MANUAL to scope just sidecars.`
+        );
+        if (!ok) return;
+      }
+      if (candidates.length === 0) {
+        alert('No sidecar-only rows in selection. ADOPT applies to rows '
+              + 'where Plex has a theme.mp3 but motif doesn\'t manage it (M badge).');
+        return;
+      }
+      if (!confirm(`Adopt ${candidates.length} sidecar-only theme(s)?\n\n`
+                   + `Each will be hardlinked into /themes and managed by motif from now on.`)) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// ADOPTING 0/${candidates.length}`;
+      let ok = 0, fail = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        const it = candidates[i];
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(it.rating_key)}/adopt-sidecar`);
+          ok++;
+        } catch (err) {
+          fail++;
+        }
+        btn.textContent = `// ADOPTING ${i + 1}/${candidates.length}`;
+      }
+      btn.textContent = `// ${ok} ADOPTED${fail ? ` · ${fail} FAILED` : ''}`;
+      libraryState.selected.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3500);
+    });
+
     // v1.10.24: close any open row-menu popover when the user clicks
     // anywhere outside it. Native <details> handles open/close on the
     // summary itself but doesn't auto-dismiss on outside click.

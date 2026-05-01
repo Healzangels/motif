@@ -86,15 +86,21 @@
 </section>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
-     checkbox. // DOWNLOAD SELECTED enqueues download jobs only for items
-     that have a ThemerrDB row; non-themed selected rows are skipped. -->
+     checkbox or the table-header select-all. v1.10.49: ADOPT SELECTED
+     covers sidecar-only rows; both actions skip rows where the action
+     can't apply (non-themed for download, non-sidecar for adopt). -->
 <div id="library-bulk-bar" class="missing-banner" style="display:none;border-color:var(--green-deep);background:rgba(109,255,181,0.04)">
   <span class="missing-banner-glyph" style="color:var(--green-bright)">▸</span>
   <span class="missing-banner-text">
     <strong id="library-selected-count">0</strong> selected
+    <span class="muted small" id="library-bulk-detail"></span>
   </span>
+  <button class="btn btn-tiny" id="library-select-all-filtered-btn" type="button"
+          title="select every row across the current filter (not just this page)">// SELECT ALL FILTERED</button>
   <button class="btn btn-tiny" id="library-clear-selection-btn" type="button">// CLEAR</button>
   <button class="btn btn-tiny btn-warn" id="library-download-selected-btn" type="button">// DOWNLOAD SELECTED</button>
+  <button class="btn btn-tiny btn-warn" id="library-adopt-selected-btn" type="button"
+          title="claim every selected sidecar-only row as motif-managed">// ADOPT SELECTED</button>
 </div>
 
 <section class="block">
