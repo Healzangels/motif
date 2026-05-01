@@ -1274,8 +1274,42 @@ def get_conn(db_path: Path) -> Iterator[sqlite3.Connection]:
 
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """Wrap a block in a BEGIN IMMEDIATE...COMMIT."""
-    conn.execute("BEGIN IMMEDIATE")
+    """Wrap a block in a BEGIN IMMEDIATE...COMMIT.
+
+    v1.11.56: BEGIN IMMEDIATE itself is now retried on
+    sqlite3.OperationalError 'database is locked' (the connection's
+    own busy_timeout=30s isn't always enough under heavy
+    sync/plex_enum write contention — busy_timeout doesn't queue
+    fairly, so a particular waiter can lose every race). Up to four
+    attempts with backoff (0.5s → 1s → 2s → 4s); after that the
+    OperationalError propagates so the caller sees it.
+
+    Once we're past BEGIN IMMEDIATE the transaction body still
+    runs to completion or raises the original exception unmodified
+    — only the BEGIN itself gets retry semantics. SQLite holds the
+    writer lock for the duration of the block; nothing in here
+    re-acquires it.
+    """
+    import time as _t
+    delays = (0.5, 1.0, 2.0, 4.0)
+    last_err: sqlite3.OperationalError | None = None
+    for d in (0.0,) + delays:
+        if d:
+            _t.sleep(d)
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            break
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower():
+                raise
+            last_err = e
+            continue
+    else:
+        # Exhausted all retries; re-raise the last lock error so the
+        # caller gets a clean OperationalError to handle (worker
+        # supervisor / _safe_mark / etc).
+        assert last_err is not None
+        raise last_err
     try:
         yield conn
         conn.execute("COMMIT")
