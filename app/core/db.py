@@ -151,7 +151,7 @@ CREATE INDEX IF NOT EXISTS idx_placements_section ON placements (section_id);
 CREATE TABLE IF NOT EXISTS jobs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     job_type        TEXT NOT NULL
-                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum','probe')),
+                       CHECK (job_type IN ('sync','download','place','refresh','relink','scan','adopt','plex_enum')),
     media_type      TEXT,
     tmdb_id         INTEGER,
     section_id      TEXT,

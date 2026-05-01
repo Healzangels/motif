@@ -975,9 +975,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE job_type = 'place'
                      AND status IN ('pending','running')) AS place_in_flight,
                   (SELECT COUNT(*) FROM jobs
-                   WHERE job_type = 'probe'
-                     AND status IN ('pending','running')) AS probe_in_flight,
-                  (SELECT COUNT(*) FROM jobs
                    WHERE job_type = 'scan'
                      AND status IN ('pending','running')) AS scan_in_flight,
                   -- Local files with no placement = items waiting placement
@@ -1056,7 +1053,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "plex_enum_in_flight": row["plex_enum_in_flight"],
                 "download_in_flight": row["download_in_flight"],
                 "place_in_flight": row["place_in_flight"],
-                "probe_in_flight": row["probe_in_flight"],
                 "scan_in_flight": row["scan_in_flight"],
                 "pending_placements": row["pending_placements"],
             },

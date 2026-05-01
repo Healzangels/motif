@@ -96,19 +96,15 @@
   async function refreshTopbarStatus() {
     try {
       const stats = await api('GET', '/api/stats');
-      // v1.11.7: replace the opaque "Nr/Mp" with a richer status that
-      // reports what kind of work is in flight. Priority (most → least
-      // attention-grabbing): sync > download > place > scan > probe >
-      // idle. Probes are a low-priority background sweep, so a probe
-      // backlog doesn't dominate the indicator the way a download
-      // backlog does. Failures still tint the dot red.
+      // v1.11.17: probe job_type retired — only real worker activities
+      // (sync / plex_enum / download / place / scan) drive the topbar
+      // text. Priority: sync > download > place > scan > idle.
       const q = stats.queue || {};
       const plexEnumBusy = q.plex_enum_in_flight > 0;
       const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
       const downloadBusy = q.download_in_flight > 0;
       const placeBusy = q.place_in_flight > 0;
       const scanBusy = q.scan_in_flight > 0;
-      const probeBusy = q.probe_in_flight > 0;
       let txt;
       if (themerrdbBusy && plexEnumBusy) {
         txt = 'SYNCING THEMERRDB + PLEX';
@@ -122,11 +118,6 @@
         txt = `PLACING ${q.place_in_flight}`;
       } else if (scanBusy) {
         txt = 'SCANNING DISK';
-      } else if (probeBusy) {
-        // Probe is a passive availability check — keep the wording
-        // distinct from real syncs so "PROBING 2173" doesn't read as
-        // an active block on user-facing work.
-        txt = `PROBING ${q.probe_in_flight}`;
       } else if ((q.running || 0) > 0 || (q.pending || 0) > 0) {
         txt = `${q.running || 0}R / ${q.pending || 0}P`;
       } else {
@@ -136,7 +127,7 @@
       const dot = $('#topbar-status .dot');
       dot.classList.remove('dot-amber', 'dot-red');
       const anyActive = themerrdbBusy || plexEnumBusy || downloadBusy
-                     || placeBusy || scanBusy || probeBusy;
+                     || placeBusy || scanBusy;
       if (q.failed > 0) dot.classList.add('dot-red');
       else if (anyActive) dot.classList.add('dot-amber');
       else if (q.pending > 0) dot.classList.add('dot-amber');

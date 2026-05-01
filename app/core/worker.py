@@ -167,22 +167,6 @@ class Worker:
                 if cur.rowcount:
                     log.info("Reclaimed %d orphan 'running' job(s) at startup",
                              cur.rowcount)
-                # v1.11.15: cancel any pending probe jobs left over from
-                # earlier syncs. Probe enqueueing was disabled this version
-                # — the TDB pill color gain wasn't worth the 25-50 min of
-                # worker time per sync. Existing backlog (often thousands
-                # of rows) drains in a single UPDATE here so the worker
-                # gets straight to real work (downloads, places, scans).
-                cur = conn.execute(
-                    "UPDATE jobs SET status = 'cancelled', finished_at = ?, "
-                    "                last_error = 'probe disabled in v1.11.15' "
-                    "WHERE job_type = 'probe' AND status = 'pending'",
-                    (now_iso(),),
-                )
-                if cur.rowcount:
-                    log.info("Cancelled %d pending probe job(s) at startup "
-                             "(probes disabled in v1.11.15)",
-                             cur.rowcount)
         except Exception as e:
             log.warning("Orphan-job recovery failed at startup: %s", e)
         while not self.stop_event.is_set():
@@ -207,18 +191,12 @@ class Worker:
 
     def _claim_next_job(self) -> sqlite3.Row | None:
         with get_conn(self.settings.db_path) as conn, transaction(conn):
-            # v1.10.59: probe jobs are explicitly deprioritized so a
-            # large sync-fed probe backlog can never starve real work
-            # (downloads/place/refresh/etc.). next_run_at gating still
-            # applies, but among due jobs non-probes always win, then
-            # ties break by id (FIFO).
             row = conn.execute(
                 """
                 SELECT * FROM jobs
                 WHERE status = 'pending'
                   AND (next_run_at IS NULL OR next_run_at <= ?)
-                ORDER BY CASE job_type WHEN 'probe' THEN 1 ELSE 0 END,
-                         id ASC
+                ORDER BY id ASC
                 LIMIT 1
                 """,
                 (now_iso(),),
@@ -300,8 +278,6 @@ class Worker:
             self._do_adopt(job)
         elif jt == "plex_enum":
             self._do_plex_enum(job)
-        elif jt == "probe":
-            self._do_probe(job)
         else:
             self._mark_failed(job["id"], f"unknown job type: {jt}")
             return
@@ -914,90 +890,6 @@ class Worker:
                 plex.refresh(rk)
         finally:
             plex.close()
-
-    def _do_probe(self, job: sqlite3.Row) -> None:
-        """v1.10.45: probe a single ThemerrDB youtube_url for availability
-        and stamp themes.failure_kind so the library's TDB pill paints
-        red/amber for dead/cookied URLs ahead of any download attempt.
-
-        Replaces the v1.10.43 inline _probe_phase + 100-cap. Sync now
-        enqueues one probe job per new + url_changed entry; the worker
-        chews through them between higher-priority work (downloads/
-        place/etc.). Probe jobs are deprioritized via next_run_at = +60s
-        at enqueue time so claim_next_job (which orders by next_run_at)
-        won't pick a probe over a download whose next_run_at = now.
-        """
-        from .downloader import probe_youtube_url, FailureKind  # local import
-        media_type = job["media_type"]
-        tmdb_id = job["tmdb_id"]
-        if media_type is None or tmdb_id is None:
-            return
-        with get_conn(self.settings.db_path) as conn:
-            theme = conn.execute(
-                "SELECT youtube_url FROM themes "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchone()
-            # v1.11.6: skip probing items we've already successfully
-            # downloaded into ANY section. The probe is a future-looking
-            # availability check; once a local file exists motif can keep
-            # serving it regardless of whether the upstream YouTube URL
-            # is still up. Drains the post-first-sync probe backlog
-            # significantly because most items end up downloaded.
-            already = conn.execute(
-                "SELECT 1 FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ? LIMIT 1",
-                (media_type, tmdb_id),
-            ).fetchone()
-        if theme is None or not theme["youtube_url"]:
-            return  # row gone or no URL — nothing to probe
-        if already:
-            return  # already downloaded somewhere; URL liveness is moot
-        try:
-            failure = probe_youtube_url(
-                theme["youtube_url"],
-                cookies_file=self.settings.cookies_file,
-            )
-        except Exception as e:
-            log.debug("probe failed for %s/%s: %s", media_type, tmdb_id, e)
-            return
-        with get_conn(self.settings.db_path) as conn, transaction(conn):
-            if failure is None:
-                # URL is reachable + playable. Clear failure_kind +
-                # failure_acked_at so the row's TDB pill goes green
-                # and any future re-failure alerts again.
-                conn.execute(
-                    "UPDATE themes SET failure_kind = NULL, "
-                    "                  failure_message = NULL, "
-                    "                  failure_at = NULL, "
-                    "                  failure_acked_at = NULL "
-                    "WHERE media_type = ? AND tmdb_id = ? "
-                    "  AND failure_kind IS NOT NULL",
-                    (media_type, tmdb_id),
-                )
-            else:
-                # v1.10.59: probe-detected failures are auto-acked.
-                # The TDB pill (driven by failure_kind) still paints
-                # red/amber so the user sees broken/cookied URLs, but
-                # they don't push the topbar's failures badge or land
-                # in the Failures tab — those should only flag work
-                # the user actually triggered. A real download failure
-                # later (with the same kind) preserves the ack via the
-                # existing CASE. A different kind clears the ack so
-                # the genuine new failure surfaces.
-                ts = now_iso()
-                conn.execute(
-                    "UPDATE themes SET failure_kind = ?, "
-                    "                  failure_message = ?, "
-                    "                  failure_at = ?, "
-                    "                  failure_acked_at = CASE "
-                    "                      WHEN failure_kind = ? THEN COALESCE(failure_acked_at, ?) "
-                    "                      ELSE ? "
-                    "                  END "
-                    "WHERE media_type = ? AND tmdb_id = ?",
-                    (failure.value, f"sync probe: {failure.human}",
-                     ts, failure.value, ts, ts, media_type, tmdb_id),
-                )
 
     def _do_relink(self, job: sqlite3.Row) -> None:
         """Retry hardlinking for placements that fell back to copy.

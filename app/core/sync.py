@@ -446,62 +446,10 @@ def _plex_supplies_theme(
     return row is not None
 
 
-_PROBE_PRIORITY_DELAY_SECONDS = 60
-
-
-def _enqueue_probe_jobs(
-    db_path,
-    targets: list[tuple[str, int, str]],
-) -> int:
-    """v1.10.45: enqueue one 'probe' job per (media_type, tmdb_id) so
-    the worker checks YouTube URL availability outside the sync flow.
-    Replaces the v1.10.43 inline _probe_phase + 100-cap.
-
-    Probe jobs land with next_run_at = now + 60s so claim_next_job
-    (which orders by next_run_at) prefers downloads / place / etc.
-    that are due 'now'. Probes interleave with idle worker time and
-    drain over hours/days without ever blocking real work.
-
-    Dedupes against any pending/running probe for the same item so
-    a daily sync with overlapping changes doesn't pile up.
-    """
-    if not targets:
-        return 0
-    enqueued = 0
-    next_run_iso = (datetime.now(timezone.utc)
-                    + timedelta(seconds=_PROBE_PRIORITY_DELAY_SECONDS)
-                    ).isoformat(timespec="seconds")
-    created_iso = now_iso()
-    with get_conn(db_path) as conn, transaction(conn):
-        for media_type, tmdb_id, _yt_url in targets:
-            existing = conn.execute(
-                "SELECT 1 FROM jobs "
-                "WHERE job_type = 'probe' AND media_type = ? AND tmdb_id = ? "
-                "  AND status IN ('pending', 'running') LIMIT 1",
-                (media_type, tmdb_id),
-            ).fetchone()
-            if existing:
-                continue
-            # v1.11.6: skip if we already have a local file for this item
-            # in any section. Probe is a future-looking availability check;
-            # once motif has the audio downloaded the upstream URL's
-            # liveness no longer matters for serving the user. Cuts the
-            # post-first-sync probe backlog dramatically.
-            already = conn.execute(
-                "SELECT 1 FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ? LIMIT 1",
-                (media_type, tmdb_id),
-            ).fetchone()
-            if already:
-                continue
-            conn.execute(
-                "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, "
-                "                  status, created_at, next_run_at) "
-                "VALUES ('probe', ?, ?, '{}', 'pending', ?, ?)",
-                (media_type, tmdb_id, created_iso, next_run_iso),
-            )
-            enqueued += 1
-    return enqueued
+# v1.11.17: probe enqueue + handler removed entirely. The TDB pill
+# color is still driven by failure_kind from real download attempts;
+# the speculative probe pass added 25-50 minutes of yt-dlp work per
+# sync without a meaningful UX gain.
 
 
 def _flush_sync_batch(
@@ -512,16 +460,10 @@ def _flush_sync_batch(
     enqueue_downloads: bool,
     auto_place_override: bool | None,
     stats: SyncStats,
-    probe_targets: list | None = None,
 ) -> None:
     """Process one batch of fetched ThemerrDB records inside a single txn.
 
     `batch` is a list of (media_type, tmdb_id, record, upstream_source).
-    `probe_targets` (v1.10.43): optional list to which we append
-    (media_type, tmdb_id, youtube_url) tuples for items that are
-    new or whose YouTube URL changed in this sync. The caller runs
-    the actual probe pass after all batches commit so the writer
-    lock isn't held during the per-URL HTTP work.
     """
     if not batch:
         return
@@ -535,12 +477,6 @@ def _flush_sync_batch(
                 upstream_source=upstream_source,
                 sync_ts=sync_ts,
             )
-            # v1.10.43: collect new + url-changed entries for the
-            # post-sync availability probe.
-            if (is_new or url_changed) and probe_targets is not None:
-                yt_url = record.get("youtube_theme_url")
-                if yt_url:
-                    probe_targets.append((media_type, tmdb_id, yt_url))
             # v1.10.16: Plex-first default — when Plex is already supplying
             # a theme for this title (P-agent state) and motif doesn't
             # manage the file yet, skip the auto-download. The user can
@@ -607,8 +543,7 @@ def _flush_sync_batch(
 
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
-             enqueue_downloads: bool = True,
-             probe_urls: bool = True) -> SyncStats:
+             enqueue_downloads: bool = True) -> SyncStats:
     """Run a full ThemerrDB sync. Returns stats.
 
     `auto_place_override=None` lets the worker fall back to the global
@@ -622,16 +557,9 @@ def run_sync(db_path, base_url: str, *,
     are enqueued. The user triggers downloads explicitly from /movies, /tv,
     or /coverage. pending_updates rows are still recorded for items whose
     ThemerrDB URL changed since last sync.
-
-    v1.10.45 — `probe_urls=True` enqueues 'probe' jobs per new +
-    url_changed YouTube URL. The worker runs them between higher-
-    priority work (downloads / place / etc.) so dead / cookied URLs
-    eventually surface as red / amber TDB pills without blocking
-    sync. Replaces v1.10.43's inline probe phase + 100-cap.
     """
     stats = SyncStats()
     sync_ts = now_iso()
-    probe_targets: list[tuple[str, int, str]] = []
 
     with get_conn(db_path) as conn:
         run_id = conn.execute(
@@ -672,7 +600,6 @@ def run_sync(db_path, base_url: str, *,
                             enqueue_downloads=enqueue_downloads,
                             auto_place_override=auto_place_override,
                             stats=stats,
-                            probe_targets=probe_targets if probe_urls else None,
                         )
                         batch.clear()
                         # Yield the writer lock briefly so concurrent API
@@ -685,23 +612,8 @@ def run_sync(db_path, base_url: str, *,
                         enqueue_downloads=enqueue_downloads,
                         auto_place_override=auto_place_override,
                         stats=stats,
-                        probe_targets=probe_targets if probe_urls else None,
                     )
                     batch.clear()
-
-        # v1.10.45: enqueue probe jobs for new + url_changed URLs.
-        # Replaces the inline _probe_phase + 100-cap. Probe jobs are
-        # deprioritized (next_run_at = now + 60s) so claim_next_job
-        # picks downloads/place/etc. first. The worker drains the
-        # probe backlog during idle windows.
-        # v1.11.15: probe enqueueing is disabled. The TDB pill color
-        # gain wasn't worth the worker time — on a 4K-item first sync
-        # the probe queue spawned 1500+ jobs that ran for 25-50 minutes
-        # each, while the same yt-dlp call fires when the user actually
-        # clicks DOWNLOAD anyway (and the failure_kind from a real
-        # download attempt drives the pill color too). _enqueue_probe_jobs
-        # and _do_probe stay in the codebase for potential future use,
-        # but sync no longer feeds them.
 
         with get_conn(db_path) as conn:
             conn.execute(
