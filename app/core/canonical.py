@@ -55,37 +55,38 @@ def canonical_theme_subdir(title: str, year: str | None) -> str:
 def compute_section_themes_subdir(
     title: str, *, type_: str, is_anime: bool, is_4k: bool,
 ) -> str:
-    """v1.11.0: filesystem-safe slug for a Plex section's themes subdir.
+    """v1.11.46: filesystem-safe slug derived directly from the Plex
+    section title, regardless of is_anime / is_4k flags. The user
+    names their section "4kmovies" or "Flex" or "Documentaries"; the
+    themes subdir mirrors that exactly (lowercased, with runs of
+    non-alphanumeric characters collapsed to a single hyphen).
 
-    v1.11.45: 4K and anime variants now use fixed category names so the
-    on-disk tree reads cleanly regardless of what the user named the
-    Plex section. Pre-fix a section titled "4K Movies" computed a
-    slug of "4k-movies" and then got the "-4k" suffix appended,
-    producing "4k-movies-4k"; an anime section titled "Anime" became
-    "anime-anime" for the same reason.
+    Pre-v1.11.46 the slug was either category-fixed ("4kmovies",
+    "anime", ...) or title-with-suffix ("movies-4k", "anime-anime"),
+    both of which surprised users whose Plex section names already
+    encoded the category. The flags now only drive the tab partition
+    (Movies / TV / Anime) and the standard / 4K toggle within a tab —
+    they no longer touch the storage layout.
+
+    is_anime / is_4k stay in the signature so callers don't need to
+    change, but they're unused in the slug derivation.
 
     Examples:
-      - movie / not anime / not 4k    → slugified title (e.g. "movies",
-                                        "documentaries") so multiple plain
-                                        sections still land in distinct dirs
-      - movie / not anime /     4k    → "4kmovies"
-      - show  / not anime / not 4k    → slugified title (e.g. "tv")
-      - show  / not anime /     4k    → "4ktv"
-      - any   /     anime / not 4k    → "anime"
-      - any   /     anime /     4k    → "4kanime"
+      - "Movies"          → "movies"
+      - "4K Movies"       → "4k-movies"
+      - "Movies4K"        → "movies4k"
+      - "4kmovies"        → "4kmovies"
+      - "TV Shows"        → "tv-shows"
+      - "Flex"            → "flex"
+      - "Documentaries"   → "documentaries"
+      - "Anime"           → "anime"
+      - empty title       → "movies" (or "tv" for show-type)
 
     Caller (sections._allocate_themes_subdir) is responsible for
     collision handling — if two sections compute the same subdir, the
-    second one gets a -2 / -3 / ... suffix until unique. With the
-    category-fixed 4K/anime names, collisions only matter when a user
-    has e.g. two 4K movie libraries (rare).
+    second one gets a -2 / -3 / ... suffix until unique.
     """
-    if is_anime and is_4k:
-        return "4kanime"
-    if is_anime:
-        return "anime"
-    if is_4k:
-        return "4ktv" if type_ == "show" else "4kmovies"
+    del is_anime, is_4k  # unused — see docstring
     raw = (title or "").strip().lower() or ("tv" if type_ == "show" else "movies")
     slug = re.sub(r"[^a-z0-9]+", "-", raw).strip("-") or (
         "tv" if type_ == "show" else "movies"
