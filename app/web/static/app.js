@@ -780,7 +780,7 @@
         + '\n\nMotif will delete the canonical at /data/media/themes/...'
         + '\n\nAfter PURGE you CANNOT use PUSH TO PLEX to restore this theme.'
         + '\nTo re-place, you must FIRST re-acquire the audio via one of:'
-        + '\n  • SOURCE → DOWNLOAD (re-fetch from ThemerrDB)'
+        + '\n  • SOURCE → TDB (re-fetch from ThemerrDB)'
         + '\n  • SOURCE → SET URL (provide a manual YouTube URL)'
         + '\n  • SOURCE → UPLOAD MP3 (upload a local file)'
         + '\n  • drop a theme.mp3 sidecar at the Plex folder and SOURCE → ADOPT';
@@ -2663,7 +2663,7 @@
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
         return ` <span class="tdb-pill tdb-pill-dead" title="Reason: ${htmlEscape(why)}${detail}&#10;&#10;Recovery options:&#10;  • SOURCE → SET URL to provide a working YouTube URL&#10;  • SOURCE → UPLOAD MP3 to upload a local audio file&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT&#10;&#10;The TDB pill stays red so you remember the upstream URL is broken.">TDB ✗</span>`;
       }
-      return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — REPLACE w/ TDB available in the SOURCE menu">TDB</span>';
+      return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
     })();
 
     // v1.10.24 Option C row actions — collapse the wide button row into
