@@ -376,6 +376,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(109,255,181,0.06); }
 .chip-warn { border-color: rgba(255,107,107,0.35); }
 .chip-warn.chip-active { color: var(--red); border-color: var(--red); background: rgba(255,107,107,0.08); }
+
+/* v1.11.34: when a chip is the sole variant for its toggle group it
+   becomes a label, not a button. Disabled cursor + suppressed hover
+   make it clear the user can't click it to switch — the page is
+   already showing the only variant available. */
+.chip-label {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.95;
+}
+.chip-label:hover { color: inherit; border-color: inherit; }
 .chip-sep {
   color: var(--bg-ridge);
   align-self: center;

@@ -3051,13 +3051,14 @@
   }
 
   function adaptLibraryFourkToggle(ta) {
-    // v1.11.27: per-button visibility instead of hiding the whole
-    // toggle. If only standard exists, hide // 4K. If only 4K exists,
-    // hide // STANDARD (and auto-flip libraryState.fourk to true so
-    // the page actually shows content). Pre-fix the toggle was
-    // hidden entirely when only one variant existed, which obscured
-    // the fact that the active tab was 4K-only. Now the visible
-    // remaining button doubles as a label.
+    // v1.11.34: when both variants exist the chips work as a toggle
+    // and chip-active follows libraryState.fourk so a return visit
+    // renders the active variant correctly. When only one variant
+    // exists the chip becomes a non-clickable label (chip-active +
+    // chip-label, disabled) so it reads as 'this tab is 4K' rather
+    // than as a button waiting to be pressed. Pre-fix the visible
+    // chip was a regular button that didn't reflect selected state
+    // on revisit.
     const tabEl = document.getElementById('library-tab');
     if (!tabEl) return;
     const tab = tabEl.value;
@@ -3071,14 +3072,28 @@
     toggle.style.display = showAny ? '' : 'none';
     if (stdBtn) stdBtn.style.display = av.standard ? '' : 'none';
     if (fkBtn)  fkBtn.style.display  = av.fourk    ? '' : 'none';
-    // Auto-flip libraryState.fourk when the user lands on a tab
-    // that only has the variant they aren't currently viewing.
+    // Auto-flip libraryState.fourk when only one variant exists.
     if (av.fourk && !av.standard && libraryState.fourk === false) {
       libraryState.fourk = true;
       loadLibrary().catch(()=>{});
     } else if (av.standard && !av.fourk && libraryState.fourk === true) {
       libraryState.fourk = false;
       loadLibrary().catch(()=>{});
+    }
+    // Sync chip-active + chip-label state. The 'sole variant' becomes
+    // a label; when both exist the chips act as a toggle.
+    const sole = (av.standard !== av.fourk);
+    if (stdBtn) {
+      const active = sole ? av.standard : !libraryState.fourk;
+      stdBtn.classList.toggle('chip-active', active);
+      stdBtn.classList.toggle('chip-label',  sole);
+      stdBtn.disabled = sole;
+    }
+    if (fkBtn) {
+      const active = sole ? av.fourk : libraryState.fourk;
+      fkBtn.classList.toggle('chip-active', active);
+      fkBtn.classList.toggle('chip-label',  sole);
+      fkBtn.disabled = sole;
     }
   }
 
