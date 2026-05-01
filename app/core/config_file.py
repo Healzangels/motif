@@ -85,6 +85,13 @@ class DownloadsConfig:
 class MatchingConfig:
     strict_edition: bool = True
     plus_mode: str = "separator"  # "separator" or "literal"
+    # v1.12.0: when True, themes_dir manual-import findings whose
+    # match_kind is 'auto_place' or 'auto_adopt' get applied
+    # automatically by the import scanner — no /import approval
+    # needed. Conflict / multi-section / orphan still always require
+    # explicit user approval. Default False so a bulk drop doesn't
+    # silently overwrite anything.
+    auto_place_unambiguous_imports: bool = False
 
 
 @dataclass
