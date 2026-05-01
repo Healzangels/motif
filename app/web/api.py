@@ -376,18 +376,39 @@ def _library_main_query(
                      t2.id DESC
             LIMIT 1
         )
-        LEFT JOIN local_files lf
-          ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
         -- v1.10.48: match placement.media_folder to this row's
         -- pi.folder_path. Pre-1.10.48 the JOIN was on (mt, tmdb)
         -- only, so a placement made at /4kmovies/Matilda would paint
         -- the standard /movies/Matilda row as PL=on (and conversely),
         -- bleeding state across sections that share the same theme.
         -- Now each row reflects placement only for ITS own folder.
+        --
+        -- Note: placements JOIN runs BEFORE local_files so v1.10.52's
+        -- gate can reference p.media_folder.
         LEFT JOIN placements p
           ON p.media_type = t.media_type
          AND p.tmdb_id = t.tmdb_id
          AND p.media_folder = pi.folder_path
+        -- v1.10.52: gate the local_files JOIN to 'this row claims the
+        -- canonical' — either there's a placement at this row's
+        -- folder, or no placement exists for this theme anywhere
+        -- (so the row is the awaiting-placement target). A row whose
+        -- theme is placed in a different section's folder reads
+        -- DL=off, PL=off, SRC=— (per-section local_files keying without
+        -- a per-section schema). Pre-1.10.52 standard Matilda showed
+        -- DL=on after a 4K upload because lf was shared across rows
+        -- of the same theme.
+        LEFT JOIN local_files lf
+          ON lf.media_type = t.media_type
+         AND lf.tmdb_id = t.tmdb_id
+         AND (
+            p.media_folder IS NOT NULL
+            OR NOT EXISTS (
+                SELECT 1 FROM placements pe
+                WHERE pe.media_type = t.media_type
+                  AND pe.tmdb_id = t.tmdb_id
+            )
+         )
     """
     sql_from_pi_only = """
         FROM plex_items pi
