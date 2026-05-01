@@ -13,6 +13,7 @@
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
+  {% if request.state.principal is defined and request.state.principal.is_authenticated %}
   <div id="dry-run-banner" class="dry-run-banner" style="display:none">
     <span class="dry-run-mark">⚠</span>
     <span class="dry-run-text">DRY-RUN ACTIVE — no themes downloaded, no files placed, no Plex calls. Sync still runs.</span>
@@ -53,6 +54,7 @@
       <a href="/logout" class="topbar-logout" title="sign out">⏻</a>
     </div>
   </header>
+  {% endif %}
 
   <main class="content">
     {% block content %}{% endblock %}
