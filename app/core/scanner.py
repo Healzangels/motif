@@ -251,7 +251,13 @@ def _classify_and_record(ctx: ScanContext, section_id: str, section_type: str,
         media_folder,
     )
 
-    # Insert the scan_findings row
+    # Insert the scan_findings row + flag the plex_items row so the
+    # library's SRC badge reflects the freshly-discovered sidecar
+    # immediately. Without this update, an anime row with a local
+    # theme.mp3 would render as P (Plex agent) until the next plex_enum
+    # caught up: pi.local_theme_file=0 + pi.has_theme=1 from Plex's
+    # local-media-assets agent picking up the sidecar = the M-vs-P
+    # discriminator in app.js falls into the P branch.
     with get_conn(ctx.db_path) as conn:
         conn.execute(
             """INSERT INTO scan_findings (
@@ -263,6 +269,11 @@ def _classify_and_record(ctx: ScanContext, section_id: str, section_type: str,
              str(media_folder), str(theme_file), file_size, file_mtime, file_sha256,
              finding_kind, theme_id,
              json.dumps(resolved) if resolved else None),
+        )
+        conn.execute(
+            "UPDATE plex_items SET local_theme_file = 1 "
+            "WHERE folder_path = ? AND section_id = ?",
+            (str(media_folder), section_id),
         )
     return True
 

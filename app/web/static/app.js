@@ -226,6 +226,39 @@
       document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
         lockBtn(b, '…');
       });
+      // v1.11.6: lock the per-section MGD checkboxes + A/4K flag pills
+      // while a sync is in flight so the user can't queue a layout
+      // change mid-enum (which would either race the worker's lookup
+      // or get a 409 from the role-flip data guard).
+      document.querySelectorAll('input[data-section-toggle]').forEach((cb) => {
+        cb.disabled = syncBusy;
+      });
+      document.querySelectorAll('button[data-section-row-toggle], button.lib-flag-pill').forEach((b) => {
+        if (syncBusy) {
+          if (!b.dataset.preLockDisabled) {
+            b.dataset.preLockDisabled = b.disabled ? '1' : '0';
+          }
+          b.disabled = true;
+        } else if (b.dataset.preLockDisabled !== undefined) {
+          b.disabled = b.dataset.preLockDisabled === '1';
+          delete b.dataset.preLockDisabled;
+        }
+      });
+      // Also lock the libraries SAVE button while a sync is in flight.
+      const libSaveBtn = document.getElementById('libraries-save-btn');
+      if (libSaveBtn) {
+        if (syncBusy) {
+          if (!libSaveBtn.dataset.preLockDisabled) {
+            libSaveBtn.dataset.preLockDisabled = libSaveBtn.disabled ? '1' : '0';
+          }
+          libSaveBtn.disabled = true;
+        } else if (libSaveBtn.dataset.preLockDisabled !== undefined) {
+          libSaveBtn.disabled = libSaveBtn.dataset.preLockDisabled === '1';
+          delete libSaveBtn.dataset.preLockDisabled;
+          // re-enable based on librariesDirty count
+          updateLibrariesSaveButton();
+        }
+      }
     } catch (e) {
       $('#topbar-status-text').textContent = 'OFFLINE';
     }
@@ -1115,19 +1148,28 @@
       const locations = (s.location_paths || []).map(htmlEscape).join('<br>') || '<span class="muted">—</span>';
       const isAnime = !!s.is_anime;
       const is4k = !!s.is_4k;
-      const role = isAnime && is4k ? 'anime_4k'
-                 : isAnime         ? 'anime'
-                 : is4k            ? '4k'
-                 :                   'standard';
-      // Movie sections only get standard/4k options — anime tabs draw from
-      // type='show' sections in motif's typical Plex layout. Show/show-4K
-      // sections get the full set including anime + anime 4K.
-      const animeOpts = s.type === 'movie'
-        ? ''
-        : `<option value="anime"${role === 'anime' ? ' selected' : ''}>anime</option>
-           <option value="anime_4k"${role === 'anime_4k' ? ' selected' : ''}>anime 4k</option>`;
+      // v1.11.6: ROLE column is now two toggleable pills (A + 4K) instead
+      // of a dropdown. Default = neither selected = 'standard'. A alone =
+      // 'anime'. 4K alone = '4k'. Both = 'anime_4k'. Movie sections still
+      // hide the A pill (motif's anime tabs draw from type='show' sections
+      // in typical Plex layouts).
+      const showAnime = s.type !== 'movie';
+      const animePill = showAnime
+        ? `<button type="button"
+                   class="lib-flag-pill lib-flag-pill-anime${isAnime ? ' is-active' : ''}"
+                   data-section-flag="anime"
+                   data-section-id="${htmlEscape(s.section_id)}"
+                   aria-pressed="${isAnime ? 'true' : 'false'}"
+                   title="anime library — feeds the ANIME tab">A</button>`
+        : '';
+      const fourkPill = `<button type="button"
+                                  class="lib-flag-pill lib-flag-pill-4k${is4k ? ' is-active' : ''}"
+                                  data-section-flag="4k"
+                                  data-section-id="${htmlEscape(s.section_id)}"
+                                  aria-pressed="${is4k ? 'true' : 'false'}"
+                                  title="4K library — feeds the 4K toggle on its tab">4K</button>`;
       const row = `
-        <tr style="${stale ? 'opacity:0.45' : ''}">
+        <tr style="${stale ? 'opacity:0.45' : ''}" data-section-row="${htmlEscape(s.section_id)}">
           <td class="lib-col-id">${htmlEscape(s.section_id)}</td>
           <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
           <td class="lib-col-type"><span class="muted">${htmlEscape(s.type)}</span></td>
@@ -1135,11 +1177,7 @@
             <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
           </td>
           <td class="lib-col-role">
-            <select class="input" data-section-role="${htmlEscape(s.section_id)}" title="which Movies/TV/Anime tab does this section feed">
-              <option value="standard"${role === 'standard' ? ' selected' : ''}>standard</option>
-              <option value="4k"${role === '4k' ? ' selected' : ''}>4k</option>
-              ${animeOpts}
-            </select>
+            <div class="lib-flag-group">${animePill}${fourkPill}</div>
           </td>
           <td class="lib-locations" style="font-family:var(--font-mono);font-size:var(--t-tiny);color:var(--fg-dim)">${locations}</td>
           <td class="lib-col-actions">
@@ -1202,24 +1240,43 @@
       // keeps the row buttons disabled until the worker drains.
     });
 
-    // Deferred save: capture every MGD/ROLE change into librariesDirty
-    // (keyed by section_id). The // SAVE button commits everything in
-    // one click — consistent with the rest of /settings, and the user
-    // can flip several sections without each toggle firing a request.
+    // Deferred save: capture every MGD / ANIME / 4K change into librariesDirty
+    // (keyed by section_id). The // SAVE button commits everything in one
+    // click — consistent with the rest of /settings, and the user can flip
+    // several sections without each toggle firing a request.
     document.addEventListener('change', (e) => {
       const tog = e.target.closest('input[data-section-toggle]');
-      const roleSel = e.target.closest('select[data-section-role]');
-      if (tog) {
-        const sid = tog.dataset.sectionToggle;
-        if (!librariesDirty[sid]) librariesDirty[sid] = {};
-        librariesDirty[sid].included = tog.checked;
-        updateLibrariesSaveButton();
-      } else if (roleSel) {
-        const sid = roleSel.dataset.sectionRole;
-        if (!librariesDirty[sid]) librariesDirty[sid] = {};
-        librariesDirty[sid].role = roleSel.value;
-        updateLibrariesSaveButton();
-      }
+      if (!tog) return;
+      const sid = tog.dataset.sectionToggle;
+      if (!librariesDirty[sid]) librariesDirty[sid] = {};
+      librariesDirty[sid].included = tog.checked;
+      updateLibrariesSaveButton();
+    });
+    // v1.11.6: A / 4K pill toggles. Each pill flips its own aria-pressed
+    // state, then the change is captured into librariesDirty as a role
+    // string ('standard' / 'anime' / '4k' / 'anime_4k') derived from the
+    // current pressed state of both pills on the same row.
+    document.addEventListener('click', (e) => {
+      const pill = e.target.closest('button.lib-flag-pill');
+      if (!pill) return;
+      e.preventDefault();
+      if (pill.disabled) return;
+      const next = pill.getAttribute('aria-pressed') !== 'true';
+      pill.setAttribute('aria-pressed', next ? 'true' : 'false');
+      pill.classList.toggle('is-active', next);
+      const sid = pill.dataset.sectionId;
+      const row = pill.closest('tr');
+      const animePill = row.querySelector('button[data-section-flag="anime"]');
+      const fourkPill = row.querySelector('button[data-section-flag="4k"]');
+      const isAnime = animePill && animePill.getAttribute('aria-pressed') === 'true';
+      const is4k = fourkPill && fourkPill.getAttribute('aria-pressed') === 'true';
+      const role = (isAnime && is4k) ? 'anime_4k'
+                 : isAnime           ? 'anime'
+                 : is4k              ? '4k'
+                 :                     'standard';
+      if (!librariesDirty[sid]) librariesDirty[sid] = {};
+      librariesDirty[sid].role = role;
+      updateLibrariesSaveButton();
     });
 
     // SAVE button: iterate dirty sections, fire per-row requests in

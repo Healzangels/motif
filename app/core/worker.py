@@ -151,6 +151,24 @@ class Worker:
 
     def run(self) -> None:
         log.info("Worker loop starting")
+        # v1.11.6: zombie-job recovery. If a worker crashed (or the
+        # container was kill-9'd) mid-job, the row is left as
+        # status='running' and never gets reclaimed by claim_next_job
+        # (which only looks at status='pending'). Reset every running
+        # job to pending on startup so they re-enter the queue. Probes
+        # in particular were observed stuck in 'running' for 40+ min
+        # after a sandbox restart with no progress.
+        try:
+            with get_conn(self.settings.db_path) as conn:
+                cur = conn.execute(
+                    "UPDATE jobs SET status = 'pending', started_at = NULL "
+                    "WHERE status = 'running'"
+                )
+                if cur.rowcount:
+                    log.info("Reclaimed %d orphan 'running' job(s) at startup",
+                             cur.rowcount)
+        except Exception as e:
+            log.warning("Orphan-job recovery failed at startup: %s", e)
         while not self.stop_event.is_set():
             job = self._claim_next_job()
             if job is None:
@@ -904,8 +922,21 @@ class Worker:
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
+            # v1.11.6: skip probing items we've already successfully
+            # downloaded into ANY section. The probe is a future-looking
+            # availability check; once a local file exists motif can keep
+            # serving it regardless of whether the upstream YouTube URL
+            # is still up. Drains the post-first-sync probe backlog
+            # significantly because most items end up downloaded.
+            already = conn.execute(
+                "SELECT 1 FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ? LIMIT 1",
+                (media_type, tmdb_id),
+            ).fetchone()
         if theme is None or not theme["youtube_url"]:
             return  # row gone or no URL — nothing to probe
+        if already:
+            return  # already downloaded somewhere; URL liveness is moot
         try:
             failure = probe_youtube_url(
                 theme["youtube_url"],

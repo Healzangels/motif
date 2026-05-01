@@ -482,6 +482,18 @@ def _enqueue_probe_jobs(
             ).fetchone()
             if existing:
                 continue
+            # v1.11.6: skip if we already have a local file for this item
+            # in any section. Probe is a future-looking availability check;
+            # once motif has the audio downloaded the upstream URL's
+            # liveness no longer matters for serving the user. Cuts the
+            # post-first-sync probe backlog dramatically.
+            already = conn.execute(
+                "SELECT 1 FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ? LIMIT 1",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if already:
+                continue
             conn.execute(
                 "INSERT INTO jobs (job_type, media_type, tmdb_id, payload, "
                 "                  status, created_at, next_run_at) "
