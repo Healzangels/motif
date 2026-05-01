@@ -156,6 +156,20 @@ def adopt_folder(
         sha256=sha256,
         decided_by=decided_by,
     )
+    # v1.11.42: read back the just-written rows so the event log records
+    # what's actually in the DB (theme_id, source_kind, provenance,
+    # placement_kind, file_path, media_folder, theme_id_in_pi). The
+    # 'no action was taken' bug report on Matilda 4K showed the success
+    # log but no visible state change — we couldn't tell whether the
+    # rows were missing, the badge logic was wrong, or the UI was
+    # caching. With this log line we can match what's on disk to what
+    # the lib renderer should see.
+    verify = _verify_adopt_state(
+        db_path,
+        media_type=outcome.get("media_type"),
+        tmdb_id=outcome.get("tmdb_id"),
+        section_id=section_id,
+    )
     log_event(db_path, level="INFO", component="adopt",
               media_type=outcome.get("media_type"),
               tmdb_id=outcome.get("tmdb_id"),
@@ -163,11 +177,53 @@ def adopt_folder(
               detail={"folder_path": str(folder_path),
                       "sha256": sha256,
                       "kind": finding_kind,
+                      "section_id": section_id,
                       "decided_by": decided_by,
-                      "restored_from_history": restored})
+                      "restored_from_history": restored,
+                      "outcome": outcome,
+                      "verify": verify})
     if restored:
         outcome["restored_from_history"] = restored
     return outcome
+
+
+def _verify_adopt_state(
+    db_path: Path, *,
+    media_type: str | None, tmdb_id: int | None,
+    section_id: str | None,
+) -> dict:
+    """Read back local_files / placements / plex_items.theme_id for the
+    just-adopted (item, section) so the event log captures the actual
+    row state. Lets us debug 'badge didn't change' reports without DB
+    access."""
+    if media_type is None or tmdb_id is None or not section_id:
+        return {"ok": False, "reason": "missing keys"}
+    with get_conn(db_path) as conn:
+        lf = conn.execute(
+            """SELECT theme_id, file_path, source_kind, provenance
+               FROM local_files
+               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+        p = conn.execute(
+            """SELECT theme_id, media_folder, placement_kind, provenance
+               FROM placements
+               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+        pi = conn.execute(
+            """SELECT rating_key, theme_id, has_theme, local_theme_file
+               FROM plex_items
+               WHERE section_id = ? AND guid_tmdb = ?
+                 AND media_type = (CASE ? WHEN 'tv' THEN 'show' ELSE ? END)
+               LIMIT 1""",
+            (section_id, tmdb_id, media_type, media_type),
+        ).fetchone()
+    return {
+        "local_files": dict(lf) if lf else None,
+        "placements": dict(p) if p else None,
+        "plex_items": dict(pi) if pi else None,
+    }
 
 
 def _maybe_restore_url_history(
