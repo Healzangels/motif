@@ -281,6 +281,13 @@ CREATE INDEX IF NOT EXISTS idx_plex_items_type    ON plex_items (media_type);
 CREATE INDEX IF NOT EXISTS idx_plex_items_imdb    ON plex_items (guid_imdb);
 CREATE INDEX IF NOT EXISTS idx_plex_items_tmdb    ON plex_items (guid_tmdb);
 CREATE INDEX IF NOT EXISTS idx_plex_items_title   ON plex_items (title COLLATE NOCASE);
+-- v1.11.10: composite index for the unified library browse query's hot
+-- path. /api/library does INNER JOIN plex_sections ON section_id +
+-- WHERE media_type=? + ORDER BY pi.title COLLATE NOCASE LIMIT 50; with
+-- 10K+ plex_items the planner was post-filter-sorting which made the
+-- first page render take 5-10s under concurrent probe write load.
+CREATE INDEX IF NOT EXISTS idx_plex_items_section_title
+    ON plex_items (section_id, media_type, title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_plex_items_title_norm
     ON plex_items (media_type, title_norm, year)
     WHERE title_norm IS NOT NULL AND year IS NOT NULL;

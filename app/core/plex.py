@@ -446,19 +446,37 @@ class PlexClient:
         per content row, with GUIDs and folder paths extracted.
 
         For movies, folder_path is the parent dir of the first Part.file.
-        For shows, folder_path is the show-level Location/path."""
-        type_id = "1" if media_type == "movie" else "2"
+        For shows, folder_path is the show-level Location/path.
+
+        v1.11.10: dropped the explicit `type=` filter on the request.
+        Some Plex setups (custom agents, certain show-section variants
+        like 'TV Shows by Original Air Date') returned 0 children for
+        type=2 even when the section had thousands of items. Plex
+        returns the natural-level rows for the section without the
+        filter, and our existing iteration already filters by tag
+        (Video / Directory) so spurious children are skipped.
+        """
         # `includeGuids=1` makes Plex emit <Guid id="..."/> children; otherwise
         # only the deprecated `guid` attr is present (and it's only one source).
         r = self._get(
             f"/library/sections/{section_id}/all",
-            params={"type": type_id, "includeGuids": "1"},
+            params={"includeGuids": "1"},
         )
         if r is None or r.status_code != 200:
+            log.warning(
+                "enumerate_section_items: section %s returned %s (%s)",
+                section_id,
+                r.status_code if r is not None else "no response",
+                "no response" if r is None else (r.text[:200] if r.text else ""),
+            )
             return []
         try:
             root = ET.fromstring(r.text)
-        except ET.ParseError:
+        except ET.ParseError as e:
+            log.warning(
+                "enumerate_section_items: section %s XML parse failed: %s",
+                section_id, e,
+            )
             return []
         out: list[PlexLibraryItem] = []
         for el in list(root):
@@ -481,6 +499,12 @@ class PlexClient:
                 folder_path=folder,
                 has_theme=el.get("theme") is not None,
             ))
+        if not out:
+            log.warning(
+                "enumerate_section_items: section %s returned 0 items "
+                "(media_type=%s, root tag=%s, child count=%d)",
+                section_id, media_type, root.tag, len(list(root)),
+            )
         return out
 
     def get_item_paths(self, rating_key: str) -> list[str]:
