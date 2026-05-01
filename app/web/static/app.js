@@ -114,6 +114,24 @@
     if (cached) applyTabAvailability(JSON.parse(cached));
   } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
 
+  // v1.11.72: build a scope label for the library REFRESH FROM PLEX
+  // button — 'MOVIES', '4K MOVIES', 'TV SHOWS', '4K TV', 'ANIME',
+  // '4K ANIME'. Falls back to 'PLEX' on pages without a library-tab
+  // input so the helper is safe to call from anywhere. libraryState
+  // is hoisted to a higher line but only consumed inside callbacks
+  // that run after DOMContentLoaded — its const binding is always
+  // initialised by the time this helper is invoked.
+  function libraryRefreshLabel() {
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return 'PLEX';
+    const tab = tabEl.value;
+    const fourk = !!libraryState.fourk;
+    const tabName = (
+      { movies: 'MOVIES', tv: 'TV SHOWS', anime: 'ANIME' }[tab]
+    ) || 'PLEX';
+    return fourk ? `4K ${tabName}` : tabName;
+  }
+
   // v1.11.48: optimistic topbar paint helper for sync/refresh click
   // handlers. /api/stats has a 1s TTL cache, so an immediate
   // refreshTopbarStatus right after enqueue often hits a stale
@@ -308,16 +326,22 @@
         }
       };
       // Library page REFRESH FROM PLEX — lock if THIS tab+fourk variant
-      // is the one currently enumerating.
+      // is the one currently enumerating. v1.11.72: busy text reflects
+      // the actual scope ('REFRESHING ANIME', 'REFRESHING 4K MOVIES',
+      // etc.) so the user can tell at a glance which library they
+      // kicked off.
       const libRefreshBtn = document.getElementById('library-refresh-btn');
       if (libRefreshBtn) {
         const tabEl = document.getElementById('library-tab');
         const tab = tabEl ? tabEl.value : null;
         const variant = libraryState.fourk ? 'fourk' : 'standard';
         const tabBusy = !!(tab && enumActive[tab] && enumActive[tab][variant]);
-        lockBtn(libRefreshBtn, tabBusy, '// REFRESHING PLEX…');
+        lockBtn(libRefreshBtn, tabBusy,
+          `// REFRESHING ${libraryRefreshLabel()}…`);
       }
       // Settings global REFRESH FROM PLEX — lock if ANY enum is running.
+      // No specific scope here (it covers every included section), so
+      // the generic 'REFRESHING PLEX' text stays correct.
       lockBtn(
         document.getElementById('refresh-libraries-btn'),
         anyEnumRunning, '// REFRESHING PLEX…',
@@ -3513,13 +3537,13 @@
       btn.disabled = true;
       const orig = btn.dataset.origLabel || btn.textContent;
       btn.dataset.origLabel = orig;
-      btn.textContent = '// REFRESHING…';
+      btn.textContent = `// REFRESHING ${libraryRefreshLabel()}…`;
       try {
         await api('POST', '/api/library/refresh', {
           tab: libraryState.tab,
           fourk: !!libraryState.fourk,
         });
-        paintTopbarSyncing('SYNCING WITH PLEX');
+        paintTopbarSyncing(`SYNCING WITH PLEX (${libraryRefreshLabel()})`);
         setTimeout(() => loadLibrary().catch(()=>{}), 5000);
         setTimeout(() => loadLibrary().catch(()=>{}), 15000);
       } catch (err) {
