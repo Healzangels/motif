@@ -3102,17 +3102,35 @@
     const n = libraryState.selected.size;
     cnt.textContent = fmt.num(n);
     bar.style.display = n > 0 ? '' : 'none';
-    if (all) all.checked = false;  // sync state-all is reset on render
-    // v1.10.51: swap which bulk-action buttons are visible based on
-    // the active filter. FAILURES → ACK SELECTED only; everything
-    // else → DOWNLOAD SELECTED + ADOPT SELECTED.
+    if (all) all.checked = false;
     const onFailures = libraryState.status === 'failures';
     const ackBtn = document.getElementById('library-ack-selected-btn');
     const dlBtn = document.getElementById('library-download-selected-btn');
     const adoptBtn = document.getElementById('library-adopt-selected-btn');
-    if (ackBtn)   ackBtn.style.display   = onFailures ? '' : 'none';
-    if (dlBtn)    dlBtn.style.display    = onFailures ? 'none' : '';
-    if (adoptBtn) adoptBtn.style.display = onFailures ? 'none' : '';
+    // v1.11.28: walk the current selection and decide which bulk
+    // actions are meaningful. M-only sidecars can only be ADOPTed
+    // (no themes record to download from); TDB-tracked rows can
+    // become T via // TDB SELECTED. Mixed selections show both.
+    let hasSidecarOnly = false;
+    let hasTdbEligible = false;
+    if (n > 0) {
+      const selectedKeys = libraryState.selected;
+      for (const it of (libraryState.items || [])) {
+        const key = libKey(it);
+        if (!selectedKeys.has(key)) continue;
+        const placed = !!it.media_folder;
+        const sidecarOnly = !placed && !!it.plex_local_theme;
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        if (sidecarOnly) hasSidecarOnly = true;
+        if (themed) hasTdbEligible = true;
+      }
+    }
+    if (ackBtn) ackBtn.style.display = onFailures ? '' : 'none';
+    if (dlBtn)    dlBtn.style.display    = (!onFailures && hasTdbEligible) ? '' : 'none';
+    if (adoptBtn) adoptBtn.style.display = (!onFailures && hasSidecarOnly) ? '' : 'none';
   }
 
   function bindLibrary() {
