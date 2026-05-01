@@ -47,11 +47,14 @@ log = logging.getLogger(__name__)
 SESSION_COOKIE = "motif_sess"
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
 
-# Routes that bypass auth entirely. Healthcheck for Docker, public stats for
-# Homepage, static assets, and the auth pages themselves.
+# Routes that bypass auth entirely. Healthcheck for Docker, static assets, and
+# the auth pages themselves. v1.11.41: /api/public/stats was demoted from this
+# list — Homepage / external dashboards must now present a read-scope API
+# token (Authorization: Bearer or ?api_key=). Exposing aggregate counters
+# unauth'd was a leak of library size, queue health, and sync-status hints
+# to anyone who could probe the URL.
 PUBLIC_PATHS: set[str] = {
     "/healthz",
-    "/api/public/stats",
     "/login",
     "/logout",
     "/setup",

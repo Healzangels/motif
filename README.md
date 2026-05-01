@@ -161,16 +161,11 @@ motif supports two auth modes that coexist, plus API tokens:
 
 **3. API tokens.** From `/settings`, generate tokens scoped `read` (stats + browse only) or `admin` (everything). Pass as `Authorization: Bearer thmr_...` or `?api_key=thmr_...`. Tokens are stored hashed (bcrypt over sha256) — once created, the raw value is shown once and never again.
 
-Two endpoints are always public, no auth required:
-
-- `/healthz` — Docker healthcheck, returns `{"status":"ok"}`
-- `/api/public/stats` — counters only, no titles or paths, suitable for Homepage
-
-Everything else returns 401 (JSON paths) or redirects to `/login` (HTML paths) when unauthenticated.
+Only one endpoint is public: `/healthz` (Docker healthcheck, returns `{"status":"ok"}`). Everything else — including `/api/public/stats` — returns 401 (JSON paths) or redirects to `/login` (HTML paths) when unauthenticated.
 
 ## Homepage integration
 
-motif exposes `/api/public/stats` specifically for [Homepage](https://gethomepage.dev) and similar dashboards. No token, no auth header, no risk of leaking sensitive data — just counters.
+motif exposes `/api/public/stats` for [Homepage](https://gethomepage.dev) and similar dashboards. The payload is counters only — no titles, no paths — but the endpoint requires a `read`-scope API token so a passerby can't probe your library size or sync status. Generate one at `/settings#tokens` and pass it in the `Authorization` header (or `?api_key=` query string):
 
 ```yaml
 # services.yaml
@@ -183,6 +178,8 @@ motif exposes `/api/public/stats` specifically for [Homepage](https://gethomepag
           url: https://motif.example.com/api/public/stats
           refreshInterval: 30000
           display: list
+          headers:
+            Authorization: Bearer thmr_YOUR_READ_TOKEN_HERE
           mappings:
             - field: movies_downloaded
               label: Movies w/ themes
@@ -201,7 +198,7 @@ motif exposes `/api/public/stats` specifically for [Homepage](https://gethomepag
               format: bytes
 ```
 
-If you want richer authenticated stats (the full `/api/stats` payload with detailed breakdowns), generate a `read`-scope API token at `/settings` and use it in the widget's `headers`.
+If you want richer authenticated stats, the full `/api/stats` payload (with detailed breakdowns) accepts the same token.
 
 ## Dry-run mode
 
@@ -441,12 +438,12 @@ Items in the four "video unavailable" states (`private`, `removed`, `age_restric
 
 ## API endpoints
 
-All endpoints return JSON unless they're HTML pages. Authentication is via session cookie (interactive), `Authorization: Bearer` token (scripts), or the forward-auth header. `/healthz` and `/api/public/stats` are always public.
+All endpoints return JSON unless they're HTML pages. Authentication is via session cookie (interactive), `Authorization: Bearer` token (scripts), or the forward-auth header. Only `/healthz` is public.
 
 | Method | Path                                            | Auth     | Purpose                                |
 |--------|-------------------------------------------------|----------|----------------------------------------|
 | GET    | `/healthz`                                      | public   | Liveness                               |
-| GET    | `/api/public/stats`                             | public   | Counters for Homepage etc.             |
+| GET    | `/api/public/stats`                             | read     | Counters for Homepage etc.             |
 | GET    | `/api/stats`                                    | read     | Full dashboard JSON                    |
 | GET    | `/api/items?media_type=movie&page=1&q=…&status=…` | read   | Paginated browse                       |
 | GET    | `/api/items/{movie\|tv}/{tmdb_id}`              | read     | Item detail                            |

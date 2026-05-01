@@ -834,13 +834,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"Admin password changed by {request.state.principal.username}")
         return {"ok": True}
 
-    # --- JSON: public stats (no auth) ---
+    # --- JSON: stats shaped for Homepage's Custom API widget ---
 
     @app.get("/api/public/stats")
     async def api_public_stats(db: Path = Depends(get_db_path)):
-        """Public, unauthenticated stats endpoint shaped for Homepage's
-        Custom API widget. Exposes only counters — no titles, no paths,
-        no sensitive data."""
+        """Stats endpoint shaped for Homepage's Custom API widget. Exposes
+        only counters — no titles, no paths, no sensitive data. Requires
+        any authenticated principal; a read-scope API token from
+        /settings#tokens is the intended caller."""
         with get_conn(db) as conn:
             stats = conn.execute("""
                 SELECT

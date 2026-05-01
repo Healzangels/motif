@@ -481,13 +481,17 @@
   </header>
   <div class="block-body">
     <p class="muted" style="margin-bottom:12px">
-      For Homepage's Custom API widget, use the public stats endpoint (no auth required):
+      Create a <strong>read</strong>-scope token in the TOKENS tab, then point
+      Homepage's Custom API widget at the stats endpoint with the token in the
+      <code>Authorization</code> header (or <code>?api_key=</code> query string):
     </p>
     <pre class="codeblock">widget:
   type: customapi
   url: https://motif.example.com/api/public/stats
   refreshInterval: 30000
   display: list
+  headers:
+    Authorization: Bearer thmr_YOUR_READ_TOKEN_HERE
   mappings:
     - field: movies_downloaded
       label: Movies w/ themes
