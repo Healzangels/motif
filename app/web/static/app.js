@@ -195,6 +195,36 @@
           refreshBtn.textContent = refreshBtn.dataset.origLabel;
         }
       }
+      // v1.10.58: settings-page REFRESH FROM PLEX (top-right of LIBRARY
+      // SECTIONS) plus every per-section REFRESH button share one lock —
+      // they all enqueue plex_enum jobs, so any in-flight enum should
+      // disable the lot. The settings refresh kicks off plex_enum across
+      // every included section, so the per-section buttons would just
+      // queue duplicates if left clickable.
+      const settingsRefreshBtn = document.getElementById('refresh-libraries-btn');
+      if (settingsRefreshBtn) {
+        const orig = settingsRefreshBtn.dataset.origLabel || settingsRefreshBtn.textContent;
+        if (plexEnumBusy) {
+          if (!settingsRefreshBtn.dataset.origLabel) settingsRefreshBtn.dataset.origLabel = orig;
+          settingsRefreshBtn.disabled = true;
+          settingsRefreshBtn.textContent = '// REFRESHING…';
+        } else if (settingsRefreshBtn.dataset.origLabel) {
+          settingsRefreshBtn.disabled = false;
+          settingsRefreshBtn.textContent = settingsRefreshBtn.dataset.origLabel;
+        }
+      }
+      document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
+        const orig = b.dataset.origLabel || b.textContent;
+        if (plexEnumBusy) {
+          if (!b.dataset.origLabel) b.dataset.origLabel = orig;
+          b.disabled = true;
+          b.textContent = '…';
+        } else if (b.dataset.origLabel) {
+          b.disabled = false;
+          b.textContent = b.dataset.origLabel;
+          delete b.dataset.origLabel;
+        }
+      });
       // SYNC button — disable during BOTH a ThemerrDB sync AND a Plex
       // enum, per user request: 'when a refresh for a given library is
       // occurring for plex lets disable the sync button so we don't
@@ -1147,40 +1177,47 @@
     const refresh = $('#refresh-libraries-btn');
     if (!refresh) return;
     refresh.addEventListener('click', async () => {
+      const orig = refresh.dataset.origLabel || refresh.textContent;
+      refresh.dataset.origLabel = orig;
       refresh.disabled = true;
-      const orig = refresh.textContent;
-      refresh.textContent = '// REFRESHING';
+      refresh.textContent = '// REFRESHING…';
       try {
         await api('POST', '/api/libraries/refresh');
+        // v1.10.58: refresh now enqueues plex_enum jobs for every
+        // included section. Stats poll's plex_enum_in_flight signal owns
+        // the re-enable; reload the table opportunistically as the jobs
+        // drain so the user sees updated counts.
+        setTimeout(() => loadLibraries().catch(()=>{}), 5000);
+        setTimeout(() => loadLibraries().catch(()=>{}), 15000);
       } catch (e) {
         alert('Refresh failed: ' + e.message);
         refresh.disabled = false;
         refresh.textContent = orig;
-        return;
       }
-      setTimeout(() => {
-        refresh.disabled = false;
-        refresh.textContent = orig;
-        loadLibraries().catch(console.error);
-      }, 1500);
     });
 
-    // Per-section refresh button — enumerate just this section from Plex
+    // Per-section refresh button — enumerate just this section from Plex.
+    // The stats poll lock will keep the button disabled while any
+    // plex_enum is in flight (across all sections) to prevent dupes.
     document.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-section-refresh]');
       if (!btn) return;
       const sid = btn.dataset.sectionRefresh;
+      const orig = btn.dataset.origLabel || btn.textContent;
+      btn.dataset.origLabel = orig;
       btn.disabled = true;
-      const orig = btn.textContent;
       btn.textContent = '…';
       try {
         await api('POST', `/api/libraries/${encodeURIComponent(sid)}/refresh`);
-        btn.textContent = '✓';
         setTimeout(() => loadLibraries().catch(()=>{}), 4000);
       } catch (err) {
         alert('Refresh failed: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = orig;
+        delete btn.dataset.origLabel;
       }
-      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+      // Don't re-enable here — stats poll's plex_enum_in_flight lock
+      // keeps the row buttons disabled until the worker drains.
     });
 
     // Deferred save: capture every MGD/ROLE change into librariesDirty

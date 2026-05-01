@@ -1575,7 +1575,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_refresh_libraries(
         request: Request, db: Path = Depends(get_db_path),
     ):
-        """Manually trigger Plex section discovery."""
+        """Manually trigger Plex section discovery, then enqueue a plex_enum
+        job for every included (selected) section so their unified browse
+        cache reloads. v1.10.58: previously only re-discovered sections — the
+        user expects the top-right REFRESH FROM PLEX in /settings to refresh
+        the contents of all selected libraries too."""
         _require_admin(request)
         if not (settings.plex_enabled and settings.plex_token):
             raise HTTPException(status_code=400, detail="Plex not configured")
@@ -1591,10 +1595,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     excluded_titles=settings.plex_excluded_titles,
                     included_titles=settings.plex_included_titles,
                 )
+            enqueued = 0
+            with get_conn(db) as conn:
+                included = conn.execute(
+                    "SELECT section_id FROM plex_sections WHERE included = 1"
+                ).fetchall()
+                pending_section_ids = {
+                    r["section_id"] for r in conn.execute(
+                        "SELECT json_extract(payload, '$.section_id') AS section_id "
+                        "FROM jobs WHERE job_type = 'plex_enum' "
+                        "AND status IN ('pending','running')"
+                    ).fetchall() if r["section_id"] is not None
+                }
+                for s in included:
+                    sid = s["section_id"]
+                    if sid in pending_section_ids:
+                        continue
+                    conn.execute(
+                        "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                        "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                        (json.dumps({"section_id": sid}), now_iso(), now_iso()),
+                    )
+                    enqueued += 1
             log_event(db, level="INFO", component="api",
                       message=f"Manual library refresh by {request.state.principal.username}: "
-                              f"{len(sections)} sections")
-            return {"ok": True, "sections_count": len(sections)}
+                              f"{len(sections)} sections discovered, "
+                              f"{enqueued} plex_enum jobs enqueued")
+            return {"ok": True, "sections_count": len(sections),
+                    "enqueued": enqueued}
         except Exception as e:
             raise HTTPException(status_code=502, detail=f"Plex unreachable: {e}")
 
