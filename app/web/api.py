@@ -27,6 +27,7 @@ from typing import Annotated, Literal, Optional
 
 import json
 import sqlite3
+from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -193,11 +194,14 @@ class AuthMiddleware(BaseHTTPMiddleware):
         )
         if wants_json:
             return JSONResponse({"detail": "authentication required"}, status_code=401)
-        # Preserve original URL so we can redirect back after login
+        # Preserve original URL so we can redirect back after login.
+        # URL-encode so query strings with & or = don't bleed into our
+        # own /login params (or open us up to redirect-injection via
+        # crafted next= values).
         next_url = request.url.path
         if request.url.query:
             next_url += "?" + request.url.query
-        return RedirectResponse(f"/login?next={next_url}", status_code=302)
+        return RedirectResponse(f"/login?next={quote(next_url, safe='/')}", status_code=302)
 
 
 def _require_admin(request: Request) -> Principal:

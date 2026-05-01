@@ -53,8 +53,14 @@
         <input class="input" type="text" data-cfg-field="paths.cookies_file"
                placeholder="/config/cookies.txt" autocomplete="off" />
         <p class="form-hint">
-          Path to your YouTube cookies.txt (Netscape format). Drop the file
-          into <code>/mnt/user/appdata/motif/cookies.txt</code> on the host.
+          Required for many YouTube downloads to succeed — used by yt-dlp to
+          authenticate as a logged-in user, which bypasses bot-detection rate
+          limits and unlocks age-restricted videos. Path is to a Netscape-
+          format <code>cookies.txt</code> exported from your browser. Drop
+          the file at <code>/mnt/user/appdata/motif/cookies.txt</code> on the
+          host (the default <code>/config/cookies.txt</code> mount maps there).
+          Without this, ThemerrDB syncs may fail with cookies_expired or
+          age_restricted errors.
         </p>
       </label>
     </div>

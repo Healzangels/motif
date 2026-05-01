@@ -630,7 +630,7 @@
     const data = await api('GET', `/api/items?${params}`);
     const body = $('#items-body');
     if (!data.items.length) {
-      body.innerHTML = '<tr><td colspan="9" class="muted center">no results</td></tr>';
+      body.innerHTML = '<tr><td colspan="9" class="muted center">no results — try clearing the search or broadening the filter chips above</td></tr>';
     } else {
       body.innerHTML = data.items.map((it) => {
         const dl = it.downloaded ? 'on' : '';
@@ -681,7 +681,7 @@
         if (it.upstream_source === 'plex_orphan') {
           srcCell = '<span class="link-badge link-badge-orphan" title="adopted orphan (no upstream record)">O</span>';
         } else if (provenance === 'manual') {
-          srcCell = '<span class="link-badge link-badge-manual" title="manually overridden">M</span>';
+          srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar — theme.mp3 at the Plex folder that motif doesn\'t manage yet (click ADOPT to take ownership)">M</span>';
         } else if (provenance === 'cloud') {
           srcCell = '<span class="link-badge link-badge-cloud" title="Plex cloud theme">☁</span>';
         } else if (provenance === 'auto') {
@@ -698,15 +698,15 @@
 
         const isOrphan = it.upstream_source === 'plex_orphan';
         const deleteBtn = isOrphan
-          ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${it.media_type}" data-id="${it.tmdb_id}" data-title="${htmlEscape(it.title || '')}" title="delete this orphan and all associated files">× DEL</button>`
+          ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${it.media_type}" data-id="${it.tmdb_id}" data-title="${htmlEscape(it.title || '')}" title="purge this orphan: deletes motif's database record and every associated theme file — your Plex library item itself stays put. Cannot be undone.">× DEL</button>`
           : '';
         const actions = it.pending_update
-          ? `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}">DETAILS</button>
-             <button class="btn btn-tiny btn-warn" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}">ACCEPT</button>
-             <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}">KEEP</button>
+          ? `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="open the per-item dialog with full theme details, history and available actions">DETAILS</button>
+             <button class="btn btn-tiny btn-warn" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="apply the new ThemerrDB URL — re-downloads from the new YouTube source and overwrites motif's current theme file">ACCEPT</button>
+             <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="ignore this update — the ↑ glyph clears and your existing theme stays in place">KEEP</button>
              ${deleteBtn}`
-          : `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}">DETAILS</button>
-             <button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${it.media_type}" data-id="${it.tmdb_id}">RE-DL</button>
+          : `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="open the per-item dialog with full theme details, history and available actions">DETAILS</button>
+             <button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="re-download from ThemerrDB — replaces motif's current theme file with a fresh download from the upstream URL">RE-DL</button>
              ${deleteBtn}`;
 
         return `
@@ -877,8 +877,9 @@
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
     const ok = confirm(
       `Remove ${labelTitle} from the Plex folder?\n\n` +
-      `Motif's canonical copy stays in /data/media/themes — click REPLACE ` +
-      `on the row to push it back without re-downloading.`);
+      `Plex will stop playing this theme until you push it back.\n\n` +
+      `Motif's canonical copy stays in /data/media/themes — click PUSH TO PLEX ` +
+      `on the row to restore it without re-downloading.`);
     if (!ok) return;
     try {
       await api('POST', `/api/items/${mediaType}/${tmdbId}/unplace`);
@@ -1024,7 +1025,11 @@
   }
 
   async function acceptUpdate(mediaType, tmdbId, btn) {
-    if (!confirm('Accept upstream update? This will re-download with the new YouTube URL.')) return;
+    if (!confirm(
+        'Accept the ThemerrDB update?\n\n' +
+        'Motif will download from the new YouTube URL and overwrite your ' +
+        'current theme file (canonical + every section\'s placement). ' +
+        'The previous file is unrecoverable after this.')) return;
     if (btn) btn.disabled = true;
     try {
       await api('POST', `/api/updates/${mediaType}/${tmdbId}/accept`);
@@ -1037,7 +1042,12 @@
   }
 
   async function declineUpdate(mediaType, tmdbId, btn) {
-    if (!confirm('Keep current theme and decline this update?')) return;
+    if (!confirm(
+        'Keep your current theme and ignore this update?\n\n' +
+        'The ↑ glyph clears, the row drops out of the UPDATES filter, ' +
+        'and your existing theme file stays exactly as it is. ThemerrDB ' +
+        'has to publish another change before you\'ll see another update ' +
+        'prompt for this title.')) return;
     if (btn) btn.disabled = true;
     try {
       await api('POST', `/api/updates/${mediaType}/${tmdbId}/decline`);
@@ -1330,7 +1340,7 @@
         <td>${actionCell}</td>
       </tr>
     `;
-    }).join('') || '<tr><td colspan="7" class="muted center">no jobs</td></tr>';
+    }).join('') || '<tr><td colspan="7" class="muted center">no jobs in the queue — work appears here when you click SYNC THEMERRDB on the dashboard, REFRESH FROM PLEX on a library, or any per-row action that downloads / places / refreshes</td></tr>';
 
     // v1.11.73: show CLEAR FAILED button only when at least one
     // failed row exists across the WHOLE queue (not just the
@@ -1720,7 +1730,7 @@
           <td class="muted">${htmlEscape(fmt.time(t.created_at))}</td>
           <td class="muted">${t.last_used_at ? htmlEscape(fmt.time(t.last_used_at)) : '<span class="muted">never</span>'}</td>
           <td class="col-actions">
-            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}">REVOKE</button>`}
+            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}" title="revoke this API token — anything currently using it will start returning 401 immediately. Cannot be undone; create a fresh token if you need access back.">REVOKE</button>`}
           </td>
         </tr>
       `;
@@ -2375,7 +2385,7 @@
       if (!liveKeys.has(k)) pendingState.selected.delete(k);
     }
     if (pendingState.items.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" class="muted center">no staged downloads — everything is either placed or unsynced</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="muted center">no staged downloads — every download has either been placed into Plex or discarded. Items land here when motif fetches a theme but the place worker defers (typically because a sidecar exists at the Plex folder that approval would overwrite).</td></tr>';
       updatePendingBulkBar();
       return;
     }
@@ -2406,8 +2416,8 @@
           <td><span class="${reasonCls}">${htmlEscape(reasonText)}</span></td>
           <td><span class="muted small">${dlAt}</span></td>
           <td class="col-actions">
-            <button class="btn btn-tiny" data-pending-approve="${htmlEscape(k)}">APPROVE</button>
-            <button class="btn btn-tiny btn-warn" data-pending-discard="${htmlEscape(k)}">DISCARD</button>
+            <button class="btn btn-tiny" data-pending-approve="${htmlEscape(k)}" title="place this download into the matching Plex media folder; if a sidecar already exists there it will be overwritten">APPROVE</button>
+            <button class="btn btn-tiny btn-warn" data-pending-discard="${htmlEscape(k)}" title="delete the staged download and drop motif's local_files row — Plex's existing theme (if any) is left alone">DISCARD</button>
           </td>
         </tr>
       `;
