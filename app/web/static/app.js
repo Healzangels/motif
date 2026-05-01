@@ -2507,7 +2507,19 @@
       // user can drop a cookies.txt to recover.
       const tdbDeadForDownload = it.failure_kind
         && TDB_DEAD_FAILURES.has(it.failure_kind);
-      if (!isPlexAgent && !lockManualActions && !tdbDeadForDownload) {
+      // v1.10.56: also hide DOWNLOAD when there's no actual URL to
+      // download from. Adopt rows on orphan_unresolved themes have
+      // no themes.youtube_url and no user_overrides; clicking
+      // DOWNLOAD enqueued a job that would error on missing URL
+      // and retry-with-backoff for ~2 hours, leaving the spinner
+      // stuck and the rest of the buttons disabled. URL-sourced
+      // rows have a user_overrides entry that the row payload
+      // doesn't expose directly, so we fall back to source_kind=
+      // 'url' as the indicator.
+      const hasDownloadUrl = !!it.youtube_url
+        || sourceKindForActions === 'url';
+      if (!isPlexAgent && !lockManualActions && !tdbDeadForDownload
+          && hasDownloadUrl) {
         // v1.10.29: tooltip names which source the download fetches —
         // ThemerrDB by default, the manual URL when an override is
         // active. Either way the URL is visible in the Info dialog.

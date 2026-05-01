@@ -397,13 +397,24 @@ class Worker:
 
         yt_url = override["youtube_url"] if override else theme["youtube_url"]
         if not yt_url:
-            raise RuntimeError("no YouTube URL")
+            # v1.10.56: missing URL = nothing to retry. Pre-1.10.56 this
+            # raised RuntimeError which went through the retry-with-
+            # backoff path (5 → 25 → 125 minutes) — leaving the row's
+            # spinner stuck and other actions disabled for ~2 hours
+            # before the job finally settled to 'failed'. Permanent-
+            # failure short-circuits to status='failed' immediately.
+            raise _JobPermanentFailure(
+                "no YouTube URL configured for this theme — "
+                "SET URL or UPLOAD MP3 to provide a source"
+            )
 
         # Re-extract video ID in case override URL is in a different format
         from .sync import extract_video_id
         vid = extract_video_id(yt_url)
         if not vid:
-            raise RuntimeError(f"could not extract video ID from {yt_url}")
+            raise _JobPermanentFailure(
+                f"could not extract YouTube video ID from {yt_url}"
+            )
 
         # Dry-run: log what we would do and stop here (no YouTube hit, no rate-limit token consumed)
         if is_dry_run(self.settings.db_path, default=self.settings.dry_run_default):
