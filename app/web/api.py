@@ -3319,15 +3319,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (media_type, tmdb_id),
                 )
             # Optimistic flag clear — Plex's metadata cache may still
-            # report theme=true for some time, but our local view should
-            # reflect 'no theme' immediately. The per-item Plex refresh
-            # below kicks Plex to re-evaluate so its cache catches up.
-            for folder in affected_folders:
-                conn.execute(
-                    "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
-                    "WHERE folder_path = ?",
-                    (folder,),
-                )
+            # report theme=true for some time, but our local view
+            # should reflect 'no theme' immediately. The per-item
+            # Plex refresh below kicks Plex to re-evaluate so its
+            # cache catches up.
+            # v1.11.60: clear by (guid_tmdb, media_type) instead of
+            # by placement folder_path. PURGE on a P-source row has
+            # no placements (motif never placed a file), so the old
+            # folder-keyed clear was a no-op and pi.has_theme stayed
+            # 1 → row kept rendering as P even though the user just
+            # said 'no theme here'. Same fix covers cases where
+            # placements.media_folder didn't exactly match
+            # plex_items.folder_path due to trailing-slash or
+            # case-folding differences. PURGE is destructive +
+            # explicit; trust the user's intent.
+            plex_mt = "show" if media_type == "tv" else "movie"
+            conn.execute(
+                "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
+                "WHERE guid_tmdb = ? AND media_type = ?",
+                (tmdb_id, plex_mt),
+            )
         # v1.10.28: skip the section enum (it would re-fetch has_theme
         # from Plex's stale cache and bring back a phantom P badge);
         # trigger a per-item refresh instead so Plex updates its cache.
@@ -3416,10 +3427,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         # Drop the theme row; FK ON DELETE CASCADE handles local_files,
         # placements, pending_updates, user_overrides in one transaction.
+        # v1.11.60: also clear plex_items.local_theme_file/has_theme for
+        # any rows that pointed at this theme. Same reasoning as the
+        # forget endpoint — without this the row keeps rendering as P
+        # (or M) until the next plex_enum re-stamps from Plex's cache.
         with get_conn(db) as conn:
             conn.execute(
                 "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
+            )
+            plex_mt = "show" if media_type == "tv" else "movie"
+            conn.execute(
+                "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
+                "WHERE guid_tmdb = ? AND media_type = ?",
+                (tmdb_id, plex_mt),
             )
 
         log_event(db, level="INFO", component="api",
