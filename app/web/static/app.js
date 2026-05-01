@@ -386,6 +386,10 @@
         setSyncButtonState('idle');
         return;
       }
+      // v1.11.23: kick the topbar status immediately so 'SYNCING WITH
+      // THEMERRDB' appears as soon as the user clicks, instead of
+      // waiting up to 15s for the next poll tick.
+      refreshTopbarStatus();
       // Poll /api/stats until the sync + auto-enqueued plex_enum settle.
       // Once neither job is in flight we flash DONE then revert.
       if (syncWatcher) clearInterval(syncWatcher);
@@ -1250,6 +1254,9 @@
         // included section. Stats poll's plex_enum_in_flight signal owns
         // the re-enable; reload the table opportunistically as the jobs
         // drain so the user sees updated counts.
+        // v1.11.23: also fire an immediate topbar refresh so the
+        // 'SYNCING WITH PLEX' banner appears now, not on the next tick.
+        refreshTopbarStatus();
         setTimeout(() => loadLibraries().catch(()=>{}), 5000);
         setTimeout(() => loadLibraries().catch(()=>{}), 15000);
       } catch (e) {
@@ -1272,6 +1279,8 @@
       btn.textContent = '…';
       try {
         await api('POST', `/api/libraries/${encodeURIComponent(sid)}/refresh`);
+        // v1.11.23: immediate topbar refresh.
+        refreshTopbarStatus();
         setTimeout(() => loadLibraries().catch(()=>{}), 4000);
       } catch (err) {
         alert('Refresh failed: ' + err.message);
@@ -3172,6 +3181,10 @@
           tab: libraryState.tab,
           fourk: !!libraryState.fourk,
         });
+        // v1.11.23: immediate topbar refresh so the user sees
+        // 'SYNCING WITH PLEX' as soon as they click instead of
+        // waiting for the next 15s tick.
+        refreshTopbarStatus();
         setTimeout(() => loadLibrary().catch(()=>{}), 5000);
         setTimeout(() => loadLibrary().catch(()=>{}), 15000);
       } catch (err) {
