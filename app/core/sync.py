@@ -694,14 +694,14 @@ def run_sync(db_path, base_url: str, *,
         # deprioritized (next_run_at = now + 60s) so claim_next_job
         # picks downloads/place/etc. first. The worker drains the
         # probe backlog during idle windows.
-        if probe_urls and probe_targets:
-            n = _enqueue_probe_jobs(db_path, probe_targets)
-            log_event(
-                db_path, level="INFO", component="sync",
-                message=f"Sync enqueued {n} probe jobs "
-                        f"(URL availability check, low priority)",
-                detail={"enqueued": n, "candidates": len(probe_targets)},
-            )
+        # v1.11.15: probe enqueueing is disabled. The TDB pill color
+        # gain wasn't worth the worker time — on a 4K-item first sync
+        # the probe queue spawned 1500+ jobs that ran for 25-50 minutes
+        # each, while the same yt-dlp call fires when the user actually
+        # clicks DOWNLOAD anyway (and the failure_kind from a real
+        # download attempt drives the pill color too). _enqueue_probe_jobs
+        # and _do_probe stay in the codebase for potential future use,
+        # but sync no longer feeds them.
 
         with get_conn(db_path) as conn:
             conn.execute(

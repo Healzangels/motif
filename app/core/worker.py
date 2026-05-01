@@ -167,6 +167,22 @@ class Worker:
                 if cur.rowcount:
                     log.info("Reclaimed %d orphan 'running' job(s) at startup",
                              cur.rowcount)
+                # v1.11.15: cancel any pending probe jobs left over from
+                # earlier syncs. Probe enqueueing was disabled this version
+                # — the TDB pill color gain wasn't worth the 25-50 min of
+                # worker time per sync. Existing backlog (often thousands
+                # of rows) drains in a single UPDATE here so the worker
+                # gets straight to real work (downloads, places, scans).
+                cur = conn.execute(
+                    "UPDATE jobs SET status = 'cancelled', finished_at = ?, "
+                    "                last_error = 'probe disabled in v1.11.15' "
+                    "WHERE job_type = 'probe' AND status = 'pending'",
+                    (now_iso(),),
+                )
+                if cur.rowcount:
+                    log.info("Cancelled %d pending probe job(s) at startup "
+                             "(probes disabled in v1.11.15)",
+                             cur.rowcount)
         except Exception as e:
             log.warning("Orphan-job recovery failed at startup: %s", e)
         while not self.stop_event.is_set():

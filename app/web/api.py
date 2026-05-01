@@ -2502,19 +2502,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
                 (now_iso(), theme_media_type, tmdb_id),
             )
-            # v1.11.0: cancel any in-flight downloads across sections,
-            # then enqueue a fresh per-section download via _enqueue_download
-            # (one job per managed section that owns this item).
+            # v1.11.0: cancel any in-flight downloads across sections.
             conn.execute(
                 "UPDATE jobs SET status = 'cancelled', finished_at = ? "
                 "WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ? "
                 "  AND status IN ('pending','failed')",
                 (now_iso(), theme_media_type, tmdb_id),
             )
-            from ..core.sync import _enqueue_download
-            _enqueue_download(
-                conn, media_type=theme_media_type, tmdb_id=tmdb_id,
-                reason="manual_url",
+            # v1.11.15: enqueue the download directly with the rating_key's
+            # section. _enqueue_download looks up sections via plex_items.
+            # guid_tmdb, which never matches for plex_orphan rows (tmdb_id
+            # is a synthetic negative). Pre-fix the manual-url flow on an
+            # orphan logged 'no included Plex section owns (...)' and
+            # silently skipped — the URL persisted but no download fired.
+            section_id = pi["section_id"]
+            conn.execute(
+                "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
+                "                  payload, status, created_at, next_run_at) "
+                "VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)",
+                (theme_media_type, tmdb_id, section_id,
+                 json.dumps({"reason": "manual_url"}),
+                 now_iso(), now_iso()),
             )
 
         log_event(db, level="INFO", component="api",
