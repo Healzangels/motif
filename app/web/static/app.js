@@ -1253,6 +1253,7 @@
       status.classList.remove('ok', 'err');
       let ok = 0;
       let failed = 0;
+      const failures = [];
       for (const [sid, change] of entries) {
         try {
           if ('included' in change) {
@@ -1268,17 +1269,28 @@
         } catch (err) {
           console.error('libraries save failed for', sid, err);
           failed += 1;
+          // v1.11.4: keep the first failure's message visible in the
+          // status line so the user actually sees WHY it failed (e.g.
+          // a 409 from the role guard) instead of a vague "see console".
+          failures.push(err.message || String(err));
         }
       }
       librariesDirty = {};
-      status.textContent = failed === 0
-        ? `✓ saved ${ok} section${ok === 1 ? '' : 's'}`
-        : `✗ ${failed} of ${ok + failed} failed — see console`;
+      if (failed === 0) {
+        status.textContent = `✓ saved ${ok} section${ok === 1 ? '' : 's'}`;
+      } else {
+        const detail = failures[0] || '';
+        status.textContent = `✗ ${failed} of ${ok + failed} failed: ${detail}`;
+      }
       status.classList.add(failed === 0 ? 'ok' : 'err');
       updateLibrariesSaveButton();
       // Re-fetch authoritative state, in case anything diverged
       setTimeout(() => loadLibraries().catch(()=>{}), 600);
-      setTimeout(() => { status.textContent = ''; status.classList.remove('ok', 'err'); }, 4000);
+      // v1.11.4: keep the message up longer when there's a failure so
+      // the user has time to read it (4s was too brief for a multi-
+      // line 409 detail).
+      const clearAfter = failed === 0 ? 4000 : 12000;
+      setTimeout(() => { status.textContent = ''; status.classList.remove('ok', 'err'); }, clearAfter);
     });
   }
 

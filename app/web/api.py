@@ -1528,23 +1528,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 params.append(1 if bool(body["is_4k"]) else 0)
         if not sets:
             return {"ok": True, "no_op": True}
-        params.append(section_id)
+        # v1.11.3 fix: read current flags first. If the requested values
+        # match what's already stored, this is a no-op — no UPDATE, no
+        # subdir rewrite, no data-guard check. Without this, clicking
+        # SAVE after picking the same role the section already had would
+        # 409 once the section accumulated any local_files / placements
+        # (false positive on a no-op).
         with get_conn(db) as conn:
-            cur = conn.execute(
-                f"UPDATE plex_sections SET {', '.join(sets)} WHERE section_id = ?",
-                params,
-            )
-            if cur.rowcount == 0:
-                raise HTTPException(status_code=404, detail="section not found")
-            row = conn.execute(
+            current = conn.execute(
                 "SELECT is_anime, is_4k FROM plex_sections WHERE section_id = ?",
                 (section_id,),
             ).fetchone()
-        # v1.11.0: re-derive themes_subdir whenever is_anime/is_4k change so
-        # the on-disk slug reflects the new role. We refuse the toggle if
-        # any per-section data already references the old slug — the
-        # rewrite would orphan on-disk files and break local_files.file_path
-        # lookups. Caller must UNMANAGE / FORGET the affected items first.
+        if current is None:
+            raise HTTPException(status_code=404, detail="section not found")
+        # Build the {column: requested_value} map from `sets`/`params` so
+        # we can compare without re-parsing.
+        requested = dict(zip([s.split(" = ")[0] for s in sets], params))
+        unchanged = all(
+            int(current[col]) == int(val) for col, val in requested.items()
+        )
+        if unchanged:
+            return {"ok": True, "no_op": True,
+                    "is_anime": bool(current["is_anime"]),
+                    "is_4k": bool(current["is_4k"])}
+        # Real change requested. Refuse if the section has staged files
+        # or placements — the slug rewrite would orphan their on-disk
+        # paths. User must UNMANAGE / FORGET first.
         with get_conn(db) as conn:
             existing = conn.execute(
                 "SELECT (SELECT COUNT(*) FROM local_files WHERE section_id = ?) "
@@ -1562,6 +1571,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "those rows before flipping is_4k / is_anime"
                 ),
             )
+        params.append(section_id)
+        with get_conn(db) as conn:
+            cur = conn.execute(
+                f"UPDATE plex_sections SET {', '.join(sets)} WHERE section_id = ?",
+                params,
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(status_code=404, detail="section not found")
+            row = conn.execute(
+                "SELECT is_anime, is_4k FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
         from .core.sections import reassign_themes_subdir
         new_subdir = reassign_themes_subdir(db, section_id)
         log_event(db, level="INFO", component="api",
