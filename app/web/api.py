@@ -462,9 +462,17 @@ def _library_main_query(
     # Single round-trip for the three banner-meta scalars added in v1.10.0.
     # Was three separate queries per request — now one. Each scalar is
     # already independently indexed; combining is purely a round-trip win.
-    sql_meta = """
+    # v1.11.44: plex_enumerated is now scoped to the tab+fourk variant so
+    # the "no Plex scan on record" banner stays visible per-library.
+    # Pre-fix it asked "has *any* plex_items row ever been written?" —
+    # so refreshing one library hid the prompt on every other untouched
+    # library, leaving the user to wonder why their TV tab was blank.
+    sql_meta = f"""
         SELECT
-            EXISTS(SELECT 1 FROM plex_items LIMIT 1)             AS plex_enumerated,
+            EXISTS(SELECT 1 FROM plex_items pi
+                    INNER JOIN plex_sections ps
+                      ON ps.section_id = pi.section_id AND ps.included = 1
+                    WHERE {tab_where})                               AS plex_enumerated,
             (SELECT MAX(finished_at) FROM jobs
               WHERE job_type = 'plex_enum' AND status = 'success') AS last_plex_enum_at,
             (SELECT MAX(finished_at) FROM sync_runs
