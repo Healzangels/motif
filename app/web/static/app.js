@@ -2437,6 +2437,13 @@
     if (scanHint) {
       scanHint.style.display = data.plex_enumerated ? 'none' : '';
     }
+    // v1.11.29: TDB pill is suppressed entirely until the first
+    // ThemerrDB sync has finished — pre-sync the themes table is
+    // empty, so every row would render as 'no TDB' which is
+    // misleading (we don't actually know yet). Stash the flag on
+    // window so renderLibraryRow's pill builder reads it without
+    // needing /api/library plumbed through.
+    window.__motif_first_sync_done = !!data.last_sync_at;
     const totalPages = Math.max(1, Math.ceil(data.total / libraryState.perPage));
     document.getElementById('library-pager').innerHTML = `
       <button data-lib-page="${libraryState.page - 1}" ${libraryState.page <= 1 ? 'disabled' : ''}>« prev</button>
@@ -2616,6 +2623,13 @@
     ]);
     const tdbAvailLabel = (() => {
       if (it.not_in_plex) return '';
+      // v1.11.29: hide the TDB pill entirely until the first
+      // ThemerrDB sync has finished. Pre-sync the themes table is
+      // empty so every row would render as 'no TDB', which is
+      // misleading — we don't actually know whether ThemerrDB tracks
+      // the title yet. Once last_sync_at is set we know the answer
+      // for every row and the pill can paint truthfully.
+      if (!window.__motif_first_sync_done) return '';
       const isThemerrDbAvail = it.upstream_source
         && it.upstream_source !== 'plex_orphan';
       if (!isThemerrDbAvail) {
