@@ -212,35 +212,42 @@ def _upsert_theme(
             log.info("Promoting orphan theme id=%d (%s/%d) → real tmdb_id=%d",
                      orphan["id"], media_type, old_tmdb, tmdb_id)
             # Migrate the orphan row's tmdb_id and FK'd tables in one txn.
-            # The row keeps its `id`; only tmdb_id changes. We must briefly
-            # disable FK enforcement because we're updating the parent and
-            # children sequentially — there's no atomic "update both" in
-            # SQLite, and intermediate states would violate the FK.
-            conn.execute("PRAGMA foreign_keys = OFF")
-            try:
-                conn.execute(
-                    "UPDATE themes SET tmdb_id = ?, upstream_source = ? "
-                    "WHERE id = ?",
-                    (tmdb_id, upstream_source, orphan["id"]),
-                )
-                conn.execute(
-                    "UPDATE local_files SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
-                    (tmdb_id, media_type, old_tmdb),
-                )
-                conn.execute(
-                    "UPDATE placements SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
-                    (tmdb_id, media_type, old_tmdb),
-                )
-                conn.execute(
-                    "UPDATE pending_updates SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
-                    (tmdb_id, media_type, old_tmdb),
-                )
-                conn.execute(
-                    "UPDATE user_overrides SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
-                    (tmdb_id, media_type, old_tmdb),
-                )
-            finally:
-                conn.execute("PRAGMA foreign_keys = ON")
+            # The row keeps its `id`; only tmdb_id changes.
+            #
+            # v1.11.71: use PRAGMA defer_foreign_keys = ON instead of
+            # foreign_keys = OFF. The latter is documented as a no-op
+            # when issued inside an open transaction (we're already
+            # inside _flush_sync_batch's BEGIN IMMEDIATE), so FK
+            # enforcement stayed live and the first UPDATE themes
+            # crashed with 'FOREIGN KEY constraint failed' — the
+            # existing local_files / placements / user_overrides rows
+            # still pointed at (media_type, old_tmdb) but the parent
+            # had just moved to (media_type, tmdb_id). defer_foreign_keys
+            # IS allowed inside a txn and defers all checks to COMMIT,
+            # at which point we've updated the children too and the
+            # final state is consistent.
+            conn.execute("PRAGMA defer_foreign_keys = ON")
+            conn.execute(
+                "UPDATE themes SET tmdb_id = ?, upstream_source = ? "
+                "WHERE id = ?",
+                (tmdb_id, upstream_source, orphan["id"]),
+            )
+            conn.execute(
+                "UPDATE local_files SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                (tmdb_id, media_type, old_tmdb),
+            )
+            conn.execute(
+                "UPDATE placements SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                (tmdb_id, media_type, old_tmdb),
+            )
+            conn.execute(
+                "UPDATE pending_updates SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                (tmdb_id, media_type, old_tmdb),
+            )
+            conn.execute(
+                "UPDATE user_overrides SET tmdb_id = ? WHERE media_type = ? AND tmdb_id = ?",
+                (tmdb_id, media_type, old_tmdb),
+            )
             existing = conn.execute(
                 "SELECT youtube_video_id, youtube_edited_at FROM themes "
                 "WHERE media_type = ? AND tmdb_id = ?",
