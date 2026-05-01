@@ -101,6 +101,10 @@
   <button class="btn btn-tiny btn-warn" id="library-download-selected-btn" type="button">// DOWNLOAD SELECTED</button>
   <button class="btn btn-tiny btn-warn" id="library-adopt-selected-btn" type="button"
           title="claim every selected sidecar-only row as motif-managed">// ADOPT SELECTED</button>
+  <!-- v1.10.51: bulk ACK only meaningful on the FAILURES filter; hidden
+       elsewhere via updateLibrarySelectionUi. -->
+  <button class="btn btn-tiny btn-warn" id="library-ack-selected-btn" type="button" style="display:none"
+          title="acknowledge every selected failure (clears ! and FAILURES membership; TDB pill stays red)">// ACK SELECTED</button>
 </div>
 
 <section class="block">

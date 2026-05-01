@@ -2366,6 +2366,8 @@
     // v1.10.42 splits cookies_expired out as a yellow TDB ⚠ since
     // that one's user-fixable (drop a cookies.txt file) rather
     // than a dead URL.
+    // Set hoisted to row scope so v1.10.51's REPLACE-w/-TDB gate
+    // can reuse it without redeclaring.
     const TDB_DEAD_FAILURES = new Set([
       'video_private', 'video_removed',
       'video_age_restricted', 'geo_blocked',
@@ -2533,7 +2535,15 @@
     // ThemerrDB download in for an existing theme from another
     // source. v1.10.41 added isPlexAgent to this set so P-agent
     // rows use this label instead of DOWNLOAD.
-    if (isThemerrDb && (sidecarOnly || isManualPlacement || isPlexAgent)) {
+    // v1.10.51: hide on rows with a permanent TDB failure (red
+    // 'TDB ✗' pill) — clicking it would re-fail the same way.
+    // SET URL / UPLOAD MP3 / ADOPT remain in the menu as recovery
+    // paths. cookies_expired stays clickable since the user can
+    // drop a cookies.txt file to recover.
+    const tdbDeadForReplace = it.failure_kind
+      && TDB_DEAD_FAILURES.has(it.failure_kind);
+    if (isThemerrDb && !tdbDeadForReplace
+        && (sidecarOnly || isManualPlacement || isPlexAgent)) {
       sourceItems.push(menuItemHtml(
         'replace-with-themerrdb', 'REPLACE w/ TDB',
         sidecarOnly    ? "overwrite the existing sidecar with motif's ThemerrDB download"
@@ -2762,6 +2772,16 @@
     cnt.textContent = fmt.num(n);
     bar.style.display = n > 0 ? '' : 'none';
     if (all) all.checked = false;  // sync state-all is reset on render
+    // v1.10.51: swap which bulk-action buttons are visible based on
+    // the active filter. FAILURES → ACK SELECTED only; everything
+    // else → DOWNLOAD SELECTED + ADOPT SELECTED.
+    const onFailures = libraryState.status === 'failures';
+    const ackBtn = document.getElementById('library-ack-selected-btn');
+    const dlBtn = document.getElementById('library-download-selected-btn');
+    const adoptBtn = document.getElementById('library-adopt-selected-btn');
+    if (ackBtn)   ackBtn.style.display   = onFailures ? '' : 'none';
+    if (dlBtn)    dlBtn.style.display    = onFailures ? 'none' : '';
+    if (adoptBtn) adoptBtn.style.display = onFailures ? 'none' : '';
   }
 
   function bindLibrary() {
@@ -2823,6 +2843,9 @@
           libraryState.status = b.dataset.status;
           libraryState.page = 1;
           updateTdbFilterVisibility();
+          // v1.10.51: bulk-bar action buttons swap on filter change
+          // (e.g. FAILURES → ACK SELECTED only).
+          updateLibrarySelectionUi();
           loadLibrary().catch(console.error);
         });
       });
@@ -3100,6 +3123,58 @@
       setTimeout(() => loadLibrary().catch(()=>{}), 1000);
       libraryRapidPoll();
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3500);
+    });
+
+    // v1.10.51: ACK SELECTED — bulk acknowledge failures. Visible only
+    // on the FAILURES filter. Walks the selection, fires
+    // /clear-failure for each themed row that has an unacked
+    // failure_kind. Off-page selections are filtered to candidates
+    // we know about from libraryState.items; the user is told if
+    // any selected rows aren't on the visible page.
+    document.getElementById('library-ack-selected-btn')?.addEventListener('click', async (e) => {
+      const candidates = (libraryState.items || []).filter((it) => {
+        if (!it.theme_media_type || it.theme_tmdb === null
+            || it.theme_tmdb === undefined) return false;
+        if (!it.failure_kind || it.failure_acked_at) return false;
+        return libraryState.selected.has(libKey(it));
+      });
+      const onPageSelected = (libraryState.items || []).filter((it) =>
+        libraryState.selected.has(libKey(it))).length;
+      const offPageSelected = libraryState.selected.size - onPageSelected;
+      if (offPageSelected > 0) {
+        const ok = confirm(
+          `${offPageSelected} of your selected rows aren't on the visible\n`
+          + `page; motif can't ack those without re-fetching. Continue\n`
+          + `and acknowledge only the ${candidates.length} on-page failures?`
+        );
+        if (!ok) return;
+      }
+      if (candidates.length === 0) {
+        alert('No unacknowledged failures in selection.');
+        return;
+      }
+      if (!confirm(`Acknowledge ${candidates.length} failure(s)?\n\n`
+                   + `The ! glyph and FAILURES membership clear.\n`
+                   + `Each row's TDB pill stays red — TDB's URL is still broken.`)) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// ACKING 0/${candidates.length}`;
+      let ok = 0, fail = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        const it = candidates[i];
+        try {
+          await api('POST', `/api/items/${it.theme_media_type}/${it.theme_tmdb}/clear-failure`);
+          ok++;
+        } catch (err) {
+          fail++;
+        }
+        btn.textContent = `// ACKING ${i + 1}/${candidates.length}`;
+      }
+      btn.textContent = `// ${ok} ACKED${fail ? ` · ${fail} FAILED` : ''}`;
+      libraryState.selected.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 600);
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
     });
 
     // v1.10.24: close any open row-menu popover when the user clicks
