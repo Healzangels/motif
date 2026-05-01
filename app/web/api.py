@@ -981,6 +981,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "config": {
                 "paths_ready": settings.is_paths_ready(),
                 "themes_dir": str(settings.themes_dir) if settings.is_paths_ready() else None,
+                # v1.10.44: drives the cookies-aware TDB pill — green
+                # when present (even if a previous probe set
+                # cookies_expired), amber only when actually missing.
+                "cookies_present": (settings.cookies_file is not None
+                                    and settings.cookies_file.is_file()),
             },
             "tab_availability": {
                 "movies": {"standard": bool(row["movies_std"]),

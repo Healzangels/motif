@@ -139,6 +139,15 @@
         adaptLibraryFourkToggle(ta);
       }
 
+      // v1.10.44: stash cookies-present so the library row's TDB pill
+      // can flip green when cookies are configured and on disk
+      // (regardless of any stale cookies_expired flag from earlier
+      // probes). The pill goes amber only when the file is actually
+      // missing.
+      if (stats.config) {
+        window.__motif_cookies_present = !!stats.config.cookies_present;
+      }
+
       // Pending-placements indicator: light the dot on the PENDING nav
       // link whenever there are items awaiting placement approval.
       // Surfaces the workflow even when the user is mid-action on /movies.
@@ -2358,6 +2367,13 @@
         return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
       }
       if (it.failure_kind === 'cookies_expired') {
+        // v1.10.44: when cookies are present on disk the user has
+        // already done their part — show green and let the next
+        // probe / download attempt either confirm or re-flag. Only
+        // amber when the file genuinely isn't there.
+        if (window.__motif_cookies_present) {
+          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title; cookies.txt is configured. The cookies_expired flag will clear on the next successful probe or download.">TDB</span>';
+        }
         return ' <span class="tdb-pill tdb-pill-cookies" title="ThemerrDB has this title but the YouTube URL needs a cookies.txt file — drop it at the path configured in Settings → PATHS to recover">TDB ⚠</span>';
       }
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
