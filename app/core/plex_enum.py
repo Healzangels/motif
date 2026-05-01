@@ -226,12 +226,28 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem]) -> tuple[int, int
     """
     # Phase 1: stat sidecars outside the transaction. List of (item, sidecar)
     # pairs.
+    # v1.11.27: extended detection to every theme-audio extension Plex
+    # accepts (theme.mp3, theme.m4a, theme.flac, theme.ogg, theme.wav,
+    # theme.opus, theme.m4b). Pre-fix only theme.mp3 was checked, so
+    # any other-format sidecar made the SRC badge fall through to P
+    # (Plex agent) even though motif could see the file existed.
+    # Case-insensitive so Theme.MP3 / THEME.mp3 are also caught.
+    THEME_NAMES = {
+        "theme.mp3", "theme.m4a", "theme.m4b", "theme.flac",
+        "theme.ogg", "theme.wav", "theme.opus",
+    }
     enriched: list[tuple[PlexLibraryItem, int]] = []
     for it in items:
         sidecar = 0
         if it.folder_path:
             try:
-                sidecar = 1 if (Path(it.folder_path) / "theme.mp3").is_file() else 0
+                folder = Path(it.folder_path)
+                if folder.is_dir():
+                    for entry in folder.iterdir():
+                        if (entry.is_file()
+                                and entry.name.lower() in THEME_NAMES):
+                            sidecar = 1
+                            break
             except OSError:
                 sidecar = 0
         enriched.append((it, sidecar))

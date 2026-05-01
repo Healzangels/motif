@@ -1008,12 +1008,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             last_sync = conn.execute("""
                 SELECT * FROM sync_runs ORDER BY id DESC LIMIT 1
             """).fetchone()
+            # v1.11.27: which (tab variant, section_id) pairs are
+            # currently being enumerated. The library page REFRESH
+            # button and the settings per-section REFRESH buttons
+            # use these to lock per-button instead of globally so
+            # the user can refresh one tab while another is still
+            # running.
+            enum_running_rows = conn.execute("""
+                SELECT DISTINCT
+                    ps.section_id, ps.type, ps.is_anime, ps.is_4k
+                FROM jobs j
+                INNER JOIN plex_sections ps
+                  ON ps.section_id = json_extract(j.payload, '$.section_id')
+                WHERE j.job_type = 'plex_enum'
+                  AND j.status IN ('pending', 'running')
+            """).fetchall()
             dry = is_dry_run(db, default=settings.dry_run_default)
-        return row, last_sync, dry
+        return row, last_sync, enum_running_rows, dry
 
     @app.get("/api/stats")
     async def api_stats(db: Path = Depends(get_db_path)):
-        row, last_sync, dry = await run_in_threadpool(_stats_sync, db)
+        row, last_sync, enum_running_rows, dry = await run_in_threadpool(_stats_sync, db)
+        # v1.11.27: aggregate the per-section enum_running rows into a
+        # tab-variant map and a section_id list so the UI can lock
+        # buttons granularly.
+        plex_enum_active = {
+            "movies": {"standard": False, "fourk": False},
+            "tv":     {"standard": False, "fourk": False},
+            "anime":  {"standard": False, "fourk": False},
+        }
+        plex_enum_running_section_ids: list[str] = []
+        for r in enum_running_rows:
+            plex_enum_running_section_ids.append(r["section_id"])
+            if r["is_anime"]:
+                tab = "anime"
+            elif r["type"] == "movie":
+                tab = "movies"
+            else:
+                tab = "tv"
+            variant = "fourk" if r["is_4k"] else "standard"
+            plex_enum_active[tab][variant] = True
         return {
             "movies": {
                 "total": row["movies_total"],
@@ -1036,6 +1070,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "place_in_flight": row["place_in_flight"],
                 "scan_in_flight": row["scan_in_flight"],
                 "pending_placements": row["pending_placements"],
+                # v1.11.27: per-tab and per-section enum activity for
+                # granular UI button locking.
+                "plex_enum_active": plex_enum_active,
+                "plex_enum_running_section_ids": plex_enum_running_section_ids,
             },
             "storage": {
                 "hardlinks": row["hardlinks"],

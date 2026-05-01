@@ -155,16 +155,21 @@
         }
       }
 
-      // Adaptive nav: hide tabs that have no managed sections backing them.
-      // Anime is the only optional content tab; Movies/TV always render
-      // (even empty) so users land somewhere familiar after first install.
+      // v1.11.27: hide every tab's nav link when no managed section
+      // backs it. Pre-fix MOVIES and TV always rendered even on a
+      // fresh install with only an Anime section (or only a 4K-tagged
+      // movies library), making the tab look broken when clicked.
+      // Now MOVIES, TV, and ANIME each appear only when at least one
+      // included Plex section maps to them.
       if (stats.tab_availability) {
         const ta = stats.tab_availability;
-        const animeNav = document.querySelector('.nav a[data-nav="anime"]');
-        if (animeNav) {
-          const hasAnime = ta.anime.standard || ta.anime.fourk;
-          animeNav.style.display = hasAnime ? '' : 'none';
-        }
+        const showHide = (sel, has) => {
+          const n = document.querySelector(sel);
+          if (n) n.style.display = has ? '' : 'none';
+        };
+        showHide('.nav a[data-nav="movies"]', ta.movies.standard || ta.movies.fourk);
+        showHide('.nav a[data-nav="tv"]',     ta.tv.standard     || ta.tv.fourk);
+        showHide('.nav a[data-nav="anime"]',  ta.anime.standard  || ta.anime.fourk);
         adaptLibraryFourkToggle(ta);
       }
 
@@ -216,14 +221,27 @@
       // Pre-v1.11.5 the page/settings/per-section refreshes only locked
       // on plex_enum, so during a ThemerrDB sync the user could fire a
       // concurrent Plex enum and end up with two sync banners running.
-      const syncBusy = themerrdbBusy || plexEnumBusy;
-      const busyLabel = themerrdbBusy
-        ? '// SYNCING TDB…'
-        : (plexEnumBusy ? '// REFRESHING PLEX…' : null);
-      const lockBtn = (btn, busyText) => {
+      // v1.11.27: granular per-tab / per-section button locking.
+      // Pre-fix any plex_enum in flight locked every refresh button on
+      // every page; the user couldn't refresh /tv while /movies was
+      // still scanning. Now each refresh button checks whether ITS
+      // scope is currently in the running set:
+      //   - library page REFRESH: gated on q.plex_enum_active[tab][variant]
+      //   - per-section REFRESH: gated on its section_id appearing in
+      //     q.plex_enum_running_section_ids
+      //   - settings global REFRESH FROM PLEX: gated on ANY section
+      //     enumerating
+      //   - dashboard SYNC: still gated on themerrdb_sync_in_flight
+      //     (it's the only ThemerrDB sync trigger)
+      const enumActive = q.plex_enum_active || {};
+      const enumSectionIds = new Set(q.plex_enum_running_section_ids || []);
+      const anyEnumRunning = enumSectionIds.size > 0;
+      // Stash for the empty-state message in loadLibrary().
+      window.__motif_enum_active = enumActive;
+      const lockBtn = (btn, locked, busyText) => {
         if (!btn) return;
         const orig = btn.dataset.origLabel || btn.textContent;
-        if (syncBusy) {
+        if (locked) {
           if (!btn.dataset.origLabel) btn.dataset.origLabel = orig;
           btn.disabled = true;
           btn.textContent = busyText;
@@ -233,21 +251,41 @@
           delete btn.dataset.origLabel;
         }
       };
-      lockBtn(document.getElementById('library-refresh-btn'), busyLabel || '');
-      lockBtn(document.getElementById('refresh-libraries-btn'), busyLabel || '');
-      lockBtn(document.getElementById('sync-now-btn'), busyLabel || '');
+      // Library page REFRESH FROM PLEX — lock if THIS tab+fourk variant
+      // is the one currently enumerating.
+      const libRefreshBtn = document.getElementById('library-refresh-btn');
+      if (libRefreshBtn) {
+        const tabEl = document.getElementById('library-tab');
+        const tab = tabEl ? tabEl.value : null;
+        const variant = libraryState.fourk ? 'fourk' : 'standard';
+        const tabBusy = !!(tab && enumActive[tab] && enumActive[tab][variant]);
+        lockBtn(libRefreshBtn, tabBusy, '// REFRESHING PLEX…');
+      }
+      // Settings global REFRESH FROM PLEX — lock if ANY enum is running.
+      lockBtn(
+        document.getElementById('refresh-libraries-btn'),
+        anyEnumRunning, '// REFRESHING PLEX…',
+      );
+      // Dashboard SYNC — only the ThemerrDB sync drives this.
+      lockBtn(
+        document.getElementById('sync-now-btn'),
+        themerrdbBusy, '// SYNCING TDB…',
+      );
+      // Per-section REFRESH — lock only if THIS section is enumerating.
       document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
-        lockBtn(b, '…');
+        const sid = b.dataset.sectionRefresh;
+        lockBtn(b, enumSectionIds.has(sid), '…');
       });
-      // v1.11.6: lock the per-section MGD checkboxes + A/4K flag pills
-      // while a sync is in flight so the user can't queue a layout
-      // change mid-enum (which would either race the worker's lookup
-      // or get a 409 from the role-flip data guard).
+      // Lock per-section MGD checkboxes + A/4K flag pills + libraries
+      // SAVE only when something is actively touching THAT section, OR
+      // any sync (themerrdb / plex_enum) is in flight at all. This
+      // keeps layout changes safe while letting the user navigate.
+      const layoutLocked = themerrdbBusy || anyEnumRunning;
       document.querySelectorAll('input[data-section-toggle]').forEach((cb) => {
-        cb.disabled = syncBusy;
+        cb.disabled = layoutLocked;
       });
       document.querySelectorAll('button[data-section-row-toggle], button.lib-flag-pill').forEach((b) => {
-        if (syncBusy) {
+        if (layoutLocked) {
           if (!b.dataset.preLockDisabled) {
             b.dataset.preLockDisabled = b.disabled ? '1' : '0';
           }
@@ -257,10 +295,9 @@
           delete b.dataset.preLockDisabled;
         }
       });
-      // Also lock the libraries SAVE button while a sync is in flight.
       const libSaveBtn = document.getElementById('libraries-save-btn');
       if (libSaveBtn) {
-        if (syncBusy) {
+        if (layoutLocked) {
           if (!libSaveBtn.dataset.preLockDisabled) {
             libSaveBtn.dataset.preLockDisabled = libSaveBtn.disabled ? '1' : '0';
           }
@@ -268,7 +305,6 @@
         } else if (libSaveBtn.dataset.preLockDisabled !== undefined) {
           libSaveBtn.disabled = libSaveBtn.dataset.preLockDisabled === '1';
           delete libSaveBtn.dataset.preLockDisabled;
-          // re-enable based on librariesDirty count
           updateLibrariesSaveButton();
         }
       }
@@ -2356,7 +2392,21 @@
     }
     libraryState.items = dedupedItems;
     if (dedupedItems.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="9" class="muted center">no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX</td></tr>';
+      // v1.11.27: when an enum is actively running for this tab, show
+      // a 'scanning now' cue instead of the stale 'click REFRESH FROM
+      // PLEX' instruction. window.__motif_enum_active is updated by
+      // the topbar status tick (set when plex_enum_active[tab][variant]
+      // is true). Until it's clear the banner sits on the same prompt
+      // that's been there for first-time visitors.
+      const tab = libraryState.tab;
+      const variant = libraryState.fourk ? 'fourk' : 'standard';
+      const enumActive = !!(window.__motif_enum_active
+                            && window.__motif_enum_active[tab]
+                            && window.__motif_enum_active[tab][variant]);
+      const msg = enumActive
+        ? 'scanning Plex now — items will appear as the enum completes…'
+        : 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
+      tbody.innerHTML = `<tr><td colspan="9" class="muted center">${msg}</td></tr>`;
     } else {
       tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
     }
@@ -2965,9 +3015,13 @@
   }
 
   function adaptLibraryFourkToggle(ta) {
-    // Hide the STANDARD/4K toggle when only one variant exists for the
-    // active tab. If only 4K exists, auto-flip libraryState.fourk so the
-    // page actually shows content. Idempotent — safe to call repeatedly.
+    // v1.11.27: per-button visibility instead of hiding the whole
+    // toggle. If only standard exists, hide // 4K. If only 4K exists,
+    // hide // STANDARD (and auto-flip libraryState.fourk to true so
+    // the page actually shows content). Pre-fix the toggle was
+    // hidden entirely when only one variant existed, which obscured
+    // the fact that the active tab was 4K-only. Now the visible
+    // remaining button doubles as a label.
     const tabEl = document.getElementById('library-tab');
     if (!tabEl) return;
     const tab = tabEl.value;
@@ -2975,12 +3029,18 @@
     if (!av) return;
     const toggle = document.querySelector('.chips[aria-label="resolution"]');
     if (!toggle) return;
-    const both = av.standard && av.fourk;
-    toggle.style.display = both ? '' : 'none';
-    if (!both && av.fourk && !av.standard && libraryState.fourk === false) {
+    const stdBtn = toggle.querySelector('[data-fourk="0"]');
+    const fkBtn  = toggle.querySelector('[data-fourk="1"]');
+    const showAny = av.standard || av.fourk;
+    toggle.style.display = showAny ? '' : 'none';
+    if (stdBtn) stdBtn.style.display = av.standard ? '' : 'none';
+    if (fkBtn)  fkBtn.style.display  = av.fourk    ? '' : 'none';
+    // Auto-flip libraryState.fourk when the user lands on a tab
+    // that only has the variant they aren't currently viewing.
+    if (av.fourk && !av.standard && libraryState.fourk === false) {
       libraryState.fourk = true;
       loadLibrary().catch(()=>{});
-    } else if (!both && av.standard && !av.fourk && libraryState.fourk === true) {
+    } else if (av.standard && !av.fourk && libraryState.fourk === true) {
       libraryState.fourk = false;
       loadLibrary().catch(()=>{});
     }
