@@ -3351,19 +3351,36 @@
       updateLibrarySelectionUi();
     });
     document.getElementById('library-download-selected-btn')?.addEventListener('click', async (e) => {
-      // Build the items list. Only entries whose key looks like
-      // "<movie|tv>:<numeric>" can be downloaded — Plex-only items keyed
-      // by rating_key get filtered out (no themes row to download from).
+      // v1.11.30: filter the bulk-TDB action to ONLY items that are
+      // ThemerrDB-tracked. Pre-fix the handler split the selKey on ':'
+      // and treated parts[1] as a tmdb_id even when the row was
+      // sidecar-only (M) and parts[1] was actually a Plex rating_key.
+      // That made the worker try to download a 'tmdb_id=<rating_key>'
+      // — at best a 404, at worst a redownload loop on a synthetic
+      // orphan with the same id. Now we walk libraryState.items and
+      // include only rows where theme_tmdb is real and the row isn't
+      // a plex_orphan (which has no upstream URL to fetch from).
       const items = [];
-      for (const k of libraryState.selected) {
-        const parts = k.split(':');
-        if (parts.length !== 2) continue;
-        const id = Number(parts[1]);
-        if (!Number.isFinite(id)) continue;
-        items.push({ media_type: parts[0], tmdb_id: id });
+      const skipped = [];
+      const selectedKeys = libraryState.selected;
+      for (const it of (libraryState.items || [])) {
+        const key = libKey(it);
+        if (!selectedKeys.has(key)) continue;
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        if (!themed) {
+          skipped.push(it.plex_title || key);
+          continue;
+        }
+        items.push({
+          media_type: it.theme_media_type,
+          tmdb_id: it.theme_tmdb,
+        });
       }
       if (items.length === 0) {
-        alert('Nothing downloadable in selection (Plex-only items have no ThemerrDB record).');
+        alert('Nothing downloadable in selection — every selected row is a sidecar (use ADOPT SELECTED) or has no ThemerrDB record.');
         return;
       }
       const btn = e.currentTarget;
@@ -3372,14 +3389,17 @@
       btn.textContent = '// QUEUING';
       try {
         const r = await api('POST', '/api/library/download-batch', { items });
-        btn.textContent = `// ${r.enqueued} QUEUED`;
+        // v1.11.30: surface the skip count so the user knows their
+        // M-row selection wasn't ignored silently.
+        const skipNote = skipped.length ? ` (${skipped.length} skipped — use ADOPT for sidecars)` : '';
+        btn.textContent = `// ${r.enqueued} QUEUED${skipNote}`;
         libraryState.selected.clear();
         setTimeout(() => loadLibrary().catch(()=>{}), 1000);
         libraryRapidPoll();
       } catch (err) {
         alert('Bulk download failed: ' + err.message);
       }
-      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
     });
 
     // v1.10.49: SELECT ALL FILTERED — pulls every page of the current
