@@ -2397,6 +2397,11 @@
     // Stacks on top of `status` to slice further (e.g. MANUAL + TRACKED
     // shows the manual rows that have a TDB alternative for REPLACE).
     tdb: "any",
+    // v1.11.66: SRC letter filter (T / U / A / M / P / -). Empty
+    // string = no filter. Applied client-side to the current page
+    // after render, so total/pagination still reflect the underlying
+    // status+tdb filters.
+    srcFilter: "",
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2514,7 +2519,24 @@
         : 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
       tbody.innerHTML = `<tr><td colspan="9" class="muted center">${msg}</td></tr>`;
     } else {
-      tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
+      // v1.11.66: client-side SRC-letter filter. Applied after the
+      // server-side status/tdb pass so click-to-filter on the SRC
+      // legend narrows the visible page without changing total/
+      // pagination (those still reflect the underlying status+tdb
+      // counts the user can read at the top of the page).
+      let displayItems = dedupedItems;
+      if (libraryState.srcFilter) {
+        displayItems = dedupedItems.filter(
+          (it) => computeSrcLetter(it) === libraryState.srcFilter
+        );
+        if (displayItems.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match SRC = ${htmlEscape(libraryState.srcFilter)} on this page (filter applies to the current page; click CLEAR or another SRC letter to broaden)</td></tr>`;
+        } else {
+          tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
+        }
+      } else {
+        tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
+      }
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
@@ -2556,6 +2578,31 @@
       <span>page ${libraryState.page} / ${totalPages}</span>
       <button data-lib-page="${libraryState.page + 1}" ${libraryState.page >= totalPages ? 'disabled' : ''}>next »</button>
     `;
+  }
+
+  // v1.11.66: standalone SRC-letter classifier. Mirrors the badge
+  // branch order in renderLibraryRow so the click-to-filter on the
+  // SRC legend agrees with what the row's badge actually shows.
+  // Returns one of T / U / A / M / P / - (literal dash).
+  function computeSrcLetter(it) {
+    const placed = !!it.media_folder;
+    const placedProv = it.placement_provenance;
+    const sidecarOnly = !placed && !!it.plex_local_theme;
+    const isOrphanRow = it.upstream_source === 'plex_orphan';
+    const sourceKind = it.source_kind || null;
+    const svid = it.source_video_id || '';
+    const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
+    if (placed && sourceKind === 'themerrdb') return 'T';
+    if (placed && sourceKind === 'adopt') return 'A';
+    if (placed && (sourceKind === 'url' || sourceKind === 'upload')) return 'U';
+    if (placed && placedProv === 'auto') return 'T';
+    if (placed && placedProv === 'manual') {
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
+      return (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
+    }
+    if (sidecarOnly) return 'M';
+    if (it.plex_has_theme) return 'P';
+    return '-';
   }
 
   function renderLibraryRow(it) {
@@ -3390,6 +3437,36 @@
         });
       });
       updateTdbFilterVisibility();
+    }
+
+    // v1.11.66: SRC legend buttons toggle a client-side SRC-letter
+    // filter on top of whatever status / TDB chips are already
+    // active. Clicking the active letter again or hitting CLEAR
+    // resets the filter. Pure client-side: pagination/total still
+    // reflect the underlying status+tdb pass.
+    if (document.getElementById('library-body')) {
+      document.querySelectorAll('[data-src-filter]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const want = b.dataset.srcFilter;
+          // Empty string === CLEAR. Same letter clicked again ===
+          // toggle off.
+          if (!want) {
+            libraryState.srcFilter = "";
+          } else if (libraryState.srcFilter === want) {
+            libraryState.srcFilter = "";
+          } else {
+            libraryState.srcFilter = want;
+          }
+          // Repaint active styling on the legend
+          document.querySelectorAll('[data-src-filter]').forEach((x) => {
+            const xVal = x.dataset.srcFilter;
+            const active = !!libraryState.srcFilter
+              && xVal === libraryState.srcFilter;
+            x.classList.toggle('src-key-btn-active', active);
+          });
+          loadLibrary().catch(console.error);
+        });
+      });
     }
 
     // Library tab chips (data-libtab) — only used on /coverage
