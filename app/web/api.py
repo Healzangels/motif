@@ -517,7 +517,15 @@ def _library_not_in_plex(
                 "last_plex_enum_at": None, "last_sync_at": None}
     media_type = "movie" if tab == "movies" else "tv"
     plex_media_type = "movie" if tab == "movies" else "show"
-    params: list = [media_type, plex_media_type, 1 if fourk else 0]
+    # v1.10.55: drop the per-tab section-flag filter (is_anime/is_4k)
+    # on the 'exists in Plex' check. Pre-1.10.55 a tab's not_in_plex
+    # only counted plex_items in sections matching that tab's flags,
+    # so an anime show registered as 'not in Plex' on the TV tab
+    # even though the user has it in their anime section. Now we
+    # check whether ANY managed plex_items row covers the title;
+    # the media_type match stays since TMDB id namespaces are
+    # disjoint per media_type (movie 999 ≠ show 999).
+    params: list = [media_type, plex_media_type]
     q_where = ""
     if q:
         q_where = " AND (t.title LIKE ? OR t.imdb_id = ?)"
@@ -531,8 +539,6 @@ def _library_not_in_plex(
                 ON ps2.section_id = pi2.section_id AND ps2.included = 1
               WHERE pi2.guid_tmdb = t.tmdb_id
                 AND pi2.media_type = ?
-                AND ps2.is_anime = 0
-                AND ps2.is_4k = ?
           )
           {q_where}
     """
