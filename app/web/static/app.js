@@ -2721,83 +2721,29 @@
     `;
   }
 
-  // v1.11.66 (refined v1.11.79): standalone SRC-letter classifier.
-  // Mirrors the badge branch order in renderLibraryRow so the
-  // click-to-filter on the SRC legend agrees with what the row's
-  // badge actually shows. v1.11.79 adds compound P/X variants:
-  // when a row has a local file AND has_theme=1 AND ThemerrDB
-  // tracks the title (themes.upstream_source != 'plex_orphan'),
-  // we render P/T / P/A / P/M / P/U — the assumption is that
-  // TDB-tracked titles likely have a Plex Pass cloud theme too,
-  // so deleting the local file would fall back to cloud rather
-  // than going themeless. Plain T/A/M/U remain for orphan-mapped
-  // rows where TDB doesn't track (no cloud fallback expected).
-  // Returns one of T / U / A / M / P / - / P/T / P/A / P/M / P/U.
+  // v1.11.66: standalone SRC-letter classifier. Mirrors the badge
+  // branch order in renderLibraryRow so the click-to-filter on the
+  // SRC legend agrees with what the row's badge actually shows.
+  // Returns one of T / U / A / M / P / - (literal dash).
   function computeSrcLetter(it) {
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
     const sidecarOnly = !placed && !!it.plex_local_theme;
     const isOrphanRow = it.upstream_source === 'plex_orphan';
-    const tdbTracks = !!it.upstream_source && !isOrphanRow;
     const sourceKind = it.source_kind || null;
     const svid = it.source_video_id || '';
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
-    let base = '-';
-    if (placed && sourceKind === 'themerrdb') base = 'T';
-    else if (placed && sourceKind === 'adopt') base = 'A';
-    else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) base = 'U';
-    else if (placed && placedProv === 'auto') base = 'T';
-    else if (placed && placedProv === 'manual') {
+    if (placed && sourceKind === 'themerrdb') return 'T';
+    if (placed && sourceKind === 'adopt') return 'A';
+    if (placed && (sourceKind === 'url' || sourceKind === 'upload')) return 'U';
+    if (placed && placedProv === 'auto') return 'T';
+    if (placed && placedProv === 'manual') {
       const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
-      base = (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
+      return (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
     }
-    else if (sidecarOnly) base = 'M';
-    else if (it.plex_has_theme) base = 'P';
-    // Compound: only when there's a local file (placed OR sidecar)
-    // AND Plex sees a theme AND TDB tracks the title (proxy for
-    // 'Plex Pass cloud version probably exists').
-    if ((placed || sidecarOnly) && it.plex_has_theme && tdbTracks
-        && (base === 'T' || base === 'A' || base === 'M' || base === 'U')) {
-      return 'P/' + base;
-    }
-    return base;
-  }
-
-  // v1.11.79: SVG diagonal-split badge for compound P/X states.
-  // P always lives in the bottom-left triangle (amber); the
-  // other source letter takes the top-right triangle in its
-  // own color. Inline SVG so the page paints crisp at any zoom
-  // level (vs a CSS-gradient hack that pixelates the letters).
-  function compoundSrcSvg(otherLetter) {
-    const palettes = {
-      T: { fill: 'rgba(109,255,181,0.10)', text: '#9affc9',
-           border: 'rgba(45,140,92,0.7)' },
-      A: { fill: 'rgba(109,211,255,0.10)', text: '#6dd3ff',
-           border: 'rgba(109,211,255,0.55)' },
-      M: { fill: 'rgba(255,122,214,0.10)', text: '#ff7ad6',
-           border: 'rgba(255,122,214,0.5)' },
-      U: { fill: 'rgba(196,109,255,0.10)', text: '#c46dff',
-           border: 'rgba(196,109,255,0.6)' },
-    };
-    const c = palettes[otherLetter];
-    if (!c) return '';
-    const W = 38, H = 18;
-    return (
-      `<svg class="link-badge-compound" viewBox="0 0 ${W} ${H}" `
-      + `width="${W}" height="${H}" role="img" `
-      + `aria-label="P/${otherLetter}">`
-      + `<polygon points="0,0 0,${H} ${W},${H}" fill="rgba(255,184,74,0.10)"/>`
-      + `<polygon points="0,0 ${W},0 ${W},${H}" fill="${c.fill}"/>`
-      + `<line x1="0" y1="0" x2="${W}" y2="${H}" `
-      +    `stroke="rgba(0,0,0,0.45)" stroke-width="1"/>`
-      + `<text x="6" y="14" font-family="JetBrains Mono, ui-monospace, monospace" `
-      +    `font-size="10" font-weight="700" fill="#ffb84a">P</text>`
-      + `<text x="${W - 12}" y="10" font-family="JetBrains Mono, ui-monospace, monospace" `
-      +    `font-size="10" font-weight="700" fill="${c.text}">${otherLetter}</text>`
-      + `<rect x="0.5" y="0.5" width="${W - 1}" height="${H - 1}" rx="2" `
-      +    `fill="none" stroke="${c.border}" stroke-width="1"/>`
-      + `</svg>`
-    );
+    if (sidecarOnly) return 'M';
+    if (it.plex_has_theme) return 'P';
+    return '-';
   }
 
   function renderLibraryRow(it) {
@@ -2856,35 +2802,29 @@
     const sourceKind = it.source_kind || null;
     const svid = it.source_video_id || '';
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
-    // v1.11.79: SRC badge dispatched off computeSrcLetter so the
-    // single source of truth for 'what letter does this row land
-    // on' is the same function that powers click-to-filter. Includes
-    // compound P/X variants for rows with a local file whose title
-    // is also TDB-tracked (proxy: Plex Pass cloud likely available).
     let srcCell;
-    const srcLetter = computeSrcLetter(it);
-    const COMPOUND_TIPS = {
-      T: "motif manages from ThemerrDB · Plex Pass cloud version likely available too — deleting the local file would fall back to Plex's cloud theme.",
-      A: "motif adopted an existing sidecar · Plex Pass cloud version likely available too — deleting the local file would fall back to cloud.",
-      M: "loose sidecar in the Plex folder (motif doesn't manage) · Plex Pass cloud version likely available too — deleting the local file would fall back to cloud.",
-      U: "user-provided theme (URL or upload) · Plex Pass cloud version likely available too — deleting the local file would fall back to cloud.",
-    };
-    if (srcLetter === 'T') {
-      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB (no Plex Pass cloud fallback known — TDB doesn\'t track other versions of this title)">T</span>';
-    } else if (srcLetter === 'A') {
+    if (placed && sourceKind === 'themerrdb') {
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+    } else if (placed && sourceKind === 'adopt') {
       srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
-    } else if (srcLetter === 'U') {
+    } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
       srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
-    } else if (srcLetter === 'M') {
+    } else if (placed && placedProv === 'auto') {
+      // Legacy rows (source_kind NULL) — provenance='auto' === T.
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+    } else if (placed && placedProv === 'manual') {
+      // Legacy fallback heuristic for rows without source_kind.
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
+      const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
+      if (kind === 'adopt') {
+        srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+      } else {
+        srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+      }
+    } else if (sidecarOnly) {
       srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (click ADOPT to take ownership)">M</span>';
-    } else if (srcLetter === 'P') {
-      srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — no local file. Use TDB / SET URL / UPLOAD MP3 / drop a sidecar to override.">P</span>';
-    } else if (srcLetter === 'P/T' || srcLetter === 'P/A'
-               || srcLetter === 'P/M' || srcLetter === 'P/U') {
-      const other = srcLetter.slice(2);
-      srcCell = '<span class="link-badge-compound-wrap" title="'
-        + htmlEscape(COMPOUND_TIPS[other])
-        + '">' + compoundSrcSvg(other) + '</span>';
+    } else if (it.plex_has_theme) {
+      srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
     } else {
       srcCell = '<span class="muted" title="no theme">—</span>';
     }
