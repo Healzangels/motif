@@ -389,7 +389,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .input::placeholder { color: var(--fg-mute); }
 
-.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+/* v1.11.86: chip-group keeps a logical chip cluster on one line so
+   wrapping happens between groups (cleaner read) instead of stranding
+   one chip on its own row when the chip count just barely exceeds
+   the available width. */
+.chip-group { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .chips-inline { font-size: var(--t-tiny); }
 .chip {
   background: transparent;

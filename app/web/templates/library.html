@@ -56,22 +56,30 @@
   <input type="text" id="library-search" placeholder="search title or imdb id…"
          class="input" autocomplete="off" />
   <div class="chips" role="tablist">
-    <button class="chip chip-active" data-status="all" title="every Plex item in this tab">ALL</button>
-    <button class="chip" data-status="has_theme" title="items with any theme source — ThemerrDB / manual / sidecar / Plex agent / downloaded">HAS THEME</button>
+    <span class="chip-group">
+      <button class="chip chip-active" data-status="all" title="every Plex item in this tab">ALL</button>
+      <button class="chip" data-status="has_theme" title="items with any theme source — ThemerrDB / manual / sidecar / Plex agent / downloaded">HAS THEME</button>
+    </span>
     <span class="chip-sep" aria-hidden="true">·</span>
-    <button class="chip" data-status="themed" title="items with a ThemerrDB record (motif can fetch a theme automatically)">THEMERRDB</button>
-    <button class="chip" data-status="manual" title="items where the theme is user-driven: motif-managed manual upload/URL, or a sidecar theme.mp3 motif doesn't own yet">MANUAL</button>
-    <button class="chip" data-status="plex_agent" title="Plex's agent has a theme but motif doesn't manage it (cloud / agent-supplied)">PLEX AGENT</button>
-    <button class="chip" data-status="untracked" title="no theme anywhere — no ThemerrDB record, no Plex theme, no sidecar">UNTRACKED</button>
+    <span class="chip-group">
+      <button class="chip" data-status="themed" title="items with a ThemerrDB record (motif can fetch a theme automatically)">THEMERRDB</button>
+      <button class="chip" data-status="manual" title="items where the theme is user-driven: motif-managed manual upload/URL, or a sidecar theme.mp3 motif doesn't own yet">MANUAL</button>
+      <button class="chip" data-status="plex_agent" title="Plex's agent has a theme but motif doesn't manage it (cloud / agent-supplied)">PLEX AGENT</button>
+      <button class="chip" data-status="untracked" title="no theme anywhere — no ThemerrDB record, no Plex theme, no sidecar">UNTRACKED</button>
+    </span>
     <span class="chip-sep" aria-hidden="true">·</span>
-    <button class="chip" data-status="downloaded" title="motif has the theme file locally (whether or not it's been placed into the Plex folder)">DOWNLOADED</button>
-    <button class="chip" data-status="placed" title="motif's theme is currently sitting in the Plex media folder — Plex is playing it">IN PLEX FOLDER</button>
-    <button class="chip" data-status="unplaced" title="motif has the file downloaded but not in the Plex folder yet (typically waiting on placement approval)">READY TO PLACE</button>
-    <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
+    <span class="chip-group">
+      <button class="chip" data-status="downloaded" title="motif has the theme file locally (whether or not it's been placed into the Plex folder)">DOWNLOADED</button>
+      <button class="chip" data-status="placed" title="motif's theme is currently sitting in the Plex media folder — Plex is playing it">IN PLEX FOLDER</button>
+      <button class="chip" data-status="unplaced" title="motif has the file downloaded but not in the Plex folder yet (typically waiting on placement approval)">READY TO PLACE</button>
+      <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
+    </span>
     <span class="chip-sep" aria-hidden="true">·</span>
-    <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
-    <button class="chip chip-warn" data-status="updates" title="ThemerrDB upstream changed the YouTube URL on items motif already manages — review with ACCEPT (replace with new TDB download) or KEEP (leave current theme alone)">UPDATES</button>
-    <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
+    <span class="chip-group">
+      <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
+      <button class="chip chip-warn" data-status="updates" title="ThemerrDB upstream changed the YouTube URL on items motif already manages — review with ACCEPT (replace with new TDB download) or KEEP (leave current theme alone)">UPDATES</button>
+      <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
+    </span>
   </div>
   <!-- v1.10.20: secondary TDB-match filter, stacks on the status chip
        above. Useful for slicing MANUAL into 'has a TDB alternative I

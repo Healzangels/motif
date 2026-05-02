@@ -1063,10 +1063,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- Local files with no placement = items waiting placement
                   -- approval (typically because a sidecar already exists at
                   -- the Plex folder; user must approve overwrite via /pending).
+                  -- v1.11.86: exclude items already approved (pending/running
+                  -- 'place' job exists). Without this, clicking PUSH TO PLEX
+                  -- on a row left the /pending banner + nav dot lit until
+                  -- the worker actually completed placement, even though the
+                  -- user-facing question ("approve placement?") was already
+                  -- answered. A failed placement re-becomes 'pending_placement'
+                  -- because the job's status flips to 'failed' (no longer
+                  -- counted by IN ('pending','running')) — correct behavior.
                   (SELECT COUNT(*) FROM local_files lf
                    LEFT JOIN placements p
                      ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
-                   WHERE p.media_folder IS NULL) AS pending_placements,
+                   WHERE p.media_folder IS NULL
+                     AND NOT EXISTS (
+                       SELECT 1 FROM jobs j
+                        WHERE j.job_type = 'place'
+                          AND j.status IN ('pending','running')
+                          AND j.media_type = lf.media_type
+                          AND j.tmdb_id = lf.tmdb_id
+                     )) AS pending_placements,
                   (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
                   -- v1.10.50: exclude acked rows from the topbar
                   -- failure counts. Acked = the user dealt with it

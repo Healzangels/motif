@@ -899,6 +899,11 @@
           && document.getElementById('library-body')) {
         libraryRapidPoll();
       }
+      // v1.11.86: kick the topbar so the /pending banner + nav dot
+      // re-evaluate against the new pending_placements count
+      // (which now excludes items with a queued place job).
+      // Schedule past /api/stats's 1s TTL.
+      setTimeout(refreshTopbarStatus, 1100);
     } catch (e) {
       alert('Replace failed: ' + e.message);
       if (btn) btn.disabled = false;
