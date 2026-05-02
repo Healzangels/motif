@@ -3351,6 +3351,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchall()
+            # v1.11.85: snapshot the plex_items rows we'll need to
+            # re-stat AFTER the DELETE chain, before any of it runs.
+            # Pre-fix the post-DELETE block looked up plex_items via
+            # `themes WHERE media_type=? AND tmdb_id=?` to derive a
+            # theme_id_pk and then matched pi.theme_id = ?. For the
+            # orphan branch (adopted manual sidecars; upstream_source=
+            # 'plex_orphan') this lookup fired AFTER `DELETE FROM themes`
+            # — so theme_id_pk came back None, the loop skipped entirely,
+            # and pi.local_theme_file stayed at whatever value it held
+            # before unmanage. Result: row dropped to '—' instead of
+            # falling back to M, and only a follow-up REFRESH FROM PLEX
+            # would correct it. Capture the pi list here while themes
+            # (and pi.theme_id) still exist.
+            plex_type_for_restat = "show" if media_type == "tv" else "movie"
+            theme_id_pk_pre_row = conn.execute(
+                "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            theme_id_pk_pre = (
+                theme_id_pk_pre_row["id"] if theme_id_pk_pre_row else None
+            )
+            pi_rows_to_restat = []
+            if theme_id_pk_pre is not None:
+                pi_rows_to_restat = [
+                    dict(r) for r in conn.execute(
+                        "SELECT rating_key, folder_path FROM plex_items "
+                        "WHERE theme_id = ? AND media_type = ?",
+                        (theme_id_pk_pre, plex_type_for_restat),
+                    ).fetchall()
+                ]
 
         # Delete the per-section canonicals — leave Plex-folder placements intact.
         themes_dir = settings.themes_dir
@@ -3386,40 +3416,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
-            # v1.10.31: optimistically set plex_items.local_theme_file=1
-            # for every folder we just unmanaged from. The sidecar at
-            # those paths still exists (we deleted only the canonical),
-            # so the row should render as M immediately.
-            # v1.11.62: stat goes through folder_has_theme_sidecar
-            # which tries common host→container path translations and
-            # matches any theme.<audio-ext>.
-            # v1.11.78: route the UPDATE through pi.theme_id +
-            # pi.rating_key instead of WHERE folder_path=? .
-            # Pre-fix the WHERE clause string-matched
-            # placements.media_folder (motif's container view, e.g.
-            # /data/media/...) against plex_items.folder_path (Plex's
-            # view, which on Unraid is often /mnt/user/data/...). The
-            # strings didn't match, the UPDATE found zero rows, and
-            # local_theme_file stayed at 0 — the row fell back to '—'
-            # instead of the expected M. Linking via theme_id sidesteps
-            # the path-string mismatch entirely; folder_has_theme_sidecar
-            # still uses each pi.folder_path for the actual stat (with
-            # its own translation table to find the file).
+            # v1.10.31 / v1.11.62 / v1.11.78 / v1.11.85: re-stat the
+            # sidecar at every Plex folder that pointed at this theme.
+            # The sidecar still exists (we deleted only the canonical),
+            # so local_theme_file should be 1 and the row should render
+            # as M immediately. folder_has_theme_sidecar handles
+            # host→container path translation (Unraid /mnt/user/data
+            # → /data) and matches any theme.<audio-ext>.
+            # v1.11.85: pi_rows_to_restat was captured BEFORE the
+            # DELETE chain ran. Pre-fix this block re-queried via
+            # `themes WHERE media_type=? AND tmdb_id=?` after the
+            # delete; for the orphan branch (upstream_source=
+            # 'plex_orphan' — i.e. adopted manual sidecars) the themes
+            # row had already been cascade-removed, so the lookup
+            # returned no theme_id_pk and the loop quietly skipped.
+            # Result: pi.local_theme_file kept its pre-unmanage value
+            # (often 0, because plex_enum hadn't re-stat'd post-adopt)
+            # and the row dropped to '—' until the next REFRESH FROM
+            # PLEX corrected it.
             from ..core.plex_enum import folder_has_theme_sidecar
-            plex_type = "show" if media_type == "tv" else "movie"
-            theme_id_pk_row = conn.execute(
-                "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchone()
-            theme_id_pk = theme_id_pk_row["id"] if theme_id_pk_row else None
-            pi_rows = []
-            if theme_id_pk is not None:
-                pi_rows = conn.execute(
-                    "SELECT rating_key, folder_path FROM plex_items "
-                    "WHERE theme_id = ? AND media_type = ?",
-                    (theme_id_pk, plex_type),
-                ).fetchall()
-            for pi_row in pi_rows:
+            for pi_row in pi_rows_to_restat:
                 sidecar_present = folder_has_theme_sidecar(
                     pi_row["folder_path"] or "",
                 )
