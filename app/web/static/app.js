@@ -257,7 +257,11 @@
         tv: tv_tdb > 0,
         // anime tab pulls from both depending on section type;
         // either source qualifies it as 'we have data'.
-        any: (movies_total + tv_total) > 0,
+        // v1.12.2: was referring to undeclared movies_total/tv_total
+        // (renamed to *_tdb in v1.11.97); ReferenceError tripped the
+        // outer catch and lit the OFFLINE indicator on every page
+        // load. Silent catch made it look like a network issue.
+        any: (movies_tdb + tv_tdb) > 0,
       };
 
       // Updates badge
@@ -457,6 +461,10 @@
       }
     } catch (e) {
       $('#topbar-status-text').textContent = 'OFFLINE';
+      // v1.12.2: log the actual error so future "OFFLINE for no
+      // apparent reason" debugging doesn't require code-archeology.
+      // Silent catch in v1.11.97 hid a ReferenceError for ~5 days.
+      try { console.error('refreshTopbarStatus failed:', e); } catch (_) {}
     }
   }
 
