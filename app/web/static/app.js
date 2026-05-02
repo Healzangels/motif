@@ -201,23 +201,22 @@
       // actually queued behind a different long-thread job), but
       // fall back to _in_flight when nothing's running so a
       // freshly-enqueued job lights the banner immediately.
-      // v1.12.3: scope-aware "SYNCING WITH PLEX" — appends "(4K MOVIES)"
-      // / "(ANIME)" / etc when we can identify which library is
-      // actually being scanned. Pre-fix the optimistic paint on
-      // click showed the scope briefly and then the periodic poll
-      // overwrote it with the generic "SYNCING WITH PLEX" because
-      // refreshTopbarStatus didn't build the scope label.
+      // v1.12.21: align verb with the button that triggered the
+      // action. SYNC THEMERRDB → "SYNCING THEMERRDB"; REFRESH FROM
+      // PLEX → "REFRESHING <scope>". Pre-fix the topbar said
+      // "SYNCING <scope>" while the row button said "REFRESHING
+      // <scope>" — same job, two verbs, mild user confusion.
       const plexScope = activePlexEnumScopeLabel(q.plex_enum_active);
-      const plexLabel = plexScope ? `SYNCING ${plexScope}` : 'SYNCING WITH PLEX';
+      const plexLabel = plexScope ? `REFRESHING ${plexScope}` : 'REFRESHING PLEX';
       let txt;
       if (themerrdbRunning && plexEnumRunning) {
-        txt = `SYNCING THEMERRDB + ${plexScope || 'PLEX'}`;
+        txt = `SYNCING THEMERRDB + ${plexLabel}`;
       } else if (themerrdbRunning) {
-        txt = 'SYNCING WITH THEMERRDB';
+        txt = 'SYNCING THEMERRDB';
       } else if (plexEnumRunning) {
         txt = plexLabel;
       } else if (themerrdbBusy) {
-        txt = 'SYNCING WITH THEMERRDB';
+        txt = 'SYNCING THEMERRDB';
       } else if (plexEnumBusy) {
         txt = plexLabel;
       } else if (downloadBusy) {
@@ -495,7 +494,7 @@
       // Dashboard SYNC — only the ThemerrDB sync drives this.
       lockBtn(
         document.getElementById('sync-now-btn'),
-        themerrdbBusy, '// SYNCING WITH THEMERRDB…',
+        themerrdbBusy, '// SYNCING THEMERRDB…',
       );
       // Per-section REFRESH — lock only if THIS section is enumerating.
       document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
@@ -632,7 +631,7 @@
       btn.textContent = '// SYNC THEMERRDB';
     } else if (state === 'running') {
       btn.disabled = true;
-      btn.textContent = '// SYNCING WITH THEMERRDB…';
+      btn.textContent = '// SYNCING THEMERRDB…';
     } else if (state === 'done') {
       btn.disabled = true;
       btn.textContent = '✓ DONE';
@@ -655,7 +654,7 @@
         setSyncButtonState('idle');
         return;
       }
-      paintTopbarSyncing('SYNCING WITH THEMERRDB');
+      paintTopbarSyncing('SYNCING THEMERRDB');
       // v1.11.47: poll only themerrdb_sync_in_flight (was sync_in_flight,
       // which includes plex_enum). The dashboard SYNC button represents
       // a ThemerrDB sync only; if a plex_enum runs concurrently the
@@ -1646,7 +1645,7 @@
         // drain so the user sees updated counts.
         // v1.11.48: optimistic topbar paint to dodge the /api/stats
         // 1s TTL cache (see paintTopbarSyncing).
-        paintTopbarSyncing('SYNCING WITH PLEX');
+        paintTopbarSyncing('REFRESHING PLEX');
         setTimeout(() => loadLibraries().catch(()=>{}), 5000);
         setTimeout(() => loadLibraries().catch(()=>{}), 15000);
       } catch (e) {
@@ -1671,7 +1670,7 @@
         await api('POST', `/api/libraries/${encodeURIComponent(sid)}/refresh`);
         // v1.11.48: optimistic paint (see paintTopbarSyncing) to
         // beat the /api/stats 1s TTL cache.
-        paintTopbarSyncing('SYNCING WITH PLEX');
+        paintTopbarSyncing('REFRESHING PLEX');
         setTimeout(() => loadLibraries().catch(()=>{}), 4000);
       } catch (err) {
         alert('Refresh failed: ' + err.message);
@@ -3133,7 +3132,7 @@
       const isThemerrDbAvail = it.upstream_source
         && it.upstream_source !== 'plex_orphan';
       if (!isThemerrDbAvail) {
-        return ' <span class="tdb-pill tdb-pill-no" title="ThemerrDB does not track this title">no TDB</span>';
+        return ' <span class="tdb-pill tdb-pill-no" title="No ThemerrDB record for this title.">no TDB</span>';
       }
       // v1.11.16: include the actual failure_kind + failure_message in
       // the pill tooltip when something failed, so hover gives concrete
@@ -3156,19 +3155,19 @@
         if (window.__motif_cookies_present) {
           // Cookies are configured — the next download attempt should
           // succeed and clear the flag. Stay green.
-          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title; cookies.txt is configured. The cookies_expired flag will clear on the next successful download attempt.">TDB</span>';
+          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracks this title. cookies.txt is configured; the next download will clear the cookies_expired flag.">TDB</span>';
         }
-        return ` <span class="tdb-pill tdb-pill-cookies" title="Reason: ${htmlEscape(why)}${detail}&#10;&#10;Recovery options:&#10;  • drop a valid cookies.txt at the path in Settings → PATHS (preferred — fixes every cookies-blocked title at once)&#10;  • SOURCE → SET URL to override with a non-restricted YouTube URL&#10;  • SOURCE → UPLOAD MP3 to bypass YouTube entirely&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT">TDB ⚠</span>`;
+        return ` <span class="tdb-pill tdb-pill-cookies" title="Cookies required: ${htmlEscape(why)}${detail}\n\nDrop a valid cookies.txt at the configured path, or use SET URL / UPLOAD MP3 / ADOPT.">TDB ⚠</span>`;
       }
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
-        return ` <span class="tdb-pill tdb-pill-dead" title="Reason: ${htmlEscape(why)}${detail}&#10;&#10;Recovery options:&#10;  • SOURCE → SET URL to provide a working YouTube URL&#10;  • SOURCE → UPLOAD MP3 to upload a local audio file&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT&#10;&#10;The TDB pill stays red so you remember the upstream URL is broken.">TDB ✗</span>`;
+        return ` <span class="tdb-pill tdb-pill-dead" title="Upstream URL broken: ${htmlEscape(why)}${detail}\n\nRecover via SET URL, UPLOAD MP3, or drop a sidecar and ADOPT.">TDB ✗</span>`;
       }
       // v1.11.96: pending-update state takes precedence over the
       // generic green TDB pill so the user can scan the library page
       // and immediately see which rows have an upstream URL update
       // available. Blue ties to the ↑ glyph and the UPDATES filter.
       if (it.pending_update) {
-        return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB has a new YouTube URL for this theme — review with ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu, or click the ↑ to filter the tab to all updates">TDB ↑</span>';
+        return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss.">TDB ↑</span>';
       }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
     })();
@@ -3262,7 +3261,7 @@
     if (sidecarOnly) {
       sourceItems.push(menuItemHtml(
         'adopt-sidecar', 'ADOPT',
-        "take ownership of the existing theme.mp3 sidecar; motif manages it from now on",
+        "Take ownership of the existing theme.mp3 sidecar.",
         { rk: it.rating_key, tone: 'adopt' },
       ));
     }
@@ -3313,24 +3312,18 @@
       // manual file with TDB' action; without this exclusion the
       // SOURCE menu showed 'TDB' twice on adopted rows (once as
       // RE-DL, once as REPLACE w/ TDB), confusingly back to back.
+      // v1.12.21: also suppress when pending_update — ACCEPT UPDATE
+      // covers the same fetch-from-TDB action with the right label
+      // for that context. Showing both confuses the user about which
+      // does what.
       if (!isPlexAgent && !isManualPlacement && !lockManualActions
-          && !tdbBlocked && hasDownloadUrl) {
-        // v1.12.8: per-state action label so the user sees what
-        // motif will actually do at the click level.
-        //   T  + downloaded healthy → "RE-DL TDB" (re-download)
-        //   T  + broken DL          → "DL TDB"   (recover)
-        //   —  (no theme content)   → "TDB DOWNLOAD"
-        // U/A/M never reach this block; they're handled by the
-        // dedicated REPLACE-w/-TDB block below as "TDB REPLACE".
+          && !tdbBlocked && hasDownloadUrl && !it.pending_update) {
         const dlSource = (sourceKindForActions === 'url')
           ? 'manual URL override'
           : 'ThemerrDB';
         const dlTip = downloaded
-          ? `source from ${dlSource} and overwrite the existing canonical (the placement updates with it)`
-          : `source from ${dlSource}; download and place into the Plex folder`;
-        // v1.12.9: VERB-first naming, no abbreviations — matches the
-        // rest of the menu (ACCEPT UPDATE / KEEP CURRENT / SET URL /
-        // UPLOAD MP3 / ADOPT / REVERT / ACK FAILURE).
+          ? `Re-fetch from ${dlSource} and overwrite the canonical.`
+          : `Download from ${dlSource} and place into the Plex folder.`;
         const tdbLabel = (downloaded && !dlBroken) ? 'RE-DOWNLOAD TDB'
                        : 'DOWNLOAD TDB';
         sourceItems.push(menuItemHtml(
@@ -3347,7 +3340,7 @@
       if (sourceKindForActions === 'url' && isThemerrDb) {
         sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
-          'clear manual URL override and download from ThemerrDB',
+          'Clear the manual URL override and re-download from ThemerrDB.',
           { mt: themeMt, id: themeId, warn: true, tone: 'themerrdb' },
         ));
       }
@@ -3362,40 +3355,39 @@
         && themed && themeId !== null && themeId !== undefined) {
       sourceItems.push(menuItemHtml(
         'clear-failure', 'ACK FAILURE',
-        "removes the ! glyph and excludes the row from FAILURES; TDB pill stays red so you know the upstream URL is still broken",
+        "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
         { mt: themeMt, id: themeId },
       ));
     }
-    // v1.11.74: ACCEPT UPDATE / KEEP CURRENT — surfaced when
-    // ThemerrDB has a new YouTube URL for this theme (pending_update
-    // flag from /api/library). ACCEPT downloads the new URL and
-    // overwrites motif's canonical; KEEP marks the diff declined so
-    // the ↑ glyph clears without changing files.
-    // v1.12.5: gate ACCEPT UPDATE / KEEP CURRENT on actionable_update
-    // (decision='pending') instead of pending_update (the pill flag,
-    // which now also covers decision='declined' so the blue pill
-    // sticks for filter / sort even after the user picked KEEP).
-    if (it.actionable_update && themed
+    // v1.12.21: ACCEPT UPDATE stays on the menu whenever the blue
+    // TDB ↑ pill is up (pending_update), even after KEEP CURRENT.
+    // The user can still change their mind. KEEP CURRENT is only
+    // shown while the row is actionable_update (decision='pending')
+    // — once declined, the row's already in the "kept" state and
+    // KEEP CURRENT would be a no-op.
+    if (it.pending_update && themed
         && themeId !== null && themeId !== undefined) {
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
-        'replace motif\'s current theme with a fresh download from the new ThemerrDB URL',
+        'Download the new ThemerrDB URL and replace the current theme.',
         { mt: themeMt, id: themeId, info: true, tone: 'themerrdb' },
       ));
-      sourceItems.push(menuItemHtml(
-        'decline-update', 'KEEP CURRENT',
-        'leave motif\'s current theme alone; clears the ↑ glyph and stops alerting on this update',
-        { mt: themeMt, id: themeId },
-      ));
+      if (it.actionable_update) {
+        sourceItems.push(menuItemHtml(
+          'decline-update', 'KEEP CURRENT',
+          'Dismiss the prompt; the blue TDB ↑ pill stays for filter/sort.',
+          { mt: themeMt, id: themeId },
+        ));
+      }
     }
     sourceItems.push(menuItemHtml(
       'manual-url', 'SET URL',
-      'provide a YouTube URL (manual override)',
+      'Provide a YouTube URL as a manual override.',
       { rk: it.rating_key, warn: true, tone: 'user' },
     ));
     sourceItems.push(menuItemHtml(
       'upload-theme', 'UPLOAD MP3',
-      'upload an MP3 file as the theme',
+      'Upload an MP3 file as the theme.',
       { rk: it.rating_key, tone: 'user' },
     ));
     // REPLACE w/ TDB — fires whenever the user is swapping motif's
@@ -3420,7 +3412,13 @@
     // the more contextually-correct phrasing when an upstream URL
     // change triggered the menu, so we keep that one and suppress
     // the redundant TDB entry below.
-    if (isThemerrDb && !tdbReplaceBlocked && !it.actionable_update
+    // v1.12.21: suppress when the blue TDB ↑ pill is up (any
+    // decision state — pending or declined). ACCEPT UPDATE covers
+    // the same "fetch from TDB" action with the right framing for
+    // an upstream-update context; offering both doubles up. After
+    // ACCEPT or after the upstream URL stabilizes (no more pending
+    // record), this block re-engages.
+    if (isThemerrDb && !tdbReplaceBlocked && !it.pending_update
         && (sidecarOnly || isManualPlacement || isPlexAgent)) {
       // v1.12.8: label is "TDB REPLACE" so the action makes sense
       // alongside the M/U/A row's existing local theme.mp3 — the
@@ -3428,10 +3426,10 @@
       // just "TDB" which read as "TDB info" or "TDB download" with
       // no hint that an existing file would be replaced.
       const replaceTip = sidecarOnly
-        ? "source from ThemerrDB; the existing local sidecar will be replaced (you'll be asked to confirm)"
+        ? "Download from ThemerrDB and replace the local sidecar."
         : isPlexAgent
-          ? "source from ThemerrDB; Plex's agent-supplied theme will be replaced (you'll be asked to confirm)"
-          : "source from ThemerrDB; your manual theme will be replaced (you'll be asked to confirm)";
+          ? "Download from ThemerrDB and replace the Plex agent theme."
+          : "Download from ThemerrDB and replace the current local theme.";
       sourceItems.push(menuItemHtml(
         'replace-with-themerrdb', 'REPLACE TDB',
         replaceTip,
@@ -3462,14 +3460,14 @@
       // users to /pending unnecessarily.
       placeItems.push(menuItemHtml(
         'replace', 'PUSH TO PLEX',
-        "push motif's downloaded theme into the Plex folder (no re-download)",
+        "Push the downloaded theme into the Plex folder.",
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
     if (themed && downloaded && placed && !dlBroken && !isMismatch) {
       placeItems.push(menuItemHtml(
         'replace', 'RE-PUSH',
-        "force motif to re-place the canonical at the Plex folder (no re-download)",
+        "Re-place the canonical at the Plex folder (no re-download).",
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
@@ -3480,20 +3478,18 @@
     if (themed && isMismatch && downloaded && placed) {
       placeItems.push(menuItemHtml(
         'replace', 'PUSH TO PLEX',
-        "overwrite the file in the Plex folder with motif's new download (resolves the mismatch)",
+        "Overwrite the Plex-folder file with the new download.",
         { mt: themeMt, id: themeId, info: true, bypassLock: true },
       ));
       placeItems.push(menuItemHtml(
         'adopt-from-plex', 'ADOPT FROM PLEX',
-        "discard the new download and re-adopt the file currently at the Plex folder as the canonical (resolves the mismatch)",
+        "Discard the new download and re-adopt the existing Plex-folder file.",
         { mt: themeMt, id: themeId, info: true, bypassLock: true },
       ));
-      // KEEP MISMATCH only meaningful when mismatch is still 'pending'
-      // (in /pending). Once acked there's nothing to keep.
       if (it.mismatch_state === 'pending') {
         placeItems.push(menuItemHtml(
           'keep-mismatch', 'KEEP MISMATCH',
-          "leave both files in place and dismiss this from /pending — the row will keep DL=amber + LINK=≠ in the library as a passive reminder",
+          "Dismiss from /pending. Library row keeps DL=amber + LINK=M.",
           { mt: themeMt, id: themeId, bypassLock: true },
         ));
       }
@@ -3501,7 +3497,7 @@
     if (themed && dlBroken && placed) {
       placeItems.push(menuItemHtml(
         'restore-canonical', 'RESTORE FROM PLEX',
-        "the canonical /themes copy is gone but the Plex-folder file is still there — recreate the canonical from it (hardlink, or copy on cross-FS)",
+        "Rebuild the canonical from the surviving Plex-folder file.",
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
@@ -3511,14 +3507,14 @@
     if (placed) {
       removeItems.push(menuItemHtml(
         'unplace', 'DEL',
-        "remove from Plex folder; canonical stays (PUSH TO PLEX puts it back)",
+        "Remove from the Plex folder. Canonical stays — PUSH TO PLEX restores.",
         { mt: themeMt, id: themeId, danger: true },
       ));
     }
     if (placed && downloaded) {
       removeItems.push(menuItemHtml(
         'unmanage', 'UNMANAGE',
-        "drop motif's tracking + delete the canonical; leave the Plex-folder theme.mp3 alone (row flips to M)",
+        "Drop motif's tracking and delete the canonical. Plex-folder file stays; row flips to M.",
         { mt: themeMt, id: themeId, danger: true },
       ));
     }
@@ -3530,11 +3526,10 @@
       // isOrphan covers !placed && downloaded) but the description
       // didn't make clear what happens to the recovery path.
       const purgeDesc = isOrphan
-        ? 'delete everything: orphan record + files (cannot be undone)'
+        ? 'Delete the orphan record and all files. Cannot be undone.'
         : (placed
-            ? 'delete everything: canonical + Plex-folder file + tracking'
-            : 'delete the downloaded canonical (no PUSH TO PLEX after this — '
-              + 'recover via DOWNLOAD / SET URL / UPLOAD MP3 / ADOPT)');
+            ? 'Delete the canonical, the Plex-folder file, and motif tracking.'
+            : 'Delete the downloaded canonical. Re-acquire via DOWNLOAD TDB / SET URL / UPLOAD MP3 / ADOPT.');
       removeItems.push(menuItemHtml(
         'purge', '× PURGE',
         purgeDesc,
@@ -4123,7 +4118,7 @@
           tab: libraryState.tab,
           fourk: !!libraryState.fourk,
         });
-        paintTopbarSyncing(`SYNCING WITH PLEX (${libraryRefreshLabel()})`);
+        paintTopbarSyncing(`REFRESHING ${libraryRefreshLabel()}`);
         setTimeout(() => loadLibrary().catch(()=>{}), 5000);
         setTimeout(() => loadLibrary().catch(()=>{}), 15000);
       } catch (err) {

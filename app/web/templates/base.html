@@ -41,21 +41,28 @@
       <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
     </nav>
     <div class="topbar-status" id="topbar-status">
+      <span class="dot dot-pulse"></span>
+      <span class="muted" id="topbar-status-text">…</span>
+      <!-- v1.12.21: badges moved AFTER the dot+text. Pre-fix they sat
+           before the dot and were display:none in the static HTML;
+           when JS populated them on tab navigation, the dot got
+           shoved right by the inserted width — visible as a brief
+           jitter on every tab change. With them after the status
+           text, the dot's horizontal position is stable regardless
+           of badge state. -->
       <a href="/movies?status=updates" class="topbar-badge" id="topbar-updates-badge"
          style="display:none"
-         title="ThemerrDB UPDATE — upstream changed the YouTube URL on one or more themes motif already manages. Click to land on the UPDATES filter (movies tab); also available on TV / Anime tabs. Each row gets ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.">
+         title="ThemerrDB upstream URL changed on one or more themes motif manages. Click to review on the library tab.">
         <span id="topbar-updates-count">0</span>
         <span class="topbar-badge-label">UPD</span>
       </a>
       <a href="/movies?tdb_pills=dead" class="topbar-badge topbar-badge-warn" id="topbar-failures-badge"
          style="display:none"
-         title="ThemerrDB FAILURES — upstream URL is dead (video removed / private / age-restricted / geo-blocked) on one or more themes. Click to land on /movies with the red TDB ✗ pill filter applied. Use ACK FAILURE in the SOURCE menu to clear the count; the red TDB pill stays so you remember the upstream is still broken.">
+         title="ThemerrDB upstream URL is broken (removed / private / restricted) on one or more themes. Click to review with the red TDB ✗ pill filter.">
         <span id="topbar-failures-count">0</span>
         <span class="topbar-badge-label">FAIL</span>
       </a>
-      <span class="dot dot-pulse"></span>
-      <span class="muted" id="topbar-status-text">…</span>
-      <a href="/logout" class="topbar-logout" title="sign out">⏻</a>
+      <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
     </div>
   </header>
   {% endif %}

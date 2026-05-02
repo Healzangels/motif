@@ -63,18 +63,18 @@
        FAILURES/THEMERRDB ONLY). -->
   <div class="chips" role="tablist">
     <span class="chip-group">
-      <button class="chip chip-active" data-status="all" title="every Plex item in this tab">ALL</button>
-      <button class="chip" data-status="has_theme" title="items with any theme source — ThemerrDB / manual / sidecar / Plex agent / downloaded (the 'covered' view)">THEMED</button>
-      <button class="chip" data-status="untracked" title="no theme content anywhere — no Plex theme, no sidecar, motif has nothing downloaded. Stack with TDB MATCH: TRACKED to find rows where ThemerrDB has the URL but motif hasn't fetched yet (the actionable subset).">UNTHEMED</button>
+      <button class="chip chip-active" data-status="all" title="Every item in this tab.">ALL</button>
+      <button class="chip" data-status="has_theme" title="Items with any theme source.">THEMED</button>
+      <button class="chip" data-status="untracked" title="No theme anywhere. Stack with TDB to scope by upstream coverage.">UNTHEMED</button>
     </span>
     <span class="chip-sep" aria-hidden="true">·</span>
     <span class="chip-group">
-      <button class="chip" data-status="downloaded" title="motif has the theme file locally (whether or not it's been placed into the Plex folder)">DOWNLOADED</button>
-      <button class="chip" data-status="placed" title="motif's theme is currently sitting in the Plex media folder — Plex is playing it">PLACED</button>
+      <button class="chip" data-status="downloaded" title="Motif has the file locally (placed or not).">DOWNLOADED</button>
+      <button class="chip" data-status="placed" title="Theme is in the Plex folder — Plex is playing it.">PLACED</button>
     </span>
     <span class="chip-sep" aria-hidden="true">·</span>
     <span class="chip-group">
-      <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
+      <button class="chip chip-warn" data-status="dl_missing" title="Canonical /themes copy is gone but the Plex-folder file survives. Use RESTORE FROM PLEX to recover.">DL MISSING</button>
     </span>
   </div>
   <!-- v1.12.7: TDB pill multi-select filter — replaces the v1.10.20
@@ -94,25 +94,25 @@
     <span class="tdb-key-label muted small">TDB:</span>
     <button type="button" class="src-key-clear muted small"
             data-tdb-pill-all="1"
-            title="Select every TDB pill state — handy for inverse filtering (light all up, then click the one you want to exclude)">ALL</button>
+            title="Select every TDB pill state.">ALL</button>
     <button type="button" class="tdb-pill tdb-pill-yes tdb-pill-btn"
             data-tdb-pill="tdb"
-            title="ThemerrDB has the title and is in good shape — motif can fetch from upstream. Click to toggle TDB-tracked rows in the filter.">TDB</button>
+            title="ThemerrDB tracks this title and the URL is healthy.">TDB</button>
     <button type="button" class="tdb-pill tdb-pill-update tdb-pill-btn"
             data-tdb-pill="update"
-            title="ThemerrDB has a new YouTube URL for this theme — review with ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu. Click to toggle update-available rows in the filter.">TDB ↑</button>
+            title="Upstream URL changed — ACCEPT UPDATE / KEEP CURRENT in SOURCE.">TDB ↑</button>
     <button type="button" class="tdb-pill tdb-pill-cookies tdb-pill-btn"
             data-tdb-pill="cookies"
-            title="ThemerrDB URL is fine but YouTube demands a sign-in cookie. Drop a cookies.txt at the configured path. Click to toggle cookies-blocked rows in the filter.">TDB ⚠</button>
+            title="YouTube needs a sign-in cookie. Drop cookies.txt at the configured path.">TDB ⚠</button>
     <button type="button" class="tdb-pill tdb-pill-dead tdb-pill-btn"
             data-tdb-pill="dead"
-            title="Upstream URL returned a permanent failure (video removed / private / age-restricted / geo-blocked). Recovery: SET URL or UPLOAD MP3. Click to toggle dead-URL rows in the filter.">TDB ✗</button>
+            title="Upstream URL is broken (removed / private / restricted). Use SET URL or UPLOAD MP3.">TDB ✗</button>
     <button type="button" class="tdb-pill tdb-pill-no tdb-pill-btn"
             data-tdb-pill="none"
-            title="ThemerrDB does not track this title. Click to toggle no-TDB rows in the filter.">no TDB</button>
+            title="No ThemerrDB record for this title.">no TDB</button>
     <button type="button" class="src-key-clear muted small"
             data-tdb-pill=""
-            title="Clear all TDB pill filter selections">CLEAR</button>
+            title="Clear all TDB pill selections.">CLEAR</button>
   </div>
 </section>
 
@@ -125,36 +125,30 @@
 <div class="src-key-compact" aria-label="SRC column legend (click to filter; multi-select)">
   <span class="src-key-label muted small">SRC:</span>
   <button type="button" class="src-key-clear muted small" data-src-filter-all="1"
-          title="Select every SRC source — handy for de-select-one inverse filtering (light all up, then click the one you want to exclude)">ALL</button>
+          title="Select every SRC source.">ALL</button>
   <button type="button" class="link-badge link-badge-themerrdb src-key-btn"
           data-src-filter="T"
-          title="ThemerrDB — motif downloads from upstream and manages the file. Click to toggle T-source rows in the filter.">T</button>
+          title="ThemerrDB-managed — motif fetches from upstream.">T</button>
   <button type="button" class="link-badge link-badge-user src-key-btn"
           data-src-filter="U"
-          title="User-managed — manual YouTube URL or UI upload. Click to toggle U-source rows in the filter.">U</button>
+          title="User-provided — manual YouTube URL or MP3 upload.">U</button>
   <button type="button" class="link-badge link-badge-adopt src-key-btn"
           data-src-filter="A"
-          title="Adopted — motif claimed an existing theme.mp3 from the Plex folder. Click to toggle A-source rows in the filter.">A</button>
+          title="Adopted — motif claimed an existing Plex-folder theme.mp3.">A</button>
   <button type="button" class="link-badge link-badge-manual src-key-btn"
           data-src-filter="M"
-          title="Manual sidecar — theme.mp3 at the Plex folder that motif doesn't manage. ADOPT to claim it. Click to toggle M-source rows in the filter.">M</button>
+          title="Manual sidecar — Plex-folder theme.mp3 not managed by motif. Use ADOPT to claim.">M</button>
   <button type="button" class="link-badge link-badge-cloud src-key-btn"
           data-src-filter="P"
-          title="Plex agent / cloud — Plex supplies its own theme; no local file. Click to toggle P-source rows in the filter.">P</button>
-  <!-- v1.12.6: ThemerrDB-only browse (titles in TDB but not in your
-       Plex library). Different mode from the per-row SRC pills —
-       clicking this swaps the result set to TDB-only items. The
-       T-shaped faded glyph keeps it adjacent to its conceptual
-       neighbors (the colored T / P / — pills) without claiming to
-       be a per-row SRC value. -->
+          title="Plex agent / cloud — Plex supplies the theme; no local file.">P</button>
   <button type="button" class="link-badge src-key-btn src-key-btn-tdb-only"
           data-tdb-only="1"
-          title="THEMERRDB ONLY — browse titles ThemerrDB has that you don't own in Plex. Useful as an import list for radarr/mdblist; selected rows can be exported to CSV.">T</button>
+          title="ThemerrDB-only browse — titles TDB has that you don't own in Plex. Selection exports to CSV.">T</button>
   <button type="button" class="link-badge src-key-btn src-key-btn-none"
           data-src-filter="-"
-          title="No theme anywhere — eligible for TDB / SET URL / UPLOAD MP3 / ADOPT. Click to toggle no-source rows in the filter.">—</button>
+          title="No theme anywhere — eligible for DOWNLOAD TDB / SET URL / UPLOAD MP3 / ADOPT.">—</button>
   <button type="button" class="src-key-clear muted small" data-src-filter=""
-          title="Clear all SRC filter selections">CLEAR</button>
+          title="Clear all SRC selections.">CLEAR</button>
 </div>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
@@ -168,21 +162,17 @@
     <span class="muted small" id="library-bulk-detail"></span>
   </span>
   <button class="btn btn-tiny" id="library-select-all-filtered-btn" type="button"
-          title="select every row across the current filter (not just this page)">// SELECT ALL FILTERED</button>
-  <button class="btn btn-tiny" id="library-clear-selection-btn" type="button">// CLEAR</button>
+          title="Select every row matching the current filter, across all pages.">// SELECT ALL FILTERED</button>
+  <button class="btn btn-tiny" id="library-clear-selection-btn" type="button"
+          title="Clear all selections.">// CLEAR</button>
   <button class="btn btn-tiny lib-source-themerrdb" id="library-download-selected-btn" type="button"
-          title="download + place every selected row from its ThemerrDB source">// DOWNLOAD FROM TDB</button>
+          title="Download and place each selected row from ThemerrDB.">// DOWNLOAD FROM TDB</button>
   <button class="btn btn-tiny lib-source-adopt" id="library-adopt-selected-btn" type="button"
-          title="claim every selected sidecar-only row as motif-managed">// ADOPT SELECTED</button>
-  <!-- v1.12.6: CSV export — always available, surfaces selection as
-       "Title (Year)","imdb_id" rows for use with mdblist /
-       radarr / etc importlists. -->
+          title="Claim each selected sidecar as motif-managed.">// ADOPT SELECTED</button>
   <button class="btn btn-tiny" id="library-export-csv-btn" type="button"
-          title="export selected rows to CSV: Title (Year), imdb id — handy for mdblist.com importlists or radarr import">// EXPORT CSV</button>
-  <!-- v1.10.51: bulk ACK only meaningful on the FAILURES filter; hidden
-       elsewhere via updateLibrarySelectionUi. -->
+          title="Export selection to CSV (Title (Year), imdb id) — drop-in for mdblist / radarr import lists.">// EXPORT CSV</button>
   <button class="btn btn-tiny btn-warn" id="library-ack-selected-btn" type="button" style="display:none"
-          title="acknowledge every selected failure (clears ! and FAILURES membership; TDB pill stays red)">// ACK SELECTED</button>
+          title="Acknowledge each selected failure. Topbar FAIL count drops; the red TDB ✗ pill stays.">// ACK SELECTED</button>
 </div>
 
 <section class="block">
