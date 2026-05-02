@@ -3583,6 +3583,13 @@
         libraryState.fourk = b.dataset.fourk === '1';
         libraryState.page = 1;
         loadLibrary().catch(console.error);
+        // v1.11.84: REFRESH FROM PLEX is locked per-variant (standard
+        // vs 4K). Toggling the chip changes the variant the button
+        // targets, so re-evaluate the lock state immediately rather
+        // than waiting for the next periodic poll — otherwise a 4K
+        // section sits visually disabled while its standard sibling
+        // is the one actually enumerating.
+        refreshTopbarStatus();
       });
     });
 
