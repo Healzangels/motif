@@ -434,7 +434,7 @@ def _library_main_query(
     # directly (loses orphan-adopted matches in COUNT only — the row
     # query keeps the full themes JOIN for accuracy).
     needs_themes_for_count = (
-        status in ("themed", "untracked", "has_theme", "failures")
+        status in ("themed", "untracked", "has_theme", "failures", "updates")
         or tdb != "any"
     )
     needs_lf_for_count = status in (
