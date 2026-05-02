@@ -1099,8 +1099,35 @@ pre code, .codeblock {
   width: 100%;
   text-align: center;
 }
-.link-glyph-hardlink { color: var(--green); }
-.link-glyph-copy { color: var(--amber); }
+/* v1.12.16: HL/C link-glyphs styled as boxed pills, matching the
+   SRC and TDB pill rhythm for visual consistency. HL gets amber
+   (orange — efficient, primary state). C gets violet (clearly
+   distinct hue family — fallback state, "still works, less
+   optimal"). The colors don't collide with their column's
+   neighbors: SRC's P is also amber and U is also violet, but
+   they're a column apart and the badge text disambiguates. */
+.link-glyph-hardlink {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--amber);
+  border: 1px solid rgba(255,184,74,0.45);
+  background: rgba(255,184,74,0.08);
+}
+.link-glyph-copy {
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--violet);
+  border: 1px solid rgba(196,109,255,0.45);
+  background: rgba(196,109,255,0.08);
+}
 .link-glyph-none { color: var(--fg-mute); }
 
 .link-badge-manual {

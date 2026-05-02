@@ -763,7 +763,7 @@
 
         let linkCell;
         if (linkKind === 'hardlink') {
-          linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink (efficient)">=</span>';
+          linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink (efficient)">HL</span>';
         } else if (linkKind === 'copy') {
           linkCell = '<span class="link-glyph link-glyph-copy" title="copy (uses extra disk)">C</span>';
         } else {
@@ -3026,9 +3026,9 @@
     if (isMismatch && placed) {
       linkCell = '<span class="link-glyph link-glyph-mismatch" title="canonical (DL) does not match the file at the Plex folder — resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu">≠</span>';
     } else if (it.placement_kind === 'hardlink') {
-      linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink">=</span>';
+      linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink (efficient — canonical and Plex-folder file share an inode)">HL</span>';
     } else if (it.placement_kind === 'copy') {
-      linkCell = '<span class="link-glyph link-glyph-copy" title="copy">C</span>';
+      linkCell = '<span class="link-glyph link-glyph-copy" title="copy (uses extra disk space — fallback when canonical and Plex folder are on different filesystems)">C</span>';
     }
 
     // Title-cell glyphs
