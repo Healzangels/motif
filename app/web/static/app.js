@@ -3315,6 +3315,14 @@
         purgeDesc,
         { mt: themeMt, id: themeId, orphan: isOrphan,
           danger: true,
+          // v1.11.88: bypassLock so PURGE stays clickable when the row
+          // is awaitingApproval (downloaded but not placed). PURGE *is*
+          // the legitimate exit from that state — the prior lock left
+          // the user with PUSH TO PLEX as the only enabled action,
+          // forcing them to either accept the placement or leave the
+          // canonical sitting there indefinitely. Real in-flight jobs
+          // still disable the button (job_in_flight).
+          bypassLock: true,
           dlOnly: !placed && downloaded ? '1' : '0' },
       ));
     }
