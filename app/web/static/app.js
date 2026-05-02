@@ -243,11 +243,18 @@
       // captured before the cancel. Now we gate on the themes count
       // being > 0 for the row's media_type, so partial captures
       // still light up the pills truthfully.
-      const movies_total = (stats.movies && stats.movies.total) || 0;
-      const tv_total = (stats.tv && stats.tv.total) || 0;
+      // v1.11.97: gate on the TDB-only count (themes whose
+      // upstream_source is a real ThemerrDB hit, not 'plex_orphan').
+      // Pre-fix any uploaded / adopted theme would bump the generic
+      // total > 0 and trip the pill into showing "no TDB" for
+      // every other row in the section, even if a sync had never
+      // been run. The TDB pill is a statement about ThemerrDB
+      // coverage; only TDB-sourced rows should drive it.
+      const movies_tdb = (stats.movies && stats.movies.tdb_total) || 0;
+      const tv_tdb = (stats.tv && stats.tv.tdb_total) || 0;
       window.__motif_themes_have = {
-        movie: movies_total > 0,
-        tv: tv_total > 0,
+        movie: movies_tdb > 0,
+        tv: tv_tdb > 0,
         // anime tab pulls from both depending on section type;
         // either source qualifies it as 'we have data'.
         any: (movies_total + tv_total) > 0,

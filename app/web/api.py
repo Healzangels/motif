@@ -1007,6 +1007,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 SELECT
                   (SELECT COUNT(*) FROM themes WHERE media_type = 'movie') AS movies_total,
                   (SELECT COUNT(*) FROM themes WHERE media_type = 'tv') AS tv_total,
+                  -- v1.11.97: TDB pill gate — only counts themes
+                  -- whose upstream_source is a real ThemerrDB hit
+                  -- ('imdb' / 'themoviedb'), excluding plex_orphan
+                  -- (manual uploads, adoptions). The 'no TDB' pill
+                  -- is a statement about ThemerrDB coverage, so an
+                  -- uploaded theme shouldn't make us claim TDB has
+                  -- been polled for that media_type.
+                  (SELECT COUNT(*) FROM themes
+                    WHERE media_type = 'movie'
+                      AND upstream_source IN ('imdb', 'themoviedb'))
+                                                AS movies_tdb_total,
+                  (SELECT COUNT(*) FROM themes
+                    WHERE media_type = 'tv'
+                      AND upstream_source IN ('imdb', 'themoviedb'))
+                                                AS tv_tdb_total,
                   (SELECT COUNT(*) FROM local_files WHERE media_type = 'movie') AS movies_dl,
                   (SELECT COUNT(*) FROM local_files WHERE media_type = 'tv') AS tv_dl,
                   (SELECT COUNT(*) FROM placements WHERE media_type = 'movie') AS movies_placed,
@@ -1187,11 +1202,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "total": row["movies_total"],
                 "downloaded": row["movies_dl"],
                 "placed": row["movies_placed"],
+                # v1.11.97: TDB-only theme count for the pill gate.
+                "tdb_total": row["movies_tdb_total"],
             },
             "tv": {
                 "total": row["tv_total"],
                 "downloaded": row["tv_dl"],
                 "placed": row["tv_placed"],
+                "tdb_total": row["tv_tdb_total"],
             },
             "queue": {
                 "pending": row["pending"],
