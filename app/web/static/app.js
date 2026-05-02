@@ -3024,7 +3024,7 @@
     const pl = placed ? 'on' : '';
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
     if (isMismatch && placed) {
-      linkCell = '<span class="link-glyph link-glyph-mismatch" title="canonical (DL) does not match the file at the Plex folder — resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu">≠</span>';
+      linkCell = '<span class="link-glyph link-glyph-mismatch" title="MISMATCH — canonical (DL) does not match the file at the Plex folder. Resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu.">M</span>';
     } else if (it.placement_kind === 'hardlink') {
       linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink (efficient — canonical and Plex-folder file share an inode)">HL</span>';
     } else if (it.placement_kind === 'copy') {

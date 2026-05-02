@@ -814,12 +814,23 @@ th.col-actions { text-align: center; }
   background: var(--amber);
   box-shadow: 0 0 6px var(--amber);
 }
-/* v1.11.99: ≠ glyph for the LINK column when canonical and placement
-   diverged. Same amber palette as .state-pill.mismatch so the DL +
-   LINK columns light up together. */
+/* v1.12.17: M pill for the LINK column when canonical and placement
+   diverged. Pill-styled to match the v1.12.16 HL/C pills; red so
+   the user can scan a row and immediately see "this is a problem
+   state" — distinct from HL (amber, healthy) and C (violet,
+   sub-optimal-but-OK). The M letter overlaps with the SRC
+   "Manual sidecar" pill but they're a column apart and the
+   colors (red here vs magenta there) keep them disambiguated. */
 .link-glyph-mismatch {
-  color: var(--amber);
+  display: inline-block;
+  padding: 1px 5px;
+  font-size: 9px;
   font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--red);
+  border: 1px solid rgba(255,107,107,0.45);
+  background: rgba(255,107,107,0.08);
 }
 
 .title-cell {

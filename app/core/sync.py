@@ -539,7 +539,58 @@ def _flush_sync_batch(
             plex_supplies = _plex_supplies_theme(conn, media_type, tmdb_id)
             if is_new:
                 stats.new_count += 1
-                if enqueue_downloads and not plex_supplies:
+                # v1.12.17: cross-sync match detection. If motif (or Plex
+                # via the local_theme_file flag) already has theme
+                # content for this title, surface a blue update pill
+                # via pending_updates instead of auto-downloading. Lets
+                # the user explicitly choose to switch from their
+                # existing theme (M sidecar / U manual URL / A adopted)
+                # to motif-managed TDB content. Pre-fix the sync just
+                # auto-downloaded over the existing local theme.
+                has_local_files = conn.execute(
+                    "SELECT 1 FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone() is not None
+                has_override = conn.execute(
+                    "SELECT 1 FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone() is not None
+                plex_mt_for_sidecar = "show" if media_type == "tv" else "movie"
+                has_sidecar = conn.execute(
+                    """SELECT 1 FROM plex_items
+                        WHERE guid_tmdb = ? AND media_type = ?
+                          AND local_theme_file = 1
+                        LIMIT 1""",
+                    (tmdb_id, plex_mt_for_sidecar),
+                ).fetchone() is not None
+                yt_url = record.get("youtube_theme_url")
+                if yt_url and (has_local_files or has_override or has_sidecar):
+                    # Cross-match: prompt instead of fetch.
+                    yt_vid = extract_video_id(yt_url)
+                    conn.execute(
+                        """
+                        INSERT INTO pending_updates (
+                            media_type, tmdb_id, old_video_id, new_video_id,
+                            old_youtube_url, new_youtube_url,
+                            upstream_edited_at, detected_at, decision
+                        ) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, 'pending')
+                        ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                            new_video_id = excluded.new_video_id,
+                            new_youtube_url = excluded.new_youtube_url,
+                            upstream_edited_at = excluded.upstream_edited_at,
+                            detected_at = excluded.detected_at,
+                            decision = CASE
+                                WHEN pending_updates.decision = 'declined'
+                                THEN 'declined'
+                                ELSE 'pending'
+                            END
+                        """,
+                        (
+                            media_type, tmdb_id, yt_vid, yt_url,
+                            record.get("youtube_theme_edited"), sync_ts,
+                        ),
+                    )
+                elif enqueue_downloads and not plex_supplies:
                     _enqueue_download(
                         conn, media_type=media_type, tmdb_id=tmdb_id,
                         reason="new", auto_place=auto_place_override,
