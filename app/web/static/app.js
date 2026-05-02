@@ -3226,8 +3226,17 @@
       // flickering). Same exclusion REPLACE w/ TDB already had
       // (v1.10.51). cookies_expired stays clickable since the
       // user can drop a cookies.txt to recover.
+      // v1.10.51: don't offer DOWNLOAD for rows whose TDB pill is
+      // red — clicking would re-fail and stamp another failure_kind
+      // on the row.
+      // v1.12.8: also hide on amber (cookies-required + cookies
+      // missing) per user spec — same reasoning, click would just
+      // re-fail until the user fixes cookies.txt.
       const tdbDeadForDownload = it.failure_kind
         && TDB_DEAD_FAILURES.has(it.failure_kind);
+      const tdbCookiesBlocked = it.failure_kind === 'cookies_expired'
+        && !window.__motif_cookies_present;
+      const tdbBlocked = tdbDeadForDownload || tdbCookiesBlocked;
       // v1.10.56: also hide DOWNLOAD when there's no actual URL to
       // download from. Adopt rows on orphan_unresolved themes have
       // no themes.youtube_url and no user_overrides; clicking
@@ -3246,22 +3255,26 @@
       // SOURCE menu showed 'TDB' twice on adopted rows (once as
       // RE-DL, once as REPLACE w/ TDB), confusingly back to back.
       if (!isPlexAgent && !isManualPlacement && !lockManualActions
-          && !tdbDeadForDownload && hasDownloadUrl) {
-        // v1.11.11: button label is just "TDB" so the source is named
-        // explicitly (was "DOWNLOAD" — ambiguous about WHERE the audio
-        // comes from). The description spells out the placement
-        // semantics: source from ThemerrDB; if motif already has a
-        // theme on disk it's overwritten (canonical replaced + plex-
-        // folder hardlink updated), otherwise it's downloaded fresh
-        // and placed.
+          && !tdbBlocked && hasDownloadUrl) {
+        // v1.12.8: per-state action label so the user sees what
+        // motif will actually do at the click level.
+        //   T  + downloaded healthy → "RE-DL TDB" (re-download)
+        //   T  + broken DL          → "DL TDB"   (recover)
+        //   —  (no theme content)   → "TDB DOWNLOAD"
+        // U/A/M never reach this block; they're handled by the
+        // dedicated REPLACE-w/-TDB block below as "TDB REPLACE".
         const dlSource = (sourceKindForActions === 'url')
           ? 'manual URL override'
           : 'ThemerrDB';
         const dlTip = downloaded
           ? `source from ${dlSource} and overwrite the existing canonical (the placement updates with it)`
           : `source from ${dlSource}; download and place into the Plex folder`;
+        const tdbLabel = (downloaded && !dlBroken) ? 'RE-DL TDB'
+                       : downloaded /* dlBroken */ ? 'DL TDB'
+                       : 'TDB DOWNLOAD';
         sourceItems.push(menuItemHtml(
-          'redl', 'TDB', dlTip, { mt: themeMt, id: themeId, tone: 'themerrdb' },
+          'redl', tdbLabel, dlTip,
+          { mt: themeMt, id: themeId, tone: 'themerrdb' },
         ));
       }
       // v1.10.29: REVERT only when both:
@@ -3333,29 +3346,33 @@
     // SET URL / UPLOAD MP3 / ADOPT remain in the menu as recovery
     // paths. cookies_expired stays clickable since the user can
     // drop a cookies.txt file to recover.
-    const tdbDeadForReplace = it.failure_kind
-      && TDB_DEAD_FAILURES.has(it.failure_kind);
+    // v1.12.8: replaces the v1.10.51 tdbDeadForReplace; same logic
+    // plus cookies-blocked (amber pill). Both states would just
+    // re-fail on click; suppress until the user clears the failure.
+    const tdbReplaceBlocked = (it.failure_kind
+        && TDB_DEAD_FAILURES.has(it.failure_kind))
+      || (it.failure_kind === 'cookies_expired'
+          && !window.__motif_cookies_present);
     // v1.12.5: hide the bottom 'TDB' replace action when ACCEPT
     // UPDATE is already on the menu — they do the same thing
     // (download from upstream, overwrite local). ACCEPT UPDATE is
     // the more contextually-correct phrasing when an upstream URL
     // change triggered the menu, so we keep that one and suppress
     // the redundant TDB entry below.
-    if (isThemerrDb && !tdbDeadForReplace && !it.actionable_update
+    if (isThemerrDb && !tdbReplaceBlocked && !it.actionable_update
         && (sidecarOnly || isManualPlacement || isPlexAgent)) {
-      // v1.11.11: button label is "TDB" (was "REPLACE w/ TDB") so the
-      // source is named explicitly and parallels the no-existing-theme
-      // version of the action. Description spells out the replace-on-
-      // collision semantics so clicking it on a sidecar / manual /
-      // Plex-agent row tells the user motif will confirm before
-      // overwriting and otherwise download + place fresh.
+      // v1.12.8: label is "TDB REPLACE" so the action makes sense
+      // alongside the M/U/A row's existing local theme.mp3 — the
+      // click overwrites it with a TDB download. Pre-1.12.8 it was
+      // just "TDB" which read as "TDB info" or "TDB download" with
+      // no hint that an existing file would be replaced.
       const replaceTip = sidecarOnly
         ? "source from ThemerrDB; the existing local sidecar will be replaced (you'll be asked to confirm)"
         : isPlexAgent
           ? "source from ThemerrDB; Plex's agent-supplied theme will be replaced (you'll be asked to confirm)"
           : "source from ThemerrDB; your manual theme will be replaced (you'll be asked to confirm)";
       sourceItems.push(menuItemHtml(
-        'replace-with-themerrdb', 'TDB',
+        'replace-with-themerrdb', 'TDB REPLACE',
         replaceTip,
         { rk: it.rating_key, warn: true, tone: 'themerrdb' },
       ));
