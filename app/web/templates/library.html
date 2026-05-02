@@ -76,7 +76,6 @@
     <span class="chip-group">
       <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
       <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
-      <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
     </span>
   </div>
   <!-- v1.10.20: secondary TDB-match filter, stacks on the status chip
@@ -119,6 +118,15 @@
   <button type="button" class="link-badge link-badge-cloud src-key-btn"
           data-src-filter="P"
           title="Plex agent / cloud — Plex supplies its own theme; no local file. Click to toggle P-source rows in the filter.">P</button>
+  <!-- v1.12.6: ThemerrDB-only browse (titles in TDB but not in your
+       Plex library). Different mode from the per-row SRC pills —
+       clicking this swaps the result set to TDB-only items. The
+       T-shaped faded glyph keeps it adjacent to its conceptual
+       neighbors (the colored T / P / — pills) without claiming to
+       be a per-row SRC value. -->
+  <button type="button" class="link-badge src-key-btn src-key-btn-tdb-only"
+          data-tdb-only="1"
+          title="THEMERRDB ONLY — browse titles ThemerrDB has that you don't own in Plex. Useful as an import list for radarr/mdblist; selected rows can be exported to CSV.">T</button>
   <button type="button" class="link-badge src-key-btn src-key-btn-none"
           data-src-filter="-"
           title="No theme anywhere — eligible for TDB / SET URL / UPLOAD MP3 / ADOPT. Click to toggle no-source rows in the filter.">—</button>
@@ -143,6 +151,11 @@
           title="download + place every selected row from its ThemerrDB source">// DOWNLOAD FROM TDB</button>
   <button class="btn btn-tiny lib-source-adopt" id="library-adopt-selected-btn" type="button"
           title="claim every selected sidecar-only row as motif-managed">// ADOPT SELECTED</button>
+  <!-- v1.12.6: CSV export — always available, surfaces selection as
+       "Title (Year)","imdb_id" rows for use with mdblist /
+       radarr / etc importlists. -->
+  <button class="btn btn-tiny" id="library-export-csv-btn" type="button"
+          title="export selected rows to CSV: Title (Year), imdb id — handy for mdblist.com importlists or radarr import">// EXPORT CSV</button>
   <!-- v1.10.51: bulk ACK only meaningful on the FAILURES filter; hidden
        elsewhere via updateLibrarySelectionUi. -->
   <button class="btn btn-tiny btn-warn" id="library-ack-selected-btn" type="button" style="display:none"

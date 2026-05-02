@@ -3671,9 +3671,16 @@
         if (themed) hasTdbEligible = true;
       }
     }
+    // v1.12.6: TDB-only browse hides DOWNLOAD-FROM-TDB / ADOPT —
+    // the rows aren't in your Plex library so neither action makes
+    // sense. CSV export becomes the primary action there. EXPORT
+    // CSV stays visible regardless of mode (it's a pure read-out).
+    const onTdbOnly = libraryState.status === 'not_in_plex';
     if (ackBtn) ackBtn.style.display = onFailures ? '' : 'none';
-    if (dlBtn)    dlBtn.style.display    = (!onFailures && hasTdbEligible) ? '' : 'none';
-    if (adoptBtn) adoptBtn.style.display = (!onFailures && hasSidecarOnly) ? '' : 'none';
+    if (dlBtn)    dlBtn.style.display    = (!onFailures && !onTdbOnly && hasTdbEligible) ? '' : 'none';
+    if (adoptBtn) adoptBtn.style.display = (!onFailures && !onTdbOnly && hasSidecarOnly) ? '' : 'none';
+    const exportBtn = document.getElementById('library-export-csv-btn');
+    if (exportBtn) exportBtn.style.display = '';
   }
 
   function bindLibrary() {
@@ -3695,6 +3702,16 @@
           libraryState.status = wantStatus;
           document.querySelectorAll('[data-status]').forEach((x) =>
             x.classList.toggle('chip-active', x.dataset.status === wantStatus));
+          // v1.12.6: faded-T TDB-only pill mirrors not_in_plex mode.
+          // Sync its active class on initial load so deep-links land
+          // with the right indicator.
+          const tdbOnlyBtn = document.querySelector('[data-tdb-only]');
+          if (tdbOnlyBtn) {
+            tdbOnlyBtn.classList.toggle(
+              'src-key-btn-active',
+              wantStatus === 'not_in_plex',
+            );
+          }
         }
       }
       const wantTdb = sp.get('tdb');
@@ -3742,6 +3759,16 @@
           libraryState.status = b.dataset.status;
           libraryState.page = 1;
           updateTdbFilterVisibility();
+          // v1.12.6: top-bar status chip click implicitly exits
+          // THEMERRDB-only mode (the faded T pill in the SRC row),
+          // since the user picked a non-tdb-only status chip.
+          const tdbOnlyBtn = document.querySelector('[data-tdb-only]');
+          if (tdbOnlyBtn) {
+            tdbOnlyBtn.classList.toggle(
+              'src-key-btn-active',
+              libraryState.status === 'not_in_plex',
+            );
+          }
           // v1.10.51: bulk-bar action buttons swap on filter change
           // (e.g. FAILURES → ACK SELECTED only).
           updateLibrarySelectionUi();
@@ -3775,8 +3802,40 @@
     // reflect the underlying status+tdb pass.
     if (document.getElementById('library-body')) {
       const allLetters = ['T', 'U', 'A', 'M', 'P', '-'];
-      document.querySelectorAll('[data-src-filter], [data-src-filter-all]').forEach((b) => {
+      // v1.12.6: include data-tdb-only in the bind so the faded T
+      // pill in the SRC row gets a click handler. It's a mode switch
+      // (status='not_in_plex') rather than an additive filter, so
+      // it short-circuits the per-letter toggle path.
+      document.querySelectorAll('[data-src-filter], [data-src-filter-all], [data-tdb-only]').forEach((b) => {
         b.addEventListener('click', () => {
+          if (b.dataset.tdbOnly) {
+            // Toggle the THEMERRDB-ONLY browse mode. When activating,
+            // wipe the SRC letter set (per-row source isn't meaningful
+            // in TDB-only rows) and flip status. When deactivating,
+            // return to status='all'.
+            const goingOn = libraryState.status !== 'not_in_plex';
+            if (goingOn) {
+              libraryState.srcFilter.clear();
+              libraryState.status = 'not_in_plex';
+            } else {
+              libraryState.status = 'all';
+            }
+            libraryState.page = 1;
+            // Sync status-chip visual state (so the top filter bar
+            // visually de-activates / reactivates ALL).
+            document.querySelectorAll('[data-status]').forEach((x) =>
+              x.classList.toggle('chip-active', x.dataset.status === libraryState.status));
+            // Repaint SRC legend — every letter inactive when
+            // TDB-only is on; the TDB pill itself is the only active.
+            document.querySelectorAll('[data-src-filter]').forEach((x) => {
+              const xVal = x.dataset.srcFilter;
+              const active = !!xVal && libraryState.srcFilter.has(xVal);
+              x.classList.toggle('src-key-btn-active', active);
+            });
+            b.classList.toggle('src-key-btn-active', goingOn);
+            loadLibrary().catch(console.error);
+            return;
+          }
           // v1.11.89: multi-select. Empty data-src-filter = CLEAR
           // (drop all). data-src-filter-all = ALL (add every letter).
           // A letter = toggle membership in the set.
@@ -3795,14 +3854,31 @@
               libraryState.srcFilter.add(want);
             }
           }
+          // v1.12.6: any letter / ALL / CLEAR click also implicitly
+          // exits THEMERRDB-only mode if it was active — they're
+          // mutually exclusive (can't filter not-in-Plex rows by
+          // per-row SRC).
+          if (libraryState.status === 'not_in_plex') {
+            libraryState.status = 'all';
+            document.querySelectorAll('[data-status]').forEach((x) =>
+              x.classList.toggle('chip-active', x.dataset.status === 'all'));
+          }
           // Repaint active styling on the legend — every letter in
           // the set lights up. CLEAR / ALL aren't "active" states;
-          // they're actions.
+          // they're actions. The faded-T TDB-only pill mirrors the
+          // status mode rather than the SRC set.
           document.querySelectorAll('[data-src-filter]').forEach((x) => {
             const xVal = x.dataset.srcFilter;
             const active = !!xVal && libraryState.srcFilter.has(xVal);
             x.classList.toggle('src-key-btn-active', active);
           });
+          const tdbOnlyBtn = document.querySelector('[data-tdb-only]');
+          if (tdbOnlyBtn) {
+            tdbOnlyBtn.classList.toggle(
+              'src-key-btn-active',
+              libraryState.status === 'not_in_plex',
+            );
+          }
           loadLibrary().catch(console.error);
         });
       });
@@ -4030,6 +4106,104 @@
         btn.textContent = `// ${collected} SELECTED`;
       } catch (err) {
         alert('Select all filtered failed: ' + err.message);
+        btn.textContent = origLabel;
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }, 2500);
+    });
+
+    // v1.12.6: EXPORT CSV — pulls every selected row (paginating
+    // /api/library to recover row data when SELECT ALL FILTERED was
+    // used) and builds a 2-column CSV "Title (Year)","imdb_id" for
+    // mdblist.com / radarr / sonarr importlists. Selection-driven
+    // rather than filter-driven so the user can hand-curate the
+    // export by toggling individual rows before clicking.
+    document.getElementById('library-export-csv-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const selectedKeys = libraryState.selected;
+      if (selectedKeys.size === 0) {
+        alert('No rows selected — pick rows first or click // SELECT ALL FILTERED');
+        return;
+      }
+      btn.disabled = true;
+      const origLabel = btn.textContent;
+      btn.textContent = '// EXPORTING…';
+      try {
+        // Build a key → {title, year, imdb_id} map by walking every
+        // page of the current filter. Same pagination loop the
+        // SELECT ALL FILTERED handler uses; we already paid for
+        // these rows on the way in.
+        const params = new URLSearchParams({
+          tab: libraryState.tab,
+          fourk: libraryState.fourk ? 'true' : 'false',
+          per_page: '200',
+        });
+        if (libraryState.q) params.set('q', libraryState.q);
+        if (libraryState.status !== 'all') params.set('status', libraryState.status);
+        if (libraryState.tdb && libraryState.tdb !== 'any') {
+          params.set('tdb', libraryState.tdb);
+        }
+        const rowsByKey = new Map();
+        let page = 1;
+        while (true) {
+          params.set('page', String(page));
+          const data = await api('GET', '/api/library?' + params.toString());
+          for (const it of (data.items || [])) {
+            const k = libKey(it);
+            if (selectedKeys.has(k)) {
+              rowsByKey.set(k, {
+                title: it.theme_title || it.plex_title || it.title || '',
+                year: it.year || '',
+                imdb: it.imdb_id || it.guid_imdb || '',
+              });
+            }
+          }
+          const total = data.total || 0;
+          const perPage = data.per_page || 200;
+          if (page * perPage >= total) break;
+          page++;
+          if (page > 200) break;  // safety
+        }
+        if (rowsByKey.size === 0) {
+          alert('No selected rows are visible under the current filter.');
+          btn.textContent = origLabel;
+          btn.disabled = false;
+          return;
+        }
+        // CSV escape per RFC 4180 — wrap in quotes when the value
+        // contains a comma, quote, or newline; double any embedded
+        // quotes. Movie titles routinely contain commas
+        // ('Lock, Stock, and Two Smoking Barrels').
+        const csvEscape = (s) => {
+          const v = String(s ?? '');
+          return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+        };
+        const lines = ['Title,IMDB'];
+        const sorted = Array.from(rowsByKey.values()).sort((a, b) =>
+          a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
+        );
+        for (const r of sorted) {
+          const titleYear = r.year ? `${r.title} (${r.year})` : r.title;
+          lines.push(`${csvEscape(titleYear)},${csvEscape(r.imdb)}`);
+        }
+        const blob = new Blob([lines.join('\r\n') + '\r\n'],
+                              { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const tab = libraryState.tab || 'library';
+        const tag = libraryState.status === 'not_in_plex' ? 'tdb-only' : 'selection';
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `motif-${tab}-${tag}-${stamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        btn.textContent = `// EXPORTED ${rowsByKey.size}`;
+      } catch (err) {
+        alert('Export CSV failed: ' + err.message);
         btn.textContent = origLabel;
       }
       setTimeout(() => {

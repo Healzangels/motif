@@ -735,6 +735,25 @@ th.col-actions { text-align: center; }
   border: 1px solid var(--line);
   border-radius: 3px;
 }
+/* v1.12.6: faded-T pill for the THEMERRDB-only browse toggle.
+   Lives in the SRC pill row but represents a different axis (mode-
+   switch, not a per-row source filter), so the muted styling
+   distinguishes it from the colored T/U/A/M/P pills. Active state
+   gets the green T color back to match the regular T pill's
+   themerrdb branding when selected. */
+.src-key-btn-tdb-only {
+  color: var(--fg-mute);
+  border: 1px solid rgba(109,255,181,0.25);
+  border-radius: 3px;
+  opacity: 0.55;
+}
+.src-key-btn-tdb-only:hover { opacity: 0.85; }
+.src-key-btn-tdb-only.src-key-btn-active {
+  color: var(--green);
+  border-color: var(--green);
+  opacity: 1;
+  filter: brightness(1.1);
+}
 .src-key-clear {
   cursor: pointer;
   background: transparent;
