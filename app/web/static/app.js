@@ -2630,8 +2630,13 @@
     const wrap = document.getElementById('library-tdb-filter');
     if (!wrap) return;
     const status = libraryState.status;
-    const redundant = (status === 'themed' || status === 'untracked'
-                       || status === 'not_in_plex' || status === 'failures');
+    // v1.12.4: 'untracked' (UNTHEMED) is no longer redundant with
+    // TDB MATCH — the v1.12.4 SQL rewrite split the two axes so the
+    // user can stack them: UNTHEMED + TDB TRACKED = "TDB has the URL
+    // but motif hasn't downloaded yet" (the actionable subset).
+    const redundant = (status === 'themed'
+                       || status === 'not_in_plex'
+                       || status === 'failures');
     if (redundant) {
       wrap.style.display = 'none';
       if (libraryState.tdb !== 'any') {

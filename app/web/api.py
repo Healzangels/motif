@@ -292,8 +292,15 @@ def _library_main_query(
                         "AND lf.file_path IS NULL "
                         "AND p.media_folder IS NULL")
     elif status == "untracked":
-        where_extra += (" AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan') "
-                        "AND pi.has_theme = 0 "
+        # v1.12.4: 'UNTHEMED' (renamed from UNTRACKED in v1.12.0) — no
+        # theme content anywhere on this row. The TDB-coverage axis is
+        # handled separately via the TDB MATCH chips so the user can
+        # slice UNTHEMED into "TDB-tracked + no theme yet" (the
+        # actionable list — motif can fetch from upstream) vs
+        # "no TDB and no theme" (truly orphan). Pre-fix the t.* clause
+        # was baked in here, which made TDB MATCH redundant on this
+        # tab and the chip row was hidden.
+        where_extra += (" AND pi.has_theme = 0 "
                         "AND pi.local_theme_file = 0 "
                         "AND lf.file_path IS NULL "
                         "AND p.media_folder IS NULL")
