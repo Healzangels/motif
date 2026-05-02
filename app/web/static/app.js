@@ -3654,21 +3654,30 @@
     // resets the filter. Pure client-side: pagination/total still
     // reflect the underlying status+tdb pass.
     if (document.getElementById('library-body')) {
-      document.querySelectorAll('[data-src-filter]').forEach((b) => {
+      const allLetters = ['T', 'U', 'A', 'M', 'P', '-'];
+      document.querySelectorAll('[data-src-filter], [data-src-filter-all]').forEach((b) => {
         b.addEventListener('click', () => {
-          const want = b.dataset.srcFilter;
-          // v1.11.89: multi-select. Empty string = CLEAR (drop all
-          // selections); a letter = toggle membership in the set.
-          if (!want) {
-            libraryState.srcFilter.clear();
-          } else if (libraryState.srcFilter.has(want)) {
-            libraryState.srcFilter.delete(want);
+          // v1.11.89: multi-select. Empty data-src-filter = CLEAR
+          // (drop all). data-src-filter-all = ALL (add every letter).
+          // A letter = toggle membership in the set.
+          // v1.11.90: ALL button added opposite CLEAR for the
+          // inverse-filter pattern ("light them all up, then
+          // deselect the ones I want excluded").
+          if (b.dataset.srcFilterAll) {
+            allLetters.forEach((l) => libraryState.srcFilter.add(l));
           } else {
-            libraryState.srcFilter.add(want);
+            const want = b.dataset.srcFilter;
+            if (!want) {
+              libraryState.srcFilter.clear();
+            } else if (libraryState.srcFilter.has(want)) {
+              libraryState.srcFilter.delete(want);
+            } else {
+              libraryState.srcFilter.add(want);
+            }
           }
           // Repaint active styling on the legend — every letter in
-          // the set lights up, CLEAR is never "active" (it's an
-          // action, not a state).
+          // the set lights up. CLEAR / ALL aren't "active" states;
+          // they're actions.
           document.querySelectorAll('[data-src-filter]').forEach((x) => {
             const xVal = x.dataset.srcFilter;
             const active = !!xVal && libraryState.srcFilter.has(xVal);
