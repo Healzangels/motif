@@ -1486,7 +1486,7 @@
     // the topbar 'red dot → click' shortcut lands on the right
     // filter without an extra click.
     const initialStatus = new URLSearchParams(window.location.search).get('status');
-    if (initialStatus && ['pending','running','failed','done'].includes(initialStatus)) {
+    if (initialStatus && ['pending','running','failed','cancelled','done'].includes(initialStatus)) {
       queueFilter = initialStatus;
       $$('.chip[data-jobfilter]').forEach((x) => x.classList.remove('chip-active'));
       const target = document.querySelector(
