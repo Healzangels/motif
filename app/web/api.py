@@ -3037,26 +3037,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     sec_where = "type = 'show' AND is_anime = 0"
                 else:
                     sec_where = "is_anime = 1"
-                sec_where += f" AND is_4k = {1 if fourk else 0}"
+                # v1.12.1: try the requested variant first, then fall
+                # back to the other one. Pre-fix a /movies tab with
+                # only 4K Movies enabled (or only standard) returned
+                # 'no managed sections' silently when REFRESH FROM
+                # PLEX shipped fourk=false, leaving the user staring
+                # at an empty page with a button that did nothing.
+                # Now we route to whichever variant actually exists.
+                requested_4k = 1 if fourk else 0
+                fallback_4k = 0 if fourk else 1
                 sections = conn.execute(
                     f"SELECT section_id FROM plex_sections "
-                    f"WHERE included = 1 AND {sec_where}"
+                    f"WHERE included = 1 AND {sec_where} "
+                    f"  AND is_4k = {requested_4k}"
                 ).fetchall()
+                used_fallback = False
+                if not sections:
+                    sections = conn.execute(
+                        f"SELECT section_id FROM plex_sections "
+                        f"WHERE included = 1 AND {sec_where} "
+                        f"  AND is_4k = {fallback_4k}"
+                    ).fetchall()
+                    used_fallback = bool(sections)
                 if not sections:
                     return {"ok": True, "enqueued": 0,
-                            "note": "no managed sections match this tab"}
+                            "note": f"no managed Plex sections match the {tab} tab"}
+                effective_fourk = (fallback_4k == 1) if used_fallback else fourk
                 ids: list[int] = []
                 for s in sections:
                     cur = conn.execute(
                         "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                         "VALUES ('plex_enum', ?, 'pending', ?, ?)",
                         (json.dumps({"section_id": s["section_id"],
-                                     "scope": f"{tab}{'-4k' if fourk else ''}"}),
+                                     "scope": f"{tab}{'-4k' if effective_fourk else ''}"}),
                          now_iso(), now_iso()),
                     )
                     ids.append(cur.lastrowid)
                 return {"ok": True, "enqueued": len(ids), "job_ids": ids,
-                        "scope": f"{tab}{'-4k' if fourk else ''}"}
+                        "scope": f"{tab}{'-4k' if effective_fourk else ''}",
+                        "fallback_used": used_fallback}
 
             # Legacy global refresh (no tab specified).
             cur = conn.execute(
