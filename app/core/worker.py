@@ -685,6 +685,17 @@ class Worker:
         # different video (e.g. ThemerrDB URL changed since last sync), unlink
         # the stale one so the downloader's "already exists" short-circuit
         # doesn't keep us pinned to the old audio.
+        # v1.11.99: also unlink (always) when the job carries
+        # user_initiated_mismatch=true. Mismatch-flow downloads must
+        # write to a fresh inode so the placement file's hardlink is
+        # broken and the placement keeps its original content. Without
+        # the explicit unlink, write_bytes via yt-dlp's postproc into
+        # a still-hardlinked file would silently mutate the placement.
+        try:
+            payload = json.loads(job["payload"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        is_mismatch_job = bool(payload.get("user_initiated_mismatch"))
         with get_conn(self.settings.db_path) as conn:
             existing_local = conn.execute(
                 "SELECT source_video_id FROM local_files "
@@ -692,8 +703,11 @@ class Worker:
                 (media_type, tmdb_id, section_id),
             ).fetchone()
         target_mp3 = out_dir / "theme.mp3"
-        if (target_mp3.exists() and existing_local
-                and existing_local["source_video_id"] != vid):
+        should_unlink = target_mp3.exists() and (
+            is_mismatch_job
+            or (existing_local and existing_local["source_video_id"] != vid)
+        )
+        if should_unlink:
             try:
                 target_mp3.unlink()
             except OSError as e:
@@ -790,6 +804,15 @@ class Worker:
         Used by both the real download path and the sibling-hardlink
         short-circuit so they stay in lockstep.
         """
+        # v1.11.99: parse payload once up front so we can branch on
+        # user_initiated_mismatch (set by api_manual_url when a
+        # placement already exists for this row).
+        try:
+            payload = json.loads(job_payload or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        is_mismatch_job = bool(payload.get("user_initiated_mismatch"))
+
         with get_conn(self.settings.db_path) as conn, transaction(conn):
             conn.execute(
                 """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
@@ -797,12 +820,14 @@ class Worker:
                    WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL""",
                 (media_type, tmdb_id),
             )
+            mismatch_value = "pending" if is_mismatch_job else None
             conn.execute(
                 """
                 INSERT INTO local_files
                     (media_type, tmdb_id, section_id, file_path, file_sha256, file_size,
-                     downloaded_at, source_video_id, provenance, source_kind)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     downloaded_at, source_video_id, provenance, source_kind,
+                     mismatch_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                     file_path = excluded.file_path,
                     file_sha256 = excluded.file_sha256,
@@ -810,24 +835,29 @@ class Worker:
                     downloaded_at = excluded.downloaded_at,
                     source_video_id = excluded.source_video_id,
                     provenance = excluded.provenance,
-                    source_kind = excluded.source_kind
+                    source_kind = excluded.source_kind,
+                    mismatch_state = excluded.mismatch_state
                 """,
                 (media_type, tmdb_id, section_id, rel_path, sha256, size,
-                 now_iso(), video_id, provenance, source_kind),
+                 now_iso(), video_id, provenance, source_kind, mismatch_value),
             )
+            # v1.11.99: skip auto-place on mismatch jobs. The new
+            # canonical sits in /themes; the placement file in the Plex
+            # folder is intentionally untouched. User resolves via the
+            # row's PLACE menu (PUSH TO PLEX / ADOPT FROM PLEX /
+            # KEEP MISMATCH) or /pending.
+            if is_mismatch_job:
+                return
+
             # Decide whether to auto-place. Per-job payload override wins;
             # otherwise fall back to the global placement.auto_place setting.
             auto_place = self.settings.auto_place_default
             force_place = False
-            try:
-                payload = json.loads(job_payload or "{}")
-                if "auto_place" in payload:
-                    auto_place = bool(payload["auto_place"])
-                if payload.get("force_place"):
-                    force_place = True
-                    auto_place = True  # force implies auto
-            except (TypeError, ValueError):
-                pass
+            if "auto_place" in payload:
+                auto_place = bool(payload["auto_place"])
+            if payload.get("force_place"):
+                force_place = True
+                auto_place = True  # force implies auto
             if auto_place:
                 place_payload = (
                     '{"force":true,"reason":"replace_with_themerrdb"}'
@@ -1027,6 +1057,16 @@ class Worker:
                     (media_type, tmdb_id, section_id, str(outcome.target_folder),
                      now_iso(), outcome.kind, outcome.plex_rating_key,
                      1 if outcome.plex_refreshed else 0, placement_provenance),
+                )
+                # v1.11.99: a successful place pushes canonical → placement,
+                # so by definition canonical now matches placement and any
+                # prior mismatch ('pending' or 'acked') is resolved. Clear
+                # the flag so the row's DL goes back to green and the LINK
+                # column flips from ≠ back to = / C.
+                conn.execute(
+                    """UPDATE local_files SET mismatch_state = NULL
+                       WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                    (media_type, tmdb_id, section_id),
                 )
                 # v1.10.46: Plex's first refresh sometimes lands before
                 # the filesystem watcher / local-media-assets agent has

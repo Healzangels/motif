@@ -99,6 +99,16 @@ CREATE TABLE IF NOT EXISTS local_files (
     -- yet (truly queued).
     last_place_attempt_at      TEXT,
     last_place_attempt_reason  TEXT,
+    -- v1.11.99: SET URL / UPLOAD MP3 on a row that already has a
+    -- placement now lands the new content in canonical without
+    -- touching the placement file. Resolution flows through /pending.
+    --   NULL      — no mismatch (default; canonical matches placement)
+    --   'pending' — mismatch awaiting user action (PUSH TO PLEX,
+    --               ADOPT FROM PLEX, or KEEP MISMATCH)
+    --   'acked'   — KEEP MISMATCH chosen; out of /pending but library
+    --               row still shows DL=amber + LINK=≠ until a
+    --               PUSH TO PLEX or ADOPT FROM PLEX clears it.
+    mismatch_state TEXT,
     PRIMARY KEY (media_type, tmdb_id, section_id),
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE,
     FOREIGN KEY (section_id) REFERENCES plex_sections (section_id) ON DELETE CASCADE
@@ -399,7 +409,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -806,6 +816,29 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v9 (plex_items.local_theme_file)")
     conn.executescript(
         "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
+def _migrate_v21_to_v22(conn: sqlite3.Connection) -> None:
+    """v22 adds local_files.mismatch_state for the v1.11.99 mismatch
+    workflow.
+
+    SET URL / UPLOAD MP3 on a row that already has a placement now
+    lands the new download in canonical *without* touching the
+    placement file in the Plex folder. The user resolves the
+    divergence via /pending or the row's PLACE menu:
+      - PUSH TO PLEX    → write canonical to placement
+      - ADOPT FROM PLEX → re-adopt placement file as new canonical
+                          (discards the user's new download)
+      - KEEP MISMATCH   → ack and dismiss from /pending; library row
+                          still shows DL=amber + LINK=≠.
+
+    Soft ALTER — purely additive, NULL default means existing rows
+    are correctly classified as 'no mismatch' without backfill.
+    """
+    log.info("Migrating to schema v22 (local_files.mismatch_state)")
+    conn.executescript(
+        "ALTER TABLE local_files ADD COLUMN mismatch_state TEXT;"
     )
 
 
@@ -1245,6 +1278,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 20:
                     _migrate_v20_to_v21(conn)
                     current = 21
+                elif current == 21:
+                    _migrate_v21_to_v22(conn)
+                    current = 22
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

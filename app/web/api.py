@@ -372,6 +372,10 @@ def _library_main_query(
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
                t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
                lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
+               -- v1.11.99: mismatch state drives the DL=amber + LINK=≠
+               -- visual on the row and the PUSH TO PLEX / ADOPT FROM
+               -- PLEX / KEEP MISMATCH branches in the PLACE menu.
+               lf.mismatch_state,
                p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
                (SELECT j.job_type FROM jobs j
                 WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
@@ -649,6 +653,7 @@ def _library_not_in_plex(
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,
             t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
             lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
+            lf.mismatch_state,
             p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
             (SELECT j.job_type FROM jobs j
              WHERE j.media_type = t.media_type AND j.tmdb_id = t.tmdb_id
@@ -1086,10 +1091,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- answered. A failed placement re-becomes 'pending_placement'
                   -- because the job's status flips to 'failed' (no longer
                   -- counted by IN ('pending','running')) — correct behavior.
+                  -- v1.11.99: also count mismatch_state='pending' rows
+                  -- (canonical and placement diverged via SET URL /
+                  -- UPLOAD MP3 over an existing placement). KEEP MISMATCH
+                  -- flips the state to 'acked', which removes the row
+                  -- from /pending while the library row still shows
+                  -- DL=amber + LINK=≠ as a passive reminder.
                   (SELECT COUNT(*) FROM local_files lf
                    LEFT JOIN placements p
                      ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
-                   WHERE p.media_folder IS NULL
+                   WHERE (p.media_folder IS NULL
+                          OR lf.mismatch_state = 'pending')
                      AND NOT EXISTS (
                        SELECT 1 FROM jobs j
                         WHERE j.job_type = 'place'
@@ -2048,12 +2060,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # but no placement for that (item, section). Each section is
             # its own pending entry — Matilda 4K can be pending while
             # Matilda standard is already placed, and vice versa.
+            # v1.11.99: include mismatch_state='pending' rows. These have
+            # both a local_files canonical AND a placements row but the
+            # files diverged (user did SET URL / UPLOAD MP3 over an
+            # existing placement). Surface them on /pending alongside
+            # the classic no-placement case.
             rows = conn.execute("""
                 SELECT t.media_type, t.tmdb_id, t.imdb_id, t.title, t.year,
                        t.youtube_url, t.youtube_video_id, t.upstream_source,
                        lf.section_id, lf.file_path, lf.file_size, lf.downloaded_at,
                        lf.source_video_id, lf.provenance, lf.source_kind,
                        lf.last_place_attempt_at, lf.last_place_attempt_reason,
+                       lf.mismatch_state,
                        ps.title AS section_title,
                        COALESCE(MAX(pi.local_theme_file), 0) AS plex_local_theme,
                        COALESCE(MAX(pi.has_theme), 0) AS plex_has_theme,
@@ -2078,6 +2096,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  AND pi.section_id = lf.section_id
                  AND pi.media_type = (CASE t.media_type WHEN 'tv' THEN 'show' ELSE t.media_type END)
                 WHERE p.media_folder IS NULL
+                   OR lf.mismatch_state = 'pending'
                 GROUP BY t.media_type, t.tmdb_id, lf.section_id
                 ORDER BY MAX(lf.downloaded_at) DESC
             """).fetchall()
@@ -2095,7 +2114,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # actual outcome.
             attempt_reason = (d.get("last_place_attempt_reason") or "")
             place_pending = bool(d.get("place_pending"))
-            if attempt_reason.startswith("existing_theme:"):
+            # v1.11.99: mismatch state takes precedence on the reason —
+            # "you uploaded new content; placement still has the old"
+            # is the most actionable explanation when both apply.
+            if d.get("mismatch_state") == "pending":
+                d["reason"] = ("New canonical (upload / SET URL) doesn't match "
+                               "the file currently at the Plex folder — "
+                               "PUSH TO PLEX to overwrite, ADOPT FROM PLEX "
+                               "to discard the new download, or KEEP MISMATCH "
+                               "to dismiss this prompt and resolve later")
+                d["reason_kind"] = "mismatch"
+            elif attempt_reason.startswith("existing_theme:"):
                 fname = attempt_reason.split(":", 1)[1] or "theme.mp3"
                 d["reason"] = (f"Existing {fname} at the Plex folder — "
                                f"approval will overwrite it")
@@ -2717,29 +2746,56 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         out_dir = media_root / canonical_theme_subdir(pi["title"], pi["year"])
         out_dir.mkdir(parents=True, exist_ok=True)
         target = out_dir / "theme.mp3"
+
+        # v1.11.99: detect existing placement → mismatch flow.
+        # If a placement row exists for this (mt, tmdb, section) the
+        # canonical and the placement file are likely hardlinked to
+        # the same inode. Writing new bytes via target.write_bytes()
+        # would mutate that shared inode and silently overwrite the
+        # placement too — defeating the user-visible distinction
+        # between "user uploaded new content" and "Plex is now
+        # playing the new content". Break the hardlink first
+        # (target.unlink()) so the placement file keeps its original
+        # inode, then write the new canonical content into a fresh
+        # inode at the same path.
+        with get_conn(db) as conn:
+            existing_placement = conn.execute(
+                """SELECT 1 FROM placements
+                    WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                (theme_media_type, tmdb_id, section_id),
+            ).fetchone()
+        is_mismatch = bool(existing_placement)
+        if is_mismatch:
+            try:
+                if target.exists():
+                    target.unlink()
+            except OSError as e:
+                log.warning("upload: could not unlink canonical for mismatch: %s", e)
         target.write_bytes(data)
 
         # Compute sha256 + insert local_files (per-section)
         import hashlib
         sha = hashlib.sha256(data).hexdigest()
         rel_path = str(target.relative_to(settings.themes_dir))
+        mismatch_value = "pending" if is_mismatch else None
 
         with get_conn(db) as conn:
             conn.execute(
                 """INSERT INTO local_files
                      (media_type, tmdb_id, section_id, file_path, file_sha256,
                       file_size, downloaded_at, source_video_id, provenance,
-                      source_kind)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, '', 'manual', 'upload')
+                      source_kind, mismatch_state)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, '', 'manual', 'upload', ?)
                    ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                        file_path = excluded.file_path,
                        file_sha256 = excluded.file_sha256,
                        file_size = excluded.file_size,
                        downloaded_at = excluded.downloaded_at,
                        provenance = excluded.provenance,
-                       source_kind = excluded.source_kind""",
+                       source_kind = excluded.source_kind,
+                       mismatch_state = excluded.mismatch_state""",
                 (theme_media_type, tmdb_id, section_id, rel_path, sha, len(data),
-                 now_iso()),
+                 now_iso(), mismatch_value),
             )
             # v1.10.50: implicit ack on a manual upload — the user is
             # routing around the broken TDB URL. Stamp acked_at so the
@@ -2750,13 +2806,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
                 (now_iso(), theme_media_type, tmdb_id),
             )
-            # Enqueue per-section placement
-            conn.execute(
-                "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
-                "                  payload, status, created_at, next_run_at) "
-                "VALUES ('place', ?, ?, ?, '{}', 'pending', ?, ?)",
-                (theme_media_type, tmdb_id, section_id, now_iso(), now_iso()),
-            )
+            # v1.11.99: only enqueue placement on the no-mismatch path.
+            # Mismatch rows wait for explicit PUSH TO PLEX / ADOPT FROM
+            # PLEX / KEEP MISMATCH from /pending or the row's PLACE menu.
+            if not is_mismatch:
+                conn.execute(
+                    "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
+                    "                  payload, status, created_at, next_run_at) "
+                    "VALUES ('place', ?, ?, ?, '{}', 'pending', ?, ?)",
+                    (theme_media_type, tmdb_id, section_id, now_iso(), now_iso()),
+                )
 
         log_event(db, level="INFO", component="api",
                   media_type=theme_media_type, tmdb_id=tmdb_id,
@@ -2875,12 +2934,29 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # orphan logged 'no included Plex section owns (...)' and
             # silently skipped — the URL persisted but no download fired.
             section_id = pi["section_id"]
+            # v1.11.99: detect the mismatch case BEFORE the worker runs —
+            # if a placement already exists for this (mt, tmdb, section)
+            # the new download should NOT auto-place over the existing
+            # file. Pass user_initiated_mismatch=true through the
+            # payload; the download worker reads it, breaks the canonical
+            # hardlink before downloading (so the placement file's inode
+            # is preserved), and marks local_files.mismatch_state='pending'
+            # instead of enqueueing a place job. The user resolves via
+            # /pending or the row's PLACE menu.
+            existing_placement = conn.execute(
+                """SELECT 1 FROM placements
+                    WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                (theme_media_type, tmdb_id, section_id),
+            ).fetchone()
+            payload = {"reason": "manual_url"}
+            if existing_placement:
+                payload["user_initiated_mismatch"] = True
             conn.execute(
                 "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
                 "                  payload, status, created_at, next_run_at) "
                 "VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)",
                 (theme_media_type, tmdb_id, section_id,
-                 json.dumps({"reason": "manual_url"}),
+                 json.dumps(payload),
                  now_iso(), now_iso()),
             )
 
@@ -3301,6 +3377,143 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Replace requested by {request.state.user}")
         return {"ok": True}
+
+    # v1.11.99: mismatch-resolution endpoints. These complement the
+    # existing /replace (PUSH TO PLEX) endpoint above:
+    #
+    #   PUSH TO PLEX     → /replace            — write canonical to placement
+    #   ADOPT FROM PLEX  → /adopt-from-plex    — replace canonical with placement
+    #   KEEP MISMATCH    → /keep-mismatch      — flip 'pending' → 'acked';
+    #                                            stays in library as DL=amber
+    #                                            + LINK=≠ but exits /pending
+    #
+    # The first two clear mismatch_state on success (place worker
+    # handles PUSH; adopt-from-plex sets it directly). KEEP MISMATCH
+    # is a state-only flip — no file mutation.
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/adopt-from-plex")
+    async def api_adopt_from_plex(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.11.99: replace motif's canonical with the file currently at
+        the placement (Plex folder) — the inverse of PUSH TO PLEX.
+
+        Use case: user uploaded / set URL on a row that already had a
+        placement, decides on review they want to keep what Plex is
+        actually playing instead of the new download. We hardlink the
+        placement file back into canonical (new inode for canonical,
+        same inode as placement → matched again), discarding the
+        rejected new download.
+        """
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(
+                status_code=409,
+                detail="themes_dir not configured; visit /settings",
+            )
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                """SELECT lf.section_id, lf.file_path AS canon_rel,
+                          p.media_folder
+                     FROM local_files lf
+                     JOIN placements p
+                       ON p.media_type = lf.media_type
+                      AND p.tmdb_id = lf.tmdb_id
+                      AND p.section_id = lf.section_id
+                    WHERE lf.media_type = ? AND lf.tmdb_id = ?
+                      AND lf.mismatch_state IS NOT NULL""",
+                (media_type, tmdb_id),
+            ).fetchall()
+        if not rows:
+            raise HTTPException(
+                status_code=409,
+                detail="no mismatch state to resolve",
+            )
+        import hashlib
+        adopted = 0
+        for r in rows:
+            placement_file = Path(r["media_folder"]) / "theme.mp3"
+            if not placement_file.is_file():
+                log.warning(
+                    "adopt-from-plex: placement file missing at %s — skipping",
+                    placement_file,
+                )
+                continue
+            canon_path = settings.themes_dir / r["canon_rel"]
+            try:
+                # Break the canonical inode (the rejected new content),
+                # then hardlink placement → canonical so they share an
+                # inode again (matching state).
+                if canon_path.exists():
+                    canon_path.unlink()
+                canon_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    canon_path.hardlink_to(placement_file)
+                    placement_kind = "hardlink"
+                except OSError:
+                    # Cross-filesystem — fall back to copy.
+                    import shutil
+                    shutil.copy2(placement_file, canon_path)
+                    placement_kind = "copy"
+            except OSError as e:
+                log.warning(
+                    "adopt-from-plex: failed for %s: %s", placement_file, e,
+                )
+                continue
+            # Re-read the now-canonical file to refresh sha + size,
+            # clear mismatch_state, and align placement.placement_kind.
+            sha = hashlib.sha256(canon_path.read_bytes()).hexdigest()
+            size = canon_path.stat().st_size
+            with get_conn(db) as conn:
+                conn.execute(
+                    """UPDATE local_files SET file_sha256 = ?, file_size = ?,
+                                              downloaded_at = ?,
+                                              mismatch_state = NULL
+                       WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                    (sha, size, now_iso(),
+                     media_type, tmdb_id, r["section_id"]),
+                )
+                conn.execute(
+                    """UPDATE placements SET placement_kind = ?
+                       WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                    (placement_kind, media_type, tmdb_id, r["section_id"]),
+                )
+            adopted += 1
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Adopt from Plex by {request.state.user}",
+                  detail={"sections_adopted": adopted})
+        return {"ok": True, "sections_adopted": adopted}
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/keep-mismatch")
+    async def api_keep_mismatch(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.11.99: ack the mismatch — drop it out of /pending but
+        keep the canonical / placement divergence intact. Library row
+        continues to render DL=amber + LINK=≠ as a passive reminder
+        that motif holds a download Plex isn't playing.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            cur = conn.execute(
+                """UPDATE local_files SET mismatch_state = 'acked'
+                    WHERE media_type = ? AND tmdb_id = ?
+                      AND mismatch_state = 'pending'""",
+                (media_type, tmdb_id),
+            )
+            if cur.rowcount == 0:
+                raise HTTPException(
+                    status_code=409,
+                    detail="no pending mismatch to ack",
+                )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"Keep mismatch by {request.state.user}",
+                  detail={"sections_acked": cur.rowcount})
+        return {"ok": True, "sections_acked": cur.rowcount}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/unmanage")
     async def api_unmanage_item(

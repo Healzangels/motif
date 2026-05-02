@@ -777,6 +777,21 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   background: var(--bg);
   transform: rotate(-45deg);
 }
+/* v1.11.99: mismatch DL — canonical exists but doesn't match the
+   placement file (user uploaded / set URL over an existing placement
+   without resolving). Amber so the row visually nags but doesn't
+   read as an actual error like .broken. */
+.state-pill.mismatch {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+/* v1.11.99: ≠ glyph for the LINK column when canonical and placement
+   diverged. Same amber palette as .state-pill.mismatch so the DL +
+   LINK columns light up together. */
+.link-glyph-mismatch {
+  color: var(--amber);
+  font-weight: 700;
+}
 
 .title-cell {
   display: flex; align-items: center; gap: 8px;

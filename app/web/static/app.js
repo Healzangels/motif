@@ -2860,10 +2860,22 @@
     // the row should call out 'still in plex, not downloaded' and
     // surface a RESTORE FROM PLEX action.
     const dlBroken = !!it.canonical_missing && !!it.file_path;
-    const dl = dlBroken ? 'broken' : (downloaded ? 'on' : '');
+    // v1.11.99: mismatch states ('pending' / 'acked') tint the DL dot
+    // amber and force the LINK glyph to ≠ — motif holds a download
+    // that does NOT match the file currently at the placement, so
+    // claiming a green DL or a clean = / C link would be a lie. The
+    // 'acked' state behaves the same visually as 'pending'; the only
+    // difference is acked rows are absent from /pending (already
+    // dismissed by the user via KEEP MISMATCH).
+    const isMismatch = !!it.mismatch_state;
+    const dl = dlBroken ? 'broken'
+             : (isMismatch ? 'mismatch'
+             : (downloaded ? 'on' : ''));
     const pl = placed ? 'on' : '';
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
-    if (it.placement_kind === 'hardlink') {
+    if (isMismatch && placed) {
+      linkCell = '<span class="link-glyph link-glyph-mismatch" title="canonical (DL) does not match the file at the Plex folder — resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu">≠</span>';
+    } else if (it.placement_kind === 'hardlink') {
       linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink">=</span>';
     } else if (it.placement_kind === 'copy') {
       linkCell = '<span class="link-glyph link-glyph-copy" title="copy">C</span>';
@@ -3287,12 +3299,37 @@
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
     }
-    if (themed && downloaded && placed && !dlBroken) {
+    if (themed && downloaded && placed && !dlBroken && !isMismatch) {
       placeItems.push(menuItemHtml(
         'replace', 'RE-PUSH',
         "force motif to re-place the canonical at the Plex folder (no re-download)",
         { mt: themeMt, id: themeId, warn: true, bypassLock: true },
       ));
+    }
+    // v1.11.99: mismatch state — canonical and placement diverged via
+    // SET URL / UPLOAD MP3. Three resolution paths, surfaced together.
+    // bypassLock so they all work even though the row is technically
+    // "awaiting approval" (which would otherwise grey out the menu).
+    if (themed && isMismatch && downloaded && placed) {
+      placeItems.push(menuItemHtml(
+        'replace', 'PUSH TO PLEX',
+        "overwrite the file in the Plex folder with motif's new download (resolves the mismatch)",
+        { mt: themeMt, id: themeId, info: true, bypassLock: true },
+      ));
+      placeItems.push(menuItemHtml(
+        'adopt-from-plex', 'ADOPT FROM PLEX',
+        "discard the new download and re-adopt the file currently at the Plex folder as the canonical (resolves the mismatch)",
+        { mt: themeMt, id: themeId, info: true, bypassLock: true },
+      ));
+      // KEEP MISMATCH only meaningful when mismatch is still 'pending'
+      // (in /pending). Once acked there's nothing to keep.
+      if (it.mismatch_state === 'pending') {
+        placeItems.push(menuItemHtml(
+          'keep-mismatch', 'KEEP MISMATCH',
+          "leave both files in place and dismiss this from /pending — the row will keep DL=amber + LINK=≠ in the library as a passive reminder",
+          { mt: themeMt, id: themeId, bypassLock: true },
+        ));
+      }
     }
     if (themed && dlBroken && placed) {
       placeItems.push(menuItemHtml(
@@ -4113,6 +4150,41 @@
         await loadLibrary().catch(()=>{});
       } else if (act === 'replace') {
         await replaceTheme(btn.dataset.mt, btn.dataset.id, btn);
+      } else if (act === 'adopt-from-plex') {
+        // v1.11.99: discard motif's new download, re-adopt the file
+        // currently at the Plex folder. Confirm explicitly because
+        // the new download will be replaced.
+        const ok = confirm(
+          "ADOPT FROM PLEX will discard motif's new download and " +
+          "re-adopt the file currently at the Plex folder as the " +
+          "canonical.\n\nThe new theme content motif fetched will be " +
+          "lost — the Plex-folder file becomes the source of truth.\n\n" +
+          "Proceed?");
+        if (!ok) return;
+        try {
+          if (btn) btn.disabled = true;
+          await api('POST',
+            `/api/items/${btn.dataset.mt}/${btn.dataset.id}/adopt-from-plex`);
+          await loadLibrary().catch(() => {});
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Adopt from Plex failed: ' + e.message);
+          if (btn) btn.disabled = false;
+        }
+      } else if (act === 'keep-mismatch') {
+        // v1.11.99: ack the mismatch — drops it from /pending but
+        // keeps both files in place. Library row keeps DL=amber +
+        // LINK=≠ as a passive reminder.
+        try {
+          if (btn) btn.disabled = true;
+          await api('POST',
+            `/api/items/${btn.dataset.mt}/${btn.dataset.id}/keep-mismatch`);
+          await loadLibrary().catch(() => {});
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Keep mismatch failed: ' + e.message);
+          if (btn) btn.disabled = false;
+        }
       } else if (act === 'accept-update') {
         // v1.11.74: same flow as the browse-page ACCEPT button —
         // helper handles the API call + alerting; we just reload
