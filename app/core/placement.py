@@ -52,7 +52,6 @@ class FolderEntry:
 
 
 @dataclass
-@dataclass
 class FolderIndex:
     """Indexes Plex media folders by various keys for fast matching.
     Can be built from a single root or from multiple roots (when a media
