@@ -71,12 +71,10 @@
     <span class="chip-group">
       <button class="chip" data-status="downloaded" title="motif has the theme file locally (whether or not it's been placed into the Plex folder)">DOWNLOADED</button>
       <button class="chip" data-status="placed" title="motif's theme is currently sitting in the Plex media folder — Plex is playing it">PLACED</button>
-      <button class="chip" data-status="unplaced" title="motif has the file downloaded but not in the Plex folder yet (typically waiting on placement approval)">UNPLACED</button>
     </span>
     <span class="chip-sep" aria-hidden="true">·</span>
     <span class="chip-group">
       <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
-      <button class="chip chip-info" data-status="updates" title="ThemerrDB upstream changed the YouTube URL on items motif already manages — review with ACCEPT (replace with new TDB download) or KEEP (leave current theme alone)">UPDATES</button>
       <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
       <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
     </span>
@@ -142,7 +140,7 @@
           title="select every row across the current filter (not just this page)">// SELECT ALL FILTERED</button>
   <button class="btn btn-tiny" id="library-clear-selection-btn" type="button">// CLEAR</button>
   <button class="btn btn-tiny lib-source-themerrdb" id="library-download-selected-btn" type="button"
-          title="source the selected items from ThemerrDB (download + place)">// TDB SELECTED</button>
+          title="download + place every selected row from its ThemerrDB source">// DOWNLOAD FROM TDB</button>
   <button class="btn btn-tiny lib-source-adopt" id="library-adopt-selected-btn" type="button"
           title="claim every selected sidecar-only row as motif-managed">// ADOPT SELECTED</button>
   <!-- v1.10.51: bulk ACK only meaningful on the FAILURES filter; hidden
@@ -159,7 +157,7 @@
   <table class="table">
     <thead>
       <tr>
-        <th class="col-state"><input type="checkbox" id="library-select-all" title="select all on this page" /></th>
+        <th class="col-state"><input type="checkbox" id="library-select-all" title="select all on this page (click again to deselect all)" /></th>
         <th class="col-title col-sort" data-sort="title">TITLE <span class="sort-indicator"></span></th>
         <th class="col-year col-sort" data-sort="year">YEAR <span class="sort-indicator"></span></th>
         <th class="col-state col-sort" data-sort="src">SRC <span class="sort-indicator"></span></th>

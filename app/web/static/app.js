@@ -2954,16 +2954,10 @@
         `<a class="title-glyph title-glyph-broken" title="canonical missing under /themes — placement in Plex folder is still there. Open RESTORE FROM PLEX in PLACE menu to recover." href="/${libraryState.tab}?status=dl_missing">↺</a>`
       );
     }
-    // v1.11.74: green ↑ glyph when ThemerrDB has a new YouTube URL
-    // for this title (pending_update=1). Click jumps to the UPDATES
-    // filter on the current tab so the user can review every
-    // affected row at once. ACCEPT / KEEP buttons live in the
-    // SOURCE menu below.
-    if (it.pending_update) {
-      titleGlyphs.push(
-        `<a class="title-glyph title-glyph-update" title="ThemerrDB updated this theme's URL — click to filter this tab to all UPDATES. Use ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu." href="/${libraryState.tab}?status=updates">↑</a>`
-      );
-    }
+    // v1.12.5: ↑ row-title glyph removed. The blue TDB ↑ pill (from
+    // the TDB-pill render below) is now the only update indicator —
+    // a single visual cue is less noisy than two redundant ones.
+    // ACCEPT UPDATE / KEEP CURRENT live in the SOURCE menu.
     // v1.10.50: only show the ! glyph when the failure hasn't been
     // acknowledged. Acked rows keep their red TDB pill (still failing
     // upstream) but no longer pull attention; they're hidden from the
@@ -3261,7 +3255,11 @@
     // flag from /api/library). ACCEPT downloads the new URL and
     // overwrites motif's canonical; KEEP marks the diff declined so
     // the ↑ glyph clears without changing files.
-    if (it.pending_update && themed
+    // v1.12.5: gate ACCEPT UPDATE / KEEP CURRENT on actionable_update
+    // (decision='pending') instead of pending_update (the pill flag,
+    // which now also covers decision='declined' so the blue pill
+    // sticks for filter / sort even after the user picked KEEP).
+    if (it.actionable_update && themed
         && themeId !== null && themeId !== undefined) {
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
@@ -3295,7 +3293,13 @@
     // drop a cookies.txt file to recover.
     const tdbDeadForReplace = it.failure_kind
       && TDB_DEAD_FAILURES.has(it.failure_kind);
-    if (isThemerrDb && !tdbDeadForReplace
+    // v1.12.5: hide the bottom 'TDB' replace action when ACCEPT
+    // UPDATE is already on the menu — they do the same thing
+    // (download from upstream, overwrite local). ACCEPT UPDATE is
+    // the more contextually-correct phrasing when an upstream URL
+    // change triggered the menu, so we keep that one and suppress
+    // the redundant TDB entry below.
+    if (isThemerrDb && !tdbDeadForReplace && !it.actionable_update
         && (sidecarOnly || isManualPlacement || isPlexAgent)) {
       // v1.11.11: button label is "TDB" (was "REPLACE w/ TDB") so the
       // source is named explicitly and parallels the no-existing-theme
@@ -3623,7 +3627,25 @@
     const n = libraryState.selected.size;
     cnt.textContent = fmt.num(n);
     bar.style.display = n > 0 ? '' : 'none';
-    if (all) all.checked = false;
+    // v1.12.5: tri-state header checkbox — checked when every visible
+    // row is selected, indeterminate when some are, unchecked when
+    // none. Lets the user see at a glance whether clicking the
+    // header will select-all or deselect-all on the current page.
+    if (all) {
+      const rowBoxes = document.querySelectorAll('#library-body input[data-lib-select]');
+      const visibleCount = rowBoxes.length;
+      const visibleSelected = Array.from(rowBoxes).filter((cb) => cb.checked).length;
+      if (visibleCount === 0 || visibleSelected === 0) {
+        all.checked = false;
+        all.indeterminate = false;
+      } else if (visibleSelected === visibleCount) {
+        all.checked = true;
+        all.indeterminate = false;
+      } else {
+        all.checked = false;
+        all.indeterminate = true;
+      }
+    }
     const onFailures = libraryState.status === 'failures';
     const ackBtn = document.getElementById('library-ack-selected-btn');
     const dlBtn = document.getElementById('library-download-selected-btn');
@@ -3881,15 +3903,26 @@
       updateLibrarySelectionUi();
     });
 
-    // Select-all on the visible page
-    document.getElementById('library-select-all')?.addEventListener('change', (e) => {
-      const on = e.currentTarget.checked;
-      document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
-        cb.checked = on;
+    // Select-all / deselect-all on the visible page.
+    // v1.12.5: tri-state behavior — if every visible row is already
+    // selected, click DEselects them; otherwise SELECT all visible.
+    // Uses the click handler (instead of change) so we can override
+    // the checkbox's own state machine when the page already has a
+    // mix; the indeterminate visual is set by updateLibrarySelectionUi.
+    document.getElementById('library-select-all')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const rowBoxes = document.querySelectorAll('#library-body input[data-lib-select]');
+      if (rowBoxes.length === 0) return;
+      const allSelected = Array.from(rowBoxes).every((cb) => cb.checked);
+      const turnOn = !allSelected;
+      rowBoxes.forEach((cb) => {
+        cb.checked = turnOn;
         const k = cb.dataset.libSelect;
-        if (on) libraryState.selected.add(k);
+        if (turnOn) libraryState.selected.add(k);
         else libraryState.selected.delete(k);
       });
+      e.currentTarget.checked = turnOn;
+      e.currentTarget.indeterminate = false;
       updateLibrarySelectionUi();
     });
 

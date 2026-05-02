@@ -392,16 +392,29 @@ def _library_main_query(
                 ORDER BY CASE j.status WHEN 'running' THEN 0 ELSE 1 END,
                          j.id DESC
                 LIMIT 1) AS job_in_flight,
-               -- v1.11.74: 1 if there's a pending TDB-update for this
-               -- (media_type, tmdb_id), 0 otherwise. Drives the green
-               -- ↑ glyph + the SOURCE menu's ACCEPT UPDATE / KEEP
-               -- CURRENT items added in the same release.
+               -- v1.11.74 / v1.12.5: pending_update drives the blue
+               -- TDB ↑ pill on the row. v1.12.5 split this from
+               -- 'actionable_update' below so KEEP CURRENT can
+               -- decrement the topbar counter without removing the
+               -- pill itself — declined updates stay visible for
+               -- filtering and sorting but no longer prompt for
+               -- action.
+               (CASE WHEN EXISTS (
+                  SELECT 1 FROM pending_updates pu
+                   WHERE pu.media_type = t.media_type
+                     AND pu.tmdb_id = t.tmdb_id
+                     AND pu.decision IN ('pending', 'declined')
+                ) THEN 1 ELSE 0 END) AS pending_update,
+               -- v1.12.5: actionable_update = the row should still
+               -- prompt with ACCEPT UPDATE / KEEP CURRENT in the
+               -- SOURCE menu. Becomes 0 once the user picks KEEP
+               -- (decision flips to 'declined').
                (CASE WHEN EXISTS (
                   SELECT 1 FROM pending_updates pu
                    WHERE pu.media_type = t.media_type
                      AND pu.tmdb_id = t.tmdb_id
                      AND pu.decision = 'pending'
-                ) THEN 1 ELSE 0 END) AS pending_update
+                ) THEN 1 ELSE 0 END) AS actionable_update
     """
     # v1.11.0: every per-row JOIN to placements / local_files matches
     # by section_id = pi.section_id, so a row on the standard library
