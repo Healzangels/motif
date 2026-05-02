@@ -555,6 +555,45 @@ class PlexClient:
                 section_id, media_type,
                 sum(tag_counts.values()), tag_counts, skipped_no_rk, total_size,
             )
+
+        # v1.11.83: per-item folder_path fallback for shows.
+        # Some Plex builds ignore includeLocations=1 on the section
+        # listing and return Directory elements without their <Location>
+        # children — folder_path comes back '' for the entire library,
+        # which kills sidecar (M) detection. Catch any item still
+        # missing folder_path and re-hit /library/metadata/<rk> per-item
+        # in parallel to recover the path. We skip movies because their
+        # <Video>/<Media>/<Part> branch in _extract_folder_path always
+        # works on the bulk listing.
+        if media_type == "show":
+            missing = [i for i, it in enumerate(out) if not it.folder_path]
+            if missing:
+                log.info(
+                    "enumerate_section_items: section %s — %d show(s) "
+                    "missing folder_path on bulk listing, falling back "
+                    "to per-item /library/metadata fetch",
+                    section_id, len(missing),
+                )
+                from concurrent.futures import ThreadPoolExecutor
+                def _fill(idx: int) -> tuple[int, str]:
+                    paths = self.get_item_paths(out[idx].rating_key)
+                    return idx, (paths[0] if paths else "")
+                # Modest concurrency — Plex tolerates this fine and the
+                # alternative is sequential which is unusable for big
+                # libraries.
+                with ThreadPoolExecutor(max_workers=8) as ex:
+                    for idx, p in ex.map(_fill, missing):
+                        if p:
+                            out[idx] = PlexLibraryItem(
+                                **{**out[idx].__dict__, "folder_path": p}
+                            )
+                still_missing = sum(1 for it in out if not it.folder_path)
+                log.info(
+                    "enumerate_section_items: section %s — per-item "
+                    "fallback recovered %d/%d, still missing %d",
+                    section_id, len(missing) - still_missing,
+                    len(missing), still_missing,
+                )
         return out
 
     def get_item_paths(self, rating_key: str) -> list[str]:
