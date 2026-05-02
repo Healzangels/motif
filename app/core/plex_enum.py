@@ -65,7 +65,16 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 stats["errors"] += 1
                 continue
             stats["items_seen"] += len(items)
-            ins, upd = _upsert_items(db_path, items, cancel_check=cancel_check)
+            ins, upd = _upsert_items(
+                db_path, items, cancel_check=cancel_check,
+                # v1.12.18: pass section_id so the resolve pass that
+                # runs at the end of _upsert_items can scope itself
+                # to JUST the rows we just touched. Pre-fix the
+                # resolve always ran against the full plex_items
+                # table (~10K+ rows on a populated install), which
+                # turned a 28-item section refresh into a 70s+ job.
+                section_id=section_id,
+            )
             stats["inserted"] += ins
             stats["updated"] += upd
             log.info("plex_enum: section %s — %d items (%d new, %d updated)",
@@ -316,7 +325,8 @@ def stat_theme_sidecar(folder_path: str) -> bool | None:
 
 
 def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
-                   *, cancel_check=lambda: False) -> tuple[int, int]:
+                   *, cancel_check=lambda: False,
+                   section_id: str | None = None) -> tuple[int, int]:
     """Upsert one section's items into plex_items. Returns
     (inserted_count, updated_count).
 
@@ -487,11 +497,22 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     # v1.11.26: stamp theme_id once per enum so /api/library's row
     # query becomes a direct PK lookup instead of running a heavy
     # correlated subquery on every page render.
-    resolve_theme_ids(db_path)
+    # v1.12.18: scope to the section we just enumerated when called
+    # from the per-section path. Pre-fix this always re-resolved
+    # the entire plex_items table (~10K+ rows), turning a 28-item
+    # section refresh into a multi-minute job and contending hard
+    # with the writer lock the whole time.
+    resolve_theme_ids(db_path, section_id=section_id, cancel_check=cancel_check)
     return inserted, updated
 
 
-def resolve_theme_ids(db_path: Path, *, chunk_size: int = 500) -> int:
+def resolve_theme_ids(
+    db_path: Path,
+    *,
+    chunk_size: int = 500,
+    section_id: str | None = None,
+    cancel_check=lambda: False,
+) -> int:
     """Bulk-populate plex_items.theme_id for every row whose match
     against themes can be resolved by tmdb_id, imdb_id, or
     (title_norm + year). Called at the end of plex_enum and sync so
@@ -521,14 +542,32 @@ def resolve_theme_ids(db_path: Path, *, chunk_size: int = 500) -> int:
     rewritten across all chunks.
     """
     with _resolve_theme_ids_lock:
-        return _resolve_theme_ids_impl(db_path, chunk_size=chunk_size)
+        return _resolve_theme_ids_impl(
+            db_path, chunk_size=chunk_size,
+            section_id=section_id, cancel_check=cancel_check,
+        )
 
 
 _resolve_theme_ids_lock = threading.Lock()
 
 
-def _resolve_theme_ids_impl(db_path: Path, *, chunk_size: int = 500) -> int:
-    sql = """
+def _resolve_theme_ids_impl(
+    db_path: Path,
+    *,
+    chunk_size: int = 500,
+    section_id: str | None = None,
+    cancel_check=lambda: False,
+) -> int:
+    # v1.12.18: optional section_id scope. When set, restrict the
+    # resolve pass to rating_keys in that section — relevant for
+    # the per-section refresh path where we know exactly which rows
+    # we just touched and don't need to re-walk the whole table.
+    scope_clause = ""
+    scope_params: tuple = ()
+    if section_id is not None:
+        scope_clause = "AND section_id = ?"
+        scope_params = (section_id,)
+    sql = f"""
         UPDATE plex_items SET theme_id = (
             SELECT t.id FROM themes t
             WHERE t.media_type = (CASE plex_items.media_type
@@ -554,6 +593,7 @@ def _resolve_theme_ids_impl(db_path: Path, *, chunk_size: int = 500) -> int:
         )
         WHERE rating_key IN (
             SELECT rating_key FROM plex_items
+            WHERE 1=1 {scope_clause}
             ORDER BY rating_key
             LIMIT ? OFFSET ?
         )
@@ -562,15 +602,45 @@ def _resolve_theme_ids_impl(db_path: Path, *, chunk_size: int = 500) -> int:
     total = 0
     offset = 0
     with get_conn(db_path) as conn:
-        # Get the row count up-front so we can stop cleanly.
-        row_count = conn.execute(
-            "SELECT COUNT(*) FROM plex_items"
-        ).fetchone()[0]
+        count_sql = "SELECT COUNT(*) FROM plex_items"
+        if section_id is not None:
+            count_sql += " WHERE section_id = ?"
+        row_count = conn.execute(count_sql, scope_params).fetchone()[0]
+    if row_count == 0:
+        return 0
+    log.info(
+        "resolve_theme_ids: starting on %d plex_items rows%s "
+        "(chunk_size=%d)",
+        row_count,
+        f" (section {section_id})" if section_id else "",
+        chunk_size,
+    )
+    progress_t0 = _time.monotonic()
     while offset < row_count:
+        # v1.12.18: cancel-check between chunks so a stuck resolve
+        # can be interrupted from the /logs CANCEL button. Also
+        # guards against the user kicking off a sync mid-resolve;
+        # the new sync's resolve waits on the mutex, but the
+        # current one stays interruptible.
+        if cancel_check():
+            from .worker import _JobCancelled
+            log.info("resolve_theme_ids: cancelled at %d/%d rows",
+                     offset, row_count)
+            raise _JobCancelled()
         with get_conn(db_path) as conn, transaction(conn):
-            cur = conn.execute(sql, (chunk_size, offset))
+            cur = conn.execute(sql, scope_params + (chunk_size, offset))
             total += cur.rowcount
         offset += chunk_size
+        # v1.12.18: progress log every 5s so a stuck resolve is
+        # visible in the logs instead of silent. Pre-fix the only
+        # log line landed at completion, which made it impossible
+        # to tell whether a "running" plex_enum job was making
+        # progress or wedged.
+        elapsed = _time.monotonic() - progress_t0
+        if elapsed > 5.0:
+            log.info("resolve_theme_ids: progress %d/%d (%.1fs)",
+                     offset, row_count, elapsed)
+            progress_t0 = _time.monotonic()
         # v1.11.54: yield ~250ms between chunks (was 50ms). Each chunk
         # holds BEGIN IMMEDIATE for ~1-2s on a 15K-row plex_items;
         # 50ms gap kept the writer at 95%+ duty cycle and starved
