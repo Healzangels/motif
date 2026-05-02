@@ -78,18 +78,42 @@
       <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
     </span>
   </div>
-  <!-- v1.10.20: secondary TDB-match filter, stacks on the status chip
-       above. Useful for slicing MANUAL into 'has a TDB alternative I
-       could REPLACE w/' vs 'no upstream theme exists'. Hidden when the
-       primary chip already implies a TDB-tracked answer (THEMERRDB,
-       UNTRACKED, THEMERRDB ONLY) — see updateTdbFilterVisibility(). -->
-  <div class="chips chips-secondary" role="tablist" id="library-tdb-filter"
-       aria-label="ThemerrDB match"
-       title="filter on whether ThemerrDB has the title">
-    <span class="chips-label">TDB MATCH:</span>
-    <button class="chip chip-tiny chip-active" data-tdb="any" title="don't filter on ThemerrDB match">ANY</button>
-    <button class="chip chip-tiny" data-tdb="tracked" title="rows where ThemerrDB has the title (TDB action available in SOURCE menu)">TRACKED</button>
-    <button class="chip chip-tiny" data-tdb="untracked" title="rows where ThemerrDB doesn't have the title">UNTRACKED</button>
+  <!-- v1.12.7: TDB pill multi-select filter — replaces the v1.10.20
+       3-state TDB MATCH chip group. Same pattern as the SRC pill row
+       below: each pill toggles items with that pill state in/out of
+       the visible page; ALL selects every state; CLEAR drops all.
+       Filter is client-side (current page only) — total / pagination
+       still reflect the underlying status filter.
+        - TDB     (green) → TDB-tracked, no failure
+        - TDB ↑   (blue)  → upstream URL update available
+        - TDB ⚠   (amber) → cookies-required failure
+        - TDB ✗   (red)   → dead URL (video removed / private / etc)
+        - no TDB  (gray)  → no themes record / orphan
+  -->
+  <div class="tdb-key-compact" id="library-tdb-filter"
+       aria-label="TDB pill filter (click to filter; multi-select)">
+    <span class="tdb-key-label muted small">TDB:</span>
+    <button type="button" class="src-key-clear muted small"
+            data-tdb-pill-all="1"
+            title="Select every TDB pill state — handy for inverse filtering (light all up, then click the one you want to exclude)">ALL</button>
+    <button type="button" class="tdb-pill tdb-pill-yes tdb-pill-btn"
+            data-tdb-pill="tdb"
+            title="ThemerrDB has the title and is in good shape — motif can fetch from upstream. Click to toggle TDB-tracked rows in the filter.">TDB</button>
+    <button type="button" class="tdb-pill tdb-pill-update tdb-pill-btn"
+            data-tdb-pill="update"
+            title="ThemerrDB has a new YouTube URL for this theme — review with ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu. Click to toggle update-available rows in the filter.">TDB ↑</button>
+    <button type="button" class="tdb-pill tdb-pill-cookies tdb-pill-btn"
+            data-tdb-pill="cookies"
+            title="ThemerrDB URL is fine but YouTube demands a sign-in cookie. Drop a cookies.txt at the configured path. Click to toggle cookies-blocked rows in the filter.">TDB ⚠</button>
+    <button type="button" class="tdb-pill tdb-pill-dead tdb-pill-btn"
+            data-tdb-pill="dead"
+            title="Upstream URL returned a permanent failure (video removed / private / age-restricted / geo-blocked). Recovery: SET URL or UPLOAD MP3. Click to toggle dead-URL rows in the filter.">TDB ✗</button>
+    <button type="button" class="tdb-pill tdb-pill-no tdb-pill-btn"
+            data-tdb-pill="none"
+            title="ThemerrDB does not track this title. Click to toggle no-TDB rows in the filter.">no TDB</button>
+    <button type="button" class="src-key-clear muted small"
+            data-tdb-pill=""
+            title="Clear all TDB pill filter selections">CLEAR</button>
   </div>
 </section>
 

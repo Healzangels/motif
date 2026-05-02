@@ -2608,6 +2608,12 @@
     // client-side: pagination/total reflect the underlying status+tdb
     // pass.
     srcFilter: new Set(),
+    // v1.12.7: multi-select Set of TDB pill states the user wants to
+    // keep visible. Possible values: 'tdb', 'update', 'cookies',
+    // 'dead', 'none' (matching computeTdbPill below). Empty Set =
+    // no filter. Same client-side pattern as srcFilter — pagination
+    // / total reflect the underlying status pass.
+    tdbPills: new Set(),
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2627,26 +2633,12 @@
   // Resets the filter to 'any' on hide so it doesn't silently leak
   // into the URL.
   function updateTdbFilterVisibility() {
-    const wrap = document.getElementById('library-tdb-filter');
-    if (!wrap) return;
-    const status = libraryState.status;
-    // v1.12.4: 'untracked' (UNTHEMED) is no longer redundant with
-    // TDB MATCH — the v1.12.4 SQL rewrite split the two axes so the
-    // user can stack them: UNTHEMED + TDB TRACKED = "TDB has the URL
-    // but motif hasn't downloaded yet" (the actionable subset).
-    const redundant = (status === 'themed'
-                       || status === 'not_in_plex'
-                       || status === 'failures');
-    if (redundant) {
-      wrap.style.display = 'none';
-      if (libraryState.tdb !== 'any') {
-        libraryState.tdb = 'any';
-        wrap.querySelectorAll('[data-tdb]').forEach((x) =>
-          x.classList.toggle('chip-active', x.dataset.tdb === 'any'));
-      }
-    } else {
-      wrap.style.display = '';
-    }
+    // v1.12.7: was the visibility gate for the old 3-chip TDB MATCH
+    // row; replaced by the always-visible TDB pill multi-select row.
+    // Kept as a no-op stub because several status-chip handlers
+    // still call it and removing the call sites cleanly is out of
+    // scope for this ship — strictly cosmetic.
+    return;
   }
 
   function updateSortIndicators() {
@@ -2735,17 +2727,30 @@
       // legend narrows the visible page without changing total/
       // pagination (those still reflect the underlying status+tdb
       // counts the user can read at the top of the page).
+      // v1.12.7: TDB pill filter follows the same pattern. Both
+      // sets stack — a row must satisfy SRC AND TDB to show.
       let displayItems = dedupedItems;
       if (libraryState.srcFilter.size > 0) {
-        displayItems = dedupedItems.filter(
+        displayItems = displayItems.filter(
           (it) => libraryState.srcFilter.has(computeSrcLetter(it))
         );
-        if (displayItems.length === 0) {
-          const sel = Array.from(libraryState.srcFilter).join(' / ');
-          tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match SRC ∈ {${htmlEscape(sel)}} on this page (filter applies to the current page; click CLEAR or toggle another SRC letter to broaden)</td></tr>`;
-        } else {
-          tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
+      }
+      if (libraryState.tdbPills.size > 0) {
+        displayItems = displayItems.filter(
+          (it) => libraryState.tdbPills.has(computeTdbPill(it))
+        );
+      }
+      if (displayItems.length === 0
+          && (libraryState.srcFilter.size > 0
+              || libraryState.tdbPills.size > 0)) {
+        const parts = [];
+        if (libraryState.srcFilter.size > 0) {
+          parts.push(`SRC ∈ {${Array.from(libraryState.srcFilter).join(' / ')}}`);
         }
+        if (libraryState.tdbPills.size > 0) {
+          parts.push(`TDB ∈ {${Array.from(libraryState.tdbPills).join(' / ')}}`);
+        }
+        tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match ${htmlEscape(parts.join(' AND '))} on this page (filter applies to the current page; click CLEAR or toggle another pill to broaden)</td></tr>`;
       } else {
         tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
       }
@@ -2793,6 +2798,43 @@
   // branch order in renderLibraryRow so the click-to-filter on the
   // SRC legend agrees with what the row's badge actually shows.
   // Returns one of T / U / A / M / P / - (literal dash).
+  // v1.12.7: shared with computeTdbPill below + the row-level pill
+   // render. Must mirror the api.py classification of permanent
+   // upstream failures.
+   const TDB_DEAD_FAILURES_GLOBAL = new Set([
+     'video_private', 'video_removed',
+     'video_age_restricted', 'geo_blocked',
+   ]);
+
+  // v1.12.7: classify a row by its TDB pill state for the multi-
+  // select TDB pill filter. Returns one of:
+  //   'tdb'     — TDB-tracked, no failure  → green pill
+  //   'update'  — pending upstream URL update (declined or pending)
+  //                → blue TDB ↑ pill
+  //   'cookies' — cookies-required failure (user-fixable)
+  //                → amber TDB ⚠ pill
+  //   'dead'    — permanent upstream failure → red TDB ✗ pill
+  //   'none'    — no themes record / orphan → gray "no TDB" pill
+  // Precedence matches the row pill render: update > dead > cookies
+  // > tdb > none. The pending_update flag (decision IN pending,
+  // declined) lights up blue regardless of the underlying tracked
+  // state; the row's actionable_update flag is what gates the
+  // ACCEPT / KEEP menu actions but isn't relevant for filtering.
+  function computeTdbPill(it) {
+    const isThemerrDbAvail = it.upstream_source
+      && it.upstream_source !== 'plex_orphan';
+    if (!isThemerrDbAvail) return 'none';
+    if (it.pending_update) return 'update';
+    if (it.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(it.failure_kind)) {
+      return 'dead';
+    }
+    if (it.failure_kind === 'cookies_expired'
+        && !window.__motif_cookies_present) {
+      return 'cookies';
+    }
+    return 'tdb';
+  }
+
   function computeSrcLetter(it) {
     const placed = !!it.media_folder;
     const placedProv = it.placement_provenance;
@@ -3776,23 +3818,36 @@
         });
       });
 
-    // v1.10.20: secondary TDB-match chips. Reset to 'any' when the
-    // primary chip changes to one that already implies a TDB answer
-    // (THEMERRDB, UNTRACKED, THEMERRDB ONLY) and hide the toggle —
-    // letting the user toggle in those cases would either return the
-    // same result or no result.
+    // v1.12.7: TDB pill multi-select filter. Replaces the v1.10.20
+     // 3-state TDB MATCH chips. Same toggle pattern as the SRC pill
+     // row — empty data-tdb-pill = CLEAR, data-tdb-pill-all = ALL,
+     // a state name (tdb / update / cookies / dead / none) toggles
+     // membership in the libraryState.tdbPills set. Pure client-side
+     // (visible-page filter) like SRC.
     if (document.getElementById('library-body')) {
-      document.querySelectorAll('[data-tdb]').forEach((b) => {
+      const tdbPillStates = ['tdb', 'update', 'cookies', 'dead', 'none'];
+      document.querySelectorAll('[data-tdb-pill], [data-tdb-pill-all]').forEach((b) => {
         b.addEventListener('click', () => {
-          document.querySelectorAll('[data-tdb]').forEach((x) =>
-            x.classList.remove('chip-active'));
-          b.classList.add('chip-active');
-          libraryState.tdb = b.dataset.tdb;
-          libraryState.page = 1;
+          if (b.dataset.tdbPillAll) {
+            tdbPillStates.forEach((s) => libraryState.tdbPills.add(s));
+          } else {
+            const want = b.dataset.tdbPill;
+            if (!want) {
+              libraryState.tdbPills.clear();
+            } else if (libraryState.tdbPills.has(want)) {
+              libraryState.tdbPills.delete(want);
+            } else {
+              libraryState.tdbPills.add(want);
+            }
+          }
+          document.querySelectorAll('[data-tdb-pill]').forEach((x) => {
+            const xVal = x.dataset.tdbPill;
+            const active = !!xVal && libraryState.tdbPills.has(xVal);
+            x.classList.toggle('tdb-pill-btn-active', active);
+          });
           loadLibrary().catch(console.error);
         });
       });
-      updateTdbFilterVisibility();
     }
 
     // v1.11.66: SRC legend buttons toggle a client-side SRC-letter

@@ -1212,6 +1212,38 @@ pre code, .codeblock {
   border: 1px solid rgba(109,143,255,0.45);
   background: rgba(109,143,255,0.08);
 }
+/* v1.12.7: TDB pill multi-select filter row. Mirrors .src-key-compact
+   below — ALL on the left, CLEAR on the right, the colored TDB pills
+   in between act as toggle switches. Active = box-shadow ring
+   matching the pill's color so the active state reads at a glance
+   alongside the muted-but-bordered inactive state. */
+.tdb-key-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0 2px;
+}
+.tdb-key-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+.tdb-pill-btn {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  user-select: none;
+  /* Native button reset — pills inherit their color/border/bg from
+     the same .tdb-pill-yes / .tdb-pill-update / etc. classes used
+     by the row-level pill render, so visual identity stays
+     consistent. */
+}
+.tdb-pill-btn:hover { filter: brightness(1.25); }
+.tdb-pill-btn-active {
+  filter: brightness(1.3);
+  box-shadow: 0 0 0 2px var(--cyan);
+}
 /* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
    as the regular T badge but de-emphasized — informational rows aren't
    actionable so they shouldn't compete with normal rows. */
