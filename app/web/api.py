@@ -1187,8 +1187,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 WHERE j.job_type = 'plex_enum'
                   AND j.status IN ('pending', 'running')
             """).fetchall()
+            # v1.12.11: tab hint for the topbar FAIL badge link.
+            # Pre-fix the badge hard-coded ?tab=movies regardless of
+            # where the failure actually was, so a /anime failure
+            # routed to /movies which had nothing to show. Pick a
+            # tab from the first unacked dead-URL failure: the
+            # section's flags determine which tab owns the failing
+            # row (anime > 4k movies/tv > standard movies/tv).
+            failure_tab_row = conn.execute("""
+                SELECT ps.type, ps.is_anime
+                FROM themes t
+                JOIN plex_items pi
+                  ON pi.guid_tmdb = t.tmdb_id
+                 AND pi.media_type = (CASE t.media_type WHEN 'tv' THEN 'show' ELSE t.media_type END)
+                JOIN plex_sections ps
+                  ON ps.section_id = pi.section_id AND ps.included = 1
+                WHERE t.failure_kind IN ('video_private','video_removed','video_age_restricted','geo_blocked')
+                  AND t.failure_acked_at IS NULL
+                LIMIT 1
+            """).fetchone()
             dry = is_dry_run(db, default=settings.dry_run_default)
-        return row, last_sync, enum_running_rows, dry
+        return row, last_sync, enum_running_rows, dry, failure_tab_row
 
     # v1.11.37: short-TTL cache for /api/stats. Topbar polls every 15s
     # AND every page that wires sync/refresh fires it on click — under
@@ -1209,7 +1228,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and (now - cached["ts"]) < _stats_cache_ttl
                 and cached["value"] is not None):
             return cached["value"]
-        row, last_sync, enum_running_rows, dry = await run_in_threadpool(_stats_sync, db)
+        row, last_sync, enum_running_rows, dry, failure_tab_row = await run_in_threadpool(_stats_sync, db)
         # v1.11.27: aggregate the per-section enum_running rows into a
         # tab-variant map and a section_id list so the UI can lock
         # buttons granularly.
@@ -1275,6 +1294,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "total": row["failures_total"],
                 "unavailable": row["failures_unavailable"],
                 "cookies_expired": row["failures_cookies"],
+                # v1.12.11: tab hint for the topbar badge link.
+                # NULL → no failures, JS keeps the default /movies link.
+                "tab_hint": (
+                    "anime" if failure_tab_row and failure_tab_row["is_anime"]
+                    else "movies" if failure_tab_row and failure_tab_row["type"] == "movie"
+                    else "tv" if failure_tab_row
+                    else None
+                ),
             },
             "config": {
                 "paths_ready": settings.is_paths_ready(),

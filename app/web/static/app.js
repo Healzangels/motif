@@ -312,6 +312,12 @@
         if (n > 0) {
           $('#topbar-failures-count').textContent = n;
           failBadge.style.display = '';
+          // v1.12.11: route the badge to whichever tab owns the
+          // first failing row (anime / tv / movies). Pre-fix the
+          // link was hardcoded to /movies which mis-routed every
+          // anime / tv failure.
+          const tabHint = (stats.failures && stats.failures.tab_hint) || 'movies';
+          failBadge.href = `/${tabHint}?tdb_pills=dead`;
         } else {
           failBadge.style.display = 'none';
         }
@@ -3720,7 +3726,6 @@
         all.indeterminate = true;
       }
     }
-    const onFailures = libraryState.status === 'failures';
     const ackBtn = document.getElementById('library-ack-selected-btn');
     const dlBtn = document.getElementById('library-download-selected-btn');
     const adoptBtn = document.getElementById('library-adopt-selected-btn');
@@ -3750,9 +3755,15 @@
     // sense. CSV export becomes the primary action there. EXPORT
     // CSV stays visible regardless of mode (it's a pure read-out).
     const onTdbOnly = libraryState.status === 'not_in_plex';
-    if (ackBtn) ackBtn.style.display = onFailures ? '' : 'none';
-    if (dlBtn)    dlBtn.style.display    = (!onFailures && !onTdbOnly && hasTdbEligible) ? '' : 'none';
-    if (adoptBtn) adoptBtn.style.display = (!onFailures && !onTdbOnly && hasSidecarOnly) ? '' : 'none';
+    // v1.12.11: ACK SELECTED is now scoped to the red TDB ✗ pill
+    // filter — that's the canonical "I'm reviewing failures" view
+    // post-removal of the FAILURES status chip. Outside that filter
+    // ACK is hidden (still reachable per-row via ACK FAILURE in the
+    // SOURCE menu).
+    const onTdbDead = libraryState.tdbPills.has('dead');
+    if (ackBtn) ackBtn.style.display = onTdbDead ? '' : 'none';
+    if (dlBtn)    dlBtn.style.display    = (!onTdbOnly && hasTdbEligible) ? '' : 'none';
+    if (adoptBtn) adoptBtn.style.display = (!onTdbOnly && hasSidecarOnly) ? '' : 'none';
     const exportBtn = document.getElementById('library-export-csv-btn');
     if (exportBtn) exportBtn.style.display = '';
   }
