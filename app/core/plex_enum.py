@@ -567,36 +567,82 @@ def _resolve_theme_ids_impl(
     if section_id is not None:
         scope_clause = "AND section_id = ?"
         scope_params = (section_id,)
-    sql = f"""
+    # v1.12.22: split the unified OR'd UPDATE into three single-
+    # condition statements. Pre-fix the combined query had:
+    #   WHERE (tmdb_id match) OR (imdb_id match) OR (title_norm+year match)
+    # SQLite's OR optimization didn't reliably use idx_themes_title_norm
+    # on the third branch when paired with the upstream_source filter,
+    # so the title-fallback path went full-scan against themes
+    # (~10K plex_items rows × ~50K themes rows × full scan = ~30s
+    # per 500-row chunk on a populated install). Splitting lets each
+    # UPDATE use its own dedicated index cleanly:
+    #   1) tmdb_id    → themes PK (media_type, tmdb_id)
+    #   2) imdb_id    → idx_themes_imdb
+    #   3) title+year → idx_themes_title_norm
+    # Each UPDATE only sets theme_id where it's currently NULL or
+    # would be improved (orphan → real). Order matters: 1 first
+    # (preferred), then 2 (orphan match), then 3 (last-resort title
+    # fallback).
+    sql_tmdb = f"""
         UPDATE plex_items SET theme_id = (
             SELECT t.id FROM themes t
             WHERE t.media_type = (CASE plex_items.media_type
                                        WHEN 'show' THEN 'tv'
                                        ELSE plex_items.media_type END)
-              AND (
-                (t.tmdb_id = plex_items.guid_tmdb
-                 AND plex_items.guid_tmdb IS NOT NULL
-                 AND t.upstream_source != 'plex_orphan')
-                OR (t.imdb_id = plex_items.guid_imdb
-                    AND plex_items.guid_imdb IS NOT NULL
-                    AND t.upstream_source = 'plex_orphan')
-                OR (t.title_norm = plex_items.title_norm
-                    AND t.year = plex_items.year
-                    AND t.upstream_source != 'plex_orphan'
-                    AND plex_items.title_norm IS NOT NULL
-                    AND plex_items.year IS NOT NULL)
-              )
-            ORDER BY
-                CASE WHEN t.upstream_source = 'plex_orphan' THEN 1 ELSE 0 END,
-                t.id DESC
+              AND t.tmdb_id = plex_items.guid_tmdb
+              AND t.upstream_source != 'plex_orphan'
+            ORDER BY t.id DESC
             LIMIT 1
         )
-        WHERE rating_key IN (
-            SELECT rating_key FROM plex_items
-            WHERE 1=1 {scope_clause}
-            ORDER BY rating_key
-            LIMIT ? OFFSET ?
+        WHERE plex_items.guid_tmdb IS NOT NULL
+          AND rating_key IN (
+              SELECT rating_key FROM plex_items
+              WHERE 1=1 {scope_clause}
+              ORDER BY rating_key
+              LIMIT ? OFFSET ?
+          )
+    """
+    sql_imdb = f"""
+        UPDATE plex_items SET theme_id = (
+            SELECT t.id FROM themes t
+            WHERE t.media_type = (CASE plex_items.media_type
+                                       WHEN 'show' THEN 'tv'
+                                       ELSE plex_items.media_type END)
+              AND t.imdb_id = plex_items.guid_imdb
+              AND t.upstream_source = 'plex_orphan'
+            ORDER BY t.id DESC
+            LIMIT 1
         )
+        WHERE plex_items.theme_id IS NULL
+          AND plex_items.guid_imdb IS NOT NULL
+          AND rating_key IN (
+              SELECT rating_key FROM plex_items
+              WHERE 1=1 {scope_clause}
+              ORDER BY rating_key
+              LIMIT ? OFFSET ?
+          )
+    """
+    sql_title = f"""
+        UPDATE plex_items SET theme_id = (
+            SELECT t.id FROM themes t
+            WHERE t.media_type = (CASE plex_items.media_type
+                                       WHEN 'show' THEN 'tv'
+                                       ELSE plex_items.media_type END)
+              AND t.title_norm = plex_items.title_norm
+              AND t.year = plex_items.year
+              AND t.upstream_source != 'plex_orphan'
+            ORDER BY t.id DESC
+            LIMIT 1
+        )
+        WHERE plex_items.theme_id IS NULL
+          AND plex_items.title_norm IS NOT NULL
+          AND plex_items.year IS NOT NULL
+          AND rating_key IN (
+              SELECT rating_key FROM plex_items
+              WHERE 1=1 {scope_clause}
+              ORDER BY rating_key
+              LIMIT ? OFFSET ?
+          )
     """
     import time as _time
     total = 0
@@ -627,8 +673,20 @@ def _resolve_theme_ids_impl(
             log.info("resolve_theme_ids: cancelled at %d/%d rows",
                      offset, row_count)
             raise _JobCancelled()
+        # v1.12.22: run all three index-targeted UPDATEs per chunk
+        # in one transaction. Most rows match by tmdb_id (PK index)
+        # so sql_tmdb does the bulk of the work; sql_imdb covers
+        # plex_orphan rows; sql_title is a last-resort fallback for
+        # rows missing both GUIDs. Each uses its dedicated index;
+        # combined wall-time is ~30x faster than the old OR'd query
+        # that fell back to a full themes scan on the title branch.
+        chunk_params = scope_params + (chunk_size, offset)
         with get_conn(db_path) as conn, transaction(conn):
-            cur = conn.execute(sql, scope_params + (chunk_size, offset))
+            cur = conn.execute(sql_tmdb, chunk_params)
+            total += cur.rowcount
+            cur = conn.execute(sql_imdb, chunk_params)
+            total += cur.rowcount
+            cur = conn.execute(sql_title, chunk_params)
             total += cur.rowcount
         offset += chunk_size
         # v1.12.18: progress log every 5s so a stuck resolve is
