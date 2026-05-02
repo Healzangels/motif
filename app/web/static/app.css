@@ -512,7 +512,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .col-state { width: 40px; text-align: center; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 260px; text-align: right; }
-.col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
+/* v1.12.0: explicit text-align: left so the IMDB header doesn't
+   inherit the browser-default center alignment for <th> while the
+   <td> data cells stay left-aligned (which made the column look
+   visually offset). */
+.col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
