@@ -512,11 +512,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .col-state { width: 40px; text-align: center; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 260px; text-align: right; }
-/* v1.12.0: explicit text-align: left so the IMDB header doesn't
-   inherit the browser-default center alignment for <th> while the
-   <td> data cells stay left-aligned (which made the column look
-   visually offset). */
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
+/* v1.12.3: header text for IMDB / ACTIONS gets centered to match
+   the YEAR / SRC / DL / PL / LINK headers (which are centered via
+   .col-state / .col-year). Data cells keep their content alignment
+   (left for IMDB tt-IDs, right for the actions menu) so the body
+   layout is unchanged — only the header text label is recentered.
+   Pre-fix v1.12.0 anchored both headers and data to the cell
+   start/end, so the headers visually broke from the rest of the
+   row. */
+th.col-imdb,
+th.col-actions { text-align: center; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }

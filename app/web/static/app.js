@@ -132,6 +132,28 @@
     return fourk ? `4K ${tabName}` : tabName;
   }
 
+  // v1.12.3: derive a human label for the active plex_enum scope
+  // from the per-tab/variant active map. Used in the topbar status
+  // text so the user sees WHICH library is currently being scanned
+  // ("SYNCING 4K MOVIES" instead of generic "SYNCING WITH PLEX").
+  // Iterates the active map deterministically (movies → tv → anime,
+  // standard → fourk) so multi-section scans surface the
+  // first-active scope; once that section finishes, the next poll
+  // picks up the next-active one.
+  function activePlexEnumScopeLabel(active) {
+    if (!active) return null;
+    const tabOrder = ['movies', 'tv', 'anime'];
+    const tabName = { movies: 'MOVIES', tv: 'TV SHOWS', anime: 'ANIME' };
+    for (const tab of tabOrder) {
+      const v = active[tab];
+      if (!v) continue;
+      if (v.standard && v.fourk) return `${tabName[tab]} + 4K ${tabName[tab]}`;
+      if (v.fourk) return `4K ${tabName[tab]}`;
+      if (v.standard) return tabName[tab];
+    }
+    return null;
+  }
+
   // v1.11.48: optimistic topbar paint helper for sync/refresh click
   // handlers. /api/stats has a 1s TTL cache, so an immediate
   // refreshTopbarStatus right after enqueue often hits a stale
@@ -179,17 +201,25 @@
       // actually queued behind a different long-thread job), but
       // fall back to _in_flight when nothing's running so a
       // freshly-enqueued job lights the banner immediately.
+      // v1.12.3: scope-aware "SYNCING WITH PLEX" — appends "(4K MOVIES)"
+      // / "(ANIME)" / etc when we can identify which library is
+      // actually being scanned. Pre-fix the optimistic paint on
+      // click showed the scope briefly and then the periodic poll
+      // overwrote it with the generic "SYNCING WITH PLEX" because
+      // refreshTopbarStatus didn't build the scope label.
+      const plexScope = activePlexEnumScopeLabel(q.plex_enum_active);
+      const plexLabel = plexScope ? `SYNCING ${plexScope}` : 'SYNCING WITH PLEX';
       let txt;
       if (themerrdbRunning && plexEnumRunning) {
-        txt = 'SYNCING THEMERRDB + PLEX';
+        txt = `SYNCING THEMERRDB + ${plexScope || 'PLEX'}`;
       } else if (themerrdbRunning) {
         txt = 'SYNCING WITH THEMERRDB';
       } else if (plexEnumRunning) {
-        txt = 'SYNCING WITH PLEX';
+        txt = plexLabel;
       } else if (themerrdbBusy) {
         txt = 'SYNCING WITH THEMERRDB';
       } else if (plexEnumBusy) {
-        txt = 'SYNCING WITH PLEX';
+        txt = plexLabel;
       } else if (downloadBusy) {
         txt = `DOWNLOADING ${q.download_in_flight}`;
       } else if (placeBusy) {
