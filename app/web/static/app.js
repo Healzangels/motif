@@ -2557,10 +2557,12 @@
     // shows the manual rows that have a TDB alternative for REPLACE).
     tdb: "any",
     // v1.11.66: SRC letter filter (T / U / A / M / P / -). Empty
-    // string = no filter. Applied client-side to the current page
-    // after render, so total/pagination still reflect the underlying
-    // status+tdb filters.
-    srcFilter: "",
+    // v1.11.89: multi-select Set of SRC letters (T/U/A/M/P/-) the user
+    // wants to keep visible. Empty Set = no filter (show all). Click a
+    // legend button to toggle that letter; CLEAR empties the set. Pure
+    // client-side: pagination/total reflect the underlying status+tdb
+    // pass.
+    srcFilter: new Set(),
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2684,12 +2686,13 @@
       // pagination (those still reflect the underlying status+tdb
       // counts the user can read at the top of the page).
       let displayItems = dedupedItems;
-      if (libraryState.srcFilter) {
+      if (libraryState.srcFilter.size > 0) {
         displayItems = dedupedItems.filter(
-          (it) => computeSrcLetter(it) === libraryState.srcFilter
+          (it) => libraryState.srcFilter.has(computeSrcLetter(it))
         );
         if (displayItems.length === 0) {
-          tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match SRC = ${htmlEscape(libraryState.srcFilter)} on this page (filter applies to the current page; click CLEAR or another SRC letter to broaden)</td></tr>`;
+          const sel = Array.from(libraryState.srcFilter).join(' / ');
+          tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match SRC ∈ {${htmlEscape(sel)}} on this page (filter applies to the current page; click CLEAR or toggle another SRC letter to broaden)</td></tr>`;
         } else {
           tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
         }
@@ -3654,20 +3657,21 @@
       document.querySelectorAll('[data-src-filter]').forEach((b) => {
         b.addEventListener('click', () => {
           const want = b.dataset.srcFilter;
-          // Empty string === CLEAR. Same letter clicked again ===
-          // toggle off.
+          // v1.11.89: multi-select. Empty string = CLEAR (drop all
+          // selections); a letter = toggle membership in the set.
           if (!want) {
-            libraryState.srcFilter = "";
-          } else if (libraryState.srcFilter === want) {
-            libraryState.srcFilter = "";
+            libraryState.srcFilter.clear();
+          } else if (libraryState.srcFilter.has(want)) {
+            libraryState.srcFilter.delete(want);
           } else {
-            libraryState.srcFilter = want;
+            libraryState.srcFilter.add(want);
           }
-          // Repaint active styling on the legend
+          // Repaint active styling on the legend — every letter in
+          // the set lights up, CLEAR is never "active" (it's an
+          // action, not a state).
           document.querySelectorAll('[data-src-filter]').forEach((x) => {
             const xVal = x.dataset.srcFilter;
-            const active = !!libraryState.srcFilter
-              && xVal === libraryState.srcFilter;
+            const active = !!xVal && libraryState.srcFilter.has(xVal);
             x.classList.toggle('src-key-btn-active', active);
           });
           loadLibrary().catch(console.error);

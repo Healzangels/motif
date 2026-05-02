@@ -55,30 +55,30 @@
 <section class="filterbar">
   <input type="text" id="library-search" placeholder="search title or imdb id…"
          class="input" autocomplete="off" />
+  <!-- v1.11.89: trimmed THEMERRDB / MANUAL / PLEX AGENT — the SRC
+       legend below is now multi-select and covers source-based
+       filtering (toggle T+U+A+M+P, just T, etc). What's left is the
+       motif-state axis: VIEW (ALL/HAS THEME/UNTRACKED) · DONE
+       (DOWNLOADED/PLACED/UNPLACED) · ATTN (DL MISSING/UPDATES/
+       FAILURES/THEMERRDB ONLY). -->
   <div class="chips" role="tablist">
     <span class="chip-group">
       <button class="chip chip-active" data-status="all" title="every Plex item in this tab">ALL</button>
-      <button class="chip" data-status="has_theme" title="items with any theme source — ThemerrDB / manual / sidecar / Plex agent / downloaded">HAS THEME</button>
-    </span>
-    <span class="chip-sep" aria-hidden="true">·</span>
-    <span class="chip-group">
-      <button class="chip" data-status="themed" title="items with a ThemerrDB record (motif can fetch a theme automatically)">THEMERRDB</button>
-      <button class="chip" data-status="manual" title="items where the theme is user-driven: motif-managed manual upload/URL, or a sidecar theme.mp3 motif doesn't own yet">MANUAL</button>
-      <button class="chip" data-status="plex_agent" title="Plex's agent has a theme but motif doesn't manage it (cloud / agent-supplied)">PLEX AGENT</button>
+      <button class="chip" data-status="has_theme" title="items with any theme source — ThemerrDB / manual / sidecar / Plex agent / downloaded (the 'covered' view)">HAS THEME</button>
       <button class="chip" data-status="untracked" title="no theme anywhere — no ThemerrDB record, no Plex theme, no sidecar">UNTRACKED</button>
     </span>
     <span class="chip-sep" aria-hidden="true">·</span>
     <span class="chip-group">
       <button class="chip" data-status="downloaded" title="motif has the theme file locally (whether or not it's been placed into the Plex folder)">DOWNLOADED</button>
-      <button class="chip" data-status="placed" title="motif's theme is currently sitting in the Plex media folder — Plex is playing it">IN PLEX FOLDER</button>
-      <button class="chip" data-status="unplaced" title="motif has the file downloaded but not in the Plex folder yet (typically waiting on placement approval)">READY TO PLACE</button>
-      <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
+      <button class="chip" data-status="placed" title="motif's theme is currently sitting in the Plex media folder — Plex is playing it">PLACED</button>
+      <button class="chip" data-status="unplaced" title="motif has the file downloaded but not in the Plex folder yet (typically waiting on placement approval)">UNPLACED</button>
     </span>
     <span class="chip-sep" aria-hidden="true">·</span>
     <span class="chip-group">
-      <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
+      <button class="chip chip-warn" data-status="dl_missing" title="canonical /themes copy was deleted, but the placement in the Plex folder is still there — use RESTORE FROM PLEX to recover">DL MISSING</button>
       <button class="chip chip-warn" data-status="updates" title="ThemerrDB upstream changed the YouTube URL on items motif already manages — review with ACCEPT (replace with new TDB download) or KEEP (leave current theme alone)">UPDATES</button>
       <button class="chip chip-warn" data-status="failures" title="ThemerrDB items where the last download failed (cookies expired, video removed, etc.)">FAILURES</button>
+      <button class="chip" data-status="not_in_plex" title="ThemerrDB has this title but you don't own it in your Plex library — informational only">THEMERRDB ONLY</button>
     </span>
   </div>
   <!-- v1.10.20: secondary TDB-match filter, stacks on the status chip
@@ -96,33 +96,34 @@
   </div>
 </section>
 
-<!-- v1.11.66: SRC legend now click-to-filter. Each badge is a button
-     that toggles a src-letter filter on top of whatever status / TDB
-     chips are already active. Pure client-side: pagination/total still
-     reflect the underlying status+tdb pass; the SRC filter narrows the
-     visible page only. CLEAR resets. -->
-<div class="src-key-compact" aria-label="SRC column legend (click to filter)">
+<!-- v1.11.66: SRC legend = click-to-filter on the SRC column.
+     v1.11.89: now multi-select — click multiple letters to widen
+     the filter (T+U shows both T-source and U-source rows). Click
+     an active letter again to remove it from the set. Pure
+     client-side: pagination/total still reflect the underlying
+     status+tdb pass; SRC narrows the visible page only. -->
+<div class="src-key-compact" aria-label="SRC column legend (click to filter; multi-select)">
   <span class="src-key-label muted small">SRC:</span>
   <button type="button" class="link-badge link-badge-themerrdb src-key-btn"
           data-src-filter="T"
-          title="ThemerrDB — motif downloads from upstream and manages the file. Click to filter to T-source rows.">T</button>
+          title="ThemerrDB — motif downloads from upstream and manages the file. Click to toggle T-source rows in the filter.">T</button>
   <button type="button" class="link-badge link-badge-user src-key-btn"
           data-src-filter="U"
-          title="User-managed — manual YouTube URL or UI upload. Click to filter to U-source rows.">U</button>
+          title="User-managed — manual YouTube URL or UI upload. Click to toggle U-source rows in the filter.">U</button>
   <button type="button" class="link-badge link-badge-adopt src-key-btn"
           data-src-filter="A"
-          title="Adopted — motif claimed an existing theme.mp3 from the Plex folder. Click to filter to A-source rows.">A</button>
+          title="Adopted — motif claimed an existing theme.mp3 from the Plex folder. Click to toggle A-source rows in the filter.">A</button>
   <button type="button" class="link-badge link-badge-manual src-key-btn"
           data-src-filter="M"
-          title="Manual sidecar — theme.mp3 at the Plex folder that motif doesn't manage. ADOPT to claim it. Click to filter to M-source rows.">M</button>
+          title="Manual sidecar — theme.mp3 at the Plex folder that motif doesn't manage. ADOPT to claim it. Click to toggle M-source rows in the filter.">M</button>
   <button type="button" class="link-badge link-badge-cloud src-key-btn"
           data-src-filter="P"
-          title="Plex agent / cloud — Plex supplies its own theme; no local file. Click to filter to P-source rows.">P</button>
+          title="Plex agent / cloud — Plex supplies its own theme; no local file. Click to toggle P-source rows in the filter.">P</button>
   <button type="button" class="link-badge src-key-btn src-key-btn-none"
           data-src-filter="-"
-          title="No theme anywhere — eligible for TDB / SET URL / UPLOAD MP3 / ADOPT. Click to filter to no-source rows.">—</button>
+          title="No theme anywhere — eligible for TDB / SET URL / UPLOAD MP3 / ADOPT. Click to toggle no-source rows in the filter.">—</button>
   <button type="button" class="src-key-clear muted small" data-src-filter=""
-          title="Clear the SRC filter">CLEAR</button>
+          title="Clear all SRC filter selections">CLEAR</button>
 </div>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
