@@ -234,18 +234,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    ⓘ glowing; same on the dialog's × close). :focus-visible only
    matches when the focus came from the keyboard, so mouse-driven
    focus stops painting and keyboard accessibility stays intact. */
+/* v1.11.92 / v1.11.98: strip the default focus outline + box-shadow
+   on all interactive primitives, EXCEPT when the element is also
+   .src-key-btn-active. SRC legend buttons carry both .link-badge
+   and .src-key-btn — v1.11.92 only excepted the .src-key-btn rule
+   and missed .link-badge, so the latter still stripped box-shadow
+   on focus and the cyan active glow only appeared once focus
+   moved away (next click anywhere). The :not() now applies to
+   every selector that might match a SRC button. */
 .btn:focus,
 .dlg-close:focus,
 .title-glyph:focus,
 .chip:focus,
-.link-badge:focus,
-/* v1.11.92: :not(.src-key-btn-active) so the active cyan box-shadow
-   isn't stripped while the button is focused right after click.
-   Without this, clicking a SRC letter applied the filter but the
-   glow didn't appear until the button lost focus (i.e. the user
-   clicked somewhere else). The class-on-pseudoclass selector below
-   would otherwise outrank the .src-key-btn-active rule on
-   specificity. */
+.link-badge:focus:not(.src-key-btn-active),
 .src-key-btn:focus:not(.src-key-btn-active),
 .src-key-clear:focus { outline: none; box-shadow: none; }
 .btn:focus-visible,
