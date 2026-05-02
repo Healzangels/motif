@@ -60,6 +60,12 @@ class Settings:
         self._config_file = ConfigFile(self._config_dir / "motif.yaml")
         self._lock = threading.RLock()
         self._cfg: MotifConfig = self._config_file.load()
+        # v1.11.94: monotonic counter bumped on every save/reload so
+        # consumers caching computed state (e.g. the worker's
+        # FolderIndex) can detect that settings have changed and
+        # invalidate. Cheap to read; no IPC required since worker +
+        # API share this Settings instance in-process.
+        self._revision: int = 0
 
     # ---- Config file passthrough ----
 
@@ -77,6 +83,7 @@ class Settings:
         new = self._config_file.load()
         with self._lock:
             self._cfg = new
+            self._revision += 1
         return new
 
     def save(self, cfg: MotifConfig, *, updated_by: str) -> None:
@@ -84,6 +91,14 @@ class Settings:
         self._config_file.save(cfg, updated_by=updated_by)
         with self._lock:
             self._cfg = self._config_file.load()  # re-read so env overrides re-apply
+            self._revision += 1
+
+    @property
+    def revision(self) -> int:
+        """v1.11.94: monotonic counter bumped on every save/reload.
+        Consumers cache against this value to detect setting changes."""
+        with self._lock:
+            return self._revision
 
     def env_overrides(self) -> dict[str, str]:
         return env_overrides_present()

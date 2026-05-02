@@ -129,6 +129,13 @@ class Worker:
     # current download/place job — no more cross-section confusion.
     _folder_index_by_section: dict[str, FolderIndex] | None = None
     _index_built_at: float = 0.0
+    # v1.11.94: settings revision the cache was built against. Any
+    # divergence from settings.revision means a settings save/reload
+    # happened — bust the cache so the next placement uses the new
+    # plex_sections / plus_equiv_mode / etc. Without this, the user
+    # could enable a section, kick a placement, and have it use the
+    # pre-enable section list for up to the 5-min TTL.
+    _index_settings_revision: int = -1
 
     def __post_init__(self):
         # Stale after 5 minutes — rebuilt on demand
@@ -143,9 +150,12 @@ class Worker:
         thousand back-to-back place jobs in the same section reuse one
         index, but the next section starts clean."""
         now = time.monotonic()
-        if now - self._index_built_at > self._index_ttl:
+        cur_rev = self.settings.revision
+        if (now - self._index_built_at > self._index_ttl
+                or cur_rev != self._index_settings_revision):
             self._folder_index_by_section = {}
             self._index_built_at = now
+            self._index_settings_revision = cur_rev
         cached = self._folder_index_by_section.get(section_id) if self._folder_index_by_section else None
         if cached is not None:
             return cached
