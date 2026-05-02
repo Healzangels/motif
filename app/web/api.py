@@ -616,15 +616,15 @@ def _library_not_in_plex(
     renderer treats them as just-another-row, with not_in_plex=1 driving
     the distinct visual treatment.
 
-    Anime tab returns empty — themes table has no anime signal so we
-    can't tell which ThemerrDB rows would belong there.
+    v1.12.10: anime tab now mirrors the TV path. ThemerrDB doesn't
+    distinguish anime from regular TV (it tracks the same TVDB/TMDB
+    show records), so the TDB-only browse for anime IS the TDB-only
+    browse for TV. The "exists in any Plex section" check at the
+    bottom naturally excludes shows the user already owns under
+    their anime section, so the user sees a curated "anime/TV TDB
+    has but I don't" list. Pre-fix the anime tab early-returned
+    empty, which made the v1.12.6 faded-T pill useless on /anime.
     """
-    if tab == "anime":
-        return {"total": 0, "missing_count": 0,
-                "page": page, "per_page": per_page,
-                "tab": tab, "fourk": fourk, "items": [],
-                "plex_enumerated": True, "plex_scan_stale": False,
-                "last_plex_enum_at": None, "last_sync_at": None}
     media_type = "movie" if tab == "movies" else "tv"
     plex_media_type = "movie" if tab == "movies" else "show"
     # v1.10.55: drop the per-tab section-flag filter (is_anime/is_4k)
