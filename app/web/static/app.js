@@ -702,7 +702,7 @@
           : '';
         const actions = it.pending_update
           ? `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="open the per-item dialog with full theme details, history and available actions">DETAILS</button>
-             <button class="btn btn-tiny btn-warn" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="apply the new ThemerrDB URL — re-downloads from the new YouTube source and overwrites motif's current theme file">ACCEPT</button>
+             <button class="btn btn-tiny btn-info" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="apply the new ThemerrDB URL — re-downloads from the new YouTube source and overwrites motif's current theme file">ACCEPT</button>
              <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="ignore this update — the ↑ glyph clears and your existing theme stays in place">KEEP</button>
              ${deleteBtn}`
           : `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="open the per-item dialog with full theme details, history and available actions">DETAILS</button>
@@ -3006,6 +3006,13 @@
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
         return ` <span class="tdb-pill tdb-pill-dead" title="Reason: ${htmlEscape(why)}${detail}&#10;&#10;Recovery options:&#10;  • SOURCE → SET URL to provide a working YouTube URL&#10;  • SOURCE → UPLOAD MP3 to upload a local audio file&#10;  • drop a theme.mp3 sidecar in the Plex folder, then SOURCE → ADOPT&#10;&#10;The TDB pill stays red so you remember the upstream URL is broken.">TDB ✗</span>`;
       }
+      // v1.11.96: pending-update state takes precedence over the
+      // generic green TDB pill so the user can scan the library page
+      // and immediately see which rows have an upstream URL update
+      // available. Blue ties to the ↑ glyph and the UPDATES filter.
+      if (it.pending_update) {
+        return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB has a new YouTube URL for this theme — review with ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu, or click the ↑ to filter the tab to all updates">TDB ↑</span>';
+      }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
     })();
 
@@ -3068,8 +3075,12 @@
       //   cloud     = P (amber)
       // Falls back to the existing danger / warn / plain styling.
       const tone = extras.tone ? ` lib-source-${extras.tone}` : '';
+      // v1.11.96: extras.info = blue "informational action" variant
+      // for ACCEPT UPDATE (matches .chip-info / .tdb-pill-update /
+      // .title-glyph-update). danger > warn > info > plain.
       const cls = extras.danger ? `btn btn-tiny btn-danger${tone}`
                 : extras.warn   ? `btn btn-tiny btn-warn${tone}`
+                : extras.info   ? `btn btn-tiny btn-info${tone}`
                 :                 `btn btn-tiny${tone}`;
       // v1.10.34: extras.bypassLock lets actions like PUSH TO PLEX
       // remain clickable when the row is awaitingApproval (downloaded
@@ -3193,7 +3204,7 @@
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
         'replace motif\'s current theme with a fresh download from the new ThemerrDB URL',
-        { mt: themeMt, id: themeId, warn: true, tone: 'themerrdb' },
+        { mt: themeMt, id: themeId, info: true, tone: 'themerrdb' },
       ));
       sourceItems.push(menuItemHtml(
         'decline-update', 'KEEP CURRENT',
