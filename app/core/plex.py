@@ -476,6 +476,13 @@ class PlexClient:
             params = {
                 "type": type_id,
                 "includeGuids": "1",
+                # v1.11.82: shows have no Part children at the section
+                # level — their on-disk path is on a <Location> child of
+                # the Directory element. Plex omits those by default;
+                # without this flag motif stores folder_path='' for
+                # every show, which kills sidecar (M) detection across
+                # the entire TV/anime library.
+                "includeLocations": "1",
                 "X-Plex-Container-Start": str(offset),
                 "X-Plex-Container-Size": str(page_size),
             }
