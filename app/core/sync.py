@@ -197,10 +197,19 @@ def _upsert_theme(
             # handles things like "(500) Days of Summer" vs "500 Days of
             # Summer" or roman-numeral / word-number variations that exact
             # case-insensitive comparison would miss.
+            # v1.11.93: ORDER BY id ASC so the candidate set is
+            # iterated in a stable insert-order. Without it SQLite is
+            # free to return rows in any order, which means two sync
+            # runs against an unchanged DB could pick *different*
+            # orphans to promote when more than one matches (rare but
+            # possible: same title+year duplicated across sections).
+            # Picking deterministically also makes log replay /
+            # debug reproducible.
             orphan_candidates = conn.execute(
                 """SELECT id, tmdb_id, title FROM themes
                    WHERE upstream_source = 'plex_orphan'
-                     AND media_type = ? AND year = ?""",
+                     AND media_type = ? AND year = ?
+                   ORDER BY id ASC""",
                 (media_type, year),
             ).fetchall()
             for cand in orphan_candidates:
