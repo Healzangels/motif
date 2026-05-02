@@ -234,7 +234,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .title-glyph:focus,
 .chip:focus,
 .link-badge:focus,
-.src-key-btn:focus,
+/* v1.11.92: :not(.src-key-btn-active) so the active cyan box-shadow
+   isn't stripped while the button is focused right after click.
+   Without this, clicking a SRC letter applied the filter but the
+   glow didn't appear until the button lost focus (i.e. the user
+   clicked somewhere else). The class-on-pseudoclass selector below
+   would otherwise outrank the .src-key-btn-active rule on
+   specificity. */
+.src-key-btn:focus:not(.src-key-btn-active),
 .src-key-clear:focus { outline: none; box-shadow: none; }
 .btn:focus-visible,
 .dlg-close:focus-visible,
