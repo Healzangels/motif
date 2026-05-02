@@ -227,11 +227,53 @@
       } else if (scanBusy) {
         txt = 'SCANNING DISK';
       } else if ((q.running || 0) > 0 || (q.pending || 0) > 0) {
-        txt = `${q.running || 0}R / ${q.pending || 0}P`;
+        // v1.12.15: friendlier label when nothing's actively running
+        // but the queue isn't empty — the most common case is
+        // post-place refresh nudges with a 30s delay before they
+        // pick up. Surface what's actually queued instead of the
+        // cryptic "0R / 1P".
+        const refresh = q.refresh_in_flight || 0;
+        const dl = q.download_in_flight || 0;
+        const pl = q.place_in_flight || 0;
+        if (refresh > 0 && refresh === (q.pending || 0) + (q.running || 0)) {
+          txt = `REFRESH PENDING · ${refresh}`;
+        } else if (dl > 0) {
+          txt = `DOWNLOAD QUEUED · ${dl}`;
+        } else if (pl > 0) {
+          txt = `PLACE QUEUED · ${pl}`;
+        } else {
+          txt = `QUEUED · ${q.running || 0}R / ${q.pending || 0}P`;
+        }
       } else {
         txt = 'IDLE';
       }
       $('#topbar-status-text').textContent = txt;
+      // v1.12.15: dot + status-text tooltip so the amber dot isn't
+      // mute. Breaks down what's actually queued / running so the
+      // user can see whether the activity is meaningful work
+      // (download / place) or just the post-place refresh nudge
+      // (which sits at "pending" for ~30s by design — see
+      // _do_place's delayed-refresh schedule in worker.py).
+      const tipParts = [];
+      if (themerrdbBusy) tipParts.push(`ThemerrDB sync: ${q.themerrdb_sync_in_flight}`);
+      if (plexEnumBusy) tipParts.push(`Plex enum: ${q.plex_enum_in_flight}`);
+      if (downloadBusy) tipParts.push(`download: ${q.download_in_flight}`);
+      if (placeBusy) tipParts.push(`place: ${q.place_in_flight}`);
+      if (scanBusy) tipParts.push(`scan: ${q.scan_in_flight}`);
+      if ((q.refresh_in_flight || 0) > 0) {
+        tipParts.push(`refresh: ${q.refresh_in_flight} (Plex metadata nudge, post-place delay ~30s)`);
+      }
+      const queueTip = tipParts.length
+        ? `In flight:\n  • ${tipParts.join('\n  • ')}\n\nClick LOGS for details.`
+        : ((q.failed || 0) > 0
+            ? `${q.failed} failed job(s) — click to review on LOGS`
+            : 'idle');
+      const dotEl = $('#topbar-status .dot');
+      if (dotEl && (q.failed || 0) === 0) {
+        // failures-tip already wired below — only override when no
+        // failures (failures-tooltip wins on click affordance).
+        dotEl.title = queueTip;
+      }
       const dot = $('#topbar-status .dot');
       dot.classList.remove('dot-amber', 'dot-red');
       const anyActive = themerrdbBusy || plexEnumBusy || downloadBusy

@@ -1100,6 +1100,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type = 'scan'
                      AND status IN ('pending','running')) AS scan_in_flight,
+                  -- v1.12.15: refresh jobs (Plex metadata nudge enqueued
+                  -- post-place with a 30s next_run_at delay) also count
+                  -- toward "something is queued" — the topbar tooltip
+                  -- breaks them out so the user sees what's actually
+                  -- waiting instead of a generic amber dot.
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'refresh'
+                     AND status IN ('pending','running')) AS refresh_in_flight,
                   -- Local files with no placement = items waiting placement
                   -- approval (typically because a sidecar already exists at
                   -- the Plex folder; user must approve overwrite via /pending).
@@ -1274,6 +1282,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "download_in_flight": row["download_in_flight"],
                 "place_in_flight": row["place_in_flight"],
                 "scan_in_flight": row["scan_in_flight"],
+                "refresh_in_flight": row["refresh_in_flight"],
                 "pending_placements": row["pending_placements"],
                 # v1.11.27: per-tab and per-section enum activity for
                 # granular UI button locking.
