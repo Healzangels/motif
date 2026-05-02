@@ -974,7 +974,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE p.placement_kind = 'copy') AS storage_copies_bytes,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
-                  (SELECT COUNT(*) FROM jobs WHERE status = 'failed') AS failed,
+                  (SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND acked_at IS NULL) AS failed,
                   (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total
             """).fetchone()
@@ -1061,7 +1061,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE p.placement_kind = 'copy') AS storage_copies_bytes,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
-                  (SELECT COUNT(*) FROM jobs WHERE status = 'failed') AS failed,
+                  (SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND acked_at IS NULL) AS failed,
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type IN ('sync','plex_enum')
                      AND status IN ('pending','running')) AS sync_in_flight,
@@ -4430,22 +4430,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_clear_failed_jobs(
         request: Request, db: Path = Depends(get_db_path),
     ):
-        """v1.11.73: dismiss every job currently in status='failed'.
-        Pure queue cleanup — file/DB state for the underlying items
-        is unaffected. Used by the /queue page's CLEAR FAILED button
-        and the topbar red-dot-click shortcut.
+        """v1.11.73 / v1.12.12: acknowledge every unacked failed
+        job. Pre-1.12.12 this hard-deleted the rows, throwing away
+        the historical record of what failed. Now it stamps
+        jobs.acked_at so the row stays put — renders in green
+        ('ACKNOWLEDGED'), drops out of the topbar failure count,
+        but stays filterable / sortable for later review.
         """
         _require_admin(request)
         with get_conn(db) as conn:
             cur = conn.execute(
-                "DELETE FROM jobs WHERE status = 'failed'"
+                "UPDATE jobs SET acked_at = ? "
+                "WHERE status = 'failed' AND acked_at IS NULL",
+                (now_iso(),),
             )
             cleared = cur.rowcount or 0
         log_event(db, level="INFO", component="api",
-                  message=f"Cleared {cleared} failed job(s) by "
+                  message=f"Acknowledged {cleared} failed job(s) by "
                           f"{request.state.principal.username}",
-                  detail={"cleared": cleared})
-        return {"ok": True, "cleared": cleared}
+                  detail={"acknowledged": cleared})
+        return {"ok": True, "acknowledged": cleared}
 
     @app.get("/api/events")
     async def api_events(

@@ -189,7 +189,13 @@ CREATE TABLE IF NOT EXISTS jobs (
     -- sections / pages, etc.) and bail with status='cancelled' on
     -- the next check. Pending jobs flip straight to 'cancelled'
     -- without ever running.
-    cancel_requested INTEGER NOT NULL DEFAULT 0
+    cancel_requested INTEGER NOT NULL DEFAULT 0,
+    -- v1.12.12: non-destructive CLEAR FAILED on the /logs page.
+    -- When set, the job stays in status='failed' but renders as
+    -- 'ACKNOWLEDGED' (green) and drops out of the topbar failure
+    -- count. Lets the user keep failure history for review without
+    -- the dot staying red forever.
+    acked_at        TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status, next_run_at);
@@ -409,7 +415,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -816,6 +822,23 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v9 (plex_items.local_theme_file)")
     conn.executescript(
         "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
+def _migrate_v22_to_v23(conn: sqlite3.Connection) -> None:
+    """v23 adds jobs.acked_at — non-destructive 'CLEAR FAILED' on the
+    /logs page (v1.12.12).
+
+    Pre-fix CLEAR FAILED ran `DELETE FROM jobs WHERE status='failed'`
+    which threw away the historical record of failures. Now CLEAR
+    FAILED instead stamps jobs.acked_at and the row stays put — it
+    renders in green ('ACKNOWLEDGED') instead of red, drops out of
+    the "failed" topbar count, but is still filterable / sortable
+    so the user can review what failed in the past.
+    """
+    log.info("Migrating to schema v23 (jobs.acked_at)")
+    conn.executescript(
+        "ALTER TABLE jobs ADD COLUMN acked_at TEXT;"
     )
 
 
@@ -1281,6 +1304,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 21:
                     _migrate_v21_to_v22(conn)
                     current = 22
+                elif current == 22:
+                    _migrate_v22_to_v23(conn)
+                    current = 23
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

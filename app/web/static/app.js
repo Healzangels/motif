@@ -1385,12 +1385,26 @@
         : (cancellable
             ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" title="cancel this job (running jobs bail at the next safe yield)">× CANCEL</button>`
             : '');
+      // v1.12.12: failed + acked rows render in green ('ACKNOWLEDGED')
+      // — they're historical records of failures the user has seen
+      // and dismissed. Still status='failed' under the hood so the
+      // FAILED filter chip surfaces them; the visual state just
+      // de-emphasizes them next to live failures.
+      const isAckedFail = j.status === 'failed' && j.acked_at;
+      const stateLevel = isAckedFail ? 'INFO'
+                       : j.status === 'failed' ? 'ERROR'
+                       : j.status === 'running' ? 'WARNING'
+                       : 'INFO';
+      const stateLabel = isAckedFail ? 'failed (acknowledged)' : j.status;
+      const stateTip = isAckedFail
+        ? `acknowledged at ${fmt.time(j.acked_at)} — kept for history; original error: ${(j.last_error || '').slice(0, 200)}`
+        : '';
       return `
       <tr>
         <td>${htmlEscape(j.id)}</td>
         <td>${htmlEscape(j.job_type)}</td>
         <td class="muted">${htmlEscape(j.media_type ?? '')} ${htmlEscape(j.tmdb_id ?? '')}</td>
-        <td><span class="event-level event-level-${j.status === 'failed' ? 'ERROR' : (j.status === 'running' ? 'WARNING' : 'INFO')}">${htmlEscape(j.status)}</span></td>
+        <td><span class="event-level event-level-${stateLevel}"${stateTip ? ` title="${htmlEscape(stateTip)}"` : ''}>${htmlEscape(stateLabel)}</span></td>
         <td class="muted">${htmlEscape(fmt.time(j.created_at))}</td>
         <td class="muted" title="${htmlEscape(j.last_error ?? '')}">${htmlEscape((j.last_error ?? '').slice(0, 60))}</td>
         <td>${actionCell}</td>
@@ -1405,8 +1419,11 @@
     // window.__motif_failed_count, set by refreshTopbarStatus.
     const clearBtn = document.getElementById('jobs-clear-failed-btn');
     if (clearBtn) {
+      // v1.12.12: gate on UNACKED failures only — already-acked
+      // failed rows are historical records, no need to surface
+      // CLEAR FAILED for them.
       const anyFailed = (window.__motif_failed_count || 0) > 0
-        || (data.jobs || []).some((j) => j.status === 'failed');
+        || (data.jobs || []).some((j) => j.status === 'failed' && !j.acked_at);
       clearBtn.style.display = anyFailed ? '' : 'none';
     }
 
