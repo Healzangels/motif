@@ -3269,9 +3269,11 @@
         const dlTip = downloaded
           ? `source from ${dlSource} and overwrite the existing canonical (the placement updates with it)`
           : `source from ${dlSource}; download and place into the Plex folder`;
-        const tdbLabel = (downloaded && !dlBroken) ? 'RE-DL TDB'
-                       : downloaded /* dlBroken */ ? 'DL TDB'
-                       : 'TDB DOWNLOAD';
+        // v1.12.9: VERB-first naming, no abbreviations — matches the
+        // rest of the menu (ACCEPT UPDATE / KEEP CURRENT / SET URL /
+        // UPLOAD MP3 / ADOPT / REVERT / ACK FAILURE).
+        const tdbLabel = (downloaded && !dlBroken) ? 'RE-DOWNLOAD TDB'
+                       : 'DOWNLOAD TDB';
         sourceItems.push(menuItemHtml(
           'redl', tdbLabel, dlTip,
           { mt: themeMt, id: themeId, tone: 'themerrdb' },
@@ -3372,7 +3374,7 @@
           ? "source from ThemerrDB; Plex's agent-supplied theme will be replaced (you'll be asked to confirm)"
           : "source from ThemerrDB; your manual theme will be replaced (you'll be asked to confirm)";
       sourceItems.push(menuItemHtml(
-        'replace-with-themerrdb', 'TDB REPLACE',
+        'replace-with-themerrdb', 'REPLACE TDB',
         replaceTip,
         { rk: it.rating_key, warn: true, tone: 'themerrdb' },
       ));
@@ -3606,11 +3608,24 @@
     if (stdBtn) stdBtn.style.display = av.standard ? '' : 'none';
     if (fkBtn)  fkBtn.style.display  = av.fourk    ? '' : 'none';
     // Auto-flip libraryState.fourk when only one variant exists.
+    // v1.12.9: persist the auto-flip outcome too so subsequent
+    // visits (including page reloads) start from the right place
+    // without waiting on /api/stats to land.
+    const persistVariant = () => {
+      try {
+        localStorage.setItem(
+          `motif:variant:${tab}`,
+          libraryState.fourk ? 'fourk' : 'standard',
+        );
+      } catch (_) { /* private mode / quota — fine */ }
+    };
     if (av.fourk && !av.standard && libraryState.fourk === false) {
       libraryState.fourk = true;
+      persistVariant();
       loadLibrary().catch(()=>{});
     } else if (av.standard && !av.fourk && libraryState.fourk === true) {
       libraryState.fourk = false;
+      persistVariant();
       loadLibrary().catch(()=>{});
     }
     // Sync chip-active + chip-label state. The 'sole variant' becomes
@@ -3779,10 +3794,45 @@
         document.querySelectorAll('[data-tdb]').forEach((x) =>
           x.classList.toggle('chip-active', x.dataset.tdb === wantTdb));
       }
+      // v1.12.9: deep-link to a TDB-pill multi-select. e.g. the
+      // failures badge in the topbar links here as
+      // ?tdb_pills=dead so the user lands on the library with the
+      // red TDB ✗ pill pre-applied. Comma-separated list of pill
+      // states (tdb / update / cookies / dead / none).
+      const wantTdbPills = sp.get('tdb_pills');
+      if (wantTdbPills) {
+        const validPills = new Set(['tdb','update','cookies','dead','none']);
+        wantTdbPills.split(',').map((s) => s.trim()).forEach((p) => {
+          if (validPills.has(p)) libraryState.tdbPills.add(p);
+        });
+        document.querySelectorAll('[data-tdb-pill]').forEach((x) => {
+          const xVal = x.dataset.tdbPill;
+          const active = !!xVal && libraryState.tdbPills.has(xVal);
+          x.classList.toggle('tdb-pill-btn-active', active);
+        });
+      }
       if (sp.get('fourk') === 'true' || sp.get('fourk') === '1') {
         libraryState.fourk = true;
         document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
           x.classList.toggle('chip-active', x.dataset.fourk === '1'));
+      } else {
+        // v1.12.9: no explicit ?fourk= override → fall back to the
+        // last variant the user picked on THIS tab. Persisted per-
+        // tab so movies/tv/anime each remember independently.
+        // adaptLibraryFourkToggle still wins when only one variant
+        // is enabled in settings (the auto-flip preserves the
+        // "only-4K-shows" case).
+        try {
+          const tabKey = (document.getElementById('library-tab') || {}).value;
+          if (tabKey) {
+            const saved = localStorage.getItem(`motif:variant:${tabKey}`);
+            if (saved === 'fourk') {
+              libraryState.fourk = true;
+              document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+                x.classList.toggle('chip-active', x.dataset.fourk === '1'));
+            }
+          }
+        } catch (_) { /* private mode / quota — fine */ }
       }
     } catch (_) { /* URLSearchParams not supported — skip */ }
 
@@ -3793,6 +3843,18 @@
           x.classList.remove('chip-active'));
         b.classList.add('chip-active');
         libraryState.fourk = b.dataset.fourk === '1';
+        // v1.12.9: persist per-tab variant choice. Next visit to this
+        // tab restores the same variant rather than defaulting back
+        // to standard. Cleared on logout naturally (localStorage).
+        try {
+          const tabKey = (document.getElementById('library-tab') || {}).value;
+          if (tabKey) {
+            localStorage.setItem(
+              `motif:variant:${tabKey}`,
+              libraryState.fourk ? 'fourk' : 'standard',
+            );
+          }
+        } catch (_) { /* private mode / quota — fine */ }
         libraryState.page = 1;
         loadLibrary().catch(console.error);
         // v1.11.84: REFRESH FROM PLEX is locked per-variant (standard
