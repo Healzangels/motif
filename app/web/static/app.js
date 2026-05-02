@@ -1016,27 +1016,22 @@
     // / ADOPT before any future placement.
     let warning;
     if (dlOnly && !isOrphan) {
-      warning = '\n\n⚠ WARNING — this row is DL-only (downloaded, not placed).'
-        + '\n\nMotif will delete the canonical at /data/media/themes/...'
-        + '\n\nAfter PURGE you CANNOT use PUSH TO PLEX to restore this theme.'
-        + '\nTo re-place, you must FIRST re-acquire the audio via one of:'
-        + '\n  • SOURCE → TDB (re-fetch from ThemerrDB)'
-        + '\n  • SOURCE → SET URL (provide a manual YouTube URL)'
-        + '\n  • SOURCE → UPLOAD MP3 (upload a local file)'
-        + '\n  • drop a theme.mp3 sidecar at the Plex folder and SOURCE → ADOPT';
+      warning = '\n\nDownloaded but not placed — motif will delete the canonical at /themes.'
+        + '\n\nAfter PURGE, PUSH TO PLEX is unavailable. To re-place, re-acquire via SOURCE:'
+        + '\n  • DOWNLOAD TDB — re-fetch from ThemerrDB'
+        + '\n  • SET URL — manual YouTube URL'
+        + '\n  • UPLOAD MP3 — upload a local file'
+        + '\n  • drop a sidecar at the Plex folder and use ADOPT';
     } else {
-      warning = '\n\nMotif will delete BOTH:'
-        + '\n  • the canonical at /data/media/themes/...'
-        + '\n  • the theme.mp3 in the Plex folder';
+      warning = '\n\nMotif will delete the canonical at /themes AND the theme.mp3 in the Plex folder.';
       if (isOrphan) {
-        warning += '\n\nThis is a user-provided / adopted entry — the themes row'
-          + ' will also be deleted; the file is gone. To restore, SET URL /'
-          + ' UPLOAD MP3, or drop a sidecar back at the Plex folder and ADOPT.';
+        warning += '\n\nUser-provided / adopted — the themes row is removed; the file is gone.'
+          + ' To restore: SET URL, UPLOAD MP3, or drop a sidecar and ADOPT.';
       } else {
-        warning += '\n\nIf ThemerrDB still tracks the title, the row will flip'
-          + ' back to —; DOWNLOAD becomes available in the SOURCE menu.';
+        warning += '\n\nIf ThemerrDB still tracks the title, the row flips to —;'
+          + ' DOWNLOAD TDB becomes available in the SOURCE menu.';
       }
-      warning += '\n\nUse UNMANAGE if you want to keep the Plex-folder file.';
+      warning += '\n\nUse UNMANAGE to keep the Plex-folder file.';
     }
     const ok = confirm(`Purge ${labelTitle}?${warning}\n\nThis cannot be undone.`);
     if (!ok) return;
@@ -1141,11 +1136,10 @@
 
   async function declineUpdate(mediaType, tmdbId, btn) {
     if (!confirm(
-        'Keep your current theme and ignore this update?\n\n' +
-        'The ↑ glyph clears, the row drops out of the UPDATES filter, ' +
-        'and your existing theme file stays exactly as it is. ThemerrDB ' +
-        'has to publish another change before you\'ll see another update ' +
-        'prompt for this title.')) return;
+        'Keep your current theme and dismiss this update?\n\n' +
+        'The topbar UPD count drops; the blue TDB ↑ pill stays so you can ' +
+        'still spot the row. Your theme file is unchanged. You\'ll see another ' +
+        'prompt only if ThemerrDB publishes a further URL change.')) return;
     if (btn) btn.disabled = true;
     try {
       await api('POST', `/api/updates/${mediaType}/${tmdbId}/decline`);
@@ -4437,21 +4431,15 @@
       const offPageSelected = libraryState.selected.size - onPageSelected;
       if (offPageSelected > 0) {
         const ok = confirm(
-          `${offPageSelected} of your selected rows aren't on the visible page;\n`
-          + `motif can't tell whether those are sidecar-only without\n`
-          + `re-fetching. Continue and ADOPT only the ${candidates.length}\n`
-          + `sidecar-only rows on this page?\n\n`
-          + `Tip: switch the filter to MANUAL to scope just sidecars.`
+          `${offPageSelected} selected row(s) aren't on the visible page; ADOPT will run on the ${candidates.length} sidecar-only rows on this page.\n\nTip: click the SRC M pill to scope to sidecars.`
         );
         if (!ok) return;
       }
       if (candidates.length === 0) {
-        alert('No sidecar-only rows in selection. ADOPT applies to rows '
-              + 'where Plex has a theme.mp3 but motif doesn\'t manage it (M badge).');
+        alert('No sidecar-only rows selected. ADOPT applies to rows showing the M pill (Plex has a theme.mp3 motif doesn\'t manage).');
         return;
       }
-      if (!confirm(`Adopt ${candidates.length} sidecar-only theme(s)?\n\n`
-                   + `Each will be hardlinked into /themes and managed by motif from now on.`)) return;
+      if (!confirm(`Adopt ${candidates.length} sidecar(s)? Each is hardlinked into /themes and managed by motif from now on.`)) return;
       const btn = e.currentTarget;
       btn.disabled = true;
       const orig = btn.textContent;
@@ -4492,9 +4480,7 @@
       const offPageSelected = libraryState.selected.size - onPageSelected;
       if (offPageSelected > 0) {
         const ok = confirm(
-          `${offPageSelected} of your selected rows aren't on the visible\n`
-          + `page; motif can't ack those without re-fetching. Continue\n`
-          + `and acknowledge only the ${candidates.length} on-page failures?`
+          `${offPageSelected} selected row(s) aren't on the visible page; ACK will run on the ${candidates.length} on-page failures.`
         );
         if (!ok) return;
       }
@@ -4502,9 +4488,7 @@
         alert('No unacknowledged failures in selection.');
         return;
       }
-      if (!confirm(`Acknowledge ${candidates.length} failure(s)?\n\n`
-                   + `The ! glyph and FAILURES membership clear.\n`
-                   + `Each row's TDB pill stays red — TDB's URL is still broken.`)) return;
+      if (!confirm(`Acknowledge ${candidates.length} failure(s)? The topbar FAIL count drops; the red TDB ✗ pill stays so the broken upstream is still visible on the row.`)) return;
       const btn = e.currentTarget;
       btn.disabled = true;
       const orig = btn.textContent;
@@ -4749,10 +4733,10 @@
           'video_age_restricted', 'geo_blocked',
         ]).has(it.failure_kind));
         const matchNote = !tdbTracked
-          ? "✗ No ThemerrDB record: your file becomes the source of truth (no TDB alternative)."
+          ? "No ThemerrDB record — your file is the source of truth."
           : tdbDead
-            ? "⚠ TMDB-matched but the YouTube URL is unavailable (video removed / private / restricted).\n  REPLACE w/ TDB won't work until ThemerrDB updates the URL — your file is effectively the source of truth."
-            : "✓ TMDB-matched: this title is in ThemerrDB. After adopt you'll be able to REPLACE w/ TDB later.";
+            ? "ThemerrDB tracks this title but the YouTube URL is broken (removed / private / restricted). REPLACE TDB stays unavailable until upstream updates."
+            : "ThemerrDB tracks this title — REPLACE TDB will be available after adopt.";
         if (!confirm(
           `Adopt the existing theme.mp3 for "${title}"?\n\n${matchNote}\n\n`
           + `Motif will hardlink the file into /themes and manage it from now on.`
