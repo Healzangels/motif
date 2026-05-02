@@ -15,6 +15,7 @@ Per-row strategy:
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 
 from .db import get_conn, transaction
@@ -503,9 +504,30 @@ def resolve_theme_ids(db_path: Path, *, chunk_size: int = 500) -> int:
     the auth middleware's session-touch UPDATE long enough to fire
     'database is locked' and 500 the user's request mid-sync.
 
+    v1.12.14: serialized via _resolve_theme_ids_lock. Pre-fix two
+    concurrent callers (sync's post-pass + plex_enum's post-pass on
+    the long-job thread, or two plex_enums after a settings change)
+    could both enter the loop. SQLite's BEGIN IMMEDIATE serializes
+    each chunk transaction at the DB level, but the Python-side
+    pagination (offset += chunk_size based on a row_count captured
+    before either caller started) didn't coordinate — the second
+    caller could re-walk rows the first already updated, doubling
+    the wall-clock cost and the writer-lock pressure. The lock
+    forces serial execution; the second caller's pass is then
+    idempotent (no-op for already-resolved rows + picks up any new
+    inserts that arrived while the first ran).
+
     Returns the total number of plex_items rows whose theme_id was
     rewritten across all chunks.
     """
+    with _resolve_theme_ids_lock:
+        return _resolve_theme_ids_impl(db_path, chunk_size=chunk_size)
+
+
+_resolve_theme_ids_lock = threading.Lock()
+
+
+def _resolve_theme_ids_impl(db_path: Path, *, chunk_size: int = 500) -> int:
     sql = """
         UPDATE plex_items SET theme_id = (
             SELECT t.id FROM themes t
