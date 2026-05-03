@@ -560,12 +560,6 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 300px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
-/* v1.12.31: text-align lifted off .col-imdb base because it's
-   shared between th (which we want centered, via .table thead th)
-   and td (which we want left-anchored for the tt-IDs). Splitting
-   it ensures the th centering is unambiguous regardless of source
-   order vs. .table thead th. */
-#library-table td.col-imdb { text-align: left; }
 /* v1.12.28: every header cell centers its label + sort
    indicator as a single unit. v1.12.27 forced left-align
    to put all eight headers on one X anchor, but the user
@@ -594,16 +588,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    inline-block sized to the "TITLE" label, so the indicator
    inside (block, text-align: center) centers BENEATH the
    "TITLE" letters rather than across the entire ~600px-wide
-   col-title cell. v1.12.37: IMDB joins the same exception —
-   its data cells (tt-IDs) are left-aligned, so a centered
-   header floated visibly right of where the data sits. With
-   left-anchored TITLE + IMDB, the header label sits directly
-   above its data column rather than over empty whitespace.
-   Other columns inherit the default text-align: center from
-   .table thead th, which centers the .th-stack horizontally
-   and stacks the carat under each centered label. */
-#library-table th.col-title,
-#library-table th.col-imdb { text-align: left; }
+   col-title cell. v1.12.39: IMDB header reverts to centered
+   (default for .table thead th) AND its td data is also
+   centered so the header label sits directly above the
+   tt-IDs. v1.12.37/.38 had the header left-anchored to match
+   left-anchored data, but the user prefers a centered look
+   where both label and data align on the column's center
+   axis. Other narrow columns (year/src/dl/pl/link) already
+   work this way (centered header over centered data); IMDB
+   now joins them. */
+#library-table th.col-title { text-align: left; }
+#library-table td.col-imdb { text-align: center; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -4502,9 +4502,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 new_prev_kind = "themerrdb" if new_prev_url else None
 
             # Apply the previous URL based on its kind.
+            # v1.12.39: provenance flip happens lazily, on the
+            # worker's download completion (worker.py writes
+            # provenance + source_kind from the CURRENT presence
+            # of a user override). Pre-fix this handler eagerly
+            # flipped local_files + placements provenance, so the
+            # SRC badge transitioned to its target value the
+            # instant REVERT was clicked — even though the
+            # canonical was still the OLD theme until the
+            # download landed. Now the SRC badge stays on its
+            # current value (T after a previous accept; U after a
+            # previous SET URL) until the new canonical is in
+            # place, matching the user's mental model: "the row's
+            # SRC describes what's actually playing".
             if prev_kind == "user":
-                # Restore the user override + flip provenance to
-                # manual so the row classifies as U immediately.
                 conn.execute(
                     """INSERT INTO user_overrides
                          (media_type, tmdb_id, youtube_url, set_at, set_by, note)
@@ -4517,17 +4528,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (media_type, tmdb_id, prev_url, now_iso(),
                      request.state.principal.username,
                      "restored via REVERT"),
-                )
-                conn.execute(
-                    """UPDATE local_files SET provenance = 'manual',
-                                              source_kind = 'url'
-                       WHERE media_type = ? AND tmdb_id = ?""",
-                    (media_type, tmdb_id),
-                )
-                conn.execute(
-                    """UPDATE placements SET provenance = 'manual'
-                       WHERE media_type = ? AND tmdb_id = ?""",
-                    (media_type, tmdb_id),
                 )
                 # If a pending_update was previously accepted on
                 # this row, reset it so the blue TDB ↑ pill
@@ -4543,26 +4543,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (media_type, tmdb_id),
                 )
             else:  # 'themerrdb'
-                # Drop user_overrides + flip provenance to auto so
-                # the worker uses themes.youtube_url. If the
-                # previous URL no longer matches themes.youtube_url
-                # (TDB has changed since the snapshot), the worker
-                # will download the current TDB URL — close enough
-                # for a one-step undo.
+                # Drop user_overrides so the worker uses
+                # themes.youtube_url on download. If the previous
+                # URL no longer matches themes.youtube_url (TDB
+                # has changed since the snapshot), the worker
+                # will download the current TDB URL — close
+                # enough for a one-step undo.
                 conn.execute(
                     "DELETE FROM user_overrides "
                     "WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                )
-                conn.execute(
-                    """UPDATE local_files SET provenance = 'auto',
-                                              source_kind = 'themerrdb'
-                       WHERE media_type = ? AND tmdb_id = ?""",
-                    (media_type, tmdb_id),
-                )
-                conn.execute(
-                    """UPDATE placements SET provenance = 'auto'
-                       WHERE media_type = ? AND tmdb_id = ?""",
                     (media_type, tmdb_id),
                 )
 

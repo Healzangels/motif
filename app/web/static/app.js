@@ -3280,132 +3280,45 @@
     }
 
     // SOURCE menu
+    //
+    // v1.12.39: rewritten for consistent intent-grouping and
+    // tone palette so the user can scan the menu top-to-bottom
+    // and the order maps to "what motif thinks the row's most
+    // useful action is" → "general source overrides" →
+    // "housekeeping" → "undo".
+    //
+    // Section order (each section conditionally renders):
+    //   1. CONTEXTUAL PROMPT     — ACCEPT UPDATE / KEEP CURRENT
+    //                              when blue TDB ↑ is up.
+    //   2. PRIMARY ACQUISITION   — ADOPT (sidecar), DOWNLOAD TDB
+    //                              (initial fetch), RE-DOWNLOAD
+    //                              TDB (refresh canonical).
+    //   3. CUSTOM OVERRIDES      — SET URL, UPLOAD MP3.
+    //   4. CROSS-SOURCE REPLACE  — REPLACE TDB on M/U/A/P rows.
+    //   5. HOUSEKEEPING          — ACK FAILURE.
+    //   6. UNDO                  — REVERT.
+    //
+    // Tone palette: blue (info) for upstream-update prompts;
+    // themerrdb-green for TDB-fetching actions; user-violet for
+    // user-source actions; adopt-cyan for ADOPT; plain for
+    // dismiss-style actions (KEEP CURRENT, ACK FAILURE); REVERT
+    // tone tracks its target kind so the button color hints at
+    // where the row will land.
     const sourceItems = [];
-    if (sidecarOnly) {
-      sourceItems.push(menuItemHtml(
-        'adopt-sidecar', 'ADOPT',
-        "Take ownership of the existing theme.mp3 sidecar.",
-        { rk: it.rating_key, tone: 'adopt' },
-      ));
-    }
+
     // v1.10.41: detect P-agent rows so SOURCE shows REPLACE w/ TDB
     // instead of DOWNLOAD. The user's mental model on those rows is
     // 'replace Plex's existing theme', not 'fetch one from scratch'.
     const isPlexAgent = !placed && !it.plex_local_theme && !!it.plex_has_theme;
 
-    if (themed && themeId !== null && themeId !== undefined && !sidecarOnly) {
-      // P-agent themed rows: REPLACE w/ TDB takes the slot DOWNLOAD
-      // would normally fill — added below in the shared REPLACE block.
-      // Suppress the standalone DOWNLOAD button there to avoid two
-      // buttons that fire near-identical actions.
-      // v1.10.53: hide DOWNLOAD when the TDB URL is in the
-      // permanent-failure set (red 'TDB ✗'). Pre-1.10.53 the button
-      // was visible on adopted rows whose TDB had been ack'd —
-      // clicking it could either re-fail (expected) or get a
-      // transient yt-dlp success that left the row in a confused
-      // state (placement manual + local_files themerrdb, badge
-      // flickering). Same exclusion REPLACE w/ TDB already had
-      // (v1.10.51). cookies_expired stays clickable since the
-      // user can drop a cookies.txt to recover.
-      // v1.10.51: don't offer DOWNLOAD for rows whose TDB pill is
-      // red — clicking would re-fail and stamp another failure_kind
-      // on the row.
-      // v1.12.8: also hide on amber (cookies-required + cookies
-      // missing) per user spec — same reasoning, click would just
-      // re-fail until the user fixes cookies.txt.
-      const tdbDeadForDownload = it.failure_kind
-        && TDB_DEAD_FAILURES.has(it.failure_kind);
-      const tdbCookiesBlocked = it.failure_kind === 'cookies_expired'
-        && !window.__motif_cookies_present;
-      const tdbBlocked = tdbDeadForDownload || tdbCookiesBlocked;
-      // v1.10.56: also hide DOWNLOAD when there's no actual URL to
-      // download from. Adopt rows on orphan_unresolved themes have
-      // no themes.youtube_url and no user_overrides; clicking
-      // DOWNLOAD enqueued a job that would error on missing URL
-      // and retry-with-backoff for ~2 hours, leaving the spinner
-      // stuck and the rest of the buttons disabled. URL-sourced
-      // rows have a user_overrides entry that the row payload
-      // doesn't expose directly, so we fall back to source_kind=
-      // 'url' as the indicator.
-      const hasDownloadUrl = !!it.youtube_url
-        || sourceKindForActions === 'url';
-      // v1.11.63: also exclude isManualPlacement (covers A/U rows).
-      // The dedicated REPLACE-w/-TDB block further down already
-      // handles those cases with a single explicit 'replace adopted/
-      // manual file with TDB' action; without this exclusion the
-      // SOURCE menu showed 'TDB' twice on adopted rows (once as
-      // RE-DL, once as REPLACE w/ TDB), confusingly back to back.
-      // v1.12.21: also suppress when pending_update — ACCEPT UPDATE
-      // covers the same fetch-from-TDB action with the right label
-      // for that context. Showing both confuses the user about which
-      // does what.
-      // v1.12.37: RE-DOWNLOAD TDB removed per user feedback —
-      // on a T row that's already downloaded, re-running the
-      // same TDB URL is a no-op for content. The action only
-      // existed to refresh corrupted files, but RESTORE FROM
-      // PLEX (PLACE menu) covers that recovery path with
-      // friendlier framing. DOWNLOAD TDB still shows on T
-      // rows that haven't been downloaded yet (or are
-      // dl-broken) — the initial-fetch case where the action
-      // is genuinely meaningful.
-      if (!isPlexAgent && !isManualPlacement && !lockManualActions
-          && !tdbBlocked && hasDownloadUrl && !it.pending_update
-          && (!downloaded || dlBroken)) {
-        const dlSource = (sourceKindForActions === 'url')
-          ? 'manual URL override'
-          : 'ThemerrDB';
-        const dlTip = `Download from ${dlSource} and place into the Plex folder.`;
-        sourceItems.push(menuItemHtml(
-          'redl', 'DOWNLOAD TDB', dlTip,
-          { mt: themeMt, id: themeId, tone: 'themerrdb' },
-        ));
-      }
-      // v1.10.29: REVERT only when both:
-      //   (a) source_kind='url' — there's a user_overrides row to clear
-      //   (b) isThemerrDb — there's an upstream record to fall back on
-      // For an orphan with a manual URL there's nothing to revert to;
-      // pre-1.10.29 the button would have errored or 'reverted' to
-      // nothing.
-      // v1.12.37: REVERT moved to the bottom of the SOURCE
-      // menu and switched onto the generalized has_previous_url
-      // flag. The button surfaces whenever the row has a
-      // captured previous URL — populated by SET URL (replacing
-      // an existing override), ACCEPT UPDATE (consuming a U
-      // row), or REPLACE TDB. Tone is violet when the previous
-      // URL is user-kind, themerrdb-green when it's upstream.
-      // REVERT is rendered AFTER everything else further below
-      // so the user sees primary actions first; see the deferred
-      // push at the end of the SOURCE block.
-    }
-    // v1.10.42: ACK FAILURE — clear the failure flag on the theme so
-    // the red ! glyph + red TDB ✗ go away. Doesn't fix anything;
-    // 'I know, stop showing me the warning'. Re-fires on the next
-    // failed download attempt.
-    // v1.10.50: only show ACK FAILURE while the row is unacked.
-    // Re-acking a previously-acked failure is a no-op.
-    if (it.failure_kind && !it.failure_acked_at
-        && themed && themeId !== null && themeId !== undefined) {
-      sourceItems.push(menuItemHtml(
-        'clear-failure', 'ACK FAILURE',
-        "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
-        { mt: themeMt, id: themeId },
-      ));
-    }
-    // v1.12.21: ACCEPT UPDATE stays on the menu whenever the blue
-    // TDB ↑ pill is up (pending_update), even after KEEP CURRENT.
-    // The user can still change their mind. KEEP CURRENT is only
-    // shown while the row is actionable_update (decision='pending')
-    // — once declined, the row's already in the "kept" state and
-    // KEEP CURRENT would be a no-op.
+    // ── 1. CONTEXTUAL PROMPT ──────────────────────────────────
+    // ACCEPT UPDATE stays on the menu whenever the blue TDB ↑
+    // pill is up (pending_update), even after KEEP CURRENT.
+    // KEEP CURRENT only shows while the row is actionable_update
+    // (decision='pending') — once declined, the row's already in
+    // the "kept" state and the action would be a no-op.
     if (it.pending_update && themed
         && themeId !== null && themeId !== undefined) {
-      // v1.12.33: dropped tone='themerrdb' so the btn-info blue
-      // dominates — matches the .tdb-pill-update blue ↑ pill the
-      // row is showing. The old themerrdb tone (green) was
-      // beating btn-info on specificity and washed the button to
-      // the same green as DOWNLOAD TDB / RE-DOWNLOAD TDB, which
-      // muddled the user's mental link between the blue pill
-      // and the action that resolves it.
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
         'Download the new ThemerrDB URL and replace the current theme.',
@@ -3419,58 +3332,99 @@
         ));
       }
     }
+
+    // ── 2. PRIMARY ACQUISITION ────────────────────────────────
+    // ADOPT — sidecar-only rows (theme.mp3 in the Plex folder
+    // but no motif canonical). Cyan tone matches the A badge
+    // the row will land on.
+    if (sidecarOnly) {
+      sourceItems.push(menuItemHtml(
+        'adopt-sidecar', 'ADOPT',
+        "Take ownership of the existing theme.mp3 sidecar.",
+        { rk: it.rating_key, tone: 'adopt' },
+      ));
+    }
+    // DOWNLOAD TDB / RE-DOWNLOAD TDB — T-source rows where the
+    // upstream URL is healthy. Split into two mutually-exclusive
+    // labels so the action's intent is unambiguous:
+    //   !downloaded || dlBroken  → DOWNLOAD TDB    (initial / recovery)
+    //   downloaded && !dlBroken  → RE-DOWNLOAD TDB (refresh canonical)
+    // Suppressed on M/U/A (those have REPLACE TDB which fits
+    // their mental model better) and on P-agent (REPLACE TDB
+    // appears further down). Suppressed when pending_update is
+    // up (ACCEPT UPDATE replaces both options with the
+    // contextually-correct phrasing) and when accepted_update is
+    // recent (canonical already came from the current TDB URL,
+    // so DOWNLOAD/RE-DOWNLOAD would be a no-op).
+    // Tone: themerrdb-green — matches the T badge the row will
+    // land on.
+    if (themed && themeId !== null && themeId !== undefined
+        && !sidecarOnly && !isPlexAgent && !isManualPlacement
+        && !lockManualActions && !it.pending_update
+        && !it.accepted_update) {
+      const tdbDeadForDownload = it.failure_kind
+        && TDB_DEAD_FAILURES.has(it.failure_kind);
+      const tdbCookiesBlocked = it.failure_kind === 'cookies_expired'
+        && !window.__motif_cookies_present;
+      const tdbBlocked = tdbDeadForDownload || tdbCookiesBlocked;
+      const hasDownloadUrl = !!it.youtube_url
+        || sourceKindForActions === 'url';
+      if (!tdbBlocked && hasDownloadUrl) {
+        if (!downloaded || dlBroken) {
+          sourceItems.push(menuItemHtml(
+            'redl', 'DOWNLOAD TDB',
+            'Download from ThemerrDB and place into the Plex folder.',
+            { mt: themeMt, id: themeId, tone: 'themerrdb' },
+          ));
+        } else {
+          // v1.12.39: RE-DOWNLOAD TDB returned per user feedback
+          // for the canonical-refresh edge case (corrupted file,
+          // post-recovery rebuild, etc.). Distinct from REPLACE
+          // TDB because RE-DOWNLOAD applies to T rows whose
+          // current canonical IS already from TDB; REPLACE TDB
+          // applies to M/U/A/P rows whose current canonical is
+          // NOT from TDB.
+          sourceItems.push(menuItemHtml(
+            'redl', 'RE-DOWNLOAD TDB',
+            'Re-fetch from ThemerrDB and overwrite the canonical (refresh / corruption recovery).',
+            { mt: themeMt, id: themeId, tone: 'themerrdb' },
+          ));
+        }
+      }
+    }
+
+    // ── 3. CUSTOM OVERRIDES ───────────────────────────────────
+    // SET URL / UPLOAD MP3 — always available, on any row. The
+    // user can choose a custom source at any time regardless of
+    // the row's current state. Violet tone matches the U badge
+    // the row will land on.
     sourceItems.push(menuItemHtml(
       'manual-url', 'SET URL',
       'Provide a YouTube URL as a manual override.',
-      { rk: it.rating_key, warn: true, tone: 'user' },
+      { rk: it.rating_key, tone: 'user' },
     ));
     sourceItems.push(menuItemHtml(
       'upload-theme', 'UPLOAD MP3',
       'Upload an MP3 file as the theme.',
       { rk: it.rating_key, tone: 'user' },
     ));
-    // REPLACE w/ TDB — fires whenever the user is swapping motif's
+
+    // ── 4. CROSS-SOURCE REPLACE ───────────────────────────────
+    // REPLACE TDB — fires when the user is swapping motif's
     // ThemerrDB download in for an existing theme from another
-    // source. v1.10.41 added isPlexAgent to this set so P-agent
-    // rows use this label instead of DOWNLOAD.
-    // v1.10.51: hide on rows with a permanent TDB failure (red
-    // 'TDB ✗' pill) — clicking it would re-fail the same way.
-    // SET URL / UPLOAD MP3 / ADOPT remain in the menu as recovery
-    // paths. cookies_expired stays clickable since the user can
-    // drop a cookies.txt file to recover.
-    // v1.12.8: replaces the v1.10.51 tdbDeadForReplace; same logic
-    // plus cookies-blocked (amber pill). Both states would just
-    // re-fail on click; suppress until the user clears the failure.
+    // source (sidecar M, manual U, adopted A, Plex agent P).
+    // Suppressed on T rows (DOWNLOAD/RE-DOWNLOAD TDB covers that
+    // case), on rows with a permanent TDB failure (red ✗ pill —
+    // would re-fail), on rows with cookies blocked, when a blue
+    // TDB ↑ pill is up (ACCEPT UPDATE covers it), and when a
+    // recent accept already pulled the current TDB URL (no-op).
     const tdbReplaceBlocked = (it.failure_kind
         && TDB_DEAD_FAILURES.has(it.failure_kind))
       || (it.failure_kind === 'cookies_expired'
           && !window.__motif_cookies_present);
-    // v1.12.5: hide the bottom 'TDB' replace action when ACCEPT
-    // UPDATE is already on the menu — they do the same thing
-    // (download from upstream, overwrite local). ACCEPT UPDATE is
-    // the more contextually-correct phrasing when an upstream URL
-    // change triggered the menu, so we keep that one and suppress
-    // the redundant TDB entry below.
-    // v1.12.21: suppress when the blue TDB ↑ pill is up (any
-    // decision state — pending or declined). ACCEPT UPDATE covers
-    // the same "fetch from TDB" action with the right framing for
-    // an upstream-update context; offering both doubles up. After
-    // ACCEPT or after the upstream URL stabilizes (no more pending
-    // record), this block re-engages.
-    // v1.12.35: also suppress when the row's pending_update was
-    // recently ACCEPTed (decision='accepted' → accepted_update=1).
-    // The canonical was just downloaded from the current TDB URL,
-    // so REPLACE TDB would re-download the same file. Re-engages
-    // once a fresh upstream change comes in (decision flips back
-    // to 'pending' on the next sync).
     if (isThemerrDb && !tdbReplaceBlocked && !it.pending_update
         && !it.accepted_update
         && (sidecarOnly || isManualPlacement || isPlexAgent)) {
-      // v1.12.8: label is "TDB REPLACE" so the action makes sense
-      // alongside the M/U/A row's existing local theme.mp3 — the
-      // click overwrites it with a TDB download. Pre-1.12.8 it was
-      // just "TDB" which read as "TDB info" or "TDB download" with
-      // no hint that an existing file would be replaced.
       const replaceTip = sidecarOnly
         ? "Download from ThemerrDB and replace the local sidecar."
         : isPlexAgent
@@ -3483,15 +3437,29 @@
       ));
     }
 
-    // v1.12.37: REVERT lives at the bottom of the SOURCE menu so
-    // the primary actions (DOWNLOAD / RE-DL / SET URL / UPLOAD /
-    // ACCEPT UPDATE / KEEP CURRENT / REPLACE TDB) read first and
-    // the "go back one step" action sits as a clearly secondary
-    // choice. Gated on has_previous_url so it only appears when
-    // there's an actual snapshot to roll back to. Tone tracks the
-    // previous URL's kind — violet for user, themerrdb-green for
-    // upstream — so the button color hints at which state REVERT
-    // will land in.
+    // ── 5. HOUSEKEEPING ───────────────────────────────────────
+    // ACK FAILURE — clear the failure flag on the theme so the
+    // red ! glyph + topbar FAIL count drop this row. Doesn't fix
+    // anything; it's a "stop showing me the warning" dismiss.
+    // Re-fires on the next failed download attempt.
+    if (it.failure_kind && !it.failure_acked_at
+        && themed && themeId !== null && themeId !== undefined) {
+      sourceItems.push(menuItemHtml(
+        'clear-failure', 'ACK FAILURE',
+        "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
+        { mt: themeMt, id: themeId },
+      ));
+    }
+
+    // ── 6. UNDO ───────────────────────────────────────────────
+    // REVERT — one-step undo. Surfaces only when there's a
+    // captured previous URL on the row (themes.previous_youtube_url).
+    // Populated by SET URL replacing an existing override,
+    // ACCEPT UPDATE consuming a U row, REPLACE TDB consuming a
+    // U row, or REVERT itself (round-trippable). Tone tracks
+    // previous_youtube_kind so the button color hints at where
+    // the row will land — violet for user, themerrdb-green for
+    // upstream.
     if (it.has_previous_url) {
       const revertTone = it.previous_youtube_kind === 'themerrdb'
         ? 'themerrdb' : 'user';
