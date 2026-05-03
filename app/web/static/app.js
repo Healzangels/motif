@@ -2666,12 +2666,20 @@
     // client-side: pagination/total reflect the underlying status+tdb
     // pass.
     srcFilter: new Set(),
-    // v1.12.7: multi-select Set of TDB pill states the user wants to
-    // keep visible. Possible values: 'tdb', 'update', 'cookies',
-    // 'dead', 'none' (matching computeTdbPill below). Empty Set =
-    // no filter. Same client-side pattern as srcFilter — pagination
-    // / total reflect the underlying status pass.
+    // v1.12.7 / v1.12.23: TDB pill states. Possible values:
+    // 'tdb', 'update', 'cookies', 'dead', 'none'. v1.12.23 moved
+    // the actual filtering server-side so counts + pagination +
+    // sort all honor the set; the client just tracks the
+    // selection and ships it as ?tdb_pills=... on each fetch.
     tdbPills: new Set(),
+    // v1.12.23: DL / PL / Link pill multi-select sets. Same
+    // server-side pattern as srcFilter / tdbPills.
+    //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red)
+    //   plPills: 'on' (green dot), 'off' (faded)
+    //   linkPills: 'hl', 'c', 'm' (mismatch), 'none'
+    dlPills: new Set(),
+    plPills: new Set(),
+    linkPills: new Set(),
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2723,6 +2731,25 @@
     if (libraryState.status !== 'all') params.set('status', libraryState.status);
     if (libraryState.tdb && libraryState.tdb !== 'any') {
       params.set('tdb', libraryState.tdb);
+    }
+    // v1.12.23: pill axes ride the URL so the server filters
+    // honor counts + pagination + sort. Pre-fix these were
+    // client-side only — the count was the pre-filter total
+    // and sort across pages dropped rows the filter rejected.
+    if (libraryState.srcFilter && libraryState.srcFilter.size > 0) {
+      params.set('src_pills', Array.from(libraryState.srcFilter).join(','));
+    }
+    if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
+      params.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+    }
+    if (libraryState.dlPills && libraryState.dlPills.size > 0) {
+      params.set('dl_pills', Array.from(libraryState.dlPills).join(','));
+    }
+    if (libraryState.plPills && libraryState.plPills.size > 0) {
+      params.set('pl_pills', Array.from(libraryState.plPills).join(','));
+    }
+    if (libraryState.linkPills && libraryState.linkPills.size > 0) {
+      params.set('link_pills', Array.from(libraryState.linkPills).join(','));
     }
     if (libraryState.sort && libraryState.sort !== 'title') {
       params.set('sort', libraryState.sort);
@@ -2780,38 +2807,12 @@
         : 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
       tbody.innerHTML = `<tr><td colspan="9" class="muted center">${msg}</td></tr>`;
     } else {
-      // v1.11.66: client-side SRC-letter filter. Applied after the
-      // server-side status/tdb pass so click-to-filter on the SRC
-      // legend narrows the visible page without changing total/
-      // pagination (those still reflect the underlying status+tdb
-      // counts the user can read at the top of the page).
-      // v1.12.7: TDB pill filter follows the same pattern. Both
-      // sets stack — a row must satisfy SRC AND TDB to show.
-      let displayItems = dedupedItems;
-      if (libraryState.srcFilter.size > 0) {
-        displayItems = displayItems.filter(
-          (it) => libraryState.srcFilter.has(computeSrcLetter(it))
-        );
-      }
-      if (libraryState.tdbPills.size > 0) {
-        displayItems = displayItems.filter(
-          (it) => libraryState.tdbPills.has(computeTdbPill(it))
-        );
-      }
-      if (displayItems.length === 0
-          && (libraryState.srcFilter.size > 0
-              || libraryState.tdbPills.size > 0)) {
-        const parts = [];
-        if (libraryState.srcFilter.size > 0) {
-          parts.push(`SRC ∈ {${Array.from(libraryState.srcFilter).join(' / ')}}`);
-        }
-        if (libraryState.tdbPills.size > 0) {
-          parts.push(`TDB ∈ {${Array.from(libraryState.tdbPills).join(' / ')}}`);
-        }
-        tbody.innerHTML = `<tr><td colspan="9" class="muted center">no rows match ${htmlEscape(parts.join(' AND '))} on this page (filter applies to the current page; click CLEAR or toggle another pill to broaden)</td></tr>`;
-      } else {
-        tbody.innerHTML = displayItems.map(renderLibraryRow).join('');
-      }
+      // v1.12.23: pill filtering moved server-side. The server's
+      // sql_count + sql_rows + ORDER BY all honor the pill set, so
+      // counts / pagination / sort are correct. dedupedItems is
+      // the final list to render — the only client-side trim is
+      // the rating_key dedup pass above.
+      tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
@@ -3853,21 +3854,39 @@
         document.querySelectorAll('[data-tdb]').forEach((x) =>
           x.classList.toggle('chip-active', x.dataset.tdb === wantTdb));
       }
-      // v1.12.9: deep-link to a TDB-pill multi-select. e.g. the
-      // failures badge in the topbar links here as
-      // ?tdb_pills=dead so the user lands on the library with the
-      // red TDB ✗ pill pre-applied. Comma-separated list of pill
-      // states (tdb / update / cookies / dead / none).
-      const wantTdbPills = sp.get('tdb_pills');
-      if (wantTdbPills) {
-        const validPills = new Set(['tdb','update','cookies','dead','none']);
-        wantTdbPills.split(',').map((s) => s.trim()).forEach((p) => {
-          if (validPills.has(p)) libraryState.tdbPills.add(p);
+      // v1.12.9 / v1.12.23: deep-link to any of the pill multi-
+      // selects via ?tdb_pills= / ?src_pills= / ?dl_pills= /
+      // ?pl_pills= / ?link_pills= (comma-separated). The failures
+      // badge uses ?tdb_pills=dead; future surfaces (e.g. dashboard
+      // shortcuts) can deep-link any combination.
+      const PILL_DEEP_LINKS = [
+        { param: 'tdb_pills',  state: 'tdbPills',  attr: 'tdbPill',
+          activeClass: 'tdb-pill-btn-active',
+          values: new Set(['tdb','update','cookies','dead','none']) },
+        { param: 'src_pills',  state: 'srcFilter', attr: 'srcFilter',
+          activeClass: 'src-key-btn-active',
+          values: new Set(['T','U','A','M','P','-']) },
+        { param: 'dl_pills',   state: 'dlPills',   attr: 'dlPill',
+          activeClass: 'state-pill-btn-active',
+          values: new Set(['on','off','broken']) },
+        { param: 'pl_pills',   state: 'plPills',   attr: 'plPill',
+          activeClass: 'state-pill-btn-active',
+          values: new Set(['on','off']) },
+        { param: 'link_pills', state: 'linkPills', attr: 'linkPill',
+          activeClass: 'link-pill-btn-active',
+          values: new Set(['hl','c','m','none']) },
+      ];
+      for (const dl of PILL_DEEP_LINKS) {
+        const raw = sp.get(dl.param);
+        if (!raw) continue;
+        raw.split(',').map((s) => s.trim()).forEach((p) => {
+          if (dl.values.has(p)) libraryState[dl.state].add(p);
         });
-        document.querySelectorAll('[data-tdb-pill]').forEach((x) => {
-          const xVal = x.dataset.tdbPill;
-          const active = !!xVal && libraryState.tdbPills.has(xVal);
-          x.classList.toggle('tdb-pill-btn-active', active);
+        const kebab = dl.attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+        document.querySelectorAll(`[data-${kebab}]`).forEach((x) => {
+          const xVal = x.dataset[dl.attr];
+          const active = !!xVal && libraryState[dl.state].has(xVal);
+          x.classList.toggle(dl.activeClass, active);
         });
       }
       if (sp.get('fourk') === 'true' || sp.get('fourk') === '1') {
@@ -3963,29 +3982,59 @@
      // membership in the libraryState.tdbPills set. Pure client-side
      // (visible-page filter) like SRC.
     if (document.getElementById('library-body')) {
-      const tdbPillStates = ['tdb', 'update', 'cookies', 'dead', 'none'];
-      document.querySelectorAll('[data-tdb-pill], [data-tdb-pill-all]').forEach((b) => {
-        b.addEventListener('click', () => {
-          if (b.dataset.tdbPillAll) {
-            tdbPillStates.forEach((s) => libraryState.tdbPills.add(s));
-          } else {
-            const want = b.dataset.tdbPill;
-            if (!want) {
-              libraryState.tdbPills.clear();
-            } else if (libraryState.tdbPills.has(want)) {
-              libraryState.tdbPills.delete(want);
+      // v1.12.23: factor the per-axis pill click handlers so TDB,
+      // DL, PL, LINK all share one implementation. The axis is
+      // identified by the data-* attribute name; each maps to a
+      // libraryState.<axis>Pills Set + the CSS active-class
+      // suffix. SRC uses its own block below because the row
+      // markup is different (link-badge buttons, an extra ALL/
+      // CLEAR clickable pair).
+      const pillAxes = [
+        { attr: 'tdbPill', allAttr: 'tdbPillAll', state: 'tdbPills',
+          activeClass: 'tdb-pill-btn-active',
+          values: ['tdb', 'update', 'cookies', 'dead', 'none'] },
+        { attr: 'dlPill', allAttr: 'dlPillAll', state: 'dlPills',
+          activeClass: 'state-pill-btn-active',
+          values: ['on', 'off', 'broken'] },
+        { attr: 'plPill', allAttr: 'plPillAll', state: 'plPills',
+          activeClass: 'state-pill-btn-active',
+          values: ['on', 'off'] },
+        { attr: 'linkPill', allAttr: 'linkPillAll', state: 'linkPills',
+          activeClass: 'link-pill-btn-active',
+          values: ['hl', 'c', 'm', 'none'] },
+      ];
+      for (const axis of pillAxes) {
+        const dataKey = axis.attr;       // camelCase for dataset
+        const allKey = axis.allAttr;
+        // Convert camelCase → kebab-case for querySelector:
+        const kebab = dataKey.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+        const allKebab = allKey.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+        const sel = `[data-${kebab}], [data-${allKebab}]`;
+        document.querySelectorAll(sel).forEach((b) => {
+          b.addEventListener('click', () => {
+            const set = libraryState[axis.state];
+            if (b.dataset[allKey]) {
+              axis.values.forEach((v) => set.add(v));
             } else {
-              libraryState.tdbPills.add(want);
+              const want = b.dataset[dataKey];
+              if (!want) {
+                set.clear();
+              } else if (set.has(want)) {
+                set.delete(want);
+              } else {
+                set.add(want);
+              }
             }
-          }
-          document.querySelectorAll('[data-tdb-pill]').forEach((x) => {
-            const xVal = x.dataset.tdbPill;
-            const active = !!xVal && libraryState.tdbPills.has(xVal);
-            x.classList.toggle('tdb-pill-btn-active', active);
+            document.querySelectorAll(`[data-${kebab}]`).forEach((x) => {
+              const xVal = x.dataset[dataKey];
+              const active = !!xVal && set.has(xVal);
+              x.classList.toggle(axis.activeClass, active);
+            });
+            libraryState.page = 1;
+            loadLibrary().catch(console.error);
           });
-          loadLibrary().catch(console.error);
         });
-      });
+      }
     }
 
     // v1.11.66: SRC legend buttons toggle a client-side SRC-letter
@@ -4072,6 +4121,7 @@
               libraryState.status === 'not_in_plex',
             );
           }
+          libraryState.page = 1;
           loadLibrary().catch(console.error);
         });
       });

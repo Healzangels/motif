@@ -246,6 +246,12 @@ def _library_main_query(
     page: int, per_page: int,
     sort: str = "title", sort_dir: str = "asc",
     tdb: str = "any",
+    src_pills: set[str] | None = None,
+    tdb_pills: set[str] | None = None,
+    dl_pills: set[str] | None = None,
+    pl_pills: set[str] | None = None,
+    link_pills: set[str] | None = None,
+    cookies_present: bool = False,
     themes_dir: Path | None = None,
 ) -> dict:
     """Sync helper for /api/library — runs all SQL in one threadpool call
@@ -369,6 +375,95 @@ def _library_main_query(
     elif tdb == "untracked":
         where_extra += " AND (t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan')"
 
+    # v1.12.23: server-side pill filters. Pre-fix SRC and TDB pill
+    # filters ran client-side after the server returned a page —
+    # which made counts and pagination lie ("THEMED + M = 3,336"
+    # whether or not M was actually selected, because the count
+    # was the THEMED total). Now each pill axis composes with
+    # `status` and `tdb` server-side, so total/pagination/sort all
+    # honor the pill state.
+    #
+    # Each pill axis is multi-select. Selections within an axis OR
+    # together; axes AND together. Empty set = no filter on that
+    # axis. Mirrors the client-side computeSrcLetter / computeTdbPill
+    # taxonomy exactly so the same row classification drives both
+    # the row pill render and the filter set.
+    src_pills = src_pills or set()
+    tdb_pills = tdb_pills or set()
+    dl_pills = dl_pills or set()
+    pl_pills = pl_pills or set()
+    link_pills = link_pills or set()
+    if src_pills:
+        branches = []
+        for p in src_pills:
+            if p == "T":
+                branches.append("(p.provenance = 'auto')")
+            elif p == "A":
+                branches.append("(p.provenance = 'manual' AND lf.source_kind = 'adopt')")
+            elif p == "U":
+                branches.append("(p.provenance = 'manual' AND (lf.source_kind != 'adopt' OR lf.source_kind IS NULL))")
+            elif p == "M":
+                branches.append("(p.media_folder IS NULL AND pi.local_theme_file = 1)")
+            elif p == "P":
+                branches.append("(p.media_folder IS NULL AND pi.local_theme_file = 0 AND pi.has_theme = 1)")
+            elif p == "-":
+                branches.append("(p.media_folder IS NULL AND pi.local_theme_file = 0 AND pi.has_theme = 0)")
+        if branches:
+            where_extra += " AND (" + " OR ".join(branches) + ")"
+    if tdb_pills:
+        DEAD_KINDS = "('video_private','video_removed','video_age_restricted','geo_blocked')"
+        branches = []
+        for p in tdb_pills:
+            if p == "tdb":
+                # Green TDB pill state: tracked + (no failure OR cookies-present cookies_expired)
+                if cookies_present:
+                    branches.append("(t.upstream_source IN ('imdb','themoviedb') AND (t.failure_kind IS NULL OR t.failure_kind = 'cookies_expired'))")
+                else:
+                    branches.append("(t.upstream_source IN ('imdb','themoviedb') AND t.failure_kind IS NULL)")
+            elif p == "update":
+                branches.append("EXISTS (SELECT 1 FROM pending_updates pu WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id AND pu.decision IN ('pending','declined'))")
+            elif p == "cookies":
+                if not cookies_present:
+                    branches.append("(t.failure_kind = 'cookies_expired')")
+            elif p == "dead":
+                branches.append(f"(t.failure_kind IN {DEAD_KINDS})")
+            elif p == "none":
+                branches.append("(t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan')")
+        if branches:
+            where_extra += " AND (" + " OR ".join(branches) + ")"
+    if dl_pills:
+        branches = []
+        for p in dl_pills:
+            if p == "on":
+                branches.append("(lf.file_path IS NOT NULL)")
+            elif p == "off":
+                branches.append("(lf.file_path IS NULL)")
+            # 'broken' is post-SQL via canonical_missing stat; falls through.
+        if branches:
+            where_extra += " AND (" + " OR ".join(branches) + ")"
+    if pl_pills:
+        branches = []
+        for p in pl_pills:
+            if p == "on":
+                branches.append("(p.media_folder IS NOT NULL)")
+            elif p == "off":
+                branches.append("(p.media_folder IS NULL)")
+        if branches:
+            where_extra += " AND (" + " OR ".join(branches) + ")"
+    if link_pills:
+        branches = []
+        for p in link_pills:
+            if p == "hl":
+                branches.append("(p.placement_kind = 'hardlink' AND lf.mismatch_state IS NULL)")
+            elif p == "c":
+                branches.append("(p.placement_kind = 'copy' AND lf.mismatch_state IS NULL)")
+            elif p == "m":
+                branches.append("(lf.mismatch_state IS NOT NULL)")
+            elif p == "none":
+                branches.append("(p.media_folder IS NULL)")
+        if branches:
+            where_extra += " AND (" + " OR ".join(branches) + ")"
+
     sql_select = """
         SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
                pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
@@ -457,19 +552,32 @@ def _library_main_query(
     # t.* in the WHERE skip the themes JOIN; lf and p use pi.guid_tmdb
     # directly (loses orphan-adopted matches in COUNT only — the row
     # query keeps the full themes JOIN for accuracy).
+    # v1.12.23: pill axes also need their relevant table JOINs in
+    # the slim count path. tdb_pills references t; src_pills /
+    # dl_pills / link_pills reference lf and p; pl_pills references
+    # p. Without these flags the count query would 500 on missing
+    # column references.
     needs_themes_for_count = (
         status in ("themed", "untracked", "has_theme", "failures", "updates")
         or tdb != "any"
+        or bool(tdb_pills)
     )
-    needs_lf_for_count = status in (
-        "manual", "plex_agent", "untracked", "has_theme",
-        "downloaded", "unplaced",
+    needs_lf_for_count = (
+        status in (
+            "manual", "plex_agent", "untracked", "has_theme",
+            "downloaded", "unplaced",
+        )
+        or bool(src_pills) or bool(dl_pills) or bool(link_pills)
     )
-    needs_p_for_count = status in (
-        "manual", "plex_agent", "untracked", "has_theme",
-        "placed", "unplaced",
+    needs_p_for_count = (
+        status in (
+            "manual", "plex_agent", "untracked", "has_theme",
+            "placed", "unplaced",
+        )
+        or bool(src_pills) or bool(pl_pills) or bool(link_pills)
     )
-    if status == "all" and tdb == "any":
+    no_pills = not (src_pills or tdb_pills or dl_pills or pl_pills or link_pills)
+    if status == "all" and tdb == "any" and no_pills:
         sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
                      f"WHERE {tab_where}{where_pi_only}")
         count_params = params
@@ -2483,6 +2591,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         q: str = Query(""),
         status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|dl_missing|failures|updates|not_in_plex)$"),
         tdb: str = Query("any", pattern="^(any|tracked|untracked)$"),
+        # v1.12.23: server-side multi-select pill filters. Each axis
+        # accepts a comma-separated list. Empty = no filter on that
+        # axis. Selections within an axis OR; axes AND.
+        src_pills: str = Query(""),
+        tdb_pills: str = Query(""),
+        dl_pills: str = Query(""),
+        pl_pills: str = Query(""),
+        link_pills: str = Query(""),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         sort: str = Query("title", pattern="^(title|year|src|dl|pl|link|imdb)$"),
@@ -2508,10 +2624,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 q=q, page=page, per_page=per_page,
                 sort=sort, sort_dir=sort_dir,
             )
+        # v1.12.23: parse the comma-separated pill axes once.
+        def _pset(s: str, valid: set[str]) -> set[str]:
+            if not s:
+                return set()
+            return {p for p in (x.strip() for x in s.split(",")) if p in valid}
+        src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "-"})
+        tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none"})
+        dl_set = _pset(dl_pills, {"on", "off", "broken"})
+        pl_set = _pset(pl_pills, {"on", "off"})
+        link_set = _pset(link_pills, {"hl", "c", "m", "none"})
+        # v1.12.23: 'broken' DL pill alone routes through the existing
+        # dl_missing path (post-SQL stat-check). Combined with on/off
+        # selections it's ignored for now — would require refactoring
+        # the post-SQL annotator to OR with the SQL pre-filter.
+        effective_status = status
+        if dl_set == {"broken"} and status == "all":
+            effective_status = "dl_missing"
+            dl_set = set()  # consumed by status routing
+        cookies_present = bool(settings.cookies_file
+                               and settings.cookies_file.exists())
         return await run_in_threadpool(
             _library_main_query, db, tab=tab, fourk=fourk,
-            q=q, status=status, tdb=tdb, page=page, per_page=per_page,
+            q=q, status=effective_status, tdb=tdb,
+            page=page, per_page=per_page,
             sort=sort, sort_dir=sort_dir,
+            src_pills=src_set, tdb_pills=tdb_set,
+            dl_pills=dl_set, pl_pills=pl_set, link_pills=link_set,
+            cookies_present=cookies_present,
             themes_dir=settings.themes_dir if settings.is_paths_ready() else None,
         )
 

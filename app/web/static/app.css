@@ -527,6 +527,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    row. */
 th.col-imdb,
 th.col-actions { text-align: center; }
+/* v1.12.23: header vertical alignment. col-imdb's smaller font
+   (var(--t-tiny)) made its label sit lower on the row compared to
+   the default-size YEAR / SRC / DL / PL / LINK headers; col-actions
+   inherited the same baseline from its td styling. Force every
+   header cell to baseline-top so the labels land on the same
+   horizontal line. */
+.table thead th { vertical-align: middle; line-height: 1.2; }
+th.col-imdb { font-size: var(--t-small); }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -706,6 +714,76 @@ th.col-actions { text-align: center; }
   border: 1px dashed var(--line);
   border-radius: 4px;
   background: var(--bg-elev);
+}
+/* v1.12.23: unified pill filter row used by TDB / SRC / DL / PL /
+   LINK. Replaces the per-axis `.src-key-compact` / `.tdb-key-compact`
+   variants — same flex layout, label slot, ALL/CLEAR action
+   buttons, and a row of axis-specific pill buttons in between. */
+.pill-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 0 2px;
+}
+.pill-filter-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-right: 2px;
+  min-width: 38px;
+}
+.pill-filter-clear {
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: var(--fg-mute);
+  font-size: var(--t-tiny);
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+}
+.pill-filter-clear:hover { color: var(--fg); border-color: var(--cyan); }
+/* DL / PL state pills as filter buttons. Mirrors the row's state
+   dot (.state-pill.on / .state-pill.broken) but rendered as a
+   button so it can be clicked. */
+.state-pill-btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--line);
+  font-size: 16px;
+  line-height: 1;
+  padding: 0;
+  color: var(--fg-mute);
+  user-select: none;
+}
+.state-pill-btn-on   { color: var(--green); border-color: rgba(109,255,181,0.4); }
+.state-pill-btn-off  { color: var(--fg-mute); }
+.state-pill-btn-broken { color: var(--red); border-color: rgba(255,107,107,0.4); }
+.state-pill-btn:hover { filter: brightness(1.25); }
+.state-pill-btn-active {
+  box-shadow: 0 0 0 2px var(--cyan);
+  filter: brightness(1.3);
+}
+/* LINK pill buttons reuse the existing .link-glyph-* pill styling
+   from the row column (HL orange / C violet / M red / — muted),
+   but become clickable as filter buttons. */
+.pill-filter-row .link-glyph {
+  cursor: pointer;
+  user-select: none;
+}
+.pill-filter-row .link-glyph:hover { filter: brightness(1.25); }
+.pill-filter-row .link-glyph.link-pill-btn-active,
+.pill-filter-row .state-pill-btn.link-pill-btn-active {
+  box-shadow: 0 0 0 2px var(--cyan);
+  filter: brightness(1.3);
 }
 /* v1.11.70: cursor: pointer (was: help) on the SRC legend badges
    since v1.11.66 turned them all into <button> filters. The help

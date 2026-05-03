@@ -55,101 +55,127 @@
 <section class="filterbar">
   <input type="text" id="library-search" placeholder="search title or imdb id…"
          class="input" autocomplete="off" />
-  <!-- v1.11.89: trimmed THEMERRDB / MANUAL / PLEX AGENT — the SRC
-       legend below is now multi-select and covers source-based
-       filtering (toggle T+U+A+M+P, just T, etc). What's left is the
-       motif-state axis: VIEW (ALL/HAS THEME/UNTRACKED) · DONE
-       (DOWNLOADED/PLACED/UNPLACED) · ATTN (DL MISSING/UPDATES/
-       FAILURES/THEMERRDB ONLY). -->
+  <!-- v1.12.23: status row trimmed to its three semantic-view chips.
+       DOWNLOADED, PLACED, DL MISSING removed — they're now covered
+       by the dedicated DL pill row below (which mirrors the row's
+       DL column dot). The pill axes (TDB / SRC / DL / PL / LINK)
+       compose with status; selections within an axis OR, axes AND.
+       All pill filters run server-side (since v1.12.23) so total,
+       pagination, and sort all honor the active set. -->
   <div class="chips" role="tablist">
-    <span class="chip-group">
-      <button class="chip chip-active" data-status="all" title="Every item in this tab.">ALL</button>
-      <button class="chip" data-status="has_theme" title="Items with any theme source.">THEMED</button>
-      <button class="chip" data-status="untracked" title="No theme anywhere. Stack with TDB to scope by upstream coverage.">UNTHEMED</button>
-    </span>
-    <span class="chip-sep" aria-hidden="true">·</span>
-    <span class="chip-group">
-      <button class="chip" data-status="downloaded" title="Motif has the file locally (placed or not).">DOWNLOADED</button>
-      <button class="chip" data-status="placed" title="Theme is in the Plex folder — Plex is playing it.">PLACED</button>
-    </span>
-    <span class="chip-sep" aria-hidden="true">·</span>
-    <span class="chip-group">
-      <button class="chip chip-warn" data-status="dl_missing" title="Canonical /themes copy is gone but the Plex-folder file survives. Use RESTORE FROM PLEX to recover.">DL MISSING</button>
-    </span>
+    <button class="chip chip-active" data-status="all" title="Every item in this tab.">ALL</button>
+    <button class="chip" data-status="has_theme" title="Items with any theme source.">THEMED</button>
+    <button class="chip" data-status="untracked" title="No theme anywhere. Stack with the pill rows to scope further.">UNTHEMED</button>
   </div>
-  <!-- v1.12.7: TDB pill multi-select filter — replaces the v1.10.20
-       3-state TDB MATCH chip group. Same pattern as the SRC pill row
-       below: each pill toggles items with that pill state in/out of
-       the visible page; ALL selects every state; CLEAR drops all.
-       Filter is client-side (current page only) — total / pagination
-       still reflect the underlying status filter.
-        - TDB     (green) → TDB-tracked, no failure
-        - TDB ↑   (blue)  → upstream URL update available
-        - TDB ⚠   (amber) → cookies-required failure
-        - TDB ✗   (red)   → dead URL (video removed / private / etc)
-        - no TDB  (gray)  → no themes record / orphan
-  -->
-  <div class="tdb-key-compact" id="library-tdb-filter"
-       aria-label="TDB pill filter (click to filter; multi-select)">
-    <span class="tdb-key-label muted small">TDB:</span>
-    <button type="button" class="src-key-clear muted small"
-            data-tdb-pill-all="1"
+
+  <!-- Pill filter rows. Order matches the row column order
+       (TDB, SRC, DL, PL, LINK) so the user's eye tracks naturally
+       between header and data. Each row is multi-select via the
+       same ALL / pill / CLEAR pattern. -->
+  <div class="pill-filter-row" id="library-tdb-filter"
+       aria-label="TDB pill filter">
+    <span class="pill-filter-label muted small">TDB:</span>
+    <button type="button" class="pill-filter-clear" data-tdb-pill-all="1"
             title="Select every TDB pill state.">ALL</button>
     <button type="button" class="tdb-pill tdb-pill-yes tdb-pill-btn"
             data-tdb-pill="tdb"
-            title="ThemerrDB tracks this title and the URL is healthy.">TDB</button>
+            title="ThemerrDB tracks this title; URL is healthy.">TDB</button>
     <button type="button" class="tdb-pill tdb-pill-update tdb-pill-btn"
             data-tdb-pill="update"
-            title="Upstream URL changed — ACCEPT UPDATE / KEEP CURRENT in SOURCE.">TDB ↑</button>
+            title="Upstream URL changed — review via ACCEPT UPDATE / KEEP CURRENT.">TDB ↑</button>
     <button type="button" class="tdb-pill tdb-pill-cookies tdb-pill-btn"
             data-tdb-pill="cookies"
             title="YouTube needs a sign-in cookie. Drop cookies.txt at the configured path.">TDB ⚠</button>
     <button type="button" class="tdb-pill tdb-pill-dead tdb-pill-btn"
             data-tdb-pill="dead"
-            title="Upstream URL is broken (removed / private / restricted). Use SET URL or UPLOAD MP3.">TDB ✗</button>
+            title="Upstream URL is broken. Use SET URL or UPLOAD MP3.">TDB ✗</button>
     <button type="button" class="tdb-pill tdb-pill-no tdb-pill-btn"
             data-tdb-pill="none"
             title="No ThemerrDB record for this title.">no TDB</button>
-    <button type="button" class="src-key-clear muted small"
-            data-tdb-pill=""
+    <button type="button" class="pill-filter-clear" data-tdb-pill=""
             title="Clear all TDB pill selections.">CLEAR</button>
   </div>
-</section>
 
-<!-- v1.11.66: SRC legend = click-to-filter on the SRC column.
-     v1.11.89: now multi-select — click multiple letters to widen
-     the filter (T+U shows both T-source and U-source rows). Click
-     an active letter again to remove it from the set. Pure
-     client-side: pagination/total still reflect the underlying
-     status+tdb pass; SRC narrows the visible page only. -->
-<div class="src-key-compact" aria-label="SRC column legend (click to filter; multi-select)">
-  <span class="src-key-label muted small">SRC:</span>
-  <button type="button" class="src-key-clear muted small" data-src-filter-all="1"
-          title="Select every SRC source.">ALL</button>
-  <button type="button" class="link-badge link-badge-themerrdb src-key-btn"
-          data-src-filter="T"
-          title="ThemerrDB-managed — motif fetches from upstream.">T</button>
-  <button type="button" class="link-badge link-badge-user src-key-btn"
-          data-src-filter="U"
-          title="User-provided — manual YouTube URL or MP3 upload.">U</button>
-  <button type="button" class="link-badge link-badge-adopt src-key-btn"
-          data-src-filter="A"
-          title="Adopted — motif claimed an existing Plex-folder theme.mp3.">A</button>
-  <button type="button" class="link-badge link-badge-manual src-key-btn"
-          data-src-filter="M"
-          title="Manual sidecar — Plex-folder theme.mp3 not managed by motif. Use ADOPT to claim.">M</button>
-  <button type="button" class="link-badge link-badge-cloud src-key-btn"
-          data-src-filter="P"
-          title="Plex agent / cloud — Plex supplies the theme; no local file.">P</button>
-  <button type="button" class="link-badge src-key-btn src-key-btn-tdb-only"
-          data-tdb-only="1"
-          title="ThemerrDB-only browse — titles TDB has that you don't own in Plex. Selection exports to CSV.">T</button>
-  <button type="button" class="link-badge src-key-btn src-key-btn-none"
-          data-src-filter="-"
-          title="No theme anywhere — eligible for DOWNLOAD TDB / SET URL / UPLOAD MP3 / ADOPT.">—</button>
-  <button type="button" class="src-key-clear muted small" data-src-filter=""
-          title="Clear all SRC selections.">CLEAR</button>
-</div>
+  <div class="pill-filter-row" aria-label="SRC pill filter">
+    <span class="pill-filter-label muted small">SRC:</span>
+    <button type="button" class="pill-filter-clear" data-src-filter-all="1"
+            title="Select every SRC source.">ALL</button>
+    <button type="button" class="link-badge link-badge-themerrdb src-key-btn"
+            data-src-filter="T"
+            title="ThemerrDB-managed — motif fetches from upstream.">T</button>
+    <button type="button" class="link-badge link-badge-user src-key-btn"
+            data-src-filter="U"
+            title="User-provided — manual YouTube URL or MP3 upload.">U</button>
+    <button type="button" class="link-badge link-badge-adopt src-key-btn"
+            data-src-filter="A"
+            title="Adopted — motif claimed an existing Plex-folder theme.mp3.">A</button>
+    <button type="button" class="link-badge link-badge-manual src-key-btn"
+            data-src-filter="M"
+            title="Manual sidecar — Plex-folder theme.mp3 not managed by motif.">M</button>
+    <button type="button" class="link-badge link-badge-cloud src-key-btn"
+            data-src-filter="P"
+            title="Plex agent / cloud — Plex supplies the theme; no local file.">P</button>
+    <button type="button" class="link-badge src-key-btn src-key-btn-tdb-only"
+            data-tdb-only="1"
+            title="ThemerrDB-only browse — titles in TDB you don't own in Plex.">T</button>
+    <button type="button" class="link-badge src-key-btn src-key-btn-none"
+            data-src-filter="-"
+            title="No theme anywhere.">—</button>
+    <button type="button" class="pill-filter-clear" data-src-filter=""
+            title="Clear all SRC selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="DL pill filter">
+    <span class="pill-filter-label muted small">DL:</span>
+    <button type="button" class="pill-filter-clear" data-dl-pill-all="1"
+            title="Select every DL state.">ALL</button>
+    <button type="button" class="state-pill-btn state-pill-btn-on"
+            data-dl-pill="on"
+            title="Motif has a downloaded canonical for this row.">●</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-dl-pill="off"
+            title="No downloaded canonical.">●</button>
+    <button type="button" class="state-pill-btn state-pill-btn-broken"
+            data-dl-pill="broken"
+            title="Canonical missing on disk; the placement file survives. Use RESTORE FROM PLEX.">●</button>
+    <button type="button" class="pill-filter-clear" data-dl-pill=""
+            title="Clear all DL selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="PL pill filter">
+    <span class="pill-filter-label muted small">PL:</span>
+    <button type="button" class="pill-filter-clear" data-pl-pill-all="1"
+            title="Select every PL state.">ALL</button>
+    <button type="button" class="state-pill-btn state-pill-btn-on"
+            data-pl-pill="on"
+            title="Theme is in the Plex folder.">●</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-pl-pill="off"
+            title="Not placed in the Plex folder.">●</button>
+    <button type="button" class="pill-filter-clear" data-pl-pill=""
+            title="Clear all PL selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="LINK pill filter">
+    <span class="pill-filter-label muted small">LINK:</span>
+    <button type="button" class="pill-filter-clear" data-link-pill-all="1"
+            title="Select every LINK state.">ALL</button>
+    <button type="button" class="link-glyph link-glyph-hardlink"
+            data-link-pill="hl"
+            title="Hardlink — canonical and Plex-folder file share an inode.">HL</button>
+    <button type="button" class="link-glyph link-glyph-copy"
+            data-link-pill="c"
+            title="Copy — uses extra disk; cross-filesystem fallback.">C</button>
+    <button type="button" class="link-glyph link-glyph-mismatch"
+            data-link-pill="m"
+            title="Mismatch — canonical content differs from the Plex-folder file. Resolve via PLACE menu.">M</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-link-pill="none"
+            title="No placement.">—</button>
+    <button type="button" class="pill-filter-clear" data-link-pill=""
+            title="Clear all LINK selections.">CLEAR</button>
+  </div>
+</section>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
      checkbox or the table-header select-all. v1.10.49: ADOPT SELECTED
