@@ -3339,18 +3339,24 @@
       // covers the same fetch-from-TDB action with the right label
       // for that context. Showing both confuses the user about which
       // does what.
+      // v1.12.37: RE-DOWNLOAD TDB removed per user feedback —
+      // on a T row that's already downloaded, re-running the
+      // same TDB URL is a no-op for content. The action only
+      // existed to refresh corrupted files, but RESTORE FROM
+      // PLEX (PLACE menu) covers that recovery path with
+      // friendlier framing. DOWNLOAD TDB still shows on T
+      // rows that haven't been downloaded yet (or are
+      // dl-broken) — the initial-fetch case where the action
+      // is genuinely meaningful.
       if (!isPlexAgent && !isManualPlacement && !lockManualActions
-          && !tdbBlocked && hasDownloadUrl && !it.pending_update) {
+          && !tdbBlocked && hasDownloadUrl && !it.pending_update
+          && (!downloaded || dlBroken)) {
         const dlSource = (sourceKindForActions === 'url')
           ? 'manual URL override'
           : 'ThemerrDB';
-        const dlTip = downloaded
-          ? `Re-fetch from ${dlSource} and overwrite the canonical.`
-          : `Download from ${dlSource} and place into the Plex folder.`;
-        const tdbLabel = (downloaded && !dlBroken) ? 'RE-DOWNLOAD TDB'
-                       : 'DOWNLOAD TDB';
+        const dlTip = `Download from ${dlSource} and place into the Plex folder.`;
         sourceItems.push(menuItemHtml(
-          'redl', tdbLabel, dlTip,
+          'redl', 'DOWNLOAD TDB', dlTip,
           { mt: themeMt, id: themeId, tone: 'themerrdb' },
         ));
       }
@@ -3566,18 +3572,18 @@
 
     // REMOVE menu
     const removeItems = [];
-    // v1.12.37: CLEAR URL drops the user_overrides row + flips
-    // the row from U to T (re-downloads from ThemerrDB). Lives
-    // in REMOVE rather than SOURCE because the action's
-    // mental-model is "remove my custom URL", not "switch
-    // sources" — even though the underlying flow is the same as
-    // REPLACE TDB. Only surfaces when there's actually a URL
-    // override to clear AND there's a TDB upstream to fall back
-    // on (otherwise clearing leaves the row in limbo).
-    if (sourceKindForActions === 'url' && isThemerrDb) {
+    // v1.12.37 (revised): CLEAR URL drops the captured PREVIOUS
+    // URL (themes.previous_youtube_url) so REVERT becomes
+    // unavailable for the row going forward. Useful when the
+    // user is satisfied with the current state and wants to
+    // "commit" — guards against accidental REVERTs and tidies
+    // the INFO card. Only surfaces when there's actually a
+    // previous URL to clear, mirroring the SOURCE-menu REVERT
+    // gating (also has_previous_url-driven).
+    if (it.has_previous_url) {
       removeItems.push(menuItemHtml(
         'clear-url', 'CLEAR URL',
-        "Drop the manual URL override and re-download from ThemerrDB.",
+        "Drop the captured previous URL — REVERT will no longer be available.",
         { mt: themeMt, id: themeId, danger: true },
       ));
     }
@@ -4708,12 +4714,12 @@
       } else if (act === 'revert') {
         revertToThemerrDb(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'clear-url') {
-        // v1.12.37: REMOVE-menu CLEAR URL drops the user override
-        // and re-downloads from TDB. Confirm prompt because
-        // it's in REMOVE (danger styling); user intent is more
-        // destructive than the SOURCE-menu equivalents.
+        // v1.12.37 (revised): CLEAR URL drops the captured
+        // previous URL on the row so REVERT becomes unavailable.
+        // Doesn't touch the canonical or user_overrides — the
+        // current playing theme is unaffected.
         const title = btn.dataset.title || 'this theme';
-        if (!confirm(`Clear the manual URL override on "${title}" and re-download from ThemerrDB?\n\nThe row will switch from U to T after the download lands. Use REVERT in SOURCE to restore the URL afterwards.`)) return;
+        if (!confirm(`Clear the captured previous URL for "${title}"?\n\nREVERT will no longer be available on this row. Current theme is unaffected.`)) return;
         clearUrlOverride(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'info') {
         openInfoDialog(btn.dataset.mt, btn.dataset.id).catch(console.error);

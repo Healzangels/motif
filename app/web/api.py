@@ -4406,69 +4406,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, media_type: MediaType, tmdb_id: int,
         db: Path = Depends(get_db_path),
     ):
-        """v1.12.37: drop a manual URL override on a U row +
-        re-download from ThemerrDB. Lives in the row's REMOVE
-        menu (rather than SOURCE) because the user mental-model
-        is "remove my custom URL", not "switch sources" —
-        functionally equivalent to REPLACE TDB but with REMOVE-
-        appropriate framing.
+        """v1.12.37 (revised per user feedback):
+        Drop the captured PREVIOUS URL on a row (clears
+        themes.previous_youtube_url + previous_youtube_kind) so
+        REVERT becomes unavailable. The current canonical and
+        user_overrides are untouched — the playing theme keeps
+        playing. Useful when the user is satisfied with the
+        current state and wants to "commit" the most recent
+        change, guarding against accidental REVERTs.
 
-        Captures the cleared URL into themes.previous_youtube_url
-        (kind='user') so REVERT can later restore it if the user
-        changes their mind. Provenance flips to 'auto' lazily on
-        the worker's download completion (per v1.12.37 worker
-        change), not eagerly here.
+        Returns 409 if no previous URL is captured.
         """
         _require_admin(request)
         with get_conn(db) as conn:
             row = conn.execute(
-                "SELECT upstream_source FROM themes "
+                "SELECT previous_youtube_url FROM themes "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="not in database")
-            if row["upstream_source"] == "plex_orphan":
+            if not row["previous_youtube_url"]:
                 raise HTTPException(
                     status_code=409,
-                    detail="this theme has no ThemerrDB upstream to clear to",
+                    detail="no captured previous URL to clear",
                 )
-            override = conn.execute(
-                "SELECT youtube_url FROM user_overrides "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchone()
-            if override is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="no manual URL override to clear",
-                )
-            _capture_previous_url(conn, media_type, tmdb_id)
             conn.execute(
-                "DELETE FROM user_overrides "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            )
-            conn.execute(
-                """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
-                                     failure_at = NULL
+                """UPDATE themes SET previous_youtube_url = NULL,
+                                     previous_youtube_kind = NULL
                    WHERE media_type = ? AND tmdb_id = ?""",
                 (media_type, tmdb_id),
             )
-            conn.execute(
-                """UPDATE jobs SET status = 'cancelled', finished_at = ?
-                   WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
-                     AND status IN ('pending', 'failed')""",
-                (now_iso(), media_type, tmdb_id),
-            )
-            from ..core.sync import _enqueue_download
-            _enqueue_download(
-                conn, media_type=media_type, tmdb_id=tmdb_id,
-                reason="clear_url_override",
-            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
-                  message=f"URL override cleared by {request.state.user}")
+                  message=f"Previous URL cleared by {request.state.user}")
         return {"ok": True}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/revert")
