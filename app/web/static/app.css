@@ -552,31 +552,30 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 300px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
-/* v1.12.27: every header cell in the library table aligns LEFT
-   regardless of how its data cells render. Mixing centered
-   labels (IMDB, ACTIONS) with left-anchored labels (TITLE,
-   YEAR, SRC, DL, PL, LINK) created the visual "IMDB and
-   ACTIONS sit lower" effect the user kept reporting — the
-   centered labels appeared at a different X anchor in their
-   wider columns and the eye read that horizontal offset as a
-   vertical shift. Forcing every header label to the left
-   anchor of its cell puts every column's label on a single
-   visual line. Data cell alignment (centered dots / pills,
-   left-aligned tt-IDs, right-aligned action buttons) is
-   unaffected — only the th text-align changes. */
+/* v1.12.28: every header cell centers its label + sort
+   indicator as a single unit. v1.12.27 forced left-align
+   to put all eight headers on one X anchor, but the user
+   wants centered headers in each column with the carat
+   centered alongside its label rather than pinned to the
+   right edge of the cell. With text-align: center on every
+   <th> and an inline-block .sort-indicator, "LINK ▲" /
+   "IMDB ▲" / etc. center as a group within their cells. */
 .table thead th {
-  text-align: left;
+  text-align: center;
   vertical-align: middle;
   line-height: 1.4;
   font-size: var(--t-tiny);
   white-space: nowrap;
-  /* v1.12.27: tabular-nums / mute color from the .col-imdb base
-     class were leaking into the IMDB header and contributing to
-     the perceived baseline difference. Resetting both at the
-     thead-th level keeps every column's header consistent. */
   font-variant-numeric: normal;
   color: var(--fg-dim);
 }
+/* v1.12.28: TITLE keeps its left-anchored label since the
+   data cells under it are also left-anchored (movie titles)
+   and a centered TITLE label over a 600px-wide column would
+   float far from its data. Every other column is narrow
+   enough that center-aligning the label reads as obviously
+   "this label belongs to this column". */
+#library-table th.col-title { text-align: left; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
