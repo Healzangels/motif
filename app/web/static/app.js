@@ -3338,29 +3338,21 @@
       // For an orphan with a manual URL there's nothing to revert to;
       // pre-1.10.29 the button would have errored or 'reverted' to
       // nothing.
-      // v1.12.34: REVERT now spans two flows — both backed by the
-      // same /revert endpoint, picked server-side based on DB
-      // state.
-      //   (a) U -> T: source_kind === 'url' AND there's a TDB
-      //       upstream — clear user_overrides, re-download TDB.
-      //   (b) post-accept-update -> U: revertible_to_url === 1 —
-      //       user_overrides was consumed by an earlier ACCEPT
-      //       UPDATE; pending_updates.replaced_user_url holds the
-      //       prior URL. REVERT restores user_overrides from it
-      //       and re-downloads, round-tripping the row back to
-      //       U with the user's original URL.
-      // The button label, tone (violet — matches U badge), and
-      // tooltip are unified so the user sees a single "go back"
-      // action regardless of which direction the row is flipping.
-      const revertUtoT = sourceKindForActions === 'url' && isThemerrDb;
-      const revertTpostAccept = !!it.revertible_to_url;
-      if (revertUtoT || revertTpostAccept) {
-        const tip = revertUtoT
-          ? 'Clear the manual URL override and re-download from ThemerrDB.'
-          : 'Restore the manual URL captured when ACCEPT UPDATE replaced it, and re-download.';
+      // v1.12.36: REVERT semantics narrowed to post-accept-update
+      // restore only. Pre-fix, REVERT also fired the legacy U->T
+      // path (clear user_overrides, download from TDB) on plain
+      // U rows that had no pending update — confusing because
+      // (a) the user might never have accepted any update and
+      // (b) the action was indistinguishable in the menu from
+      // REPLACE TDB which already covers U->T. REVERT now only
+      // surfaces when revertible_to_url=1 (an earlier ACCEPT
+      // UPDATE captured replaced_user_url) and round-trips T
+      // back to U with the user's saved URL. The U->T direction
+      // is covered by REPLACE TDB further down the menu.
+      if (it.revertible_to_url) {
         sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
-          tip,
+          'Restore the manual URL captured when ACCEPT UPDATE replaced it, and re-download.',
           { mt: themeMt, id: themeId, tone: 'user' },
         ));
       }
@@ -4919,6 +4911,13 @@
       const oldUrlLink = pu.old_youtube_url
         ? `<a href="${htmlEscape(pu.old_youtube_url)}" target="_blank" rel="noopener">${htmlEscape(pu.old_youtube_url)}</a>`
         : '<span class="muted">—</span>';
+      // v1.12.36: relabeled "new tdb url" -> "current tdb url"
+      // and "old tdb url" -> "previous tdb url" per user
+      // feedback. "new" and "old" implied a temporal change
+      // direction that was unclear in post-accept state (where
+      // "new" is now the canonical and "old" is gone). "Current"
+      // and "previous" line up with the actual state regardless
+      // of decision (pending / accepted / declined).
       puBlock = `<dt>upstream update</dt>`
         + `<dd class="muted small">${htmlEscape(decisionLabel)}`
         + (pu.detected_at ? ` · detected ${htmlEscape(pu.detected_at)}` : '')
@@ -4926,8 +4925,8 @@
               ? ` · ${htmlEscape(pu.decision)} ${htmlEscape(pu.decision_at)}`
               : '')
         + '</dd>'
-        + `<dt>new tdb url</dt><dd>${newUrlLink}</dd>`
-        + `<dt>old tdb url</dt><dd>${oldUrlLink}</dd>`;
+        + `<dt>current tdb url</dt><dd>${newUrlLink}</dd>`
+        + `<dt>previous tdb url</dt><dd>${oldUrlLink}</dd>`;
       if (pu.replaced_user_url) {
         // Captured by ACCEPT UPDATE on a U row. REVERT will
         // restore this URL if invoked. Violet styling matches
