@@ -1124,11 +1124,36 @@
   }
 
   async function acceptUpdate(mediaType, tmdbId, btn) {
-    if (!confirm(
-        'Accept the ThemerrDB update?\n\n' +
-        'Motif will download from the new YouTube URL and overwrite your ' +
-        'current theme file (canonical + every section\'s placement). ' +
-        'The previous file is unrecoverable after this.')) return;
+    // v1.12.42: tailor the confirm prompt based on whether the
+    // row's current source is a user URL. ACCEPT UPDATE on a U
+    // row captures the user_overrides URL into
+    // themes.previous_youtube_url so REVERT can restore it
+    // post-accept (assuming the URLs differ — server-side
+    // checks that and skips capture if they match). The "previous
+    // file is unrecoverable" line was correct for T-row accepts
+    // but misleading for U-row accepts where the user URL is
+    // explicitly preserved.
+    let isUserSrcRow = false;
+    if (btn) {
+      const rowItem = (libraryState.items || []).find((it) =>
+        it.theme_media_type === mediaType
+        && String(it.theme_tmdb) === String(tmdbId)
+      );
+      if (rowItem) isUserSrcRow = computeSrcLetter(rowItem) === 'U';
+    }
+    const promptText = isUserSrcRow
+      ? 'Accept the ThemerrDB update?\n\n'
+        + 'Motif will download the new ThemerrDB URL and overwrite '
+        + 'the current theme file. Your manual URL is saved — if '
+        + 'you change your mind, REVERT in the SOURCE menu will '
+        + 'restore it. (If your URL exactly matched the new TDB '
+        + 'URL, REVERT will be unavailable; the INFO card explains.)'
+      : 'Accept the ThemerrDB update?\n\n'
+        + 'Motif will download from the new YouTube URL and '
+        + 'overwrite the current theme file (canonical + every '
+        + 'section\'s placement). The previous file is '
+        + 'unrecoverable after this.';
+    if (!confirm(promptText)) return;
     if (btn) btn.disabled = true;
     try {
       await api('POST', `/api/updates/${mediaType}/${tmdbId}/accept`);
