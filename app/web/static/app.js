@@ -1062,9 +1062,16 @@
     // captured). Skip the confirm dialog — REVERT is non-destructive
     // and round-trippable (clicking REVERT a second time returns
     // the row to its pre-first-revert state).
+    // v1.12.47: scope to the row's section_id so REVERT only
+    // re-themes the section the user clicked from (matches
+    // ACCEPT UPDATE's per-section behavior).
     if (btn) btn.disabled = true;
     try {
-      await api('POST', `/api/items/${mediaType}/${tmdbId}/revert`);
+      const sectionId = btn?.dataset?.sectionId;
+      const url = sectionId
+        ? `/api/items/${mediaType}/${tmdbId}/revert?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/items/${mediaType}/${tmdbId}/revert`;
+      await api('POST', url);
       if (btn) btn.textContent = 'QUEUED';
       if (typeof libraryRapidPoll === 'function'
           && document.getElementById('library-body')) {
@@ -3507,12 +3514,15 @@
       const revertTone = it.previous_youtube_kind === 'themerrdb'
         ? 'themerrdb' : 'user';
       const revertTip = it.previous_youtube_kind === 'themerrdb'
-        ? "Revert to the previously-active ThemerrDB URL and re-download."
-        : "Revert to the previously-active user URL and re-download.";
+        ? "Revert to the previously-active ThemerrDB URL and re-download in this section."
+        : "Revert to the previously-active user URL and re-download in this section.";
+      // v1.12.47: pass sectionId so REVERT scopes the
+      // re-download + place to only this row's section
+      // (matches ACCEPT UPDATE per-section behavior).
       sourceItems.push(menuItemHtml(
         'revert', 'REVERT',
         revertTip,
-        { mt: themeMt, id: themeId, tone: revertTone },
+        { mt: themeMt, id: themeId, sectionId: it.section_id, tone: revertTone },
       ));
     }
 

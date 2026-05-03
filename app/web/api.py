@@ -4531,6 +4531,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/revert")
     async def api_revert_to_themerrdb(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.47: optional section_id scopes the re-download +
+        # placement to one section (mirrors the v1.12.46
+        # ACCEPT UPDATE flow). Without it, the download fans
+        # out to every section that owns the title — wrong
+        # when only one library/edition is being reverted.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """REVERT the row's canonical URL one step back to
@@ -4661,10 +4667,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
+            # v1.12.47: REVERT now passes force_place=True +
+            # only_section_id (when provided) — mirrors the
+            # v1.12.43 ACCEPT UPDATE fix. Pre-fix the place job
+            # ran but skipped with status "plex_has_theme"
+            # because the existing post-accept theme.mp3 was
+            # there; the new (reverted-to) URL got downloaded
+            # into canonical but never replaced the placement,
+            # so Plex kept playing the post-accept theme.
             from ..core.sync import _enqueue_download
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason=f"revert_to_{prev_kind}_url",
+                auto_place=True,
+                force_place=True,
+                only_section_id=section_id,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -4737,10 +4754,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
+            # v1.12.47: RE-DOWNLOAD TDB / DOWNLOAD TDB (this
+            # endpoint backs both labels) needs force_place=True
+            # so the place job overwrites the existing
+            # placement file. Pre-fix the place worker hit
+            # skip_if_plex_has_theme and the new canonical
+            # never reached Plex's folder — same Plex-cache bug
+            # the v1.12.43 ACCEPT UPDATE fix solved.
             from ..core.sync import _enqueue_download
             n = _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason="manual",
+                auto_place=True,
+                force_place=True,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -4819,10 +4845,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
+            # v1.12.47: SET URL via the /override dialog needs
+            # force_place=True so the new URL's download
+            # overwrites whatever theme.mp3 is currently in the
+            # Plex folder. User intent is "use this URL" — the
+            # placement should reflect it. Pre-fix the place
+            # worker hit skip_if_plex_has_theme on rows that
+            # already had a theme cached, so the override URL
+            # downloaded into canonical but Plex kept playing
+            # the old theme.
             from ..core.sync import _enqueue_download
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason="override",
+                auto_place=True,
+                force_place=True,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
