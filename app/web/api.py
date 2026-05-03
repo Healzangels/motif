@@ -2716,29 +2716,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  media_type, tmdb_id),
             )
             from ..core.sync import _enqueue_download
-            # v1.12.41: ACCEPT UPDATE forces auto_place=True on
-            # the queued download. Pre-fix the placement
-            # decision deferred to the global placement.auto_place
-            # setting — when False, the download landed in
-            # canonical and waited at /pending for manual
-            # approval. With /pending removed in v1.12.41 the
-            # only way the user would discover the awaiting-
-            # placement state is via the row's PUSH TO PLEX
-            # button, which is ambiguous with the case where they
-            # explicitly held back. ACCEPT UPDATE has explicit
-            # user intent ("yes, take this update") so the
-            # download chains directly into a place job.
+            # v1.12.41: ACCEPT UPDATE forces auto_place=True so
+            # the download chains directly into a place job
+            # instead of deferring to the global setting.
+            # v1.12.43: also pass force_place=True so the place
+            # job overwrites whatever theme.mp3 is currently in
+            # the Plex folder (typical case: a user-source
+            # theme that the user is now updating to TDB's URL).
+            # Pre-fix the place job ran but skipped with status
+            # "plex_has_theme" because Plex's metadata cache
+            # still showed has_theme=true from the existing
+            # user file — motif downloaded the new canonical
+            # but the placement file never got replaced, so
+            # Plex kept playing the old U theme.
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason="upstream_update_accepted",
                 auto_place=True,
+                force_place=True,
             )
+        # v1.12.43: log message references url_match (computed
+        # above) instead of the v1.12.35-era replaced_user_url
+        # variable which was removed when the previous-URL state
+        # moved to themes.previous_youtube_url. The stale
+        # reference NameError'd accept-update for U-source rows,
+        # 500ing the response even though the DB transaction +
+        # download enqueue succeeded.
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=(f"Update accepted by {request.state.principal.username}"
                            + (" (user URL captured for revert)"
-                              if replaced_user_url else
-                              " (user URL matched TDB; no revert)"
+                              if (override and not url_match)
+                              else " (user URL matched TDB; no revert)"
                               if override else "")))
         return {"ok": True}
 

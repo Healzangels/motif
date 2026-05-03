@@ -383,6 +383,7 @@ def _enqueue_download(
     tmdb_id: int,
     reason: str,
     auto_place: bool | None = None,
+    force_place: bool = False,
 ) -> int:
     """v1.11.0: enqueue one download job per (media_type, tmdb_id, section)
     where this item lives — sections discovered via plex_items joined to
@@ -395,6 +396,16 @@ def _enqueue_download(
 
     `auto_place=None` means "use the global setting"; True/False writes
     an explicit override into the job payload that the worker honors.
+
+    v1.12.43: `force_place=True` adds force_place to the payload so the
+    chained place job runs with force=True, bypassing the worker's
+    skip_if_plex_has_theme guard. Used by ACCEPT UPDATE so the new TDB
+    theme actually overwrites the existing user-source theme.mp3 in the
+    Plex folder. Pre-fix the place job ran but skipped with
+    "plex_has_theme" because Plex still cached the old theme as
+    has_theme=true — the file got downloaded into canonical but never
+    replaced the placement file in /movies/, leaving Plex playing the
+    old U theme.
     """
     plex_type = "show" if media_type == "tv" else "movie"
     sections = conn.execute(
@@ -436,6 +447,8 @@ def _enqueue_download(
         payload: dict = {"reason": reason}
         if auto_place is not None:
             payload["auto_place"] = bool(auto_place)
+        if force_place:
+            payload["force_place"] = True
         conn.execute(
             """
             INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
