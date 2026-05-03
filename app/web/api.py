@@ -2890,6 +2890,127 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"Update declined by {request.state.principal.username}")
         return {"ok": True}
 
+    @app.post("/api/updates/accept-all")
+    async def api_accept_all_updates(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v1.12.55: bulk-accept every pending_updates row with
+        decision='pending'. Iterates server-side applying the same
+        logic as the single-row api_accept_update: capture previous
+        URL, delete user_overrides, eager-flip local_files for
+        url_match rows (v1.12.53), mark decision='accepted', enqueue
+        a download. No per-section scoping — bulk fans out to every
+        section owning each title (the v1.12.34 fallback). Users who
+        need per-edition control should use the per-row action.
+
+        Returns counts so the UI can show breakdown
+        (e.g. "23 accepted · 5 eager-flipped · 18 downloads queued").
+        """
+        _require_admin(request)
+        accepted = 0
+        eager_flipped = 0
+        enqueued = 0
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                """SELECT media_type, tmdb_id, new_youtube_url, kind
+                     FROM pending_updates
+                    WHERE decision = 'pending'"""
+            ).fetchall()
+            from ..core.sync import _enqueue_download
+            for row in rows:
+                media_type = row["media_type"]
+                tmdb_id = row["tmdb_id"]
+                new_tdb_url = row["new_youtube_url"]
+                override = conn.execute(
+                    "SELECT youtube_url FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                url_match = bool(
+                    override
+                    and new_tdb_url
+                    and override["youtube_url"]
+                    and override["youtube_url"].strip() == new_tdb_url.strip()
+                )
+                if not url_match:
+                    _capture_previous_url(conn, media_type, tmdb_id)
+                if override:
+                    conn.execute(
+                        "DELETE FROM user_overrides "
+                        "WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
+                    if url_match:
+                        conn.execute(
+                            """UPDATE local_files
+                                  SET provenance = 'auto',
+                                      source_kind = 'themerrdb'
+                                WHERE media_type = ?
+                                  AND tmdb_id = ?""",
+                            (media_type, tmdb_id),
+                        )
+                        eager_flipped += 1
+                conn.execute(
+                    """UPDATE pending_updates SET decision = 'accepted',
+                           decision_at = ?, decision_by = ?
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (now_iso(), request.state.principal.username,
+                     media_type, tmdb_id),
+                )
+                _enqueue_download(
+                    conn, media_type=media_type, tmdb_id=tmdb_id,
+                    reason="bulk_update_accepted",
+                    auto_place=True,
+                    force_place=True,
+                    only_section_id=None,
+                )
+                enqueued += 1
+                accepted += 1
+        log_event(
+            db, level="INFO", component="api",
+            message=(
+                f"Bulk-accepted {accepted} pending update"
+                f"{'s' if accepted != 1 else ''} by "
+                f"{request.state.principal.username} "
+                f"({eager_flipped} eager-flipped, "
+                f"{enqueued} downloads queued)"
+            ),
+        )
+        return {
+            "ok": True,
+            "accepted": accepted,
+            "eager_flipped": eager_flipped,
+            "downloads_queued": enqueued,
+        }
+
+    @app.post("/api/updates/decline-all")
+    async def api_decline_all_updates(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v1.12.55: bulk-decline every pending update. Flips
+        decision='declined' for every row currently at 'pending'.
+        The blue ↑ pill stays for filter/sort but the topbar UPD
+        count drops to 0. Sticky — won't re-prompt unless
+        ThemerrDB updates again."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            cur = conn.execute(
+                """UPDATE pending_updates SET decision = 'declined',
+                       decision_at = ?, decision_by = ?
+                   WHERE decision = 'pending'""",
+                (now_iso(), request.state.principal.username),
+            )
+            declined = cur.rowcount
+        log_event(
+            db, level="INFO", component="api",
+            message=(
+                f"Bulk-declined {declined} pending update"
+                f"{'s' if declined != 1 else ''} by "
+                f"{request.state.principal.username}"
+            ),
+        )
+        return {"ok": True, "declined": declined}
+
     # --- JSON: items ---
 
     @app.get("/api/library")

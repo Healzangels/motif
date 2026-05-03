@@ -199,7 +199,7 @@
 <div id="library-bulk-bar" class="missing-banner" style="display:none;border-color:var(--green-deep);background:rgba(109,255,181,0.04)">
   <span class="missing-banner-glyph" style="color:var(--green-bright)">▸</span>
   <span class="missing-banner-text">
-    <strong id="library-selected-count">0</strong> selected
+    <span id="library-bulk-count-wrap"><strong id="library-selected-count">0</strong> selected</span>
     <span class="muted small" id="library-bulk-detail"></span>
   </span>
   <button class="btn btn-tiny" id="library-select-all-filtered-btn" type="button"
@@ -214,6 +214,15 @@
           title="Export selection to CSV (Title (Year), imdb id) — drop-in for mdblist / radarr import lists.">// EXPORT CSV</button>
   <button class="btn btn-tiny btn-warn" id="library-ack-selected-btn" type="button" style="display:none"
           title="Acknowledge each selected failure. Topbar FAIL count drops; the red TDB ✗ pill stays.">// ACK SELECTED</button>
+  <!-- v1.12.55: bulk update actions. Visible only when the user
+       is on the blue-↑-pill click-through (tdb_pills=update),
+       which is what the topbar UPD badge routes to. Both call
+       server-side bulk endpoints so the action is one HTTP
+       round-trip regardless of how many pending updates exist. -->
+  <button class="btn btn-tiny btn-info" id="library-accept-all-updates-btn" type="button" style="display:none"
+          title="Accept every pending ThemerrDB update across all libraries. Eager-flips the urls_match rows (no download) and queues downloads for the rest.">// ACCEPT ALL UPDATES</button>
+  <button class="btn btn-tiny" id="library-decline-all-updates-btn" type="button" style="display:none"
+          title="Dismiss every pending update. The blue ↑ pill stays for filter/sort; the topbar UPD count drops to 0.">// KEEP ALL CURRENT</button>
 </div>
 
 <section class="block">

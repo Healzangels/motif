@@ -3957,7 +3957,26 @@
     if (!bar || !cnt) return;
     const n = libraryState.selected.size;
     cnt.textContent = fmt.num(n);
-    bar.style.display = n > 0 ? '' : 'none';
+    // v1.12.55: bulk bar also shows when the user is on the
+    // tdb_pills=update click-through (topbar UPD badge target),
+    // even with nothing selected — so the // ACCEPT ALL UPDATES /
+    // KEEP ALL CURRENT actions are reachable without forcing a
+    // SELECT ALL FILTERED first.
+    const onUpdateFilter = libraryState.tdbPills.has('update');
+    bar.style.display = (n > 0 || onUpdateFilter) ? '' : 'none';
+    // When nothing is selected but the bar is showing because of
+    // the update filter, hide the "N selected" prefix entirely and
+    // show "viewing pending updates" instead — bulk actions explain
+    // their own scope without needing a row count.
+    const detail = document.getElementById('library-bulk-detail');
+    const countWrap = document.getElementById('library-bulk-count-wrap');
+    if (onUpdateFilter && n === 0) {
+      if (countWrap) countWrap.style.display = 'none';
+      if (detail) detail.textContent = 'viewing pending updates · bulk actions below';
+    } else {
+      if (countWrap) countWrap.style.display = '';
+      if (detail) detail.textContent = '';
+    }
     // v1.12.5: tri-state header checkbox — checked when every visible
     // row is selected, indeterminate when some are, unchecked when
     // none. Lets the user see at a glance whether clicking the
@@ -4017,6 +4036,15 @@
     if (adoptBtn) adoptBtn.style.display = (!onTdbOnly && hasSidecarOnly) ? '' : 'none';
     const exportBtn = document.getElementById('library-export-csv-btn');
     if (exportBtn) exportBtn.style.display = '';
+    // v1.12.55: bulk update actions visible only when the user is
+    // on the blue-↑-pill click-through (the topbar UPD badge
+    // target). Outside that filter the actions don't fit the
+    // mental model — ACCEPT ALL UPDATES would silently fan out
+    // beyond the rows the user is looking at.
+    const acceptAllBtn = document.getElementById('library-accept-all-updates-btn');
+    const declineAllBtn = document.getElementById('library-decline-all-updates-btn');
+    if (acceptAllBtn) acceptAllBtn.style.display = onUpdateFilter ? '' : 'none';
+    if (declineAllBtn) declineAllBtn.style.display = onUpdateFilter ? '' : 'none';
   }
 
   function bindLibrary() {
@@ -4721,6 +4749,83 @@
     // failure_kind. Off-page selections are filtered to candidates
     // we know about from libraryState.items; the user is told if
     // any selected rows aren't on the visible page.
+    // v1.12.55: bulk accept-all / decline-all handlers. Both call
+    // server-side endpoints that iterate every pending_updates row
+    // with decision='pending', so the action is one HTTP round-trip
+    // regardless of how many pending updates exist.
+    document.getElementById('library-accept-all-updates-btn')?.addEventListener('click', async (e) => {
+      let pending = 0;
+      try {
+        const res = await api('GET', '/api/updates/count');
+        pending = res.pending || 0;
+      } catch (_) { /* fall through; the endpoint will handle the noop */ }
+      if (pending === 0) {
+        alert('No pending updates to accept.');
+        return;
+      }
+      const ok = confirm(
+        `Accept ${pending} pending ThemerrDB update`
+          + `${pending !== 1 ? 's' : ''}?\n\n`
+          + `For URL-match rows (your override URL == TDB URL) this is `
+          + `instant — no download. For the rest motif will queue a `
+          + `download per row, replacing the current theme. The action `
+          + `cannot be undone in bulk; per-row REVERT remains available.`
+      );
+      if (!ok) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// ACCEPTING ${pending}…`;
+      try {
+        const res = await api('POST', '/api/updates/accept-all');
+        const flipped = res.eager_flipped || 0;
+        const queued = res.downloads_queued || 0;
+        btn.textContent = `// ${res.accepted} ACCEPTED`
+          + (flipped ? ` · ${flipped} FLIPPED` : '')
+          + (queued ? ` · ${queued} QUEUED` : '');
+        libraryRapidPoll();
+      } catch (err) {
+        btn.textContent = '// FAILED';
+        alert('Bulk accept failed: ' + err.message);
+      } finally {
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+      }
+    });
+
+    document.getElementById('library-decline-all-updates-btn')?.addEventListener('click', async (e) => {
+      let pending = 0;
+      try {
+        const res = await api('GET', '/api/updates/count');
+        pending = res.pending || 0;
+      } catch (_) { /* fall through */ }
+      if (pending === 0) {
+        alert('No pending updates to dismiss.');
+        return;
+      }
+      const ok = confirm(
+        `Dismiss ${pending} pending update${pending !== 1 ? 's' : ''}?\n\n`
+          + `The blue ↑ pill stays on each row for filter/sort, but the `
+          + `topbar UPD count drops to 0. Won't re-prompt unless ThemerrDB `
+          + `updates again.`
+      );
+      if (!ok) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// DISMISSING ${pending}…`;
+      try {
+        const res = await api('POST', '/api/updates/decline-all');
+        btn.textContent = `// ${res.declined} DISMISSED`;
+      } catch (err) {
+        btn.textContent = '// FAILED';
+        alert('Bulk dismiss failed: ' + err.message);
+      } finally {
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+      }
+    });
+
     document.getElementById('library-ack-selected-btn')?.addEventListener('click', async (e) => {
       const candidates = (libraryState.items || []).filter((it) => {
         if (!it.theme_media_type || it.theme_tmdb === null
