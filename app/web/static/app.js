@@ -5289,13 +5289,24 @@
               ? ` · ${htmlEscape(pu.decision)} ${htmlEscape(pu.decision_at)}`
               : '')
         + '</dd>';
-      if (pu.decision === 'accepted' && !previousUrl) {
-        // No previous URL captured — usually because the user's
-        // URL matched the new TDB URL at accept time, OR the row
-        // wasn't U at accept time. Surface why REVERT isn't
-        // available so the missing button doesn't read as a bug.
-        puBlock += `<dt class="muted">revert</dt>`
-          + `<dd class="muted small">unavailable — no previous URL captured (either none was set, or it matched the TDB URL exactly).</dd>`;
+      if (pu.decision === 'accepted') {
+        // v1.12.61: explain why REVERT might be missing. Two cases:
+        //   - no previous URL captured (legacy data from before
+        //     v1.12.61 always-capture fix)
+        //   - previous URL matches current canonical (would be a
+        //     no-op — same URL, possibly different kind, but
+        //     reverting just re-creates the override pointing to
+        //     the same content)
+        // Either way the SOURCE menu hides REVERT; this hint
+        // tells the user the missing button isn't a bug.
+        const currentCanonical = (ovr && ovr.youtube_url) || tdbUrl || '';
+        if (!previousUrl) {
+          puBlock += `<dt class="muted">revert</dt>`
+            + `<dd class="muted small">unavailable — no previous URL captured.</dd>`;
+        } else if (previousUrl === currentCanonical) {
+          puBlock += `<dt class="muted">revert</dt>`
+            + `<dd class="muted small">unavailable — previous URL matches the current canonical (would be a no-op).</dd>`;
+        }
       }
     }
     const placedBlock = placements.length

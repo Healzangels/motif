@@ -2789,19 +2789,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             # v1.12.37: capture the row's current URL into
             # themes.previous_youtube_url so REVERT can round-trip
-            # this accept later. Skipped when the user's existing
-            # URL already matches the new TDB URL — accepting
-            # would just download the same file, and REVERT would
-            # re-arrive at the same state. Surface that to the
-            # user via the INFO card "no captured URL" message.
+            # this accept later.
+            # v1.12.61: previous capture is now unconditional. The
+            # original code skipped capture when override URL ==
+            # new TDB URL, on the theory that REVERT would be a
+            # no-op. That suppressed REVERT correctly but also lied
+            # about the row's "previous state" in the INFO card —
+            # for a SET URL → ACCEPT UPDATE flow with matching
+            # URLs, the previous_youtube_url stayed at the
+            # pre-SET-URL value (themerrdb-kind), so the card
+            # showed "previous url: X themerrdb" when the URL was
+            # actually a user-sourced override moments before.
+            # v1.12.53's smarter revert_redundant SQL hides the
+            # REVERT button independently (suppresses when
+            # previous_url == current canonical URL), so the
+            # skip-capture optimization is no longer needed.
+            # Capturing always means the kind reflects the actual
+            # source: if override exists at this moment, kind=user;
+            # otherwise kind=themerrdb.
             url_match = bool(
                 override
                 and new_tdb_url
                 and override["youtube_url"]
                 and override["youtube_url"].strip() == new_tdb_url.strip()
             )
-            if not url_match:
-                _capture_previous_url(conn, media_type, tmdb_id)
+            _capture_previous_url(conn, media_type, tmdb_id)
 
             if override:
                 conn.execute(
