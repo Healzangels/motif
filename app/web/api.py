@@ -522,7 +522,23 @@ def _library_main_query(
                    WHERE pu.media_type = t.media_type
                      AND pu.tmdb_id = t.tmdb_id
                      AND pu.replaced_user_url IS NOT NULL
-                ) THEN 1 ELSE 0 END) AS revertible_to_url
+                ) THEN 1 ELSE 0 END) AS revertible_to_url,
+               -- v1.12.35: accepted_update = the row's pending
+               -- update was ACCEPTed previously. Suppresses
+               -- REPLACE TDB / RE-DOWNLOAD TDB in the SOURCE
+               -- menu since the canonical was just downloaded
+               -- from the current TDB URL — re-running either
+               -- would just download the same file. Independent
+               -- of revertible_to_url because URLs may have
+               -- matched at accept time (no revert possible)
+               -- but the canonical-is-from-TDB invariant still
+               -- holds.
+               (CASE WHEN EXISTS (
+                  SELECT 1 FROM pending_updates pu
+                   WHERE pu.media_type = t.media_type
+                     AND pu.tmdb_id = t.tmdb_id
+                     AND pu.decision = 'accepted'
+                ) THEN 1 ELSE 0 END) AS accepted_update
     """
     # v1.11.0: every per-row JOIN to placements / local_files matches
     # by section_id = pi.section_id, so a row on the standard library
@@ -2541,53 +2557,80 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """Accept an upstream theme update: enqueue a re-download with the new URL.
 
-        v1.12.34: when the row currently has a user_overrides URL
-        (U source), this handler captures that URL into
-        pending_updates.replaced_user_url and DELETEs the
-        user_overrides row before enqueueing the download. Two
-        behavior changes from the pre-1.12.34 flow:
-
-          1. The download worker prefers user_overrides URL when
-             present, so leaving it in place meant ACCEPT UPDATE
-             never actually pulled the new TDB URL — it just
-             flipped pending_updates.decision to 'accepted'. The
-             canonical kept coming from the user's URL on every
-             re-download. Clearing user_overrides forces the
-             worker to use the new TDB URL, which is what the
-             user expects when they click ACCEPT UPDATE.
-
-          2. The captured URL is preserved in
-             pending_updates.replaced_user_url so the row's
-             SOURCE menu can offer a REVERT action that restores
-             the user's URL — round-tripping the row back to U
-             without losing the user's customization.
+        v1.12.34 / v1.12.35:
+        When the row currently has a user_overrides URL (U source),
+        this handler:
+          1. Compares the user's URL to the new TDB URL. If they
+             match, no REVERT will be possible (would just put the
+             row back where it is) — replaced_user_url stays NULL.
+             If they differ, the user's URL is captured into
+             pending_updates.replaced_user_url for REVERT.
+          2. DELETEs user_overrides so the worker uses the TDB
+             URL on re-download (worker prefers user_overrides URL
+             when present — pre-1.12.34, leaving the override in
+             place meant ACCEPT UPDATE silently kept downloading
+             the user's URL).
+          3. Flips provenance='auto' / source_kind='themerrdb' on
+             every local_files + placements row for this title.
+             v1.12.35: pre-fix, the worker's sibling-hardlink path
+             inherited the sibling's existing 'manual'/'url'
+             values when no override was present — so even after
+             ACCEPT UPDATE deleted user_overrides, the row kept
+             classifying as U because every section's hardlink
+             carried the original U-upload's provenance forward.
+             Explicit flip here resolves the classification
+             before the worker touches anything.
         """
         _require_admin(request)
         with get_conn(db) as conn:
             update = conn.execute(
-                "SELECT * FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
+                "SELECT new_youtube_url FROM pending_updates "
+                "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
             if update is None:
                 raise HTTPException(status_code=404, detail="no pending update")
-            # v1.12.34: if the row has a user override, capture it
-            # for revert + clear it so the worker uses the new
-            # TDB URL. See docstring for context.
+            new_tdb_url = update["new_youtube_url"]
             override = conn.execute(
                 "SELECT youtube_url FROM user_overrides "
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
-            replaced_user_url = override["youtube_url"] if override else None
-            if replaced_user_url:
+
+            # v1.12.35: only capture the user's URL for REVERT when
+            # it actually differs from the TDB URL. Identical URLs
+            # mean a REVERT round-trip would re-arrive at the same
+            # state we just reached — surface that to the user via
+            # the INFO panel rather than offering a no-op REVERT.
+            replaced_user_url = None
+            if override:
+                if (new_tdb_url and override["youtube_url"]
+                        and override["youtube_url"].strip() == new_tdb_url.strip()):
+                    replaced_user_url = None  # URLs matched → no revert
+                else:
+                    replaced_user_url = override["youtube_url"]
                 conn.execute(
                     "DELETE FROM user_overrides "
                     "WHERE media_type = ? AND tmdb_id = ?",
                     (media_type, tmdb_id),
                 )
-            # Mark accepted (and stamp replaced_user_url if we
-            # captured one — null otherwise so REVERT logic stays
-            # off for non-U accepts).
+                # Flip provenance immediately so the row classifies
+                # as T as soon as the canonical settles. The worker's
+                # sibling-hardlink path inherits whatever the
+                # sibling row currently has, so we have to update
+                # both the canonical and any sibling rows.
+                conn.execute(
+                    """UPDATE local_files SET provenance = 'auto',
+                                              source_kind = 'themerrdb'
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (media_type, tmdb_id),
+                )
+                conn.execute(
+                    """UPDATE placements SET provenance = 'auto'
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (media_type, tmdb_id),
+                )
+
             conn.execute(
                 """UPDATE pending_updates SET decision = 'accepted',
                        decision_at = ?, decision_by = ?,
@@ -2596,10 +2639,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (now_iso(), request.state.principal.username,
                  replaced_user_url, media_type, tmdb_id),
             )
-            # v1.11.0: per-section download fan-out via _enqueue_download.
-            # Pre-fix this inserted a section-less job that the worker
-            # rejects with _JobPermanentFailure, so accepted updates
-            # never re-downloaded.
             from ..core.sync import _enqueue_download
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
@@ -2608,8 +2647,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=(f"Update accepted by {request.state.principal.username}"
-                           + (f" (user URL captured for revert)"
-                              if replaced_user_url else "")))
+                           + (" (user URL captured for revert)"
+                              if replaced_user_url else
+                              " (user URL matched TDB; no revert)"
+                              if override else "")))
         return {"ok": True}
 
     @app.post("/api/updates/{media_type}/{tmdb_id}/decline")
@@ -4383,8 +4424,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 reason = "revert_to_themerrdb"
                 log_msg = "Override cleared + ThemerrDB re-download"
             elif replaced:
-                # Flow (b) v1.12.34: restore the user URL captured
-                # by an earlier ACCEPT UPDATE.
+                # Flow (b) v1.12.34 / v1.12.35: restore the user URL
+                # captured by an earlier ACCEPT UPDATE and reset
+                # the upstream-update state so the row prompts again.
                 conn.execute(
                     """INSERT INTO user_overrides
                          (media_type, tmdb_id, youtube_url, set_at, set_by, note)
@@ -4393,8 +4435,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      request.state.principal.username,
                      "restored from accepted-update revert"),
                 )
+                # v1.12.35: reset decision so the blue TDB ↑ pill
+                # returns. The user reverted, so they're back in the
+                # "I have a custom URL but TDB has a different one"
+                # state — same as before they accepted. They can now
+                # ACCEPT UPDATE again or use SET URL / UPLOAD MP3.
+                # Also clear replaced_user_url since it's been
+                # consumed.
                 conn.execute(
-                    """UPDATE pending_updates SET replaced_user_url = NULL
+                    """UPDATE pending_updates SET
+                         decision = 'pending',
+                         decision_at = NULL,
+                         decision_by = NULL,
+                         replaced_user_url = NULL
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (media_type, tmdb_id),
+                )
+                # v1.12.35: flip provenance back to 'manual' /
+                # 'url' for every section. The worker's
+                # sibling-hardlink path would otherwise carry the
+                # post-accept 'auto'/'themerrdb' values forward
+                # and the row would still classify as T even after
+                # the override is restored.
+                conn.execute(
+                    """UPDATE local_files SET provenance = 'manual',
+                                              source_kind = 'url'
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (media_type, tmdb_id),
+                )
+                conn.execute(
+                    """UPDATE placements SET provenance = 'manual'
                        WHERE media_type = ? AND tmdb_id = ?""",
                     (media_type, tmdb_id),
                 )

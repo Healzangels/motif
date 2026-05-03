@@ -3445,7 +3445,14 @@
     // an upstream-update context; offering both doubles up. After
     // ACCEPT or after the upstream URL stabilizes (no more pending
     // record), this block re-engages.
+    // v1.12.35: also suppress when the row's pending_update was
+    // recently ACCEPTed (decision='accepted' → accepted_update=1).
+    // The canonical was just downloaded from the current TDB URL,
+    // so REPLACE TDB would re-download the same file. Re-engages
+    // once a fresh upstream change comes in (decision flips back
+    // to 'pending' on the next sync).
     if (isThemerrDb && !tdbReplaceBlocked && !it.pending_update
+        && !it.accepted_update
         && (sidecarOnly || isManualPlacement || isPlexAgent)) {
       // v1.12.8: label is "TDB REPLACE" so the action makes sense
       // alongside the M/U/A row's existing local theme.mp3 — the
@@ -4928,6 +4935,17 @@
         puBlock += `<dt style="color:var(--violet)">replaced user url</dt>`
           + `<dd><a href="${htmlEscape(pu.replaced_user_url)}" target="_blank" rel="noopener" style="color:var(--violet)">${htmlEscape(pu.replaced_user_url)}</a>`
           + `<br><span class="muted small">REVERT will restore this URL.</span></dd>`;
+      } else if (pu.decision === 'accepted') {
+        // v1.12.35: pu.decision === 'accepted' with no
+        // replaced_user_url means either (a) the user accepted on
+        // a U row but their URL was identical to the new TDB URL
+        // (no point capturing a revert target), or (b) the row
+        // didn't have a user override at accept time. In both
+        // cases REVERT is intentionally absent from the SOURCE
+        // menu — surface why so the missing button doesn't
+        // read as a bug.
+        puBlock += `<dt class="muted">revert</dt>`
+          + `<dd class="muted small">unavailable — no captured user URL (either none was set at accept time, or the user URL matched the TDB URL exactly).</dd>`;
       }
     }
     const placedBlock = placements.length
