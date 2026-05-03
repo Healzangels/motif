@@ -250,6 +250,42 @@ def _capture_previous_url(conn, media_type: str, tmdb_id: int) -> None:
     )
 
 
+def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
+    """v1.12.57: drop motif's tracking metadata for a title — the
+    rows that aren't tied to actual files on disk but persist
+    motif's "what should we do with this title" decisions:
+      - user_overrides (manual URL override)
+      - pending_updates (any decision: pending / accepted / declined)
+      - themes.previous_youtube_url + previous_youtube_kind
+        (the REVERT snapshot)
+
+    Called from PURGE, UNMANAGE, and DEL so those actions truly
+    leave a clean slate. Pre-fix the rows survived even after the
+    user destroyed every on-disk file: the next download or sync
+    re-applied the stale override URL or re-surfaced the stale
+    pending update, undoing the user's intent.
+
+    Safe to call BEFORE the themes row is dropped — for orphan
+    paths that DELETE themes, the previous_* UPDATE is a no-op
+    once the row is gone (the FK CASCADE handles pending_updates,
+    but user_overrides has no FK and would otherwise survive).
+    """
+    conn.execute(
+        "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+        (media_type, tmdb_id),
+    )
+    conn.execute(
+        "DELETE FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
+        (media_type, tmdb_id),
+    )
+    conn.execute(
+        """UPDATE themes SET previous_youtube_url = NULL,
+                             previous_youtube_kind = NULL
+           WHERE media_type = ? AND tmdb_id = ?""",
+        (media_type, tmdb_id),
+    )
+
+
 # v1.10.15: column-sort whitelist. Each entry maps the ?sort= value
 # accepted by /api/library to a SQL ORDER BY snippet for the main row
 # query. Wrapping in a whitelist keeps the param SQL-injection-safe.
@@ -4377,6 +4413,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
+            # v1.12.57: drop motif's tracking metadata (override URL,
+            # pending_updates, previous-URL snapshot). UNMANAGE means
+            # motif walks away — the file stays at the Plex folder
+            # but the metadata that drove motif's tracking should
+            # leave too. Pre-fix the override URL lingered, so a
+            # later re-adopt or re-download silently re-applied the
+            # user's old URL.
+            _drop_motif_tracking(conn, media_type, tmdb_id)
             if is_orphan:
                 conn.execute(
                     "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
@@ -4595,6 +4639,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
+            # v1.12.57: PURGE = full destruction. Drop motif's
+            # tracking metadata (override URL, pending_updates,
+            # previous-URL snapshot) so the row is a true clean
+            # slate. Pre-fix a "CLEAR URL → PURGE" sequence left
+            # the user_overrides row alive — the row showed src='-'
+            # but the next download silently used the stale
+            # override URL, classifying the row as U again.
+            _drop_motif_tracking(conn, media_type, tmdb_id)
             if is_orphan:
                 conn.execute(
                     "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
@@ -4749,6 +4801,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchall():
                 rk_clear.add(r["rating_key"])
 
+            # v1.12.57: drop motif's tracking metadata before
+            # killing the themes row. FK CASCADE on themes handles
+            # placements / local_files / pending_updates, but
+            # user_overrides has no FK so without this explicit
+            # delete the override survives the orphan-themes
+            # destruction and silently re-applies on next adopt.
+            _drop_motif_tracking(conn, media_type, tmdb_id)
             conn.execute(
                 "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
