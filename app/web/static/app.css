@@ -130,6 +130,42 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .dot-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .dot-red { background: var(--red); box-shadow: 0 0 6px var(--red); }
 
+/* v1.12.69: per-tab busy dot — added by JS as .nav-busy when the
+   tab's plex_enum is in flight. Pulsing cyan ::after pseudo lets
+   the user see which tabs are mid-refresh without parsing topbar
+   text. Position absolute so it doesn't shift the tab's text. */
+.nav a.nav-busy {
+  position: relative;
+}
+.nav a.nav-busy::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -10px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 5px var(--cyan);
+  animation: pulse 1.4s ease-in-out infinite;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* v1.12.69: section-count badge next to the topbar dot when
+   multiple plex_enum jobs are in flight. Tiny mono digit so the
+   user can tell at a glance how many sections are mid-refresh
+   without expanding the topbar text label. */
+.topbar-dot-badge {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  color: var(--cyan);
+  font-weight: 700;
+  margin-left: 4px;
+  margin-right: 2px;
+  letter-spacing: 0.05em;
+}
+
 /* v1.11.73: when q.failed>0 the topbar status is clickable as a
    shortcut to the failed-jobs filter on /queue. */
 .topbar-status-clickable { cursor: pointer; }

@@ -480,6 +480,51 @@
       const anyEnumInFlight = plexEnumBusy;
       // Stash for the empty-state message in loadLibrary().
       window.__motif_enum_active = enumActive;
+      // v1.12.69: per-tab busy indicator. Toggle .nav-busy on each
+      // managed-tab anchor whenever any of that tab's variants
+      // (standard / fourk) is currently enumerating. CSS adds a
+      // small pulsing cyan dot via ::after so users can see at a
+      // glance which library tabs are in flux without parsing the
+      // topbar status text.
+      ['movies', 'tv', 'anime'].forEach((tab) => {
+        const anchor = document.querySelector(`.nav a[data-nav="${tab}"]`);
+        if (!anchor) return;
+        const tabBusy = !!(enumActive[tab]
+                           && (enumActive[tab].standard
+                               || enumActive[tab].fourk));
+        anchor.classList.toggle('nav-busy', tabBusy);
+      });
+      // v1.12.69: section-count badge on the topbar dot. When
+      // multiple sections are enumerating concurrently, show "N"
+      // beside the pulsing dot so the user knows how many are in
+      // flight. plex_enum_running_section_ids is the live set;
+      // plex_enum_in_flight covers pending + running. Uses the
+      // running set for the visible count (more accurate to "what
+      // the worker is processing now") but falls back to
+      // _in_flight as the lower bound when running is 0 but
+      // something's queued.
+      // (dotEl const already declared above at the failures
+      //  tooltip pass; reusing it here would shadow that scope.
+      //  Use a fresh selector to keep the two passes independent.)
+      const enumDotEl = document.querySelector('#topbar-status .dot');
+      let dotBadge = document.getElementById('topbar-dot-badge');
+      const sectionCount = enumSectionIds.size
+                        || (q.plex_enum_in_flight || 0);
+      if (sectionCount > 1) {
+        if (!dotBadge && enumDotEl) {
+          dotBadge = document.createElement('span');
+          dotBadge.id = 'topbar-dot-badge';
+          dotBadge.className = 'topbar-dot-badge';
+          enumDotEl.parentElement.insertBefore(dotBadge, enumDotEl.nextSibling);
+        }
+        if (dotBadge) {
+          dotBadge.textContent = String(sectionCount);
+          dotBadge.title = `${sectionCount} sections enumerating`;
+          dotBadge.style.display = '';
+        }
+      } else if (dotBadge) {
+        dotBadge.style.display = 'none';
+      }
       const lockBtn = (btn, locked, busyText) => {
         if (!btn) return;
         const orig = btn.dataset.origLabel || btn.textContent;
