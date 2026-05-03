@@ -828,6 +828,57 @@ def run_sync(db_path, base_url: str, *,
         except Exception as e:
             log.warning("post-sync resolve_theme_ids failed: %s", e)
 
+        # v1.12.49: sweep stale pending_updates rows. A pending_updates
+        # row is only meaningful when the user actually has a theme to
+        # "update against" (motif local file, manual URL override, or
+        # Plex-folder sidecar). Rows can become stale when the user
+        # drops/forgets a theme after the upstream URL changed: the
+        # pending_updates row stays put, lighting the topbar UPD
+        # counter and (pre-v1.12.48) the row's blue TDB ↑ pill, even
+        # though there's nothing for ACCEPT UPDATE to swap from.
+        # v1.12.48 papered over the row pill in JS; this sweep fixes
+        # the root cause so the UPD count and the tdb_pills=update
+        # filter both stop counting them too.
+        #
+        # Scoped to decision IN ('pending','declined') so an in-flight
+        # ACCEPT UPDATE (decision='accepted', download/place job not
+        # yet materialized) never gets pruned out from under the worker.
+        # Mirrors the cross-sync match-detection inverse at line 597:
+        # rows are *created* when has_local_files OR has_override OR
+        # has_sidecar; rows are *deleted* here when none of those hold.
+        with get_conn(db_path) as conn:
+            pruned = conn.execute(
+                """
+                DELETE FROM pending_updates
+                WHERE decision IN ('pending', 'declined')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM local_files lf
+                    WHERE lf.media_type = pending_updates.media_type
+                      AND lf.tmdb_id = pending_updates.tmdb_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM user_overrides uo
+                    WHERE uo.media_type = pending_updates.media_type
+                      AND uo.tmdb_id = pending_updates.tmdb_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM plex_items pi
+                    WHERE pi.guid_tmdb = pending_updates.tmdb_id
+                      AND pi.media_type = (CASE pending_updates.media_type
+                                            WHEN 'tv' THEN 'show'
+                                            ELSE pending_updates.media_type END)
+                      AND pi.local_theme_file = 1
+                  )
+                """
+            ).rowcount or 0
+        if pruned:
+            log_event(
+                db_path, level="INFO", component="sync",
+                message=f"Pruned {pruned} stale pending_updates row"
+                        f"{'s' if pruned != 1 else ''} (no theme to update against)",
+                detail={"pruned": pruned},
+            )
+
         with get_conn(db_path) as conn:
             conn.execute(
                 """
