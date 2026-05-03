@@ -553,7 +553,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 #library-table th.col-state { padding-left: 6px; padding-right: 6px; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 300px; text-align: right; }
-.col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
+.col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
+/* v1.12.31: text-align lifted off .col-imdb base because it's
+   shared between th (which we want centered, via .table thead th)
+   and td (which we want left-anchored for the tt-IDs). Splitting
+   it ensures the th centering is unambiguous regardless of source
+   order vs. .table thead th. */
+#library-table td.col-imdb { text-align: left; }
 /* v1.12.28: every header cell centers its label + sort
    indicator as a single unit. v1.12.27 forced left-align
    to put all eight headers on one X anchor, but the user
@@ -578,6 +584,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    enough that center-aligning the label reads as obviously
    "this label belongs to this column". */
 #library-table th.col-title { text-align: left; }
+/* v1.12.31: TITLE's carat tracks the LEFT-anchored label rather
+   than centering across the column. The default .sort-indicator
+   uses width: 100% + text-align: center to stack the carat under
+   each centered header label; for TITLE the carat needs to sit
+   directly beneath the "TITLE" word at the left edge of the
+   cell, not float across to the column's geometric center
+   (which would be hundreds of pixels right of the label). */
+#library-table th.col-title .sort-indicator { text-align: left; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
