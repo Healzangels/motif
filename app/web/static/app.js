@@ -3123,7 +3123,14 @@
     const dl = dlBroken ? 'broken'
              : (isMismatch ? 'mismatch'
              : (downloaded ? 'on' : ''));
-    const pl = placed ? 'on' : '';
+    // v1.12.65: PL column gains a third state — 'await' (amber) —
+    // when the canonical exists but no placement does. Pre-fix, a
+    // post-DEL row dropped to a plain gray PL dot, the same as a
+    // never-themed row, so the "you have the file, push it to
+    // Plex" call-to-action wasn't visible from the column scan.
+    // Amber matches the title-glyph color so the row's two
+    // attention signals agree.
+    const pl = placed ? 'on' : (awaitingApproval ? 'await' : '');
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
     if (isMismatch && placed) {
       linkCell = '<span class="link-glyph link-glyph-mismatch" title="MISMATCH — canonical (DL) does not match the file at the Plex folder. Resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu.">M</span>';
@@ -3151,8 +3158,13 @@
         `<span class="title-glyph title-glyph-pending" title="${htmlEscape(jobLabel)}">⟳</span>`
       );
     } else if (awaitingApproval) {
+      // v1.12.65: glyph used to be a link to /pending which was
+      // removed in v1.12.41. Now a non-link button-styled span
+      // with copy that points at the actual recovery action.
+      // Amber color matches the new amber PL state pill so both
+      // attention signals agree visually.
       titleGlyphs.push(
-        `<a class="title-glyph title-glyph-await" title="awaiting placement approval — click to review at /pending" href="/pending">!</a>`
+        `<span class="title-glyph title-glyph-await" title="Canonical downloaded but not placed in Plex. Use PLACE → PUSH TO PLEX to apply, or REMOVE → PURGE to discard the canonical.">!</span>`
       );
     }
     // v1.11.62: 'DL broken' glyph — motif's canonical was deleted but
@@ -3310,11 +3322,17 @@
     // overflow with click-outside-close handler. Empty menus are
     // suppressed so untracked rows don't get a useless PLACE/REMOVE
     // button. INFO stays as its own clickable button.
-    const lockManualActions = !!it.job_in_flight || awaitingApproval;
-    const lockTitle = it.job_in_flight
-      ? 'wait for current job to finish'
-      : (awaitingApproval ? 'pending placement approval — review at /pending'
-                          : '');
+    // v1.12.65: dropped awaitingApproval from the lock predicate.
+    // Pre-fix, a post-DEL row (downloaded but unplaced) had every
+    // SOURCE action greyed out with a tooltip pointing at the
+    // removed /pending tab. Now SOURCE is unlocked — clicking
+    // DOWNLOAD TDB / SET URL / etc. legitimately replaces the
+    // awaiting canonical, which is what the user typically wants.
+    // The amber title-glyph + amber PL pill remain as the visual
+    // "action required" signal; PLACE → PUSH TO PLEX is still
+    // the obvious recovery action.
+    const lockManualActions = !!it.job_in_flight;
+    const lockTitle = it.job_in_flight ? 'wait for current job to finish' : '';
     const isOrphan = it.upstream_source === 'plex_orphan';
     const isManual = it.provenance === 'manual';
     const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
@@ -3623,19 +3641,26 @@
     // upstream update. If the previous is a TDB URL that
     // DOESN'T match the new URL (e.g., TDB rolled forward
     // again), both buttons render and serve different actions.
-    if (it.has_previous_url && !it.revert_redundant) {
-      const revertTone = it.previous_youtube_kind === 'themerrdb'
-        ? 'themerrdb' : 'user';
-      const revertTip = it.previous_youtube_kind === 'themerrdb'
-        ? "Revert to the previously-active ThemerrDB URL and re-download in this section."
-        : "Revert to the previously-active user URL and re-download in this section.";
+    // v1.12.65: REVERT now requires previous_youtube_kind='user'.
+    // For 'themerrdb' kind the action is functionally identical
+    // to DOWNLOAD TDB / RE-DOWNLOAD TDB / REPLACE TDB — the worker
+    // discards the previous URL value and downloads from
+    // themes.youtube_url either way (no per-job URL override
+    // mechanism). Showing REVERT alongside those actions was
+    // pure UI redundancy that confused users. The INFO card
+    // explains the hidden-REVERT case so the missing button
+    // doesn't read as a bug. Only 'user' kind survives because
+    // restoring an override is a meaningfully different state
+    // (row flips back to U).
+    if (it.has_previous_url && !it.revert_redundant
+        && it.previous_youtube_kind === 'user') {
       // v1.12.47: pass sectionId so REVERT scopes the
       // re-download + place to only this row's section
       // (matches ACCEPT UPDATE per-section behavior).
       sourceItems.push(menuItemHtml(
         'revert', 'REVERT',
-        revertTip,
-        { mt: themeMt, id: themeId, sectionId: it.section_id, tone: revertTone },
+        "Revert to the previously-active user URL and re-download in this section.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id, tone: 'user' },
       ));
     }
 
@@ -5312,30 +5337,35 @@
               ? ` · ${htmlEscape(pu.decision)} ${htmlEscape(pu.decision_at)}`
               : '')
         + '</dd>';
-      if (pu.decision === 'accepted') {
-        // v1.12.61: explain why REVERT might be missing. Two cases:
-        //   - no previous URL captured (legacy data from before
-        //     v1.12.61 always-capture fix)
-        //   - previous URL matches current canonical (would be a
-        //     no-op — same URL, possibly different kind, but
-        //     reverting just re-creates the override pointing to
-        //     the same content)
-        // Either way the SOURCE menu hides REVERT; this hint
-        // tells the user the missing button isn't a bug.
-        // v1.12.63: copy reworded for clarity per user feedback.
-        // "current canonical" was jargon; "currently applied" matches
-        // the field name two rows above and reads naturally. The
-        // url-match case explicitly says "URLs are identical" so
-        // the user can scan and understand at a glance.
-        const currentCanonical = (ovr && ovr.youtube_url) || tdbUrl || '';
-        if (!previousUrl) {
-          puBlock += `<dt class="muted">revert</dt>`
-            + `<dd class="muted small">unavailable — no previous URL was captured.</dd>`;
-        } else if (previousUrl === currentCanonical) {
-          puBlock += `<dt class="muted">revert</dt>`
-            + `<dd class="muted small">unavailable — the previous URL is identical to what's currently applied, so reverting would just re-create the override at the same URL (no-op).</dd>`;
-        }
-      }
+    }
+    // v1.12.65: REVERT-hidden hint moved out of the pu.decision
+    // block — REVERT can be hidden for reasons unrelated to a
+    // pending update (e.g., previous_kind='themerrdb' is now
+    // hidden by design). Block fires whenever there's a previous
+    // URL captured but REVERT wouldn't be useful, so the user
+    // never wonders why an action they expect is missing. Three
+    // cases covered:
+    //   - previous URL matches current canonical (no-op — same
+    //     URL would be re-applied)
+    //   - previous_kind='themerrdb' (functionally identical to
+    //     DOWNLOAD TDB / RE-DOWNLOAD TDB / REPLACE TDB; worker
+    //     ignores the captured URL and pulls themes.youtube_url
+    //     either way, so REVERT was pure UI duplication)
+    //   - no previous URL captured at all (legacy / never-changed)
+    // Each case names the alternative action so the user has a
+    // clear next step without trial and error.
+    const currentCanonical = (ovr && ovr.youtube_url) || tdbUrl || '';
+    let revertHint = '';
+    if (!previousUrl && pu && pu.decision === 'accepted') {
+      revertHint = "unavailable — no previous URL was captured.";
+    } else if (previousUrl && previousUrl === currentCanonical) {
+      revertHint = "unavailable — the previous URL is identical to what's currently applied, so reverting would just re-create the override at the same URL (no-op).";
+    } else if (previousUrl && previousKind === 'themerrdb') {
+      revertHint = "unavailable — the previous URL was a ThemerrDB URL, so reverting would just re-download the current themerrdb URL. Use DOWNLOAD TDB / RE-DOWNLOAD TDB / REPLACE TDB instead — they cover the same outcome with clearer intent.";
+    }
+    if (revertHint) {
+      puBlock += `<dt class="muted">revert</dt>`
+        + `<dd class="muted small">${revertHint}</dd>`;
     }
     const placedBlock = placements.length
       ? `<dt>placed in</dt><dd>${placements.map(p => `<div class="muted small">${htmlEscape(p.media_folder)} <span class="muted">(${htmlEscape(p.placement_kind)})</span></div>`).join('')}</dd>`

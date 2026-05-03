@@ -1076,6 +1076,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .state-pill.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .state-pill.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .state-pill.bad { background: var(--red); box-shadow: 0 0 6px var(--red); }
+/* v1.12.65: 'await' PL state — canonical exists in motif's
+   downloads but no placement row is present (typically post-DEL
+   or post-mismatch). Amber so the row visually signals "action
+   required" — the user's next step is PLACE → PUSH TO PLEX (or
+   REMOVE → PURGE to drop the canonical). Matches the amber
+   .title-glyph-await glyph in the title cell so the row's two
+   attention signals agree at a glance. */
+.state-pill.await {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
 /* v1.11.62: 'broken' DL state — local_files row exists but the
    canonical was deleted out from under motif. The placement in the
    Plex folder is still there; user uses RESTORE FROM PLEX to
@@ -1143,7 +1154,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .title-glyph-update  { color: var(--blue);   text-shadow: 0 0 6px rgba(109,143,255,0.45); }
 .title-glyph-pending { color: var(--cyan);   text-shadow: 0 0 6px rgba(109,211,255,0.55);
                        display: inline-block; animation: spin-glyph 1.4s linear infinite; }
-.title-glyph-await   { color: var(--cyan);   text-shadow: 0 0 6px rgba(109,211,255,0.55);
+/* v1.12.65: await glyph color flipped from cyan → amber to read
+   as "action required" instead of "informational". Matches the
+   new amber .state-pill.await in the PL column so the row's
+   two attention signals tell the same story. */
+.title-glyph-await   { color: var(--amber);  text-shadow: 0 0 6px rgba(255,184,74,0.55);
                        text-decoration: none; font-weight: 700;
                        animation: fail-pulse 2s ease-in-out infinite; }
 /* v1.11.62: dlBroken cycle glyph — clicks through to the dl_missing filter. */
