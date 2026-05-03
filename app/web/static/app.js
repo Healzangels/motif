@@ -114,6 +114,22 @@
     if (cached) applyTabAvailability(JSON.parse(cached));
   } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
 
+  // v1.12.50: same trick for the themes-have map. The library row
+  // pill render gates on window.__motif_themes_have[rowMt] to avoid
+  // misleading 'no TDB' pills on a fresh install with an empty
+  // themes table. Without this cache, the first library render on
+  // every page load (and every nav-back to the library tab) had
+  // __motif_themes_have undefined, so the gate returned '' for every
+  // row and pills only appeared after a filter click forced a
+  // re-render. Reading the cached map here seeds the global before
+  // the first render, so pills paint on first frame for any user
+  // who has run /api/stats at least once. The poll still overwrites
+  // with fresh data immediately after.
+  try {
+    const cachedTh = localStorage.getItem('motif:themes_have');
+    if (cachedTh) window.__motif_themes_have = JSON.parse(cachedTh);
+  } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
+
   // v1.11.72: build a scope label for the library REFRESH FROM PLEX
   // button — 'MOVIES', '4K MOVIES', 'TV SHOWS', '4K TV', 'ANIME',
   // '4K ANIME'. Falls back to 'PLEX' on pages without a library-tab
@@ -334,6 +350,20 @@
         // load. Silent catch made it look like a network issue.
         any: (movies_tdb + tv_tdb) > 0,
       };
+      // v1.12.50: cache the themes-have map in localStorage so the
+      // NEXT page load can paint TDB pills on the FIRST render
+      // without waiting for /api/stats. Pre-fix, library rows
+      // rendered before stats landed, so the pill render gate
+      // (haveTdb at row pill time) was always false on first paint;
+      // pills only appeared after a filter click forced a re-render.
+      // Mirrors the localStorage cache pattern established for
+      // tab_availability in v1.11.33.
+      try {
+        localStorage.setItem(
+          'motif:themes_have',
+          JSON.stringify(window.__motif_themes_have),
+        );
+      } catch (_) { /* private mode / quota — fine, just lose the cache */ }
 
       // Updates badge
       const updBadge = $('#topbar-updates-badge');
