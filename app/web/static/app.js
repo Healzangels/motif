@@ -5261,6 +5261,14 @@
     const dlBlock = lf
       ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · ${htmlEscape(lf.provenance)}</dd>`
       : '';
+    // v1.12.56: pending-update diff section. When an actionable
+    // upstream-changed update is queued, show side-by-side tiles
+    // (current vs proposed) so the user can pre-validate ACCEPT
+    // UPDATE — thumbnails are static URLs, video titles hydrate
+    // async from /api/youtube/oembed. Skipped for urls_match (URLs
+    // are identical, no diff to display) and for non-pending
+    // decisions (already accepted/declined).
+    const diffSection = renderPendingUpdateDiff(pu, lf, t);
     body.innerHTML = `
       <h3>${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
       <dl class="dlg-grid">
@@ -5279,6 +5287,7 @@
         ${dlBlock}
         ${placedBlock}
       </dl>
+      ${diffSection}
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
         <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
            style="display:block;text-decoration:none">
@@ -5291,6 +5300,91 @@
         </a>
       </div>` : ''}
     `;
+    // Hydrate diff-tile titles asynchronously (oEmbed proxy); no
+    // await — failures fall back to bare video IDs already in the
+    // markup. Runs after innerHTML so the DOM nodes exist.
+    hydrateDiffTitles(body);
+  }
+
+  // v1.12.56: render the side-by-side diff for an actionable
+  // pending update. Returns '' (no section) when there's nothing
+  // to show. Tiles ship with thumbnail src baked in (constructed
+  // from video ID — works for any public YouTube video) and a
+  // title placeholder that hydrateDiffTitles fills in via the
+  // server oEmbed proxy.
+  function renderPendingUpdateDiff(pu, lf, t) {
+    if (!pu || pu.decision !== 'pending') return '';
+    if (pu.kind === 'urls_match') return '';
+    const newUrl = pu.new_youtube_url || '';
+    const newVid = extractYouTubeVideoId(newUrl);
+    if (!newVid) return '';
+    const currentVid = (lf && lf.source_video_id)
+      || extractYouTubeVideoId(pu.old_youtube_url || '')
+      || '';
+    const currentUrl = currentVid
+      ? `https://www.youtube.com/watch?v=${currentVid}`
+      : (pu.old_youtube_url || '');
+    const tile = (label, vid, url, slot, accent) => {
+      if (!vid) {
+        return `<div class="diff-tile diff-tile-empty">
+          <div class="diff-tile-label" style="color:${accent}">${htmlEscape(label)}</div>
+          <p class="muted small">no recorded video</p>
+        </div>`;
+      }
+      return `<div class="diff-tile">
+        <div class="diff-tile-label" style="color:${accent}">${htmlEscape(label)}</div>
+        <a href="${htmlEscape(url)}" target="_blank" rel="noopener"
+           class="diff-tile-thumb-link">
+          <img src="https://img.youtube.com/vi/${htmlEscape(vid)}/hqdefault.jpg"
+               alt="" loading="lazy" class="diff-tile-thumb" />
+        </a>
+        <div class="diff-tile-title" data-oembed-slot="${htmlEscape(slot)}"
+             data-oembed-url="${htmlEscape(url)}">
+          <span class="muted small">${htmlEscape(vid)}</span>
+        </div>
+      </div>`;
+    };
+    return `
+      <section class="diff-section">
+        <header class="diff-section-head">
+          <span class="diff-section-title">// PROPOSED CHANGE</span>
+          <span class="muted small">ACCEPT UPDATE will replace the left video with the right.</span>
+        </header>
+        <div class="diff-tiles">
+          ${tile('CURRENT', currentVid, currentUrl, 'current', 'var(--violet)')}
+          <div class="diff-arrow" aria-hidden="true">→</div>
+          ${tile('PROPOSED', newVid, newUrl, 'proposed', 'var(--blue)')}
+        </div>
+      </section>
+    `;
+  }
+
+  // v1.12.56: walk the diff-tile slots in `root` and replace each
+  // placeholder span with the oEmbed video title. Best-effort —
+  // a 404 from the proxy (private/removed/geo-blocked video)
+  // leaves the bare-vid placeholder in place, so the UI never
+  // empties out on lookup failure.
+  async function hydrateDiffTitles(root) {
+    if (!root) return;
+    const slots = root.querySelectorAll('[data-oembed-slot]');
+    await Promise.all(Array.from(slots).map(async (slot) => {
+      const url = slot.getAttribute('data-oembed-url');
+      if (!url) return;
+      try {
+        const data = await api(
+          'GET',
+          `/api/youtube/oembed?url=${encodeURIComponent(url)}`,
+        );
+        if (data && data.title) {
+          const author = data.author_name
+            ? `<span class="muted small">${htmlEscape(data.author_name)}</span>`
+            : '';
+          slot.innerHTML = `<div>${htmlEscape(data.title)}</div>${author}`;
+        }
+      } catch (_) {
+        // Leave placeholder; vid is already shown.
+      }
+    }));
   }
 
   function closeInfoDialog() {

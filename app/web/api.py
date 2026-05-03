@@ -2890,6 +2890,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"Update declined by {request.state.principal.username}")
         return {"ok": True}
 
+    # v1.12.56: server-side YouTube oEmbed proxy. Used by the INFO
+    # card's pending-update diff view to fetch human-readable video
+    # titles for side-by-side current/proposed tiles. YouTube's
+    # oEmbed endpoint doesn't reliably set CORS headers, so a
+    # browser-side fetch fails intermittently — proxying server-side
+    # avoids that, and the LRU cache amortizes repeat lookups
+    # across rows that share videos (e.g. franchise themes).
+    _OEMBED_CACHE: dict[str, dict] = {}
+    _OEMBED_CACHE_MAX = 512
+
+    def _fetch_youtube_oembed(yt_url: str) -> dict | None:
+        cached = _OEMBED_CACHE.get(yt_url)
+        if cached is not None:
+            return cached
+        try:
+            import httpx
+            with httpx.Client(timeout=8.0, follow_redirects=True) as c:
+                resp = c.get(
+                    "https://www.youtube.com/oembed",
+                    params={"url": yt_url, "format": "json"},
+                )
+                if resp.status_code != 200:
+                    return None
+                data = resp.json()
+        except Exception:
+            return None
+        # Trim to fields the UI uses (avoid leaking unbounded
+        # response shapes through the cache).
+        slim = {
+            "title": data.get("title"),
+            "author_name": data.get("author_name"),
+            "author_url": data.get("author_url"),
+            "thumbnail_url": data.get("thumbnail_url"),
+        }
+        # Naive LRU eviction — drop the oldest entry when full.
+        # dict iteration order is insertion-ordered (Python 3.7+).
+        if len(_OEMBED_CACHE) >= _OEMBED_CACHE_MAX:
+            try:
+                first_key = next(iter(_OEMBED_CACHE))
+                _OEMBED_CACHE.pop(first_key, None)
+            except StopIteration:
+                pass
+        _OEMBED_CACHE[yt_url] = slim
+        return slim
+
+    @app.get("/api/youtube/oembed")
+    async def api_youtube_oembed(url: str = Query(...)):
+        """Proxy + cache YouTube oEmbed lookups. Returns
+        {title, author_name, author_url, thumbnail_url} or 404 when
+        the URL is not a recognizable YouTube video / oEmbed
+        rejected it (private, removed, geo-blocked). Surface the
+        404 cleanly so the UI can fall back to thumbnail-only +
+        bare URL display."""
+        if not url or "youtube.com" not in url and "youtu.be" not in url:
+            raise HTTPException(status_code=400, detail="not a YouTube URL")
+        data = await run_in_threadpool(_fetch_youtube_oembed, url)
+        if data is None:
+            raise HTTPException(status_code=404, detail="oEmbed lookup failed")
+        return data
+
     @app.post("/api/updates/accept-all")
     async def api_accept_all_updates(
         request: Request, db: Path = Depends(get_db_path),

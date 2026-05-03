@@ -1755,6 +1755,86 @@ pre code, .codeblock {
   margin-top: 8px;
 }
 
+/* v1.12.56: pending-update diff section in the INFO card.
+   Side-by-side tiles (current / proposed) so the user can
+   pre-validate ACCEPT UPDATE — thumbnails are static from
+   img.youtube.com, titles hydrate via the /api/youtube/oembed
+   proxy. */
+.diff-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.diff-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.diff-section-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  color: var(--blue);
+}
+.diff-tiles {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+.diff-tile {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.diff-tile-empty {
+  justify-content: center;
+  align-items: center;
+  color: var(--fg-mute);
+}
+.diff-tile-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.18em;
+  font-weight: 700;
+}
+.diff-tile-thumb-link {
+  display: block;
+  line-height: 0;
+}
+.diff-tile-thumb {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--line);
+  transition: border-color 0.12s;
+}
+.diff-tile-thumb-link:hover .diff-tile-thumb {
+  border-color: var(--cyan);
+}
+.diff-tile-title {
+  font-size: var(--t-tiny);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.diff-arrow {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 1.4em;
+  color: var(--blue);
+  padding: 0 4px;
+  user-select: none;
+}
+@media (max-width: 600px) {
+  .diff-tiles { grid-template-columns: 1fr; }
+  .diff-arrow { transform: rotate(90deg); padding: 8px 0; }
+}
+
 .form-env-badge {
   font-size: var(--t-tiny);
   letter-spacing: 0.15em;
