@@ -5199,6 +5199,207 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"REVERT to {prev_kind} URL by {request.state.user}")
         return {"ok": True}
 
+    @app.get("/api/items/{media_type}/{tmdb_id}/recovery-options")
+    async def api_recovery_options(
+        media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.12.71: structured recovery checklist for a failed row.
+
+        Returns a list of options ranked by likelihood of fixing the
+        specific failure_kind, each with a label, tooltip, action
+        keyword that the frontend can map to existing handlers, and
+        a tone color to match motif's source palette. The ordering
+        reflects "try this first" — e.g., for VIDEO_PRIVATE the
+        most-likely fix is SET URL (find a different YouTube source);
+        ACK FAILURE is always last because it dismisses without
+        fixing.
+
+        Powers the INFO card's // TRY THIS NEXT section so the user
+        gets concrete next steps for each failure kind instead of
+        the generic "Recover via SET URL, UPLOAD MP3, or drop a
+        sidecar and ADOPT" copy that previously lived in the row's
+        tdb-pill tooltip.
+        """
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT failure_kind, failure_message, failure_acked_at, "
+                "       upstream_source FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            # v1.12.71: resolve a representative rating_key so the
+            # recovery buttons that need one (SET URL, UPLOAD MP3)
+            # can wire up via the existing per-rating_key endpoints.
+            # Picks the first plex_items row matching this title;
+            # NULL if the row isn't currently in any Plex section
+            # (e.g., after the Plex section was removed).
+            plex_mt = "show" if media_type == "tv" else "movie"
+            rk_row = conn.execute(
+                "SELECT rating_key FROM plex_items "
+                "WHERE guid_tmdb = ? AND media_type = ? "
+                "LIMIT 1",
+                (tmdb_id, plex_mt),
+            ).fetchone()
+            rating_key = rk_row["rating_key"] if rk_row else None
+        kind = row["failure_kind"]
+        if not kind:
+            return {"failure_kind": None, "options": [],
+                    "human": None, "needs_manual_override": False}
+        # Static recipe per FailureKind. Each entry is (action,
+        # label, tooltip, priority, tone). Frontend renders these
+        # as buttons that call into the existing per-action
+        # handlers — `action` is the same string as the SOURCE menu
+        # data-act attribute so the click dispatch is shared.
+        cookies_present = bool(
+            settings.cookies_file and settings.cookies_file.is_file()
+        )
+        is_orphan = row["upstream_source"] == "plex_orphan"
+        recipes: dict[str, list[dict]] = {
+            "cookies_expired": [
+                {"action": "info", "label": "DROP cookies.txt",
+                 "tooltip": "Place a fresh cookies.txt at the path configured in /settings. The next download attempt will retry with the new credentials.",
+                 "priority": 1, "tone": "info",
+                 "interactive": False},
+                {"action": "redl", "label": "RE-DOWNLOAD",
+                 "tooltip": "Retry the download with the current cookies file. Useful if you just dropped a fresh one.",
+                 "priority": 2, "tone": "themerrdb",
+                 "interactive": True,
+                 "disabled": not cookies_present,
+                 "disabled_reason": "no cookies.txt at the configured path"},
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "Provide a non-cookie-walled YouTube URL.",
+                 "priority": 3, "tone": "user",
+                 "interactive": True},
+                {"action": "upload-theme", "label": "UPLOAD MP3",
+                 "tooltip": "Skip YouTube — upload your own MP3 file.",
+                 "priority": 4, "tone": "user",
+                 "interactive": True},
+            ],
+            "video_private": [
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "Provide a different YouTube URL — the original is private.",
+                 "priority": 1, "tone": "user",
+                 "interactive": True},
+                {"action": "upload-theme", "label": "UPLOAD MP3",
+                 "tooltip": "Upload your own MP3 file.",
+                 "priority": 2, "tone": "user",
+                 "interactive": True},
+                {"action": "clear-failure", "label": "ACK FAILURE",
+                 "tooltip": "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
+                 "priority": 9, "tone": "info",
+                 "interactive": True},
+            ],
+            "video_removed": [
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "Provide a different YouTube URL — the original was removed.",
+                 "priority": 1, "tone": "user",
+                 "interactive": True},
+                {"action": "upload-theme", "label": "UPLOAD MP3",
+                 "tooltip": "Upload your own MP3 file.",
+                 "priority": 2, "tone": "user",
+                 "interactive": True},
+                {"action": "clear-failure", "label": "ACK FAILURE",
+                 "tooltip": "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
+                 "priority": 9, "tone": "info",
+                 "interactive": True},
+            ],
+            "video_age_restricted": [
+                {"action": "info", "label": "DROP cookies.txt",
+                 "tooltip": "Drop an age-verified YouTube cookies.txt at the configured path so yt-dlp can authenticate as a logged-in user.",
+                 "priority": 1, "tone": "info",
+                 "interactive": False},
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "Provide a non-age-restricted YouTube alternative.",
+                 "priority": 2, "tone": "user",
+                 "interactive": True},
+                {"action": "upload-theme", "label": "UPLOAD MP3",
+                 "tooltip": "Skip YouTube — upload your own MP3 file.",
+                 "priority": 3, "tone": "user",
+                 "interactive": True},
+            ],
+            "geo_blocked": [
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "Provide a YouTube URL that's available in your region.",
+                 "priority": 1, "tone": "user",
+                 "interactive": True},
+                {"action": "upload-theme", "label": "UPLOAD MP3",
+                 "tooltip": "Skip YouTube — upload your own MP3 file.",
+                 "priority": 2, "tone": "user",
+                 "interactive": True},
+                {"action": "clear-failure", "label": "ACK FAILURE",
+                 "tooltip": "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
+                 "priority": 9, "tone": "info",
+                 "interactive": True},
+            ],
+            "network_error": [
+                {"action": "redl", "label": "RE-DOWNLOAD",
+                 "tooltip": "Retry — network errors are usually transient.",
+                 "priority": 1, "tone": "themerrdb",
+                 "interactive": True},
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "If retries keep failing, the original URL may be the problem — try a different one.",
+                 "priority": 2, "tone": "user",
+                 "interactive": True},
+                {"action": "clear-failure", "label": "ACK FAILURE",
+                 "tooltip": "Drop this row from the topbar FAIL count. Re-fires on the next failed attempt.",
+                 "priority": 9, "tone": "info",
+                 "interactive": True},
+            ],
+            "unknown": [
+                {"action": "redl", "label": "RE-DOWNLOAD",
+                 "tooltip": "Retry the download — unknown errors are sometimes transient.",
+                 "priority": 1, "tone": "themerrdb",
+                 "interactive": True},
+                {"action": "manual-url", "label": "SET URL",
+                 "tooltip": "Provide a different YouTube URL.",
+                 "priority": 2, "tone": "user",
+                 "interactive": True},
+                {"action": "upload-theme", "label": "UPLOAD MP3",
+                 "tooltip": "Upload your own MP3 file.",
+                 "priority": 3, "tone": "user",
+                 "interactive": True},
+                {"action": "info", "label": "CHECK LOGS",
+                 "tooltip": "Open the LOGS tab to see the raw yt-dlp error message — sometimes the cause is identifiable from the trace.",
+                 "priority": 4, "tone": "info",
+                 "interactive": False},
+                {"action": "clear-failure", "label": "ACK FAILURE",
+                 "tooltip": "Drop this row from the topbar FAIL count.",
+                 "priority": 9, "tone": "info",
+                 "interactive": True},
+            ],
+        }
+        humans = {
+            "cookies_expired": "YouTube cookies missing or expired",
+            "video_private": "Video is private",
+            "video_removed": "Video was removed or deleted",
+            "video_age_restricted": "Video is age-restricted",
+            "geo_blocked": "Video is geo-blocked from your region",
+            "network_error": "Network error reaching YouTube",
+            "unknown": "Unknown error",
+        }
+        options = sorted(recipes.get(kind, recipes["unknown"]),
+                         key=lambda o: o["priority"])
+        # Orphans don't have a TDB record so RE-DOWNLOAD against
+        # themes.youtube_url is meaningless. Filter it out for
+        # plex_orphan rows so the user isn't pointed at a dead path.
+        if is_orphan:
+            options = [o for o in options if o["action"] != "redl"]
+        return {
+            "failure_kind": kind,
+            "failure_message": row["failure_message"],
+            "human": humans.get(kind, kind),
+            "needs_manual_override": kind in (
+                "video_private", "video_removed",
+                "video_age_restricted", "geo_blocked",
+            ),
+            "acked": bool(row["failure_acked_at"]),
+            "rating_key": rating_key,
+            "options": options,
+        }
+
     @app.post("/api/items/{media_type}/{tmdb_id}/clear-failure")
     async def api_clear_failure(
         request: Request, media_type: MediaType, tmdb_id: int,

@@ -5574,6 +5574,23 @@
     // are identical, no diff to display) and for non-pending
     // decisions (already accepted/declined).
     const diffSection = renderPendingUpdateDiff(pu, lf, t);
+    // v1.12.71: TRY THIS NEXT recovery section. Renders only when
+    // the row has an active failure_kind. Each suggested action is
+    // a button that hooks into the existing data-act dispatch — no
+    // new click plumbing. The list is fetched async; placeholder
+    // rendered now and replaced once the fetch lands.
+    const recoverySectionId = (t.failure_kind && t.media_type
+                               && t.tmdb_id !== undefined)
+      ? 'recovery-section'
+      : null;
+    const recoveryPlaceholder = recoverySectionId
+      ? `<section id="${recoverySectionId}" class="recovery-section">
+           <header class="recovery-section-head">
+             <span class="recovery-section-title">// TRY THIS NEXT</span>
+             <span class="muted small">loading recovery options…</span>
+           </header>
+         </section>`
+      : '';
     // v1.12.66: per-row events timeline. The INFO endpoint already
     // returns the last 25 events for this (media_type, tmdb_id);
     // pre-fix the dialog discarded them. Surfacing the timeline
@@ -5600,6 +5617,7 @@
         ${dlBlock}
         ${placedBlock}
       </dl>
+      ${recoveryPlaceholder}
       ${diffSection}
       ${historySection}
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
@@ -5618,6 +5636,137 @@
     // await — failures fall back to bare video IDs already in the
     // markup. Runs after innerHTML so the DOM nodes exist.
     hydrateDiffTitles(body);
+    // v1.12.71: hydrate the TRY THIS NEXT section if the row has
+    // a failure. Best-effort — endpoint failure leaves the
+    // placeholder copy ("loading recovery options…") in place.
+    if (recoverySectionId) {
+      hydrateRecoveryOptions(body, t.media_type, t.tmdb_id);
+    }
+  }
+
+  // v1.12.71: fetch the recovery options for a failed row and
+  // render them as a vertical action list inside the existing
+  // placeholder. Each option is a button that fires the same
+  // data-act dispatch as the SOURCE menu items, so click handling
+  // is shared. Disabled options (e.g. RE-DOWNLOAD when cookies
+  // aren't present for cookies_expired) render greyed with the
+  // disabled_reason as the tooltip.
+  async function hydrateRecoveryOptions(root, mediaType, tmdbId) {
+    if (!root || !mediaType || tmdbId === undefined) return;
+    const section = root.querySelector('#recovery-section');
+    if (!section) return;
+    let data;
+    try {
+      data = await api(
+        'GET',
+        `/api/items/${encodeURIComponent(mediaType)}/${encodeURIComponent(tmdbId)}/recovery-options`,
+      );
+    } catch (_) {
+      section.querySelector('.muted').textContent = 'recovery options unavailable';
+      return;
+    }
+    if (!data || !data.failure_kind || !(data.options || []).length) {
+      section.remove();
+      return;
+    }
+    const human = data.human || data.failure_kind;
+    const ackedNote = data.acked
+      ? ' <span class="muted small">(failure acknowledged — these options stay available until upstream changes)</span>'
+      : '';
+    const items = data.options.map((opt) => {
+      const tone = opt.tone ? ` lib-source-${opt.tone}` : '';
+      const disabledAttr = opt.disabled ? 'disabled' : '';
+      const disabledClass = opt.disabled ? ' recovery-option-disabled' : '';
+      const tooltip = opt.disabled && opt.disabled_reason
+        ? `${opt.tooltip || ''}\n\n(disabled: ${opt.disabled_reason})`
+        : (opt.tooltip || '');
+      // 'info' actions are non-interactive hints (e.g. "drop a
+      // cookies.txt"); render as a styled tile rather than a button
+      // so the user doesn't expect a click to do something.
+      if (!opt.interactive) {
+        return `<div class="recovery-option recovery-option-info${disabledClass}"
+                     title="${htmlEscape(tooltip)}">
+          <span class="recovery-option-label">${htmlEscape(opt.label)}</span>
+          <span class="recovery-option-tip muted small">${htmlEscape(opt.tooltip || '')}</span>
+        </div>`;
+      }
+      // Interactive option — render as a button with the same
+      // data-act / data-mt / data-id / data-rk attributes the
+      // SOURCE menu uses. Clicking dispatches into the existing
+      // library click handler if the row is on-page; otherwise
+      // we fall back to closing the dialog and navigating.
+      return `<button type="button"
+                      class="btn btn-tiny${tone} recovery-option-btn${disabledClass}"
+                      data-act="${htmlEscape(opt.action)}"
+                      data-mt="${htmlEscape(mediaType)}"
+                      data-id="${htmlEscape(tmdbId)}"
+                      data-recovery="1"
+                      ${disabledAttr}
+                      title="${htmlEscape(tooltip)}">
+        ${htmlEscape(opt.label)}
+      </button>`;
+    }).join('');
+    section.innerHTML = `
+      <header class="recovery-section-head">
+        <span class="recovery-section-title">// TRY THIS NEXT</span>
+        <span class="muted small">${htmlEscape(human)}${ackedNote}</span>
+      </header>
+      <div class="recovery-section-body">${items}</div>
+    `;
+    // v1.12.71: dispatch recovery-button clicks. Each button's
+    // data-act matches an existing handler keyword:
+    //   redl, clear-failure → direct API call (mt + tmdb)
+    //   manual-url, upload-theme → open the corresponding dialog
+    //     (needs rating_key from the API response)
+    // Closing the INFO dialog after dispatch lets the user see the
+    // result on the row without manually closing.
+    const ratingKey = data.rating_key || null;
+    section.querySelectorAll('button.recovery-option-btn').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const act = btn.dataset.act;
+        const mt = btn.dataset.mt;
+        const id = btn.dataset.id;
+        const closeAndReload = () => {
+          closeInfoDialog();
+          libraryRapidPoll();
+          loadLibrary().catch(() => {});
+        };
+        try {
+          if (act === 'redl') {
+            await api('POST', `/api/items/${mt}/${id}/redownload`);
+            closeAndReload();
+          } else if (act === 'clear-failure') {
+            await api('POST', `/api/items/${mt}/${id}/clear-failure`);
+            closeAndReload();
+          } else if (act === 'manual-url') {
+            if (!ratingKey) {
+              alert('No rating_key available for this row — open SET URL from the row\'s SOURCE menu.');
+              return;
+            }
+            closeInfoDialog();
+            // Resolve title/year from the dialog's stale data;
+            // use bare strings since the dialog is closing.
+            openManualUrlDialog({
+              ratingKey,
+              title: '',
+              year: '',
+              tdbUrl: '',
+              srcLetter: '',
+            });
+          } else if (act === 'upload-theme') {
+            if (!ratingKey) {
+              alert('No rating_key available for this row — open UPLOAD MP3 from the row\'s SOURCE menu.');
+              return;
+            }
+            closeInfoDialog();
+            openUploadDialog({ ratingKey, title: '', year: '' });
+          }
+        } catch (err) {
+          alert('Recovery action failed: ' + err.message);
+        }
+      });
+    });
   }
 
   // v1.12.66: per-row events timeline. Renders the last 25 events

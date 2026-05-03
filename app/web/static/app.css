@@ -1890,6 +1890,63 @@ pre code, .codeblock {
   .diff-arrow { transform: rotate(90deg); padding: 8px 0; }
 }
 
+/* v1.12.71: TRY THIS NEXT recovery section in the INFO card.
+   Renders only when the row has an active failure_kind. Lists
+   ranked recovery options (RE-DOWNLOAD / SET URL / UPLOAD MP3 /
+   ACK FAILURE / etc.) tone-coded to motif's source palette.
+   Non-interactive "info" entries (e.g. "DROP cookies.txt") render
+   as styled tiles instead of buttons to avoid implying clickable. */
+.recovery-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.recovery-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.recovery-section-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  color: var(--amber);
+}
+.recovery-section-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+}
+.recovery-option-btn {
+  flex: 0 0 auto;
+}
+.recovery-option-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.recovery-option-info {
+  flex: 1 1 100%;
+  border: 1px dashed var(--line-bright);
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.recovery-option-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  color: var(--cyan);
+}
+.recovery-option-tip {
+  line-height: 1.5;
+}
+
 /* v1.12.66: per-row event timeline in the INFO card. Collapsed by
    default (native <details>) so the timeline stays out of the way
    on rows the user isn't debugging; click-to-expand surfaces the
