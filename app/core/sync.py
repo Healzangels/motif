@@ -892,6 +892,54 @@ def run_sync(db_path, base_url: str, *,
                 detail={"pruned": pruned},
             )
 
+        # v1.12.53: detect "U-row with override URL == TDB URL" —
+        # the row is classified U but the URL is identical to TDB.
+        # Without this synthetic pending_update, the user has no
+        # blue-↑-pill prompt to reclassify U → T (cross-sync's
+        # is_new and url_changed branches don't fire when both the
+        # title and the URL are pre-existing). Writing a synthetic
+        # pending_update lights up the blue pill so the user can
+        # ACCEPT UPDATE — which (in api.py v1.12.53) flips local_files
+        # to T eagerly via the url_match path. Idempotent: ON
+        # CONFLICT keeps any existing decision the user already
+        # made on this row.
+        with get_conn(db_path) as conn:
+            synthetic = conn.execute(
+                """
+                INSERT INTO pending_updates (
+                    media_type, tmdb_id, old_video_id, new_video_id,
+                    old_youtube_url, new_youtube_url,
+                    upstream_edited_at, detected_at, decision
+                )
+                SELECT t.media_type, t.tmdb_id,
+                       t.youtube_video_id, t.youtube_video_id,
+                       NULL, t.youtube_url,
+                       t.youtube_edited_at, ?, 'pending'
+                  FROM themes t
+                  JOIN user_overrides uo
+                    ON uo.media_type = t.media_type
+                   AND uo.tmdb_id = t.tmdb_id
+                 WHERE t.youtube_url IS NOT NULL
+                   AND t.youtube_url <> ''
+                   AND TRIM(uo.youtube_url) = TRIM(t.youtube_url)
+                   AND NOT EXISTS (
+                     SELECT 1 FROM pending_updates pu
+                      WHERE pu.media_type = t.media_type
+                        AND pu.tmdb_id = t.tmdb_id
+                   )
+                """,
+                (sync_ts,),
+            ).rowcount or 0
+        if synthetic:
+            log_event(
+                db_path, level="INFO", component="sync",
+                message=f"Detected {synthetic} U-row"
+                        f"{'s' if synthetic != 1 else ''} with override URL "
+                        "matching TDB — surfaced as pending updates so the "
+                        "user can ACCEPT UPDATE to convert U → T",
+                detail={"synthetic": synthetic},
+            )
+
         with get_conn(db_path) as conn:
             conn.execute(
                 """

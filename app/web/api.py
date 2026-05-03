@@ -608,14 +608,34 @@ def _library_main_query(
                -- user-kind previous URL stays revertible since
                -- it represents a meaningfully different state
                -- (the row would flip back to U).
+               -- v1.12.53: also redundant when the previous URL
+               -- equals the row's CURRENT canonical URL (the
+               -- override URL when present, else themes.youtube_url).
+               -- Covers the post-accept URL-match case: SET URL
+               -- captured previous=TDB-URL, then ACCEPT UPDATE
+               -- ran with url_match=True (override URL == TDB URL),
+               -- decision flipped to 'accepted' so the original
+               -- pending-updates clause no longer matches —
+               -- but REVERT would just re-create the override
+               -- pointing back at the current TDB URL, a no-op
+               -- with extra UI churn. Suppress.
                (CASE WHEN t.previous_youtube_url IS NOT NULL
-                      AND t.previous_youtube_kind = 'themerrdb'
-                      AND EXISTS (
-                        SELECT 1 FROM pending_updates pu
-                         WHERE pu.media_type = t.media_type
-                           AND pu.tmdb_id = t.tmdb_id
-                           AND pu.decision IN ('pending', 'declined')
-                           AND pu.new_youtube_url = t.previous_youtube_url
+                      AND (
+                        (t.previous_youtube_kind = 'themerrdb'
+                         AND EXISTS (
+                           SELECT 1 FROM pending_updates pu
+                            WHERE pu.media_type = t.media_type
+                              AND pu.tmdb_id = t.tmdb_id
+                              AND pu.decision IN ('pending', 'declined')
+                              AND pu.new_youtube_url = t.previous_youtube_url
+                         ))
+                        OR
+                        t.previous_youtube_url = COALESCE(
+                          (SELECT youtube_url FROM user_overrides uo
+                            WHERE uo.media_type = t.media_type
+                              AND uo.tmdb_id = t.tmdb_id),
+                          t.youtube_url
+                        )
                       )
                      THEN 1 ELSE 0 END) AS revert_redundant,
                -- v1.12.35: accepted_update = the row's pending
@@ -2751,6 +2771,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # badge to appear only AFTER the new canonical is
                 # in place — pre-download the row should still
                 # show its current source state.
+                #
+                # v1.12.53: BUT when url_match=True the new
+                # canonical IS already in place — override URL
+                # == new TDB URL means the file already on disk
+                # was downloaded from the same YouTube video TDB
+                # would now download. So flip eagerly only for
+                # the url_match case. Closes a race where a
+                # follow-on SET URL re-creates the override
+                # before the worker re-runs, leaving local_files
+                # stale at source_kind='url'. Scoped to
+                # section_id when provided (mirrors the
+                # _enqueue_download scope below); otherwise
+                # covers every section the global override
+                # affected.
+                if url_match:
+                    if section_id:
+                        conn.execute(
+                            """UPDATE local_files
+                                  SET provenance = 'auto',
+                                      source_kind = 'themerrdb'
+                                WHERE media_type = ?
+                                  AND tmdb_id = ?
+                                  AND section_id = ?""",
+                            (media_type, tmdb_id, section_id),
+                        )
+                    else:
+                        conn.execute(
+                            """UPDATE local_files
+                                  SET provenance = 'auto',
+                                      source_kind = 'themerrdb'
+                                WHERE media_type = ?
+                                  AND tmdb_id = ?""",
+                            (media_type, tmdb_id),
+                        )
 
             conn.execute(
                 """UPDATE pending_updates SET decision = 'accepted',
