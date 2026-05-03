@@ -510,22 +510,23 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .table th.col-sort:hover { color: var(--fg); }
 .table th.col-sort-active { color: var(--green-bright); }
 .table th .sort-indicator {
-  /* v1.12.25: inline-flex with vertical-align: middle so the
-     indicator (whether ▲ ▼ or empty) sits on the same visual
-     line as its label across every header. Pre-fix, an empty
-     inline-block with width: 8px had no content, which let
-     browsers pin its baseline at its bottom edge — different
-     header columns rendered the empty span on subtly different
-     baselines, making IMDB / ACTIONS labels visually drop
-     below YEAR / SRC / DL / PL / LINK. */
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  /* v1.12.27: simple inline-block 12px-wide slot, text-align
+     center so the ▲ / ▼ glyph (which renders ~10px wide at
+     font-size: 10px) sits centered within. width: 8px from
+     v1.12.25 was narrower than the glyph itself, causing the
+     triangle to either overflow visibly or render off-center.
+     line-height: 1 + vertical-align: middle keeps the indicator
+     on the same visual line as the header label. font-family
+     forced to monospace so the triangle metrics are predictable
+     across system fonts. */
+  display: inline-block;
   vertical-align: middle;
-  margin-left: 4px;
+  margin-left: 6px;
   font-size: 10px;
-  width: 8px;
-  height: 12px;
+  width: 12px;
+  text-align: center;
+  line-height: 1;
+  font-family: var(--font-mono);
 }
 .table td {
   padding: 10px 14px;
@@ -535,7 +536,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .table tr:hover td { background: rgba(109,255,181,0.02); }
 .table-tight th, .table-tight td { padding: 6px 10px; font-size: var(--t-tiny); }
 
-.col-state { width: 56px; text-align: center; }
+.col-state { width: 64px; text-align: center; }
 /* v1.12.25: narrow-column td padding override. With table-layout:
    fixed, the SRC / DL / PL / LINK columns (all .col-state, 56px)
    need lighter horizontal padding so their pills (HL, link-badge,
@@ -543,29 +544,38 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    The default .table td padding (10px 14px) consumes 28px of the
    56px column, leaving only 28px for content. */
 #library-table td.col-state { padding-left: 6px; padding-right: 6px; }
+/* v1.12.27: matching th padding for the narrow .col-state header
+   so "SRC ▲" / "LINK ▲" / etc fit without overflowing into the
+   neighboring column. Shares the 6px horizontal padding the td
+   already uses. */
+#library-table th.col-state { padding-left: 6px; padding-right: 6px; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 300px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
-/* v1.12.3: header text for IMDB / ACTIONS gets centered to match
-   the YEAR / SRC / DL / PL / LINK headers (which are centered via
-   .col-state / .col-year). Data cells keep their content alignment
-   (left for IMDB tt-IDs, right for the actions menu) so the body
-   layout is unchanged — only the header text label is recentered.
-   Pre-fix v1.12.0 anchored both headers and data to the cell
-   start/end, so the headers visually broke from the rest of the
-   row. */
-th.col-imdb,
-th.col-actions { text-align: center; }
-/* v1.12.24: every header cell shares the same vertical-align,
-   line-height, and font-size so the labels sit on a single
-   baseline regardless of column width or sort-indicator presence.
-   v1.12.23 mistakenly bumped col-imdb header to --t-small (12px)
-   which made it taller than the --t-tiny (11px) default of its
-   neighbors — the opposite of the intended fix. */
+/* v1.12.27: every header cell in the library table aligns LEFT
+   regardless of how its data cells render. Mixing centered
+   labels (IMDB, ACTIONS) with left-anchored labels (TITLE,
+   YEAR, SRC, DL, PL, LINK) created the visual "IMDB and
+   ACTIONS sit lower" effect the user kept reporting — the
+   centered labels appeared at a different X anchor in their
+   wider columns and the eye read that horizontal offset as a
+   vertical shift. Forcing every header label to the left
+   anchor of its cell puts every column's label on a single
+   visual line. Data cell alignment (centered dots / pills,
+   left-aligned tt-IDs, right-aligned action buttons) is
+   unaffected — only the th text-align changes. */
 .table thead th {
+  text-align: left;
   vertical-align: middle;
   line-height: 1.4;
   font-size: var(--t-tiny);
+  white-space: nowrap;
+  /* v1.12.27: tabular-nums / mute color from the .col-imdb base
+     class were leaking into the IMDB header and contributing to
+     the perceived baseline difference. Resetting both at the
+     thead-th level keeps every column's header consistent. */
+  font-variant-numeric: normal;
+  color: var(--fg-dim);
 }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
