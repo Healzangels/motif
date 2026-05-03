@@ -24,14 +24,10 @@
 <!-- Pending-placements banner — present whenever motif has downloads
      waiting for user approval (typically because a Plex-folder sidecar
      would be overwritten). Click through to /pending. -->
-<a id="library-pending-banner" class="missing-banner" href="/pending"
-   style="display:none;border-color:var(--cyan);background:rgba(109,211,255,0.06);color:var(--fg);text-decoration:none">
-  <span class="missing-banner-glyph" style="color:var(--cyan)">▸</span>
-  <span class="missing-banner-text">
-    <strong id="library-pending-count">0</strong> downloads waiting placement approval —
-    review at <code>/pending</code>.
-  </span>
-</a>
+<!-- v1.12.41: pending-placements click-through banner removed
+     (the /pending tab is gone). Pending placements still get
+     surfaced via the row's PLACE menu PUSH TO PLEX action and
+     can be filtered via the TDB ↑ pill. -->
 
 <!-- Scan-needed hint — shown when motif has not yet enumerated Plex.
      Without a scan, the missing-themes count would be comparing ThemerrDB
@@ -154,6 +150,20 @@
             title="Not placed in the Plex folder.">●</button>
     <button type="button" class="pill-filter-clear" data-pl-pill=""
             title="Clear all PL selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="EDITION pill filter">
+    <span class="pill-filter-label muted small">EDITION:</span>
+    <button type="button" class="pill-filter-clear" data-ed-pill-all="1"
+            title="Select every EDITION state.">ALL</button>
+    <button type="button" class="ed-pill-btn ed-pill-btn-on"
+            data-ed-pill="has"
+            title="Show only rows with a Plex {edition-...} folder tag (Director's Cut, Extended, IMAX, etc.).">ED</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-ed-pill="none"
+            title="Show only rows without an edition tag.">—</button>
+    <button type="button" class="pill-filter-clear" data-ed-pill=""
+            title="Clear all EDITION selections.">CLEAR</button>
   </div>
 
   <div class="pill-filter-row" aria-label="LINK pill filter">

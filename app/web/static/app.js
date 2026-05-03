@@ -387,25 +387,10 @@
         window.__motif_cookies_present = !!stats.config.cookies_present;
       }
 
-      // Pending-placements indicator: light the dot on the PENDING nav
-      // link whenever there are items awaiting placement approval.
-      // Surfaces the workflow even when the user is mid-action on /movies.
-      const pendingDot = document.getElementById('nav-attn-pending');
-      const pendingCount = (stats.queue && stats.queue.pending_placements) || 0;
-      if (pendingDot) pendingDot.style.display = pendingCount > 0 ? '' : 'none';
-      // Library-page banner: show a click-through when there are pending
-      // placements. Subtle vs the missing-themes banner; same JS refresh
-      // cadence (every loadLibrary tick, plus the 15s topbar poll).
-      const pendingBanner = document.getElementById('library-pending-banner');
-      if (pendingBanner) {
-        if (pendingCount > 0) {
-          document.getElementById('library-pending-count').textContent =
-            fmt.num(pendingCount);
-          pendingBanner.style.display = '';
-        } else {
-          pendingBanner.style.display = 'none';
-        }
-      }
+      // v1.12.41: /pending tab removed. The pending-placements
+      // indicator + library-page banner that pointed at it are
+      // both gone — pending downloads now surface via the
+      // library tab's TDB ↑ pill filter and the per-row UI.
 
       // Drive dry-run banner
       const banner = $('#dry-run-banner');
@@ -2702,6 +2687,9 @@
     dlPills: new Set(),
     plPills: new Set(),
     linkPills: new Set(),
+    // v1.12.41: EDITION axis. 'has' = rows with a Plex
+    // {edition-...} folder tag, 'none' = rows without.
+    edPills: new Set(),
     // v1.10.15: column sort state. sort key whitelisted server-side.
     sort: "title",
     sortDir: "asc",
@@ -2769,6 +2757,9 @@
     }
     if (libraryState.plPills && libraryState.plPills.size > 0) {
       params.set('pl_pills', Array.from(libraryState.plPills).join(','));
+    }
+    if (libraryState.edPills && libraryState.edPills.size > 0) {
+      params.set('ed_pills', Array.from(libraryState.edPills).join(','));
     }
     if (libraryState.linkPills && libraryState.linkPills.size > 0) {
       params.set('link_pills', Array.from(libraryState.linkPills).join(','));
@@ -3943,6 +3934,9 @@
         { param: 'link_pills', state: 'linkPills', attr: 'linkPill',
           activeClass: 'link-pill-btn-active',
           values: new Set(['hl','c','m','none']) },
+        { param: 'ed_pills',   state: 'edPills',   attr: 'edPill',
+          activeClass: 'state-pill-btn-active',
+          values: new Set(['has','none']) },
       ];
       for (const dl of PILL_DEEP_LINKS) {
         const raw = sp.get(dl.param);
@@ -4070,6 +4064,9 @@
         { attr: 'linkPill', allAttr: 'linkPillAll', state: 'linkPills',
           activeClass: 'link-pill-btn-active',
           values: ['hl', 'c', 'm', 'none'] },
+        { attr: 'edPill', allAttr: 'edPillAll', state: 'edPills',
+          activeClass: 'state-pill-btn-active',
+          values: ['has', 'none'] },
       ];
       for (const axis of pillAxes) {
         const dataKey = axis.attr;       // camelCase for dataset

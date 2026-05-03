@@ -290,6 +290,13 @@ def _library_main_query(
     dl_pills: set[str] | None = None,
     pl_pills: set[str] | None = None,
     link_pills: set[str] | None = None,
+    # v1.12.41: EDITION pill axis. Filters rows by whether the
+    # Plex folder name carries an `{edition-...}` tag. 'has'
+    # matches rows with an edition tag (Director's Cut,
+    # Extended, IMAX, etc.); 'none' matches rows without one.
+    # Lets the user scope themes to a specific edition family
+    # without filtering by SRC/DL/PL.
+    ed_pills: set[str] | None = None,
     cookies_present: bool = False,
     themes_dir: Path | None = None,
 ) -> dict:
@@ -432,6 +439,7 @@ def _library_main_query(
     dl_pills = dl_pills or set()
     pl_pills = pl_pills or set()
     link_pills = link_pills or set()
+    ed_pills = ed_pills or set()
     if src_pills:
         branches = []
         for p in src_pills:
@@ -500,6 +508,19 @@ def _library_main_query(
                 branches.append("(lf.mismatch_state IS NOT NULL)")
             elif p == "none":
                 branches.append("(p.media_folder IS NULL)")
+        if branches:
+            where_extra += " AND (" + " OR ".join(branches) + ")"
+    # v1.12.41: EDITION axis — match against the Plex folder
+    # path's `{edition-...}` tag. SQL LIKE pattern is escape-safe
+    # because the Plex folder convention is fixed (curly-brace
+    # tags); no user-supplied substring lands in the pattern.
+    if ed_pills:
+        branches = []
+        for p in ed_pills:
+            if p == "has":
+                branches.append("(pi.folder_path LIKE '%{edition-%')")
+            elif p == "none":
+                branches.append("(pi.folder_path IS NULL OR pi.folder_path NOT LIKE '%{edition-%')")
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
 
@@ -662,7 +683,7 @@ def _library_main_query(
         )
         or bool(src_pills) or bool(pl_pills) or bool(link_pills)
     )
-    no_pills = not (src_pills or tdb_pills or dl_pills or pl_pills or link_pills)
+    no_pills = not (src_pills or tdb_pills or dl_pills or pl_pills or link_pills or ed_pills)
     if status == "all" and tdb == "any" and no_pills:
         sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
                      f"WHERE {tab_where}{where_pi_only}")
@@ -981,9 +1002,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # fallback path for hash-match adoption from a real scan run, but
     # there's no UI surface and no /scans HTML route.
 
-    @app.get("/pending", response_class=HTMLResponse)
-    async def pending_page(request: Request):
-        return templates.TemplateResponse(request, "pending.html")
+    # v1.12.41: /pending tab removed. Pending downloads are now
+    # surfaced via the library tab's TDB ↑ pill filter instead;
+    # the dedicated tab was redundant. No redirect — /pending
+    # was never linked externally.
 
     @app.get("/settings", response_class=HTMLResponse)
     async def settings_page(request: Request):
@@ -2694,9 +2716,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  media_type, tmdb_id),
             )
             from ..core.sync import _enqueue_download
+            # v1.12.41: ACCEPT UPDATE forces auto_place=True on
+            # the queued download. Pre-fix the placement
+            # decision deferred to the global placement.auto_place
+            # setting — when False, the download landed in
+            # canonical and waited at /pending for manual
+            # approval. With /pending removed in v1.12.41 the
+            # only way the user would discover the awaiting-
+            # placement state is via the row's PUSH TO PLEX
+            # button, which is ambiguous with the case where they
+            # explicitly held back. ACCEPT UPDATE has explicit
+            # user intent ("yes, take this update") so the
+            # download chains directly into a place job.
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason="upstream_update_accepted",
+                auto_place=True,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -2746,6 +2781,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dl_pills: str = Query(""),
         pl_pills: str = Query(""),
         link_pills: str = Query(""),
+        # v1.12.41: EDITION axis. Empty = no filter; 'has' /
+        # 'none' / 'has,none' control whether to surface only
+        # rows with / without an `{edition-...}` Plex folder tag.
+        ed_pills: str = Query(""),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         sort: str = Query("title", pattern="^(title|year|src|dl|pl|link|imdb)$"),
@@ -2781,6 +2820,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dl_set = _pset(dl_pills, {"on", "off", "broken"})
         pl_set = _pset(pl_pills, {"on", "off"})
         link_set = _pset(link_pills, {"hl", "c", "m", "none"})
+        ed_set = _pset(ed_pills, {"has", "none"})
         # v1.12.23: 'broken' DL pill alone routes through the existing
         # dl_missing path (post-SQL stat-check). Combined with on/off
         # selections it's ignored for now — would require refactoring
@@ -2798,6 +2838,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sort=sort, sort_dir=sort_dir,
             src_pills=src_set, tdb_pills=tdb_set,
             dl_pills=dl_set, pl_pills=pl_set, link_pills=link_set,
+            ed_pills=ed_set,
             cookies_present=cookies_present,
             themes_dir=settings.themes_dir if settings.is_paths_ready() else None,
         )
