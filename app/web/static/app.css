@@ -527,14 +527,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    row. */
 th.col-imdb,
 th.col-actions { text-align: center; }
-/* v1.12.23: header vertical alignment. col-imdb's smaller font
-   (var(--t-tiny)) made its label sit lower on the row compared to
-   the default-size YEAR / SRC / DL / PL / LINK headers; col-actions
-   inherited the same baseline from its td styling. Force every
-   header cell to baseline-top so the labels land on the same
-   horizontal line. */
-.table thead th { vertical-align: middle; line-height: 1.2; }
-th.col-imdb { font-size: var(--t-small); }
+/* v1.12.24: every header cell shares the same vertical-align,
+   line-height, and font-size so the labels sit on a single
+   baseline regardless of column width or sort-indicator presence.
+   v1.12.23 mistakenly bumped col-imdb header to --t-small (12px)
+   which made it taller than the --t-tiny (11px) default of its
+   neighbors — the opposite of the intended fix. */
+.table thead th {
+  vertical-align: middle;
+  line-height: 1.4;
+  font-size: var(--t-tiny);
+}
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -543,9 +546,29 @@ th.col-imdb { font-size: var(--t-small); }
    Nowrap ensures the row height stays consistent. */
 .row-actions {
   display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
+  /* v1.12.24: switch from flex-end (right-align) to flex-end with
+     fixed-width slots — each action category has a reserved
+     horizontal slot so SOURCE / PLACE / REMOVE stay in the same
+     X position regardless of whether sibling slots are populated.
+     Pre-fix sorting between rows with different action sets caused
+     buttons to jump horizontally as the right-aligned cell
+     packed/unpacked. */
   justify-content: flex-end;
 }
 .row-actions .btn-tiny { white-space: nowrap; }
+.row-action-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+}
+/* Each slot reserves space matching its populated button width so
+   an empty slot doesn't collapse and shift its neighbors. Widths
+   sized to the longest label per category. */
+.row-action-slot-info   { min-width: 28px; }
+.row-action-slot-source { min-width: 80px; }
+.row-action-slot-place  { min-width: 72px; }
+.row-action-slot-remove { min-width: 86px; }
+.row-action-slot-empty { /* nothing visual; just reserves min-width */ }
 /* v1.10.24 Option C: per-row menu buttons (SOURCE / PLACE / REMOVE).
    Native <details>/<summary> popover; CSS positions the panel and a
    global click-outside handler closes any open one. */
@@ -726,6 +749,11 @@ th.col-imdb { font-size: var(--t-small); }
   gap: 6px;
   margin-top: 6px;
   padding: 0 2px;
+  /* v1.12.24: claim a full row inside the .filterbar flex parent
+     so the five pill axes (TDB, SRC, DL, PL, LINK) stack vertically
+     instead of packing horizontally and producing the broken
+     wrapped layout from v1.12.23. */
+  flex-basis: 100%;
 }
 .pill-filter-label {
   letter-spacing: 0.12em;

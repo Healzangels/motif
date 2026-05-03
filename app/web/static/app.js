@@ -3549,19 +3549,28 @@
     }
 
     function menuButtonHtml(label, items, kindClass) {
-      if (!items.length) return '';
-      // <details>/<summary> popover — open/close native, click-outside
-      // close handled by the global listener bound below.
+      // v1.12.24: empty slot returns an invisible placeholder of
+      // the same width as the populated button so the actions
+      // cell keeps a stable horizontal layout across rows with
+      // different action sets. Pre-fix sorting between row
+      // groups (themed vs unthemed, etc.) shifted SOURCE / PLACE /
+      // REMOVE columns visually as buttons appeared/disappeared.
+      const slotClass = `row-action-slot row-action-slot-${label.toLowerCase()}`;
+      if (!items.length) {
+        return `<span class="${slotClass} row-action-slot-empty" aria-hidden="true"></span>`;
+      }
       const cls = `row-menu ${kindClass || ''}`.trim();
-      return `<details class="${cls}">`
+      return `<span class="${slotClass}"><details class="${cls}">`
         + `<summary class="btn btn-tiny" title="${htmlEscape(label)} actions">${htmlEscape(label)} ▾</summary>`
         + `<div class="row-menu-panel">${items.join('')}</div>`
-        + `</details>`;
+        + `</details></span>`;
     }
 
     const acts = [];
     if (themed && themeId !== null && themeId !== undefined) {
-      acts.push(`<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
+      acts.push(`<span class="row-action-slot row-action-slot-info"><button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button></span>`);
+    } else {
+      acts.push(`<span class="row-action-slot row-action-slot-info row-action-slot-empty" aria-hidden="true"></span>`);
     }
     acts.push(menuButtonHtml('SOURCE', sourceItems));
     acts.push(menuButtonHtml('PLACE', placeItems));
