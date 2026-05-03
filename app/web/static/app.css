@@ -594,11 +594,16 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    inline-block sized to the "TITLE" label, so the indicator
    inside (block, text-align: center) centers BENEATH the
    "TITLE" letters rather than across the entire ~600px-wide
-   col-title cell. Other columns inherit the default
-   text-align: center from .table thead th, which centers the
-   .th-stack horizontally and stacks the carat under each
-   centered label. */
-#library-table th.col-title { text-align: left; }
+   col-title cell. v1.12.37: IMDB joins the same exception —
+   its data cells (tt-IDs) are left-aligned, so a centered
+   header floated visibly right of where the data sits. With
+   left-anchored TITLE + IMDB, the header label sits directly
+   above its data column rather than over empty whitespace.
+   Other columns inherit the default text-align: center from
+   .table thead th, which centers the .th-stack horizontally
+   and stacks the carat under each centered label. */
+#library-table th.col-title,
+#library-table th.col-imdb { text-align: left; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }

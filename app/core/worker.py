@@ -659,8 +659,21 @@ class Worker:
                         sha256=sibling["file_sha256"],
                         size=sibling["file_size"],
                         video_id=vid,
-                        provenance=("manual" if override else sibling["provenance"]),
-                        source_kind=("url" if override else (sibling["source_kind"] or "themerrdb")),
+                        # v1.12.37: derive provenance + source_kind
+                        # from the CURRENT presence of a user override,
+                        # not from the sibling row's stale values. The
+                        # pre-fix code inherited the sibling's values
+                        # which was wrong whenever the row's source had
+                        # changed since the sibling was recorded — most
+                        # visibly after ACCEPT UPDATE deleted
+                        # user_overrides on a U row, where the sibling
+                        # still carried 'manual'/'url' and the new
+                        # canonical inherited that even though it was
+                        # downloaded with no override active. The row
+                        # classified as U forever despite the canonical
+                        # actually coming from the TDB URL.
+                        provenance=("manual" if override else "auto"),
+                        source_kind=("url" if override else "themerrdb"),
                         job_payload=job["payload"],
                     )
                     log_event(

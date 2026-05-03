@@ -53,6 +53,18 @@ CREATE TABLE IF NOT EXISTS themes (
     -- v1.10.32: normalized title (normalize_title in app/core/normalize.py)
     -- for the title-fallback library match. Populated by sync.
     title_norm           TEXT,
+    -- v1.12.37: one-step REVERT history. Whenever a user-initiated
+    -- action changes the canonical URL (ACCEPT UPDATE consuming a U
+    -- override, SET URL replacing an existing override, REPLACE TDB
+    -- on a U row, REVERT itself), the prior URL + its kind get
+    -- captured here so REVERT can swap back. NULL means no
+    -- single-step history is available — the SOURCE menu hides
+    -- REVERT for those rows.
+    --   previous_youtube_url   = the prior canonical URL string
+    --   previous_youtube_kind  = 'user' (came from user_overrides)
+    --                          | 'themerrdb' (came from themes.youtube_url)
+    previous_youtube_url   TEXT,
+    previous_youtube_kind  TEXT CHECK (previous_youtube_kind IN ('user', 'themerrdb') OR previous_youtube_kind IS NULL),
     UNIQUE (media_type, tmdb_id)
 );
 
@@ -422,7 +434,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 24
+CURRENT_SCHEMA_VERSION = 25
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -829,6 +841,57 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v9 (plex_items.local_theme_file)")
     conn.executescript(
         "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
+def _migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
+    """v25 adds themes.previous_youtube_url + previous_youtube_kind
+    for the v1.12.37 generalized REVERT.
+
+    Pre-fix (v1.12.34-v1.12.36) only post-accept-update U rows had
+    a captured prior URL (pending_updates.replaced_user_url). The
+    user wants REVERT to be a one-step undo for any URL-changing
+    action — so SET URL replacing an existing override, REPLACE
+    TDB on a U row, or ACCEPT UPDATE all populate the previous_*
+    columns the same way.
+
+    The v1.12.34 pending_updates.replaced_user_url column is
+    superseded but preserved for back-compat with existing
+    accepted-update rows. The migration backfills any non-null
+    replaced_user_url values into themes.previous_youtube_url
+    with kind='user' so previously-accepted rows keep their
+    REVERT capability.
+    """
+    log.info("Migrating to schema v25 (themes.previous_youtube_url)")
+    conn.executescript(
+        """
+        ALTER TABLE themes ADD COLUMN previous_youtube_url TEXT;
+        ALTER TABLE themes ADD COLUMN previous_youtube_kind TEXT
+            CHECK (previous_youtube_kind IN ('user', 'themerrdb')
+                   OR previous_youtube_kind IS NULL);
+
+        UPDATE themes
+           SET previous_youtube_url = (
+                 SELECT pu.replaced_user_url
+                   FROM pending_updates pu
+                  WHERE pu.media_type = themes.media_type
+                    AND pu.tmdb_id = themes.tmdb_id
+                    AND pu.replaced_user_url IS NOT NULL
+               ),
+               previous_youtube_kind = (
+                 SELECT 'user'
+                   FROM pending_updates pu
+                  WHERE pu.media_type = themes.media_type
+                    AND pu.tmdb_id = themes.tmdb_id
+                    AND pu.replaced_user_url IS NOT NULL
+               )
+         WHERE EXISTS (
+                 SELECT 1 FROM pending_updates pu
+                  WHERE pu.media_type = themes.media_type
+                    AND pu.tmdb_id = themes.tmdb_id
+                    AND pu.replaced_user_url IS NOT NULL
+               );
+        """
     )
 
 
@@ -1348,6 +1411,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 23:
                     _migrate_v23_to_v24(conn)
                     current = 24
+                elif current == 24:
+                    _migrate_v24_to_v25(conn)
+                    current = 25
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

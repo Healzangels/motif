@@ -1071,9 +1071,12 @@
   }
 
   async function revertToThemerrDb(mediaType, tmdbId, btn) {
-    if (!confirm('Replace your manual override with the ThemerrDB version?\n\n'
-        + 'Motif will clear the override and download from upstream. The SRC '
-        + 'will switch from U back to T.')) return;
+    // v1.12.37: REVERT is now a one-step undo. The /revert endpoint
+    // swaps the canonical URL back to themes.previous_youtube_url
+    // (could be a user URL or a TDB URL depending on what was
+    // captured). Skip the confirm dialog — REVERT is non-destructive
+    // and round-trippable (clicking REVERT a second time returns
+    // the row to its pre-first-revert state).
     if (btn) btn.disabled = true;
     try {
       await api('POST', `/api/items/${mediaType}/${tmdbId}/revert`);
@@ -1084,6 +1087,25 @@
       }
     } catch (e) {
       alert('Revert failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // v1.12.37: REMOVE-menu CLEAR URL drops the user override and
+  // re-downloads from TDB. Calls /clear-url which captures the
+  // dropped URL into themes.previous_youtube_url so REVERT can
+  // restore it later.
+  async function clearUrlOverride(mediaType, tmdbId, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      await api('POST', `/api/items/${mediaType}/${tmdbId}/clear-url`);
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+    } catch (e) {
+      alert('Clear URL failed: ' + e.message);
       if (btn) btn.disabled = false;
     }
   }
@@ -3338,24 +3360,16 @@
       // For an orphan with a manual URL there's nothing to revert to;
       // pre-1.10.29 the button would have errored or 'reverted' to
       // nothing.
-      // v1.12.36: REVERT semantics narrowed to post-accept-update
-      // restore only. Pre-fix, REVERT also fired the legacy U->T
-      // path (clear user_overrides, download from TDB) on plain
-      // U rows that had no pending update — confusing because
-      // (a) the user might never have accepted any update and
-      // (b) the action was indistinguishable in the menu from
-      // REPLACE TDB which already covers U->T. REVERT now only
-      // surfaces when revertible_to_url=1 (an earlier ACCEPT
-      // UPDATE captured replaced_user_url) and round-trips T
-      // back to U with the user's saved URL. The U->T direction
-      // is covered by REPLACE TDB further down the menu.
-      if (it.revertible_to_url) {
-        sourceItems.push(menuItemHtml(
-          'revert', 'REVERT',
-          'Restore the manual URL captured when ACCEPT UPDATE replaced it, and re-download.',
-          { mt: themeMt, id: themeId, tone: 'user' },
-        ));
-      }
+      // v1.12.37: REVERT moved to the bottom of the SOURCE
+      // menu and switched onto the generalized has_previous_url
+      // flag. The button surfaces whenever the row has a
+      // captured previous URL — populated by SET URL (replacing
+      // an existing override), ACCEPT UPDATE (consuming a U
+      // row), or REPLACE TDB. Tone is violet when the previous
+      // URL is user-kind, themerrdb-green when it's upstream.
+      // REVERT is rendered AFTER everything else further below
+      // so the user sees primary actions first; see the deferred
+      // push at the end of the SOURCE block.
     }
     // v1.10.42: ACK FAILURE — clear the failure flag on the theme so
     // the red ! glyph + red TDB ✗ go away. Doesn't fix anything;
@@ -3463,6 +3477,28 @@
       ));
     }
 
+    // v1.12.37: REVERT lives at the bottom of the SOURCE menu so
+    // the primary actions (DOWNLOAD / RE-DL / SET URL / UPLOAD /
+    // ACCEPT UPDATE / KEEP CURRENT / REPLACE TDB) read first and
+    // the "go back one step" action sits as a clearly secondary
+    // choice. Gated on has_previous_url so it only appears when
+    // there's an actual snapshot to roll back to. Tone tracks the
+    // previous URL's kind — violet for user, themerrdb-green for
+    // upstream — so the button color hints at which state REVERT
+    // will land in.
+    if (it.has_previous_url) {
+      const revertTone = it.previous_youtube_kind === 'themerrdb'
+        ? 'themerrdb' : 'user';
+      const revertTip = it.previous_youtube_kind === 'themerrdb'
+        ? "Revert to the previously-active ThemerrDB URL and re-download."
+        : "Revert to the previously-active user URL and re-download.";
+      sourceItems.push(menuItemHtml(
+        'revert', 'REVERT',
+        revertTip,
+        { mt: themeMt, id: themeId, tone: revertTone },
+      ));
+    }
+
     // PLACE menu — single-action category, but rendered as a menu for
     // visual symmetry with the others. Hidden entirely when there's
     // nothing to push.
@@ -3530,6 +3566,21 @@
 
     // REMOVE menu
     const removeItems = [];
+    // v1.12.37: CLEAR URL drops the user_overrides row + flips
+    // the row from U to T (re-downloads from ThemerrDB). Lives
+    // in REMOVE rather than SOURCE because the action's
+    // mental-model is "remove my custom URL", not "switch
+    // sources" — even though the underlying flow is the same as
+    // REPLACE TDB. Only surfaces when there's actually a URL
+    // override to clear AND there's a TDB upstream to fall back
+    // on (otherwise clearing leaves the row in limbo).
+    if (sourceKindForActions === 'url' && isThemerrDb) {
+      removeItems.push(menuItemHtml(
+        'clear-url', 'CLEAR URL',
+        "Drop the manual URL override and re-download from ThemerrDB.",
+        { mt: themeMt, id: themeId, danger: true },
+      ));
+    }
     if (placed) {
       removeItems.push(menuItemHtml(
         'unplace', 'DEL',
@@ -4656,6 +4707,14 @@
         redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'revert') {
         revertToThemerrDb(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+      } else if (act === 'clear-url') {
+        // v1.12.37: REMOVE-menu CLEAR URL drops the user override
+        // and re-downloads from TDB. Confirm prompt because
+        // it's in REMOVE (danger styling); user intent is more
+        // destructive than the SOURCE-menu equivalents.
+        const title = btn.dataset.title || 'this theme';
+        if (!confirm(`Clear the manual URL override on "${title}" and re-download from ThemerrDB?\n\nThe row will switch from U to T after the download lands. Use REVERT in SOURCE to restore the URL afterwards.`)) return;
+        clearUrlOverride(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'info') {
         openInfoDialog(btn.dataset.mt, btn.dataset.id).catch(console.error);
       } else if (act === 'delete-orphan') {
@@ -4872,79 +4931,84 @@
     const lf = data.local_file;
     const placements = data.placements || [];
     const pu = data.pending_update;
-    // v1.12.34: header URL prefers user override, then upstream
-    // theme record. Pending-update old/new URLs and the
-    // replaced_user_url (captured by ACCEPT UPDATE) render in
-    // their own dedicated rows below so the user can see the
-    // full picture: what's currently downloading, what was
-    // there before, and what they can revert to.
-    const ytUrl = ovr?.youtube_url || t.youtube_url || '';
+    // v1.12.37: the INFO card now shows three explicit URLs —
+    // ThemerrDB, currently applied, and previous — so the user
+    // can see at a glance what they're on, what TDB advertises,
+    // and what REVERT will restore.
+    const tdbUrl = t.youtube_url || '';
+    const currentUrl = ovr?.youtube_url || t.youtube_url || '';
+    const previousUrl = t.previous_youtube_url || '';
+    const previousKind = t.previous_youtube_kind || null;
+    // ytId for the embedded YouTube thumbnail tracks the currently
+    // applied URL so it always matches what's being played.
+    const ytUrl = currentUrl;
     const ytId = ovr?.youtube_video_id || t.youtube_video_id ||
                  (ytUrl ? (ytUrl.match(/[?&]v=([^&]+)/) || [])[1] : '');
     const imdb = t.imdb_id ? `<a href="https://www.imdb.com/title/${htmlEscape(t.imdb_id)}" target="_blank" rel="noopener">${htmlEscape(t.imdb_id)}</a>` : '<span class="muted">—</span>';
     const tmdbLink = t.tmdb_id && t.tmdb_id > 0
       ? `<a href="https://www.themoviedb.org/${mediaType === 'tv' ? 'tv' : 'movie'}/${t.tmdb_id}" target="_blank" rel="noopener">${t.tmdb_id}</a>`
       : '<span class="muted">orphan</span>';
-    const ytLink = ytUrl
-      ? `<a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener">${htmlEscape(ytUrl)}</a>`
+    // v1.12.37: three URL rows render top-of-card so the user
+    // can see ThemerrDB's URL, what's currently active, and what
+    // REVERT will restore. The currently-applied URL gets violet
+    // styling when sourced from a user override (matches the U
+    // badge); themerrdb-green when sourced from the upstream
+    // record. Previous URL color tracks previous_youtube_kind
+    // similarly.
+    const linkOrDash = (url, color) =>
+      url
+        ? `<a href="${htmlEscape(url)}" target="_blank" rel="noopener"${color ? ` style="color:${color}"` : ''}>${htmlEscape(url)}</a>`
+        : '<span class="muted">—</span>';
+    const tdbUrlLink = linkOrDash(tdbUrl, 'var(--green-bright)');
+    const currentColor = ovr ? 'var(--violet)' : 'var(--green-bright)';
+    const currentUrlLink = linkOrDash(currentUrl, currentColor);
+    const prevColor = previousKind === 'user'
+      ? 'var(--violet)'
+      : previousKind === 'themerrdb' ? 'var(--green-bright)' : null;
+    const prevKindLabel = previousKind === 'user'
+      ? '<span class="muted small" style="color:var(--violet)">user</span>'
+      : previousKind === 'themerrdb'
+        ? '<span class="muted small" style="color:var(--green-bright)">themerrdb</span>'
+        : '';
+    const previousUrlLink = previousUrl
+      ? `${linkOrDash(previousUrl, prevColor)} ${prevKindLabel}`
       : '<span class="muted">—</span>';
+    const ytLink = currentUrlLink;
     const failBlock = t.failure_kind
       ? `<dt>last failure</dt><dd class="accent-red">${htmlEscape(t.failure_kind)}${t.failure_message ? ' · ' + htmlEscape(t.failure_message) : ''}</dd>`
       : '';
+    // v1.12.37: override block shows the metadata around the
+    // user-override row (set_by, set_at, note). The URL itself is
+    // already in the "currently applied" row above, so this block
+    // only renders the audit context.
     const ovrBlock = ovr
-      ? `<dt>override</dt><dd>${htmlEscape(ovr.youtube_url || '')}<br><span class="muted small">set by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(ovr.set_at || '')}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
+      ? `<dt>override set</dt><dd><span class="muted small">by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(ovr.set_at || '')}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
       : '';
-    // v1.12.34: pending-update block surfaces both the new TDB
-    // URL and (if ACCEPT UPDATE consumed a user override) the
-    // replaced URL. Active blue ↑ pill: "new (pending)" with
-    // old. Post-accept on a U row: "new (downloaded)" with
-    // replaced_user_url surfaced separately so the user can
-    // see exactly which URL REVERT will restore.
+    // v1.12.37: pending-update block now only carries the
+    // upstream-update decision metadata (detected/decided
+    // timestamps). The actual URLs that drove it (TDB old/new)
+    // are visible from the "themerrdb url" + "previous url"
+    // rows above when they're meaningful — keeps the card from
+    // listing four+ URLs which is hard to scan.
     let puBlock = '';
     if (pu) {
       const decisionLabel = pu.decision === 'accepted' ? 'accepted (current)'
                           : pu.decision === 'declined' ? 'declined (kept old)'
                           : 'pending — awaiting ACCEPT UPDATE / KEEP CURRENT';
-      const newUrlLink = pu.new_youtube_url
-        ? `<a href="${htmlEscape(pu.new_youtube_url)}" target="_blank" rel="noopener">${htmlEscape(pu.new_youtube_url)}</a>`
-        : '<span class="muted">—</span>';
-      const oldUrlLink = pu.old_youtube_url
-        ? `<a href="${htmlEscape(pu.old_youtube_url)}" target="_blank" rel="noopener">${htmlEscape(pu.old_youtube_url)}</a>`
-        : '<span class="muted">—</span>';
-      // v1.12.36: relabeled "new tdb url" -> "current tdb url"
-      // and "old tdb url" -> "previous tdb url" per user
-      // feedback. "new" and "old" implied a temporal change
-      // direction that was unclear in post-accept state (where
-      // "new" is now the canonical and "old" is gone). "Current"
-      // and "previous" line up with the actual state regardless
-      // of decision (pending / accepted / declined).
       puBlock = `<dt>upstream update</dt>`
         + `<dd class="muted small">${htmlEscape(decisionLabel)}`
         + (pu.detected_at ? ` · detected ${htmlEscape(pu.detected_at)}` : '')
         + (pu.decision_at && pu.decision !== 'pending'
               ? ` · ${htmlEscape(pu.decision)} ${htmlEscape(pu.decision_at)}`
               : '')
-        + '</dd>'
-        + `<dt>current tdb url</dt><dd>${newUrlLink}</dd>`
-        + `<dt>previous tdb url</dt><dd>${oldUrlLink}</dd>`;
-      if (pu.replaced_user_url) {
-        // Captured by ACCEPT UPDATE on a U row. REVERT will
-        // restore this URL if invoked. Violet styling matches
-        // the U badge / REVERT button color.
-        puBlock += `<dt style="color:var(--violet)">replaced user url</dt>`
-          + `<dd><a href="${htmlEscape(pu.replaced_user_url)}" target="_blank" rel="noopener" style="color:var(--violet)">${htmlEscape(pu.replaced_user_url)}</a>`
-          + `<br><span class="muted small">REVERT will restore this URL.</span></dd>`;
-      } else if (pu.decision === 'accepted') {
-        // v1.12.35: pu.decision === 'accepted' with no
-        // replaced_user_url means either (a) the user accepted on
-        // a U row but their URL was identical to the new TDB URL
-        // (no point capturing a revert target), or (b) the row
-        // didn't have a user override at accept time. In both
-        // cases REVERT is intentionally absent from the SOURCE
-        // menu — surface why so the missing button doesn't
-        // read as a bug.
+        + '</dd>';
+      if (pu.decision === 'accepted' && !previousUrl) {
+        // No previous URL captured — usually because the user's
+        // URL matched the new TDB URL at accept time, OR the row
+        // wasn't U at accept time. Surface why REVERT isn't
+        // available so the missing button doesn't read as a bug.
         puBlock += `<dt class="muted">revert</dt>`
-          + `<dd class="muted small">unavailable — no captured user URL (either none was set at accept time, or the user URL matched the TDB URL exactly).</dd>`;
+          + `<dd class="muted small">unavailable — no previous URL captured (either none was set, or it matched the TDB URL exactly).</dd>`;
       }
     }
     const placedBlock = placements.length
@@ -4959,7 +5023,9 @@
         <dt>imdb</dt><dd>${imdb}</dd>
         <dt>tmdb</dt><dd>${tmdbLink}</dd>
         <dt>upstream</dt><dd>${htmlEscape(t.upstream_source || '')}</dd>
-        <dt>youtube url</dt><dd>${ytLink}</dd>
+        <dt>themerrdb url</dt><dd>${tdbUrlLink}</dd>
+        <dt>currently applied</dt><dd>${currentUrlLink}</dd>
+        <dt>previous url</dt><dd>${previousUrlLink}</dd>
         <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
         <dt>added</dt><dd class="muted small">${htmlEscape(t.youtube_added_at || '—')}</dd>
         <dt>edited</dt><dd class="muted small">${htmlEscape(t.youtube_edited_at || '—')}</dd>
