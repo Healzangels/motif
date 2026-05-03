@@ -563,6 +563,27 @@ def _library_main_query(
                -- the INFO card (violet for user, themerrdb-green
                -- for upstream).
                t.previous_youtube_kind AS previous_youtube_kind,
+               -- v1.12.40: revert_redundant = the previous URL is
+               -- a TDB URL AND it exactly matches the
+               -- pending_updates.new_youtube_url that ACCEPT
+               -- UPDATE would fetch. Reverting and accepting
+               -- would download the same file, so REVERT is
+               -- suppressed in the SOURCE menu to avoid two
+               -- buttons that fire identical actions. Only
+               -- triggers for previous_kind='themerrdb' — a
+               -- user-kind previous URL stays revertible since
+               -- it represents a meaningfully different state
+               -- (the row would flip back to U).
+               (CASE WHEN t.previous_youtube_url IS NOT NULL
+                      AND t.previous_youtube_kind = 'themerrdb'
+                      AND EXISTS (
+                        SELECT 1 FROM pending_updates pu
+                         WHERE pu.media_type = t.media_type
+                           AND pu.tmdb_id = t.tmdb_id
+                           AND pu.decision IN ('pending', 'declined')
+                           AND pu.new_youtube_url = t.previous_youtube_url
+                      )
+                     THEN 1 ELSE 0 END) AS revert_redundant,
                -- v1.12.35: accepted_update = the row's pending
                -- update was ACCEPTed previously. Suppresses
                -- REPLACE TDB in the SOURCE menu since the

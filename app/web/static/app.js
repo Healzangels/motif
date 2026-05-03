@@ -3460,7 +3460,17 @@
     // previous_youtube_kind so the button color hints at where
     // the row will land — violet for user, themerrdb-green for
     // upstream.
-    if (it.has_previous_url) {
+    // v1.12.40: also suppress when revert_redundant=1 — the
+    // previous URL is a TDB URL that exactly matches the
+    // pending_updates.new_youtube_url that ACCEPT UPDATE would
+    // fetch. REVERT and ACCEPT UPDATE would do the same thing,
+    // so showing both would be confusing. A user-kind previous
+    // URL stays revertible regardless because reverting to U
+    // is a meaningfully different state from accepting the
+    // upstream update. If the previous is a TDB URL that
+    // DOESN'T match the new URL (e.g., TDB rolled forward
+    // again), both buttons render and serve different actions.
+    if (it.has_previous_url && !it.revert_redundant) {
       const revertTone = it.previous_youtube_kind === 'themerrdb'
         ? 'themerrdb' : 'user';
       const revertTip = it.previous_youtube_kind === 'themerrdb'
