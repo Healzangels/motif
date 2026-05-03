@@ -256,8 +256,6 @@ def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
     motif's "what should we do with this title" decisions:
       - user_overrides (manual URL override)
       - pending_updates (any decision: pending / accepted / declined)
-      - themes.previous_youtube_url + previous_youtube_kind
-        (the REVERT snapshot)
 
     Called from PURGE, UNMANAGE, and DEL so those actions truly
     leave a clean slate. Pre-fix the rows survived even after the
@@ -265,10 +263,18 @@ def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
     re-applied the stale override URL or re-surfaced the stale
     pending update, undoing the user's intent.
 
-    Safe to call BEFORE the themes row is dropped — for orphan
-    paths that DELETE themes, the previous_* UPDATE is a no-op
-    once the row is gone (the FK CASCADE handles pending_updates,
-    but user_overrides has no FK and would otherwise survive).
+    Safe to call BEFORE the themes row is dropped — the FK
+    CASCADE handles pending_updates, but user_overrides has no FK
+    and would otherwise survive.
+
+    v1.12.64: themes.previous_youtube_url + previous_youtube_kind
+    are NO LONGER cleared here. Per user feedback, the previous-URL
+    snapshot should survive PURGE/UNMANAGE so the user retains a
+    one-step RESTORE path (REVERT button stays surfaced when
+    revert_redundant is false). The user can still wipe the
+    snapshot explicitly via CLEAR URL before destruction if they
+    want a true clean slate. DEL drops the themes row anyway, so
+    previous_* go with it via row deletion.
     """
     conn.execute(
         "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
@@ -276,12 +282,6 @@ def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
     )
     conn.execute(
         "DELETE FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
-        (media_type, tmdb_id),
-    )
-    conn.execute(
-        """UPDATE themes SET previous_youtube_url = NULL,
-                             previous_youtube_kind = NULL
-           WHERE media_type = ? AND tmdb_id = ?""",
         (media_type, tmdb_id),
     )
 

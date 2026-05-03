@@ -1125,8 +1125,24 @@
   // re-downloads from TDB. Calls /clear-url which captures the
   // dropped URL into themes.previous_youtube_url so REVERT can
   // restore it later.
+  // v1.12.64: while the request is in flight, lock every action
+  // button on the row so the user can't accidentally click PURGE
+  // / DEL between firing CLEAR URL and the row refresh that hides
+  // the now-irrelevant CLEAR URL button. On error we re-enable the
+  // locked buttons since there's no refresh coming; on success the
+  // refresh re-renders them in their natural state.
   async function clearUrlOverride(mediaType, tmdbId, btn) {
     if (btn) btn.disabled = true;
+    const row = btn ? btn.closest('tr') : null;
+    const lockedButtons = [];
+    if (row) {
+      row.querySelectorAll('details.row-menu button').forEach((b) => {
+        if (!b.disabled) {
+          b.disabled = true;
+          lockedButtons.push(b);
+        }
+      });
+    }
     try {
       await api('POST', `/api/items/${mediaType}/${tmdbId}/clear-url`);
       if (btn) btn.textContent = 'QUEUED';
@@ -1136,6 +1152,7 @@
       }
     } catch (e) {
       alert('Clear URL failed: ' + e.message);
+      lockedButtons.forEach((b) => { b.disabled = false; });
       if (btn) btn.disabled = false;
     }
   }
