@@ -1927,6 +1927,36 @@ pre code, .codeblock {
   max-height: 240px;
 }
 
+/* v1.12.67: per-section coverage table on the dashboard.
+   Compact density (smaller padding than the default .table) since
+   it's a summary view, not the primary library grid. Right-aligned
+   numeric columns with tabular-nums so the digits line up. Whole
+   row is clickable with hover highlight so the drill-through is
+   obvious. */
+.table-compact th,
+.table-compact td {
+  padding: 6px 10px;
+}
+.table-compact .col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 90px;
+}
+.table-compact .col-num b { font-weight: 700; color: var(--fg); }
+.table-compact .accent-green { color: var(--green-bright); }
+.table-compact .accent       { color: var(--blue); }
+.table-compact .accent-red   { color: var(--red); }
+.section-coverage-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+.section-coverage-row:hover {
+  background: rgba(109, 211, 255, 0.06);
+}
+.section-coverage-row:hover td:first-child {
+  color: var(--cyan);
+}
+
 .form-env-badge {
   font-size: var(--t-tiny);
   letter-spacing: 0.15em;

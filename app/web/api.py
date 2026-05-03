@@ -1658,6 +1658,88 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _stats_cache["value"] = response
         return response
 
+    @app.get("/api/sections/coverage")
+    async def api_sections_coverage(db: Path = Depends(get_db_path)):
+        """v1.12.67: per-section coverage breakdown. Returns one row
+        per managed plex_section with theme/unthemed/failure/pending
+        counts. Powers the dashboard's PER-SECTION COVERAGE block —
+        users with multi-section libraries (4K + standard, anime,
+        etc.) can see at a glance which library has gaps without
+        navigating into each tab.
+
+        Themed = any of: motif placement exists, Plex sidecar (file
+        in Plex folder), or Plex agent reports has_theme. Unthemed
+        is the inverse on counted plex_items rows. Failures and
+        pending_updates count titles whose theme record (themes
+        row) has the corresponding flag — pending_updates is
+        keyed on (media_type, tmdb_id) without section_id, so a
+        single TDB-URL change for a multi-section title increments
+        each owning section's count (each section will need its
+        own ACCEPT UPDATE).
+
+        Excluded sections (ps.included = 0) are filtered out so
+        the dashboard shows what motif actually manages.
+        """
+        def _query():
+            with get_conn(db) as conn:
+                rows = conn.execute("""
+                    SELECT
+                      ps.section_id, ps.title, ps.type,
+                      ps.is_4k, ps.is_anime,
+                      COUNT(pi.rating_key) AS total,
+                      COALESCE(SUM(CASE
+                        WHEN p.media_folder IS NOT NULL THEN 1
+                        WHEN pi.local_theme_file = 1 THEN 1
+                        WHEN pi.has_theme = 1 THEN 1
+                        ELSE 0
+                      END), 0) AS themed,
+                      COALESCE(SUM(CASE
+                        WHEN t.failure_kind IS NOT NULL
+                         AND t.failure_acked_at IS NULL THEN 1
+                        ELSE 0
+                      END), 0) AS failures,
+                      COALESCE(SUM(CASE
+                        WHEN EXISTS (
+                          SELECT 1 FROM pending_updates pu
+                          WHERE pu.media_type = (
+                            CASE pi.media_type
+                              WHEN 'show' THEN 'tv'
+                              ELSE pi.media_type
+                            END)
+                            AND pu.tmdb_id = pi.guid_tmdb
+                            AND pu.decision = 'pending'
+                        ) THEN 1 ELSE 0
+                      END), 0) AS pending_updates
+                    FROM plex_sections ps
+                    LEFT JOIN plex_items pi
+                      ON pi.section_id = ps.section_id
+                    LEFT JOIN themes t
+                      ON t.id = pi.theme_id
+                    LEFT JOIN placements p
+                      ON p.media_type = t.media_type
+                     AND p.tmdb_id = t.tmdb_id
+                     AND p.section_id = pi.section_id
+                    WHERE ps.included = 1
+                    GROUP BY ps.section_id
+                    ORDER BY ps.is_anime, ps.type, ps.is_4k, ps.title
+                """).fetchall()
+            return [dict(r) for r in rows]
+        sections_raw = await run_in_threadpool(_query)
+        sections = []
+        for d in sections_raw:
+            d["unthemed"] = max(0, (d["total"] or 0) - (d["themed"] or 0))
+            # Map (type, is_anime) → tab so the frontend can route
+            # the click-through to the right /movies / /tv / /anime
+            # page. Mirrors the legacy applyTabAvailability logic.
+            if d["is_anime"]:
+                d["tab"] = "anime"
+            elif d["type"] == "show":
+                d["tab"] = "tv"
+            else:
+                d["tab"] = "movies"
+            sections.append(d)
+        return {"sections": sections}
+
     # --- Dry-run toggle ---
 
     @app.get("/api/dry-run")

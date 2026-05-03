@@ -95,6 +95,35 @@
   </article>
 </section>
 
+<!-- v1.12.67: per-section coverage table. Multi-section libraries
+     (4K + standard, anime, etc.) used to aggregate everything into
+     the two top cards above; you couldn't tell which library had
+     the gaps. This block surfaces total / themed / unthemed /
+     failures / pending-updates per managed Plex section, with a
+     click-through that lands the user on the matching library tab
+     + 4K toggle. Hidden when only one section exists (single-section
+     installs don't gain anything from this view). -->
+<section class="block" id="section-coverage-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PER-SECTION COVERAGE</h2>
+    <span class="muted small">click a row to drill into its library tab</span>
+  </header>
+  <table class="table table-compact" id="section-coverage-table">
+    <thead>
+      <tr>
+        <th>SECTION</th>
+        <th class="col-year">TYPE</th>
+        <th class="col-num">TOTAL</th>
+        <th class="col-num">THEMED</th>
+        <th class="col-num">UNTHEMED</th>
+        <th class="col-num">FAILURES</th>
+        <th class="col-num">PENDING</th>
+      </tr>
+    </thead>
+    <tbody id="section-coverage-body"></tbody>
+  </table>
+</section>
+
 <!-- Copies-block: only renders when there are placements that fell back to
      copy (cross-FS situation). Was on /coverage; moved here in v1.8.1 since
      /coverage went away. // RE-LINK ALL converts them to hardlinks where

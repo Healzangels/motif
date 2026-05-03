@@ -628,6 +628,14 @@
       $('#last-sync').textContent = 'no sync runs yet — click SYNC NOW to start';
     }
 
+    // v1.12.67: per-section coverage. Hidden if there's only one
+    // managed section (no comparison value); rendered as a table
+    // with click-through to the matching library tab + 4K toggle.
+    try {
+      const sec = await api('GET', '/api/sections/coverage');
+      renderSectionCoverage(sec.sections || []);
+    } catch (_) { /* non-fatal — dashboard still renders */ }
+
     // Recent events
     const evs = await api('GET', '/api/events?limit=20');
     const stream = $('#event-stream');
@@ -639,6 +647,64 @@
         <span class="event-msg" title="${htmlEscape(e.message)}">${htmlEscape(e.message)}</span>
       </li>
     `).join('');
+  }
+
+  // v1.12.67: render the per-section coverage table on the
+  // dashboard. Hidden when only one section is managed (no
+  // comparison story); otherwise lists each section with its
+  // total / themed / unthemed / failures / pending-updates plus
+  // a click-through that lands the user on the right library
+  // tab + 4K variant.
+  function renderSectionCoverage(sections) {
+    const block = document.getElementById('section-coverage-block');
+    const body = document.getElementById('section-coverage-body');
+    if (!block || !body) return;
+    if (!sections.length || sections.length < 2) {
+      block.style.display = 'none';
+      return;
+    }
+    block.style.display = '';
+    body.innerHTML = sections.map((s) => {
+      const fourkLabel = s.is_4k ? '4K' : 'STD';
+      const typeLabel = s.tab === 'anime' ? 'ANIME'
+                      : s.tab === 'tv'    ? 'TV'
+                      :                     'MOVIES';
+      const href = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}`;
+      const failureCell = s.failures > 0
+        ? `<td class="col-num accent-red">${fmt.num(s.failures)}</td>`
+        : `<td class="col-num muted">0</td>`;
+      const pendingCell = s.pending_updates > 0
+        ? `<td class="col-num accent">${fmt.num(s.pending_updates)}</td>`
+        : `<td class="col-num muted">0</td>`;
+      const unthemedCell = s.unthemed > 0
+        ? `<td class="col-num">${fmt.num(s.unthemed)}</td>`
+        : `<td class="col-num muted">0</td>`;
+      // Drill-through: clicking a row navigates to the library
+      // tab. Whole-row clickability via data-href + cursor:pointer
+      // styling so the click target isn't just a tiny link.
+      return `
+        <tr class="section-coverage-row" data-href="${htmlEscape(href)}">
+          <td>${htmlEscape(s.title || '')}</td>
+          <td class="col-year">
+            <span class="muted small">${typeLabel} · ${fourkLabel}</span>
+          </td>
+          <td class="col-num"><b>${fmt.num(s.total || 0)}</b></td>
+          <td class="col-num accent-green">${fmt.num(s.themed || 0)}</td>
+          ${unthemedCell}
+          ${failureCell}
+          ${pendingCell}
+        </tr>
+      `;
+    }).join('');
+    // Bind click-through. Idempotent: removing-and-readding a
+    // listener on each render avoids leaks across loadDashboard
+    // calls.
+    body.querySelectorAll('tr.section-coverage-row').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        const href = tr.getAttribute('data-href');
+        if (href) window.location.href = href;
+      });
+    });
   }
 
   // Polled by the SYNC button to know when both the sync + plex_enum
