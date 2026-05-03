@@ -846,6 +846,14 @@ def run_sync(db_path, base_url: str, *,
         # Mirrors the cross-sync match-detection inverse at line 597:
         # rows are *created* when has_local_files OR has_override OR
         # has_sidecar; rows are *deleted* here when none of those hold.
+        # v1.12.52: also keep rows that have a placements entry. The
+        # creation criteria don't include placements (placement implies
+        # local_files at write time) but a placement row can outlive
+        # its local_files row — e.g., the canonical was deleted from
+        # the themes dir but the hardlink in the Plex folder survives.
+        # The user still has the theme playing in Plex, so the
+        # pending_update is still actionable. Defensive: if the four
+        # criteria all miss, the row is genuinely orphaned.
         with get_conn(db_path) as conn:
             pruned = conn.execute(
                 """
@@ -860,6 +868,11 @@ def run_sync(db_path, base_url: str, *,
                     SELECT 1 FROM user_overrides uo
                     WHERE uo.media_type = pending_updates.media_type
                       AND uo.tmdb_id = pending_updates.tmdb_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM placements p
+                    WHERE p.media_type = pending_updates.media_type
+                      AND p.tmdb_id = pending_updates.tmdb_id
                   )
                   AND NOT EXISTS (
                     SELECT 1 FROM plex_items pi
