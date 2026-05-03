@@ -4896,12 +4896,18 @@
     function isPlexAgentRow(it) {
       return !!it && !it.media_folder && !it.plex_local_theme && !!it.plex_has_theme;
     }
-    function confirmPlexAgentOverride(action, title) {
+    function confirmPlexAgentOverride(action, title, sourceLabel) {
+      // v1.12.59: parenthetical now names the actual source motif
+      // will use (the ThemerrDB version / your manual URL / your
+      // uploaded MP3) instead of the vague "motif's version" — the
+      // user reading the prompt for REPLACE TDB on a P-agent row
+      // shouldn't have to wonder what "motif's version" means when
+      // motif itself is fetching from ThemerrDB.
       return confirm(
         `Plex is already supplying a theme for "${title || 'this item'}".\n\n`
         + `Motif's default is to defer to Plex when it has its own theme. `
         + `Are you sure you want to ${action}?\n\n`
-        + `(This will replace what Plex currently plays with motif's version.)`
+        + `(This will replace what Plex currently plays with ${sourceLabel || "motif's version"}.)`
       );
     }
 
@@ -4929,7 +4935,16 @@
                      : act === 'upload-theme'          ? 'upload an MP3'
                      : act === 'revert'                ? 'revert to ThemerrDB'
                      :                                   "replace with ThemerrDB's version";
-          if (!confirmPlexAgentOverride(verb, btn.dataset.title)) return;
+          // v1.12.59: source label names what's about to play
+          // instead of the vague "motif's version" the prompt
+          // used to show. Maps each action to the canonical
+          // wording the rest of the UI uses (ThemerrDB / your
+          // manual YouTube URL / your uploaded MP3).
+          const sourceLabel =
+              act === 'manual-url'  ? 'your manual YouTube URL'
+            : act === 'upload-theme' ? 'your uploaded MP3'
+            :                          'the ThemerrDB version';
+          if (!confirmPlexAgentOverride(verb, btn.dataset.title, sourceLabel)) return;
         }
       }
       if (act === 'redl') {
