@@ -815,11 +815,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  margin-top: 6px;
+  /* v1.12.45: tighter row gap for visual rhythm. Previous 6px
+     was a touch loose given the divider already provides
+     between-group breathing room. */
+  margin-top: 4px;
   padding: 0 2px;
-  /* v1.12.24: claim a full row inside the .filterbar flex parent
-     so the five pill axes (TDB, SRC, DL, PL, LINK) stack vertically
-     instead of packing horizontally. */
   flex-basis: 100%;
 }
 /* v1.12.25: every direct child of a pill-filter-row is content-
@@ -852,28 +852,30 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   letter-spacing: 0.12em;
   text-transform: uppercase;
   margin-right: 2px;
-  /* v1.12.25: wider, fixed-width label column so every pill
-     row's ALL button starts at the same X coordinate — the
-     pills line up vertically across the five rows for a
-     cleaner, scannable grid. */
-  min-width: 56px;
+  /* v1.12.45: bumped 56 -> 64px to account for "LINK:" being
+     the longest label + monospace letter-spacing. Every label
+     now fits in the column without expanding it, so all pill
+     rows have ALL/CLEAR buttons starting at exactly the same X
+     for a clean scannable grid. */
+  min-width: 64px;
   text-align: right;
-  padding-right: 4px;
+  padding-right: 6px;
   font-weight: 600;
+  font-size: var(--t-tiny);
   color: var(--fg);
-  opacity: 0.75;
+  opacity: 0.7;
 }
-/* v1.12.25: visual separator between the theme-axis filters
-   (TDB / SRC — describing what theme is associated) and the
-   file-axis filters (DL / PL / LINK — describing how the
-   theme file lives on disk). Subtle dashed top border on the
-   first file-axis row mirrors the pill-filter-clear's dashed
-   border so it reads as part of the filter chrome rather than
-   a decorative line. */
+/* v1.12.25 / v1.12.45: visual separator between the theme-axis
+   filters (TDB / SRC — describing what theme is associated)
+   and the file-axis filters (DL / PL / LINK — describing how
+   the theme file lives on disk). Solid 1px top border (was
+   dashed) for a calmer, more polished look — the dashed line
+   competed visually with the pill-filter-clear button border.
+   Slightly more breathing room above the divider. */
 .pill-filter-row.pill-filter-row-divider {
-  margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--line);
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
 }
 .pill-filter-clear {
   cursor: pointer;

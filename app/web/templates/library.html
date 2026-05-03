@@ -152,20 +152,6 @@
             title="Clear all PL selections.">CLEAR</button>
   </div>
 
-  <div class="pill-filter-row" aria-label="EDITION pill filter">
-    <span class="pill-filter-label muted small">EDITION:</span>
-    <button type="button" class="pill-filter-clear" data-ed-pill-all="1"
-            title="Select every EDITION state.">ALL</button>
-    <button type="button" class="ed-pill-btn ed-pill-btn-on"
-            data-ed-pill="has"
-            title="Show only rows with a Plex {edition-...} folder tag (Director's Cut, Extended, IMAX, etc.).">ED</button>
-    <button type="button" class="state-pill-btn state-pill-btn-off"
-            data-ed-pill="none"
-            title="Show only rows without an edition tag.">—</button>
-    <button type="button" class="pill-filter-clear" data-ed-pill=""
-            title="Clear all EDITION selections.">CLEAR</button>
-  </div>
-
   <div class="pill-filter-row" aria-label="LINK pill filter">
     <span class="pill-filter-label muted small">LINK:</span>
     <button type="button" class="pill-filter-clear" data-link-pill-all="1"
@@ -184,6 +170,25 @@
             title="No placement.">—</button>
     <button type="button" class="pill-filter-clear" data-link-pill=""
             title="Clear all LINK selections.">CLEAR</button>
+  </div>
+
+  <!-- v1.12.45: EDITION row moved to the bottom (after LINK) so
+       the file-state group (DL, PL, LINK) stays uninterrupted.
+       Label shortened "EDITION:" -> "ED:" so it fits the same
+       label-column width as TDB/SRC/DL/PL/LINK without expanding
+       the column. -->
+  <div class="pill-filter-row" aria-label="EDITION pill filter">
+    <span class="pill-filter-label muted small">ED:</span>
+    <button type="button" class="pill-filter-clear" data-ed-pill-all="1"
+            title="Select every EDITION state.">ALL</button>
+    <button type="button" class="ed-pill-btn ed-pill-btn-on"
+            data-ed-pill="has"
+            title="Show only rows with a Plex {edition-...} folder tag (Director's Cut, Extended, IMAX, etc.).">ED</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-ed-pill="none"
+            title="Show only rows without an edition tag.">—</button>
+    <button type="button" class="pill-filter-clear" data-ed-pill=""
+            title="Clear all EDITION selections.">CLEAR</button>
   </div>
 </section>
 
