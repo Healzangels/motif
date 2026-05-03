@@ -509,7 +509,20 @@ def _library_main_query(
                    WHERE pu.media_type = t.media_type
                      AND pu.tmdb_id = t.tmdb_id
                      AND pu.decision = 'pending'
-                ) THEN 1 ELSE 0 END) AS actionable_update
+                ) THEN 1 ELSE 0 END) AS actionable_update,
+               -- v1.12.34: revertible_to_url = an ACCEPT UPDATE
+               -- previously consumed a user_overrides row on this
+               -- title; pending_updates.replaced_user_url holds the
+               -- prior URL so REVERT can restore it. Drives the
+               -- post-accept REVERT button visibility in the SOURCE
+               -- menu (alongside / replacing the legacy U->T REVERT
+               -- gated on sourceKindForActions === 'url').
+               (CASE WHEN EXISTS (
+                  SELECT 1 FROM pending_updates pu
+                   WHERE pu.media_type = t.media_type
+                     AND pu.tmdb_id = t.tmdb_id
+                     AND pu.replaced_user_url IS NOT NULL
+                ) THEN 1 ELSE 0 END) AS revertible_to_url
     """
     # v1.11.0: every per-row JOIN to placements / local_files matches
     # by section_id = pi.section_id, so a row on the standard library
@@ -2527,10 +2540,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Path = Depends(get_db_path),
     ):
         """Accept an upstream theme update: enqueue a re-download with the new URL.
-        Works for both auto and manual provenance — accepting overrides whatever
-        was there. Note: a manual override URL (in user_overrides) takes precedence
-        in the worker, so to actually replace a manual theme with the upstream
-        ThemerrDB version, the user must also clear their override."""
+
+        v1.12.34: when the row currently has a user_overrides URL
+        (U source), this handler captures that URL into
+        pending_updates.replaced_user_url and DELETEs the
+        user_overrides row before enqueueing the download. Two
+        behavior changes from the pre-1.12.34 flow:
+
+          1. The download worker prefers user_overrides URL when
+             present, so leaving it in place meant ACCEPT UPDATE
+             never actually pulled the new TDB URL — it just
+             flipped pending_updates.decision to 'accepted'. The
+             canonical kept coming from the user's URL on every
+             re-download. Clearing user_overrides forces the
+             worker to use the new TDB URL, which is what the
+             user expects when they click ACCEPT UPDATE.
+
+          2. The captured URL is preserved in
+             pending_updates.replaced_user_url so the row's
+             SOURCE menu can offer a REVERT action that restores
+             the user's URL — round-tripping the row back to U
+             without losing the user's customization.
+        """
         _require_admin(request)
         with get_conn(db) as conn:
             update = conn.execute(
@@ -2539,12 +2570,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if update is None:
                 raise HTTPException(status_code=404, detail="no pending update")
-            # Mark accepted
+            # v1.12.34: if the row has a user override, capture it
+            # for revert + clear it so the worker uses the new
+            # TDB URL. See docstring for context.
+            override = conn.execute(
+                "SELECT youtube_url FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            replaced_user_url = override["youtube_url"] if override else None
+            if replaced_user_url:
+                conn.execute(
+                    "DELETE FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+            # Mark accepted (and stamp replaced_user_url if we
+            # captured one — null otherwise so REVERT logic stays
+            # off for non-U accepts).
             conn.execute(
                 """UPDATE pending_updates SET decision = 'accepted',
-                       decision_at = ?, decision_by = ?
+                       decision_at = ?, decision_by = ?,
+                       replaced_user_url = ?
                    WHERE media_type = ? AND tmdb_id = ?""",
-                (now_iso(), request.state.principal.username, media_type, tmdb_id),
+                (now_iso(), request.state.principal.username,
+                 replaced_user_url, media_type, tmdb_id),
             )
             # v1.11.0: per-section download fan-out via _enqueue_download.
             # Pre-fix this inserted a section-less job that the worker
@@ -2557,7 +2607,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
-                  message=f"Update accepted by {request.state.principal.username}")
+                  message=(f"Update accepted by {request.state.principal.username}"
+                           + (f" (user URL captured for revert)"
+                              if replaced_user_url else "")))
         return {"ok": True}
 
     @app.post("/api/updates/{media_type}/{tmdb_id}/decline")
@@ -3402,6 +3454,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "SELECT * FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
+            # v1.12.34: include the pending_updates row so the INFO
+            # dialog can render both the current TDB URL and the
+            # replaced_user_url (the user's URL captured by ACCEPT
+            # UPDATE) — the user's "the info also still only
+            # contained the override youtube url and not the
+            # themerrdb youtube url" feedback.
+            pu = conn.execute(
+                "SELECT old_youtube_url, new_youtube_url, decision, "
+                "       decision_at, decision_by, replaced_user_url, "
+                "       detected_at "
+                "FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
             recent_events = conn.execute(
                 "SELECT * FROM events WHERE media_type = ? AND tmdb_id = ? "
                 "ORDER BY ts DESC LIMIT 25",
@@ -3419,6 +3484,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "local_files": local_payloads,
             "placements": [dict(p) for p in placements],
             "override": dict(ovr) if ovr else None,
+            "pending_update": dict(pu) if pu else None,
             "events": [dict(e) for e in recent_events],
         }
 
@@ -4261,11 +4327,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         request: Request, media_type: MediaType, tmdb_id: int,
         db: Path = Depends(get_db_path),
     ):
-        """Drop the user_override on a theme and re-download from
-        ThemerrDB's upstream URL. Used by the // DOWNLOAD button on
-        U-tagged rows in the library view to flip a manual override
-        back to T (auto). Refuses if the theme is a plex_orphan
-        (no upstream to revert to).
+        """REVERT a row's source classification to its prior state.
+
+        Two flows, picked based on DB state:
+
+        (a) U -> T legacy flow: when user_overrides exists, drop
+            the override and re-download from ThemerrDB. Used by
+            the REVERT button on plain U-tagged rows. Refuses on
+            plex_orphan (no upstream to revert to).
+
+        (b) v1.12.34 post-accept-update flow: when user_overrides
+            does NOT exist BUT pending_updates.replaced_user_url
+            is set (an ACCEPT UPDATE consumed the user's URL on
+            this title earlier), restore the user_overrides row
+            from replaced_user_url, clear the column, and
+            re-download. Round-trips the row back to U with the
+            user's original URL. Lets the user undo an accept
+            without losing their customization.
+
+        The SOURCE menu surfaces a single REVERT button for
+        either case via gating on
+        sourceKindForActions === 'url' OR revertible_to_url.
         """
         _require_admin(request)
         with get_conn(db) as conn:
@@ -4275,15 +4357,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="not in database")
-            if row["upstream_source"] == "plex_orphan":
+            override = conn.execute(
+                "SELECT youtube_url FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            pending = conn.execute(
+                "SELECT replaced_user_url FROM pending_updates "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            replaced = pending["replaced_user_url"] if pending else None
+
+            if override is not None:
+                # Flow (a): clear the override and download from TDB.
+                if row["upstream_source"] == "plex_orphan":
+                    raise HTTPException(
+                        status_code=409,
+                        detail="this theme has no ThemerrDB upstream to revert to",
+                    )
+                conn.execute(
+                    "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+                reason = "revert_to_themerrdb"
+                log_msg = "Override cleared + ThemerrDB re-download"
+            elif replaced:
+                # Flow (b) v1.12.34: restore the user URL captured
+                # by an earlier ACCEPT UPDATE.
+                conn.execute(
+                    """INSERT INTO user_overrides
+                         (media_type, tmdb_id, youtube_url, set_at, set_by, note)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (media_type, tmdb_id, replaced, now_iso(),
+                     request.state.principal.username,
+                     "restored from accepted-update revert"),
+                )
+                conn.execute(
+                    """UPDATE pending_updates SET replaced_user_url = NULL
+                       WHERE media_type = ? AND tmdb_id = ?""",
+                    (media_type, tmdb_id),
+                )
+                reason = "revert_to_user_url"
+                log_msg = "User URL restored + re-download"
+            else:
                 raise HTTPException(
                     status_code=409,
-                    detail="this theme has no ThemerrDB upstream to revert to",
+                    detail="nothing to revert: no override and no captured user URL",
                 )
-            conn.execute(
-                "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            )
+
             conn.execute(
                 """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
                                      failure_at = NULL
@@ -4291,7 +4413,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             )
             # Cancel any in-flight download (would otherwise pick up the
-            # override URL we just deleted), then enqueue a fresh one.
+            # stale URL we just changed), then enqueue a fresh one.
             conn.execute(
                 """UPDATE jobs SET status = 'cancelled', finished_at = ?
                    WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
@@ -4301,11 +4423,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             from ..core.sync import _enqueue_download
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
-                reason="revert_to_themerrdb",
+                reason=reason,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
-                  message=f"Override cleared + ThemerrDB re-download requested by {request.state.user}")
+                  message=f"{log_msg} requested by {request.state.user}")
         return {"ok": True}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/clear-failure")

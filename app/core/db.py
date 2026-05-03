@@ -345,6 +345,13 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     decision          TEXT,
     decision_at       TEXT,
     decision_by       TEXT,
+    -- v1.12.34: when ACCEPT UPDATE is invoked on a U-source row
+    -- (user_overrides present), motif captures the user's URL
+    -- here before deleting user_overrides + downloading the new
+    -- TDB URL. REVERT restores the user_overrides row from this
+    -- column, giving the user a one-click round-trip back to
+    -- their custom URL after they accepted an upstream change.
+    replaced_user_url TEXT,
     PRIMARY KEY (media_type, tmdb_id),
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
 );
@@ -415,7 +422,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -822,6 +829,37 @@ def _migrate_v8_to_v9(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v9 (plex_items.local_theme_file)")
     conn.executescript(
         "ALTER TABLE plex_items ADD COLUMN local_theme_file INTEGER NOT NULL DEFAULT 0;"
+    )
+
+
+def _migrate_v23_to_v24(conn: sqlite3.Connection) -> None:
+    """v24 adds pending_updates.replaced_user_url for the v1.12.34
+    ACCEPT UPDATE / REVERT round-trip on U-source rows.
+
+    Pre-fix, ACCEPT UPDATE on a row that had a manual YouTube URL
+    (user_overrides present) was effectively a no-op for the
+    canonical file: it flipped pending_updates.decision to
+    'accepted' but left user_overrides in place. The download
+    worker prefers the override URL, so the "accept" never
+    actually pulled the new TDB URL — yet the blue TDB ↑ pill
+    disappeared and the source kept reading as U.
+
+    v1.12.34 fixes the flow:
+      - On ACCEPT UPDATE: capture user_overrides.youtube_url into
+        replaced_user_url here, DELETE user_overrides, then
+        re-download. Worker now uses TDB's URL and the row
+        classifies as T.
+      - On REVERT (post-accept): restore user_overrides from
+        replaced_user_url, clear the column, re-download — round
+        trip back to U with the user's original URL.
+
+    Soft ALTER — purely additive, NULL default means existing
+    rows are correctly classified as 'no replaced URL' without
+    backfill.
+    """
+    log.info("Migrating to schema v24 (pending_updates.replaced_user_url)")
+    conn.executescript(
+        "ALTER TABLE pending_updates ADD COLUMN replaced_user_url TEXT;"
     )
 
 
@@ -1307,6 +1345,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 22:
                     _migrate_v22_to_v23(conn)
                     current = 23
+                elif current == 23:
+                    _migrate_v23_to_v24(conn)
+                    current = 24
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

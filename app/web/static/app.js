@@ -3338,15 +3338,29 @@
       // For an orphan with a manual URL there's nothing to revert to;
       // pre-1.10.29 the button would have errored or 'reverted' to
       // nothing.
-      if (sourceKindForActions === 'url' && isThemerrDb) {
-        // v1.12.33: tone switched themerrdb (green) -> user (violet)
-        // so REVERT visually matches the U badge color of the row
-        // it lives on. Differentiates from DOWNLOAD TDB /
-        // RE-DOWNLOAD TDB which keep the green themerrdb tone for
-        // the download-from-TDB action family.
+      // v1.12.34: REVERT now spans two flows — both backed by the
+      // same /revert endpoint, picked server-side based on DB
+      // state.
+      //   (a) U -> T: source_kind === 'url' AND there's a TDB
+      //       upstream — clear user_overrides, re-download TDB.
+      //   (b) post-accept-update -> U: revertible_to_url === 1 —
+      //       user_overrides was consumed by an earlier ACCEPT
+      //       UPDATE; pending_updates.replaced_user_url holds the
+      //       prior URL. REVERT restores user_overrides from it
+      //       and re-downloads, round-tripping the row back to
+      //       U with the user's original URL.
+      // The button label, tone (violet — matches U badge), and
+      // tooltip are unified so the user sees a single "go back"
+      // action regardless of which direction the row is flipping.
+      const revertUtoT = sourceKindForActions === 'url' && isThemerrDb;
+      const revertTpostAccept = !!it.revertible_to_url;
+      if (revertUtoT || revertTpostAccept) {
+        const tip = revertUtoT
+          ? 'Clear the manual URL override and re-download from ThemerrDB.'
+          : 'Restore the manual URL captured when ACCEPT UPDATE replaced it, and re-download.';
         sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
-          'Clear the manual URL override and re-download from ThemerrDB.',
+          tip,
           { mt: themeMt, id: themeId, tone: 'user' },
         ));
       }
@@ -4858,6 +4872,13 @@
     const ovr = data.override;
     const lf = data.local_file;
     const placements = data.placements || [];
+    const pu = data.pending_update;
+    // v1.12.34: header URL prefers user override, then upstream
+    // theme record. Pending-update old/new URLs and the
+    // replaced_user_url (captured by ACCEPT UPDATE) render in
+    // their own dedicated rows below so the user can see the
+    // full picture: what's currently downloading, what was
+    // there before, and what they can revert to.
     const ytUrl = ovr?.youtube_url || t.youtube_url || '';
     const ytId = ovr?.youtube_video_id || t.youtube_video_id ||
                  (ytUrl ? (ytUrl.match(/[?&]v=([^&]+)/) || [])[1] : '');
@@ -4874,6 +4895,41 @@
     const ovrBlock = ovr
       ? `<dt>override</dt><dd>${htmlEscape(ovr.youtube_url || '')}<br><span class="muted small">set by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(ovr.set_at || '')}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
       : '';
+    // v1.12.34: pending-update block surfaces both the new TDB
+    // URL and (if ACCEPT UPDATE consumed a user override) the
+    // replaced URL. Active blue ↑ pill: "new (pending)" with
+    // old. Post-accept on a U row: "new (downloaded)" with
+    // replaced_user_url surfaced separately so the user can
+    // see exactly which URL REVERT will restore.
+    let puBlock = '';
+    if (pu) {
+      const decisionLabel = pu.decision === 'accepted' ? 'accepted (current)'
+                          : pu.decision === 'declined' ? 'declined (kept old)'
+                          : 'pending — awaiting ACCEPT UPDATE / KEEP CURRENT';
+      const newUrlLink = pu.new_youtube_url
+        ? `<a href="${htmlEscape(pu.new_youtube_url)}" target="_blank" rel="noopener">${htmlEscape(pu.new_youtube_url)}</a>`
+        : '<span class="muted">—</span>';
+      const oldUrlLink = pu.old_youtube_url
+        ? `<a href="${htmlEscape(pu.old_youtube_url)}" target="_blank" rel="noopener">${htmlEscape(pu.old_youtube_url)}</a>`
+        : '<span class="muted">—</span>';
+      puBlock = `<dt>upstream update</dt>`
+        + `<dd class="muted small">${htmlEscape(decisionLabel)}`
+        + (pu.detected_at ? ` · detected ${htmlEscape(pu.detected_at)}` : '')
+        + (pu.decision_at && pu.decision !== 'pending'
+              ? ` · ${htmlEscape(pu.decision)} ${htmlEscape(pu.decision_at)}`
+              : '')
+        + '</dd>'
+        + `<dt>new tdb url</dt><dd>${newUrlLink}</dd>`
+        + `<dt>old tdb url</dt><dd>${oldUrlLink}</dd>`;
+      if (pu.replaced_user_url) {
+        // Captured by ACCEPT UPDATE on a U row. REVERT will
+        // restore this URL if invoked. Violet styling matches
+        // the U badge / REVERT button color.
+        puBlock += `<dt style="color:var(--violet)">replaced user url</dt>`
+          + `<dd><a href="${htmlEscape(pu.replaced_user_url)}" target="_blank" rel="noopener" style="color:var(--violet)">${htmlEscape(pu.replaced_user_url)}</a>`
+          + `<br><span class="muted small">REVERT will restore this URL.</span></dd>`;
+      }
+    }
     const placedBlock = placements.length
       ? `<dt>placed in</dt><dd>${placements.map(p => `<div class="muted small">${htmlEscape(p.media_folder)} <span class="muted">(${htmlEscape(p.placement_kind)})</span></div>`).join('')}</dd>`
       : '';
@@ -4892,6 +4948,7 @@
         <dt>edited</dt><dd class="muted small">${htmlEscape(t.youtube_edited_at || '—')}</dd>
         ${failBlock}
         ${ovrBlock}
+        ${puBlock}
         ${dlBlock}
         ${placedBlock}
       </dl>
