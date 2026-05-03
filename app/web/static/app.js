@@ -4302,7 +4302,7 @@
           values: new Set(['on','off','broken']) },
         { param: 'pl_pills',   state: 'plPills',   attr: 'plPill',
           activeClass: 'state-pill-btn-active',
-          values: new Set(['on','off']) },
+          values: new Set(['on','await','off']) },
         { param: 'link_pills', state: 'linkPills', attr: 'linkPill',
           activeClass: 'link-pill-btn-active',
           values: new Set(['hl','c','m','none']) },
@@ -4432,7 +4432,7 @@
           values: ['on', 'off', 'broken'] },
         { attr: 'plPill', allAttr: 'plPillAll', state: 'plPills',
           activeClass: 'state-pill-btn-active',
-          values: ['on', 'off'] },
+          values: ['on', 'await', 'off'] },
         { attr: 'linkPill', allAttr: 'linkPillAll', state: 'linkPills',
           activeClass: 'link-pill-btn-active',
           values: ['hl', 'c', 'm', 'none'] },
@@ -5588,7 +5588,7 @@
         <dt>imdb</dt><dd>${imdb}</dd>
         <dt>tmdb</dt><dd>${tmdbLink}</dd>
         <dt>upstream</dt><dd>${htmlEscape(t.upstream_source || '')}</dd>
-        <dt>themerrdb url</dt><dd>${tdbUrlLink}</dd>
+        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url</dt><dd>${tdbUrlLink}</dd>`}
         <dt>currently applied</dt><dd>${currentUrlLink}</dd>
         <dt>previous url</dt><dd>${previousUrlLink}</dd>
         <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>

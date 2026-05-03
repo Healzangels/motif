@@ -573,6 +573,16 @@ def _library_main_query(
                 branches.append("(p.media_folder IS NOT NULL)")
             elif p == "off":
                 branches.append("(p.media_folder IS NULL)")
+            # v1.12.70: 'await' — canonical exists but no placement
+            # row (typically post-DEL: the user removed the file from
+            # the Plex folder but motif's canonical still lives in
+            # /themes). Mirrors the JS computeSrcLetter awaitingApproval
+            # gate; lets users find every row that needs a PLACE →
+            # PUSH TO PLEX (or REMOVE → PURGE) without scrolling.
+            elif p == "await":
+                branches.append(
+                    "(p.media_folder IS NULL AND lf.file_path IS NOT NULL)"
+                )
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
     if link_pills:
@@ -3284,7 +3294,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "-"})
         tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none"})
         dl_set = _pset(dl_pills, {"on", "off", "broken"})
-        pl_set = _pset(pl_pills, {"on", "off"})
+        pl_set = _pset(pl_pills, {"on", "await", "off"})
         link_set = _pset(link_pills, {"hl", "c", "m", "none"})
         ed_set = _pset(ed_pills, {"has", "none"})
         # v1.12.23: 'broken' DL pill alone routes through the existing

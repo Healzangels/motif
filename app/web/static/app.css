@@ -963,6 +963,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .state-pill-btn-on   { color: var(--green); border-color: rgba(109,255,181,0.4); }
 .state-pill-btn-off  { color: var(--fg-mute); }
 .state-pill-btn-broken { color: var(--red); border-color: rgba(255,107,107,0.4); }
+/* v1.12.70: amber 'await' PL filter button — matches the amber
+   .state-pill.await dot in the PL column for rows where the
+   canonical exists but no placement does (post-DEL state). */
+.state-pill-btn-await { color: var(--amber); border-color: rgba(255,184,74,0.4); }
 /* v1.12.41: EDITION filter pill — amber/yellow to match the
    .edition-pill row glyph the filter is selecting on. Sized
    wider than .state-pill-btn since the label is text ("ED")

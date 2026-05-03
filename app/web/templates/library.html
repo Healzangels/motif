@@ -145,6 +145,12 @@
     <button type="button" class="state-pill-btn state-pill-btn-on"
             data-pl-pill="on"
             title="Theme is in the Plex folder.">●</button>
+    <!-- v1.12.70: amber 'await' state — canonical exists in motif's
+         downloads but no placement row. Surfaces post-DEL rows that
+         need a PUSH TO PLEX (or PURGE) to leave the awaiting state. -->
+    <button type="button" class="state-pill-btn state-pill-btn-await"
+            data-pl-pill="await"
+            title="Awaiting placement — canonical downloaded but not placed in Plex (post-DEL). Use PLACE → PUSH TO PLEX, or REMOVE → PURGE.">●</button>
     <button type="button" class="state-pill-btn state-pill-btn-off"
             data-pl-pill="off"
             title="Not placed in the Plex folder.">●</button>
