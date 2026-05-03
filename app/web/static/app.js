@@ -3936,7 +3936,7 @@
 
     const acts = [];
     if (themed && themeId !== null && themeId !== undefined) {
-      acts.push(`<button class="btn btn-tiny row-info-btn" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
+      acts.push(`<button class="btn btn-tiny row-info-btn" data-act="info" data-mt="${themeMt}" data-id="${themeId}" data-section-id="${htmlEscape(it.section_id || '')}" title="ThemerrDB record details">ⓘ</button>`);
     }
     acts.push(menuButtonHtml('SOURCE', sourceItems));
     acts.push(menuButtonHtml('PLACE', placeItems));
@@ -3987,7 +3987,7 @@
       : '<span class="muted">—</span>';
 
     const acts = [
-      `<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`,
+      `<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" data-section-id="${htmlEscape(it.section_id || '')}" title="ThemerrDB record details">ⓘ</button>`,
     ];
     if (downloaded) {
       acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="0" title="motif has a stale local file for a title you don't own in Plex — purge to remove">× PURGE</button>`);
@@ -5228,7 +5228,16 @@
         if (!confirm(`Clear the captured previous URL for "${title}"?\n\nREVERT will no longer be available on this row. Current theme is unaffected.`)) return;
         clearUrlOverride(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'info') {
-        openInfoDialog(btn.dataset.mt, btn.dataset.id).catch(console.error);
+        // v1.12.72: pass section_id from the row so INFO surfaces
+        // the section-specific override (when per-section overrides
+        // exist). Closest tr's first <details data-section-id>
+        // attribute would also work, but the menu button's
+        // data-section-id (set by menuItemHtml) is the cleanest path.
+        // Fall back to undefined when not present.
+        const sid = btn.dataset.sectionId
+                 || btn.closest('tr')?.dataset.sectionId
+                 || undefined;
+        openInfoDialog(btn.dataset.mt, btn.dataset.id, sid).catch(console.error);
       } else if (act === 'delete-orphan') {
         await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
         await loadLibrary().catch(()=>{});
@@ -5426,7 +5435,7 @@
 
   // ---- ThemerrDB info dialog ----
 
-  async function openInfoDialog(mediaType, tmdbId) {
+  async function openInfoDialog(mediaType, tmdbId, sectionId) {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
     const body = document.getElementById('info-dlg-body');
@@ -5435,7 +5444,14 @@
     else dlg.setAttribute('open', '');
     let data;
     try {
-      data = await api('GET', `/api/items/${mediaType}/${tmdbId}`);
+      // v1.12.72: pass section_id so the INFO endpoint surfaces
+      // the section-specific user_overrides row in the legacy
+      // `override` field. Falls through to global ('') and then
+      // any-section if no per-section override exists.
+      const url = sectionId
+        ? `/api/items/${mediaType}/${tmdbId}?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/items/${mediaType}/${tmdbId}`;
+      data = await api('GET', url);
     } catch (e) {
       body.innerHTML = `<p class="accent-red">${htmlEscape(e.message)}</p>`;
       return;

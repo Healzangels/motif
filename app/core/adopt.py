@@ -264,11 +264,17 @@ def _maybe_restore_url_history(
         url = hist["youtube_url"]
         # Promote: write user_overrides + flip local_files.source_kind
         # to 'url' so the row's badge becomes U instead of A.
+        # v1.12.72: adopt-restore writes the '' (global) override row
+        # since the restoration applies to the title across all
+        # sections by default. Per-section preferences set later
+        # via SET URL still take precedence per worker fall-back.
         conn.execute(
             """INSERT INTO user_overrides
-                 (media_type, tmdb_id, youtube_url, set_at, set_by, note)
-               VALUES (?, ?, ?, ?, ?, 'restored from local_files_history on adopt')
-               ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                 (media_type, tmdb_id, youtube_url, set_at, set_by, note,
+                  section_id)
+               VALUES (?, ?, ?, ?, ?,
+                       'restored from local_files_history on adopt', '')
+               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                    youtube_url = excluded.youtube_url,
                    set_at = excluded.set_at,
                    set_by = excluded.set_by,
@@ -377,11 +383,26 @@ def replace_with_themerrdb(
         # mind. SQL inlined here (rather than calling
         # web.api._capture_previous_url) to avoid a core → web
         # circular import.
+        # v1.12.72: section-aware override fetch + delete. REPLACE TDB
+        # was given a section_id parameter; scope override ops to that
+        # section so sibling sections' per-edition overrides aren't
+        # collateral damage. Falls back to '' global when no
+        # per-section row exists. The previous-URL snapshot stays
+        # title-global (themes.previous_youtube_url is per-title).
+        ovr_section_for_replace = section_id or ""
         ovr_row = conn.execute(
-            "SELECT youtube_url FROM user_overrides "
-            "WHERE media_type = ? AND tmdb_id = ?",
-            (media_type, tmdb_id),
+            "SELECT youtube_url, section_id FROM user_overrides "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+            (media_type, tmdb_id, ovr_section_for_replace),
         ).fetchone()
+        if ovr_row is None and ovr_section_for_replace:
+            ovr_row = conn.execute(
+                "SELECT youtube_url, section_id FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if ovr_row is not None:
+                ovr_section_for_replace = ""
         if ovr_row and ovr_row["youtube_url"]:
             conn.execute(
                 """UPDATE themes
@@ -392,8 +413,8 @@ def replace_with_themerrdb(
             )
             conn.execute(
                 "DELETE FROM user_overrides "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, ovr_section_for_replace),
             )
         job_ids: list[int] = []
         for sid in target_sections:
@@ -700,10 +721,15 @@ def _do_keep(db_path: Path, finding, decided_by: str) -> dict:
         # An override row keyed on (media_type, tmdb_id) signals manual
         # provenance. We store the existing youtube_url (or empty) so this
         # serves as a "do not auto-replace" marker.
+        # v1.12.72: scan/adopt's "keep existing" lock writes the
+        # global ('') override row since the keep-decision applies
+        # across all sections. Per-section preferences set later
+        # via SET URL still take precedence per worker fall-back.
         conn.execute(
             """INSERT OR REPLACE INTO user_overrides
-                 (media_type, tmdb_id, theme_id, youtube_url, set_at, set_by, note)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                 (media_type, tmdb_id, theme_id, youtube_url, set_at,
+                  set_by, note, section_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, '')""",
             (theme["media_type"], theme["tmdb_id"], theme_id,
              theme["youtube_url"] or "",
              now_iso(), decided_by, "kept existing theme.mp3 from scan"),

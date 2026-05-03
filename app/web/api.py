@@ -717,9 +717,20 @@ def _library_main_query(
                          ))
                         OR
                         t.previous_youtube_url = COALESCE(
+                          -- v1.12.72: prefer section-specific
+                          -- override; fall back to global ('') row;
+                          -- final fallback to themes.youtube_url.
+                          -- Mirrors the worker's two-step fetch so
+                          -- the row's "currently applied" URL is
+                          -- the same value the worker would use.
                           (SELECT youtube_url FROM user_overrides uo
                             WHERE uo.media_type = t.media_type
-                              AND uo.tmdb_id = t.tmdb_id),
+                              AND uo.tmdb_id = t.tmdb_id
+                              AND uo.section_id = pi.section_id),
+                          (SELECT youtube_url FROM user_overrides uo
+                            WHERE uo.media_type = t.media_type
+                              AND uo.tmdb_id = t.tmdb_id
+                              AND uo.section_id = ''),
                           t.youtube_url
                         )
                       )
@@ -2902,11 +2913,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if update is None:
                 raise HTTPException(status_code=404, detail="no pending update")
             new_tdb_url = update["new_youtube_url"]
+            # v1.12.72: section-aware override fetch. Try the row's
+            # section first, then fall back to the legacy '' global
+            # row. ACCEPT UPDATE on a 4K row queries the 4K-specific
+            # override (so the url_match check + delete + flip
+            # affect only that section's override). Without
+            # section_id (legacy callers / orphan paths) we fall
+            # through to the global row.
+            ovr_section_for_accept = section_id or ""
             override = conn.execute(
                 "SELECT youtube_url FROM user_overrides "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, ovr_section_for_accept),
             ).fetchone()
+            if override is None and ovr_section_for_accept:
+                # Try global fallback when no per-section override
+                override = conn.execute(
+                    "SELECT youtube_url FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                if override is not None:
+                    # The override that applied was the global one,
+                    # so deleting it on accept means dropping it
+                    # globally too. Track which section_id the
+                    # delete should target.
+                    ovr_section_for_accept = ""
 
             # v1.12.37: capture the row's current URL into
             # themes.previous_youtube_url so REVERT can round-trip
@@ -2937,10 +2969,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _capture_previous_url(conn, media_type, tmdb_id)
 
             if override:
+                # v1.12.72: scoped delete using the section_id we
+                # tracked during the override fetch above. If a
+                # per-section override existed for this section,
+                # only it is deleted (sibling sections keep theirs);
+                # if we fell through to the global row, the global
+                # row gets dropped instead.
                 conn.execute(
                     "DELETE FROM user_overrides "
-                    "WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, ovr_section_for_accept),
                 )
                 # v1.12.37: provenance flip happens lazily, on
                 # download completion (worker.py writes fresh
@@ -3767,17 +3805,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # this SET URL call.
             _capture_previous_url(conn, theme_media_type, tmdb_id)
 
+            # v1.12.72: SET URL writes a per-section override scoped
+            # to the rating_key's plex_items.section_id. Pre-fix, all
+            # SET URL writes overwrote the same global (media_type,
+            # tmdb_id) row across every section that owned the title
+            # — users with separately-themed editions (4K + standard)
+            # couldn't pin different sources per edition. PK is now
+            # (media_type, tmdb_id, section_id) so different sections
+            # coexist; ON CONFLICT clause updates only the matching
+            # section's row, leaving sibling-section overrides
+            # untouched.
+            section_id_for_override = pi["section_id"] or ""
             conn.execute(
                 """INSERT INTO user_overrides (media_type, tmdb_id, youtube_url,
-                                               set_at, set_by, note)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                                               set_at, set_by, note,
+                                               section_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                        youtube_url = excluded.youtube_url,
                        set_at = excluded.set_at,
                        set_by = excluded.set_by,
                        note = excluded.note""",
                 (theme_media_type, tmdb_id, canonical_url, now_iso(),
-                 request.state.user, f"manual url for plex rk={rating_key}"),
+                 request.state.user, f"manual url for plex rk={rating_key}",
+                 section_id_for_override),
             )
             # v1.12.62: eager synthetic urls_match detection. If the
             # URL the user just set exactly matches the row's current
@@ -4084,7 +4135,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"total": total, "page": page, "per_page": per_page, "items": items}
 
     @app.get("/api/items/{media_type}/{tmdb_id}")
-    async def api_item(media_type: MediaType, tmdb_id: int, db: Path = Depends(get_db_path)):
+    async def api_item(
+        media_type: MediaType, tmdb_id: int,
+        # v1.12.72: optional section_id picks which section's
+        # override to surface in the legacy `override` field.
+        # Without it, the response uses the per-title query that
+        # may return any matching row when multiple per-section
+        # overrides exist. Pass section_id from row clicks so the
+        # INFO card's "currently applied" matches what the worker
+        # would use for that section.
+        section_id: str | None = Query(None),
+        db: Path = Depends(get_db_path),
+    ):
         with get_conn(db) as conn:
             t = conn.execute(
                 "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
@@ -4105,10 +4167,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "ORDER BY section_id, media_folder",
                 (media_type, tmdb_id),
             ).fetchall()
-            ovr = conn.execute(
-                "SELECT * FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
+            # v1.12.72: prefer the section-specific override row when
+            # section_id is provided; fall back to global ('') and
+            # finally to any-section. Keeps INFO's "currently applied"
+            # accurate per the row's section.
+            ovr = None
+            if section_id:
+                ovr = conn.execute(
+                    "SELECT * FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchone()
+            if ovr is None:
+                ovr = conn.execute(
+                    "SELECT * FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                    (media_type, tmdb_id),
+                ).fetchone()
+            if ovr is None:
+                ovr = conn.execute(
+                    "SELECT * FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "ORDER BY section_id LIMIT 1",
+                    (media_type, tmdb_id),
+                ).fetchone()
+            # Also surface the full per-section override list so the
+            # frontend can show all overrides at once if it wants.
+            all_overrides = conn.execute(
+                "SELECT * FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? "
+                "ORDER BY section_id",
                 (media_type, tmdb_id),
-            ).fetchone()
+            ).fetchall()
             # v1.12.34 / v1.12.37: include the pending_updates row
             # so the INFO dialog can render the upstream-update
             # state. The "previous URL" lives on themes.previous_*
@@ -4137,6 +4227,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "local_files": local_payloads,
             "placements": [dict(p) for p in placements],
             "override": dict(ovr) if ovr else None,
+            # v1.12.72: full per-section override list. Frontend
+            # can render one row per section in the INFO card if
+            # multiple overrides exist; legacy `override` field
+            # still surfaces a single representative row for
+            # back-compat with consumers that don't read this list.
+            "overrides": [dict(o) for o in all_overrides],
             "pending_update": dict(pu) if pu else None,
             "events": [dict(e) for e in recent_events],
         }
@@ -5119,18 +5215,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # place, matching the user's mental model: "the row's
             # SRC describes what's actually playing".
             if prev_kind == "user":
+                # v1.12.72: scope to the row's section_id when
+                # provided. Without a section the legacy '' global
+                # row gets restored, matching pre-migration behavior.
+                ovr_section = section_id or ""
                 conn.execute(
                     """INSERT INTO user_overrides
-                         (media_type, tmdb_id, youtube_url, set_at, set_by, note)
-                       VALUES (?, ?, ?, ?, ?, ?)
-                       ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                         (media_type, tmdb_id, youtube_url,
+                          set_at, set_by, note, section_id)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                            youtube_url = excluded.youtube_url,
                            set_at = excluded.set_at,
                            set_by = excluded.set_by,
                            note = excluded.note""",
                     (media_type, tmdb_id, prev_url, now_iso(),
                      request.state.principal.username,
-                     "restored via REVERT"),
+                     "restored via REVERT", ovr_section),
                 )
                 # If a pending_update was previously accepted on
                 # this row, reset it so the blue TDB ↑ pill
@@ -5152,10 +5253,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # has changed since the snapshot), the worker
                 # will download the current TDB URL — close
                 # enough for a one-step undo.
+                # v1.12.72: scope to the row's section. Sibling
+                # sections' overrides survive (they may have their
+                # own per-edition URL the user wants to keep).
+                # When called without section_id (legacy / orphan
+                # paths), drops only the '' global row.
+                ovr_section = section_id or ""
                 conn.execute(
                     "DELETE FROM user_overrides "
-                    "WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, ovr_section),
                 )
 
             # Swap the previous_* columns to point at what was
@@ -5531,11 +5638,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="theme not in database")
+            # v1.12.72: api_override has no rating_key/section_id
+            # context — it's the global "override URL for this title"
+            # path used by the failure dialog. Writes the '' (global)
+            # row so the worker uses this URL for any section that
+            # doesn't have its own per-section override.
             conn.execute(
                 """INSERT INTO user_overrides (media_type, tmdb_id, youtube_url,
-                                               set_at, set_by, note)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                                               set_at, set_by, note,
+                                               section_id)
+                   VALUES (?, ?, ?, ?, ?, ?, '')
+                   ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                        youtube_url = excluded.youtube_url,
                        set_at = excluded.set_at,
                        set_by = excluded.set_by,

@@ -560,10 +560,24 @@ class Worker:
                 "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
+            # v1.12.72: per-section override fetch. Try the row's
+            # specific section first; if none, fall back to the
+            # legacy global ('') row that applies to any section
+            # without a more-specific override. Lets users with
+            # multi-section libraries pin different YouTube URLs
+            # per edition while keeping pre-migration overrides
+            # working as global defaults.
             override = conn.execute(
-                "SELECT * FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "SELECT * FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, section_id),
             ).fetchone()
+            if override is None:
+                override = conn.execute(
+                    "SELECT * FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                    (media_type, tmdb_id),
+                ).fetchone()
             section_row = conn.execute(
                 "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
                 (section_id,),

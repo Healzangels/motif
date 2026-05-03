@@ -256,7 +256,16 @@ CREATE TABLE IF NOT EXISTS user_overrides (
     set_at          TEXT NOT NULL,
     set_by          TEXT,
     note            TEXT,
-    PRIMARY KEY (media_type, tmdb_id)
+    -- v1.12.72: section_id scopes the override to a specific Plex
+    -- section. Empty string ('') means "applies to every section
+    -- that doesn't have its own per-section override" (the legacy
+    -- global state and the default for callers without section
+    -- context). Multiple rows per (media_type, tmdb_id) are now
+    -- allowed: one per section + an optional global fallback.
+    -- Worker fetch is two-step: try (mt, tmdb, section_id) first,
+    -- then fall back to (mt, tmdb, '').
+    section_id      TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (media_type, tmdb_id, section_id)
 );
 
 -- v1.11.0: plex_sections is treated as append-only at runtime — sections
@@ -446,7 +455,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 26
+CURRENT_SCHEMA_VERSION = 27
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -926,6 +935,57 @@ def _migrate_v25_to_v26(conn: sqlite3.Connection) -> None:
         ALTER TABLE pending_updates ADD COLUMN kind TEXT
             NOT NULL DEFAULT 'upstream_changed'
             CHECK (kind IN ('upstream_changed', 'urls_match'));
+        """
+    )
+
+
+def _migrate_v26_to_v27(conn: sqlite3.Connection) -> None:
+    """v27 adds user_overrides.section_id for per-edition override
+    URLs. Previously a single (media_type, tmdb_id) row applied to
+    every section that owned the title — users with separately-
+    themed editions (4K + standard, anime + plain, director's cut
+    + theatrical) couldn't pin different YouTube sources per
+    edition without piecemeal hacks.
+
+    New schema: PK becomes (media_type, tmdb_id, section_id).
+    Empty string ('') in section_id means "applies to every
+    section that doesn't have its own override" — the legacy
+    global state and the default for callers without section
+    context. Worker fetch is two-step: per-section first, then
+    fall back to ''.
+
+    SQLite ALTER TABLE can't change the PK in place, so the
+    migration recreates the table:
+      1. CREATE the new shape under a temp name
+      2. INSERT existing rows with section_id = ''
+      3. DROP the old table, rename the new one in
+    Rows written before v1.12.72 land with section_id='' so
+    behavior is unchanged for unmigrated data — they remain
+    "applies globally" until a per-section SET URL writes a
+    more-specific row.
+    """
+    log.info("Migrating to schema v27 (user_overrides.section_id)")
+    conn.executescript(
+        """
+        CREATE TABLE user_overrides_v27 (
+            media_type      TEXT NOT NULL,
+            tmdb_id         INTEGER NOT NULL,
+            theme_id        INTEGER,
+            youtube_url     TEXT NOT NULL,
+            set_at          TEXT NOT NULL,
+            set_by          TEXT,
+            note            TEXT,
+            section_id      TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (media_type, tmdb_id, section_id)
+        );
+        INSERT INTO user_overrides_v27
+            (media_type, tmdb_id, theme_id, youtube_url,
+             set_at, set_by, note, section_id)
+        SELECT media_type, tmdb_id, theme_id, youtube_url,
+               set_at, set_by, note, ''
+          FROM user_overrides;
+        DROP TABLE user_overrides;
+        ALTER TABLE user_overrides_v27 RENAME TO user_overrides;
         """
     )
 
@@ -1452,6 +1512,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 25:
                     _migrate_v25_to_v26(conn)
                     current = 26
+                elif current == 26:
+                    _migrate_v26_to_v27(conn)
+                    current = 27
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
