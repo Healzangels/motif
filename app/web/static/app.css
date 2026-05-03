@@ -509,20 +509,26 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .table th.col-sort:hover { color: var(--fg); }
 .table th.col-sort-active { color: var(--green-bright); }
-.table th .sort-indicator {
-  /* v1.12.29: indicator is now a block beneath the label so
-     both the LABEL and the CARAT center horizontally within
-     the column. v1.12.28 placed "LABEL ▲" inline and centered
-     as a unit — which put the label off to the left of the
-     column center and the carat off to the right (neither
-     actually on the column center). Stacking the carat under
-     the label puts both on the column's vertical centerline.
-     Reserved 12px height + non-zero margin-top so the row
-     height stays constant whether the indicator is populated
-     (▲ / ▼) or empty, and so the label doesn't shift between
-     sort columns. */
+/* v1.12.32: header label + sort carat stack inside an
+   inline-block wrapper sized to the label width, so the carat
+   centers UNDER the label rather than at the column's
+   geometric center. v1.12.29 used display: block + width: 100%
+   on the indicator — that pinned the carat to the column's
+   vertical centerline regardless of where the label was
+   positioned. Wrapping label + indicator in .th-stack means
+   the wrapper itself absorbs the th's text-align (center for
+   most columns, left for col-title) and the carat always sits
+   directly beneath the label letters. */
+.table thead th .th-stack {
+  display: inline-block;
+  vertical-align: middle;
+}
+.table thead th .th-label {
   display: block;
-  width: 100%;
+  text-align: center;
+}
+.table th .sort-indicator {
+  display: block;
   height: 12px;
   margin: 2px 0 0 0;
   font-size: 10px;
@@ -583,15 +589,16 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    float far from its data. Every other column is narrow
    enough that center-aligning the label reads as obviously
    "this label belongs to this column". */
+/* v1.12.32: TITLE's <th> is text-align: left so its .th-stack
+   wrapper sits at the left edge of the column. The wrapper is
+   inline-block sized to the "TITLE" label, so the indicator
+   inside (block, text-align: center) centers BENEATH the
+   "TITLE" letters rather than across the entire ~600px-wide
+   col-title cell. Other columns inherit the default
+   text-align: center from .table thead th, which centers the
+   .th-stack horizontally and stacks the carat under each
+   centered label. */
 #library-table th.col-title { text-align: left; }
-/* v1.12.31: TITLE's carat tracks the LEFT-anchored label rather
-   than centering across the column. The default .sort-indicator
-   uses width: 100% + text-align: center to stack the carat under
-   each centered header label; for TITLE the carat needs to sit
-   directly beneath the "TITLE" word at the left edge of the
-   cell, not float across to the column's geometric center
-   (which would be hundreds of pixels right of the label). */
-#library-table th.col-title .sort-indicator { text-align: left; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
