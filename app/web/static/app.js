@@ -3549,28 +3549,27 @@
     }
 
     function menuButtonHtml(label, items, kindClass) {
-      // v1.12.24: empty slot returns an invisible placeholder of
-      // the same width as the populated button so the actions
-      // cell keeps a stable horizontal layout across rows with
-      // different action sets. Pre-fix sorting between row
-      // groups (themed vs unthemed, etc.) shifted SOURCE / PLACE /
-      // REMOVE columns visually as buttons appeared/disappeared.
-      const slotClass = `row-action-slot row-action-slot-${label.toLowerCase()}`;
-      if (!items.length) {
-        return `<span class="${slotClass} row-action-slot-empty" aria-hidden="true"></span>`;
-      }
-      const cls = `row-menu ${kindClass || ''}`.trim();
-      return `<span class="${slotClass}"><details class="${cls}">`
+      // v1.12.25: absent buttons render nothing so present buttons
+      // collapse to the right edge of the actions cell. Each
+      // button keeps a consistent per-label min-width via CSS
+      // (.row-menu-source / .row-menu-place / .row-menu-remove)
+      // so the visible buttons stay at constant size regardless
+      // of which siblings are present. v1.12.24's fixed-slot
+      // approach reserved horizontal space for absent buttons,
+      // which scattered the present buttons across the cell —
+      // the opposite of the intended right-anchored layout.
+      if (!items.length) return '';
+      const labelClass = `row-menu-${label.toLowerCase()}`;
+      const cls = `row-menu ${labelClass} ${kindClass || ''}`.trim();
+      return `<details class="${cls}">`
         + `<summary class="btn btn-tiny" title="${htmlEscape(label)} actions">${htmlEscape(label)} ▾</summary>`
         + `<div class="row-menu-panel">${items.join('')}</div>`
-        + `</details></span>`;
+        + `</details>`;
     }
 
     const acts = [];
     if (themed && themeId !== null && themeId !== undefined) {
-      acts.push(`<span class="row-action-slot row-action-slot-info"><button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button></span>`);
-    } else {
-      acts.push(`<span class="row-action-slot row-action-slot-info row-action-slot-empty" aria-hidden="true"></span>`);
+      acts.push(`<button class="btn btn-tiny row-info-btn" data-act="info" data-mt="${themeMt}" data-id="${themeId}" title="ThemerrDB record details">ⓘ</button>`);
     }
     acts.push(menuButtonHtml('SOURCE', sourceItems));
     acts.push(menuButtonHtml('PLACE', placeItems));

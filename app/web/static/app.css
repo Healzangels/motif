@@ -480,6 +480,16 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-collapse: collapse;
   font-size: var(--t-small);
 }
+/* v1.12.25: table-layout: fixed scoped to the library results
+   table only — locks column widths to the widths declared on
+   the <th>s so sort / page refreshes don't re-measure body
+   cells and trigger the brief flicker the user reported on
+   first sort-press. The col-title column has no explicit width
+   and absorbs the remaining space; other columns have explicit
+   pixel widths from .col-state / .col-year / .col-imdb /
+   .col-actions. Other admin tables (dashboard, settings,
+   libraries) keep table-layout: auto. */
+#library-table { table-layout: fixed; }
 .table th {
   text-align: left;
   padding: 10px 14px;
@@ -500,10 +510,22 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .table th.col-sort:hover { color: var(--fg); }
 .table th.col-sort-active { color: var(--green-bright); }
 .table th .sort-indicator {
-  display: inline-block;
+  /* v1.12.25: inline-flex with vertical-align: middle so the
+     indicator (whether ▲ ▼ or empty) sits on the same visual
+     line as its label across every header. Pre-fix, an empty
+     inline-block with width: 8px had no content, which let
+     browsers pin its baseline at its bottom edge — different
+     header columns rendered the empty span on subtly different
+     baselines, making IMDB / ACTIONS labels visually drop
+     below YEAR / SRC / DL / PL / LINK. */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
   margin-left: 4px;
   font-size: 10px;
   width: 8px;
+  height: 12px;
 }
 .table td {
   padding: 10px 14px;
@@ -515,7 +537,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 
 .col-state { width: 40px; text-align: center; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
-.col-actions { width: 260px; text-align: right; }
+.col-actions { width: 300px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
 /* v1.12.3: header text for IMDB / ACTIONS gets centered to match
    the YEAR / SRC / DL / PL / LINK headers (which are centered via
@@ -543,32 +565,28 @@ th.col-actions { text-align: center; }
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* Library row actions — keep buttons in a single horizontal line, no wrap.
-   Nowrap ensures the row height stays consistent. */
+   v1.12.25: right-aligned with per-button constant widths.
+   Absent buttons render nothing (see menuButtonHtml) so the
+   present buttons collapse to the right edge of the cell. Each
+   button has a fixed min-width so its visible width stays
+   constant across rows — only the SET of buttons changes between
+   rows, never the individual button widths. v1.12.24's fixed-slot
+   spacers reserved horizontal space for absent buttons which
+   scattered the present buttons across the cell — the opposite
+   of the right-anchored layout the user wants. */
 .row-actions {
   display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
-  /* v1.12.24: switch from flex-end (right-align) to flex-end with
-     fixed-width slots — each action category has a reserved
-     horizontal slot so SOURCE / PLACE / REMOVE stay in the same
-     X position regardless of whether sibling slots are populated.
-     Pre-fix sorting between rows with different action sets caused
-     buttons to jump horizontally as the right-aligned cell
-     packed/unpacked. */
   justify-content: flex-end;
 }
 .row-actions .btn-tiny { white-space: nowrap; }
-.row-action-slot {
-  display: inline-flex;
-  align-items: center;
-  justify-content: flex-start;
+.row-info-btn {
+  /* v1.12.25: ⓘ button is the narrow-width outlier. Override
+     .btn-tiny's 72px min-width down to a glyph-sized 30px so
+     the info pill stays compact next to the wider menu buttons. */
+  min-width: 30px !important;
+  padding: 4px 6px;
+  text-align: center;
 }
-/* Each slot reserves space matching its populated button width so
-   an empty slot doesn't collapse and shift its neighbors. Widths
-   sized to the longest label per category. */
-.row-action-slot-info   { min-width: 28px; }
-.row-action-slot-source { min-width: 80px; }
-.row-action-slot-place  { min-width: 72px; }
-.row-action-slot-remove { min-width: 86px; }
-.row-action-slot-empty { /* nothing visual; just reserves min-width */ }
 /* v1.10.24 Option C: per-row menu buttons (SOURCE / PLACE / REMOVE).
    Native <details>/<summary> popover; CSS positions the panel and a
    global click-outside handler closes any open one. */
@@ -577,6 +595,17 @@ th.col-actions { text-align: center; }
   list-style: none;
   cursor: pointer;
   user-select: none;
+  /* v1.12.25: every menu button (SOURCE / PLACE / REMOVE) has the
+     same constant width regardless of which siblings are present.
+     With .row-actions justify-content: flex-end, present buttons
+     collapse to the right edge of the cell while keeping their
+     individual sizes stable. v1.12.24's per-label slot spacers
+     reserved horizontal space for ABSENT buttons which scattered
+     present buttons across the cell — opposite of intent. */
+  display: inline-block;
+  text-align: center;
+  box-sizing: border-box;
+  min-width: 78px;
 }
 .row-menu > summary::-webkit-details-marker { display: none; }
 .row-menu > summary::marker { content: ''; }
@@ -751,15 +780,60 @@ th.col-actions { text-align: center; }
   padding: 0 2px;
   /* v1.12.24: claim a full row inside the .filterbar flex parent
      so the five pill axes (TDB, SRC, DL, PL, LINK) stack vertically
-     instead of packing horizontally and producing the broken
-     wrapped layout from v1.12.23. */
+     instead of packing horizontally. */
   flex-basis: 100%;
+}
+/* v1.12.25: every direct child of a pill-filter-row is content-
+   sized — pre-fix LINK pills (which inherit from .link-glyph-*
+   classes designed for inline <span> use) stretched to full row
+   width when used as <button> flex items, rendering as bars
+   instead of small pills. */
+.pill-filter-row > * {
+  flex: 0 0 auto;
+}
+/* v1.12.25: every interactive pill across the five filter rows
+   shares the same height + vertical-rhythm so the rows scan as
+   a clean grid. Each pill type keeps its own width / padding
+   (TDB pills naturally wider than DL dots) but the y-axis
+   alignment is uniform. */
+.pill-filter-row .pill-filter-clear,
+.pill-filter-row .tdb-pill-btn,
+.pill-filter-row .src-key-btn,
+.pill-filter-row .state-pill-btn,
+.pill-filter-row .link-glyph {
+  height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
 }
 .pill-filter-label {
   letter-spacing: 0.12em;
   text-transform: uppercase;
   margin-right: 2px;
-  min-width: 38px;
+  /* v1.12.25: wider, fixed-width label column so every pill
+     row's ALL button starts at the same X coordinate — the
+     pills line up vertically across the five rows for a
+     cleaner, scannable grid. */
+  min-width: 56px;
+  text-align: right;
+  padding-right: 4px;
+  font-weight: 600;
+  color: var(--fg);
+  opacity: 0.75;
+}
+/* v1.12.25: visual separator between the theme-axis filters
+   (TDB / SRC — describing what theme is associated) and the
+   file-axis filters (DL / PL / LINK — describing how the
+   theme file lives on disk). Subtle dashed top border on the
+   first file-axis row mirrors the pill-filter-clear's dashed
+   border so it reads as part of the filter chrome rather than
+   a decorative line. */
+.pill-filter-row.pill-filter-row-divider {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
 }
 .pill-filter-clear {
   cursor: pointer;
@@ -775,18 +849,20 @@ th.col-actions { text-align: center; }
 .pill-filter-clear:hover { color: var(--fg); border-color: var(--cyan); }
 /* DL / PL state pills as filter buttons. Mirrors the row's state
    dot (.state-pill.on / .state-pill.broken) but rendered as a
-   button so it can be clicked. */
+   button so it can be clicked. v1.12.25: explicit box-sizing so
+   the border-box width stays at 18px regardless of border. */
 .state-pill-btn {
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: transparent;
   border: 1px solid var(--line);
-  font-size: 16px;
+  font-size: 10px;
   line-height: 1;
   padding: 0;
   color: var(--fg-mute);
@@ -800,12 +876,25 @@ th.col-actions { text-align: center; }
   box-shadow: 0 0 0 2px var(--cyan);
   filter: brightness(1.3);
 }
-/* LINK pill buttons reuse the existing .link-glyph-* pill styling
-   from the row column (HL orange / C violet / M red / — muted),
-   but become clickable as filter buttons. */
+/* v1.12.25: LINK pill buttons reuse the row's HL / C / M pill
+   styling but need button-specific overrides. The .link-glyph-*
+   classes were authored for inline <span> use in row cells; as
+   <button> children of a flex row they were stretching to full
+   width. Force inline-block sizing + content-width so each pill
+   stays compact. */
 .pill-filter-row .link-glyph {
   cursor: pointer;
   user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 0 8px;
+  width: auto;
 }
 .pill-filter-row .link-glyph:hover { filter: brightness(1.25); }
 .pill-filter-row .link-glyph.link-pill-btn-active,
