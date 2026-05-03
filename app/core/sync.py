@@ -828,6 +828,65 @@ def run_sync(db_path, base_url: str, *,
         except Exception as e:
             log.warning("post-sync resolve_theme_ids failed: %s", e)
 
+        # v1.12.60: sweep orphan user_overrides BEFORE the
+        # pending_updates sweep below. user_overrides is what
+        # makes a row classify as U at download time (worker
+        # prefers user_overrides.youtube_url over
+        # themes.youtube_url). When the row has no theme presence
+        # — no local_files, no placements, no sidecar — and no
+        # in-flight job, the override is dangling metadata that
+        # silently re-classifies the row as U on the next download.
+        # Pre-fix, a sequence like SET URL → PURGE on a pre-v1.12.57
+        # build left an orphan override that survived everywhere
+        # else and re-applied on the next DOWNLOAD TDB action,
+        # confusing users who expected a clean T result. The .57
+        # _drop_motif_tracking helper handles the forward path;
+        # this sweep handles legacy and edge cases.
+        #
+        # Same in-flight job guard as the pending_updates sweep —
+        # protects a fresh SET URL whose download hasn't started yet
+        # (user_overrides exists, local_files doesn't, but there's
+        # a queued download job).
+        with get_conn(db_path) as conn:
+            stale_overrides = conn.execute(
+                """
+                DELETE FROM user_overrides
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM local_files lf
+                    WHERE lf.media_type = user_overrides.media_type
+                      AND lf.tmdb_id = user_overrides.tmdb_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM placements p
+                    WHERE p.media_type = user_overrides.media_type
+                      AND p.tmdb_id = user_overrides.tmdb_id
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM plex_items pi
+                    WHERE pi.guid_tmdb = user_overrides.tmdb_id
+                      AND pi.media_type = (CASE user_overrides.media_type
+                                            WHEN 'tv' THEN 'show'
+                                            ELSE user_overrides.media_type END)
+                      AND pi.local_theme_file = 1
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM jobs j
+                    WHERE j.media_type = user_overrides.media_type
+                      AND j.tmdb_id = user_overrides.tmdb_id
+                      AND j.job_type IN ('download', 'place')
+                      AND j.status IN ('pending', 'running')
+                  )
+                """
+            ).rowcount or 0
+        if stale_overrides:
+            log_event(
+                db_path, level="INFO", component="sync",
+                message=f"Pruned {stale_overrides} orphan user_overrides "
+                        f"row{'s' if stale_overrides != 1 else ''} "
+                        "(no theme presence, no in-flight jobs)",
+                detail={"pruned": stale_overrides},
+            )
+
         # v1.12.49: sweep stale pending_updates rows. A pending_updates
         # row is only meaningful when the user actually has a theme to
         # "update against" (motif local file, manual URL override, or

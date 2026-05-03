@@ -4005,6 +4005,13 @@
     // become T via // TDB SELECTED. Mixed selections show both.
     let hasSidecarOnly = false;
     let hasTdbEligible = false;
+    // v1.12.60: track whether any selected row would have its
+    // existing theme replaced by a bulk DOWNLOAD-FROM-TDB action.
+    // Pure-'-' selections download cleanly; selections that mix in
+    // U/A/M/P (anything with a current theme other than T) get an
+    // adjusted button label so the user knows they're about to
+    // overwrite content, not just fetch.
+    let hasReplaceTarget = false;
     if (n > 0) {
       const selectedKeys = libraryState.selected;
       for (const it of (libraryState.items || [])) {
@@ -4018,6 +4025,14 @@
                         && it.upstream_source !== 'plex_orphan');
         if (sidecarOnly) hasSidecarOnly = true;
         if (themed) hasTdbEligible = true;
+        // v1.12.60: any T row is "already TDB-sourced" so the
+        // download is a refresh, not a replace — same for '-'
+        // (no theme to replace). Anything else (U/A/M/P) IS a
+        // replace target.
+        const srcLetter = computeSrcLetter(it);
+        if (srcLetter !== 'T' && srcLetter !== '-') {
+          hasReplaceTarget = true;
+        }
       }
     }
     // v1.12.6: TDB-only browse hides DOWNLOAD-FROM-TDB / ADOPT —
@@ -4034,6 +4049,19 @@
     if (ackBtn) ackBtn.style.display = onTdbDead ? '' : 'none';
     if (dlBtn)    dlBtn.style.display    = (!onTdbOnly && hasTdbEligible) ? '' : 'none';
     if (adoptBtn) adoptBtn.style.display = (!onTdbOnly && hasSidecarOnly) ? '' : 'none';
+    // v1.12.60: relabel DOWNLOAD-FROM-TDB based on selection mix so
+    // the user reads accurate intent. Pure '-' (or T) selections
+    // are clean fetches; mixing in U/A/M/P means existing themes
+    // will be overwritten — say so in both the label and tooltip.
+    if (dlBtn) {
+      if (hasReplaceTarget) {
+        dlBtn.textContent = '// DOWNLOAD & REPLACE FROM TDB';
+        dlBtn.title = 'Download from ThemerrDB. Selected rows with existing themes (U / A / M / P) will be overwritten with the TDB version.';
+      } else {
+        dlBtn.textContent = '// DOWNLOAD FROM TDB';
+        dlBtn.title = 'Download and place each selected row from ThemerrDB.';
+      }
+    }
     const exportBtn = document.getElementById('library-export-csv-btn');
     if (exportBtn) exportBtn.style.display = '';
     // v1.12.55: bulk update actions visible only when the user is
