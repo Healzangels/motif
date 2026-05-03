@@ -535,7 +535,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .table tr:hover td { background: rgba(109,255,181,0.02); }
 .table-tight th, .table-tight td { padding: 6px 10px; font-size: var(--t-tiny); }
 
-.col-state { width: 40px; text-align: center; }
+.col-state { width: 56px; text-align: center; }
+/* v1.12.25: narrow-column td padding override. With table-layout:
+   fixed, the SRC / DL / PL / LINK columns (all .col-state, 56px)
+   need lighter horizontal padding so their pills (HL, link-badge,
+   state dot) fit within the locked column width without clipping.
+   The default .table td padding (10px 14px) consumes 28px of the
+   56px column, leaving only 28px for content. */
+#library-table td.col-state { padding-left: 6px; padding-right: 6px; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 300px; text-align: right; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; text-align: left; }
@@ -1306,8 +1313,12 @@ pre code, .codeblock {
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 700;
-  width: 100%;
   text-align: center;
+  /* v1.12.25: width: 100% removed. With table-layout: fixed on
+     #library-table, the LINK column is locked at .col-state width
+     and the pill's 100% inner width clipped the "HL" label. The
+     pill now sizes to its content; the td is centered so the pill
+     centers in its column. */
 }
 /* v1.12.16: HL/C link-glyphs styled as boxed pills, matching the
    SRC and TDB pill rhythm for visual consistency. HL gets amber
