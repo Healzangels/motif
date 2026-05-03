@@ -573,6 +573,17 @@ def _library_main_query(
                      AND pu.tmdb_id = t.tmdb_id
                      AND pu.decision IN ('pending', 'declined')
                 ) THEN 1 ELSE 0 END) AS pending_update,
+               -- v1.12.54: kind discriminator on the active
+               -- pending_update so the JS pill render can use
+               -- different tooltip/coloring for 'urls_match'
+               -- (synthetic "convert U → T" prompt) vs the
+               -- original 'upstream_changed' (TDB URL actually
+               -- moved). NULL when no pending_update row exists.
+               (SELECT pu.kind FROM pending_updates pu
+                 WHERE pu.media_type = t.media_type
+                   AND pu.tmdb_id = t.tmdb_id
+                   AND pu.decision IN ('pending', 'declined')
+                 LIMIT 1) AS pending_update_kind,
                -- v1.12.5: actionable_update = the row should still
                -- prompt with ACCEPT UPDATE / KEEP CURRENT in the
                -- SOURCE menu. Becomes 0 once the user picks KEEP

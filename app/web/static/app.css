@@ -1745,6 +1745,15 @@ pre code, .codeblock {
 }
 .form-hint a { color: var(--cyan); }
 .form-hint .warn { color: var(--amber); font-weight: 700; letter-spacing: 0.08em; }
+/* v1.12.54: amber-bordered variant for inline warning hints
+   (e.g. SET URL match-detection). Visually distinct from the
+   ambient gray .form-hint so the user can't miss it. */
+.form-hint-warn {
+  color: var(--amber);
+  border-left: 2px solid var(--amber);
+  padding-left: 8px;
+  margin-top: 8px;
+}
 
 .form-env-badge {
   font-size: var(--t-tiny);

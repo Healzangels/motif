@@ -364,6 +364,18 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     -- column, giving the user a one-click round-trip back to
     -- their custom URL after they accepted an upstream change.
     replaced_user_url TEXT,
+    -- v1.12.54: kind discriminator. 'upstream_changed' = the
+    -- ThemerrDB URL actually changed (the original semantic);
+    -- 'urls_match' = synthetic row written by the v1.12.53
+    -- end-of-sync sweep when override URL exactly matches the
+    -- TDB URL — a "convert U → T" prompt, not an upstream
+    -- update. The frontend pill render branches on this so the
+    -- tooltip and (eventually) color tier can match the actual
+    -- semantic instead of misrepresenting both states as a
+    -- URL-changed event. Defaults to 'upstream_changed' for
+    -- back-compat with rows written before this migration.
+    kind              TEXT NOT NULL DEFAULT 'upstream_changed'
+                        CHECK (kind IN ('upstream_changed', 'urls_match')),
     PRIMARY KEY (media_type, tmdb_id),
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
 );
@@ -434,7 +446,7 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
 );
 """
 
-CURRENT_SCHEMA_VERSION = 25
+CURRENT_SCHEMA_VERSION = 26
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -891,6 +903,29 @@ def _migrate_v24_to_v25(conn: sqlite3.Connection) -> None:
                     AND pu.tmdb_id = themes.tmdb_id
                     AND pu.replaced_user_url IS NOT NULL
                );
+        """
+    )
+
+
+def _migrate_v25_to_v26(conn: sqlite3.Connection) -> None:
+    """v26 adds pending_updates.kind discriminating between
+    'upstream_changed' (TDB URL actually changed — original semantic)
+    and 'urls_match' (synthetic row written by the v1.12.53
+    end-of-sync sweep when override URL exactly matches the TDB URL).
+
+    Frontends can branch on kind so the row pill tooltip reads
+    accurately for each case — pre-fix the synthetic case
+    inherited the upstream-changed tooltip ("ThemerrDB upstream URL
+    changed") which was a lie for those rows. Existing rows
+    backfill to 'upstream_changed' since v1.12.53 is the first
+    version that wrote the synthetic kind.
+    """
+    log.info("Migrating to schema v26 (pending_updates.kind)")
+    conn.executescript(
+        """
+        ALTER TABLE pending_updates ADD COLUMN kind TEXT
+            NOT NULL DEFAULT 'upstream_changed'
+            CHECK (kind IN ('upstream_changed', 'urls_match'));
         """
     )
 
@@ -1414,6 +1449,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 24:
                     _migrate_v24_to_v25(conn)
                     current = 25
+                elif current == 25:
+                    _migrate_v25_to_v26(conn)
+                    current = 26
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

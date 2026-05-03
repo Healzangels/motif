@@ -3262,7 +3262,15 @@
       // there's nothing to ACCEPT UPDATE against (the action would
       // just download the current URL), so render the plain green
       // TDB pill that prompts DOWNLOAD via the SOURCE menu.
+      // v1.12.54: branch on pending_update_kind so the synthetic
+      // 'urls_match' rows (v1.12.53 sweep — the user's override URL
+      // already equals TDB's URL, so ACCEPT UPDATE is really a U→T
+      // reclassify) get an accurate tooltip instead of the
+      // upstream-changed wording that was a lie for those rows.
       if (it.pending_update && computeSrcLetter(it) !== '-') {
+        if (it.pending_update_kind === 'urls_match') {
+          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches the current ThemerrDB URL — ACCEPT UPDATE in the SOURCE menu to convert this row from U (user-managed) to T (ThemerrDB-managed). The file on disk stays the same; only the classification changes.">TDB ↑</span>';
+        }
         return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss.">TDB ↑</span>';
       }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
@@ -3323,6 +3331,12 @@
         // you cannot PUSH TO PLEX"). Default '0' when absent so
         // btn.dataset.dlOnly === '1' is a clean predicate.
         extras.dlOnly !== undefined ? `data-dl-only="${extras.dlOnly}"` : '',
+        // v1.12.54: TDB canonical URL flows through to SET URL so
+        // the dialog can warn the user when their input matches —
+        // setting the same URL as a manual override would just
+        // create the U→T conversion loop the v1.12.53 sweep was
+        // designed to surface, with extra UI churn for no benefit.
+        extras.ytUrl !== undefined ? `data-yt-url="${htmlEscape(extras.ytUrl)}"` : '',
       ].filter(Boolean).join(' ');
       // v1.11.14: extras.tone tints the source menu entries to match
       // the SRC column badge colors so the user can read at a glance
@@ -3414,15 +3428,29 @@
       // would also overwrite the standard library's theme —
       // which the user wanted independently themed (different
       // editions = different themes).
+      // v1.12.54: tooltip branches on pending_update_kind. For
+      // 'urls_match' rows the action is really a U→T reclassify
+      // (no new content gets downloaded — the file on disk
+      // already matches what TDB would fetch); for the regular
+      // 'upstream_changed' case the file genuinely changes.
+      // Same endpoint handles both: api_accept_update's
+      // url_match path covers urls_match and the v1.12.53 eager
+      // flip lands the row at T immediately.
+      const acceptTip = (it.pending_update_kind === 'urls_match')
+        ? 'Convert this row from U to T. Your override URL already matches ThemerrDB, so the file on disk stays put — only the classification changes.'
+        : 'Download the new ThemerrDB URL and replace the current theme in this section only.';
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
-        'Download the new ThemerrDB URL and replace the current theme in this section only.',
+        acceptTip,
         { mt: themeMt, id: themeId, sectionId: it.section_id, info: true },
       ));
       if (it.actionable_update) {
+        const declineTip = (it.pending_update_kind === 'urls_match')
+          ? 'Dismiss the prompt; the row stays U (your manual override stays in place). The blue TDB ↑ pill stays for filter/sort.'
+          : 'Dismiss the prompt; the blue TDB ↑ pill stays for filter/sort.';
         sourceItems.push(menuItemHtml(
           'decline-update', 'KEEP CURRENT',
-          'Dismiss the prompt; the blue TDB ↑ pill stays for filter/sort.',
+          declineTip,
           { mt: themeMt, id: themeId },
         ));
       }
@@ -3504,7 +3532,7 @@
     sourceItems.push(menuItemHtml(
       'manual-url', 'SET URL',
       'Provide a YouTube URL as a manual override.',
-      { rk: it.rating_key, tone: 'user' },
+      { rk: it.rating_key, tone: 'user', ytUrl: it.youtube_url || '' },
     ));
     sourceItems.push(menuItemHtml(
       'upload-theme', 'UPLOAD MP3',
@@ -4940,6 +4968,7 @@
           ratingKey: btn.dataset.rk,
           title: btn.dataset.title || '',
           year: btn.dataset.year || '',
+          tdbUrl: btn.dataset.ytUrl || '',
         });
       } else if (act === 'open-override') {
         openOverrideDialog({
@@ -5175,15 +5204,37 @@
 
   // ---- Manual YouTube URL dialog (Coverage tab) ----
 
-  function openManualUrlDialog({ ratingKey, title, year }) {
+  // v1.12.54: extract the canonical YouTube video ID from a URL
+  // for SET URL match detection. Mirrors the server's
+  // extract_video_id (downloader.py): handles watch?v=, youtu.be/,
+  // shorts/. Returns null on no-match. Used to compare the user's
+  // input to the row's TDB URL so the dialog can warn before the
+  // user pins an identical URL as a manual override.
+  function extractYouTubeVideoId(url) {
+    if (!url) return null;
+    const m = String(url).match(
+      /(?:youtube\.com\/watch\?(?:[^&]*&)*v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/i
+    );
+    return m ? m[1] : null;
+  }
+
+  function openManualUrlDialog({ ratingKey, title, year, tdbUrl }) {
     const dlg = document.getElementById('manual-url-dlg');
     if (!dlg) return;
     document.getElementById('manual-url-rk').value = ratingKey;
+    // v1.12.54: stash the row's TDB URL on the dialog element so
+    // the input-listener (bound once at page load) can read it
+    // each open without rebinding. dataset persists until the
+    // next openManualUrlDialog overwrites it.
+    dlg.dataset.tdbUrl = tdbUrl || '';
     const meta = document.getElementById('manual-url-dlg-meta');
     const ylabel = year ? ` (${htmlEscape(year)})` : '';
     meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
     document.getElementById('manual-url-input').value = '';
     document.getElementById('manual-url-status').textContent = '';
+    // v1.12.54: clear any leftover match-hint from a previous open.
+    const hint = document.getElementById('manual-url-match-hint');
+    if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
     if (typeof dlg.showModal === 'function') dlg.showModal();
     else dlg.setAttribute('open', '');
   }
@@ -5200,6 +5251,40 @@
     if (!dlg) return;
     document.getElementById('manual-url-dlg-close')?.addEventListener('click', closeManualUrlDialog);
     document.getElementById('manual-url-cancel')?.addEventListener('click', closeManualUrlDialog);
+    // v1.12.54: live match-warning. Whenever the user pauses
+    // typing, compare the input's video ID to the row's TDB URL
+    // (stored on dlg.dataset.tdbUrl by openManualUrlDialog). If
+    // they match, surface an inline hint that pinning the same
+    // URL as an override creates a U row that the next sync
+    // (v1.12.53) will surface as a "convert U → T" prompt anyway.
+    // Pure UX nudge — submit is still allowed.
+    const input = document.getElementById('manual-url-input');
+    const hint = document.getElementById('manual-url-match-hint');
+    if (input && hint) {
+      let matchTimer = null;
+      const checkMatch = () => {
+        const tdbUrl = dlg.dataset.tdbUrl || '';
+        if (!tdbUrl) {
+          hint.style.display = 'none';
+          return;
+        }
+        const userVid = extractYouTubeVideoId(input.value.trim());
+        const tdbVid = extractYouTubeVideoId(tdbUrl);
+        if (userVid && tdbVid && userVid === tdbVid) {
+          hint.textContent = 'This URL matches the current ThemerrDB URL. '
+            + 'Setting it as a manual override pins the row as U-source — '
+            + 'the next sync will surface a "convert U → T" prompt anyway. '
+            + 'Use RE-DOWNLOAD TDB instead if you just want to refresh the file.';
+          hint.style.display = '';
+        } else {
+          hint.style.display = 'none';
+        }
+      };
+      input.addEventListener('input', () => {
+        clearTimeout(matchTimer);
+        matchTimer = setTimeout(checkMatch, 250);
+      });
+    }
     const form = document.getElementById('manual-url-form');
     form?.addEventListener('submit', async (e) => {
       e.preventDefault();

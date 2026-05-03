@@ -909,12 +909,12 @@ def run_sync(db_path, base_url: str, *,
                 INSERT INTO pending_updates (
                     media_type, tmdb_id, old_video_id, new_video_id,
                     old_youtube_url, new_youtube_url,
-                    upstream_edited_at, detected_at, decision
+                    upstream_edited_at, detected_at, decision, kind
                 )
                 SELECT t.media_type, t.tmdb_id,
                        t.youtube_video_id, t.youtube_video_id,
                        NULL, t.youtube_url,
-                       t.youtube_edited_at, ?, 'pending'
+                       t.youtube_edited_at, ?, 'pending', 'urls_match'
                   FROM themes t
                   JOIN user_overrides uo
                     ON uo.media_type = t.media_type
