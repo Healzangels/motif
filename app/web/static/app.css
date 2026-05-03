@@ -510,22 +510,24 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .table th.col-sort:hover { color: var(--fg); }
 .table th.col-sort-active { color: var(--green-bright); }
 .table th .sort-indicator {
-  /* v1.12.27: simple inline-block 12px-wide slot, text-align
-     center so the ▲ / ▼ glyph (which renders ~10px wide at
-     font-size: 10px) sits centered within. width: 8px from
-     v1.12.25 was narrower than the glyph itself, causing the
-     triangle to either overflow visibly or render off-center.
-     line-height: 1 + vertical-align: middle keeps the indicator
-     on the same visual line as the header label. font-family
-     forced to monospace so the triangle metrics are predictable
-     across system fonts. */
-  display: inline-block;
-  vertical-align: middle;
-  margin-left: 6px;
+  /* v1.12.29: indicator is now a block beneath the label so
+     both the LABEL and the CARAT center horizontally within
+     the column. v1.12.28 placed "LABEL ▲" inline and centered
+     as a unit — which put the label off to the left of the
+     column center and the carat off to the right (neither
+     actually on the column center). Stacking the carat under
+     the label puts both on the column's vertical centerline.
+     Reserved 12px height + non-zero margin-top so the row
+     height stays constant whether the indicator is populated
+     (▲ / ▼) or empty, and so the label doesn't shift between
+     sort columns. */
+  display: block;
+  width: 100%;
+  height: 12px;
+  margin: 2px 0 0 0;
   font-size: 10px;
-  width: 12px;
-  text-align: center;
   line-height: 1;
+  text-align: center;
   font-family: var(--font-mono);
 }
 .table td {
