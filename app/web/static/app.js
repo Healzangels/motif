@@ -5305,13 +5305,18 @@
         //     the same content)
         // Either way the SOURCE menu hides REVERT; this hint
         // tells the user the missing button isn't a bug.
+        // v1.12.63: copy reworded for clarity per user feedback.
+        // "current canonical" was jargon; "currently applied" matches
+        // the field name two rows above and reads naturally. The
+        // url-match case explicitly says "URLs are identical" so
+        // the user can scan and understand at a glance.
         const currentCanonical = (ovr && ovr.youtube_url) || tdbUrl || '';
         if (!previousUrl) {
           puBlock += `<dt class="muted">revert</dt>`
-            + `<dd class="muted small">unavailable — no previous URL captured.</dd>`;
+            + `<dd class="muted small">unavailable — no previous URL was captured.</dd>`;
         } else if (previousUrl === currentCanonical) {
           puBlock += `<dt class="muted">revert</dt>`
-            + `<dd class="muted small">unavailable — previous URL matches the current canonical (would be a no-op).</dd>`;
+            + `<dd class="muted small">unavailable — the previous URL is identical to what's currently applied, so reverting would just re-create the override at the same URL (no-op).</dd>`;
         }
       }
     }
