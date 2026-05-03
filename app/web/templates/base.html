@@ -40,15 +40,13 @@
       <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
     </nav>
     <div class="topbar-status" id="topbar-status">
-      <span class="dot dot-pulse"></span>
-      <span class="muted" id="topbar-status-text">…</span>
-      <!-- v1.12.21: badges moved AFTER the dot+text. Pre-fix they sat
-           before the dot and were display:none in the static HTML;
-           when JS populated them on tab navigation, the dot got
-           shoved right by the inserted width — visible as a brief
-           jitter on every tab change. With them after the status
-           text, the dot's horizontal position is stable regardless
-           of badge state. -->
+      <!-- v1.12.44: badges moved BACK to before the dot+text per
+           user preference. The v1.12.21 "after" placement was to
+           avoid jitter when the badges popped in/out, but the
+           user prefers the [UPD] [FAIL] ● IDLE layout visually.
+           The jitter is mild (dot shifts left a bit when a badge
+           appears) and lives only at the badge-edge transitions,
+           not on every tab change like the pre-1.12.21 bug. -->
       <a href="/movies?status=updates" class="topbar-badge" id="topbar-updates-badge"
          style="display:none"
          title="ThemerrDB upstream URL changed on one or more themes motif manages. Click to review on the library tab.">
@@ -61,6 +59,8 @@
         <span id="topbar-failures-count">0</span>
         <span class="topbar-badge-label">FAIL</span>
       </a>
+      <span class="dot dot-pulse"></span>
+      <span class="muted" id="topbar-status-text">…</span>
       <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
     </div>
   </header>
