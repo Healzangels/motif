@@ -384,6 +384,7 @@ def _enqueue_download(
     reason: str,
     auto_place: bool | None = None,
     force_place: bool = False,
+    only_section_id: str | None = None,
 ) -> int:
     """v1.11.0: enqueue one download job per (media_type, tmdb_id, section)
     where this item lives — sections discovered via plex_items joined to
@@ -408,15 +409,31 @@ def _enqueue_download(
     old U theme.
     """
     plex_type = "show" if media_type == "tv" else "movie"
-    sections = conn.execute(
-        """SELECT DISTINCT pi.section_id
-           FROM plex_items pi
-           JOIN plex_sections ps ON ps.section_id = pi.section_id
-           WHERE pi.guid_tmdb = ?
-             AND pi.media_type = ?
-             AND ps.included = 1""",
-        (tmdb_id, plex_type),
-    ).fetchall()
+    # v1.12.46: scope to a single section when only_section_id is
+    # set (e.g., ACCEPT UPDATE clicked from a specific library
+    # row should only re-theme that section's edition, not fan
+    # out to every section that owns the title).
+    if only_section_id is not None:
+        sections = conn.execute(
+            """SELECT DISTINCT pi.section_id
+               FROM plex_items pi
+               JOIN plex_sections ps ON ps.section_id = pi.section_id
+               WHERE pi.guid_tmdb = ?
+                 AND pi.media_type = ?
+                 AND pi.section_id = ?
+                 AND ps.included = 1""",
+            (tmdb_id, plex_type, only_section_id),
+        ).fetchall()
+    else:
+        sections = conn.execute(
+            """SELECT DISTINCT pi.section_id
+               FROM plex_items pi
+               JOIN plex_sections ps ON ps.section_id = pi.section_id
+               WHERE pi.guid_tmdb = ?
+                 AND pi.media_type = ?
+                 AND ps.included = 1""",
+            (tmdb_id, plex_type),
+        ).fetchall()
     if not sections:
         # Nothing to enqueue — the item isn't in any included Plex
         # section yet. Common during the window between sync (which

@@ -1125,14 +1125,13 @@
 
   async function acceptUpdate(mediaType, tmdbId, btn) {
     // v1.12.42: tailor the confirm prompt based on whether the
-    // row's current source is a user URL. ACCEPT UPDATE on a U
-    // row captures the user_overrides URL into
-    // themes.previous_youtube_url so REVERT can restore it
-    // post-accept (assuming the URLs differ — server-side
-    // checks that and skips capture if they match). The "previous
-    // file is unrecoverable" line was correct for T-row accepts
-    // but misleading for U-row accepts where the user URL is
-    // explicitly preserved.
+    // row's current source is a user URL.
+    // v1.12.46: also scope the action to a single section if the
+    // button carries a data-section-id. Pre-fix accept-update
+    // fanned out across every section owning the title, so
+    // accepting from a 4K library row also overwrote the
+    // standard library's placement — wrong when the user wants
+    // different themes per edition.
     let isUserSrcRow = false;
     if (btn) {
       const rowItem = (libraryState.items || []).find((it) =>
@@ -1144,19 +1143,23 @@
     const promptText = isUserSrcRow
       ? 'Accept the ThemerrDB update?\n\n'
         + 'Motif will download the new ThemerrDB URL and overwrite '
-        + 'the current theme file. Your manual URL is saved — if '
-        + 'you change your mind, REVERT in the SOURCE menu will '
-        + 'restore it. (If your URL exactly matched the new TDB '
-        + 'URL, REVERT will be unavailable; the INFO card explains.)'
+        + 'the current theme file in this section. Your manual URL '
+        + 'is saved — if you change your mind, REVERT in the SOURCE '
+        + 'menu will restore it. (If your URL exactly matched the '
+        + 'new TDB URL, REVERT will be unavailable; the INFO card '
+        + 'explains.)'
       : 'Accept the ThemerrDB update?\n\n'
         + 'Motif will download from the new YouTube URL and '
-        + 'overwrite the current theme file (canonical + every '
-        + 'section\'s placement). The previous file is '
-        + 'unrecoverable after this.';
+        + 'overwrite the current theme file in this section. The '
+        + 'previous file is unrecoverable after this.';
     if (!confirm(promptText)) return;
     if (btn) btn.disabled = true;
     try {
-      await api('POST', `/api/updates/${mediaType}/${tmdbId}/accept`);
+      const sectionId = btn?.dataset?.sectionId;
+      const url = sectionId
+        ? `/api/updates/${mediaType}/${tmdbId}/accept?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/updates/${mediaType}/${tmdbId}/accept`;
+      await api('POST', url);
       if (btn) btn.textContent = 'QUEUED';
       setTimeout(() => loadItems().catch(()=>{}), 600);
     } catch (e) {
@@ -3251,6 +3254,13 @@
         extras.rk !== undefined ? `data-rk="${htmlEscape(extras.rk)}"` : '',
         extras.mt !== undefined ? `data-mt="${htmlEscape(extras.mt)}"` : '',
         extras.id !== undefined ? `data-id="${htmlEscape(extras.id)}"` : '',
+        // v1.12.46: section_id flows through so handlers can scope
+        // their action to the row's section (e.g. ACCEPT UPDATE
+        // placing only in the section the user clicked from,
+        // rather than fanning out to every section owning the
+        // title — important when the same title lives in both
+        // standard and 4K libraries with different editions).
+        extras.sectionId !== undefined ? `data-section-id="${htmlEscape(extras.sectionId)}"` : '',
         `data-title="${htmlEscape(it.plex_title)}"`,
         `data-year="${htmlEscape(it.year || '')}"`,
         extras.orphan !== undefined ? `data-orphan="${extras.orphan ? '1' : '0'}"` : '',
@@ -3335,10 +3345,17 @@
     // the "kept" state and the action would be a no-op.
     if (it.pending_update && themed
         && themeId !== null && themeId !== undefined) {
+      // v1.12.46: pass sectionId so the accept-update endpoint
+      // scopes the download + place to ONLY this row's section.
+      // Pre-fix _enqueue_download fanned out to every section
+      // that owned the title, so accepting from the 4K row
+      // would also overwrite the standard library's theme —
+      // which the user wanted independently themed (different
+      // editions = different themes).
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
-        'Download the new ThemerrDB URL and replace the current theme.',
-        { mt: themeMt, id: themeId, info: true },
+        'Download the new ThemerrDB URL and replace the current theme in this section only.',
+        { mt: themeMt, id: themeId, sectionId: it.section_id, info: true },
       ));
       if (it.actionable_update) {
         sourceItems.push(menuItemHtml(
@@ -4937,12 +4954,26 @@
     const lf = data.local_file;
     const placements = data.placements || [];
     const pu = data.pending_update;
-    // v1.12.37: the INFO card now shows three explicit URLs —
-    // ThemerrDB, currently applied, and previous — so the user
-    // can see at a glance what they're on, what TDB advertises,
-    // and what REVERT will restore.
+    // v1.12.37 / v1.12.46: three URL rows render top-of-card —
+    // ThemerrDB, currently applied, previous.
+    //
+    // "currently applied" only fills in when the row's canonical
+    // was actually downloaded from a YouTube URL — i.e., the
+    // local_files row has source_kind 'themerrdb' / 'url' /
+    // 'upload'. M (manual sidecar), A (adopted), and P (Plex
+    // agent) rows have a theme.mp3 in place but its contents
+    // didn't come from a YouTube URL motif controls. Pre-fix
+    // the field showed t.youtube_url for those rows even though
+    // the displayed URL wasn't being applied — misleading.
+    // v1.12.46 leaves it blank for non-URL sources.
     const tdbUrl = t.youtube_url || '';
-    const currentUrl = ovr?.youtube_url || t.youtube_url || '';
+    const lfSource = lf?.source_kind || null;
+    const isUrlSourced = lfSource === 'themerrdb'
+      || lfSource === 'url'
+      || lfSource === 'upload';
+    const currentUrl = isUrlSourced
+      ? (ovr?.youtube_url || t.youtube_url || '')
+      : '';
     const previousUrl = t.previous_youtube_url || '';
     const previousKind = t.previous_youtube_kind || null;
     // ytId for the embedded YouTube thumbnail tracks the currently

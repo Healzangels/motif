@@ -2632,6 +2632,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/updates/{media_type}/{tmdb_id}/accept")
     async def api_accept_update(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.46: optional section_id scopes the download +
+        # placement to one section only. When omitted, falls back
+        # to the v1.12.34 behavior of fanning out to every
+        # section that owns the title (used by callers without
+        # row-level context; the library row UI now always passes
+        # section_id so the user gets per-section behavior).
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """Accept an upstream theme update: enqueue a re-download with the new URL.
@@ -2729,11 +2736,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # user file — motif downloaded the new canonical
             # but the placement file never got replaced, so
             # Plex kept playing the old U theme.
+            # v1.12.46: section_id (if provided) scopes the
+            # enqueue to only one section. Without it, the
+            # download fans out to every section that owns the
+            # title — wrong when the same title lives in
+            # multiple libraries with separately-themed editions
+            # (e.g., standard + 4K). The library row UI passes
+            # section_id; sync/scheduled callers omit it.
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason="upstream_update_accepted",
                 auto_place=True,
                 force_place=True,
+                only_section_id=section_id,
             )
         # v1.12.43: log message references url_match (computed
         # above) instead of the v1.12.35-era replaced_user_url
