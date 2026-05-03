@@ -1040,7 +1040,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    colors (red here vs magenta there) keep them disambiguated. */
 .link-glyph-mismatch {
   display: inline-block;
-  padding: 1px 5px;
+  padding: 1px 4px 1px 5px;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -1340,7 +1340,14 @@ pre code, .codeblock {
    they're a column apart and the badge text disambiguates. */
 .link-glyph-hardlink {
   display: inline-block;
-  padding: 1px 5px;
+  /* v1.12.30: padding-right reduced 5 -> 4px to compensate for
+     the trailing letter-spacing after the final character — the
+     0.1em (~0.9px) of empty space added after the last letter
+     pushed the visible "HL" to the left of the pill's geometric
+     center, which the user read as the pill being "too large to
+     the right". Asymmetric padding cancels the trailing space
+     so the visible glyphs sit centered inside the pill border. */
+  padding: 1px 4px 1px 5px;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
@@ -1351,7 +1358,7 @@ pre code, .codeblock {
 }
 .link-glyph-copy {
   display: inline-block;
-  padding: 1px 5px;
+  padding: 1px 4px 1px 5px;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.1em;
