@@ -308,6 +308,35 @@ _LIBRARY_SORTS_MAIN = {
     "dl":    "CASE WHEN lf.file_path IS NOT NULL THEN 0 ELSE 1 END",
     "pl":    "CASE WHEN p.media_folder IS NOT NULL THEN 0 ELSE 1 END",
     "link":  "CASE p.placement_kind WHEN 'hardlink' THEN 0 WHEN 'copy' THEN 1 ELSE 2 END",
+    # v1.12.68: 'attention' sort orders rows by what needs the
+    # user's attention most. Lower priority numbers sort first
+    # (asc) so the rows demanding action float to the top of the
+    # list — failures, then pending updates, then post-DEL await
+    # placements, then mismatches, then the rest. Pairs with the
+    # frontend's // NEEDS WORK sort button. Title is the
+    # secondary key (added in the SQL builder via _LIBRARY_SORT_TIE)
+    # so equal-priority rows stay alphabetized.
+    "attention": (
+        "CASE "
+        # Active failure (red TDB ✗ pill, not yet acked)
+        "WHEN t.failure_kind IS NOT NULL AND t.failure_acked_at IS NULL THEN 1 "
+        # Pending upstream update (blue TDB ↑ pill, not yet decided)
+        "WHEN EXISTS (SELECT 1 FROM pending_updates pu "
+        "  WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
+        "    AND pu.decision = 'pending') THEN 2 "
+        # Awaiting placement (canonical exists, no placement)
+        "WHEN lf.file_path IS NOT NULL AND p.media_folder IS NULL THEN 3 "
+        # Mismatch (canonical and placement file diverged)
+        "WHEN lf.mismatch_state = 'pending' THEN 4 "
+        # Acked failure or KEEP-CURRENTed update — a passive
+        # "still broken" cue, lower urgency than the unhandled
+        # cases above but higher than ordinary rows.
+        "WHEN t.failure_kind IS NOT NULL THEN 5 "
+        "WHEN EXISTS (SELECT 1 FROM pending_updates pu "
+        "  WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
+        "    AND pu.decision = 'declined') THEN 6 "
+        "ELSE 7 END"
+    ),
 }
 _LIBRARY_SORTS_NOT_IN_PLEX = {
     "title": "t.title COLLATE NOCASE",
@@ -3224,7 +3253,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ed_pills: str = Query(""),
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
-        sort: str = Query("title", pattern="^(title|year|src|dl|pl|link|imdb)$"),
+        sort: str = Query("title", pattern="^(title|year|src|dl|pl|link|imdb|attention)$"),
         sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
         db: Path = Depends(get_db_path),
     ):

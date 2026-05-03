@@ -2881,6 +2881,14 @@
       th.classList.toggle('col-sort-active', isActive);
       ind.textContent = isActive ? (libraryState.sortDir === 'desc' ? '▼' : '▲') : '';
     });
+    // v1.12.68: reflect the attention-sort state on the
+    // // NEEDS WORK chip. Active when libraryState.sort is
+    // 'attention'; clicking toggles back to the prior column
+    // sort (or title asc as the fallback).
+    const attnBtn = document.getElementById('library-sort-attention-btn');
+    if (attnBtn) {
+      attnBtn.classList.toggle('chip-active', libraryState.sort === 'attention');
+    }
   }
 
   async function loadLibrary() {
@@ -4572,6 +4580,32 @@
       loadLibrary().catch(console.error);
     });
 
+    // v1.12.68: // NEEDS WORK chip toggles the attention sort.
+    // Stores the prior (column) sort on first activation so a
+    // second click can restore it cleanly. Title-asc is the
+    // fallback when no prior sort is recorded.
+    document.getElementById('library-sort-attention-btn')?.addEventListener('click', () => {
+      if (libraryState.sort === 'attention') {
+        // Toggle off — restore the prior sort or default to title
+        const prior = libraryState._attentionPriorSort
+                   || { sort: 'title', sortDir: 'asc' };
+        libraryState.sort = prior.sort;
+        libraryState.sortDir = prior.sortDir;
+        libraryState._attentionPriorSort = null;
+      } else {
+        // Toggle on — remember the current sort to restore later
+        libraryState._attentionPriorSort = {
+          sort: libraryState.sort,
+          sortDir: libraryState.sortDir,
+        };
+        libraryState.sort = 'attention';
+        libraryState.sortDir = 'asc';  // ascending = highest priority first
+      }
+      libraryState.page = 1;
+      updateSortIndicators();
+      loadLibrary().catch(console.error);
+    });
+
     // v1.10.15: column sort. Click a th[data-sort] to sort. Re-clicking
     // the active column toggles asc → desc → asc. Switching columns
     // resets to asc. The active column shows a ▲/▼ indicator.
@@ -4579,6 +4613,13 @@
       th.addEventListener('click', () => {
         const key = th.dataset.sort;
         if (!key) return;
+        // v1.12.68: clicking a column header while attention sort is
+        // active clears the "prior sort" memory — the user has
+        // explicitly picked a new column, so the // NEEDS WORK
+        // toggle no longer needs to restore an older value.
+        if (libraryState.sort === 'attention') {
+          libraryState._attentionPriorSort = null;
+        }
         if (libraryState.sort === key) {
           libraryState.sortDir = libraryState.sortDir === 'asc' ? 'desc' : 'asc';
         } else {
