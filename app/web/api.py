@@ -468,7 +468,20 @@ def _library_main_query(
                 else:
                     branches.append("(t.upstream_source IN ('imdb','themoviedb') AND t.failure_kind IS NULL)")
             elif p == "update":
-                branches.append("EXISTS (SELECT 1 FROM pending_updates pu WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id AND pu.decision IN ('pending','declined'))")
+                # v1.12.48: scoped to decision='pending' (was IN
+                # ('pending','declined')) so the filter matches the
+                # topbar UPD count exactly. Clicking the UPD badge
+                # now lands the user on a list with the same
+                # cardinality the badge advertised. KEEP CURRENT
+                # decisions still light up the row's blue pill but
+                # are excluded from this filter — the user already
+                # said they don't want to act on them.
+                branches.append(
+                    "EXISTS (SELECT 1 FROM pending_updates pu "
+                    "WHERE pu.media_type = t.media_type "
+                    "AND pu.tmdb_id = t.tmdb_id "
+                    "AND pu.decision = 'pending')"
+                )
             elif p == "cookies":
                 if not cookies_present:
                     branches.append("(t.failure_kind = 'cookies_expired')")
@@ -1430,8 +1443,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   AND t.failure_acked_at IS NULL
                 LIMIT 1
             """).fetchone()
+            # v1.12.48: matching tab hint for the topbar UPD badge so
+            # clicking the badge lands the user on the tab that owns
+            # the first row with a pending update. Mirrors the FAIL
+            # query above. NULL when no pending updates exist.
+            update_tab_row = conn.execute("""
+                SELECT ps.type, ps.is_anime
+                FROM pending_updates pu
+                JOIN plex_items pi
+                  ON pi.guid_tmdb = pu.tmdb_id
+                 AND pi.media_type = (CASE pu.media_type WHEN 'tv' THEN 'show' ELSE pu.media_type END)
+                JOIN plex_sections ps
+                  ON ps.section_id = pi.section_id AND ps.included = 1
+                WHERE pu.decision = 'pending'
+                LIMIT 1
+            """).fetchone()
             dry = is_dry_run(db, default=settings.dry_run_default)
-        return row, last_sync, enum_running_rows, dry, failure_tab_row
+        return row, last_sync, enum_running_rows, dry, failure_tab_row, update_tab_row
 
     # v1.11.37: short-TTL cache for /api/stats. Topbar polls every 15s
     # AND every page that wires sync/refresh fires it on click — under
@@ -1452,7 +1480,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and (now - cached["ts"]) < _stats_cache_ttl
                 and cached["value"] is not None):
             return cached["value"]
-        row, last_sync, enum_running_rows, dry, failure_tab_row = await run_in_threadpool(_stats_sync, db)
+        row, last_sync, enum_running_rows, dry, failure_tab_row, update_tab_row = await run_in_threadpool(_stats_sync, db)
         # v1.11.27: aggregate the per-section enum_running rows into a
         # tab-variant map and a section_id list so the UI can lock
         # buttons granularly.
@@ -1514,6 +1542,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "updates": {
                 "pending": row["updates_pending"],
+                # v1.12.48: tab hint mirrors failures.tab_hint so the
+                # topbar UPD badge can route to whichever tab owns
+                # the first pending update (anime / tv / movies).
+                "tab_hint": (
+                    "anime" if update_tab_row and update_tab_row["is_anime"]
+                    else "movies" if update_tab_row and update_tab_row["type"] == "movie"
+                    else "tv" if update_tab_row
+                    else None
+                ),
             },
             "failures": {
                 "total": row["failures_total"],

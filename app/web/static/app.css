@@ -383,10 +383,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 /* ---- Filterbar ---- */
 
 .filterbar {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
-  padding: 14px 16px;
+  /* v1.12.48: tighter outer padding + shorter bottom margin to
+     claw back vertical real-estate. The hero and table sit
+     closer to the filters now, so the user reaches more rows
+     without scrolling on a typical laptop viewport. */
+  margin-bottom: 12px;
+  padding: 8px 12px;
   background: var(--bg-elev);
   border: 1px solid var(--line);
 }
@@ -814,11 +818,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
-  /* v1.12.45: tighter row gap for visual rhythm. Previous 6px
-     was a touch loose given the divider already provides
-     between-group breathing room. */
-  margin-top: 4px;
+  gap: 5px;
+  /* v1.12.48: row gap dropped to 1px so the six rows stack
+     tightly. The divider above DL still provides visual
+     separation between the theme-axis and file-axis groups;
+     adjacent rows within a group don't need much breathing
+     room when each row is its own colored-label scanline. */
+  margin-top: 1px;
   padding: 0 2px;
   flex-basis: 100%;
 }
@@ -841,7 +847,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .pill-filter-row .state-pill-btn,
 .pill-filter-row .link-glyph,
 .pill-filter-row .ed-pill-btn {
-  height: 22px;
+  /* v1.12.48: 22 -> 20px to recover vertical real-estate
+     across the six rows. Shrinking pill height by 2px ×
+     six rows saves 12px of total height without making
+     the click target uncomfortable (still 20px tall, well
+     above the 16px floor for a glyph chip). */
+  height: 20px;
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -873,8 +884,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    competed visually with the pill-filter-clear button border.
    Slightly more breathing room above the divider. */
 .pill-filter-row.pill-filter-row-divider {
-  margin-top: 14px;
-  padding-top: 12px;
+  /* v1.12.48: divider tightened to keep the file-axis group
+     visually separated without consuming a full row-height of
+     dead space. 14/12 -> 8/6. */
+  margin-top: 8px;
+  padding-top: 6px;
   border-top: 1px solid var(--line);
 }
 .pill-filter-clear {

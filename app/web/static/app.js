@@ -342,6 +342,14 @@
         if (n > 0) {
           $('#topbar-updates-count').textContent = n;
           updBadge.style.display = '';
+          // v1.12.48: route the badge to whichever tab owns the
+          // first row with a pending update (mirrors the FAIL
+          // badge's tab_hint logic). Apply the blue TDB ↑ pill
+          // filter so the user lands directly on the rows that
+          // make up the count — matched 1:1 since the
+          // tdb_pills=update SQL now scopes to decision='pending'.
+          const tabHint = (stats.updates && stats.updates.tab_hint) || 'movies';
+          updBadge.href = `/${tabHint}?tdb_pills=update`;
         } else {
           updBadge.style.display = 'none';
         }
@@ -2931,7 +2939,12 @@
     const isThemerrDbAvail = it.upstream_source
       && it.upstream_source !== 'plex_orphan';
     if (!isThemerrDbAvail) return 'none';
-    if (it.pending_update) return 'update';
+    // v1.12.48: pending_update only meaningful when the row is
+    // actually themed. If src='-' (no theme anywhere) there's
+    // nothing to "update" — fall through to plain green TDB so
+    // the SOURCE menu prompts a fresh download instead of an
+    // ACCEPT UPDATE that would just download the same URL.
+    if (it.pending_update && computeSrcLetter(it) !== '-') return 'update';
     if (it.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(it.failure_kind)) {
       return 'dead';
     }
@@ -3215,7 +3228,11 @@
       // generic green TDB pill so the user can scan the library page
       // and immediately see which rows have an upstream URL update
       // available. Blue ties to the ↑ glyph and the UPDATES filter.
-      if (it.pending_update) {
+      // v1.12.48: gate on src!='-' — if the row has no theme anywhere
+      // there's nothing to ACCEPT UPDATE against (the action would
+      // just download the current URL), so render the plain green
+      // TDB pill that prompts DOWNLOAD via the SOURCE menu.
+      if (it.pending_update && computeSrcLetter(it) !== '-') {
         return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss.">TDB ↑</span>';
       }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
