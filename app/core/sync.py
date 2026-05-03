@@ -840,9 +840,6 @@ def run_sync(db_path, base_url: str, *,
         # the root cause so the UPD count and the tdb_pills=update
         # filter both stop counting them too.
         #
-        # Scoped to decision IN ('pending','declined') so an in-flight
-        # ACCEPT UPDATE (decision='accepted', download/place job not
-        # yet materialized) never gets pruned out from under the worker.
         # Mirrors the cross-sync match-detection inverse at line 597:
         # rows are *created* when has_local_files OR has_override OR
         # has_sidecar; rows are *deleted* here when none of those hold.
@@ -854,12 +851,23 @@ def run_sync(db_path, base_url: str, *,
         # The user still has the theme playing in Plex, so the
         # pending_update is still actionable. Defensive: if the four
         # criteria all miss, the row is genuinely orphaned.
+        # v1.12.58: dropped the decision IN ('pending','declined')
+        # filter that was here to protect in-flight ACCEPT UPDATE
+        # downloads. Replaced with a NOT EXISTS jobs check that
+        # provides the same protection more precisely. Pre-fix,
+        # 'accepted' decisions for rows that had since been PURGEd
+        # (or where pre-v1.12.57 PURGE failed to clean up — the
+        # whole reason v1.12.57 added _drop_motif_tracking) lingered
+        # forever, setting the SQL accepted_update flag and
+        # blocking REPLACE TDB / DOWNLOAD TDB in the SOURCE menu
+        # for the row's afterlife. With the in-flight guard, any
+        # decision is fair game once the row has nothing to update
+        # against AND no live download/place jobs.
         with get_conn(db_path) as conn:
             pruned = conn.execute(
                 """
                 DELETE FROM pending_updates
-                WHERE decision IN ('pending', 'declined')
-                  AND NOT EXISTS (
+                WHERE NOT EXISTS (
                     SELECT 1 FROM local_files lf
                     WHERE lf.media_type = pending_updates.media_type
                       AND lf.tmdb_id = pending_updates.tmdb_id
@@ -881,6 +889,13 @@ def run_sync(db_path, base_url: str, *,
                                             WHEN 'tv' THEN 'show'
                                             ELSE pending_updates.media_type END)
                       AND pi.local_theme_file = 1
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM jobs j
+                    WHERE j.media_type = pending_updates.media_type
+                      AND j.tmdb_id = pending_updates.tmdb_id
+                      AND j.job_type IN ('download', 'place')
+                      AND j.status IN ('pending', 'running')
                   )
                 """
             ).rowcount or 0
