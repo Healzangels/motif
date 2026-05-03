@@ -1850,6 +1850,83 @@ pre code, .codeblock {
   .diff-arrow { transform: rotate(90deg); padding: 8px 0; }
 }
 
+/* v1.12.66: per-row event timeline in the INFO card. Collapsed by
+   default (native <details>) so the timeline stays out of the way
+   on rows the user isn't debugging; click-to-expand surfaces the
+   full audit trail without leaving the dialog. */
+.history-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.history-section > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+}
+.history-section > summary::-webkit-details-marker { display: none; }
+.history-section-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  color: var(--cyan);
+}
+.history-section[open] .history-section-title { color: var(--green-bright); }
+.history-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+.history-row {
+  border-left: 2px solid var(--line);
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.history-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+}
+.history-ts { color: var(--fg-dim); }
+.history-level {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: var(--t-tiny);
+}
+.history-level-info  { color: var(--cyan);  border: 1px solid rgba(109,211,255,0.35); }
+.history-level-warn  { color: var(--amber); border: 1px solid rgba(255,184,74,0.4); }
+.history-level-error { color: var(--red);   border: 1px solid rgba(255,107,107,0.4); }
+.history-component { font-family: var(--font-mono); }
+.history-msg {
+  margin-top: 4px;
+  line-height: 1.5;
+  font-size: var(--t-tiny);
+}
+.history-detail {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  line-height: 1.4;
+  color: var(--fg-dim);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 240px;
+}
+
 .form-env-badge {
   font-size: var(--t-tiny);
   letter-spacing: 0.15em;

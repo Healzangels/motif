@@ -3130,6 +3130,14 @@
     // Plex" call-to-action wasn't visible from the column scan.
     // Amber matches the title-glyph color so the row's two
     // attention signals agree.
+    // v1.12.66: awaitingApproval was originally declared further
+    // down (after the title-cell glyphs), but the v1.12.65 pl
+    // computation referenced it before its const declaration —
+    // ReferenceError in the temporal dead zone, which crashed
+    // renderLibraryRow and left every library tab stuck at
+    // "loading…". Moved the declaration up here so pl can read it
+    // safely; the original declaration site below is removed.
+    const awaitingApproval = !it.job_in_flight && !!it.file_path && !it.media_folder;
     const pl = placed ? 'on' : (awaitingApproval ? 'await' : '');
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
     if (isMismatch && placed) {
@@ -3143,10 +3151,9 @@
     // Title-cell glyphs
     const titleGlyphs = [];
     let rowExtra = '';
-    // Awaiting-placement-approval state: motif has the download but the
-    // place job was deferred (typically because a sidecar exists at the
-    // Plex folder that approval would overwrite).
-    const awaitingApproval = !it.job_in_flight && !!it.file_path && !it.media_folder;
+    // v1.12.66: awaitingApproval declaration moved up to the dl/pl
+    // block. It was here originally but pl now needs it earlier;
+    // declaring twice would shadow + ReferenceError under TDZ.
     if (it.job_in_flight) {
       // Theme has a pending or running download/place job — pulse a cyan
       // glyph so users can watch their just-clicked URL/upload land. Pairs
@@ -4576,6 +4583,13 @@
       // a plex_orphan (which has no upstream URL to fetch from).
       const items = [];
       const skipped = [];
+      // v1.12.66: per-source-letter breakdown so the confirm dialog
+      // can show "3 will be downloaded fresh, 2 will replace U content,
+      // 1 will replace P-agent" instead of a faceless "12 rows" count.
+      // The user picked this up from a v1.11.30 selection that mixed
+      // M sidecars (now ADOPT-only) with downloadable rows; making the
+      // mix legible avoids accidental overwrites.
+      const breakdown = { T: 0, U: 0, A: 0, M: 0, P: 0, '-': 0 };
       const selectedKeys = libraryState.selected;
       for (const it of (libraryState.items || [])) {
         const key = libKey(it);
@@ -4588,6 +4602,8 @@
           skipped.push(it.plex_title || key);
           continue;
         }
+        const srcLetter = computeSrcLetter(it);
+        if (srcLetter in breakdown) breakdown[srcLetter]++;
         items.push({
           media_type: it.theme_media_type,
           tmdb_id: it.theme_tmdb,
@@ -4597,14 +4613,39 @@
         alert('Nothing downloadable in selection — every selected row is a sidecar (use ADOPT SELECTED) or has no ThemerrDB record.');
         return;
       }
+      // v1.12.66: confirm dialog with kind-by-kind breakdown so the
+      // user knows exactly which source classes get overwritten. Only
+      // shows breakdown lines for non-zero counts; if everything is
+      // '-' (a clean download spread) the dialog reads simpler.
+      const lines = [];
+      const parts = [];
+      if (breakdown['-']) parts.push(`${breakdown['-']} unthemed (clean download)`);
+      if (breakdown.T)    parts.push(`${breakdown.T} T (refresh)`);
+      if (breakdown.U)    parts.push(`${breakdown.U} U (replace user URL)`);
+      if (breakdown.A)    parts.push(`${breakdown.A} A (replace adopted)`);
+      if (breakdown.M)    parts.push(`${breakdown.M} M (replace sidecar)`);
+      if (breakdown.P)    parts.push(`${breakdown.P} P (replace Plex agent)`);
+      const willReplace = breakdown.T + breakdown.U + breakdown.A
+                        + breakdown.M + breakdown.P;
+      lines.push(`Download ${items.length} theme${items.length === 1 ? '' : 's'} from ThemerrDB?`);
+      lines.push('');
+      lines.push('Breakdown:');
+      lines.push('  ' + parts.join('\n  '));
+      if (willReplace > 0) {
+        lines.push('');
+        lines.push(`⚠ ${willReplace} row${willReplace === 1 ? '' : 's'} will have their existing theme replaced. This cannot be undone in bulk; per-row REVERT remains available where applicable.`);
+      }
+      if (skipped.length) {
+        lines.push('');
+        lines.push(`(${skipped.length} skipped — sidecars use ADOPT, no-TDB rows have no upstream to fetch.)`);
+      }
+      if (!confirm(lines.join('\n'))) return;
       const btn = e.currentTarget;
       btn.disabled = true;
       const orig = btn.textContent;
       btn.textContent = '// QUEUING';
       try {
         const r = await api('POST', '/api/library/download-batch', { items });
-        // v1.11.30: surface the skip count so the user knows their
-        // M-row selection wasn't ignored silently.
         const skipNote = skipped.length ? ` (${skipped.length} skipped — use ADOPT for sidecars)` : '';
         btn.textContent = `// ${r.enqueued} QUEUED${skipNote}`;
         libraryState.selected.clear();
@@ -5381,6 +5422,14 @@
     // are identical, no diff to display) and for non-pending
     // decisions (already accepted/declined).
     const diffSection = renderPendingUpdateDiff(pu, lf, t);
+    // v1.12.66: per-row events timeline. The INFO endpoint already
+    // returns the last 25 events for this (media_type, tmdb_id);
+    // pre-fix the dialog discarded them. Surfacing the timeline
+    // gives a "what happened to this row" debug log without needing
+    // to grep the global LOGS tab. Collapsed by default to keep
+    // the dialog scannable; expand-on-click for the deep dive.
+    const events = (data.events || []);
+    const historySection = renderRowHistory(events);
     body.innerHTML = `
       <h3>${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
       <dl class="dlg-grid">
@@ -5400,6 +5449,7 @@
         ${placedBlock}
       </dl>
       ${diffSection}
+      ${historySection}
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
         <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
            style="display:block;text-decoration:none">
@@ -5416,6 +5466,65 @@
     // await — failures fall back to bare video IDs already in the
     // markup. Runs after innerHTML so the DOM nodes exist.
     hydrateDiffTitles(body);
+  }
+
+  // v1.12.66: per-row events timeline. Renders the last 25 events
+  // for this row (already loaded by /api/items/{mt}/{tmdb}) as a
+  // collapsed details popover. Each line shows local-formatted
+  // timestamp · level · component · message, color-coded by level.
+  // Detail JSON is rendered as a nested <pre> when present, so a
+  // failed download's raw error or a sync's index/payload counts
+  // are inspectable without leaving the dialog.
+  function renderRowHistory(events) {
+    if (!events || !events.length) return '';
+    const fmtTs = (iso) => {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+      } catch (_) {
+        return iso;
+      }
+    };
+    const levelClass = (level) => {
+      const l = (level || '').toUpperCase();
+      if (l === 'ERROR') return 'history-level-error';
+      if (l === 'WARNING' || l === 'WARN') return 'history-level-warn';
+      return 'history-level-info';
+    };
+    const rows = events.map((e) => {
+      const detail = (() => {
+        if (!e.detail) return '';
+        try {
+          const parsed = typeof e.detail === 'string' ? JSON.parse(e.detail) : e.detail;
+          const pretty = JSON.stringify(parsed, null, 2);
+          return `<pre class="history-detail">${htmlEscape(pretty)}</pre>`;
+        } catch (_) {
+          return `<pre class="history-detail">${htmlEscape(String(e.detail))}</pre>`;
+        }
+      })();
+      return `
+        <div class="history-row">
+          <div class="history-row-head">
+            <span class="history-ts">${htmlEscape(fmtTs(e.ts))}</span>
+            <span class="history-level ${levelClass(e.level)}">${htmlEscape((e.level || '').toUpperCase())}</span>
+            <span class="history-component muted small">${htmlEscape(e.component || '')}</span>
+          </div>
+          <div class="history-msg">${htmlEscape(e.message || '')}</div>
+          ${detail}
+        </div>
+      `;
+    }).join('');
+    return `
+      <details class="history-section">
+        <summary>
+          <span class="history-section-title">// HISTORY</span>
+          <span class="muted small">${events.length} event${events.length === 1 ? '' : 's'} · click to expand</span>
+        </summary>
+        <div class="history-body">${rows}</div>
+      </details>
+    `;
   }
 
   // v1.12.56: render the side-by-side diff for an actionable
