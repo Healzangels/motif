@@ -3339,10 +3339,15 @@
       // pre-1.10.29 the button would have errored or 'reverted' to
       // nothing.
       if (sourceKindForActions === 'url' && isThemerrDb) {
+        // v1.12.33: tone switched themerrdb (green) -> user (violet)
+        // so REVERT visually matches the U badge color of the row
+        // it lives on. Differentiates from DOWNLOAD TDB /
+        // RE-DOWNLOAD TDB which keep the green themerrdb tone for
+        // the download-from-TDB action family.
         sourceItems.push(menuItemHtml(
           'revert', 'REVERT',
           'Clear the manual URL override and re-download from ThemerrDB.',
-          { mt: themeMt, id: themeId, warn: true, tone: 'themerrdb' },
+          { mt: themeMt, id: themeId, tone: 'user' },
         ));
       }
     }
@@ -3368,10 +3373,17 @@
     // KEEP CURRENT would be a no-op.
     if (it.pending_update && themed
         && themeId !== null && themeId !== undefined) {
+      // v1.12.33: dropped tone='themerrdb' so the btn-info blue
+      // dominates — matches the .tdb-pill-update blue ↑ pill the
+      // row is showing. The old themerrdb tone (green) was
+      // beating btn-info on specificity and washed the button to
+      // the same green as DOWNLOAD TDB / RE-DOWNLOAD TDB, which
+      // muddled the user's mental link between the blue pill
+      // and the action that resolves it.
       sourceItems.push(menuItemHtml(
         'accept-update', 'ACCEPT UPDATE',
         'Download the new ThemerrDB URL and replace the current theme.',
-        { mt: themeMt, id: themeId, info: true, tone: 'themerrdb' },
+        { mt: themeMt, id: themeId, info: true },
       ));
       if (it.actionable_update) {
         sourceItems.push(menuItemHtml(
