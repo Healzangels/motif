@@ -3397,7 +3397,15 @@
     // KEEP CURRENT only shows while the row is actionable_update
     // (decision='pending') — once declined, the row's already in
     // the "kept" state and the action would be a no-op.
-    if (it.pending_update && themed
+    // v1.12.51: also gate on src!='-'. A pending_update on a row
+    // the user doesn't have themed yet has nothing to "update
+    // from"; ACCEPT UPDATE would just download the current TDB
+    // URL, which is exactly what DOWNLOAD TDB does. Falling
+    // through to PRIMARY ACQUISITION below gives the user the
+    // green DOWNLOAD button instead of the violet ACCEPT UPDATE.
+    // Mirrors the v1.12.48 row-pill gate.
+    const srcLetter = computeSrcLetter(it);
+    if (it.pending_update && themed && srcLetter !== '-'
         && themeId !== null && themeId !== undefined) {
       // v1.12.46: pass sectionId so the accept-update endpoint
       // scopes the download + place to ONLY this row's section.
@@ -3445,9 +3453,17 @@
     // so DOWNLOAD/RE-DOWNLOAD would be a no-op).
     // Tone: themerrdb-green — matches the T badge the row will
     // land on.
+    // v1.12.51: !it.pending_update suppresses DOWNLOAD whenever
+    // a pending update exists, on the assumption ACCEPT UPDATE
+    // covers it. That assumption breaks for src='-' rows (no
+    // theme to update from) — those need DOWNLOAD to come back.
+    // The CONTEXTUAL PROMPT block above now skips ACCEPT UPDATE
+    // on src='-', so we mirror the gate here: a src='-' row with
+    // a stale pending_update should still see the green DOWNLOAD
+    // button.
     if (themed && themeId !== null && themeId !== undefined
         && !sidecarOnly && !isPlexAgent && !isManualPlacement
-        && !lockManualActions && !it.pending_update
+        && !lockManualActions && (!it.pending_update || srcLetter === '-')
         && !it.accepted_update) {
       const tdbDeadForDownload = it.failure_kind
         && TDB_DEAD_FAILURES.has(it.failure_kind);
