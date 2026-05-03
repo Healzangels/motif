@@ -3658,6 +3658,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (theme_media_type, tmdb_id, canonical_url, now_iso(),
                  request.state.user, f"manual url for plex rk={rating_key}"),
             )
+            # v1.12.62: eager synthetic urls_match detection. If the
+            # URL the user just set exactly matches the row's current
+            # TDB URL, surface the "convert U → T" prompt immediately
+            # — pre-fix the user had to wait until the next sync for
+            # the v1.12.53 sweep to write the synthetic pending_update,
+            # which felt like the action menu had no path to swap to T.
+            # Mirrors the SQL the sync sweep uses; idempotent via
+            # NOT EXISTS so the next sync's sweep won't double-write.
+            existing_theme_yt = (theme["youtube_url"]
+                                 if theme and "youtube_url" in theme.keys()
+                                 else None)
+            if (existing_theme_yt
+                    and canonical_url
+                    and existing_theme_yt.strip() == canonical_url.strip()):
+                conn.execute(
+                    """
+                    INSERT INTO pending_updates (
+                        media_type, tmdb_id, old_video_id, new_video_id,
+                        old_youtube_url, new_youtube_url,
+                        upstream_edited_at, detected_at, decision, kind
+                    )
+                    SELECT t.media_type, t.tmdb_id,
+                           t.youtube_video_id, t.youtube_video_id,
+                           NULL, t.youtube_url,
+                           t.youtube_edited_at, ?, 'pending', 'urls_match'
+                      FROM themes t
+                     WHERE t.media_type = ?
+                       AND t.tmdb_id = ?
+                       AND NOT EXISTS (
+                         SELECT 1 FROM pending_updates pu
+                          WHERE pu.media_type = t.media_type
+                            AND pu.tmdb_id = t.tmdb_id
+                       )
+                    """,
+                    (now_iso(), theme_media_type, tmdb_id),
+                )
             # v1.10.50: implicit ack on manual URL — same reasoning as
             # upload-theme. The user has provided a working source, so
             # stop alerting; keep failure_kind so the TDB pill stays red.

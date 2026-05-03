@@ -3337,6 +3337,10 @@
         // create the U→T conversion loop the v1.12.53 sweep was
         // designed to surface, with extra UI churn for no benefit.
         extras.ytUrl !== undefined ? `data-yt-url="${htmlEscape(extras.ytUrl)}"` : '',
+        // v1.12.62: row's current SRC letter flows through too so
+        // the SET URL match-warning copy can branch — for src='-'
+        // there's no file to "re-download", just to download.
+        extras.srcLetter !== undefined ? `data-src-letter="${htmlEscape(extras.srcLetter)}"` : '',
       ].filter(Boolean).join(' ');
       // v1.11.14: extras.tone tints the source menu entries to match
       // the SRC column badge colors so the user can read at a glance
@@ -3532,7 +3536,8 @@
     sourceItems.push(menuItemHtml(
       'manual-url', 'SET URL',
       'Provide a YouTube URL as a manual override.',
-      { rk: it.rating_key, tone: 'user', ytUrl: it.youtube_url || '' },
+      { rk: it.rating_key, tone: 'user', ytUrl: it.youtube_url || '',
+        srcLetter: srcLetter },
     ));
     sourceItems.push(menuItemHtml(
       'upload-theme', 'UPLOAD MP3',
@@ -5117,6 +5122,7 @@
           title: btn.dataset.title || '',
           year: btn.dataset.year || '',
           tdbUrl: btn.dataset.ytUrl || '',
+          srcLetter: btn.dataset.srcLetter || '',
         });
       } else if (act === 'open-override') {
         openOverrideDialog({
@@ -5471,7 +5477,7 @@
     return m ? m[1] : null;
   }
 
-  function openManualUrlDialog({ ratingKey, title, year, tdbUrl }) {
+  function openManualUrlDialog({ ratingKey, title, year, tdbUrl, srcLetter }) {
     const dlg = document.getElementById('manual-url-dlg');
     if (!dlg) return;
     document.getElementById('manual-url-rk').value = ratingKey;
@@ -5479,7 +5485,11 @@
     // the input-listener (bound once at page load) can read it
     // each open without rebinding. dataset persists until the
     // next openManualUrlDialog overwrites it.
+    // v1.12.62: also stash srcLetter so the match-warning can
+    // branch its copy — '-' rows have no file to re-download
+    // (the alternative action is DOWNLOAD TDB, not RE-DOWNLOAD).
     dlg.dataset.tdbUrl = tdbUrl || '';
+    dlg.dataset.srcLetter = srcLetter || '';
     const meta = document.getElementById('manual-url-dlg-meta');
     const ylabel = year ? ` (${htmlEscape(year)})` : '';
     meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
@@ -5524,10 +5534,19 @@
         const userVid = extractYouTubeVideoId(input.value.trim());
         const tdbVid = extractYouTubeVideoId(tdbUrl);
         if (userVid && tdbVid && userVid === tdbVid) {
+          // v1.12.62: copy branches on srcLetter — the alternative
+          // action depends on whether the row currently has a file:
+          //   '-' (no theme)  → DOWNLOAD TDB
+          //   T/U/A/M/P (has) → RE-DOWNLOAD TDB
+          const srcLetter = dlg.dataset.srcLetter || '';
+          const altAction = (srcLetter === '-') ? 'DOWNLOAD TDB' : 'RE-DOWNLOAD TDB';
+          const altIntent = (srcLetter === '-')
+            ? 'fetch from ThemerrDB'
+            : 'refresh the file';
           hint.textContent = 'This URL matches the current ThemerrDB URL. '
             + 'Setting it as a manual override pins the row as U-source — '
             + 'the next sync will surface a "convert U → T" prompt anyway. '
-            + 'Use RE-DOWNLOAD TDB instead if you just want to refresh the file.';
+            + `Use ${altAction} instead if you just want to ${altIntent}.`;
           hint.style.display = '';
         } else {
           hint.style.display = 'none';

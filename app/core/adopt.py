@@ -364,6 +364,37 @@ def replace_with_themerrdb(
             raise AdoptError(
                 "no managed Plex sections own this item — enable a section in /settings"
             )
+        # v1.12.62: REPLACE TDB on a U row — delete user_overrides
+        # so the worker doesn't keep using the override URL and
+        # re-classifying the new download as U. Pre-fix the user
+        # would click REPLACE TDB on a U row, the download would
+        # run, and the row would stay U because the worker still
+        # saw user_overrides at line 563 of worker.py and stamped
+        # source_kind='url'. The action's intent ("replace your
+        # current theme with ThemerrDB's") implies dropping the
+        # override too. Capture previous URL before the delete so
+        # REVERT can restore the U state if the user changes their
+        # mind. SQL inlined here (rather than calling
+        # web.api._capture_previous_url) to avoid a core → web
+        # circular import.
+        ovr_row = conn.execute(
+            "SELECT youtube_url FROM user_overrides "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        ).fetchone()
+        if ovr_row and ovr_row["youtube_url"]:
+            conn.execute(
+                """UPDATE themes
+                      SET previous_youtube_url = ?,
+                          previous_youtube_kind = 'user'
+                    WHERE media_type = ? AND tmdb_id = ?""",
+                (ovr_row["youtube_url"], media_type, tmdb_id),
+            )
+            conn.execute(
+                "DELETE FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
         job_ids: list[int] = []
         for sid in target_sections:
             cur = conn.execute(
