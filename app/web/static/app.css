@@ -1986,6 +1986,15 @@ pre code, .codeblock {
   color: var(--cyan);
 }
 .history-section[open] .history-section-title { color: var(--green-bright); }
+/* v1.12.83: CLEAR button in the // HISTORY / // PROVENANCE summary
+   right-aligns past the section title + count text. Click on the
+   button is intercepted in JS (preventDefault + stopPropagation
+   would be cleanest but the dispatcher's preventDefault already
+   stops the toggle since the click target is the button, not the
+   summary itself for native details semantics — verified visually). */
+.info-clear-btn {
+  margin-left: auto;
+}
 .history-body {
   margin-top: 8px;
   display: flex;

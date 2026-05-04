@@ -5837,6 +5837,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             })
         return {"events": out}
 
+    @app.delete("/api/items/{media_type}/{tmdb_id}/audit")
+    async def api_item_audit_clear(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        section_id: str | None = Query(None),
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.12.83: clear audit_events for a single row. Useful while
+        testing — repeated SET URL / ACCEPT UPDATE / PURGE cycles can
+        bloat PROVENANCE to dozens of entries that are only meaningful
+        to the testing session. Admin-only.
+
+        Honors the same section_id filter as the GET so the user can
+        clear just one section's row without nuking title-global
+        entries (NULL section_id, e.g. ADOPT). Without section_id
+        every audit row for the (media_type, tmdb_id) tuple is
+        deleted.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            if section_id is not None:
+                cur = conn.execute(
+                    """DELETE FROM audit_events
+                        WHERE media_type = ? AND tmdb_id = ?
+                          AND (section_id = ? OR section_id IS NULL)""",
+                    (media_type, tmdb_id, section_id),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM audit_events "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+        return {"ok": True, "deleted": cur.rowcount}
+
+    @app.delete("/api/items/{media_type}/{tmdb_id}/events")
+    async def api_item_events_clear(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.12.83: clear the rolling events log entries for a row
+        (drives the INFO card's // HISTORY section). Title-global —
+        events table has no section_id column, so this clears across
+        all sections that own the title. Admin-only."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            cur = conn.execute(
+                "DELETE FROM events "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+        return {"ok": True, "deleted": cur.rowcount}
+
     @app.get("/api/items/{media_type}/{tmdb_id}/recovery-options")
     async def api_recovery_options(
         media_type: MediaType, tmdb_id: int,

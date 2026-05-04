@@ -5776,7 +5776,7 @@
     // to grep the global LOGS tab. Collapsed by default to keep
     // the dialog scannable; expand-on-click for the deep dive.
     const events = (data.events || []);
-    const historySection = renderRowHistory(events);
+    const historySection = renderRowHistory(events, t.media_type, t.tmdb_id);
     // v1.12.80: audit_events provenance section. Loaded
     // asynchronously after the dialog paints — keeps the initial
     // open snappy and the audit query off the synchronous /api/items
@@ -5828,6 +5828,20 @@
     if (recoverySectionId) {
       hydrateRecoveryOptions(body, t.media_type, t.tmdb_id);
     }
+    // v1.12.83: wire the CLEAR button rendered into the // HISTORY
+    // section by renderRowHistory. The PROVENANCE CLEAR is wired
+    // inside hydrateAuditSection because that section is rendered
+    // asynchronously into a placeholder slot; HISTORY is part of
+    // the body's initial innerHTML so we hook it here.
+    body.querySelectorAll('.info-clear-btn[data-clear="events"]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        // stopPropagation so the click doesn't toggle the parent
+        // <details> element open/closed via summary semantics.
+        ev.preventDefault();
+        ev.stopPropagation();
+        handleInfoClear(ev.currentTarget, body);
+      });
+    });
     // v1.12.80: load the audit_events provenance log for this row
     // and render it into #audit-section-slot. Async so the dialog
     // paints first; failure leaves the slot empty (no error noise
@@ -5910,15 +5924,68 @@
         </div>
       `;
     }).join('');
+    // v1.12.83: per-row CLEAR button. Useful when iterating during
+    // testing — repeated SET URL / ACCEPT UPDATE / PURGE cycles can
+    // bloat PROVENANCE to dozens of entries that aren't useful for
+    // future debugging. data-attrs let the dispatcher know which
+    // (media_type, tmdb_id, section_id) tuple to delete.
+    const clearBtn = `<button type="button" class="btn btn-tiny btn-danger info-clear-btn"
+      data-clear="audit"
+      data-mt="${htmlEscape(mediaType)}"
+      data-id="${htmlEscape(tmdbId)}"
+      data-section-id="${htmlEscape(sectionId || '')}"
+      title="Delete every PROVENANCE entry for this row${sectionId ? ' (this section + title-global rows)' : ''}.">CLEAR</button>`;
     slot.innerHTML = `
       <details class="history-section" open>
         <summary>
           <span class="history-section-title">// PROVENANCE</span>
           <span class="muted small">${events.length} audited change${events.length === 1 ? '' : 's'}</span>
+          ${clearBtn}
         </summary>
         <div class="history-body">${rows}</div>
       </details>
     `;
+    slot.querySelector('.info-clear-btn')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleInfoClear(ev.currentTarget, root);
+    });
+  }
+
+  // v1.12.83: shared dispatcher for the // HISTORY and // PROVENANCE
+  // CLEAR buttons. Confirms with the user, fires the DELETE, then
+  // re-hydrates just the affected section so the dialog stays open.
+  async function handleInfoClear(btn, root) {
+    const which = btn.dataset.clear;  // 'audit' | 'events'
+    const mt = btn.dataset.mt;
+    const id = btn.dataset.id;
+    const sid = btn.dataset.sectionId || null;
+    const label = which === 'audit' ? 'PROVENANCE' : 'HISTORY';
+    if (!confirm(`Clear ${label} for this row?\n\nThis cannot be undone.`)) return;
+    btn.disabled = true;
+    try {
+      const sec = sid && which === 'audit'
+        ? `?section_id=${encodeURIComponent(sid)}`
+        : '';
+      const path = which === 'audit'
+        ? `/api/items/${mt}/${id}/audit${sec}`
+        : `/api/items/${mt}/${id}/events`;
+      await api('DELETE', path);
+      if (which === 'audit') {
+        const slot = root.querySelector('#audit-section-slot');
+        if (slot) slot.innerHTML = '';
+        hydrateAuditSection(root, mt, id, sid || undefined);
+      } else {
+        // HISTORY is part of the static markup — replace it inline.
+        const node = root.querySelector('details.history-section:not(.history-section-audit)');
+        if (node) {
+          node.outerHTML = '<details class="history-section history-section-empty"><summary><span class="history-section-title">// HISTORY</span><span class="muted small">cleared</span></summary></details>';
+        }
+      }
+    } catch (e) {
+      alert(`Clear ${label} failed: ${e.message}`);
+      btn.disabled = false;
+    }
   }
 
   // v1.12.71: fetch the recovery options for a failed row and
@@ -6053,7 +6120,7 @@
   // Detail JSON is rendered as a nested <pre> when present, so a
   // failed download's raw error or a sync's index/payload counts
   // are inspectable without leaving the dialog.
-  function renderRowHistory(events) {
+  function renderRowHistory(events, mediaType, tmdbId) {
     if (!events || !events.length) return '';
     const fmtTs = (iso) => {
       if (!iso) return '—';
@@ -6094,11 +6161,25 @@
         </div>
       `;
     }).join('');
+    // v1.12.83: per-row CLEAR button. The HISTORY section sources
+    // from the rolling events table which has no section_id column,
+    // so this clears across every section that owns the title.
+    // Useful while testing — repeated cycles can bloat HISTORY with
+    // worker / sync chatter that no longer matters. Click handler
+    // is wired by the openInfoDialog dispatcher (data-clear="events").
+    const clearBtn = (mediaType !== undefined && tmdbId !== undefined)
+      ? `<button type="button" class="btn btn-tiny btn-danger info-clear-btn"
+          data-clear="events"
+          data-mt="${htmlEscape(mediaType)}"
+          data-id="${htmlEscape(tmdbId)}"
+          title="Delete every HISTORY entry for this row (title-global — events table has no section_id).">CLEAR</button>`
+      : '';
     return `
       <details class="history-section">
         <summary>
           <span class="history-section-title">// HISTORY</span>
           <span class="muted small">${events.length} event${events.length === 1 ? '' : 's'} · click to expand</span>
+          ${clearBtn}
         </summary>
         <div class="history-body">${rows}</div>
       </details>
