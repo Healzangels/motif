@@ -1716,19 +1716,25 @@
     // v1.11.73: CLEAR FAILED dismisses every job in the failed state.
     // Visible only when at least one failed job exists, hidden
     // otherwise. Calls POST /api/jobs/clear-failed.
+    // v1.12.75: response key was `cleared` pre-v1.12.12 but the
+    // endpoint switched to `acknowledged` when it stopped hard-
+    // deleting rows. The client check (typeof r.cleared ===
+    // 'number') silently failed, so neither loadQueue() nor
+    // refreshTopbarStatus() ran — topbar dot stayed red until
+    // the user manually refreshed. Now we trigger the refresh
+    // unconditionally on success and only inspect the response
+    // for the user-facing count.
     document.getElementById('jobs-clear-failed-btn')?.addEventListener('click',
       async () => {
         if (!confirm('Dismiss every failed job from the queue history? '
                      + 'This only clears the queue rows — files and DB state '
                      + 'for the underlying items are unaffected.')) return;
         try {
-          const r = await api('POST', '/api/jobs/clear-failed');
-          if (r && typeof r.cleared === 'number') {
-            // Repaint immediately + re-poll the topbar so the red dot
-            // clears the same frame.
-            await loadQueue().catch(()=>{});
-            setTimeout(refreshTopbarStatus, 1100);
-          }
+          await api('POST', '/api/jobs/clear-failed');
+          // Repaint immediately + re-poll the topbar so the red dot
+          // clears the same frame.
+          await loadQueue().catch(()=>{});
+          setTimeout(refreshTopbarStatus, 1100);
         } catch (e) {
           alert('Clear failed: ' + e.message);
         }
