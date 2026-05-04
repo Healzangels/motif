@@ -17,9 +17,15 @@
         <button class="chip" data-jobfilter="failed">FAILED</button>
         <button class="chip" data-jobfilter="cancelled">CANCELLED</button>
         <button class="chip" data-jobfilter="done">DONE</button>
-        <button class="btn btn-tiny btn-danger" id="jobs-clear-failed-btn"
-                style="display:none;margin-left:8px"
-                title="dismiss every job currently in the failed state — file/DB state isn't touched, just the queue history">// CLEAR FAILED</button>
+        <!-- v1.12.76: // CLEAR FAILED button removed. Pre-fix the
+             same logical action ("dismiss this failure") needed two
+             clicks: ACK FAILURE on the row + CLEAR FAILED in LOGS.
+             Per v1.12.74 the per-row ACK now also cancels the
+             matching failed download job, so the LOGS button was
+             redundant. Library page bulk-ACK SELECTED handles the
+             rare "dismiss many failures at once" case. The
+             /api/jobs/clear-failed endpoint is preserved for
+             scripts/external callers. -->
       </div>
     </header>
     <!-- v1.10.37: scroll the jobs list within a fixed-height container so

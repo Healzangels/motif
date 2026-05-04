@@ -297,15 +297,17 @@
       else if (anyActive) dot.classList.add('dot-amber');
       else if (q.pending > 0) dot.classList.add('dot-amber');
 
-      // v1.11.73: red dot → click jumps to /queue?status=failed.
-      // Pre-fix the user saw a red ● next to 'IDLE' with no
-      // explanation of what was wrong or how to clear it. Now the
-      // dot + status text get a tooltip, a pointer cursor, and a
-      // click handler when failed > 0; clicking lands on the
-      // failed-jobs filter where a CLEAR FAILED button can dismiss
-      // them in one action. Stash the count on window so /queue's
-      // CLEAR FAILED button can read it without an extra round
-      // trip.
+      // v1.11.73: red dot → click jumps to /queue?status=failed
+      // so the user can review failures in context. Pre-fix the
+      // user saw a red ● next to 'IDLE' with no explanation of
+      // what was wrong. Now the dot + status text get a tooltip,
+      // a pointer cursor, and a click handler when failed > 0.
+      // v1.12.76: the LOGS // CLEAR FAILED button is gone (per
+      // user feedback) so reviewing on /queue is read-only;
+      // dismiss happens via per-row ACK FAILURE on the library
+      // page (which also cancels the underlying failed job per
+      // v1.12.74). The __motif_failed_count global is kept in
+      // case other future code wants to gate on it.
       const statusEl = $('#topbar-status');
       const failed = q.failed || 0;
       window.__motif_failed_count = failed;
@@ -1664,20 +1666,11 @@
     `;
     }).join('') || '<tr><td colspan="7" class="muted center">no jobs in the queue — work appears here when you click SYNC THEMERRDB on the dashboard, REFRESH FROM PLEX on a library, or any per-row action that downloads / places / refreshes</td></tr>';
 
-    // v1.11.73: show CLEAR FAILED button only when at least one
-    // failed row exists across the WHOLE queue (not just the
-    // current filter view, otherwise switching to PENDING would
-    // hide the button while failed jobs still exist). Reads
-    // window.__motif_failed_count, set by refreshTopbarStatus.
-    const clearBtn = document.getElementById('jobs-clear-failed-btn');
-    if (clearBtn) {
-      // v1.12.12: gate on UNACKED failures only — already-acked
-      // failed rows are historical records, no need to surface
-      // CLEAR FAILED for them.
-      const anyFailed = (window.__motif_failed_count || 0) > 0
-        || (data.jobs || []).some((j) => j.status === 'failed' && !j.acked_at);
-      clearBtn.style.display = anyFailed ? '' : 'none';
-    }
+    // v1.12.76: removed the CLEAR FAILED visibility toggle. The
+    // button itself is gone from the queue template — see
+    // commit message for rationale. Per-row ACK FAILURE plus the
+    // library bulk-ACK SELECTED cover the same workflow without
+    // forcing the user to leave the library page.
 
     const evs = await api('GET', '/api/events?limit=200');
     $('#event-stream-full').innerHTML = evs.events.map((e) => `
@@ -1713,32 +1706,16 @@
       });
     });
 
-    // v1.11.73: CLEAR FAILED dismisses every job in the failed state.
-    // Visible only when at least one failed job exists, hidden
-    // otherwise. Calls POST /api/jobs/clear-failed.
-    // v1.12.75: response key was `cleared` pre-v1.12.12 but the
-    // endpoint switched to `acknowledged` when it stopped hard-
-    // deleting rows. The client check (typeof r.cleared ===
-    // 'number') silently failed, so neither loadQueue() nor
-    // refreshTopbarStatus() ran — topbar dot stayed red until
-    // the user manually refreshed. Now we trigger the refresh
-    // unconditionally on success and only inspect the response
-    // for the user-facing count.
-    document.getElementById('jobs-clear-failed-btn')?.addEventListener('click',
-      async () => {
-        if (!confirm('Dismiss every failed job from the queue history? '
-                     + 'This only clears the queue rows — files and DB state '
-                     + 'for the underlying items are unaffected.')) return;
-        try {
-          await api('POST', '/api/jobs/clear-failed');
-          // Repaint immediately + re-poll the topbar so the red dot
-          // clears the same frame.
-          await loadQueue().catch(()=>{});
-          setTimeout(refreshTopbarStatus, 1100);
-        } catch (e) {
-          alert('Clear failed: ' + e.message);
-        }
-      });
+    // v1.12.76: CLEAR FAILED click handler removed alongside the
+    // button. Per-row ACK FAILURE (api_clear_failure, v1.12.74)
+    // now also cancels the matching failed download job, so the
+    // bulk path through the LOGS page is no longer needed.
+    // Library page bulk-ACK SELECTED handles "dismiss many at
+    // once" via the same per-row endpoint, keeping the workflow
+    // on the page where the user is already reviewing the rows.
+    // The /api/jobs/clear-failed endpoint stays available for
+    // scripts/external callers.
+
     // v1.11.36: cancel-job click handler. Posts to /api/jobs/{id}/cancel.
     document.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act="cancel-job"]');
