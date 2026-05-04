@@ -223,8 +223,7 @@ def _capture_previous_url(
 
     Resolution order for "current URL":
       1. user_overrides.youtube_url for the given section_id (when
-         provided), then the '' global row, then any other
-         per-section row as a last fallback (kind = 'user').
+         provided), then the '' global row (kind = 'user').
       2. themes.youtube_url otherwise (kind = 'themerrdb').
     A null URL produces a no-op snapshot — REVERT will read the
     null and the SOURCE menu will hide the button via
@@ -236,6 +235,17 @@ def _capture_previous_url(
     silently lost the URL because user_overrides was deleted before
     anyone snapshotted it. previous_youtube_url itself stays
     title-global by design (one undo slot per title).
+
+    v1.12.84: dropped the "any per-section override LIMIT 1" final
+    fallback. Pre-fix capturing previous_url for a standard-section
+    PURGE on a T row pulled the 4K's user override URL into
+    themes.previous_youtube_url, then the standard's INFO card
+    showed RESTORE pointing at the wrong (4K's) URL. The capture
+    now only reads URLs that would actually apply to the requested
+    section: section's own row, then '' global, then themes URL.
+    The legacy "no section_id provided" path keeps the
+    any-section fallback because legacy callers genuinely don't
+    know which section to prefer.
     """
     ovr = None
     if section_id is not None:
@@ -244,21 +254,27 @@ def _capture_previous_url(
             "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
             (media_type, tmdb_id, section_id),
         ).fetchone()
-    if ovr is None or not ovr["youtube_url"]:
+        if ovr is None or not ovr["youtube_url"]:
+            ovr = conn.execute(
+                "SELECT youtube_url FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                (media_type, tmdb_id),
+            ).fetchone()
+    else:
+        # Legacy callers without row context — '' global first, then
+        # any-section fallback. Same shape the v1.12.79 code had.
         ovr = conn.execute(
             "SELECT youtube_url FROM user_overrides "
-            "WHERE media_type = ? AND tmdb_id = ? AND section_id = '' ",
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
             (media_type, tmdb_id),
         ).fetchone()
-    if ovr is None or not ovr["youtube_url"]:
-        # Final fallback — any per-section override at all. Covers
-        # legacy callers that didn't pass section_id.
-        ovr = conn.execute(
-            "SELECT youtube_url FROM user_overrides "
-            "WHERE media_type = ? AND tmdb_id = ? "
-            "ORDER BY section_id LIMIT 1",
-            (media_type, tmdb_id),
-        ).fetchone()
+        if ovr is None or not ovr["youtube_url"]:
+            ovr = conn.execute(
+                "SELECT youtube_url FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? "
+                "ORDER BY section_id LIMIT 1",
+                (media_type, tmdb_id),
+            ).fetchone()
     if ovr and ovr["youtube_url"]:
         prev_url = ovr["youtube_url"]
         prev_kind = "user"
@@ -3862,6 +3878,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         log_event(db, level="INFO", component="api",
                   media_type=theme_media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Manual upload by {request.state.user}: {len(data)} bytes",
                   detail={"rating_key": rating_key, "title": pi["title"]})
         return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
@@ -4089,6 +4106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         log_event(db, level="INFO", component="api",
                   media_type=theme_media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Manual URL set by {request.state.user}: {canonical_url}",
                   detail={"rating_key": rating_key, "title": pi["title"]})
         return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
@@ -4421,11 +4439,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
-            recent_events = conn.execute(
-                "SELECT * FROM events WHERE media_type = ? AND tmdb_id = ? "
-                "ORDER BY ts DESC LIMIT 25",
-                (media_type, tmdb_id),
-            ).fetchall()
+            # v1.12.84: scope events by section_id when provided, like
+            # audit_events. Title-global entries (section_id IS NULL —
+            # legacy pre-migration rows + sync/scan events that span
+            # every section) stay visible so cross-section context
+            # isn't lost. Pre-fix the unfiltered query rendered
+            # standard's worker events on the 4K card and vice versa.
+            if section_id is not None:
+                recent_events = conn.execute(
+                    """SELECT * FROM events
+                        WHERE media_type = ? AND tmdb_id = ?
+                          AND (section_id = ? OR section_id IS NULL)
+                        ORDER BY ts DESC LIMIT 25""",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+            else:
+                recent_events = conn.execute(
+                    "SELECT * FROM events WHERE media_type = ? AND tmdb_id = ? "
+                    "ORDER BY ts DESC LIMIT 25",
+                    (media_type, tmdb_id),
+                ).fetchall()
         local_payloads: list[dict] = []
         for lf in local_files:
             d = dict(lf)
@@ -4600,6 +4633,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Unplaced by {request.state.user}",
                   detail={"title": theme["title"],
                           "placements_unlinked": unlinked,
@@ -5075,6 +5109,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Unmanage theme '{theme['title']}' "
                           f"by {request.state.principal.username}",
                   detail={"orphan": is_orphan})
@@ -5393,6 +5428,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Forget by {request.state.user}",
                   detail={"title": theme["title"],
                           "orphan_dropped": is_orphan,
@@ -5773,6 +5809,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"REVERT to {prev_kind} URL by {request.state.user}")
         return {"ok": True}
 
@@ -6224,6 +6261,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Manual re-download requested by {request.state.user} "
                           f"({n} sections{', scoped to ' + section_id if section_id else ''})")
         return {"ok": True, "enqueued_sections": n}

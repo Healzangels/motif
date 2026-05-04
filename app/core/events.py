@@ -69,11 +69,16 @@ def _flusher_loop(db_path: Path) -> None:
             pass
         try:
             with sqlite3.connect(db_path, timeout=10.0) as conn:
+                # v1.12.84: section_id flows through every event row so
+                # the INFO card's // HISTORY section can scope to the
+                # row's own section. Pre-fix the events table was
+                # title-global and HISTORY rendered every section's
+                # worker / sync / API events on every card.
                 conn.executemany(
                     """INSERT INTO events
                          (ts, level, component, media_type, tmdb_id,
-                          message, detail)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                          section_id, message, detail)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                     batch,
                 )
         except sqlite3.Error as e:
@@ -91,11 +96,19 @@ def log_event(
     message: str,
     media_type: str | None = None,
     tmdb_id: int | None = None,
+    section_id: str | None = None,
     detail: dict[str, Any] | str | None = None,
 ) -> None:
     """Enqueue an event for the background flusher. Never raises —
     event logging must not break callers and must not hold the
-    caller's thread for DB I/O."""
+    caller's thread for DB I/O.
+
+    v1.12.84: section_id parameter so per-section actions can attribute
+    their events. NULL section_id means "title-global" — the api_item
+    HISTORY filter treats those as visible from every section's INFO
+    card so cross-section context isn't lost. Existing callers that
+    don't pass section_id continue to write NULL, matching the
+    backfill semantics for pre-migration rows."""
     detail_str: str | None
     if isinstance(detail, dict):
         scrubbed = _scrub(detail)
@@ -117,7 +130,7 @@ def log_event(
     try:
         _EVENT_QUEUE.put_nowait((
             now_iso(), level.upper(), component,
-            media_type, tmdb_id, message, detail_str,
+            media_type, tmdb_id, section_id, message, detail_str,
         ))
     except queue.Full:
         # Best-effort: drop on overflow. The python logger above

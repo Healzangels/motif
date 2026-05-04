@@ -811,7 +811,7 @@ class Worker:
 
         log_event(
             self.settings.db_path, level="INFO", component="download",
-            media_type=media_type, tmdb_id=tmdb_id,
+            media_type=media_type, tmdb_id=tmdb_id, section_id=section_id,
             message=f"Downloaded theme for {theme['title']}",
             detail={"size": result.file_size, "video_id": vid,
                     "section_id": section_id},
@@ -1187,6 +1187,7 @@ class Worker:
             self.settings.db_path,
             level="INFO" if outcome.placed else "DEBUG",
             component="place", media_type=media_type, tmdb_id=tmdb_id,
+            section_id=section_id,
             message=(f"Placed in {outcome.target_folder}" if outcome.placed
                      else f"Skipped placement: {outcome.reason}"),
             detail={"reason": outcome.reason, "kind": outcome.kind},

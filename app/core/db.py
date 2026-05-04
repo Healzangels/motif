@@ -228,12 +228,15 @@ CREATE TABLE IF NOT EXISTS events (
     component   TEXT NOT NULL,
     media_type  TEXT,
     tmdb_id     INTEGER,
+    section_id  TEXT,
     message     TEXT NOT NULL,
     detail      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_events_item ON events (media_type, tmdb_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_events_item_section
+    ON events (media_type, tmdb_id, section_id, ts DESC);
 
 CREATE TABLE IF NOT EXISTS sync_runs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -474,7 +477,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 28
+CURRENT_SCHEMA_VERSION = 29
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1050,6 +1053,32 @@ def _migrate_v27_to_v28(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
+    """v29 adds events.section_id + per-(media_type, tmdb_id, section_id)
+    index. Previously the events table was title-global — a single
+    INFO card opened on a 4K row showed every section's worker /
+    sync / API events because the recent_events query had no way to
+    scope by section. With section_id on each row, the api_item
+    fetch can mirror the audit_events filter (rows for this section
+    plus title-global rows where section_id IS NULL), eliminating
+    the cross-section HISTORY bleed.
+
+    Existing rows backfill to NULL section_id since we can't recover
+    the section retroactively. The api_item filter treats NULL as
+    "applies to every section" so legacy data still surfaces — the
+    user just won't get section attribution for events captured
+    before the migration.
+    """
+    log.info("Migrating to schema v29 (events.section_id)")
+    conn.executescript(
+        """
+        ALTER TABLE events ADD COLUMN section_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_events_item_section
+            ON events (media_type, tmdb_id, section_id, ts DESC);
+        """
+    )
+
+
 def _migrate_v23_to_v24(conn: sqlite3.Connection) -> None:
     """v24 adds pending_updates.replaced_user_url for the v1.12.34
     ACCEPT UPDATE / REVERT round-trip on U-source rows.
@@ -1578,6 +1607,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 27:
                     _migrate_v27_to_v28(conn)
                     current = 28
+                elif current == 28:
+                    _migrate_v28_to_v29(conn)
+                    current = 29
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
