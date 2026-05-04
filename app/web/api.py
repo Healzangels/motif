@@ -402,23 +402,65 @@ def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
     )
 
 
+# v1.12.95: canonical SQL expression for the row's SRC letter. Mirrors
+# JS computeSrcLetter exactly — same priority order, same fallthrough
+# logic — so the pill filter, the SRC sort, and the row badge all
+# agree on what SRC class a row belongs to. Pre-fix the pill SQL and
+# sort SQL each had their own simpler heuristic (provenance-first)
+# and could disagree with the JS render on rows where source_kind
+# disagreed with placement.provenance.
+#
+# Ordering matches JS:
+#   1. placed + source_kind=themerrdb → T
+#   2. placed + source_kind=adopt     → A
+#   3. placed + source_kind=url|upload → U
+#   4. placed + provenance=auto        → T (legacy fallback for rows
+#                                          without source_kind)
+#   5. placed + provenance=manual:
+#        non-orphan OR svid is empty OR svid length=11 → U
+#                                          else        → A
+#   6. !placed + plex_local_theme → M
+#   7. !placed + has_theme        → P
+#   8. else                       → '-'
+#
+# The length(svid)=11 check approximates the JS regex
+# /^[A-Za-z0-9_-]{11}$/ — adopt's hash-based svids are not 11 chars,
+# YouTube video IDs are exactly 11 chars. Empty svid handled
+# separately via COALESCE.
+_SRC_LETTER_SQL = (
+    "CASE "
+    "WHEN p.media_folder IS NOT NULL AND lf.source_kind = 'themerrdb' THEN 'T' "
+    "WHEN p.media_folder IS NOT NULL AND lf.source_kind = 'adopt' THEN 'A' "
+    "WHEN p.media_folder IS NOT NULL AND lf.source_kind IN ('url','upload') THEN 'U' "
+    "WHEN p.media_folder IS NOT NULL AND p.provenance = 'auto' THEN 'T' "
+    "WHEN p.media_folder IS NOT NULL AND p.provenance = 'manual' AND ("
+        "t.upstream_source != 'plex_orphan' "
+        "OR COALESCE(lf.source_video_id, '') = '' "
+        "OR length(lf.source_video_id) = 11"
+    ") THEN 'U' "
+    "WHEN p.media_folder IS NOT NULL AND p.provenance = 'manual' THEN 'A' "
+    "WHEN p.media_folder IS NULL AND pi.local_theme_file = 1 THEN 'M' "
+    "WHEN p.media_folder IS NULL AND pi.has_theme = 1 THEN 'P' "
+    "ELSE '-' END"
+)
+
 # v1.10.15: column-sort whitelist. Each entry maps the ?sort= value
 # accepted by /api/library to a SQL ORDER BY snippet for the main row
 # query. Wrapping in a whitelist keeps the param SQL-injection-safe.
-# 'src' uses a CASE expression that mirrors the badge precedence:
-# T → U → A → M → P → — so sort-by-source groups rows visually the same
-# way the SRC column does.
+# 'src' uses _SRC_LETTER_SQL with a numeric remap so sort-by-source
+# groups rows visually the same way the SRC column does (T → U → A →
+# M → P → —).
 _LIBRARY_SORTS_MAIN = {
     "title": "pi.title COLLATE NOCASE",
     "year":  "pi.year",
     "imdb":  "pi.guid_imdb",
     "src": (
-        "CASE "
-        "WHEN p.provenance = 'auto' THEN 1 "
-        "WHEN p.provenance = 'manual' AND lf.source_kind = 'adopt' THEN 2 "
-        "WHEN p.provenance = 'manual' THEN 3 "
-        "WHEN pi.local_theme_file = 1 THEN 4 "
-        "WHEN pi.has_theme = 1 THEN 5 "
+        f"CASE ({_SRC_LETTER_SQL}) "
+        "WHEN 'T' THEN 1 "
+        "WHEN 'U' THEN 2 "
+        "WHEN 'A' THEN 3 "
+        "WHEN 'M' THEN 4 "
+        "WHEN 'P' THEN 5 "
         "ELSE 6 END"
     ),
     "dl":    "CASE WHEN lf.file_path IS NOT NULL THEN 0 ELSE 1 END",
@@ -622,22 +664,17 @@ def _library_main_query(
     link_pills = link_pills or set()
     ed_pills = ed_pills or set()
     if src_pills:
-        branches = []
-        for p in src_pills:
-            if p == "T":
-                branches.append("(p.provenance = 'auto')")
-            elif p == "A":
-                branches.append("(p.provenance = 'manual' AND lf.source_kind = 'adopt')")
-            elif p == "U":
-                branches.append("(p.provenance = 'manual' AND (lf.source_kind != 'adopt' OR lf.source_kind IS NULL))")
-            elif p == "M":
-                branches.append("(p.media_folder IS NULL AND pi.local_theme_file = 1)")
-            elif p == "P":
-                branches.append("(p.media_folder IS NULL AND pi.local_theme_file = 0 AND pi.has_theme = 1)")
-            elif p == "-":
-                branches.append("(p.media_folder IS NULL AND pi.local_theme_file = 0 AND pi.has_theme = 0)")
-        if branches:
-            where_extra += " AND (" + " OR ".join(branches) + ")"
+        # v1.12.95: route through _SRC_LETTER_SQL — single source of
+        # truth for the pill, the SRC sort, and the row badge. Pre-fix
+        # each pill had its own provenance-first predicate that
+        # diverged from JS computeSrcLetter on rows where source_kind
+        # disagreed with placement.provenance.
+        valid_letters = {"T", "U", "A", "M", "P", "-"}
+        wanted = sorted(p for p in src_pills if p in valid_letters)
+        if wanted:
+            placeholders = ",".join("?" for _ in wanted)
+            where_extra += f" AND ({_SRC_LETTER_SQL}) IN ({placeholders})"
+            params.extend(wanted)
     if tdb_pills:
         DEAD_KINDS = "('video_private','video_removed','video_age_restricted','geo_blocked')"
         # Subquery snippet reused below — "this row has an actionable
@@ -762,7 +799,12 @@ def _library_main_query(
             elif p == "c":
                 branches.append("(p.placement_kind = 'copy' AND lf.mismatch_state IS NULL)")
             elif p == "m":
-                branches.append("(lf.mismatch_state IS NOT NULL)")
+                # v1.12.95: gate on `placed` so the filter mirrors JS
+                # `isMismatch && placed` — the M badge only paints
+                # when there's a placement to be in mismatch with.
+                # Pre-fix the SQL matched any mismatch_state row,
+                # which could include orphan-placement edge cases.
+                branches.append("(lf.mismatch_state IS NOT NULL AND p.media_folder IS NOT NULL)")
             elif p == "none":
                 branches.append("(p.media_folder IS NULL)")
         if branches:
