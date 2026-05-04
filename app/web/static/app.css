@@ -1200,6 +1200,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    (act if you want, no urgency) and visually distinct from amber's
    "broken state" connotation (broken hardlinks, etc). */
 .title-glyph-update  { color: var(--blue);   text-shadow: 0 0 6px rgba(109,143,255,0.45); }
+/* v1.12.78: action variant of the update glyph — used for the blue !
+   on rows that need an ACCEPT UPDATE / KEEP CURRENT decision. Pulses
+   like the red fail ! and amber await ! so the three "action
+   required" glyphs share one visual treatment, color-coded by kind. */
+.title-glyph-action  { font-weight: 700;
+                       animation: fail-pulse 2s ease-in-out infinite; }
 .title-glyph-pending { color: var(--cyan);   text-shadow: 0 0 6px rgba(109,211,255,0.55);
                        display: inline-block; animation: spin-glyph 1.4s linear infinite; }
 /* v1.12.65: await glyph color flipped from cyan → amber to read

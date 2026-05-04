@@ -3316,6 +3316,22 @@
     // the TDB-pill render below) is now the only update indicator —
     // a single visual cue is less noisy than two redundant ones.
     // ACCEPT UPDATE / KEEP CURRENT live in the SOURCE menu.
+    // v1.12.78: blue ! glyph reinstated as an attention signal
+    // matching the red ! (failure) and amber ! (await placement)
+    // pattern — color encodes the kind, ! shape signals "action
+    // required". Gated on actionable_update (decision='pending')
+    // so KEEP CURRENT clears it; suppressed during in-flight jobs
+    // (cyan spinner already owns the row) and on src='-' rows
+    // (DOWNLOAD path covers them, no theme to update from).
+    if (it.actionable_update && !it.job_in_flight
+        && computeSrcLetter(it) !== '-') {
+      const updTip = (it.pending_update_kind === 'urls_match')
+        ? 'ThemerrDB now matches your override URL — review in SOURCE → ACCEPT UPDATE / KEEP CURRENT.'
+        : 'ThemerrDB has a new URL for this row — review in SOURCE → ACCEPT UPDATE / KEEP CURRENT.';
+      titleGlyphs.push(
+        `<span class="title-glyph title-glyph-update title-glyph-action" title="${htmlEscape(updTip)}">!</span>`
+      );
+    }
     // v1.10.50: only show the ! glyph when the failure hasn't been
     // acknowledged. Acked rows keep their red TDB pill (still failing
     // upstream) but no longer pull attention; they're hidden from the
@@ -3665,10 +3681,18 @@
     // on src='-', so we mirror the gate here: a src='-' row with
     // a stale pending_update should still see the green DOWNLOAD
     // button.
+    // v1.12.78: accepted_update gate now mirrors the pending_update
+    // gate's src='-' escape hatch. Pre-fix a section that PURGEd
+    // after a prior urls_match ACCEPT UPDATE saw DOWNLOAD TDB
+    // suppressed because pending_updates(decision='accepted') is
+    // title-global — it survives section PURGE on non-last sections.
+    // The "downloading would be a no-op" justification breaks on
+    // src='-' (no canonical to be redundant with), so let DOWNLOAD
+    // through and trust the worker to fetch the current TDB URL.
     if (themed && themeId !== null && themeId !== undefined
         && !sidecarOnly && !isPlexAgent && !isManualPlacement
         && !lockManualActions && (!it.pending_update || srcLetter === '-')
-        && !it.accepted_update) {
+        && (!it.accepted_update || srcLetter === '-')) {
       const tdbDeadForDownload = it.failure_kind
         && TDB_DEAD_FAILURES.has(it.failure_kind);
       const tdbCookiesBlocked = it.failure_kind === 'cookies_expired'
