@@ -1829,6 +1829,44 @@ pre code, .codeblock {
   margin-top: 8px;
 }
 
+/* v1.12.97: live thumbnail preview in the SET URL dialog. Shows the
+   pasted YouTube video's thumbnail + oembed-fetched title so the user
+   can confirm they got the right video before submitting. The block
+   stays [hidden] until a valid YouTube ID is detected in the input. */
+.manual-url-preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+.manual-url-preview-link {
+  flex-shrink: 0;
+}
+.manual-url-preview-thumb {
+  width: 120px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: rgba(109, 211, 255, 0.05);
+}
+.manual-url-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.manual-url-preview-title {
+  word-break: break-word;
+}
+.manual-url-preview-vid {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+
 /* v1.12.56: pending-update diff section in the INFO card.
    Side-by-side tiles (current / proposed) so the user can
    pre-validate ACCEPT UPDATE — thumbnails are static from

@@ -6465,6 +6465,10 @@
     // v1.12.54: clear any leftover match-hint from a previous open.
     const hint = document.getElementById('manual-url-match-hint');
     if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
+    // v1.12.97: reset the live preview block so a stale thumbnail
+    // from the previous open doesn't flash before the user types.
+    const preview = document.getElementById('manual-url-preview');
+    if (preview) preview.hidden = true;
     if (typeof dlg.showModal === 'function') dlg.showModal();
     else dlg.setAttribute('open', '');
   }
@@ -6522,7 +6526,57 @@
       input.addEventListener('input', () => {
         clearTimeout(matchTimer);
         matchTimer = setTimeout(checkMatch, 250);
+        // v1.12.97: live preview alongside the match-hint. Same
+        // debounce window so we don't hit oembed on every keystroke.
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(updatePreview, 350);
       });
+    }
+    // v1.12.97: live YouTube preview. Watches the input and renders
+    // the thumbnail + oembed-fetched title in the dialog as the user
+    // types/pastes a URL. Each new video ID kicks a fresh oembed
+    // fetch (debounced, deduped against the most recent ID). Falls
+    // back to "no title (private/removed/geo-blocked)" when oembed
+    // 404s — same fallback the v1.12.56 PROPOSED CHANGE diff uses.
+    const preview = document.getElementById('manual-url-preview');
+    const previewThumb = document.getElementById('manual-url-preview-thumb');
+    const previewLink = document.getElementById('manual-url-preview-link');
+    const previewTitle = document.getElementById('manual-url-preview-title');
+    const previewVid = document.getElementById('manual-url-preview-vid');
+    let previewTimer = null;
+    let previewLastVid = null;
+    async function updatePreview() {
+      if (!input || !preview) return;
+      const vid = extractYouTubeVideoId(input.value.trim());
+      if (!vid) {
+        preview.hidden = true;
+        previewLastVid = null;
+        return;
+      }
+      if (vid === previewLastVid) return;
+      previewLastVid = vid;
+      const url = `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`;
+      previewThumb.src = `https://img.youtube.com/vi/${encodeURIComponent(vid)}/hqdefault.jpg`;
+      previewLink.href = url;
+      previewTitle.textContent = 'loading title…';
+      previewVid.textContent = vid;
+      preview.hidden = false;
+      try {
+        const data = await api(
+          'GET',
+          `/api/youtube/oembed?url=${encodeURIComponent(url)}`,
+        );
+        // Race guard: another keystroke may have changed previewLastVid
+        // before this fetch resolved; bail if we're stale.
+        if (vid !== previewLastVid) return;
+        previewTitle.textContent = data?.title || vid;
+        if (data?.author_name) {
+          previewTitle.textContent += ` · ${data.author_name}`;
+        }
+      } catch (_) {
+        if (vid !== previewLastVid) return;
+        previewTitle.textContent = 'no title — video may be private, removed, or geo-blocked';
+      }
     }
     const form = document.getElementById('manual-url-form');
     form?.addEventListener('submit', async (e) => {

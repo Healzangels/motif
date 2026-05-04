@@ -374,6 +374,27 @@
         </p>
         <p id="manual-url-match-hint" class="form-hint form-hint-warn"
            style="display:none"></p>
+        <!-- v1.12.97: live YouTube preview. As the user types/pastes a
+             URL, the JS extracts the video id and shows a thumbnail +
+             oembed-fetched title so they can confirm the right video
+             before submitting. The preview block stays empty until a
+             valid YouTube ID is detected; on detection it appears
+             inline beneath the input. -->
+        <div id="manual-url-preview" class="manual-url-preview" hidden>
+          <a id="manual-url-preview-link" href="#" target="_blank"
+             rel="noopener" class="manual-url-preview-link">
+            <img id="manual-url-preview-thumb" alt=""
+                 class="manual-url-preview-thumb" />
+          </a>
+          <div class="manual-url-preview-meta">
+            <span id="manual-url-preview-title"
+                  class="manual-url-preview-title muted small">
+              loading title…
+            </span>
+            <span id="manual-url-preview-vid"
+                  class="manual-url-preview-vid muted small"></span>
+          </div>
+        </div>
       </label>
       <div class="form-actions">
         <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
