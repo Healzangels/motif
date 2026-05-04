@@ -23,6 +23,27 @@
       const d = new Date(iso);
       return d.toTimeString().slice(0, 8);
     },
+    // v1.12.93: format a timestamp from either an ISO 8601 string
+    // or a unix-epoch (seconds; 10-digit number/string) into a
+    // human-readable absolute date+time. Used by INFO card timestamp
+    // rows where the source format varies — themes.youtube_added_at /
+    // edited_at come from ThemerrDB as numeric seconds, while
+    // motif's audit_events / local_files store ISO strings.
+    timeAuto: (val) => {
+      if (val === null || val === undefined || val === '') return '—';
+      let d;
+      if (typeof val === 'number'
+          || (typeof val === 'string' && /^\d{10}$/.test(val.trim()))) {
+        d = new Date(Number(val) * 1000);
+      } else {
+        d = new Date(val);
+      }
+      if (Number.isNaN(d.getTime())) return String(val);
+      return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+    },
   };
 
   async function api(method, path, body) {
@@ -5725,7 +5746,7 @@
     // already in the "currently applied" row above, so this block
     // only renders the audit context.
     const ovrBlock = ovr
-      ? `<dt>override set</dt><dd><span class="muted small">by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(ovr.set_at || '')}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
+      ? `<dt>override set</dt><dd><span class="muted small">by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(fmt.timeAuto(ovr.set_at))}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
       : '';
     // v1.12.37: pending-update block now only carries the
     // upstream-update decision metadata (detected/decided
@@ -5848,8 +5869,10 @@
         <dt>currently applied</dt><dd>${currentUrlLink}</dd>
         <dt>previous url</dt><dd>${previousUrlLink}</dd>
         <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
-        <dt>added</dt><dd class="muted small">${htmlEscape(t.youtube_added_at || '—')}</dd>
-        <dt>edited</dt><dd class="muted small">${htmlEscape(t.youtube_edited_at || '—')}</dd>
+        <dt>themerrdb added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_added_at))}</dd>
+        <dt>themerrdb edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_edited_at))}</dd>
+        <dt>motif added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_added_at))}</dd>
+        <dt>motif edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_edited_at))}</dd>
         ${failBlock}
         ${ovrBlock}
         ${puBlock}

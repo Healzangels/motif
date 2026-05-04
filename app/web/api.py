@@ -4557,6 +4557,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             prev_row = _load_previous_url(
                 conn, media_type, tmdb_id, section_id=section_id,
             )
+            # v1.12.93: per-row "motif touched this on" timestamps for
+            # the INFO card. Distinct from themes.youtube_added_at /
+            # youtube_edited_at which track ThemerrDB's record.
+            #   motif_added_at  = oldest evidence motif acted on this
+            #     row. audit_events covers post-v1.12.80 actions; falls
+            #     back to local_files.downloaded_at for older installs.
+            #   motif_edited_at = most recent evidence. Same fallback.
+            # NULL when motif has never acted (e.g. M sidecar that
+            # was never adopted, P-agent never replaced) — frontend
+            # renders an em-dash.
+            motif_added = None
+            motif_edited = None
+            if section_id is not None:
+                ae = conn.execute(
+                    """SELECT MIN(occurred_at) AS first_at,
+                              MAX(occurred_at) AS last_at
+                         FROM audit_events
+                        WHERE media_type = ? AND tmdb_id = ?
+                          AND (section_id = ? OR section_id IS NULL)""",
+                    (media_type, tmdb_id, section_id),
+                ).fetchone()
+            else:
+                ae = conn.execute(
+                    """SELECT MIN(occurred_at) AS first_at,
+                              MAX(occurred_at) AS last_at
+                         FROM audit_events
+                        WHERE media_type = ? AND tmdb_id = ?""",
+                    (media_type, tmdb_id),
+                ).fetchone()
+            if ae:
+                motif_added = ae["first_at"]
+                motif_edited = ae["last_at"]
+            # local_files.downloaded_at fallback when no audit row
+            # exists (pre-v1.12.80 installs, or pure-T rows whose
+            # initial sync-driven download never wrote an audit
+            # entry). Per-section when section_id is provided so
+            # the timestamp matches the row the user clicked.
+            if not motif_added:
+                if section_id is not None:
+                    lf_dl = conn.execute(
+                        """SELECT MIN(downloaded_at) AS first_at,
+                                  MAX(downloaded_at) AS last_at
+                             FROM local_files
+                            WHERE media_type = ? AND tmdb_id = ?
+                              AND section_id = ?""",
+                        (media_type, tmdb_id, section_id),
+                    ).fetchone()
+                else:
+                    lf_dl = conn.execute(
+                        """SELECT MIN(downloaded_at) AS first_at,
+                                  MAX(downloaded_at) AS last_at
+                             FROM local_files
+                            WHERE media_type = ? AND tmdb_id = ?""",
+                        (media_type, tmdb_id),
+                    ).fetchone()
+                if lf_dl and lf_dl["first_at"]:
+                    motif_added = lf_dl["first_at"]
+                    motif_edited = lf_dl["last_at"]
         previous_url_payload = (
             {"youtube_url": prev_row["youtube_url"],
              "kind": prev_row["kind"],
@@ -4577,6 +4635,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "overrides": [dict(o) for o in all_overrides],
             "pending_update": dict(pu) if pu else None,
             "previous_url": previous_url_payload,
+            # v1.12.93: motif-side timestamps so the INFO card can
+            # show when *motif* first/last acted on the row, distinct
+            # from ThemerrDB's record on the theme.
+            "motif_added_at": motif_added,
+            "motif_edited_at": motif_edited,
             "events": [dict(e) for e in recent_events],
         }
 
