@@ -6237,6 +6237,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # plex_orphan rows so the user isn't pointed at a dead path.
         if is_orphan:
             options = [o for o in options if o["action"] != "redl"]
+        # v1.12.88: filter ACK FAILURE out of the options when the
+        # row is already acked. The user explicitly wants the recovery
+        # context (failure kind + resolution paths like SET URL /
+        # UPLOAD MP3) to remain visible after acking, but the ACK
+        # button itself becomes redundant — the alarm is already
+        # dismissed. Pre-fix clicking ACK closed the dialog and
+        # required reopening to see the same recovery options.
+        if row["failure_acked_at"]:
+            options = [o for o in options if o["action"] != "clear-failure"]
         return {
             "failure_kind": kind,
             "failure_message": row["failure_message"],

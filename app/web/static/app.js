@@ -5973,7 +5973,7 @@
       data-section-id="${htmlEscape(sectionId || '')}"
       title="Delete every PROVENANCE entry for this row${sectionId ? ' (this section + title-global rows)' : ''}.">CLEAR</button>`;
     slot.innerHTML = `
-      <details class="history-section" open>
+      <details class="history-section" data-info-section="audit" open>
         <summary>
           <span class="history-section-title">// PROVENANCE</span>
           <span class="muted small">${events.length} audited change${events.length === 1 ? '' : 's'}</span>
@@ -5992,6 +5992,13 @@
   // v1.12.83: shared dispatcher for the // HISTORY and // PROVENANCE
   // CLEAR buttons. Confirms with the user, fires the DELETE, then
   // re-hydrates just the affected section so the dialog stays open.
+  // v1.12.88: target the correct section via [data-info-section]
+  // attribute. Pre-fix the selector was `:not(.history-section-audit)`
+  // looking for a class that was never set, so HISTORY clear matched
+  // the FIRST .history-section in DOM order — which was actually
+  // the audit section's slot. Result: HISTORY stayed visible, audit
+  // section got replaced by an empty placeholder, and the audit
+  // CLEAR button was lost (looked locked from the user's POV).
   async function handleInfoClear(btn, root) {
     const which = btn.dataset.clear;  // 'audit' | 'events'
     const mt = btn.dataset.mt;
@@ -6009,12 +6016,16 @@
         : `/api/items/${mt}/${id}/events`;
       await api('DELETE', path);
       if (which === 'audit') {
+        // Re-hydrate the audit slot. With zero events the slot
+        // ends up empty (hydrateAuditSection bails on no events),
+        // which is the correct visual signal.
         const slot = root.querySelector('#audit-section-slot');
         if (slot) slot.innerHTML = '';
         hydrateAuditSection(root, mt, id, sid || undefined);
       } else {
-        // HISTORY is part of the static markup — replace it inline.
-        const node = root.querySelector('details.history-section:not(.history-section-audit)');
+        // Replace the HISTORY <details> in place with a "cleared"
+        // marker. No CLEAR button needed — there's nothing to clear.
+        const node = root.querySelector('details[data-info-section="history"]');
         if (node) {
           node.outerHTML = '<details class="history-section history-section-empty"><summary><span class="history-section-title">// HISTORY</span><span class="muted small">cleared</span></summary></details>';
         }
@@ -6118,8 +6129,16 @@
             await api('POST', `/api/items/${mt}/${id}/redownload`);
             closeAndReload();
           } else if (act === 'clear-failure') {
+            // v1.12.88: ACK from INFO doesn't close the dialog —
+            // re-render the recovery section in place so the user
+            // can keep reading the failure context + recovery
+            // options (now without the ACK FAILURE button, which
+            // is filtered out server-side once acked). Topbar dot
+            // refresh kicks via the standard helper.
             await api('POST', `/api/items/${mt}/${id}/clear-failure`);
-            closeAndReload();
+            section.innerHTML = '';
+            await hydrateRecoveryOptions(root, mt, id);
+            refreshTopbarStatus().catch(() => {});
           } else if (act === 'manual-url') {
             if (!ratingKey) {
               alert('No rating_key available for this row — open SET URL from the row\'s SOURCE menu.');
@@ -6212,7 +6231,7 @@
           title="Delete every HISTORY entry for this row (title-global — events table has no section_id).">CLEAR</button>`
       : '';
     return `
-      <details class="history-section">
+      <details class="history-section" data-info-section="history">
         <summary>
           <span class="history-section-title">// HISTORY</span>
           <span class="muted small">${events.length} event${events.length === 1 ? '' : 's'} · click to expand</span>
