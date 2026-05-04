@@ -399,6 +399,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-bottom: 1px solid var(--line);
   background: var(--bg-elev-2);
 }
+/* v1.12.74: right-aligned action group inside the block-head.
+   Lets the // NEEDS WORK sort chip sit inline with the pager
+   instead of floating in the middle of the row. */
+.block-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .block-title {
   font-family: var(--font-display);
   font-size: var(--t-small);

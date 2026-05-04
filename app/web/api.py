@@ -5614,6 +5614,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "WHERE media_type = ? AND tmdb_id = ?",
                 (now_iso(), media_type, tmdb_id),
             )
+            # v1.12.74: also cancel the underlying failed download
+            # job in the queue. Pre-fix the topbar dot stayed red
+            # after ACK FAILURE because q.failed counted the
+            # 'failed'-status job in jobs even though the row's
+            # failure was dismissed. The user's intent in clicking
+            # ACK is "I'm done with this failure" — that should
+            # include the queued failed job that produced the
+            # failure in the first place. Marking 'cancelled' (not
+            # deleting) preserves the audit trail in LOGS.
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type = 'download'
+                     AND media_type = ? AND tmdb_id = ?
+                     AND status = 'failed'""",
+                (now_iso(), media_type, tmdb_id),
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Failure acknowledged on '{row['title']}' "

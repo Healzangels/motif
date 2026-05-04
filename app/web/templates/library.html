@@ -234,16 +234,21 @@
 <section class="block">
   <header class="block-head">
     <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span></h2>
-    <!-- v1.12.68: quick-access "needs work" sort. Re-orders the
-         current filtered list by attention priority — failures
-         first, then pending updates, then post-DEL await
-         placements, then mismatches, then everything else.
-         Click toggles between the user's prior column sort and
-         this attention sort; the active state is reflected by
-         the chip-active class. -->
-    <button class="chip" id="library-sort-attention-btn" type="button"
-            title="Re-order rows by attention priority: failures → pending updates → awaiting placements → mismatches → rest. Click again to return to the previous column sort.">// NEEDS WORK</button>
-    <div class="pager" id="library-pager"></div>
+    <!-- v1.12.74: chip + pager grouped right so // NEEDS WORK
+         sits inline with the pager instead of floating in the
+         empty middle of the block-head. -->
+    <div class="block-head-actions">
+      <!-- v1.12.68: quick-access "needs work" sort. Re-orders the
+           current filtered list by attention priority — failures
+           first, then pending updates, then post-DEL await
+           placements, then mismatches, then everything else.
+           Click toggles between the user's prior column sort and
+           this attention sort; the active state is reflected by
+           the chip-active class. -->
+      <button class="chip" id="library-sort-attention-btn" type="button"
+              title="Re-order rows by attention priority: failures → pending updates → awaiting placements → mismatches → rest. Click again to return to the previous column sort.">// NEEDS WORK</button>
+      <div class="pager" id="library-pager"></div>
+    </div>
   </header>
   <table class="table" id="library-table">
     <thead>
