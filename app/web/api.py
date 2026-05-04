@@ -4548,6 +4548,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/unmanage")
     async def api_unmanage_item(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.73: optional section_id scopes UNMANAGE to one
+        # section. Without it, every section that motif manages
+        # for this title gets unmanaged at once (legacy fan-out).
+        # Mirrors the v1.12.46 ACCEPT UPDATE / v1.12.47 REVERT
+        # scoping; per-edition theming (v1.12.72) requires this
+        # so unmanaging the 4K edition doesn't yank motif's
+        # tracking from the standard edition too.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """v1.10.18: drop motif's management of a theme without deleting
@@ -4569,6 +4577,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         normal row actions. Use case: testing, or temporarily
         disconnecting motif from a title without nuking the actual
         theme file.
+
+        v1.12.73: when section_id is provided the action targets just
+        that section's local_files + placement; sibling sections'
+        management survives. The orphan-themes drop only fires when
+        the unmanaged section is the LAST one for the title.
         """
         _require_admin(request)
         with get_conn(db) as conn:
@@ -4581,13 +4594,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="theme not found")
             # v1.11.0: walk every per-section local_files row for this
             # item — UNMANAGE drops motif from all of them at once.
-            locals_rows = conn.execute(
-                "SELECT section_id, file_path, file_sha256, source_kind, "
-                "       source_video_id "
-                "FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchall()
+            # v1.12.73: when section_id is provided, scope to that
+            # section only.
+            if section_id:
+                locals_rows = conn.execute(
+                    "SELECT section_id, file_path, file_sha256, source_kind, "
+                    "       source_video_id "
+                    "FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+            else:
+                locals_rows = conn.execute(
+                    "SELECT section_id, file_path, file_sha256, source_kind, "
+                    "       source_video_id "
+                    "FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchall()
             if not locals_rows:
                 raise HTTPException(
                     status_code=409,
@@ -4678,28 +4702,73 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
-            # v1.12.57: drop motif's tracking metadata (override URL,
-            # pending_updates, previous-URL snapshot). UNMANAGE means
-            # motif walks away — the file stays at the Plex folder
-            # but the metadata that drove motif's tracking should
-            # leave too. Pre-fix the override URL lingered, so a
-            # later re-adopt or re-download silently re-applied the
-            # user's old URL.
-            _drop_motif_tracking(conn, media_type, tmdb_id)
-            if is_orphan:
+            # v1.12.73: when section_id is provided, scope the
+            # delete to that section. The orphan-themes drop only
+            # fires when this is the LAST section for the title
+            # (otherwise we'd nuke the themes row and orphan the
+            # other sections' local_files). _drop_motif_tracking
+            # also runs only at the last-section step so per-edition
+            # overrides survive partial unmanages.
+            if section_id:
                 conn.execute(
-                    "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
+                    "DELETE FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
                 )
+                conn.execute(
+                    "DELETE FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                )
+                # Drop the row's section-specific override (matches
+                # the v1.12.72 per-section semantic). The global ''
+                # override and sibling sections' overrides survive.
+                conn.execute(
+                    "DELETE FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                )
+                # Last-section detection — drop themes (orphan only)
+                # and tracking metadata only when this was the
+                # final section.
+                remaining = conn.execute(
+                    "SELECT COUNT(*) AS n FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                last_section = remaining and remaining["n"] == 0
+                if last_section:
+                    _drop_motif_tracking(conn, media_type, tmdb_id)
+                    if is_orphan:
+                        conn.execute(
+                            "DELETE FROM themes "
+                            "WHERE media_type = ? AND tmdb_id = ?",
+                            (media_type, tmdb_id),
+                        )
             else:
-                conn.execute(
-                    "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                )
-                conn.execute(
-                    "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                )
+                # Legacy global UNMANAGE — drops every section at once.
+                # v1.12.57: drop motif's tracking metadata (override URL,
+                # pending_updates, previous-URL snapshot). UNMANAGE means
+                # motif walks away — the file stays at the Plex folder
+                # but the metadata that drove motif's tracking should
+                # leave too. Pre-fix the override URL lingered, so a
+                # later re-adopt or re-download silently re-applied the
+                # user's old URL.
+                _drop_motif_tracking(conn, media_type, tmdb_id)
+                if is_orphan:
+                    conn.execute(
+                        "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
+                    conn.execute(
+                        "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
             # v1.10.31 / v1.11.62 / v1.11.78 / v1.11.85: re-stat the
             # sidecar at every Plex folder that pointed at this theme.
             # The sidecar still exists (we deleted only the canonical),
@@ -5556,6 +5625,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/redownload")
     async def api_redownload(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.73: optional section_id scopes the re-download +
+        # placement to one section. Without it, the download fans
+        # out to every section that owns the title — wrong when
+        # the user clicks DOWNLOAD/RE-DOWNLOAD TDB on a specific
+        # row (4K vs standard) and only wants that one section
+        # affected. Mirrors the v1.12.46 ACCEPT UPDATE / v1.12.47
+        # REVERT scoping; per-section overrides (v1.12.72) need
+        # this too so a per-edition theme isn't accidentally
+        # re-downloaded into sibling sections that have their own
+        # different URLs.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         _require_admin(request)
@@ -5566,13 +5646,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if row is None:
                 raise HTTPException(status_code=404, detail="not in database")
-            # Cancel any pending download for this item, then enqueue a fresh one
-            conn.execute(
-                """UPDATE jobs SET status = 'cancelled', finished_at = ?
-                   WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
-                     AND status IN ('pending', 'failed')""",
-                (now_iso(), media_type, tmdb_id),
-            )
+            # Cancel any pending download for this item, then enqueue a fresh one.
+            # v1.12.73: when section_id is provided, only cancel
+            # jobs in that section so sibling-section downloads
+            # the user isn't replacing keep running.
+            if section_id:
+                conn.execute(
+                    """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                       WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
+                         AND section_id = ?
+                         AND status IN ('pending', 'failed')""",
+                    (now_iso(), media_type, tmdb_id, section_id),
+                )
+            else:
+                conn.execute(
+                    """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                       WHERE job_type = 'download' AND media_type = ? AND tmdb_id = ?
+                         AND status IN ('pending', 'failed')""",
+                    (now_iso(), media_type, tmdb_id),
+                )
             # v1.12.47: RE-DOWNLOAD TDB / DOWNLOAD TDB (this
             # endpoint backs both labels) needs force_place=True
             # so the place job overwrites the existing
@@ -5586,11 +5678,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 reason="manual",
                 auto_place=True,
                 force_place=True,
+                only_section_id=section_id,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Manual re-download requested by {request.state.user} "
-                          f"({n} sections)")
+                          f"({n} sections{', scoped to ' + section_id if section_id else ''})")
         return {"ok": True, "enqueued_sections": n}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/override")

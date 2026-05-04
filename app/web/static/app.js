@@ -1268,10 +1268,19 @@
     }
   }
 
-  async function redownload(mediaType, tmdbId, btn) {
+  async function redownload(mediaType, tmdbId, btn, sectionId) {
     if (btn) btn.disabled = true;
     try {
-      await api('POST', `/api/items/${mediaType}/${tmdbId}/redownload`);
+      // v1.12.73: pass section_id so the re-download targets only
+      // the row's section. Pre-fix, RE-DOWNLOAD TDB / DOWNLOAD TDB
+      // on a 4K row enqueued downloads for every section that
+      // owned the title — wrong for per-edition theming since
+      // sibling sections might have their own per-section
+      // overrides (v1.12.72) the user wants to keep.
+      const url = sectionId
+        ? `/api/items/${mediaType}/${tmdbId}/redownload?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/items/${mediaType}/${tmdbId}/redownload`;
+      await api('POST', url);
       if (btn) btn.textContent = 'QUEUED';
       // If we're on /movies, /tv, /anime, light up rapid-poll so the row
       // updates as the download/place transitions land.
@@ -3667,10 +3676,15 @@
         || sourceKindForActions === 'url';
       if (!tdbBlocked && hasDownloadUrl) {
         if (!downloaded || dlBroken) {
+          // v1.12.73: pass sectionId so RE-DOWNLOAD/DOWNLOAD TDB
+          // targets only this row's section. Without it, the
+          // re-download fanned out to every section that owned
+          // the title — wrong for per-edition theming.
           sourceItems.push(menuItemHtml(
             'redl', 'DOWNLOAD TDB',
-            'Download from ThemerrDB and place into the Plex folder.',
-            { mt: themeMt, id: themeId, tone: 'themerrdb' },
+            'Download from ThemerrDB and place into the Plex folder for this section.',
+            { mt: themeMt, id: themeId, sectionId: it.section_id,
+              tone: 'themerrdb' },
           ));
         } else {
           // v1.12.39: RE-DOWNLOAD TDB returned per user feedback
@@ -3682,8 +3696,9 @@
           // NOT from TDB.
           sourceItems.push(menuItemHtml(
             'redl', 'RE-DOWNLOAD TDB',
-            'Re-fetch from ThemerrDB and overwrite the canonical (refresh / corruption recovery).',
-            { mt: themeMt, id: themeId, tone: 'themerrdb' },
+            'Re-fetch from ThemerrDB and overwrite the canonical for this section (refresh / corruption recovery).',
+            { mt: themeMt, id: themeId, sectionId: it.section_id,
+              tone: 'themerrdb' },
           ));
         }
       }
@@ -3880,10 +3895,15 @@
       ));
     }
     if (placed && downloaded) {
+      // v1.12.73: scope UNMANAGE to this row's section so sibling
+      // sections (4K vs standard, anime vs plain) keep their motif
+      // management. The endpoint detects last-section and only
+      // drops the themes row + tracking metadata when nothing else
+      // is managed for the title.
       removeItems.push(menuItemHtml(
         'unmanage', 'UNMANAGE',
-        "Drop motif's tracking and delete the canonical. Plex-folder file stays; row flips to M.",
-        { mt: themeMt, id: themeId, danger: true },
+        "Drop motif's tracking for this section and delete the canonical. Plex-folder file stays; row flips to M.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id, danger: true },
       ));
     }
     if (downloaded || isOrphan) {
@@ -5216,7 +5236,12 @@
         }
       }
       if (act === 'redl') {
-        redownload(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+        // v1.12.73: pass section_id from the menu button (set by
+        // menuItemHtml(extras.sectionId)) so RE-DOWNLOAD TDB /
+        // DOWNLOAD TDB target only the row's section. Mirrors the
+        // ACCEPT UPDATE / REVERT scoping we already do.
+        redownload(btn.dataset.mt, btn.dataset.id, btn,
+                   btn.dataset.sectionId || undefined).catch(console.error);
       } else if (act === 'revert') {
         revertToThemerrDb(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
       } else if (act === 'clear-url') {
@@ -5237,6 +5262,12 @@
         const sid = btn.dataset.sectionId
                  || btn.closest('tr')?.dataset.sectionId
                  || undefined;
+        // v1.12.73: blur the trigger button before opening the
+        // dialog so the focus-visible cyan outline doesn't linger
+        // on the row's ⓘ button after the user closes the
+        // dialog with Esc. Same pattern used elsewhere where a
+        // click hands focus off to a modal.
+        btn.blur();
         openInfoDialog(btn.dataset.mt, btn.dataset.id, sid).catch(console.error);
       } else if (act === 'delete-orphan') {
         await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
@@ -5348,7 +5379,14 @@
           + `re-adopt or replace it later.`
         )) return;
         try {
-          await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/unmanage`);
+          // v1.12.73: pass section_id from the menu button so
+          // UNMANAGE targets only this row's section. Sibling
+          // sections keep their motif management.
+          const sid = btn.dataset.sectionId;
+          const unmanageUrl = sid
+            ? `/api/items/${btn.dataset.mt}/${btn.dataset.id}/unmanage?section_id=${encodeURIComponent(sid)}`
+            : `/api/items/${btn.dataset.mt}/${btn.dataset.id}/unmanage`;
+          await api('POST', unmanageUrl);
           libraryRapidPoll();
           await loadLibrary().catch(()=>{});
         } catch (e) {
@@ -5928,6 +5966,14 @@
   function closeInfoDialog() {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
+    // v1.12.73: clear focus from any focused element inside the
+    // dialog before closing. Pre-fix, clicking the X (or Esc)
+    // closed the dialog with the X button still :focus, so when
+    // the dialog re-opened next time the X carried a stale cyan
+    // focus-visible outline. Calling blur() releases focus
+    // cleanly; the host page's <body> takes focus instead.
+    const focused = dlg.querySelector(':focus');
+    if (focused && typeof focused.blur === 'function') focused.blur();
     if (typeof dlg.close === 'function') dlg.close();
     else dlg.removeAttribute('open');
   }

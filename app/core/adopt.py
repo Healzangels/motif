@@ -262,12 +262,44 @@ def _maybe_restore_url_history(
         if hist is None:
             return None
         url = hist["youtube_url"]
-        # Promote: write user_overrides + flip local_files.source_kind
-        # to 'url' so the row's badge becomes U instead of A.
-        # v1.12.72: adopt-restore writes the '' (global) override row
-        # since the restoration applies to the title across all
-        # sections by default. Per-section preferences set later
-        # via SET URL still take precedence per worker fall-back.
+        # v1.12.73: branch on URL match. If the historical URL is
+        # IDENTICAL to themes.youtube_url, the file is content-
+        # identical to what TDB would download right now, so the
+        # row is conceptually T-managed — flip local_files to
+        # source_kind='themerrdb' and skip writing user_overrides
+        # entirely. Pre-fix the row landed at U with a global
+        # override URL that just shadowed TDB's URL, then the next
+        # sync surfaced a synthetic urls_match prompt asking the
+        # user to "convert U → T" — extra UI for what was already
+        # a T-equivalent state.
+        theme_yt_row = conn.execute(
+            "SELECT youtube_url FROM themes "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        ).fetchone()
+        theme_yt = (theme_yt_row and theme_yt_row["youtube_url"]) or ""
+        url_matches_tdb = bool(theme_yt and url and theme_yt.strip() == url.strip())
+        if url_matches_tdb:
+            # Adopt-as-T path: keep themes.youtube_url, no override,
+            # flip every section's local_files.source_kind to
+            # 'themerrdb'. Row classifies as T immediately.
+            conn.execute(
+                "UPDATE local_files SET source_kind = 'themerrdb', "
+                "                       source_video_id = ? "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (hist["source_video_id"] or "", media_type, tmdb_id),
+            )
+            return {
+                "youtube_url": url,
+                "source_kind": "themerrdb",
+                "url_matches_tdb": True,
+                "history_saved_at": hist["saved_at"],
+            }
+        # Adopt-as-U path (URL differs from TDB): write user_overrides
+        # + flip local_files to source_kind='url'. The override is
+        # scoped to '' (global) so the restoration applies across
+        # sections by default; per-section SET URL still wins via
+        # the worker fall-back chain (v1.12.72).
         conn.execute(
             """INSERT INTO user_overrides
                  (media_type, tmdb_id, youtube_url, set_at, set_by, note,
@@ -287,11 +319,6 @@ def _maybe_restore_url_history(
             "  AND (youtube_url IS NULL OR youtube_url = '')",
             (url, media_type, tmdb_id),
         )
-        # v1.11.0 note: this UPDATE intentionally spans every per-section
-        # local_files row for the item — themes.youtube_url and
-        # user_overrides.youtube_url are item-scoped (not section-scoped),
-        # so the URL semantics flip uniformly across sections when one
-        # section's adopted file matches the historical hash.
         conn.execute(
             "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
             "WHERE media_type = ? AND tmdb_id = ?",
