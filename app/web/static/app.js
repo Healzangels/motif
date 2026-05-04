@@ -6080,9 +6080,16 @@
       return;
     }
     const human = data.human || data.failure_kind;
-    const ackedNote = data.acked
-      ? ' <span class="muted small">(failure acknowledged — these options stay available until upstream changes)</span>'
-      : '';
+    // v1.12.92: render the acked note on its own line below the
+    // header instead of inlining it next to the human label. The
+    // inline version made the header wrap to two lines after ACK,
+    // which jumped the buttons down. The dedicated line keeps the
+    // header height constant pre/post ack. The line is always in
+    // the DOM (empty when not acked) so the section's vertical
+    // size doesn't shift either.
+    const ackedNoteLine = data.acked
+      ? '<p class="recovery-section-note muted small">failure acknowledged — these options stay available until upstream changes</p>'
+      : '<p class="recovery-section-note recovery-section-note-empty"></p>';
     const items = data.options.map((opt) => {
       const tone = opt.tone ? ` lib-source-${opt.tone}` : '';
       const disabledAttr = opt.disabled ? 'disabled' : '';
@@ -6119,8 +6126,9 @@
     section.innerHTML = `
       <header class="recovery-section-head">
         <span class="recovery-section-title">// TRY THIS NEXT</span>
-        <span class="muted small">${htmlEscape(human)}${ackedNote}</span>
+        <span class="muted small">${htmlEscape(human)}</span>
       </header>
+      ${ackedNoteLine}
       <div class="recovery-section-body">${items}</div>
     `;
     // v1.12.71: dispatch recovery-button clicks. Each button's
@@ -6153,10 +6161,17 @@
             // options (now without the ACK FAILURE button, which
             // is filtered out server-side once acked). Topbar dot
             // refresh kicks via the standard helper.
+            // v1.12.92: don't innerHTML='' before the re-fetch.
+            // hydrateRecoveryOptions overwrites innerHTML once the
+            // new data arrives, so the section's old content stays
+            // visible during the ~100ms fetch instead of collapsing
+            // to empty and re-painting (which felt jarring). Also
+            // kick loadLibrary so the row's red ! glyph clears
+            // without requiring a refresh / external click.
             await api('POST', `/api/items/${mt}/${id}/clear-failure`);
-            section.innerHTML = '';
             await hydrateRecoveryOptions(root, mt, id);
             refreshTopbarStatus().catch(() => {});
+            loadLibrary().catch(() => {});
           } else if (act === 'manual-url') {
             if (!ratingKey) {
               alert('No rating_key available for this row — open SET URL from the row\'s SOURCE menu.');

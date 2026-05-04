@@ -1939,6 +1939,21 @@ pre code, .codeblock {
   gap: 8px;
   align-items: stretch;
 }
+/* v1.12.92: dedicated line for the post-ack note so the header's
+   vertical size doesn't grow when ack happens. Always rendered (an
+   empty <p> with reserved height when not acked) so the section
+   doesn't shift on toggle. */
+.recovery-section-note {
+  margin: 0 0 10px 0;
+  line-height: 1.4;
+  min-height: 1.4em;
+}
+.recovery-section-note-empty {
+  /* Same height as the populated note so toggling on/off doesn't
+     reflow the buttons below. visibility:hidden keeps the element
+     in the layout but hides it from screen readers + visuals. */
+  visibility: hidden;
+}
 .recovery-option-btn {
   flex: 0 0 auto;
 }
