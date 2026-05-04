@@ -30,7 +30,7 @@ import sqlite3
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -6048,6 +6048,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             )
         return {"ok": True, "deleted": cur.rowcount}
+
+    @app.get("/api/items/{media_type}/{tmdb_id}/theme.mp3")
+    async def api_item_theme_audio(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        section_id: str | None = Query(None),
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.12.90: stream the canonical theme.mp3 for in-browser
+        audio playback from the INFO card. Resolves the file via
+        local_files (per-section when section_id is provided, falling
+        back to any-section). FastAPI's FileResponse handles range
+        requests so the <audio> element can seek without re-fetching
+        the whole file.
+
+        Auth-required like every other /api/items/* endpoint. Returns
+        404 when the row has no canonical recorded, and 410 when the
+        DB has a file_path but the file isn't actually on disk
+        (canonical_missing / dlBroken state).
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            if section_id is not None:
+                row = conn.execute(
+                    "SELECT file_path FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT file_path FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "ORDER BY section_id LIMIT 1",
+                    (media_type, tmdb_id),
+                ).fetchone()
+        if row is None or not row["file_path"]:
+            raise HTTPException(status_code=404, detail="no canonical recorded for this row")
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=503, detail="themes_dir not configured")
+        full = settings.themes_dir / row["file_path"]
+        try:
+            full = full.resolve()
+            themes_root = settings.themes_dir.resolve()
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"path resolution failed: {e}")
+        # Reject path-traversal attempts — full must live under themes_dir.
+        if themes_root not in full.parents and full != themes_root:
+            raise HTTPException(status_code=400, detail="resolved path escapes themes_dir")
+        if not full.is_file():
+            raise HTTPException(
+                status_code=410,
+                detail="canonical recorded but missing on disk (dlBroken)",
+            )
+        return FileResponse(full, media_type="audio/mpeg",
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/items/{media_type}/{tmdb_id}/recovery-options")
     async def api_recovery_options(

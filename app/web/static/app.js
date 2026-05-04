@@ -5781,6 +5781,23 @@
     const dlBlock = lf
       ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · ${htmlEscape(lf.provenance)}</dd>`
       : '';
+    // v1.12.90: in-card audio player. The INFO dialog now serves
+    // the canonical theme.mp3 via /api/items/{mt}/{tmdb}/theme.mp3
+    // so users can preview what's actually playing without leaving
+    // the dialog. Rendered only when there's a local_files row;
+    // canonical_missing rows (dlBroken state) get the endpoint's
+    // 410 — the <audio> element handles that gracefully (no-source
+    // state). preload="metadata" so duration shows without
+    // streaming the body until the user hits play.
+    const audioBlock = lf && t.media_type !== undefined && t.tmdb_id !== undefined
+      ? (() => {
+          const sec = sectionId
+            ? `?section_id=${encodeURIComponent(sectionId)}`
+            : '';
+          const src = `/api/items/${encodeURIComponent(t.media_type)}/${encodeURIComponent(t.tmdb_id)}/theme.mp3${sec}`;
+          return `<dt>play</dt><dd><audio controls preload="metadata" src="${htmlEscape(src)}" class="info-audio">your browser doesn't support inline audio playback</audio></dd>`;
+        })()
+      : '';
     // v1.12.56: pending-update diff section. When an actionable
     // upstream-changed update is queued, show side-by-side tiles
     // (current vs proposed) so the user can pre-validate ACCEPT
@@ -5838,6 +5855,7 @@
         ${puBlock}
         ${dlBlock}
         ${placedBlock}
+        ${audioBlock}
       </dl>
       ${recoveryPlaceholder}
       ${diffSection}

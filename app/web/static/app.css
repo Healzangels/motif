@@ -1322,6 +1322,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .dlg-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; font-size: var(--t-small); }
 .dlg-grid dt { color: var(--fg-dim); }
 .dlg-grid dd { color: var(--fg); word-break: break-all; }
+/* v1.12.90: in-card audio preview. Width-constrained so the native
+   controls don't blow out the dialog grid; height matches the
+   one-line text rows above so the layout doesn't jump when audio
+   loads metadata. */
+.info-audio { width: 100%; max-width: 480px; height: 32px; }
 .dlg-actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
 .dlg-form { display: flex; gap: 8px; margin-top: 8px; }
 .dlg-form .input { flex: 1; }
