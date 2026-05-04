@@ -284,7 +284,14 @@ test("SOURCE: REVERT hidden when revert_redundant is set", () => {
   assert.ok(!src.includes("revert"));
 });
 
-test("SOURCE: ACK FAILURE shown only on un-acked failures", () => {
+test("SOURCE: ACK FAILURE removed from menu (v1.12.87 — INFO-only)", () => {
+  // Pre-v1.12.87 the SOURCE menu surfaced ACK FAILURE alongside
+  // recovery actions; v1.12.87 moves it to the INFO card's
+  // // TRY THIS NEXT section as the single entry-point so users
+  // see the failure context (raw yt-dlp message + recovery
+  // options) before dismissing. The row's red ! glyph also
+  // routes through INFO. Verify clear-failure never appears in
+  // the SOURCE list, regardless of failure / ack state.
   const themed = {
     media_folder: "/m/movies/T",
     placement_provenance: "auto",
@@ -294,7 +301,7 @@ test("SOURCE: ACK FAILURE shown only on un-acked failures", () => {
   const open = computeMenuActions(
     row(Object.assign({}, themed, { failure_kind: "video_private" })),
   );
-  assert.ok(acts(open.source).includes("clear-failure"));
+  assert.ok(!acts(open.source).includes("clear-failure"));
   const acked = computeMenuActions(
     row(
       Object.assign({}, themed, {

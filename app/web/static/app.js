@@ -278,13 +278,23 @@
       if ((q.refresh_in_flight || 0) > 0) {
         tipParts.push(`refresh: ${q.refresh_in_flight} (Plex metadata nudge, post-place delay ~30s)`);
       }
+      // v1.12.87: topbar dot color is driven by unacked_failures
+      // (themes-based "active alarm" count) rather than q.failed
+      // (jobs.status='failed' count). ACK FAILURE clears
+      // failure_acked_at on the theme, which immediately drops
+      // unacked_failures regardless of whether the underlying
+      // failed-status job rows survive in the queue as audit trail.
+      // Pre-fix the dot stayed red after ACK because the failed
+      // job row was still counted; users had to "clear failed"
+      // separately or wait for a sweep that no longer existed.
+      const unacked = q.unacked_failures || 0;
       const queueTip = tipParts.length
         ? `In flight:\n  • ${tipParts.join('\n  • ')}\n\nClick LOGS for details.`
-        : ((q.failed || 0) > 0
-            ? `${q.failed} failed job(s) — click to review on LOGS`
+        : (unacked > 0
+            ? `${unacked} active failure(s) — open the row's INFO card to see and ACK`
             : 'idle');
       const dotEl = $('#topbar-status .dot');
-      if (dotEl && (q.failed || 0) === 0) {
+      if (dotEl && unacked === 0) {
         // failures-tip already wired below — only override when no
         // failures (failures-tooltip wins on click affordance).
         dotEl.title = queueTip;
@@ -293,7 +303,7 @@
       dot.classList.remove('dot-amber', 'dot-red');
       const anyActive = themerrdbBusy || plexEnumBusy || downloadBusy
                      || placeBusy || scanBusy;
-      if (q.failed > 0) dot.classList.add('dot-red');
+      if (unacked > 0) dot.classList.add('dot-red');
       else if (anyActive) dot.classList.add('dot-amber');
       else if (q.pending > 0) dot.classList.add('dot-amber');
 
@@ -308,11 +318,14 @@
       // page (which also cancels the underlying failed job per
       // v1.12.74). The __motif_failed_count global is kept in
       // case other future code wants to gate on it.
+      // v1.12.87: clickable status now tracks unacked_failures
+      // (themes-based) so the click target follows the dot color.
+      // Routes to /queue?status=failed (audit view) — the actual
+      // ACK happens on the row's INFO card.
       const statusEl = $('#topbar-status');
-      const failed = q.failed || 0;
-      window.__motif_failed_count = failed;
-      if (failed > 0) {
-        const tip = `${failed} failed job(s) — click to review on /queue`;
+      window.__motif_failed_count = unacked;
+      if (unacked > 0) {
+        const tip = `${unacked} active failure(s) — click to review on /queue, ACK on the row's INFO card`;
         if (dot) dot.title = tip;
         $('#topbar-status-text').title = tip;
         statusEl?.classList.add('topbar-status-clickable');
@@ -3341,7 +3354,7 @@
       // Amber color matches the new amber PL state pill so both
       // attention signals agree visually.
       titleGlyphs.push(
-        `<span class="title-glyph title-glyph-await" title="Canonical downloaded but not placed in Plex. Use PLACE → PUSH TO PLEX to apply, or REMOVE → PURGE to discard the canonical.">!</span>`
+        `<span class="title-glyph title-glyph-await" title="Awaiting placement — canonical downloaded but not placed in Plex. Open INFO for context; PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.">!</span>`
       );
     }
     // v1.11.62: 'DL broken' glyph — motif's canonical was deleted but
@@ -3365,9 +3378,12 @@
     // (DOWNLOAD path covers them, no theme to update from).
     if (it.actionable_update && !it.job_in_flight
         && computeSrcLetter(it) !== '-') {
+      // v1.12.87: tooltip points at INFO + SOURCE so users have a
+      // single mental model — `!` means "click for context, ACK
+      // (for failures) or decide (ACCEPT/KEEP) in the menu/INFO".
       const updTip = (it.pending_update_kind === 'urls_match')
-        ? 'ThemerrDB now matches your override URL — review in SOURCE → ACCEPT UPDATE / KEEP CURRENT.'
-        : 'ThemerrDB has a new URL for this row — review in SOURCE → ACCEPT UPDATE / KEEP CURRENT.';
+        ? 'ThemerrDB now matches your override URL — open INFO to see the diff, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.'
+        : 'ThemerrDB has a new URL for this row — open INFO to see the proposed change, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.';
       titleGlyphs.push(
         `<span class="title-glyph title-glyph-update title-glyph-action" title="${htmlEscape(updTip)}">!</span>`
       );
@@ -3382,7 +3398,7 @@
     // menu has work to do" — distinct from the upstream-update blue.
     if (it.mismatch_state === 'pending' && !it.job_in_flight) {
       titleGlyphs.push(
-        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical content diverged from the Plex-folder file. Resolve in PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">!</span>`
+        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical content diverged from the Plex-folder file. Open INFO for the diff; resolve in PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">!</span>`
       );
     }
     // v1.10.50: only show the ! glyph when the failure hasn't been
@@ -3399,16 +3415,20 @@
         'network_error': 'Network error',
         'unknown': 'Unknown failure'
       }[it.failure_kind] || it.failure_kind;
-      // v1.11.8: clicking the red ! glyph acknowledges the failure
-      // (silent — clears the alert state, leaves failure_kind so the
-      // TDB pill stays red). Pre-fix this opened the SET URL prompt,
-      // which was a footgun for failures that aren't URL-fixable
-      // (e.g. cookies_expired or geo_blocked) and confused users who
-      // just wanted to dismiss the warning glyph.
-      const ackTip = `${human} — click to acknowledge`;
+      // v1.12.87: clicking the red ! glyph now opens the row's
+      // INFO card (was inline-acknowledge pre-.87). INFO is the
+      // single ACK entry-point — // TRY THIS NEXT shows the raw
+      // yt-dlp error + recovery options first, then ACK FAILURE
+      // dismisses the alarm. The previous inline-clear flow
+      // dismissed the warning without ever showing the user
+      // *why* the download failed, which was a usability gap on
+      // ambiguous failures (e.g. UNKNOWN → user couldn't tell
+      // if it was URL-fixable or transient).
+      const ackTip = `${human} — click to view in INFO and ACK`;
       titleGlyphs.push(
         `<button class="title-glyph title-glyph-fail" title="${htmlEscape(ackTip)}" `
-        + `data-act="clear-failure" data-mt="${themeMt}" data-id="${themeId}" `
+        + `data-act="info" data-mt="${themeMt}" data-id="${themeId}" `
+        + `data-section-id="${htmlEscape(it.section_id || '')}" `
         + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`
       );
       rowExtra = ' class="row-failure"';
@@ -3829,18 +3849,14 @@
     }
 
     // ── 5. HOUSEKEEPING ───────────────────────────────────────
-    // ACK FAILURE — clear the failure flag on the theme so the
-    // red ! glyph + topbar FAIL count drop this row. Doesn't fix
-    // anything; it's a "stop showing me the warning" dismiss.
-    // Re-fires on the next failed download attempt.
-    if (it.failure_kind && !it.failure_acked_at
-        && themed && themeId !== null && themeId !== undefined) {
-      sourceItems.push(menuItemHtml(
-        'clear-failure', 'ACK FAILURE',
-        "Drop this row from the topbar FAIL count. The red TDB ✗ pill stays.",
-        { mt: themeMt, id: themeId },
-      ));
-    }
+    // v1.12.87: ACK FAILURE moved out of the SOURCE menu — INFO
+    // card's // TRY THIS NEXT section is now the single ACK
+    // entry-point. The row's red ! glyph also routes there
+    // (was inline-clear pre-.87) so users always see the failure
+    // context (kind, raw yt-dlp message, recovery options) before
+    // dismissing. Reduces SOURCE-menu clutter and removes the
+    // "what's the difference between the glyph and SOURCE → ACK"
+    // ambiguity.
 
     // ── 6. UNDO ───────────────────────────────────────────────
     // REVERT — one-step undo. Surfaces only when there's a

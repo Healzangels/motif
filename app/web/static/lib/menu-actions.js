@@ -201,16 +201,9 @@
       });
     }
 
-    // ── 5. HOUSEKEEPING (ACK FAILURE) ────────────────────────
-    if (
-      it.failure_kind &&
-      !it.failure_acked_at &&
-      flags.themed &&
-      themeId !== null &&
-      themeId !== undefined
-    ) {
-      source.push({ act: "clear-failure", label: "ACK FAILURE" });
-    }
+    // v1.12.87: ACK FAILURE removed from the SOURCE menu — moved
+    // to INFO card's // TRY THIS NEXT section as the single ACK
+    // entry-point. Row's red ! glyph also routes there.
 
     // ── 6. UNDO (REVERT / RESTORE) ───────────────────────────
     if (

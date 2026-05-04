@@ -1520,6 +1520,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND acked_at IS NULL) AS failed,
+                  -- v1.12.87: unacked_failures drives the topbar's red
+                  -- IDLE dot — counts themes with an active alarm
+                  -- (failure_kind set, failure_acked_at NULL). Distinct
+                  -- from `failed` (jobs-based) which powers the /queue
+                  -- FAILED filter chip and is purely an audit count.
+                  -- ACK FAILURE clears failure_acked_at, so the topbar
+                  -- dot reliably reflects user-acknowledged state
+                  -- regardless of whether the underlying failed-status
+                  -- job rows have been cancelled or not.
+                  (SELECT COUNT(*) FROM themes
+                   WHERE failure_kind IS NOT NULL
+                     AND failure_acked_at IS NULL) AS unacked_failures,
                   (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total
             """).fetchone()
@@ -1544,6 +1556,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "queue_pending": stats["pending"],
             "queue_running": stats["running"],
             "queue_failed": stats["failed"],
+            "unacked_failures": stats["unacked_failures"],
             "updates_pending": stats["updates_pending"],
             "failures_total": stats["failures_total"],
             "last_sync_at": last_sync["finished_at"] if last_sync else None,
@@ -1607,6 +1620,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'failed' AND acked_at IS NULL) AS failed,
+                  -- v1.12.87: unacked_failures drives the topbar's red
+                  -- IDLE dot — counts themes with an active alarm
+                  -- (failure_kind set, failure_acked_at NULL). Distinct
+                  -- from `failed` (jobs-based) which powers the /queue
+                  -- FAILED filter chip and is purely an audit count.
+                  -- ACK FAILURE clears failure_acked_at, so the topbar
+                  -- dot reliably reflects user-acknowledged state
+                  -- regardless of whether the underlying failed-status
+                  -- job rows have been cancelled or not.
+                  (SELECT COUNT(*) FROM themes
+                   WHERE failure_kind IS NOT NULL
+                     AND failure_acked_at IS NULL) AS unacked_failures,
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type IN ('sync','plex_enum')
                      AND status IN ('pending','running')) AS sync_in_flight,
@@ -1834,6 +1859,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "pending": row["pending"],
                 "running": row["running"],
                 "failed": row["failed"],
+                # v1.12.87: themes-based "active alarm" count for the
+                # topbar's IDLE dot. Drops to zero on ACK FAILURE
+                # regardless of whether the failed-status job rows
+                # remain in the queue (they stay as audit trail).
+                "unacked_failures": row["unacked_failures"],
                 "sync_in_flight": row["sync_in_flight"],
                 "themerrdb_sync_in_flight": row["themerrdb_sync_in_flight"],
                 "plex_enum_in_flight": row["plex_enum_in_flight"],
@@ -6250,12 +6280,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if row["failure_kind"] is None:
                 return {"ok": True, "no_op": True,
                         "note": "no failure to acknowledge"}
-            if row["failure_acked_at"]:
-                return {"ok": True, "no_op": True,
-                        "note": "already acknowledged"}
+            # v1.12.87: idempotent over the failure_acked_at flag —
+            # always run the cancel sweep below even if the user has
+            # ACKed before. Pre-fix the early no-op meant a second
+            # ACK click after a stale-pending retry cycle produced
+            # new failed jobs did NOT cancel them, so the topbar
+            # stayed red. With the topbar now driven by themes (not
+            # jobs) this is mostly belt-and-suspenders, but the
+            # cleanup keeps the queue tidy and matches user intent
+            # ("dismiss this and stop trying").
             conn.execute(
                 "UPDATE themes SET failure_acked_at = ? "
-                "WHERE media_type = ? AND tmdb_id = ?",
+                "WHERE media_type = ? AND tmdb_id = ? AND failure_acked_at IS NULL",
                 (now_iso(), media_type, tmdb_id),
             )
             # v1.12.74: also cancel the underlying failed download
