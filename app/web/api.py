@@ -215,37 +215,25 @@ def _capture_previous_url(
     conn, media_type: str, tmdb_id: int,
     *, section_id: str | None = None,
 ) -> None:
-    """v1.12.37: snapshot the row's current canonical URL into
-    themes.previous_youtube_url + previous_youtube_kind so REVERT
-    can swap back one step. Called from any handler that's about
-    to change the canonical URL (ACCEPT UPDATE, SET URL, UPLOAD
-    MP3, REPLACE TDB).
+    """v1.12.37: snapshot the row's current canonical URL so REVERT
+    can swap back one step. Called from any handler that's about to
+    change the canonical URL (ACCEPT UPDATE, SET URL, UPLOAD MP3,
+    REPLACE TDB, PURGE/UNMANAGE pre-drop).
 
-    Resolution order for "current URL":
-      1. user_overrides.youtube_url for the given section_id (when
-         provided), then the '' global row (kind = 'user').
-      2. themes.youtube_url otherwise (kind = 'themerrdb').
-    A null URL produces a no-op snapshot — REVERT will read the
-    null and the SOURCE menu will hide the button via
-    has_previous_url=0.
+    v1.12.86: writes to per-section previous_urls table (was the
+    title-global themes.previous_youtube_url + previous_youtube_kind
+    columns). Each section gets its own snapshot — pre-fix a PURGE
+    in 4K then PURGE in standard overwrote 4K's slot, breaking
+    RESTORE. Without section_id (legacy callers without row context)
+    the snapshot lands at section_id='' which acts as a fallback for
+    any section that doesn't have its own row.
 
-    v1.12.79: section_id parameter so PURGE / UNMANAGE can capture
-    the section-specific override URL before dropping it. Powers
-    the post-PURGE RESTORE flow — without it, PURGE on a U row
-    silently lost the URL because user_overrides was deleted before
-    anyone snapshotted it. previous_youtube_url itself stays
-    title-global by design (one undo slot per title).
-
-    v1.12.84: dropped the "any per-section override LIMIT 1" final
-    fallback. Pre-fix capturing previous_url for a standard-section
-    PURGE on a T row pulled the 4K's user override URL into
-    themes.previous_youtube_url, then the standard's INFO card
-    showed RESTORE pointing at the wrong (4K's) URL. The capture
-    now only reads URLs that would actually apply to the requested
-    section: section's own row, then '' global, then themes URL.
-    The legacy "no section_id provided" path keeps the
-    any-section fallback because legacy callers genuinely don't
-    know which section to prefer.
+    Resolution order for "current URL" (which we then snapshot):
+      1. user_overrides.youtube_url for the given section_id (or
+         '' global) — kind='user'.
+      2. themes.youtube_url otherwise — kind='themerrdb'.
+    A null URL produces a no-op (no INSERT). The library SQL hides
+    REVERT/RESTORE on rows with no previous_urls entry.
     """
     ovr = None
     if section_id is not None:
@@ -261,8 +249,6 @@ def _capture_previous_url(
                 (media_type, tmdb_id),
             ).fetchone()
     else:
-        # Legacy callers without row context — '' global first, then
-        # any-section fallback. Same shape the v1.12.79 code had.
         ovr = conn.execute(
             "SELECT youtube_url FROM user_overrides "
             "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
@@ -286,12 +272,67 @@ def _capture_previous_url(
         ).fetchone()
         prev_url = t["youtube_url"] if t else None
         prev_kind = "themerrdb" if prev_url else None
+    if not prev_url or not prev_kind:
+        return
+    target_section = section_id if section_id is not None else ""
     conn.execute(
-        """UPDATE themes SET previous_youtube_url = ?,
-                             previous_youtube_kind = ?
-           WHERE media_type = ? AND tmdb_id = ?""",
-        (prev_url, prev_kind, media_type, tmdb_id),
+        """INSERT INTO previous_urls
+             (media_type, tmdb_id, section_id, youtube_url, kind, captured_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+               youtube_url = excluded.youtube_url,
+               kind = excluded.kind,
+               captured_at = excluded.captured_at""",
+        (media_type, tmdb_id, target_section, prev_url, prev_kind, now_iso()),
     )
+
+
+def _load_previous_url(
+    conn, media_type: str, tmdb_id: int, *, section_id: str | None = None,
+):
+    """v1.12.86: read the one-step REVERT/RESTORE snapshot for a row.
+    Returns (youtube_url, kind, captured_at) or None when no snapshot
+    exists. Resolution: section's own row first, then '' fallback —
+    mirrors the user_overrides + worker URL-resolution pattern.
+    """
+    if section_id is not None:
+        row = conn.execute(
+            "SELECT youtube_url, kind, captured_at FROM previous_urls "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+        if row:
+            return row
+    row = conn.execute(
+        "SELECT youtube_url, kind, captured_at FROM previous_urls "
+        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+        (media_type, tmdb_id),
+    ).fetchone()
+    return row
+
+
+def _clear_previous_url(
+    conn, media_type: str, tmdb_id: int, *, section_id: str | None = None,
+) -> int:
+    """v1.12.86: delete the previous_urls snapshot for a row. When
+    section_id is provided, drops only that section's row (the ''
+    fallback survives so other sections relying on it stay intact).
+    Without section_id, drops every row for the title (matches the
+    legacy semantics of clearing themes.previous_youtube_url).
+    Returns rowcount for callers that want to log the result."""
+    if section_id is not None:
+        cur = conn.execute(
+            "DELETE FROM previous_urls "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+            (media_type, tmdb_id, section_id),
+        )
+    else:
+        cur = conn.execute(
+            "DELETE FROM previous_urls "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        )
+    return cur.rowcount
 
 
 def _record_audit(
@@ -752,20 +793,17 @@ def _library_main_query(
                      AND pu.tmdb_id = t.tmdb_id
                      AND pu.decision = 'pending'
                 ) THEN 1 ELSE 0 END) AS actionable_update,
-               -- v1.12.37: has_previous_url drives the REVERT button.
-               -- themes.previous_youtube_url is populated by any
-               -- user-initiated URL-change action (SET URL,
-               -- ACCEPT UPDATE, REPLACE TDB) so REVERT can swap
-               -- the canonical back to the prior URL one step.
-               -- Replaces v1.12.34 revertible_to_url which only
-               -- covered the post-accept-on-U flow.
-               (CASE WHEN t.previous_youtube_url IS NOT NULL
+               -- v1.12.86: previous-URL fields resolve from the
+               -- previous_urls JOINs (pv_sec + pv_global). Each
+               -- column's value comes from the section-specific row
+               -- when present, falling back to the '' global row.
+               -- Pre-v1.12.86 these came from title-global columns
+               -- on the themes table; per-section keying eliminates
+               -- cross-section bleed (PURGE in section A no longer
+               -- overwrites the snapshot for section B).
+               (CASE WHEN COALESCE(pv_sec.youtube_url, pv_global.youtube_url) IS NOT NULL
                      THEN 1 ELSE 0 END) AS has_previous_url,
-               -- v1.12.37: previous_youtube_kind tells the UI
-               -- which color to use for the previous URL row in
-               -- the INFO card (violet for user, themerrdb-green
-               -- for upstream).
-               t.previous_youtube_kind AS previous_youtube_kind,
+               COALESCE(pv_sec.kind, pv_global.kind) AS previous_youtube_kind,
                -- v1.12.40: revert_redundant = the previous URL is
                -- a TDB URL AND it exactly matches the
                -- pending_updates.new_youtube_url that ACCEPT
@@ -788,18 +826,18 @@ def _library_main_query(
                -- but REVERT would just re-create the override
                -- pointing back at the current TDB URL, a no-op
                -- with extra UI churn. Suppress.
-               (CASE WHEN t.previous_youtube_url IS NOT NULL
+               (CASE WHEN COALESCE(pv_sec.youtube_url, pv_global.youtube_url) IS NOT NULL
                       AND (
-                        (t.previous_youtube_kind = 'themerrdb'
+                        (COALESCE(pv_sec.kind, pv_global.kind) = 'themerrdb'
                          AND EXISTS (
                            SELECT 1 FROM pending_updates pu
                             WHERE pu.media_type = t.media_type
                               AND pu.tmdb_id = t.tmdb_id
                               AND pu.decision IN ('pending', 'declined')
-                              AND pu.new_youtube_url = t.previous_youtube_url
+                              AND pu.new_youtube_url = COALESCE(pv_sec.youtube_url, pv_global.youtube_url)
                          ))
                         OR
-                        t.previous_youtube_url = COALESCE(
+                        COALESCE(pv_sec.youtube_url, pv_global.youtube_url) = COALESCE(
                           -- v1.12.72: prefer section-specific
                           -- override; fall back to global ('') row;
                           -- final fallback to themes.youtube_url.
@@ -857,6 +895,21 @@ def _library_main_query(
           ON lf.media_type = t.media_type
          AND lf.tmdb_id = t.tmdb_id
          AND lf.section_id = pi.section_id
+        -- v1.12.86: per-section REVERT/RESTORE snapshot. Two
+        -- LEFT JOINs (section-specific + '' fallback) so the SELECT
+        -- can resolve the row's effective previous URL with one
+        -- COALESCE rather than a per-row correlated subquery. The
+        -- '' fallback row is populated by legacy callers that
+        -- captured before per-section keying existed (or by future
+        -- callers that genuinely want title-global semantics).
+        LEFT JOIN previous_urls pv_sec
+          ON pv_sec.media_type = t.media_type
+         AND pv_sec.tmdb_id = t.tmdb_id
+         AND pv_sec.section_id = pi.section_id
+        LEFT JOIN previous_urls pv_global
+          ON pv_global.media_type = t.media_type
+         AND pv_global.tmdb_id = t.tmdb_id
+         AND pv_global.section_id = ''
     """
     sql_from_pi_only = """
         FROM plex_items pi
@@ -4465,6 +4518,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if settings.is_paths_ready() and d.get("file_path"):
                 d["abs_path"] = str(settings.themes_dir / d["file_path"])
             local_payloads.append(d)
+        # v1.12.86: surface per-section previous URL (replaces the
+        # title-global themes.previous_youtube_url + previous_youtube_kind
+        # columns). The INFO card reads previous_url.youtube_url +
+        # previous_url.kind to render the "previous url" row with the
+        # correct color + suffix.
+        with get_conn(db) as conn:
+            prev_row = _load_previous_url(
+                conn, media_type, tmdb_id, section_id=section_id,
+            )
+        previous_url_payload = (
+            {"youtube_url": prev_row["youtube_url"],
+             "kind": prev_row["kind"],
+             "captured_at": prev_row["captured_at"]}
+            if prev_row else None
+        )
         return {
             "theme": dict(t),
             "local_file": local_payloads[0] if local_payloads else None,
@@ -4478,6 +4546,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # back-compat with consumers that don't read this list.
             "overrides": [dict(o) for o in all_overrides],
             "pending_update": dict(pu) if pu else None,
+            "previous_url": previous_url_payload,
             "events": [dict(e) for e in recent_events],
         }
 
@@ -5575,43 +5644,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/clear-url")
     async def api_clear_url_override(
         request: Request, media_type: MediaType, tmdb_id: int,
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
-        """v1.12.37 (revised per user feedback):
-        Drop the captured PREVIOUS URL on a row (clears
-        themes.previous_youtube_url + previous_youtube_kind) so
-        REVERT becomes unavailable. The current canonical and
-        user_overrides are untouched — the playing theme keeps
-        playing. Useful when the user is satisfied with the
-        current state and wants to "commit" the most recent
-        change, guarding against accidental REVERTs.
+        """v1.12.37 (revised per user feedback): drop the captured
+        PREVIOUS URL on a row so REVERT/RESTORE becomes unavailable.
+        The current canonical and user_overrides are untouched — the
+        playing theme keeps playing.
 
-        Returns 409 if no previous URL is captured.
+        v1.12.86: per-section. With section_id provided, drops only
+        that section's previous_urls row (the '' fallback row, if any,
+        survives so other sections relying on it stay intact). Without
+        section_id, drops every previous_urls row for the title — same
+        as the legacy "clear themes.previous_youtube_url" semantic.
+
+        Returns 409 if no matching previous URL is captured.
         """
         _require_admin(request)
         with get_conn(db) as conn:
-            row = conn.execute(
-                "SELECT previous_youtube_url FROM themes "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchone()
-            if row is None:
-                raise HTTPException(status_code=404, detail="not in database")
-            if not row["previous_youtube_url"]:
+            existing = _load_previous_url(
+                conn, media_type, tmdb_id, section_id=section_id,
+            )
+            if existing is None:
                 raise HTTPException(
                     status_code=409,
                     detail="no captured previous URL to clear",
                 )
-            conn.execute(
-                """UPDATE themes SET previous_youtube_url = NULL,
-                                     previous_youtube_kind = NULL
-                   WHERE media_type = ? AND tmdb_id = ?""",
-                (media_type, tmdb_id),
+            old_url = existing["youtube_url"]
+            _clear_previous_url(
+                conn, media_type, tmdb_id, section_id=section_id,
             )
             _record_audit(
                 conn, actor=request.state.user, action="clear_previous_url",
                 media_type=media_type, tmdb_id=tmdb_id,
-                details={"old_url": row["previous_youtube_url"]},
+                section_id=section_id,
+                details={"old_url": old_url},
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -5629,16 +5696,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
-        """REVERT the row's canonical URL one step back to
-        themes.previous_youtube_url.
+        """REVERT the row's canonical URL one step back to the
+        captured previous URL for this section.
 
-        v1.12.37: generalized one-step undo. The previous_*
-        columns are populated by any handler that changes the
-        canonical URL (ACCEPT UPDATE, SET URL, REPLACE TDB),
-        not just post-accept-on-U as in v1.12.34-v1.12.36.
+        v1.12.37: generalized one-step undo. The snapshot is
+        populated by any handler that changes the canonical URL
+        (ACCEPT UPDATE, SET URL, UPLOAD MP3, REPLACE TDB,
+        PURGE/UNMANAGE pre-drop).
 
-        Resolves which restoration path to apply based on
-        previous_youtube_kind:
+        Resolves which restoration path to apply based on the
+        snapshot's kind:
           'user'      → INSERT user_overrides with previous URL
                         (row goes back to U, blue TDB ↑ pill
                         returns if there's a pending update).
@@ -5650,23 +5717,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         atomically so REVERT is fully round-trippable: clicking
         REVERT twice returns the row to its pre-first-revert
         state. Returns 409 if no previous URL is captured.
+
+        v1.12.86: reads/writes the per-section previous_urls table
+        instead of the title-global themes.previous_youtube_url
+        columns. RESTORE on section A no longer disturbs section B.
         """
         _require_admin(request)
         with get_conn(db) as conn:
-            row = conn.execute(
-                "SELECT youtube_url, previous_youtube_url, previous_youtube_kind "
-                "FROM themes WHERE media_type = ? AND tmdb_id = ?",
+            theme_row = conn.execute(
+                "SELECT youtube_url FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
-            if row is None:
+            if theme_row is None:
                 raise HTTPException(status_code=404, detail="not in database")
-            prev_url = row["previous_youtube_url"]
-            prev_kind = row["previous_youtube_kind"]
-            if not prev_url or not prev_kind:
+            snapshot = _load_previous_url(
+                conn, media_type, tmdb_id, section_id=section_id,
+            )
+            if snapshot is None:
                 raise HTTPException(
                     status_code=409,
-                    detail="nothing to revert — no previous URL captured for this title",
+                    detail="nothing to revert — no previous URL captured for this row",
                 )
+            prev_url = snapshot["youtube_url"]
+            prev_kind = snapshot["kind"]
 
             # Snapshot what's currently in the canonical so REVERT
             # is a swap, not a one-way pop. Capturing here also
@@ -5692,7 +5766,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 new_prev_url = ovr["youtube_url"]
                 new_prev_kind = "user"
             else:
-                new_prev_url = row["youtube_url"]
+                new_prev_url = theme_row["youtube_url"]
                 new_prev_kind = "themerrdb" if new_prev_url else None
 
             # Apply the previous URL based on its kind.
@@ -5760,17 +5834,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (media_type, tmdb_id, ovr_section),
                 )
 
-            # Swap the previous_* columns to point at what was
+            # Swap the previous_urls snapshot to point at what was
             # current before this revert — REVERT becomes
-            # round-trippable.
+            # round-trippable. v1.12.86: per-section write (was a
+            # title-global update on themes columns).
+            if new_prev_url and new_prev_kind:
+                target_section = section_id if section_id is not None else ""
+                conn.execute(
+                    """INSERT INTO previous_urls
+                         (media_type, tmdb_id, section_id, youtube_url,
+                          kind, captured_at)
+                       VALUES (?, ?, ?, ?, ?, ?)
+                       ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                           youtube_url = excluded.youtube_url,
+                           kind = excluded.kind,
+                           captured_at = excluded.captured_at""",
+                    (media_type, tmdb_id, target_section,
+                     new_prev_url, new_prev_kind, now_iso()),
+                )
+            else:
+                _clear_previous_url(
+                    conn, media_type, tmdb_id, section_id=section_id,
+                )
+            # Failure flags clear regardless — REVERT's intent is
+            # "I'm fixing this row".
             conn.execute(
-                """UPDATE themes SET previous_youtube_url = ?,
-                                     previous_youtube_kind = ?,
-                                     failure_kind = NULL,
+                """UPDATE themes SET failure_kind = NULL,
                                      failure_message = NULL,
                                      failure_at = NULL
                    WHERE media_type = ? AND tmdb_id = ?""",
-                (new_prev_url, new_prev_kind, media_type, tmdb_id),
+                (media_type, tmdb_id),
             )
             # Cancel any in-flight download (would otherwise pick
             # up the stale URL), then enqueue a fresh one.

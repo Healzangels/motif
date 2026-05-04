@@ -1263,7 +1263,7 @@
   // the now-irrelevant CLEAR URL button. On error we re-enable the
   // locked buttons since there's no refresh coming; on success the
   // refresh re-renders them in their natural state.
-  async function clearUrlOverride(mediaType, tmdbId, btn) {
+  async function clearUrlOverride(mediaType, tmdbId, btn, sectionId) {
     if (btn) btn.disabled = true;
     const row = btn ? btn.closest('tr') : null;
     const lockedButtons = [];
@@ -1276,7 +1276,13 @@
       });
     }
     try {
-      await api('POST', `/api/items/${mediaType}/${tmdbId}/clear-url`);
+      // v1.12.86: optional section_id scopes the clear so only this
+      // section's previous_urls row is dropped. Without it the
+      // endpoint drops every section's snapshot for the title.
+      const sec = sectionId
+        ? `?section_id=${encodeURIComponent(sectionId)}`
+        : '';
+      await api('POST', `/api/items/${mediaType}/${tmdbId}/clear-url${sec}`);
       if (btn) btn.textContent = 'QUEUED';
       if (typeof libraryRapidPoll === 'function'
           && document.getElementById('library-body')) {
@@ -3982,7 +3988,8 @@
       removeItems.push(menuItemHtml(
         'clear-url', 'CLEAR URL',
         clearTip,
-        { mt: themeMt, id: themeId, danger: true },
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          danger: true },
       ));
     }
     if (placed) {
@@ -5355,9 +5362,15 @@
         // previous URL on the row so REVERT becomes unavailable.
         // Doesn't touch the canonical or user_overrides — the
         // current playing theme is unaffected.
+        // v1.12.86: pass section_id so the clear scopes to the
+        // row's section. Without it the endpoint clears every
+        // section's snapshot for the title (legacy behavior).
         const title = btn.dataset.title || 'this theme';
         if (!confirm(`Clear the captured previous URL for "${title}"?\n\nREVERT will no longer be available on this row. Current theme is unaffected.`)) return;
-        clearUrlOverride(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+        clearUrlOverride(
+          btn.dataset.mt, btn.dataset.id, btn,
+          btn.dataset.sectionId || undefined,
+        ).catch(console.error);
       } else if (act === 'info') {
         // v1.12.72: pass section_id from the row so INFO surfaces
         // the section-specific override (when per-section overrides
@@ -5628,8 +5641,16 @@
     const currentUrl = isUrlSourced
       ? (ovr?.youtube_url || t.youtube_url || '')
       : '';
-    const previousUrl = t.previous_youtube_url || '';
-    const previousKind = t.previous_youtube_kind || null;
+    // v1.12.86: per-section previous URL. Payload comes from a
+    // top-level `previous_url` object {youtube_url, kind,
+    // captured_at} populated by api_item via _load_previous_url.
+    // Pre-v1.12.86 the same data lived on the title-global
+    // themes.previous_youtube_url + previous_youtube_kind columns —
+    // those were dropped in schema v30 along with the cross-section
+    // bleed they caused.
+    const previousUrlObj = data.previous_url || null;
+    const previousUrl = previousUrlObj?.youtube_url || '';
+    const previousKind = previousUrlObj?.kind || null;
     // ytId for the embedded YouTube thumbnail tracks the currently
     // applied URL so it always matches what's being played.
     const ytUrl = currentUrl;

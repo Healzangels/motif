@@ -446,8 +446,12 @@ def replace_with_themerrdb(
         # was given a section_id parameter; scope override ops to that
         # section so sibling sections' per-edition overrides aren't
         # collateral damage. Falls back to '' global when no
-        # per-section row exists. The previous-URL snapshot stays
-        # title-global (themes.previous_youtube_url is per-title).
+        # per-section row exists.
+        # v1.12.86: previous-URL snapshot is per-section now via the
+        # previous_urls table (was the title-global
+        # themes.previous_youtube_url column). The capture below
+        # writes to the row's section so RESTORE/REVERT in section A
+        # doesn't disturb section B.
         ovr_section_for_replace = section_id or ""
         ovr_row = conn.execute(
             "SELECT youtube_url, section_id FROM user_overrides "
@@ -464,11 +468,15 @@ def replace_with_themerrdb(
                 ovr_section_for_replace = ""
         if ovr_row and ovr_row["youtube_url"]:
             conn.execute(
-                """UPDATE themes
-                      SET previous_youtube_url = ?,
-                          previous_youtube_kind = 'user'
-                    WHERE media_type = ? AND tmdb_id = ?""",
-                (ovr_row["youtube_url"], media_type, tmdb_id),
+                """INSERT INTO previous_urls
+                     (media_type, tmdb_id, section_id, youtube_url, kind, captured_at)
+                   VALUES (?, ?, ?, ?, 'user', ?)
+                   ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                       youtube_url = excluded.youtube_url,
+                       kind = excluded.kind,
+                       captured_at = excluded.captured_at""",
+                (media_type, tmdb_id, ovr_section_for_replace,
+                 ovr_row["youtube_url"], now_iso()),
             )
             conn.execute(
                 "DELETE FROM user_overrides "

@@ -53,18 +53,6 @@ CREATE TABLE IF NOT EXISTS themes (
     -- v1.10.32: normalized title (normalize_title in app/core/normalize.py)
     -- for the title-fallback library match. Populated by sync.
     title_norm           TEXT,
-    -- v1.12.37: one-step REVERT history. Whenever a user-initiated
-    -- action changes the canonical URL (ACCEPT UPDATE consuming a U
-    -- override, SET URL replacing an existing override, REPLACE TDB
-    -- on a U row, REVERT itself), the prior URL + its kind get
-    -- captured here so REVERT can swap back. NULL means no
-    -- single-step history is available — the SOURCE menu hides
-    -- REVERT for those rows.
-    --   previous_youtube_url   = the prior canonical URL string
-    --   previous_youtube_kind  = 'user' (came from user_overrides)
-    --                          | 'themerrdb' (came from themes.youtube_url)
-    previous_youtube_url   TEXT,
-    previous_youtube_kind  TEXT CHECK (previous_youtube_kind IN ('user', 'themerrdb') OR previous_youtube_kind IS NULL),
     UNIQUE (media_type, tmdb_id)
 );
 
@@ -457,6 +445,39 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
     updated_by  TEXT
 );
 
+-- v1.12.86: per-section one-step REVERT/RESTORE snapshots. Replaces
+-- the v1.12.37 themes.previous_youtube_url + previous_youtube_kind
+-- columns, which were title-global (one undo slot per title) and
+-- caused cross-section bleed: a PURGE in 4K then PURGE in standard
+-- overwrote the 4K's snapshot, breaking RESTORE. Now keyed by
+-- (media_type, tmdb_id, section_id) so each section gets its own
+-- independent slot.
+--
+-- The empty-string section_id ('') row acts as a fallback for
+-- sections that don't have their own snapshot — mirrors the
+-- user_overrides pattern. The library main query reads this table
+-- via LEFT JOIN (per-section first, then '' fallback) to populate
+-- has_previous_url, previous_youtube_kind, and revert_redundant.
+CREATE TABLE IF NOT EXISTS previous_urls (
+    media_type   TEXT NOT NULL CHECK (media_type IN ('movie', 'tv')),
+    tmdb_id      INTEGER NOT NULL,
+    section_id   TEXT NOT NULL DEFAULT '',
+    youtube_url  TEXT NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('user', 'themerrdb')),
+    captured_at  TEXT NOT NULL,
+    PRIMARY KEY (media_type, tmdb_id, section_id),
+    -- v1.12.86: when the parent themes row is dropped (PURGE/UNMANAGE
+    -- last-section orphan, or api_delete_item full destruction), the
+    -- snapshot is meaningless — there's no canonical to revert TO.
+    -- ON DELETE CASCADE prevents orphan previous_urls rows from
+    -- accumulating across the lifetime of the install. PRAGMA
+    -- foreign_keys=ON is set in get_conn().
+    FOREIGN KEY (media_type, tmdb_id) REFERENCES themes(media_type, tmdb_id)
+        ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_previous_urls_target
+    ON previous_urls (media_type, tmdb_id);
+
 -- v1.12.80: append-only provenance log for URL changes, override
 -- set/clear, and accept/decline decisions. Distinct from `events`
 -- (rotates) — audit_events lives forever so "who changed Willy
@@ -477,7 +498,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 29
+CURRENT_SCHEMA_VERSION = 30
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1053,6 +1074,61 @@ def _migrate_v27_to_v28(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v29_to_v30(conn: sqlite3.Connection) -> None:
+    """v30 moves the one-step REVERT/RESTORE snapshot from
+    themes.previous_youtube_url / previous_youtube_kind (title-global,
+    one slot per title) to a new previous_urls table keyed by
+    (media_type, tmdb_id, section_id).
+
+    Pre-fix the title-global slot caused cross-section bleed: a PURGE
+    in section A then a PURGE in section B overwrote A's snapshot, so
+    the user could only RESTORE one section's URL even when both
+    sections had been independently configured. The new table gives
+    each section its own slot with an '' (empty string) row acting
+    as a global fallback for sections that never captured their own.
+
+    Migration steps:
+      1. CREATE previous_urls table + index.
+      2. Backfill from themes: any non-null previous_youtube_url
+         lands in previous_urls with section_id='' (acts as the
+         universal fallback under the new read logic).
+      3. Drop themes.previous_youtube_url + previous_youtube_kind.
+         SQLite ≥ 3.35 supports ALTER TABLE DROP COLUMN; older code
+         paths recreate-and-rename. We use DROP COLUMN here since
+         motif requires modern SQLite anyway.
+    """
+    log.info("Migrating to schema v30 (previous_urls per-section)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS previous_urls (
+            media_type   TEXT NOT NULL CHECK (media_type IN ('movie', 'tv')),
+            tmdb_id      INTEGER NOT NULL,
+            section_id   TEXT NOT NULL DEFAULT '',
+            youtube_url  TEXT NOT NULL,
+            kind         TEXT NOT NULL CHECK (kind IN ('user', 'themerrdb')),
+            captured_at  TEXT NOT NULL,
+            PRIMARY KEY (media_type, tmdb_id, section_id),
+            FOREIGN KEY (media_type, tmdb_id) REFERENCES themes(media_type, tmdb_id)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_previous_urls_target
+            ON previous_urls (media_type, tmdb_id);
+
+        INSERT OR IGNORE INTO previous_urls
+            (media_type, tmdb_id, section_id, youtube_url, kind, captured_at)
+        SELECT media_type, tmdb_id, '',
+               previous_youtube_url, previous_youtube_kind,
+               COALESCE(youtube_edited_at, last_seen_sync_at)
+          FROM themes
+         WHERE previous_youtube_url IS NOT NULL
+           AND previous_youtube_kind IS NOT NULL;
+
+        ALTER TABLE themes DROP COLUMN previous_youtube_url;
+        ALTER TABLE themes DROP COLUMN previous_youtube_kind;
+        """
+    )
+
+
 def _migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
     """v29 adds events.section_id + per-(media_type, tmdb_id, section_id)
     index. Previously the events table was title-global — a single
@@ -1610,6 +1686,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 28:
                     _migrate_v28_to_v29(conn)
                     current = 29
+                elif current == 29:
+                    _migrate_v29_to_v30(conn)
+                    current = 30
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
