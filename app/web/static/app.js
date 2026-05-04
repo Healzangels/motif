@@ -4979,6 +4979,49 @@
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
     });
 
+    // v1.12.94: shared param-builder for the bulk-pagination handlers
+    // (SELECT ALL FILTERED, EXPORT CSV). Pre-fix each handler had its
+    // own copy of the URL-param construction and both forgot to
+    // include the pill filters (src_pills / tdb_pills / dl_pills /
+    // pl_pills / link_pills / ed_pills), so a filter like
+    // TDB=NO TDB silently dropped — the bulk query then selected /
+    // exported the broader pre-pill result set. Producing a count
+    // higher than the visible // RESULTS. Extracting the builder
+    // ensures the two stay in sync; the main loadLibrary path uses
+    // its own (more sort-aware) constructor and isn't routed
+    // through this helper.
+    function buildLibraryFilterParams(perPage = 200) {
+      const params = new URLSearchParams({
+        tab: libraryState.tab,
+        fourk: libraryState.fourk ? 'true' : 'false',
+        per_page: String(perPage),
+      });
+      if (libraryState.q) params.set('q', libraryState.q);
+      if (libraryState.status !== 'all') params.set('status', libraryState.status);
+      if (libraryState.tdb && libraryState.tdb !== 'any') {
+        params.set('tdb', libraryState.tdb);
+      }
+      if (libraryState.srcFilter && libraryState.srcFilter.size > 0) {
+        params.set('src_pills', Array.from(libraryState.srcFilter).join(','));
+      }
+      if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
+        params.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+      }
+      if (libraryState.dlPills && libraryState.dlPills.size > 0) {
+        params.set('dl_pills', Array.from(libraryState.dlPills).join(','));
+      }
+      if (libraryState.plPills && libraryState.plPills.size > 0) {
+        params.set('pl_pills', Array.from(libraryState.plPills).join(','));
+      }
+      if (libraryState.linkPills && libraryState.linkPills.size > 0) {
+        params.set('link_pills', Array.from(libraryState.linkPills).join(','));
+      }
+      if (libraryState.edPills && libraryState.edPills.size > 0) {
+        params.set('ed_pills', Array.from(libraryState.edPills).join(','));
+      }
+      return params;
+    }
+
     // v1.10.49: SELECT ALL FILTERED — pulls every page of the current
     // filter and adds each row's key to libraryState.selected. Useful
     // for 'manual + TDB tracked → DOWNLOAD ALL' and similar bulk
@@ -4990,16 +5033,7 @@
       const origLabel = btn.textContent;
       btn.textContent = '// LOADING…';
       try {
-        const params = new URLSearchParams({
-          tab: libraryState.tab,
-          fourk: libraryState.fourk ? 'true' : 'false',
-          per_page: '200',
-        });
-        if (libraryState.q) params.set('q', libraryState.q);
-        if (libraryState.status !== 'all') params.set('status', libraryState.status);
-        if (libraryState.tdb && libraryState.tdb !== 'any') {
-          params.set('tdb', libraryState.tdb);
-        }
+        const params = buildLibraryFilterParams(200);
         let page = 1;
         let collected = 0;
         while (true) {
@@ -5051,17 +5085,10 @@
         // Build a key → {title, year, imdb_id} map by walking every
         // page of the current filter. Same pagination loop the
         // SELECT ALL FILTERED handler uses; we already paid for
-        // these rows on the way in.
-        const params = new URLSearchParams({
-          tab: libraryState.tab,
-          fourk: libraryState.fourk ? 'true' : 'false',
-          per_page: '200',
-        });
-        if (libraryState.q) params.set('q', libraryState.q);
-        if (libraryState.status !== 'all') params.set('status', libraryState.status);
-        if (libraryState.tdb && libraryState.tdb !== 'any') {
-          params.set('tdb', libraryState.tdb);
-        }
+        // these rows on the way in. v1.12.94: pill filters are now
+        // included via buildLibraryFilterParams (was a copy-paste
+        // omission shared with select-all).
+        const params = buildLibraryFilterParams(200);
         const rowsByKey = new Map();
         let page = 1;
         while (true) {
