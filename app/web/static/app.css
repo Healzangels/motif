@@ -1848,6 +1848,18 @@ pre code, .codeblock {
   border: 1px solid var(--line);
   border-radius: 4px;
 }
+/* v1.12.101: explicit [hidden] override. Pre-fix the .manual-url-preview
+   class set display:flex with the same specificity as the user-agent
+   `[hidden] { display: none }` rule — the class won the cascade
+   (later in stylesheet order) so `preview.hidden = true` left the
+   block visible. Symptoms: preview rendered on dialog open even
+   before the user typed anything; preview survived clearing the
+   input; preview persisted across cancel + reopen. The explicit
+   override pins the hidden semantic to display:none regardless of
+   class specificity. */
+.manual-url-preview[hidden] {
+  display: none;
+}
 .manual-url-preview-link {
   flex-shrink: 0;
 }

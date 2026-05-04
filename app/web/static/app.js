@@ -3913,11 +3913,22 @@
     // mechanism). Showing REVERT alongside those actions was
     // pure UI redundancy that confused users. The INFO card
     // explains the hidden-REVERT case so the missing button
-    // doesn't read as a bug. Only 'user' kind survives because
-    // restoring an override is a meaningfully different state
-    // (row flips back to U).
+    // doesn't read as a bug.
+    // v1.12.101: relax the gate for src='-' and src='M' rows.
+    // After PURGE / UNMANAGE there's no canonical and no
+    // DOWNLOAD TDB action competing with RESTORE — the "kind
+    // collides with TDB action" reasoning above only applies
+    // to T rows where DOWNLOAD TDB is also visible. Without
+    // this relaxation, UNMANAGEing a T row left the user with
+    // no one-step path back ("here's what you just dropped,
+    // bring it back") — they'd have to use DOWNLOAD TDB and
+    // hope the upstream URL still matched. RESTORE makes the
+    // intent explicit. Still gated on revert_redundant=0 so
+    // we don't double-show alongside ACCEPT UPDATE.
+    const restoreEligibleKind = it.previous_youtube_kind === 'user'
+      || (srcLetter === '-' || srcLetter === 'M');
     if (it.has_previous_url && !it.revert_redundant
-        && it.previous_youtube_kind === 'user') {
+        && restoreEligibleKind) {
       // v1.12.47: pass sectionId so REVERT scopes the
       // re-download + place to only this row's section
       // (matches ACCEPT UPDATE per-section behavior).
@@ -4313,16 +4324,29 @@
     // KEEP ALL CURRENT actions are reachable without forcing a
     // SELECT ALL FILTERED first.
     const onUpdateFilter = libraryState.tdbPills.has('update');
-    bar.style.display = (n > 0 || onUpdateFilter) ? '' : 'none';
+    // v1.12.101: count rows on the current page that are actually
+    // actionable as a pending update (pending_update flag set, src
+    // is not '-' since we suppress update treatment on plex-orphans
+    // — mirrors the row-level gate at computePillState). When the
+    // user is on the update filter but no rows on this page have a
+    // live pending_update, the ACCEPT ALL / KEEP ALL buttons act on
+    // a global state that doesn't reflect what's visible — clicking
+    // ACCEPT ALL "does nothing" from the user's POV. Hide the
+    // banner entirely in that case.
+    const visiblePendingUpdates = (libraryState.items || []).filter(
+      (it) => it.pending_update && computeSrcLetter(it) !== '-',
+    ).length;
+    const showBarForUpdates = onUpdateFilter && visiblePendingUpdates > 0;
+    bar.style.display = (n > 0 || showBarForUpdates) ? '' : 'none';
     // When nothing is selected but the bar is showing because of
     // the update filter, hide the "N selected" prefix entirely and
     // show "viewing pending updates" instead — bulk actions explain
     // their own scope without needing a row count.
     const detail = document.getElementById('library-bulk-detail');
     const countWrap = document.getElementById('library-bulk-count-wrap');
-    if (onUpdateFilter && n === 0) {
+    if (showBarForUpdates && n === 0) {
       if (countWrap) countWrap.style.display = 'none';
-      if (detail) detail.textContent = 'viewing pending updates · bulk actions below';
+      if (detail) detail.textContent = `${visiblePendingUpdates} pending update${visiblePendingUpdates !== 1 ? 's' : ''} · bulk actions below`;
     } else {
       if (countWrap) countWrap.style.display = '';
       if (detail) detail.textContent = '';
@@ -4397,8 +4421,14 @@
     // SOURCE menu).
     const onTdbDead = libraryState.tdbPills.has('dead');
     if (ackBtn) ackBtn.style.display = onTdbDead ? '' : 'none';
-    if (dlBtn)    dlBtn.style.display    = (!onTdbOnly && hasTdbEligible) ? '' : 'none';
-    if (adoptBtn) adoptBtn.style.display = (!onTdbOnly && hasSidecarOnly) ? '' : 'none';
+    // v1.12.101: hide DOWNLOAD-FROM-TDB on the update filter. The
+    // update filter is the ACCEPT/KEEP workflow surface; bulk
+    // download competes with that by silently overwriting the
+    // pending update with a fresh fetch (which then triggers the
+    // accept path anyway). Removing it from this filter keeps the
+    // intent clear: choose for each row, then accept-all or keep-all.
+    if (dlBtn)    dlBtn.style.display    = (!onTdbOnly && !onUpdateFilter && hasTdbEligible) ? '' : 'none';
+    if (adoptBtn) adoptBtn.style.display = (!onTdbOnly && !onUpdateFilter && hasSidecarOnly) ? '' : 'none';
     // v1.12.60: relabel DOWNLOAD-FROM-TDB based on selection mix so
     // the user reads accurate intent. Pure '-' (or T) selections
     // are clean fetches; mixing in U/A/M/P means existing themes
@@ -4419,10 +4449,22 @@
     // target). Outside that filter the actions don't fit the
     // mental model — ACCEPT ALL UPDATES would silently fan out
     // beyond the rows the user is looking at.
+    // v1.12.101: also gate on visiblePendingUpdates so the buttons
+    // disappear when the filter is up but no rows actually have a
+    // pending update (e.g., user already accepted/declined them).
     const acceptAllBtn = document.getElementById('library-accept-all-updates-btn');
     const declineAllBtn = document.getElementById('library-decline-all-updates-btn');
-    if (acceptAllBtn) acceptAllBtn.style.display = onUpdateFilter ? '' : 'none';
-    if (declineAllBtn) declineAllBtn.style.display = onUpdateFilter ? '' : 'none';
+    if (acceptAllBtn) acceptAllBtn.style.display = showBarForUpdates ? '' : 'none';
+    if (declineAllBtn) declineAllBtn.style.display = showBarForUpdates ? '' : 'none';
+    // v1.12.101: keep // EXPORT CSV anchored as the rightmost
+    // action regardless of which other buttons render. Without
+    // this the bar renders in DOM order (DOWNLOAD / ADOPT / EXPORT
+    // / ACK / ACCEPT ALL / KEEP ALL), so the dynamic accept/keep
+    // pair pushes EXPORT into the middle on the update filter.
+    // Re-append ensures it always sits at the end of the flex row.
+    if (exportBtn && exportBtn.parentNode) {
+      exportBtn.parentNode.appendChild(exportBtn);
+    }
   }
 
   function bindLibrary() {
@@ -5916,8 +5958,6 @@
       </dl>
       ${recoveryPlaceholder}
       ${diffSection}
-      ${auditPlaceholder}
-      ${historySection}
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
         <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
            style="display:block;text-decoration:none">
@@ -5929,7 +5969,14 @@
           </p>
         </a>
       </div>` : ''}
+      ${auditPlaceholder}
+      ${historySection}
     `;
+    // v1.12.101: thumbnail moved up above PROVENANCE / HISTORY (was
+    // last in the card). Closing + reopening the dialog now starts
+    // with PROVENANCE + HISTORY collapsed (the audit section's
+    // `open` attribute was removed; HISTORY was already closed by
+    // default), so the visible card height is bounded.
     // Hydrate diff-tile titles asynchronously (oEmbed proxy); no
     // await — failures fall back to bare video IDs already in the
     // markup. Runs after innerHTML so the DOM nodes exist.
@@ -6048,7 +6095,7 @@
       data-section-id="${htmlEscape(sectionId || '')}"
       title="Delete every PROVENANCE entry for this row${sectionId ? ' (this section + title-global rows)' : ''}.">CLEAR</button>`;
     slot.innerHTML = `
-      <details class="history-section" data-info-section="audit" open>
+      <details class="history-section" data-info-section="audit">
         <summary>
           <span class="history-section-title">// PROVENANCE</span>
           <span class="muted small">${events.length} audited change${events.length === 1 ? '' : 's'}</span>

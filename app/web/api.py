@@ -981,7 +981,19 @@ def _library_main_query(
                -- but REVERT would just re-create the override
                -- pointing back at the current TDB URL, a no-op
                -- with extra UI churn. Suppress.
+               -- v1.12.101: redundant only when there's a CURRENT
+               -- canonical (lf.file_path IS NOT NULL). After PURGE
+               -- or UNMANAGE the row has no canonical file but
+               -- themes.youtube_url survives — the URL-equality
+               -- check above would otherwise fire for the
+               -- common case "previous_url captured at PURGE
+               -- == themes.youtube_url" and hide RESTORE even
+               -- though the row genuinely has no theme to
+               -- play. Gating the redundancy check on
+               -- "canonical exists" keeps RESTORE available
+               -- whenever there's something to actually restore.
                (CASE WHEN COALESCE(pv_sec.youtube_url, pv_global.youtube_url) IS NOT NULL
+                      AND lf.file_path IS NOT NULL
                       AND (
                         (COALESCE(pv_sec.kind, pv_global.kind) = 'themerrdb'
                          AND EXISTS (
