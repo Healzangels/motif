@@ -3853,7 +3853,12 @@
       // for that scenario — "revert" implies undoing a config
       // change, "restore" implies bringing back a destroyed
       // theme. Same endpoint, different copy.
-      const isRestore = (srcLetter === '-');
+      // v1.12.81: also label RESTORE on src='M' (post-UNMANAGE
+      // sidecar). Pre-fix the user UNMANAGEd a U row → became M
+      // sidecar → button still read REVERT, which was inconsistent
+      // with PURGE's RESTORE label even though both are
+      // "destructive action just happened, bring my URL back".
+      const isRestore = (srcLetter === '-' || srcLetter === 'M');
       const restoreLabel = isRestore ? 'RESTORE' : 'REVERT';
       const restoreTip = isRestore
         ? "Restore the user URL captured before PURGE/UNMANAGE and re-download in this section."
@@ -3942,10 +3947,11 @@
     // gating (also has_previous_url-driven).
     if (it.has_previous_url) {
       // v1.12.79: tooltip mirrors the SOURCE-menu label flip — on
-      // src='-' rows the SOURCE button reads RESTORE (post-PURGE
-      // recovery), elsewhere it reads REVERT. Same action, same
-      // wording in the menu copy keeps the two sides consistent.
-      const clearTip = (srcLetter === '-')
+      // src='-' / src='M' rows the SOURCE button reads RESTORE
+      // (post-PURGE / post-UNMANAGE recovery), elsewhere REVERT.
+      // Same action, same wording in the menu copy keeps the two
+      // sides consistent.
+      const clearTip = (srcLetter === '-' || srcLetter === 'M')
         ? "Drop the captured previous URL — RESTORE will no longer be available."
         : "Drop the captured previous URL — REVERT will no longer be available.";
       removeItems.push(menuItemHtml(

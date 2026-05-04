@@ -4265,16 +4265,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # v1.11.0: per-section local_files — return the list so the
             # UI can render one row per section. legacy `local_file`
             # field still emitted (first row, or null) for older callers.
-            local_files = conn.execute(
-                "SELECT * FROM local_files WHERE media_type = ? AND tmdb_id = ? "
-                "ORDER BY section_id",
-                (media_type, tmdb_id),
-            ).fetchall()
-            placements = conn.execute(
-                "SELECT * FROM placements WHERE media_type = ? AND tmdb_id = ? "
-                "ORDER BY section_id, media_folder",
-                (media_type, tmdb_id),
-            ).fetchall()
+            # v1.12.81: scope local_files + placements to the requested
+            # section_id when provided. Pre-fix opening INFO on a
+            # standard-section row whose 4K sibling still had a
+            # canonical / placement showed the 4K paths in the
+            # "downloaded" / "placed in" rows because the queries
+            # returned all sections' files and the legacy `local_file`
+            # field grabbed local_files[0]. Filtering here keeps the
+            # card honest — the user sees exactly what's at this row's
+            # section. Without section_id (legacy callers) the
+            # unfiltered query stays.
+            if section_id:
+                local_files = conn.execute(
+                    "SELECT * FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+                placements = conn.execute(
+                    "SELECT * FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                    "ORDER BY media_folder",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+            else:
+                local_files = conn.execute(
+                    "SELECT * FROM local_files WHERE media_type = ? AND tmdb_id = ? "
+                    "ORDER BY section_id",
+                    (media_type, tmdb_id),
+                ).fetchall()
+                placements = conn.execute(
+                    "SELECT * FROM placements WHERE media_type = ? AND tmdb_id = ? "
+                    "ORDER BY section_id, media_folder",
+                    (media_type, tmdb_id),
+                ).fetchall()
             # v1.12.72: prefer the section-specific override row when
             # section_id is provided; fall back to global ('') row.
             # v1.12.81: dropped the "any-section LIMIT 1" final
