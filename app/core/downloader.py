@@ -76,6 +76,14 @@ def classify_yt_dlp_error(msg: str) -> FailureKind:
         return FailureKind.VIDEO_REMOVED
     if "no longer available" in m or "is unavailable" in m:
         return FailureKind.VIDEO_REMOVED
+    # v1.12.85: yt-dlp's "This video is not available" matches the
+    # generic dead-video case; previously fell through to UNKNOWN
+    # (transient) so the job retried with backoff forever instead of
+    # being marked permanent. Catching it here lets the worker raise
+    # _JobPermanentFailure on the first attempt, which marks the job
+    # 'failed' immediately and keeps the topbar dot honest.
+    if "is not available" in m or "not available" in m:
+        return FailureKind.VIDEO_REMOVED
     if "this video has been removed" in m or "account associated" in m:
         return FailureKind.VIDEO_REMOVED
     if "age" in m and ("restrict" in m or "confirm your age" in m):

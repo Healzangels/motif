@@ -6174,11 +6174,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # include the queued failed job that produced the
             # failure in the first place. Marking 'cancelled' (not
             # deleting) preserves the audit trail in LOGS.
+            # v1.12.85: extend the cancel to status='pending' too.
+            # Pre-fix a misclassified-as-transient failure (e.g.
+            # "This video is not available" before .85 added the
+            # pattern) cycled between pending → failed → pending via
+            # the worker's backoff retry; ACK cleared the failed row
+            # but the next retry put another in pending → failed,
+            # so the topbar dot kept going red and the row's `!`
+            # glyph kept reappearing. Cancelling pending too breaks
+            # the cycle. Running jobs are left alone (cancel_requested
+            # via /jobs/{id}/cancel is the cooperative path for those).
             conn.execute(
                 """UPDATE jobs SET status = 'cancelled', finished_at = ?
                    WHERE job_type = 'download'
                      AND media_type = ? AND tmdb_id = ?
-                     AND status = 'failed'""",
+                     AND status IN ('pending', 'failed')""",
                 (now_iso(), media_type, tmdb_id),
             )
             _record_audit(
