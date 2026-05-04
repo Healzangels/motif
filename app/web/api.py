@@ -1103,6 +1103,13 @@ def _library_main_query(
         status in ("themed", "untracked", "has_theme", "failures", "updates")
         or tdb != "any"
         or bool(tdb_pills)
+        # v1.12.100: src_pills now route through _SRC_LETTER_SQL which
+        # references t.upstream_source for the orphan/svid branch. The
+        # slim count path's lf+p joins aren't enough; we also need t.
+        # Pre-fix selecting any SRC pill 500'd with
+        # "no such column: t.upstream_source" because the count query
+        # was assembled without the themes JOIN.
+        or bool(src_pills)
     )
     needs_lf_for_count = (
         status in (
