@@ -3824,9 +3824,21 @@
       // v1.12.47: pass sectionId so REVERT scopes the
       // re-download + place to only this row's section
       // (matches ACCEPT UPDATE per-section behavior).
+      // v1.12.79: relabel to RESTORE on src='-' rows. PURGE /
+      // UNMANAGE both capture the dropped URL into
+      // previous_youtube_url so the user can bring it back
+      // one-step. "RESTORE" reads more naturally than "REVERT"
+      // for that scenario — "revert" implies undoing a config
+      // change, "restore" implies bringing back a destroyed
+      // theme. Same endpoint, different copy.
+      const isRestore = (srcLetter === '-');
+      const restoreLabel = isRestore ? 'RESTORE' : 'REVERT';
+      const restoreTip = isRestore
+        ? "Restore the user URL captured before PURGE/UNMANAGE and re-download in this section."
+        : "Revert to the previously-active user URL and re-download in this section.";
       sourceItems.push(menuItemHtml(
-        'revert', 'REVERT',
-        "Revert to the previously-active user URL and re-download in this section.",
+        'revert', restoreLabel,
+        restoreTip,
         { mt: themeMt, id: themeId, sectionId: it.section_id, tone: 'user' },
       ));
     }
@@ -3907,9 +3919,16 @@
     // previous URL to clear, mirroring the SOURCE-menu REVERT
     // gating (also has_previous_url-driven).
     if (it.has_previous_url) {
+      // v1.12.79: tooltip mirrors the SOURCE-menu label flip — on
+      // src='-' rows the SOURCE button reads RESTORE (post-PURGE
+      // recovery), elsewhere it reads REVERT. Same action, same
+      // wording in the menu copy keeps the two sides consistent.
+      const clearTip = (srcLetter === '-')
+        ? "Drop the captured previous URL — RESTORE will no longer be available."
+        : "Drop the captured previous URL — REVERT will no longer be available.";
       removeItems.push(menuItemHtml(
         'clear-url', 'CLEAR URL',
-        "Drop the captured previous URL — REVERT will no longer be available.",
+        clearTip,
         { mt: themeMt, id: themeId, danger: true },
       ));
     }

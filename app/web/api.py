@@ -211,7 +211,10 @@ def _require_admin(request: Request) -> Principal:
     return p
 
 
-def _capture_previous_url(conn, media_type: str, tmdb_id: int) -> None:
+def _capture_previous_url(
+    conn, media_type: str, tmdb_id: int,
+    *, section_id: str | None = None,
+) -> None:
     """v1.12.37: snapshot the row's current canonical URL into
     themes.previous_youtube_url + previous_youtube_kind so REVERT
     can swap back one step. Called from any handler that's about
@@ -219,18 +222,43 @@ def _capture_previous_url(conn, media_type: str, tmdb_id: int) -> None:
     MP3, REPLACE TDB).
 
     Resolution order for "current URL":
-      1. user_overrides.youtube_url if a user override exists
-         (kind = 'user' for the violet INFO card chrome).
+      1. user_overrides.youtube_url for the given section_id (when
+         provided), then the '' global row, then any other
+         per-section row as a last fallback (kind = 'user').
       2. themes.youtube_url otherwise (kind = 'themerrdb').
     A null URL produces a no-op snapshot — REVERT will read the
     null and the SOURCE menu will hide the button via
     has_previous_url=0.
+
+    v1.12.79: section_id parameter so PURGE / UNMANAGE can capture
+    the section-specific override URL before dropping it. Powers
+    the post-PURGE RESTORE flow — without it, PURGE on a U row
+    silently lost the URL because user_overrides was deleted before
+    anyone snapshotted it. previous_youtube_url itself stays
+    title-global by design (one undo slot per title).
     """
-    ovr = conn.execute(
-        "SELECT youtube_url FROM user_overrides "
-        "WHERE media_type = ? AND tmdb_id = ?",
-        (media_type, tmdb_id),
-    ).fetchone()
+    ovr = None
+    if section_id is not None:
+        ovr = conn.execute(
+            "SELECT youtube_url FROM user_overrides "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+    if ovr is None or not ovr["youtube_url"]:
+        ovr = conn.execute(
+            "SELECT youtube_url FROM user_overrides "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = '' ",
+            (media_type, tmdb_id),
+        ).fetchone()
+    if ovr is None or not ovr["youtube_url"]:
+        # Final fallback — any per-section override at all. Covers
+        # legacy callers that didn't pass section_id.
+        ovr = conn.execute(
+            "SELECT youtube_url FROM user_overrides "
+            "WHERE media_type = ? AND tmdb_id = ? "
+            "ORDER BY section_id LIMIT 1",
+            (media_type, tmdb_id),
+        ).fetchone()
     if ovr and ovr["youtube_url"]:
         prev_url = ovr["youtube_url"]
         prev_kind = "user"
@@ -4734,6 +4762,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # also runs only at the last-section step so per-edition
             # overrides survive partial unmanages.
             if section_id:
+                # v1.12.79: capture the section's override URL into
+                # themes.previous_youtube_url before the override
+                # delete so the row keeps a one-step RESTORE path
+                # post-UNMANAGE. Mirrors the PURGE capture; the
+                # snapshot survives _drop_motif_tracking via v1.12.64.
+                _capture_previous_url(conn, media_type, tmdb_id,
+                                      section_id=section_id)
                 conn.execute(
                     "DELETE FROM placements "
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
@@ -5052,6 +5087,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # only fire when this is the LAST section for the
                 # title (no other local_files remaining), mirroring
                 # the v1.12.73 UNMANAGE last-section logic.
+                # v1.12.79: snapshot the URL ABOUT to be dropped so
+                # the post-PURGE RESTORE button has something to
+                # bring back. Reads the section's override (or
+                # falls back to '' / themes); writes title-global
+                # previous_youtube_url + previous_youtube_kind.
+                # Last-section path below also keeps this snapshot
+                # intact — _drop_motif_tracking deliberately
+                # preserves previous_* per v1.12.64.
+                _capture_previous_url(conn, media_type, tmdb_id,
+                                      section_id=section_id)
                 conn.execute(
                     "DELETE FROM placements "
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
@@ -5367,11 +5412,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Snapshot what's currently in the canonical so REVERT
             # is a swap, not a one-way pop. Capturing here also
             # means a second REVERT call cleanly round-trips.
+            # v1.12.79: prefer the section-specific override row
+            # so a per-section revert round-trips against the
+            # section's URL rather than picking up a sibling
+            # section's override by accident. Falls back to the
+            # '' global row, then to themes.youtube_url.
+            ovr_section = section_id or ""
             ovr = conn.execute(
                 "SELECT youtube_url FROM user_overrides "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, ovr_section),
             ).fetchone()
+            if ovr is None or not ovr["youtube_url"]:
+                ovr = conn.execute(
+                    "SELECT youtube_url FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                    (media_type, tmdb_id),
+                ).fetchone()
             if ovr and ovr["youtube_url"]:
                 new_prev_url = ovr["youtube_url"]
                 new_prev_kind = "user"
