@@ -640,14 +640,53 @@ def _library_main_query(
             where_extra += " AND (" + " OR ".join(branches) + ")"
     if tdb_pills:
         DEAD_KINDS = "('video_private','video_removed','video_age_restricted','geo_blocked')"
+        # Subquery snippet reused below — "this row has an actionable
+        # pending update". Mirrors the v1.12.5 row-pill priority:
+        # update wins over the green-tdb pill in the row render, so
+        # the filter excludes update rows from the green-tdb match
+        # set (and includes them in the blue-update match set, gated
+        # on src != '-' per JS computeTdbPill).
+        PENDING_EXISTS = (
+            "EXISTS (SELECT 1 FROM pending_updates pu "
+            "  WHERE pu.media_type = t.media_type "
+            "    AND pu.tmdb_id = t.tmdb_id "
+            "    AND pu.decision = 'pending')"
+        )
+        # JS computeSrcLetter returns '-' when nothing's themed
+        # anywhere on the row — no placement, no sidecar, no Plex
+        # agent, no canonical. The blue-update pill is hidden on
+        # those rows because there's nothing to "update from"; the
+        # `update` filter mirrors the gate.
+        SRC_NOT_DASH = (
+            "(p.media_folder IS NOT NULL"
+            " OR pi.local_theme_file = 1"
+            " OR pi.has_theme = 1"
+            " OR lf.file_path IS NOT NULL)"
+        )
         branches = []
         for p in tdb_pills:
             if p == "tdb":
-                # Green TDB pill state: tracked + (no failure OR cookies-present cookies_expired)
+                # v1.12.95: green TDB pill render is the FALLTHROUGH
+                # in JS computeTdbPill — wins only when none of
+                # update / dead-failure / cookies-blocked match.
+                # Pre-fix the SQL was `tracked AND (no failure OR
+                # cookies_expired-with-cookies)`, which silently
+                # included rows whose row-pill showed blue update
+                # or red dead. Strict alignment now: also exclude
+                # pending_update + dead-failure (and
+                # cookies_expired when no cookies present).
                 if cookies_present:
-                    branches.append("(t.upstream_source IN ('imdb','themoviedb') AND (t.failure_kind IS NULL OR t.failure_kind = 'cookies_expired'))")
+                    branches.append(
+                        "(t.upstream_source IN ('imdb','themoviedb') "
+                        "AND (t.failure_kind IS NULL OR t.failure_kind = 'cookies_expired') "
+                        f"AND NOT {PENDING_EXISTS})"
+                    )
                 else:
-                    branches.append("(t.upstream_source IN ('imdb','themoviedb') AND t.failure_kind IS NULL)")
+                    branches.append(
+                        "(t.upstream_source IN ('imdb','themoviedb') "
+                        "AND t.failure_kind IS NULL "
+                        f"AND NOT {PENDING_EXISTS})"
+                    )
             elif p == "update":
                 # v1.12.48: scoped to decision='pending' (was IN
                 # ('pending','declined')) so the filter matches the
@@ -657,12 +696,11 @@ def _library_main_query(
                 # decisions still light up the row's blue pill but
                 # are excluded from this filter — the user already
                 # said they don't want to act on them.
-                branches.append(
-                    "EXISTS (SELECT 1 FROM pending_updates pu "
-                    "WHERE pu.media_type = t.media_type "
-                    "AND pu.tmdb_id = t.tmdb_id "
-                    "AND pu.decision = 'pending')"
-                )
+                # v1.12.95: also gate on src != '-' to mirror JS
+                # computeTdbPill. Pre-fix unthemed rows with stale
+                # pending_updates lit up the update filter even
+                # though their row-pill rendered green/none.
+                branches.append(f"({PENDING_EXISTS} AND {SRC_NOT_DASH})")
             elif p == "cookies":
                 if not cookies_present:
                     branches.append("(t.failure_kind = 'cookies_expired')")
@@ -678,24 +716,31 @@ def _library_main_query(
     # let the post-filter step downstream apply the full dl_pills /
     # pl_pills selection. Without 'broken' the SQL branches stay so
     # the page query narrows efficiently.
-    if dl_pills and "broken" not in dl_pills:
+    # v1.12.95: 'on' selections also need post-stat filtering because
+    # `lf.file_path IS NOT NULL` (DL=on SQL) matches both intact and
+    # missing-on-disk rows — same for `p.media_folder IS NOT NULL`
+    # (PL=on). Without the post-stat narrowing, filtering by ON
+    # silently includes rows whose row-pill renders BROKEN (red).
+    # When `on` is selected we route the entire dl_pills / pl_pills
+    # filter through the post-stat path (same trigger as `broken`)
+    # so `_row_matches_dl` / `_row_matches_pl` apply the strict
+    # canonical_missing / placement_missing exclusion.
+    dl_needs_post_stat = ("on" in dl_pills) or ("broken" in dl_pills)
+    pl_needs_post_stat = ("on" in pl_pills) or ("broken" in pl_pills)
+    if dl_pills and not dl_needs_post_stat:
         branches = []
         for p in dl_pills:
-            if p == "on":
-                branches.append("(lf.file_path IS NOT NULL)")
-            elif p == "off":
+            if p == "off":
                 branches.append("(lf.file_path IS NULL)")
             # 'mismatch' was retired in v1.12.81 — content divergence
             # is a LINK fact (link_pills 'm') and a row-title `!`
             # glyph; DL no longer doubles up.
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
-    if pl_pills and "broken" not in pl_pills:
+    if pl_pills and not pl_needs_post_stat:
         branches = []
         for p in pl_pills:
-            if p == "on":
-                branches.append("(p.media_folder IS NOT NULL)")
-            elif p == "off":
+            if p == "off":
                 branches.append("(p.media_folder IS NULL)")
             # v1.12.70: 'await' — canonical exists but no placement
             # row (typically post-DEL: the user removed the file from
@@ -1033,8 +1078,8 @@ def _library_main_query(
     # in Python.
     needs_post_stat_pagination = (
         status == "dl_missing"
-        or (dl_pills and "broken" in dl_pills)
-        or (pl_pills and "broken" in pl_pills)
+        or (dl_pills and ("broken" in dl_pills or "on" in dl_pills))
+        or (pl_pills and ("broken" in pl_pills or "on" in pl_pills))
     )
     sql_rows_unbounded = f"{sql_select} {sql_from} {sql_where} {order_clause}"
     with get_conn(db) as conn:
@@ -1096,11 +1141,18 @@ def _library_main_query(
                 return True
         return False
 
-    if dl_pills and "broken" in dl_pills:
+    # v1.12.95: post-stat pagination triggers on either 'on' or
+    # 'broken' in the pill set — `on` was leaking broken rows
+    # because the SQL `lf.file_path IS NOT NULL` (or
+    # `p.media_folder IS NOT NULL`) doesn't know about disk state.
+    # _row_matches_dl / _row_matches_pl apply the strict
+    # canonical_missing / placement_missing exclusion so the
+    # filter result mirrors the row-pill display exactly.
+    if dl_pills and ("broken" in dl_pills or "on" in dl_pills):
         items = [it for it in items if _row_matches_dl(it, dl_pills)]
         total = len(items)
         items = items[offset:offset + per_page]
-    if pl_pills and "broken" in pl_pills:
+    if pl_pills and ("broken" in pl_pills or "on" in pl_pills):
         items = [it for it in items if _row_matches_pl(it, pl_pills)]
         total = len(items)
         items = items[offset:offset + per_page]
