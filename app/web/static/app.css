@@ -133,7 +133,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 /* v1.12.69: per-tab busy dot — added by JS as .nav-busy when the
    tab's plex_enum is in flight. Pulsing cyan ::after pseudo lets
    the user see which tabs are mid-refresh without parsing topbar
-   text. Position absolute so it doesn't shift the tab's text. */
+   text. Position absolute so it doesn't shift the tab's text.
+   v1.12.98: moved from `right: -10px` (which placed the dot 10px
+   PAST the anchor's right edge — but tabs share a 1px border with
+   no gap, so the dot landed inside the *next* tab's area; users
+   saw e.g. MOVIES being refreshed but the dot appeared next to TV
+   SHOWS). New position sits inside the anchor's 16px right
+   padding so the dot reads as part of the busy tab. */
 .nav a.nav-busy {
   position: relative;
 }
@@ -141,7 +147,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   content: '';
   position: absolute;
   top: 50%;
-  right: -10px;
+  right: 4px;
   width: 5px;
   height: 5px;
   border-radius: 50%;

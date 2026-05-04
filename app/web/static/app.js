@@ -6417,6 +6417,20 @@
     // cleanly; the host page's <body> takes focus instead.
     const focused = dlg.querySelector(':focus');
     if (focused && typeof focused.blur === 'function') focused.blur();
+    // v1.12.98: pause + reset any audio elements inside the dialog
+    // before closing. Pre-fix the v1.12.90 in-card preview kept
+    // playing after Esc/× because the <audio> element survived in
+    // the detached DOM until the next open re-rendered it. The user
+    // had no way to stop it short of reopening + scrubbing to the
+    // end. pause() halts playback; setting currentTime=0 rewinds
+    // so the next open starts fresh (also matches the user's
+    // mental model that closing the card = "I'm done with this").
+    dlg.querySelectorAll('audio').forEach((el) => {
+      try {
+        el.pause();
+        el.currentTime = 0;
+      } catch (_) { /* defensive — element may already be torn down */ }
+    });
     if (typeof dlg.close === 'function') dlg.close();
     else dlg.removeAttribute('open');
   }
