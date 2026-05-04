@@ -212,6 +212,33 @@ def _opts(
         "continuedl": True,
         # Speed limits help avoid getting flagged
         "ratelimit": 5_000_000,  # 5 MB/s ceiling
+        # v1.12.89: declare nodejs as the JS runtime so yt-dlp can use
+        # the full `web` player client. Without a JS runtime yt-dlp
+        # falls back to `android_vr` (the only client that doesn't
+        # need JS to derive cipher signatures), which returns "This
+        # video is not available" for many otherwise-playable videos.
+        # Format is `{runtime_name: {config}}` per yt-dlp's source —
+        # empty config dict picks up the binary from PATH. The
+        # Dockerfile installs nodejs alongside ffmpeg; native installs
+        # can pre-install deno or node and yt-dlp will find either.
+        "js_runtimes": {"node": {}},
+        # v1.12.89: tell yt-dlp to try multiple YouTube player clients
+        # in order. If `web` (JS-required) trips anti-bot or fails to
+        # extract, the fallback list keeps trying — `android` and
+        # `tv_embedded` work for many videos that `web` rejects, and
+        # don't need a JS runtime. Belt-and-suspenders alongside the
+        # nodejs install above.
+        "extractor_args": {
+            "youtube": {
+                "player_client": [
+                    "default",
+                    "android",
+                    "ios",
+                    "tv_embedded",
+                    "mweb",
+                ],
+            },
+        },
     }
     if cookies_file and cookies_file.exists():
         opts["cookiefile"] = str(cookies_file)
