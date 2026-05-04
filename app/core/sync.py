@@ -596,15 +596,20 @@ def _flush_sync_batch(
                 yt_url = record.get("youtube_theme_url")
                 if yt_url and (has_local_files or has_override or has_sidecar):
                     # Cross-match: prompt instead of fetch.
+                    # v1.12.99: schema v31 added section_id to the PK.
+                    # Sync writes the title-global '' row; per-section
+                    # accept/decline rows (created on user action) take
+                    # precedence over '' via the library SQL's COALESCE
+                    # resolution. ON CONFLICT now matches the full PK.
                     yt_vid = extract_video_id(yt_url)
                     conn.execute(
                         """
                         INSERT INTO pending_updates (
-                            media_type, tmdb_id, old_video_id, new_video_id,
+                            media_type, tmdb_id, section_id, old_video_id, new_video_id,
                             old_youtube_url, new_youtube_url,
                             upstream_edited_at, detected_at, decision
-                        ) VALUES (?, ?, NULL, ?, NULL, ?, ?, ?, 'pending')
-                        ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                        ) VALUES (?, ?, '', NULL, ?, NULL, ?, ?, ?, 'pending')
+                        ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                             new_video_id = excluded.new_video_id,
                             new_youtube_url = excluded.new_youtube_url,
                             upstream_edited_at = excluded.upstream_edited_at,
@@ -636,15 +641,17 @@ def _flush_sync_batch(
                     (media_type, tmdb_id),
                 ).fetchone() is not None
                 if already_have or has_override:
+                    # v1.12.99: schema v31 added section_id to the PK.
+                    # Sync writes the title-global '' row.
                     yt_vid = extract_video_id(record.get("youtube_theme_url"))
                     conn.execute(
                         """
                         INSERT INTO pending_updates (
-                            media_type, tmdb_id, old_video_id, new_video_id,
+                            media_type, tmdb_id, section_id, old_video_id, new_video_id,
                             old_youtube_url, new_youtube_url,
                             upstream_edited_at, detected_at, decision
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
-                        ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                        ) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?, 'pending')
+                        ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                             new_video_id = excluded.new_video_id,
                             new_youtube_url = excluded.new_youtube_url,
                             upstream_edited_at = excluded.upstream_edited_at,
@@ -978,14 +985,22 @@ def run_sync(db_path, base_url: str, *,
         # CONFLICT keeps any existing decision the user already
         # made on this row.
         with get_conn(db_path) as conn:
+            # v1.12.99: per-section sweep. Pre-fix the synthetic
+            # urls_match row was title-global (one row per title)
+            # which lit up the blue pill on every section's row even
+            # when the override only existed for one. Now each
+            # user_overrides row gets its own section-specific
+            # synthetic pending_update so KEEP CURRENT / ACCEPT on
+            # one section doesn't bleed to siblings.
             synthetic = conn.execute(
                 """
                 INSERT INTO pending_updates (
-                    media_type, tmdb_id, old_video_id, new_video_id,
+                    media_type, tmdb_id, section_id,
+                    old_video_id, new_video_id,
                     old_youtube_url, new_youtube_url,
                     upstream_edited_at, detected_at, decision, kind
                 )
-                SELECT t.media_type, t.tmdb_id,
+                SELECT t.media_type, t.tmdb_id, uo.section_id,
                        t.youtube_video_id, t.youtube_video_id,
                        NULL, t.youtube_url,
                        t.youtube_edited_at, ?, 'pending', 'urls_match'
@@ -1000,6 +1015,7 @@ def run_sync(db_path, base_url: str, *,
                      SELECT 1 FROM pending_updates pu
                       WHERE pu.media_type = t.media_type
                         AND pu.tmdb_id = t.tmdb_id
+                        AND pu.section_id = uo.section_id
                    )
                 """,
                 (sync_ts,),

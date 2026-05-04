@@ -275,6 +275,29 @@ def _capture_previous_url(
     if not prev_url or not prev_kind:
         return
     target_section = section_id if section_id is not None else ""
+    # v1.12.99: don't overwrite a user-kind capture with a themerrdb-kind
+    # one. Pre-fix the M*A*S*H scenario lost the user's URL through this
+    # cascade:
+    #   1. SET URL    → captures (no-op; orphan themes.youtube_url=NULL)
+    #   2. ACCEPT URL → captures user override (kind=user) ✓
+    #   3. PURGE      → user_overrides gone; capture falls to
+    #                   themes.youtube_url (kind=themerrdb), OVERWRITING
+    #                   step-2's user capture
+    # User then has no RESTORE option (kind=themerrdb is functionally
+    # DOWNLOAD TDB; revert_redundant=true). The user-kind URL they
+    # explicitly set is gone forever.
+    # New rule: themerrdb-kind captures don't clobber existing
+    # user-kind captures. User-kind URLs are meaningful for one-step
+    # undo; themerrdb URLs are always reachable via DOWNLOAD TDB
+    # regardless of whether previous_urls knows about them.
+    if prev_kind == "themerrdb":
+        existing = conn.execute(
+            "SELECT kind FROM previous_urls "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+            (media_type, tmdb_id, target_section),
+        ).fetchone()
+        if existing and existing["kind"] == "user":
+            return
     conn.execute(
         """INSERT INTO previous_urls
              (media_type, tmdb_id, section_id, youtube_url, kind, captured_at)
@@ -364,6 +387,63 @@ def _record_audit(
         (now_iso(), actor, action, media_type, tmdb_id,
          section_id, payload),
     )
+
+
+def _set_pending_update_decision(
+    conn, *, media_type: str, tmdb_id: int,
+    section_id: str | None, decision: str, decided_by: str,
+) -> int:
+    """v1.12.99: record a user's accept/decline on the per-section
+    pending_updates row for a (media_type, tmdb_id, section_id) tuple.
+
+    Schema v31 made pending_updates per-section. The user's decision
+    lives at section_id-specific rows so KEEP CURRENT on standard
+    doesn't bleed to 4K. The title-global '' row written by sync
+    survives as the "default" any section without its own decision
+    inherits — the library SQL's pu_sec / pu_global LEFT JOIN with
+    COALESCE picks per-section first, '' second.
+
+    Implementation:
+      1. Read the effective pending update for the requested section
+         (per-section first, '' fallback) — this provides the values
+         to copy (new_youtube_url, kind, etc.).
+      2. UPSERT into the section-specific row with the new decision.
+         The '' row stays untouched so other sections still see
+         their inherited pending state.
+
+    Returns 1 when a row was written, 0 when no pending_update
+    existed for the (mt, tmdb) tuple to act on.
+    """
+    section = section_id if section_id is not None else ""
+    src = conn.execute(
+        """SELECT new_video_id, new_youtube_url, old_youtube_url,
+                  upstream_edited_at, detected_at, kind
+             FROM pending_updates
+            WHERE media_type = ? AND tmdb_id = ?
+              AND section_id IN (?, '')
+            ORDER BY (section_id = ?) DESC
+            LIMIT 1""",
+        (media_type, tmdb_id, section, section),
+    ).fetchone()
+    if src is None:
+        return 0
+    conn.execute(
+        """INSERT INTO pending_updates (
+              media_type, tmdb_id, section_id,
+              new_video_id, new_youtube_url, old_youtube_url,
+              upstream_edited_at, detected_at, decision,
+              decision_at, decision_by, kind
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+               decision = excluded.decision,
+               decision_at = excluded.decision_at,
+               decision_by = excluded.decision_by""",
+        (media_type, tmdb_id, section,
+         src["new_video_id"], src["new_youtube_url"], src["old_youtube_url"],
+         src["upstream_edited_at"], src["detected_at"], decision,
+         now_iso(), decided_by, src["kind"]),
+    )
+    return 1
 
 
 def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
@@ -853,33 +933,21 @@ def _library_main_query(
                -- pill itself — declined updates stay visible for
                -- filtering and sorting but no longer prompt for
                -- action.
-               (CASE WHEN EXISTS (
-                  SELECT 1 FROM pending_updates pu
-                   WHERE pu.media_type = t.media_type
-                     AND pu.tmdb_id = t.tmdb_id
-                     AND pu.decision IN ('pending', 'declined')
-                ) THEN 1 ELSE 0 END) AS pending_update,
-               -- v1.12.54: kind discriminator on the active
-               -- pending_update so the JS pill render can use
-               -- different tooltip/coloring for 'urls_match'
-               -- (synthetic "convert U → T" prompt) vs the
-               -- original 'upstream_changed' (TDB URL actually
-               -- moved). NULL when no pending_update row exists.
-               (SELECT pu.kind FROM pending_updates pu
-                 WHERE pu.media_type = t.media_type
-                   AND pu.tmdb_id = t.tmdb_id
-                   AND pu.decision IN ('pending', 'declined')
-                 LIMIT 1) AS pending_update_kind,
-               -- v1.12.5: actionable_update = the row should still
-               -- prompt with ACCEPT UPDATE / KEEP CURRENT in the
-               -- SOURCE menu. Becomes 0 once the user picks KEEP
-               -- (decision flips to 'declined').
-               (CASE WHEN EXISTS (
-                  SELECT 1 FROM pending_updates pu
-                   WHERE pu.media_type = t.media_type
-                     AND pu.tmdb_id = t.tmdb_id
-                     AND pu.decision = 'pending'
-                ) THEN 1 ELSE 0 END) AS actionable_update,
+               -- v1.12.99: pending_update / actionable_update /
+               -- pending_update_kind resolve via the per-section
+               -- LEFT JOIN with '' fallback. COALESCE picks the
+               -- section's own decision when present; otherwise
+               -- inherits from the title-global '' row that sync
+               -- writes. Pre-v1.12.99 the EXISTS subqueries hit
+               -- pending_updates without section_id filter, so a
+               -- KEEP CURRENT on standard cleared the blue pill on
+               -- 4K and the topbar UPD count under-reported.
+               (CASE WHEN COALESCE(pu_sec.decision, pu_global.decision)
+                          IN ('pending', 'declined')
+                     THEN 1 ELSE 0 END) AS pending_update,
+               COALESCE(pu_sec.kind, pu_global.kind) AS pending_update_kind,
+               (CASE WHEN COALESCE(pu_sec.decision, pu_global.decision) = 'pending'
+                     THEN 1 ELSE 0 END) AS actionable_update,
                -- v1.12.86: previous-URL fields resolve from the
                -- previous_urls JOINs (pv_sec + pv_global). Each
                -- column's value comes from the section-specific row
@@ -949,12 +1017,10 @@ def _library_main_query(
                -- canonical was just downloaded from the current
                -- TDB URL — re-running would just download the
                -- same file.
-               (CASE WHEN EXISTS (
-                  SELECT 1 FROM pending_updates pu
-                   WHERE pu.media_type = t.media_type
-                     AND pu.tmdb_id = t.tmdb_id
-                     AND pu.decision = 'accepted'
-                ) THEN 1 ELSE 0 END) AS accepted_update
+               -- v1.12.99: per-section via the COALESCE-of-LEFT-JOIN
+               -- pattern (pu_sec wins, '' fallback otherwise).
+               (CASE WHEN COALESCE(pu_sec.decision, pu_global.decision) = 'accepted'
+                     THEN 1 ELSE 0 END) AS accepted_update
     """
     # v1.11.0: every per-row JOIN to placements / local_files matches
     # by section_id = pi.section_id, so a row on the standard library
@@ -997,6 +1063,22 @@ def _library_main_query(
           ON pv_global.media_type = t.media_type
          AND pv_global.tmdb_id = t.tmdb_id
          AND pv_global.section_id = ''
+        -- v1.12.99: pending_updates is per-section as of schema v31.
+        -- Two LEFT JOINs (section-specific + '' global fallback)
+        -- mirror the previous_urls pattern. Library-row pending /
+        -- actionable / kind columns resolve via COALESCE so each
+        -- section's row reflects its own decision (KEEP CURRENT on
+        -- standard doesn't bleed to 4K) and the '' row from sync
+        -- still drives sections that haven't been independently
+        -- accepted/declined.
+        LEFT JOIN pending_updates pu_sec
+          ON pu_sec.media_type = t.media_type
+         AND pu_sec.tmdb_id = t.tmdb_id
+         AND pu_sec.section_id = pi.section_id
+        LEFT JOIN pending_updates pu_global
+          ON pu_global.media_type = t.media_type
+         AND pu_global.tmdb_id = t.tmdb_id
+         AND pu_global.section_id = ''
     """
     sql_from_pi_only = """
         FROM plex_items pi
@@ -1626,7 +1708,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM themes
                    WHERE failure_kind IS NOT NULL
                      AND failure_acked_at IS NULL) AS unacked_failures,
-                  (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
+                  -- v1.12.99: per-section count. Walks every plex_items
+                  -- row whose effective pending_updates decision (per-
+                  -- section first, '' fallback) is 'pending', so the
+                  -- topbar UPD badge equals the number of (section ×
+                  -- title) instances awaiting decision. Pre-fix the
+                  -- count was titles-with-pending which under-reported
+                  -- when the same title spanned multiple sections.
+                  (SELECT COUNT(*) FROM plex_items pi2
+                   INNER JOIN plex_sections ps2
+                     ON ps2.section_id = pi2.section_id AND ps2.included = 1
+                   INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                   WHERE COALESCE(
+                     (SELECT pu.decision FROM pending_updates pu
+                       WHERE pu.media_type = t2.media_type
+                         AND pu.tmdb_id = t2.tmdb_id
+                         AND pu.section_id = pi2.section_id),
+                     (SELECT pu.decision FROM pending_updates pu
+                       WHERE pu.media_type = t2.media_type
+                         AND pu.tmdb_id = t2.tmdb_id
+                         AND pu.section_id = '')
+                   ) = 'pending'
+                  ) AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total
             """).fetchone()
             last_sync = conn.execute(
@@ -1801,7 +1904,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           AND j.media_type = lf.media_type
                           AND j.tmdb_id = lf.tmdb_id
                      )) AS pending_placements,
-                  (SELECT COUNT(*) FROM pending_updates WHERE decision = 'pending') AS updates_pending,
+                  -- v1.12.99: per-section count. Walks every plex_items
+                  -- row whose effective pending_updates decision (per-
+                  -- section first, '' fallback) is 'pending', so the
+                  -- topbar UPD badge equals the number of (section ×
+                  -- title) instances awaiting decision. Pre-fix the
+                  -- count was titles-with-pending which under-reported
+                  -- when the same title spanned multiple sections.
+                  (SELECT COUNT(*) FROM plex_items pi2
+                   INNER JOIN plex_sections ps2
+                     ON ps2.section_id = pi2.section_id AND ps2.included = 1
+                   INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                   WHERE COALESCE(
+                     (SELECT pu.decision FROM pending_updates pu
+                       WHERE pu.media_type = t2.media_type
+                         AND pu.tmdb_id = t2.tmdb_id
+                         AND pu.section_id = pi2.section_id),
+                     (SELECT pu.decision FROM pending_updates pu
+                       WHERE pu.media_type = t2.media_type
+                         AND pu.tmdb_id = t2.tmdb_id
+                         AND pu.section_id = '')
+                   ) = 'pending'
+                  ) AS updates_pending,
                   -- v1.10.50: exclude acked rows from the topbar
                   -- failure counts. Acked = the user dealt with it
                   -- (manual URL/upload/adopt or explicit ACK); the
@@ -3347,12 +3471,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             (media_type, tmdb_id),
                         )
 
-            conn.execute(
-                """UPDATE pending_updates SET decision = 'accepted',
-                       decision_at = ?, decision_by = ?
-                   WHERE media_type = ? AND tmdb_id = ?""",
-                (now_iso(), request.state.principal.username,
-                 media_type, tmdb_id),
+            # v1.12.99: per-section decision write. Schema v31 keys
+            # pending_updates by (mt, tmdb, section_id); the helper
+            # inserts a section-specific row leaving the '' fallback
+            # untouched, so other sections continue to see pending.
+            _set_pending_update_decision(
+                conn, media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id, decision="accepted",
+                decided_by=request.state.principal.username,
             )
             _record_audit(
                 conn, actor=request.state.user, action="accept_update",
@@ -3411,27 +3537,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/updates/{media_type}/{tmdb_id}/decline")
     async def api_decline_update(
         request: Request, media_type: MediaType, tmdb_id: int,
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
-        """Decline an upstream update: keep the current theme. The decline is
-        sticky — won't re-prompt unless ThemerrDB updates again."""
+        """Decline an upstream update: keep the current theme. The decline
+        is sticky — won't re-prompt unless ThemerrDB updates again.
+
+        v1.12.99: per-section. Pre-fix declining on standard wrote a
+        title-global decision that 4K's row inherited too. Now writes
+        a section-specific row; sibling sections continue to see the
+        '' fallback (pending) until they make their own decision.
+        """
         _require_admin(request)
         with get_conn(db) as conn:
-            cur = conn.execute(
-                """UPDATE pending_updates SET decision = 'declined',
-                       decision_at = ?, decision_by = ?
-                   WHERE media_type = ? AND tmdb_id = ? AND decision = 'pending'""",
-                (now_iso(), request.state.principal.username, media_type, tmdb_id),
+            written = _set_pending_update_decision(
+                conn, media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id, decision="declined",
+                decided_by=request.state.principal.username,
             )
-            if cur.rowcount == 0:
+            if written == 0:
                 raise HTTPException(status_code=404, detail="no pending update")
             _record_audit(
                 conn, actor=request.state.principal.username,
                 action="decline_update",
                 media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=f"Update declined by {request.state.principal.username}")
         return {"ok": True}
 
@@ -4206,19 +4340,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if (existing_theme_yt
                     and canonical_url
                     and existing_theme_yt.strip() == canonical_url.strip()):
+                # v1.12.99: schema v31 added section_id to the PK.
+                # SET URL is per-section (rk-driven), so the eager
+                # urls_match insert lands on the row's section_id —
+                # not the title-global '' row. Other sections see
+                # whatever was already there (or nothing).
                 conn.execute(
                     "DELETE FROM pending_updates "
-                    "WHERE media_type = ? AND tmdb_id = ?",
-                    (theme_media_type, tmdb_id),
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (theme_media_type, tmdb_id, section_id_for_override),
                 )
                 conn.execute(
                     """
                     INSERT INTO pending_updates (
-                        media_type, tmdb_id, old_video_id, new_video_id,
+                        media_type, tmdb_id, section_id,
+                        old_video_id, new_video_id,
                         old_youtube_url, new_youtube_url,
                         upstream_edited_at, detected_at, decision, kind
                     )
-                    SELECT t.media_type, t.tmdb_id,
+                    SELECT t.media_type, t.tmdb_id, ?,
                            t.youtube_video_id, t.youtube_video_id,
                            NULL, t.youtube_url,
                            t.youtube_edited_at, ?, 'pending', 'urls_match'
@@ -4226,7 +4366,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      WHERE t.media_type = ?
                        AND t.tmdb_id = ?
                     """,
-                    (now_iso(), theme_media_type, tmdb_id),
+                    (section_id_for_override, now_iso(), theme_media_type, tmdb_id),
                 )
             # v1.10.50: implicit ack on manual URL — same reasoning as
             # upload-theme. The user has provided a working source, so

@@ -347,6 +347,13 @@ CREATE INDEX IF NOT EXISTS idx_plex_items_title_norm
 CREATE TABLE IF NOT EXISTS pending_updates (
     media_type        TEXT NOT NULL,
     tmdb_id           INTEGER NOT NULL,
+    -- v1.12.99: section_id makes pending_updates per-section so a
+    -- KEEP CURRENT decision on the standard library doesn't
+    -- silently apply to the 4K library and the topbar UPD count
+    -- reflects per-section state. '' (empty) is a fallback for
+    -- title-global captures (legacy callers without section context);
+    -- the library SQL reads section's own row first, then '' fallback.
+    section_id        TEXT NOT NULL DEFAULT '',
     theme_id          INTEGER,
     old_video_id      TEXT,
     new_video_id      TEXT,
@@ -376,12 +383,14 @@ CREATE TABLE IF NOT EXISTS pending_updates (
     -- back-compat with rows written before this migration.
     kind              TEXT NOT NULL DEFAULT 'upstream_changed'
                         CHECK (kind IN ('upstream_changed', 'urls_match')),
-    PRIMARY KEY (media_type, tmdb_id),
+    PRIMARY KEY (media_type, tmdb_id, section_id),
     FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id) ON DELETE CASCADE
 );
 
 CREATE INDEX IF NOT EXISTS idx_pending_updates_decision
     ON pending_updates (decision, detected_at);
+CREATE INDEX IF NOT EXISTS idx_pending_updates_target
+    ON pending_updates (media_type, tmdb_id);
 
 CREATE TABLE IF NOT EXISTS scan_runs (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -498,7 +507,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 30
+CURRENT_SCHEMA_VERSION = 31
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1129,6 +1138,77 @@ def _migrate_v29_to_v30(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v30_to_v31(conn: sqlite3.Connection) -> None:
+    """v31 makes pending_updates per-section. Pre-fix the table was
+    keyed on (media_type, tmdb_id) — title-global — so a sync that
+    detected an upstream URL change wrote one row that lit up the
+    blue update pill on EVERY section's instance of the title.
+    KEEP CURRENT or ACCEPT UPDATE on standard then silently applied
+    to the 4K row too because both rows read the same pending_updates
+    record. The topbar UPD count under-reported: each title-with-
+    update counted once regardless of how many sections owned it.
+
+    Schema change:
+      - Add section_id TEXT NOT NULL DEFAULT '' column.
+      - Drop the (media_type, tmdb_id) PK.
+      - New PK (media_type, tmdb_id, section_id).
+      - SQLite can't ALTER PRIMARY KEY in-place — we recreate the
+        table and copy data over (existing rows land at section_id='').
+      - The '' row acts as a fallback for legacy callers that don't
+        supply section_id; the library SQL reads section's own row
+        first, falling back to '' (mirrors user_overrides v27 +
+        previous_urls v30 patterns).
+
+    The library SQL, accept/decline endpoints, and the urls_match
+    eager-detection paths in api.py / sync.py are updated separately
+    to honor the new section_id key. This migration just reshapes
+    the storage; reads continue to work via the '' fallback row
+    until the call sites are upgraded.
+    """
+    log.info("Migrating to schema v31 (pending_updates per-section)")
+    conn.executescript(
+        """
+        CREATE TABLE pending_updates_v31 (
+            media_type        TEXT NOT NULL,
+            tmdb_id           INTEGER NOT NULL,
+            section_id        TEXT NOT NULL DEFAULT '',
+            theme_id          INTEGER,
+            old_video_id      TEXT,
+            new_video_id      TEXT,
+            old_youtube_url   TEXT,
+            new_youtube_url   TEXT,
+            upstream_edited_at TEXT,
+            detected_at       TEXT NOT NULL,
+            decision          TEXT,
+            decision_at       TEXT,
+            decision_by       TEXT,
+            replaced_user_url TEXT,
+            kind              TEXT NOT NULL DEFAULT 'upstream_changed'
+                                CHECK (kind IN ('upstream_changed', 'urls_match')),
+            PRIMARY KEY (media_type, tmdb_id, section_id),
+            FOREIGN KEY (media_type, tmdb_id) REFERENCES themes (media_type, tmdb_id)
+                ON DELETE CASCADE
+        );
+        INSERT INTO pending_updates_v31
+            (media_type, tmdb_id, section_id, theme_id,
+             old_video_id, new_video_id, old_youtube_url, new_youtube_url,
+             upstream_edited_at, detected_at, decision, decision_at,
+             decision_by, replaced_user_url, kind)
+        SELECT media_type, tmdb_id, '', theme_id,
+               old_video_id, new_video_id, old_youtube_url, new_youtube_url,
+               upstream_edited_at, detected_at, decision, decision_at,
+               decision_by, replaced_user_url, kind
+          FROM pending_updates;
+        DROP TABLE pending_updates;
+        ALTER TABLE pending_updates_v31 RENAME TO pending_updates;
+        CREATE INDEX IF NOT EXISTS idx_pending_updates_decision
+            ON pending_updates (decision, detected_at);
+        CREATE INDEX IF NOT EXISTS idx_pending_updates_target
+            ON pending_updates (media_type, tmdb_id);
+        """
+    )
+
+
 def _migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
     """v29 adds events.section_id + per-(media_type, tmdb_id, section_id)
     index. Previously the events table was title-global — a single
@@ -1689,6 +1769,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 29:
                     _migrate_v29_to_v30(conn)
                     current = 30
+                elif current == 30:
+                    _migrate_v30_to_v31(conn)
+                    current = 31
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

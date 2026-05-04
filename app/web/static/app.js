@@ -1419,7 +1419,14 @@
         'prompt only if ThemerrDB publishes a further URL change.')) return;
     if (btn) btn.disabled = true;
     try {
-      await api('POST', `/api/updates/${mediaType}/${tmdbId}/decline`);
+      // v1.12.99: pass sectionId so decline scopes to the row's
+      // section. Pre-fix decline was title-global and silently
+      // applied to sibling sections.
+      const sectionId = btn?.dataset?.sectionId;
+      const url = sectionId
+        ? `/api/updates/${mediaType}/${tmdbId}/decline?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/updates/${mediaType}/${tmdbId}/decline`;
+      await api('POST', url);
       if (btn) btn.textContent = 'KEPT';
       setTimeout(() => loadItems().catch(()=>{}), 600);
     } catch (e) {
@@ -3737,7 +3744,7 @@
         sourceItems.push(menuItemHtml(
           'decline-update', 'KEEP CURRENT',
           declineTip,
-          { mt: themeMt, id: themeId },
+          { mt: themeMt, id: themeId, sectionId: it.section_id },
         ));
       }
     }
