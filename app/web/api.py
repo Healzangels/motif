@@ -615,23 +615,25 @@ def _library_main_query(
                 branches.append("(t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan')")
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
-    if dl_pills:
+    # v1.12.81: when 'broken' is in dl_pills or pl_pills the filter
+    # needs a post-SQL stat-check (canonical_missing / placement_missing
+    # don't live in any column). Skip the SQL branch in that case and
+    # let the post-filter step downstream apply the full dl_pills /
+    # pl_pills selection. Without 'broken' the SQL branches stay so
+    # the page query narrows efficiently.
+    if dl_pills and "broken" not in dl_pills:
         branches = []
         for p in dl_pills:
             if p == "on":
                 branches.append("(lf.file_path IS NOT NULL)")
             elif p == "off":
                 branches.append("(lf.file_path IS NULL)")
-            elif p == "mismatch":
-                # v1.12.81: amber DL state — canonical diverged from
-                # placement file (e.g. SET URL / UPLOAD over an
-                # existing placement). lf.mismatch_state is set by
-                # the v1.11.99 detector to 'pending' or 'acked'.
-                branches.append("(lf.mismatch_state IS NOT NULL)")
-            # 'broken' is post-SQL via canonical_missing stat; falls through.
+            # 'mismatch' was retired in v1.12.81 — content divergence
+            # is a LINK fact (link_pills 'm') and a row-title `!`
+            # glyph; DL no longer doubles up.
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
-    if pl_pills:
+    if pl_pills and "broken" not in pl_pills:
         branches = []
         for p in pl_pills:
             if p == "on":
@@ -955,9 +957,19 @@ def _library_main_query(
     # v1.11.62: dl_missing requires post-SQL stat-check, which means
     # SQL pagination would lie about the total. For that filter,
     # fetch every candidate (no LIMIT) and paginate in Python below.
+    # v1.12.81: DL=broken / PL=broken pills are also stat-driven —
+    # SQL pagination would slice off broken candidates that happen
+    # to fall outside the current page's window. Treat them like
+    # status=dl_missing: load unbounded, post-filter, then paginate
+    # in Python.
+    needs_post_stat_pagination = (
+        status == "dl_missing"
+        or (dl_pills and "broken" in dl_pills)
+        or (pl_pills and "broken" in pl_pills)
+    )
     sql_rows_unbounded = f"{sql_select} {sql_from} {sql_where} {order_clause}"
     with get_conn(db) as conn:
-        if status == "dl_missing":
+        if needs_post_stat_pagination:
             total = -1  # filled in after stat-check
             missing_count = conn.execute(sql_missing_count).fetchone()[0]
             all_rows = conn.execute(sql_rows_unbounded, params).fetchall()
@@ -986,6 +998,43 @@ def _library_main_query(
         items = [it for it in items if it.get("canonical_missing")]
         total = len(items)
         items = items[offset:offset + per_page]
+
+    # v1.12.81: post-SQL filter for DL=broken / PL=broken. Both
+    # require a stat-check that doesn't live in any column. When
+    # 'broken' is in dl_pills or pl_pills the SQL skipped the
+    # corresponding branch (see the dl_pills / pl_pills processing
+    # earlier); we apply the full pill selection here so the result
+    # honors all selected states (broken alone, broken + on, etc.).
+    def _row_matches_dl(it, pills):
+        for p in pills:
+            if p == "on" and it.get("file_path") and not it.get("canonical_missing"):
+                return True
+            if p == "off" and not it.get("file_path"):
+                return True
+            if p == "broken" and it.get("canonical_missing"):
+                return True
+        return False
+
+    def _row_matches_pl(it, pills):
+        for p in pills:
+            if p == "on" and it.get("media_folder") and not it.get("placement_missing"):
+                return True
+            if p == "off" and not it.get("media_folder") and not it.get("file_path"):
+                return True
+            if p == "await" and not it.get("media_folder") and it.get("file_path"):
+                return True
+            if p == "broken" and it.get("placement_missing"):
+                return True
+        return False
+
+    if dl_pills and "broken" in dl_pills:
+        items = [it for it in items if _row_matches_dl(it, dl_pills)]
+        total = len(items)
+        items = items[offset:offset + per_page]
+    if pl_pills and "broken" in pl_pills:
+        items = [it for it in items if _row_matches_pl(it, pl_pills)]
+        total = len(items)
+        items = items[offset:offset + per_page]
     return {"total": total, "missing_count": missing_count,
             "page": page, "per_page": per_page,
             "tab": tab, "fourk": fourk, "items": items,
@@ -999,20 +1048,36 @@ def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None) -> 
     """Add canonical_missing=True to each row whose lf.file_path points
     at a file that no longer exists under themes_dir. Best-effort —
     OSError on stat (permissions, dead mount) treats as missing.
+
+    v1.12.81: also annotates placement_missing — placements row has a
+    media_folder but theme.mp3 isn't actually there. Parallel concept
+    to canonical_missing on the Plex-folder side; surfaces as PL=broken
+    in the library row UI so the user can spot a placement that fell
+    out of sync (Plex deleted it, file moved manually, etc.) without
+    motif noticing yet.
     """
     if not themes_dir:
         for it in items:
             it["canonical_missing"] = False
+            it["placement_missing"] = False
         return items
     for it in items:
         rel = it.get("file_path")
         if not rel:
             it["canonical_missing"] = False
-            continue
-        try:
-            it["canonical_missing"] = not (themes_dir / rel).is_file()
-        except OSError:
-            it["canonical_missing"] = True
+        else:
+            try:
+                it["canonical_missing"] = not (themes_dir / rel).is_file()
+            except OSError:
+                it["canonical_missing"] = True
+        media_folder = it.get("media_folder")
+        if not media_folder:
+            it["placement_missing"] = False
+        else:
+            try:
+                it["placement_missing"] = not (Path(media_folder) / "theme.mp3").is_file()
+            except OSError:
+                it["placement_missing"] = True
     return items
 
 
@@ -3411,8 +3476,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {p for p in (x.strip() for x in s.split(",")) if p in valid}
         src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "-"})
         tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none"})
-        dl_set = _pset(dl_pills, {"on", "off", "broken", "mismatch"})
-        pl_set = _pset(pl_pills, {"on", "await", "off"})
+        dl_set = _pset(dl_pills, {"on", "off", "broken"})
+        pl_set = _pset(pl_pills, {"on", "await", "off", "broken"})
         link_set = _pset(link_pills, {"hl", "c", "m", "none"})
         ed_set = _pset(ed_pills, {"has", "none"})
         # v1.12.23: 'broken' DL pill alone routes through the existing

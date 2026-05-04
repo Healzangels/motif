@@ -134,12 +134,10 @@
     <button type="button" class="state-pill-btn state-pill-btn-broken"
             data-dl-pill="broken"
             title="Canonical missing on disk; the placement file survives. Use RESTORE FROM PLEX.">●</button>
-    <!-- v1.12.81: mismatch filter — canonical content diverged from
-         the Plex-folder file (e.g., SET URL / UPLOAD MP3 over an
-         existing placement). Amber dot matches the row's DL state. -->
-    <button type="button" class="state-pill-btn state-pill-btn-mismatch"
-            data-dl-pill="mismatch"
-            title="Mismatch — canonical differs from the Plex-folder file. Resolve via PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">●</button>
+    <!-- v1.12.81: mismatch DL pill removed — content divergence is
+         now expressed exclusively via the LINK column's M glyph and
+         the amber `!` row-title attention glyph. DL answers a single
+         question: is the canonical file present? -->
     <button type="button" class="pill-filter-clear" data-dl-pill=""
             title="Clear all DL selections.">CLEAR</button>
   </div>
@@ -157,6 +155,13 @@
     <button type="button" class="state-pill-btn state-pill-btn-await"
             data-pl-pill="await"
             title="Awaiting placement — canonical downloaded but not placed in Plex (post-DEL). Use PLACE → PUSH TO PLEX, or REMOVE → PURGE.">●</button>
+    <!-- v1.12.81: broken filter — placement row exists but theme.mp3
+         is missing from the Plex folder (Plex deleted it, file moved
+         manually, etc.). Symmetry with DL=broken on the canonical
+         side; same red palette so users can spot the inverse case. -->
+    <button type="button" class="state-pill-btn state-pill-btn-broken"
+            data-pl-pill="broken"
+            title="Broken — placement row exists but theme.mp3 is missing from the Plex folder. RE-PUSH (PLACE menu) restores from the canonical.">●</button>
     <button type="button" class="state-pill-btn state-pill-btn-off"
             data-pl-pill="off"
             title="Not placed in the Plex folder.">●</button>

@@ -2901,9 +2901,12 @@
     tdbPills: new Set(),
     // v1.12.23: DL / PL / Link pill multi-select sets. Same
     // server-side pattern as srcFilter / tdbPills.
-    //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red),
-    //            'mismatch' (amber — v1.12.81)
-    //   plPills: 'on' (green dot), 'off' (faded), 'await' (amber)
+    //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red).
+    //            v1.12.81 retired 'mismatch' — content divergence is
+    //            a LINK fact ('m') only.
+    //   plPills: 'on' (green dot), 'off' (faded), 'await' (amber),
+    //            'broken' (red, v1.12.81 — placement row exists but
+    //            theme.mp3 missing from the Plex folder).
     //   linkPills: 'hl', 'c', 'm' (mismatch), 'none'
     dlPills: new Set(),
     plPills: new Set(),
@@ -3251,17 +3254,16 @@
     // the row should call out 'still in plex, not downloaded' and
     // surface a RESTORE FROM PLEX action.
     const dlBroken = !!it.canonical_missing && !!it.file_path;
-    // v1.11.99: mismatch states ('pending' / 'acked') tint the DL dot
-    // amber and force the LINK glyph to ≠ — motif holds a download
-    // that does NOT match the file currently at the placement, so
-    // claiming a green DL or a clean = / C link would be a lie. The
-    // 'acked' state behaves the same visually as 'pending'; the only
-    // difference is acked rows are absent from /pending (already
-    // dismissed by the user via KEEP MISMATCH).
+    // v1.11.99: mismatch_state tracks "canonical content diverged
+    // from the placement file". v1.12.81 removed the amber
+    // 'mismatch' DL state — the LINK column's M glyph is the
+    // single source of truth for content divergence, and the
+    // amber `!` row-title glyph is the at-a-glance attention
+    // signal. DL now answers exactly one question: is the canonical
+    // file present?
     const isMismatch = !!it.mismatch_state;
     const dl = dlBroken ? 'broken'
-             : (isMismatch ? 'mismatch'
-             : (downloaded ? 'on' : ''));
+             : (downloaded ? 'on' : '');
     // v1.12.65: PL column gains a third state — 'await' (amber) —
     // when the canonical exists but no placement does. Pre-fix, a
     // post-DEL row dropped to a plain gray PL dot, the same as a
@@ -3276,8 +3278,31 @@
     // renderLibraryRow and left every library tab stuck at
     // "loading…". Moved the declaration up here so pl can read it
     // safely; the original declaration site below is removed.
+    // v1.12.81: PL gains 'broken' — placement row exists but the
+    // theme.mp3 is missing from the Plex folder (Plex deleted it,
+    // file moved manually, etc.). Symmetry with DL=broken; uses
+    // the same red palette so users can spot the inverse case.
     const awaitingApproval = !it.job_in_flight && !!it.file_path && !it.media_folder;
-    const pl = placed ? 'on' : (awaitingApproval ? 'await' : '');
+    const placementBroken = !!placed && !!it.placement_missing;
+    const pl = placementBroken ? 'broken'
+             : placed ? 'on'
+             : awaitingApproval ? 'await'
+             : '';
+    // v1.12.81: hover tooltips for the DL / PL state dots so each
+    // color is self-describing — pre-fix the user had to memorize
+    // green=on / amber=await / red=broken from the filter chips.
+    const dlTip = dl === 'broken'
+      ? 'BROKEN — local_files row says canonical exists but the file is missing from /themes. PUSH TO PLEX still works (placement file survives); RESTORE FROM PLEX rebuilds the canonical from it.'
+      : dl === 'on'
+        ? 'ON — canonical theme file is on disk under /themes.'
+        : 'OFF — no canonical file recorded.';
+    const plTip = pl === 'broken'
+      ? 'BROKEN — placement row exists but theme.mp3 is missing from the Plex folder. RE-PUSH (PLACE menu) re-creates the placement from the canonical.'
+      : pl === 'on'
+        ? 'ON — theme is in the Plex folder.'
+        : pl === 'await'
+          ? 'AWAIT — canonical exists but no placement. Use PUSH TO PLEX to apply, or PURGE to drop.'
+          : 'OFF — not placed in the Plex folder.';
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
     if (isMismatch && placed) {
       linkCell = '<span class="link-glyph link-glyph-mismatch" title="MISMATCH — canonical (DL) does not match the file at the Plex folder. Resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu.">M</span>';
@@ -4062,8 +4087,8 @@
         </td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>
         <td class="col-state">${srcCell}</td>
-        <td class="col-state"><span class="state-pill ${dl}"></span></td>
-        <td class="col-state"><span class="state-pill ${pl}"></span></td>
+        <td class="col-state"><span class="state-pill ${dl}" title="${htmlEscape(dlTip)}"></span></td>
+        <td class="col-state"><span class="state-pill ${pl}" title="${htmlEscape(plTip)}"></span></td>
         <td class="col-state">${linkCell}</td>
         <td class="col-imdb">${imdbLink}</td>
         <td class="col-actions">${actions}</td>
@@ -4403,7 +4428,7 @@
           values: new Set(['on','off','broken']) },
         { param: 'pl_pills',   state: 'plPills',   attr: 'plPill',
           activeClass: 'state-pill-btn-active',
-          values: new Set(['on','await','off']) },
+          values: new Set(['on','await','off','broken']) },
         { param: 'link_pills', state: 'linkPills', attr: 'linkPill',
           activeClass: 'link-pill-btn-active',
           values: new Set(['hl','c','m','none']) },

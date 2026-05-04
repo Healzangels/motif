@@ -975,10 +975,6 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    .state-pill.await dot in the PL column for rows where the
    canonical exists but no placement does (post-DEL state). */
 .state-pill-btn-await { color: var(--amber); border-color: rgba(255,184,74,0.4); }
-/* v1.12.81: mismatch filter button — same amber as the row dot's
-   .state-pill.mismatch so the filter visual matches what users see
-   in the DL column on a mismatch-state row. */
-.state-pill-btn-mismatch { color: var(--amber); border-color: rgba(255,184,74,0.4); }
 /* v1.12.41: EDITION filter pill — amber/yellow to match the
    .edition-pill row glyph the filter is selecting on. Sized
    wider than .state-pill-btn since the label is text ("ED")
