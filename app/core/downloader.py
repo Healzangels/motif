@@ -222,19 +222,32 @@ def _opts(
         # Dockerfile installs nodejs alongside ffmpeg; native installs
         # can pre-install deno or node and yt-dlp will find either.
         "js_runtimes": {"node": {}},
+        # v1.12.91: enable yt-dlp's remote-component fetcher (ejs from
+        # the official yt-dlp GitHub repo) so node can solve YouTube's
+        # signature + n challenges. Without this, even with node as a
+        # JS runtime, yt-dlp falls back to clients that don't need
+        # signature solving (web_embedded, android_vr) which on many
+        # videos return only the low-quality 360p MP4 fallback (format
+        # 18 — 22 kHz mono audio). Enabling EJS unlocks formats 140
+        # (128k AAC, 44.1 kHz stereo) and 251 (160k Opus, 48 kHz
+        # stereo) — far better source material for the MP3 transcode.
+        # Adds a remote-fetch dependency at extraction time; helpers
+        # come from yt-dlp's first-party releases.
+        "remote_components": ["ejs:github"],
         # v1.12.89: tell yt-dlp to try multiple YouTube player clients
         # in order. If `web` (JS-required) trips anti-bot or fails to
         # extract, the fallback list keeps trying — `android` and
-        # `tv_embedded` work for many videos that `web` rejects, and
-        # don't need a JS runtime. Belt-and-suspenders alongside the
-        # nodejs install above.
+        # `mweb` work for many videos that `web` rejects, and don't
+        # need a JS runtime. Belt-and-suspenders alongside the nodejs
+        # install above.
+        # v1.12.91: dropped 'tv_embedded' from the list — yt-dlp 2025+
+        # logs "Skipping unsupported client" for it (no-op).
         "extractor_args": {
             "youtube": {
                 "player_client": [
                     "default",
                     "android",
                     "ios",
-                    "tv_embedded",
                     "mweb",
                 ],
             },
