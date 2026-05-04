@@ -153,6 +153,11 @@ def adopt_folder(
         db_path,
         media_type=outcome.get("media_type"),
         tmdb_id=outcome.get("tmdb_id"),
+        # v1.12.77: pass section_id so the local_files flip is
+        # scoped — pre-fix the UPDATE spanned every section's
+        # local_files row, silently flipping sibling-edition
+        # source_kind based on a single section's adoption.
+        section_id=section_id,
         sha256=sha256,
         decided_by=decided_by,
     )
@@ -230,6 +235,7 @@ def _maybe_restore_url_history(
     db_path: Path, *,
     media_type: str | None, tmdb_id: int | None,
     sha256: str, decided_by: str,
+    section_id: str | None = None,
 ) -> dict | None:
     """v1.10.57: look up local_files_history by sha256 and, if a prior
     URL-sourced entry matches, restore the youtube_url onto the
@@ -244,6 +250,13 @@ def _maybe_restore_url_history(
     'upload' the URL was empty anyway, and for 'themerrdb'/'adopt'
     there's no original-URL semantic to preserve. Picks the most
     recent saved_at when multiple matches exist.
+
+    v1.12.77: section_id scopes the local_files UPDATE so the flip
+    only affects the section being adopted into. Pre-fix the UPDATE
+    spanned every section's local_files row, silently flipping
+    sibling-edition source_kind on a single-section adopt — the
+    user adopted the 4K theme.mp3 and the standard edition's row
+    classified differently as a side effect.
     """
     if not sha256 or media_type is None or tmdb_id is None:
         return None
@@ -281,14 +294,25 @@ def _maybe_restore_url_history(
         url_matches_tdb = bool(theme_yt and url and theme_yt.strip() == url.strip())
         if url_matches_tdb:
             # Adopt-as-T path: keep themes.youtube_url, no override,
-            # flip every section's local_files.source_kind to
-            # 'themerrdb'. Row classifies as T immediately.
-            conn.execute(
-                "UPDATE local_files SET source_kind = 'themerrdb', "
-                "                       source_video_id = ? "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (hist["source_video_id"] or "", media_type, tmdb_id),
-            )
+            # flip the local_files.source_kind to 'themerrdb' for
+            # this section only (v1.12.77 — was global pre-fix and
+            # silently flipped sibling sections). Row classifies as
+            # T immediately.
+            if section_id:
+                conn.execute(
+                    "UPDATE local_files SET source_kind = 'themerrdb', "
+                    "                       source_video_id = ? "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (hist["source_video_id"] or "", media_type, tmdb_id,
+                     section_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE local_files SET source_kind = 'themerrdb', "
+                    "                       source_video_id = ? "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (hist["source_video_id"] or "", media_type, tmdb_id),
+                )
             return {
                 "youtube_url": url,
                 "source_kind": "themerrdb",
@@ -319,11 +343,19 @@ def _maybe_restore_url_history(
             "  AND (youtube_url IS NULL OR youtube_url = '')",
             (url, media_type, tmdb_id),
         )
-        conn.execute(
-            "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
-            "WHERE media_type = ? AND tmdb_id = ?",
-            (hist["source_video_id"] or "", media_type, tmdb_id),
-        )
+        # v1.12.77: scope local_files flip to the adopting section.
+        if section_id:
+            conn.execute(
+                "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (hist["source_video_id"] or "", media_type, tmdb_id, section_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (hist["source_video_id"] or "", media_type, tmdb_id),
+            )
     return {
         "youtube_url": url,
         "source_kind": "url",

@@ -4297,12 +4297,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/unplace")
     async def api_unplace_item(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.77: optional section_id scopes DEL (unplace) to one
+        # section. Without it, every section's placement file gets
+        # unlinked (legacy fan-out). Mirrors the v1.12.46/.47/.73
+        # scoping for ACCEPT UPDATE / REVERT / RE-DOWNLOAD /
+        # UNMANAGE.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """Remove the placement of a theme (theme.mp3 in Plex's folder) but
         keep motif's canonical so the user can REPLACE it back later. The
         Plex side stops playing the motif theme; the file in themes_dir
         stays, allowing one-click re-placement without re-download.
+
+        v1.12.77: when section_id is provided, only that section's
+        placement gets unlinked. Sibling sections continue to play
+        their motif theme.
         """
         _require_admin(request)
         with get_conn(db) as conn:
@@ -4312,11 +4322,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if theme is None:
                 raise HTTPException(status_code=404, detail="theme not found")
-            placements = conn.execute(
-                "SELECT media_folder FROM placements "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchall()
+            if section_id:
+                placements = conn.execute(
+                    "SELECT media_folder FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+            else:
+                placements = conn.execute(
+                    "SELECT media_folder FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchall()
         # Unlink each placement's theme.mp3
         unlinked = 0
         affected_folders: list[str] = []
@@ -4330,10 +4347,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except OSError as e:
                 log.warning("unplace: could not unlink %s: %s", pr["media_folder"], e)
         with get_conn(db) as conn:
-            conn.execute(
-                "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            )
+            if section_id:
+                conn.execute(
+                    "DELETE FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                )
+            else:
+                conn.execute(
+                    "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
             # Optimistically clear plex_items flags so the SRC badge
             # immediately reflects "no theme" instead of going stale-P
             # (Plex's metadata still says theme=present for some time
@@ -4815,6 +4839,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/items/{media_type}/{tmdb_id}/forget")
     async def api_forget_item(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.77: optional section_id scopes PURGE to one section.
+        # Without it, every section that owns the title gets purged
+        # at once (legacy fan-out). Mirrors the v1.12.46/.47/.73
+        # scoping for ACCEPT UPDATE / REVERT / RE-DOWNLOAD /
+        # UNMANAGE — per-edition theming requires this so PURGE
+        # on the 4K row doesn't yank the standard edition's
+        # theme too.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """PURGE: full destruction of motif's theme presence for an item.
@@ -4832,6 +4864,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
           a sidecar back at the Plex folder before ADOPT becomes
           available.
 
+        v1.12.77: when section_id is provided the action targets just
+        that section. Sibling sections' files + tracking survive.
+        Per-section override drops, themes-row drop (orphan-only),
+        and tracking-metadata drop only fire when this is the LAST
+        section for the title.
+
         v1.10.38: reverted v1.10.27's source_kind=URL/upload/adopt
         preservation. Per user feedback, PURGE should always be the
         full-destruction action; UNMANAGE is the keep-the-file action.
@@ -4845,18 +4883,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ).fetchone()
             if theme is None:
                 raise HTTPException(status_code=404, detail="theme not found")
-            placements = conn.execute(
-                "SELECT media_folder FROM placements "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchall()
-            locals_rows = conn.execute(
-                "SELECT section_id, file_path, file_sha256, source_kind, "
-                "       source_video_id "
-                "FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchall()
+            # v1.12.77: scope placements + locals_rows to the
+            # requested section when one was provided.
+            if section_id:
+                placements = conn.execute(
+                    "SELECT media_folder FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+            else:
+                placements = conn.execute(
+                    "SELECT media_folder FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchall()
+            if section_id:
+                locals_rows = conn.execute(
+                    "SELECT section_id, file_path, file_sha256, source_kind, "
+                    "       source_video_id "
+                    "FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchall()
+            else:
+                locals_rows = conn.execute(
+                    "SELECT section_id, file_path, file_sha256, source_kind, "
+                    "       source_video_id "
+                    "FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchall()
             # v1.12.1: collect every plex_items.rating_key pointing at
             # this theme BEFORE the delete cascade fires. The post-
             # delete flag clear at the bottom of this handler clears
@@ -4888,11 +4944,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             plex_mt = "show" if media_type == "tv" else "movie"
             placement_folders = [pr["media_folder"] for pr in placements]
             rk_clear: set[str] = set()
+            # v1.12.77: when section_id is provided, scope the
+            # rating_key collection to that section so plex_items
+            # in sibling sections keep their local_theme_file +
+            # has_theme flags. Otherwise the section-scoped PURGE
+            # would delete the 4K placement file but ALSO clear
+            # the standard section's plex_items has_theme flag,
+            # which would silently flip the standard row to '-'
+            # at the next render.
+            section_filter_sql = (
+                "AND section_id = ?" if section_id else ""
+            )
+            section_filter_args = ((section_id,) if section_id else ())
             # Path 1: theme_id stamp
             if theme_id_pk_for_clear is not None:
                 for r in conn.execute(
-                    "SELECT rating_key FROM plex_items WHERE theme_id = ?",
-                    (theme_id_pk_for_clear,),
+                    f"SELECT rating_key FROM plex_items "
+                    f"WHERE theme_id = ? {section_filter_sql}",
+                    (theme_id_pk_for_clear, *section_filter_args),
                 ).fetchall():
                     rk_clear.add(r["rating_key"])
             # Path 2: placement folder_path match
@@ -4900,16 +4969,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 qmarks = ",".join("?" for _ in placement_folders)
                 for r in conn.execute(
                     f"SELECT rating_key FROM plex_items "
-                    f"WHERE folder_path IN ({qmarks}) AND media_type = ?",
-                    (*placement_folders, plex_mt),
+                    f"WHERE folder_path IN ({qmarks}) AND media_type = ? "
+                    f"{section_filter_sql}",
+                    (*placement_folders, plex_mt, *section_filter_args),
                 ).fetchall():
                     rk_clear.add(r["rating_key"])
             # Path 3: real-tmdb match (covers the non-orphan case
             # where motif never had to allocate a synthetic id)
             for r in conn.execute(
-                "SELECT rating_key FROM plex_items "
-                "WHERE guid_tmdb = ? AND media_type = ?",
-                (tmdb_id, plex_mt),
+                f"SELECT rating_key FROM plex_items "
+                f"WHERE guid_tmdb = ? AND media_type = ? "
+                f"{section_filter_sql}",
+                (tmdb_id, plex_mt, *section_filter_args),
             ).fetchall():
                 rk_clear.add(r["rating_key"])
             # v1.10.57: snapshot content-hash → URL mapping per section
@@ -4973,28 +5044,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn:
-            # v1.12.57: PURGE = full destruction. Drop motif's
-            # tracking metadata (override URL, pending_updates,
-            # previous-URL snapshot) so the row is a true clean
-            # slate. Pre-fix a "CLEAR URL → PURGE" sequence left
-            # the user_overrides row alive — the row showed src='-'
-            # but the next download silently used the stale
-            # override URL, classifying the row as U again.
-            _drop_motif_tracking(conn, media_type, tmdb_id)
-            if is_orphan:
+            if section_id:
+                # v1.12.77: scope DELETE to the row's section.
+                # Sibling sections' placements + local_files
+                # survive. Per-section override drops too. The
+                # tracking-metadata drop and orphan-themes delete
+                # only fire when this is the LAST section for the
+                # title (no other local_files remaining), mirroring
+                # the v1.12.73 UNMANAGE last-section logic.
                 conn.execute(
-                    "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
+                    "DELETE FROM placements "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
                 )
+                conn.execute(
+                    "DELETE FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                )
+                conn.execute(
+                    "DELETE FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                )
+                remaining = conn.execute(
+                    "SELECT COUNT(*) AS n FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                last_section = remaining and remaining["n"] == 0
+                if last_section:
+                    _drop_motif_tracking(conn, media_type, tmdb_id)
+                    if is_orphan:
+                        conn.execute(
+                            "DELETE FROM themes "
+                            "WHERE media_type = ? AND tmdb_id = ?",
+                            (media_type, tmdb_id),
+                        )
             else:
-                conn.execute(
-                    "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                )
-                conn.execute(
-                    "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                )
+                # Legacy global PURGE path — destroys every section.
+                # v1.12.57: PURGE = full destruction. Drop motif's
+                # tracking metadata (override URL, pending_updates,
+                # previous-URL snapshot) so the row is a true clean
+                # slate. Pre-fix a "CLEAR URL → PURGE" sequence left
+                # the user_overrides row alive — the row showed src='-'
+                # but the next download silently used the stale
+                # override URL, classifying the row as U again.
+                _drop_motif_tracking(conn, media_type, tmdb_id)
+                if is_orphan:
+                    conn.execute(
+                        "DELETE FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
+                    conn.execute(
+                        "DELETE FROM local_files WHERE media_type = ? AND tmdb_id = ?",
+                        (media_type, tmdb_id),
+                    )
             # v1.12.1: clear pi.local_theme_file + has_theme by the
             # rating_key set we memo-ized BEFORE delete (see the
             # theme_id_pk_for_clear / rk_clear collection above).

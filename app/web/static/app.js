@@ -1098,19 +1098,28 @@
     });
   }
 
-  async function unplaceTheme(mediaType, tmdbId, title) {
+  async function unplaceTheme(mediaType, tmdbId, title, sectionId) {
     // Removes the theme.mp3 from Plex's folder but keeps motif's canonical
     // so REPLACE can push it back later. No re-download needed if user
     // changes their mind.
+    // v1.12.77: scope to section_id so DEL on a 4K row only
+    // unlinks the 4K folder's theme.mp3 — sibling editions keep
+    // playing motif's theme.
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
+    const scopeNote = sectionId
+      ? '\n\nScoped to this section only — sibling editions keep their themes in place.'
+      : '';
     const ok = confirm(
       `Remove ${labelTitle} from the Plex folder?\n\n` +
       `Plex will stop playing this theme until you push it back.\n\n` +
       `Motif's canonical copy stays in /data/media/themes — click PUSH TO PLEX ` +
-      `on the row to restore it without re-downloading.`);
+      `on the row to restore it without re-downloading.${scopeNote}`);
     if (!ok) return;
     try {
-      await api('POST', `/api/items/${mediaType}/${tmdbId}/unplace`);
+      const url = sectionId
+        ? `/api/items/${mediaType}/${tmdbId}/unplace?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/items/${mediaType}/${tmdbId}/unplace`;
+      await api('POST', url);
     } catch (e) {
       alert('Unplace failed: ' + e.message);
     }
@@ -1138,7 +1147,7 @@
     }
   }
 
-  async function purgeTheme(mediaType, tmdbId, title, isOrphan, dlOnly) {
+  async function purgeTheme(mediaType, tmdbId, title, isOrphan, dlOnly, sectionId) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
     // v1.10.38: PURGE is full destruction — delete both motif's
     // canonical at /data/media/themes AND the placement in the Plex
@@ -1168,10 +1177,20 @@
       }
       warning += '\n\nUse UNMANAGE to keep the Plex-folder file.';
     }
-    const ok = confirm(`Purge ${labelTitle}?${warning}\n\nThis cannot be undone.`);
+    // v1.12.77: surface section-scope in the confirm copy so the
+    // user knows the action only targets the row's edition. The
+    // backend detects last-section and only drops the themes row +
+    // tracking metadata when nothing else is managed for the title.
+    const scopeNote = sectionId
+      ? '\n\nScoped to this section only — sibling editions (e.g. 4K vs standard) keep their themes.'
+      : '';
+    const ok = confirm(`Purge ${labelTitle}?${warning}${scopeNote}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
-      const r = await fetch(`/api/items/${mediaType}/${tmdbId}/forget`, { method: 'POST' });
+      const url = sectionId
+        ? `/api/items/${mediaType}/${tmdbId}/forget?section_id=${encodeURIComponent(sectionId)}`
+        : `/api/items/${mediaType}/${tmdbId}/forget`;
+      const r = await fetch(url, { method: 'POST' });
       if (!r.ok && r.status !== 204) {
         const t = await r.text().catch(() => '');
         throw new Error(`${r.status}: ${t || r.statusText}`);
@@ -3871,10 +3890,12 @@
       ));
     }
     if (placed) {
+      // v1.12.77: section_id scopes DEL so only this row's
+      // placement gets unlinked. Sibling editions keep playing.
       removeItems.push(menuItemHtml(
         'unplace', 'DEL',
-        "Remove from the Plex folder. Canonical stays — PUSH TO PLEX restores.",
-        { mt: themeMt, id: themeId, danger: true },
+        "Remove from this Plex folder. Canonical stays — PUSH TO PLEX restores.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id, danger: true },
       ));
     }
     if (placed && downloaded) {
@@ -3905,6 +3926,12 @@
         'purge', '× PURGE',
         purgeDesc,
         { mt: themeMt, id: themeId, orphan: isOrphan,
+          // v1.12.77: scope PURGE to this row's section so
+          // sibling sections (4K vs standard, anime vs plain)
+          // keep their files. Backend detects last-section and
+          // only drops the themes row + tracking metadata when
+          // nothing else is managed for the title.
+          sectionId: it.section_id,
           danger: true,
           // v1.11.88: bypassLock so PURGE stays clickable when the row
           // is awaitingApproval (downloaded but not placed). PURGE *is*
@@ -5256,7 +5283,9 @@
         await deleteOrphan(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
         await loadLibrary().catch(()=>{});
       } else if (act === 'unplace') {
-        await unplaceTheme(btn.dataset.mt, btn.dataset.id, btn.dataset.title || '');
+        await unplaceTheme(btn.dataset.mt, btn.dataset.id,
+                           btn.dataset.title || '',
+                           btn.dataset.sectionId || undefined);
         await loadLibrary().catch(()=>{});
       } else if (act === 'replace') {
         await replaceTheme(btn.dataset.mt, btn.dataset.id, btn);
@@ -5334,7 +5363,8 @@
         await purgeTheme(btn.dataset.mt, btn.dataset.id,
                          btn.dataset.title || '',
                          btn.dataset.orphan === '1',
-                         btn.dataset.dlOnly === '1');
+                         btn.dataset.dlOnly === '1',
+                         btn.dataset.sectionId || undefined);
         await loadLibrary().catch(()=>{});
       } else if (act === 'clear-failure') {
         // v1.10.42: silent acknowledge — no confirm prompt, the
