@@ -5709,6 +5709,13 @@
     // the dialog scannable; expand-on-click for the deep dive.
     const events = (data.events || []);
     const historySection = renderRowHistory(events);
+    // v1.12.80: audit_events provenance section. Loaded
+    // asynchronously after the dialog paints — keeps the initial
+    // open snappy and the audit query off the synchronous /api/items
+    // path. Empty placeholder swapped in by hydrateAuditSection when
+    // the fetch lands; if the row has no audit history (older row
+    // pre-v1.12.80), the section stays hidden.
+    const auditPlaceholder = '<div id="audit-section-slot"></div>';
     body.innerHTML = `
       <h3>${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
       <dl class="dlg-grid">
@@ -5729,6 +5736,7 @@
       </dl>
       ${recoveryPlaceholder}
       ${diffSection}
+      ${auditPlaceholder}
       ${historySection}
       ${ytId ? `<div style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)">
         <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
@@ -5752,6 +5760,90 @@
     if (recoverySectionId) {
       hydrateRecoveryOptions(body, t.media_type, t.tmdb_id);
     }
+    // v1.12.80: load the audit_events provenance log for this row
+    // and render it into #audit-section-slot. Async so the dialog
+    // paints first; failure leaves the slot empty (no error noise
+    // since most rows won't have audit history yet).
+    hydrateAuditSection(body, t.media_type, t.tmdb_id);
+  }
+
+  // v1.12.80: fetch audit_events for a row and render a // PROVENANCE
+  // section into the placeholder. Distinct from the // HISTORY
+  // section which renders log_event rows (rolling, includes
+  // sync/worker noise) — this section is the curated "who changed
+  // what" feed sourced from audit_events.
+  async function hydrateAuditSection(root, mediaType, tmdbId) {
+    if (!root || !mediaType || tmdbId === undefined) return;
+    const slot = root.querySelector('#audit-section-slot');
+    if (!slot) return;
+    let data;
+    try {
+      data = await api('GET', `/api/items/${mediaType}/${tmdbId}/audit?limit=50`);
+    } catch (_) {
+      return;
+    }
+    const events = data?.events || [];
+    if (!events.length) return;
+    const fmtTs = (iso) => {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+      } catch (_) { return iso; }
+    };
+    const actionLabel = (a) => ({
+      set_url: 'SET URL',
+      clear_override: 'CLEAR OVERRIDE',
+      clear_previous_url: 'CLEAR URL',
+      accept_update: 'ACCEPT UPDATE',
+      decline_update: 'KEEP CURRENT',
+      revert: 'RESTORE / REVERT',
+      purge: 'PURGE',
+      unmanage: 'UNMANAGE',
+      unplace: 'DEL',
+      adopt: 'ADOPT',
+      replace_with_themerrdb: 'REPLACE TDB',
+      redownload: 'RE-DOWNLOAD',
+      ack_failure: 'ACK FAILURE',
+    }[a] || a.replace(/_/g, ' ').toUpperCase());
+    const renderDetail = (d) => {
+      if (!d || typeof d !== 'object') return '';
+      const lines = [];
+      if (d.old_url) lines.push(`old: ${d.old_url}`);
+      if (d.new_url) lines.push(`new: ${d.new_url}`);
+      if (d.restored_url) lines.push(`restored: ${d.restored_url}`);
+      const extras = Object.entries(d)
+        .filter(([k]) => !['old_url', 'new_url', 'restored_url'].includes(k))
+        .filter(([, v]) => v !== null && v !== undefined && v !== '')
+        .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+      lines.push(...extras);
+      return lines.length
+        ? `<pre class="history-detail">${htmlEscape(lines.join('\n'))}</pre>`
+        : '';
+    };
+    const rows = events.map((e) => {
+      const sec = e.section_id ? ` <span class="muted small">[section ${htmlEscape(e.section_id)}]</span>` : '';
+      return `
+        <div class="history-row">
+          <div class="history-row-head">
+            <span class="history-ts">${htmlEscape(fmtTs(e.occurred_at))}</span>
+            <span class="history-level history-level-info">${htmlEscape(actionLabel(e.action))}</span>
+            <span class="history-component muted small">${htmlEscape(e.actor || '')}${sec}</span>
+          </div>
+          ${renderDetail(e.details)}
+        </div>
+      `;
+    }).join('');
+    slot.innerHTML = `
+      <details class="history-section" open>
+        <summary>
+          <span class="history-section-title">// PROVENANCE</span>
+          <span class="muted small">${events.length} audited change${events.length === 1 ? '' : 's'}</span>
+        </summary>
+        <div class="history-body">${rows}</div>
+      </details>
+    `;
   }
 
   // v1.12.71: fetch the recovery options for a failed row and

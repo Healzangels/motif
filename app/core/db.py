@@ -453,9 +453,28 @@ CREATE TABLE IF NOT EXISTS runtime_settings (
     updated_at  TEXT NOT NULL,
     updated_by  TEXT
 );
+
+-- v1.12.80: append-only provenance log for URL changes, override
+-- set/clear, and accept/decline decisions. Distinct from `events`
+-- (rotates) — audit_events lives forever so "who changed Willy
+-- Wonka and when" is answerable months later.
+CREATE TABLE IF NOT EXISTS audit_events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    occurred_at  TEXT NOT NULL,
+    actor        TEXT NOT NULL,
+    action       TEXT NOT NULL,
+    media_type   TEXT,
+    tmdb_id      INTEGER,
+    section_id   TEXT,
+    details      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_audit_events_target
+    ON audit_events (media_type, tmdb_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
+    ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 27
+CURRENT_SCHEMA_VERSION = 28
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -990,6 +1009,47 @@ def _migrate_v26_to_v27(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v27_to_v28(conn: sqlite3.Connection) -> None:
+    """v28 adds audit_events — an append-only provenance log for
+    every URL change, override set/clear, and accept/decline
+    decision. Distinct from log_event (which captures generic
+    events including transient debug/info ones and gets rotated
+    out of the live DB). audit_events is intended to live forever:
+    it answers "who changed Willy Wonka's theme URL on 2026-04-12,
+    and what was it before?" months later, after the rolling log
+    has cycled.
+
+    Indexed by (media_type, tmdb_id, occurred_at DESC) for fast
+    per-row lookups in the INFO card; secondary index on
+    occurred_at for time-range scans.
+
+    details is a JSON blob — schema varies by action so a fixed
+    column shape would either be too narrow or too wide. Each
+    action documents its own keys (e.g., set_url stores
+    {old_url, new_url, scope}; accept_update stores
+    {old_url, new_url, kind}).
+    """
+    log.info("Migrating to schema v28 (audit_events)")
+    conn.executescript(
+        """
+        CREATE TABLE audit_events (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            occurred_at  TEXT NOT NULL,
+            actor        TEXT NOT NULL,
+            action       TEXT NOT NULL,
+            media_type   TEXT,
+            tmdb_id      INTEGER,
+            section_id   TEXT,
+            details      TEXT
+        );
+        CREATE INDEX idx_audit_events_target
+            ON audit_events (media_type, tmdb_id, occurred_at DESC);
+        CREATE INDEX idx_audit_events_occurred
+            ON audit_events (occurred_at DESC);
+        """
+    )
+
+
 def _migrate_v23_to_v24(conn: sqlite3.Connection) -> None:
     """v24 adds pending_updates.replaced_user_url for the v1.12.34
     ACCEPT UPDATE / REVERT round-trip on U-source rows.
@@ -1515,6 +1575,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 26:
                     _migrate_v26_to_v27(conn)
                     current = 27
+                elif current == 27:
+                    _migrate_v27_to_v28(conn)
+                    current = 28
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

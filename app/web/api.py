@@ -278,6 +278,37 @@ def _capture_previous_url(
     )
 
 
+def _record_audit(
+    conn, *, actor: str, action: str,
+    media_type: str | None = None,
+    tmdb_id: int | None = None,
+    section_id: str | None = None,
+    details: dict | None = None,
+) -> None:
+    """v1.12.80: append a row to audit_events — the long-lived
+    provenance log for URL changes, override set/clear, accept/
+    decline decisions, and destructive theme actions.
+
+    Distinct from log_event (which uses the rolling `events`
+    table). audit_events is intentionally not rotated: the goal
+    is to be able to answer "who changed Willy Wonka's theme on
+    2026-04-12, and what was it before?" months later.
+
+    `details` is a free-form dict serialized to JSON. Each action
+    documents its own keys; common ones include old_url, new_url,
+    kind, scope.
+    """
+    payload = json.dumps(details, separators=(",", ":")) if details else None
+    conn.execute(
+        """INSERT INTO audit_events
+             (occurred_at, actor, action, media_type, tmdb_id,
+              section_id, details)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (now_iso(), actor, action, media_type, tmdb_id,
+         section_id, payload),
+    )
+
+
 def _drop_motif_tracking(conn, media_type: str, tmdb_id: int) -> None:
     """v1.12.57: drop motif's tracking metadata for a title — the
     rows that aren't tied to actual files on disk but persist
@@ -3059,6 +3090,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (now_iso(), request.state.principal.username,
                  media_type, tmdb_id),
             )
+            _record_audit(
+                conn, actor=request.state.user, action="accept_update",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
+                details={
+                    "old_url": override["youtube_url"] if override else None,
+                    "new_url": new_tdb_url,
+                    "url_match": url_match,
+                },
+            )
             from ..core.sync import _enqueue_download
             # v1.12.41: ACCEPT UPDATE forces auto_place=True so
             # the download chains directly into a place job
@@ -3120,6 +3161,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             if cur.rowcount == 0:
                 raise HTTPException(status_code=404, detail="no pending update")
+            _record_audit(
+                conn, actor=request.state.principal.username,
+                action="decline_update",
+                media_type=media_type, tmdb_id=tmdb_id,
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Update declined by {request.state.principal.username}")
@@ -3844,6 +3890,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # section's row, leaving sibling-section overrides
             # untouched.
             section_id_for_override = pi["section_id"] or ""
+            prior_override = conn.execute(
+                "SELECT youtube_url FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (theme_media_type, tmdb_id, section_id_for_override),
+            ).fetchone()
             conn.execute(
                 """INSERT INTO user_overrides (media_type, tmdb_id, youtube_url,
                                                set_at, set_by, note,
@@ -3857,6 +3908,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (theme_media_type, tmdb_id, canonical_url, now_iso(),
                  request.state.user, f"manual url for plex rk={rating_key}",
                  section_id_for_override),
+            )
+            _record_audit(
+                conn, actor=request.state.user, action="set_url",
+                media_type=theme_media_type, tmdb_id=tmdb_id,
+                section_id=section_id_for_override,
+                details={
+                    "old_url": prior_override["youtube_url"] if prior_override else None,
+                    "new_url": canonical_url,
+                    "rating_key": rating_key,
+                },
             )
             # v1.12.62: eager synthetic urls_match detection. If the
             # URL the user just set exactly matches the row's current
@@ -4407,6 +4468,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _trigger_plex_item_refresh(media_type, tmdb_id)
         except Exception as e:
             log.debug("plex item refresh skipped: %s", e)
+        with get_conn(db) as conn:
+            _record_audit(
+                conn, actor=request.state.user, action="unplace",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
+                details={"placements_unlinked": unlinked,
+                         "placements_total": len(placements)},
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Unplaced by {request.state.user}",
@@ -4455,6 +4524,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                'pending', ?, ?)""",
                     (media_type, tmdb_id, s["section_id"], now_iso(), now_iso()),
                 )
+            _record_audit(
+                conn, actor=request.state.user,
+                action="replace_with_themerrdb",
+                media_type=media_type, tmdb_id=tmdb_id,
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Replace requested by {request.state.user}")
@@ -4562,6 +4636,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (placement_kind, media_type, tmdb_id, r["section_id"]),
                 )
             adopted += 1
+        with get_conn(db) as conn:
+            _record_audit(
+                conn, actor=request.state.user, action="adopt",
+                media_type=media_type, tmdb_id=tmdb_id,
+                details={"sections_adopted": adopted},
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Adopt from Plex by {request.state.user}",
@@ -4864,6 +4944,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # full-section enum per unmanage; pi.local_theme_file is
             # already truthful before this block exits.
 
+        with get_conn(db) as conn:
+            _record_audit(
+                conn, actor=request.state.principal.username, action="unmanage",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
+                details={"orphan": is_orphan},
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Unmanage theme '{theme['title']}' "
@@ -5173,6 +5260,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as e:
             log.debug("plex item refresh skipped: %s", e)
 
+        with get_conn(db) as conn:
+            _record_audit(
+                conn, actor=request.state.user, action="purge",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
+                details={"orphan_dropped": is_orphan,
+                         "placements_unlinked": unlinked,
+                         "placements_total": len(placements)},
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Forget by {request.state.user}",
@@ -5353,6 +5449,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                      previous_youtube_kind = NULL
                    WHERE media_type = ? AND tmdb_id = ?""",
                 (media_type, tmdb_id),
+            )
+            _record_audit(
+                conn, actor=request.state.user, action="clear_previous_url",
+                media_type=media_type, tmdb_id=tmdb_id,
+                details={"old_url": row["previous_youtube_url"]},
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -5537,10 +5638,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 force_place=True,
                 only_section_id=section_id,
             )
+            _record_audit(
+                conn, actor=request.state.user, action="revert",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
+                details={
+                    "restored_url": prev_url,
+                    "restored_kind": prev_kind,
+                    "new_previous_url": new_prev_url,
+                    "new_previous_kind": new_prev_kind,
+                },
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"REVERT to {prev_kind} URL by {request.state.user}")
         return {"ok": True}
+
+    @app.get("/api/items/{media_type}/{tmdb_id}/audit")
+    async def api_item_audit(
+        media_type: MediaType, tmdb_id: int,
+        limit: int = Query(50, ge=1, le=500),
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.12.80: audit_events for a single row, newest first.
+        Powers the INFO card's // PROVENANCE section so users can
+        see "who changed this row, when, and what was the URL
+        before" months after the fact — distinct from the rolling
+        events log which gets rotated."""
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                """SELECT id, occurred_at, actor, action, section_id, details
+                     FROM audit_events
+                    WHERE media_type = ? AND tmdb_id = ?
+                    ORDER BY occurred_at DESC, id DESC
+                    LIMIT ?""",
+                (media_type, tmdb_id, limit),
+            ).fetchall()
+        out = []
+        for r in rows:
+            details = None
+            if r["details"]:
+                try:
+                    details = json.loads(r["details"])
+                except (ValueError, TypeError):
+                    details = None
+            out.append({
+                "id": r["id"],
+                "occurred_at": r["occurred_at"],
+                "actor": r["actor"],
+                "action": r["action"],
+                "section_id": r["section_id"],
+                "details": details,
+            })
+        return {"events": out}
 
     @app.get("/api/items/{media_type}/{tmdb_id}/recovery-options")
     async def api_recovery_options(
@@ -5797,6 +5947,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status = 'failed'""",
                 (now_iso(), media_type, tmdb_id),
             )
+            _record_audit(
+                conn, actor=request.state.principal.username,
+                action="ack_failure",
+                media_type=media_type, tmdb_id=tmdb_id,
+                details={"failure_kind": row["failure_kind"]},
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Failure acknowledged on '{row['title']}' "
@@ -5862,6 +6018,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 auto_place=True,
                 force_place=True,
                 only_section_id=section_id,
+            )
+            _record_audit(
+                conn, actor=request.state.user, action="redownload",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=section_id,
+                details={"sections_enqueued": n},
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
@@ -5962,6 +6124,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 auto_place=True,
                 force_place=True,
             )
+            _record_audit(
+                conn, actor=request.state.user, action="set_url",
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id="",
+                details={"new_url": canonical, "note": note,
+                         "via": "override_dialog"},
+            )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Override set by {request.state.user}: {canonical}",
@@ -5975,10 +6144,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         _require_admin(request)
         with get_conn(db) as conn:
+            prior = conn.execute(
+                "SELECT youtube_url, section_id FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchall()
             conn.execute(
                 "DELETE FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             )
+            for r in prior:
+                _record_audit(
+                    conn, actor=request.state.user, action="clear_override",
+                    media_type=media_type, tmdb_id=tmdb_id,
+                    section_id=r["section_id"],
+                    details={"old_url": r["youtube_url"]},
+                )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
                   message=f"Override cleared by {request.state.user}")
