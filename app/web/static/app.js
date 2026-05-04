@@ -1642,6 +1642,14 @@
     if (!$('#jobs-body')) return;
     const path = queueFilter === 'all' ? '/api/jobs' : `/api/jobs?status=${queueFilter}`;
     const data = await api('GET', path);
+    // v1.12.81: piggyback a topbar refresh on every queue poll. /queue
+    // is where the user sits when watching for jobs/events, so the
+    // expectation is "if anything changed, the badges reflect it".
+    // Pre-fix the UPD badge could lag the actual pending_updates row
+    // by up to 30s (the topbar's own poll cadence) since loadQueue
+    // didn't kick it. Cheap — one extra request per 10s while the
+    // tab is /queue, not running otherwise.
+    refreshTopbarStatus().catch(() => {});
     $('#jobs-body').innerHTML = data.jobs.map((j) => {
       // v1.11.36: cancel button on pending / running rows.
       // cancel_requested=1 + status='running' shows 'CANCELLING…' so
@@ -2893,8 +2901,9 @@
     tdbPills: new Set(),
     // v1.12.23: DL / PL / Link pill multi-select sets. Same
     // server-side pattern as srcFilter / tdbPills.
-    //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red)
-    //   plPills: 'on' (green dot), 'off' (faded)
+    //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red),
+    //            'mismatch' (amber — v1.12.81)
+    //   plPills: 'on' (green dot), 'off' (faded), 'await' (amber)
     //   linkPills: 'hl', 'c', 'm' (mismatch), 'none'
     dlPills: new Set(),
     plPills: new Set(),
@@ -3330,6 +3339,19 @@
         : 'ThemerrDB has a new URL for this row — review in SOURCE → ACCEPT UPDATE / KEEP CURRENT.';
       titleGlyphs.push(
         `<span class="title-glyph title-glyph-update title-glyph-action" title="${htmlEscape(updTip)}">!</span>`
+      );
+    }
+    // v1.12.81: amber ! for mismatch state — canonical content
+    // diverged from the placement file (e.g., SET URL / UPLOAD MP3
+    // over an existing placement). Same attention-glyph pattern as
+    // the red ! (failure) / blue ! (update) / amber ! (await
+    // placement). Gated on mismatch_state='pending' so KEEP MISMATCH
+    // (which flips to 'acked') clears it. Color reuses the existing
+    // amber `.title-glyph-await` palette since both signal "PLACE
+    // menu has work to do" — distinct from the upstream-update blue.
+    if (it.mismatch_state === 'pending' && !it.job_in_flight) {
+      titleGlyphs.push(
+        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical content diverged from the Plex-folder file. Resolve in PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">!</span>`
       );
     }
     // v1.10.50: only show the ! glyph when the failure hasn't been
@@ -5598,8 +5620,23 @@
         ? `<a href="${htmlEscape(url)}" target="_blank" rel="noopener"${color ? ` style="color:${color}"` : ''}>${htmlEscape(url)}</a>`
         : '<span class="muted">—</span>';
     const tdbUrlLink = linkOrDash(tdbUrl, 'var(--green-bright)');
-    const currentColor = ovr ? 'var(--violet)' : 'var(--green-bright)';
-    const currentUrlLink = linkOrDash(currentUrl, currentColor);
+    // v1.12.81: append a kind label after "currently applied" so it
+    // mirrors the "previous url" treatment and the user can read
+    // the source at a glance instead of inferring from color alone.
+    // Color + label match the SRC badge ("user" violet for U-source
+    // overrides; "themerrdb" green for upstream URLs).
+    const currentKind = ovr ? 'user' : (currentUrl ? 'themerrdb' : null);
+    const currentColor = currentKind === 'user'
+      ? 'var(--violet)'
+      : currentKind === 'themerrdb' ? 'var(--green-bright)' : null;
+    const currentKindLabel = currentKind === 'user'
+      ? ' <span class="muted small" style="color:var(--violet)">user</span>'
+      : currentKind === 'themerrdb'
+        ? ' <span class="muted small" style="color:var(--green-bright)">themerrdb</span>'
+        : '';
+    const currentUrlLink = currentUrl
+      ? `${linkOrDash(currentUrl, currentColor)}${currentKindLabel}`
+      : '<span class="muted">—</span>';
     const prevColor = previousKind === 'user'
       ? 'var(--violet)'
       : previousKind === 'themerrdb' ? 'var(--green-bright)' : null;
@@ -5764,7 +5801,11 @@
     // and render it into #audit-section-slot. Async so the dialog
     // paints first; failure leaves the slot empty (no error noise
     // since most rows won't have audit history yet).
-    hydrateAuditSection(body, t.media_type, t.tmdb_id);
+    // v1.12.81: pass section_id so PROVENANCE renders only the
+    // events for the row's section (plus title-global ones like
+    // ADOPT). Pre-fix the standard and 4K cards showed identical
+    // timelines.
+    hydrateAuditSection(body, t.media_type, t.tmdb_id, sectionId);
   }
 
   // v1.12.80: fetch audit_events for a row and render a // PROVENANCE
@@ -5772,13 +5813,16 @@
   // section which renders log_event rows (rolling, includes
   // sync/worker noise) — this section is the curated "who changed
   // what" feed sourced from audit_events.
-  async function hydrateAuditSection(root, mediaType, tmdbId) {
+  async function hydrateAuditSection(root, mediaType, tmdbId, sectionId) {
     if (!root || !mediaType || tmdbId === undefined) return;
     const slot = root.querySelector('#audit-section-slot');
     if (!slot) return;
     let data;
     try {
-      data = await api('GET', `/api/items/${mediaType}/${tmdbId}/audit?limit=50`);
+      const sec = sectionId
+        ? `&section_id=${encodeURIComponent(sectionId)}`
+        : '';
+      data = await api('GET', `/api/items/${mediaType}/${tmdbId}/audit?limit=50${sec}`);
     } catch (_) {
       return;
     }
@@ -6348,7 +6392,16 @@
     // 1s server-side (v1.11.37) and event-driven refreshes fire
     // immediately on sync/refresh button clicks, so background
     // polling can be less aggressive without losing responsiveness.
-    setInterval(refreshTopbarStatus, 30000);
+    // v1.12.81: dropped from 30s → 10s. Pre-fix the topbar's UPD /
+    // FAIL badges and idle-dot color could sit stale for up to 30s
+    // after a sync wrote new pending_updates rows or a worker job
+    // finished. The new cadence matches the /queue page's job poll
+    // so users watching LOGS no longer see "refresh job done" and
+    // then wait another half-minute for the topbar to catch up.
+    // Tripled traffic but the response is small (one cached query
+    // bundle) and the per-action `setTimeout(refreshTopbarStatus,
+    // 1100)` calls remain so explicit clicks still feel immediate.
+    setInterval(refreshTopbarStatus, 10000);
 
     bindDashboard();
     bindBrowse();

@@ -134,6 +134,12 @@
     <button type="button" class="state-pill-btn state-pill-btn-broken"
             data-dl-pill="broken"
             title="Canonical missing on disk; the placement file survives. Use RESTORE FROM PLEX.">●</button>
+    <!-- v1.12.81: mismatch filter — canonical content diverged from
+         the Plex-folder file (e.g., SET URL / UPLOAD MP3 over an
+         existing placement). Amber dot matches the row's DL state. -->
+    <button type="button" class="state-pill-btn state-pill-btn-mismatch"
+            data-dl-pill="mismatch"
+            title="Mismatch — canonical differs from the Plex-folder file. Resolve via PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">●</button>
     <button type="button" class="pill-filter-clear" data-dl-pill=""
             title="Clear all DL selections.">CLEAR</button>
   </div>

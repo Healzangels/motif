@@ -622,6 +622,12 @@ def _library_main_query(
                 branches.append("(lf.file_path IS NOT NULL)")
             elif p == "off":
                 branches.append("(lf.file_path IS NULL)")
+            elif p == "mismatch":
+                # v1.12.81: amber DL state — canonical diverged from
+                # placement file (e.g. SET URL / UPLOAD over an
+                # existing placement). lf.mismatch_state is set by
+                # the v1.11.99 detector to 'pending' or 'acked'.
+                branches.append("(lf.mismatch_state IS NOT NULL)")
             # 'broken' is post-SQL via canonical_missing stat; falls through.
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
@@ -3405,7 +3411,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {p for p in (x.strip() for x in s.split(",")) if p in valid}
         src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "-"})
         tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none"})
-        dl_set = _pset(dl_pills, {"on", "off", "broken"})
+        dl_set = _pset(dl_pills, {"on", "off", "broken", "mismatch"})
         pl_set = _pset(pl_pills, {"on", "await", "off"})
         link_set = _pset(link_pills, {"hl", "c", "m", "none"})
         ed_set = _pset(ed_pills, {"has", "none"})
@@ -3925,14 +3931,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # — pre-fix the user had to wait until the next sync for
             # the v1.12.53 sweep to write the synthetic pending_update,
             # which felt like the action menu had no path to swap to T.
-            # Mirrors the SQL the sync sweep uses; idempotent via
-            # NOT EXISTS so the next sync's sweep won't double-write.
+            # v1.12.81: drop stale pending_updates (any decision) for
+            # this title BEFORE re-inserting. Pre-fix the original
+            # NOT EXISTS guard blocked insertion whenever ANY row
+            # existed, so the SET URL → ACCEPT (urls_match) → SET URL
+            # again with the same URL flow silently produced a U row
+            # with no re-prompt — the prior decision='accepted' row
+            # vetoed the synthetic insert. Treat each fresh SET URL
+            # match as a clean prompt: clear prior decisions and
+            # insert a new pending row. Still idempotent because the
+            # SET URL writes are user-initiated, not automatic.
             existing_theme_yt = (theme["youtube_url"]
                                  if theme and "youtube_url" in theme.keys()
                                  else None)
             if (existing_theme_yt
                     and canonical_url
                     and existing_theme_yt.strip() == canonical_url.strip()):
+                conn.execute(
+                    "DELETE FROM pending_updates "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (theme_media_type, tmdb_id),
+                )
                 conn.execute(
                     """
                     INSERT INTO pending_updates (
@@ -3947,11 +3966,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                       FROM themes t
                      WHERE t.media_type = ?
                        AND t.tmdb_id = ?
-                       AND NOT EXISTS (
-                         SELECT 1 FROM pending_updates pu
-                          WHERE pu.media_type = t.media_type
-                            AND pu.tmdb_id = t.tmdb_id
-                       )
                     """,
                     (now_iso(), theme_media_type, tmdb_id),
                 )
@@ -3977,23 +3991,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # orphan logged 'no included Plex section owns (...)' and
             # silently skipped — the URL persisted but no download fired.
             section_id = pi["section_id"]
-            # v1.11.99: detect the mismatch case BEFORE the worker runs —
-            # if a placement already exists for this (mt, tmdb, section)
-            # the new download should NOT auto-place over the existing
-            # file. Pass user_initiated_mismatch=true through the
-            # payload; the download worker reads it, breaks the canonical
-            # hardlink before downloading (so the placement file's inode
-            # is preserved), and marks local_files.mismatch_state='pending'
-            # instead of enqueueing a place job. The user resolves via
-            # /pending or the row's PLACE menu.
-            existing_placement = conn.execute(
-                """SELECT 1 FROM placements
-                    WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
-                (theme_media_type, tmdb_id, section_id),
-            ).fetchone()
-            payload = {"reason": "manual_url"}
-            if existing_placement:
-                payload["user_initiated_mismatch"] = True
+            # v1.12.81: SET URL now auto-places over the existing
+            # placement (force_place=True in the payload, no
+            # user_initiated_mismatch). Pre-fix the v1.11.99 mismatch
+            # flow preserved the old placement file and marked
+            # mismatch_state='pending' so the user could choose
+            # between PUSH / ADOPT FROM PLEX / KEEP MISMATCH — but
+            # per user feedback, clicking SET URL is already an
+            # explicit "use this URL" decision; landing in a yellow
+            # mismatch state and needing a follow-up PLACE action
+            # felt like the action didn't take. Force-place mirrors
+            # the /override endpoint's behavior so the two SET URL
+            # paths produce the same outcome. UPLOAD MP3 still uses
+            # the mismatch flow since uploaded content is locally
+            # crafted — there the "preserve until user confirms
+            # overwrite" gate matches user intent better.
+            #
+            # Direct INSERT (rather than _enqueue_download) is
+            # preserved per v1.11.15 — _enqueue_download looks up
+            # sections via plex_items.guid_tmdb which doesn't match
+            # for plex_orphan rows (synthetic-negative tmdb_id),
+            # so manual-url on an orphan would silently skip.
+            payload = {"reason": "manual_url", "force_place": True}
             conn.execute(
                 "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
                 "                  payload, status, created_at, next_run_at) "
@@ -4257,9 +4276,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (media_type, tmdb_id),
             ).fetchall()
             # v1.12.72: prefer the section-specific override row when
-            # section_id is provided; fall back to global ('') and
-            # finally to any-section. Keeps INFO's "currently applied"
-            # accurate per the row's section.
+            # section_id is provided; fall back to global ('') row.
+            # v1.12.81: dropped the "any-section LIMIT 1" final
+            # fallback when section_id is specified. Pre-fix, opening
+            # INFO on a 4K row that has no override of its own surfaced
+            # the standard section's override (or any sibling's),
+            # making "currently applied" render in violet on a row
+            # whose canonical was sourced from TDB. The worker never
+            # cross-pollinates either — it only reads the row's own
+            # section_id and the '' global. Mirror that here so
+            # "currently applied" reflects what's actually applied.
+            # The any-section fallback survives only when section_id
+            # is NULL (legacy callers without row context).
             ovr = None
             if section_id:
                 ovr = conn.execute(
@@ -4267,19 +4295,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
                     (media_type, tmdb_id, section_id),
                 ).fetchone()
-            if ovr is None:
+                if ovr is None:
+                    ovr = conn.execute(
+                        "SELECT * FROM user_overrides "
+                        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                        (media_type, tmdb_id),
+                    ).fetchone()
+            else:
                 ovr = conn.execute(
                     "SELECT * FROM user_overrides "
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
                     (media_type, tmdb_id),
                 ).fetchone()
-            if ovr is None:
-                ovr = conn.execute(
-                    "SELECT * FROM user_overrides "
-                    "WHERE media_type = ? AND tmdb_id = ? "
-                    "ORDER BY section_id LIMIT 1",
-                    (media_type, tmdb_id),
-                ).fetchone()
+                if ovr is None:
+                    ovr = conn.execute(
+                        "SELECT * FROM user_overrides "
+                        "WHERE media_type = ? AND tmdb_id = ? "
+                        "ORDER BY section_id LIMIT 1",
+                        (media_type, tmdb_id),
+                    ).fetchone()
             # Also surface the full per-section override list so the
             # frontend can show all overrides at once if it wants.
             all_overrides = conn.execute(
@@ -5657,6 +5691,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/items/{media_type}/{tmdb_id}/audit")
     async def api_item_audit(
         media_type: MediaType, tmdb_id: int,
+        section_id: str | None = Query(None),
         limit: int = Query(50, ge=1, le=500),
         db: Path = Depends(get_db_path),
     ):
@@ -5664,16 +5699,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Powers the INFO card's // PROVENANCE section so users can
         see "who changed this row, when, and what was the URL
         before" months after the fact — distinct from the rolling
-        events log which gets rotated."""
+        events log which gets rotated.
+
+        v1.12.81: section_id filter. When the INFO card is opened
+        on a 4K row the user expects PROVENANCE to show actions
+        taken against that section — pre-fix the unfiltered query
+        returned every audit row for the title, so the standard
+        and 4K cards rendered identical timelines and the user
+        couldn't tell which section's history they were looking
+        at. The filter keeps title-global rows (section_id IS NULL
+        — e.g., ADOPT which spans every section) visible alongside
+        the section-specific ones, so cross-section context isn't
+        lost."""
         with get_conn(db) as conn:
-            rows = conn.execute(
-                """SELECT id, occurred_at, actor, action, section_id, details
-                     FROM audit_events
-                    WHERE media_type = ? AND tmdb_id = ?
-                    ORDER BY occurred_at DESC, id DESC
-                    LIMIT ?""",
-                (media_type, tmdb_id, limit),
-            ).fetchall()
+            if section_id is not None:
+                rows = conn.execute(
+                    """SELECT id, occurred_at, actor, action, section_id, details
+                         FROM audit_events
+                        WHERE media_type = ? AND tmdb_id = ?
+                          AND (section_id = ? OR section_id IS NULL)
+                        ORDER BY occurred_at DESC, id DESC
+                        LIMIT ?""",
+                    (media_type, tmdb_id, section_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT id, occurred_at, actor, action, section_id, details
+                         FROM audit_events
+                        WHERE media_type = ? AND tmdb_id = ?
+                        ORDER BY occurred_at DESC, id DESC
+                        LIMIT ?""",
+                    (media_type, tmdb_id, limit),
+                ).fetchall()
         out = []
         for r in rows:
             details = None
