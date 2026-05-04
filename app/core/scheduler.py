@@ -72,26 +72,38 @@ def _retry_pending_placements(db_path: Path) -> None:
     with get_conn(db_path) as conn:
         rows = conn.execute(
             """
-            SELECT lf.media_type, lf.tmdb_id
+            SELECT lf.media_type, lf.tmdb_id, lf.section_id
             FROM local_files lf
             LEFT JOIN placements p
-              ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id
+              ON p.media_type = lf.media_type
+             AND p.tmdb_id = lf.tmdb_id
+             AND p.section_id = lf.section_id
             WHERE p.media_folder IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM jobs j
                   WHERE j.job_type = 'place' AND j.media_type = lf.media_type
                     AND j.tmdb_id = lf.tmdb_id
+                    AND j.section_id = lf.section_id
                     AND j.status IN ('pending', 'running')
               )
             LIMIT 500
             """
         ).fetchall()
         for r in rows:
+            # v1.12.81: include section_id when enqueueing the place job.
+            # Pre-fix the worker rejected these with "place job missing
+            # section_id (v1.11.0 requires per-section routing)" and the
+            # job stuck in status='failed' counted toward the topbar's
+            # red FAIL dot indefinitely. The dup-detection above + the
+            # placements LEFT JOIN are likewise per-section so a
+            # placement existing in section A no longer suppresses a
+            # legitimate need-to-place in section B.
             conn.execute(
-                """INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                     created_at, next_run_at)
-                   VALUES ('place', ?, ?, '{}', 'pending', ?, ?)""",
-                (r["media_type"], r["tmdb_id"], now_iso(), now_iso()),
+                """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                     payload, status, created_at, next_run_at)
+                   VALUES ('place', ?, ?, ?, '{}', 'pending', ?, ?)""",
+                (r["media_type"], r["tmdb_id"], r["section_id"],
+                 now_iso(), now_iso()),
             )
     if rows:
         log_event(db_path, level="INFO", component="scheduler",

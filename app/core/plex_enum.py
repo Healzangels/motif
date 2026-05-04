@@ -122,14 +122,21 @@ def reconcile_placement_paths(db_path: Path) -> int:
     with get_conn(db_path) as conn:
         # DISTINCT collapses cases where the same (mt, tmdb, old, new)
         # tuple appears multiple times via different ratingKeys.
+        # v1.12.81: include p.section_id in the SELECT and the
+        # plex_items join so the relocate-detect is per-section.
+        # Pre-fix the enqueue below dropped section_id and the
+        # worker rejected the resulting place job with a v1.11.0
+        # missing-section_id permanent failure, stuck-failing the
+        # job and lighting up the topbar's red FAIL dot.
         rows = conn.execute(
-            """SELECT DISTINCT p.media_type, p.tmdb_id,
+            """SELECT DISTINCT p.media_type, p.tmdb_id, p.section_id,
                       p.media_folder AS old_folder,
                       pi.folder_path AS new_folder
                FROM placements p
                INNER JOIN plex_items pi
                  ON pi.guid_tmdb = p.tmdb_id
                 AND pi.media_type = (CASE p.media_type WHEN 'tv' THEN 'show' ELSE 'movie' END)
+                AND pi.section_id = p.section_id
                WHERE pi.folder_path IS NOT NULL
                  AND pi.folder_path != ''
                  AND p.media_folder != pi.folder_path"""
@@ -154,6 +161,7 @@ def reconcile_placement_paths(db_path: Path) -> int:
             new_folder = r["new_folder"]
             mt = r["media_type"]
             tmdb_id = r["tmdb_id"]
+            section_id = r["section_id"]
             current_plex_paths = plex_paths_by_item.get((mt, tmdb_id), set())
 
             # Skip if the placement's current folder is still in Plex's
@@ -165,16 +173,23 @@ def reconcile_placement_paths(db_path: Path) -> int:
 
             try:
                 # Cancel any in-flight place to avoid racing the new one.
+                # v1.12.81: scope cancel + lookups + INSERT to the
+                # placement's section_id so a sibling section's place
+                # in flight isn't accidentally cancelled, and the
+                # follow-on enqueue doesn't fail v1.11.0's
+                # section_id requirement.
                 conn.execute(
                     """UPDATE jobs SET status = 'cancelled', finished_at = ?
                        WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
+                         AND section_id = ?
                          AND status IN ('pending','running')""",
-                    (now_iso(), mt, tmdb_id),
+                    (now_iso(), mt, tmdb_id, section_id),
                 )
                 existing_at_new = conn.execute(
                     "SELECT 1 FROM placements "
-                    "WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?",
-                    (mt, tmdb_id, new_folder),
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                    "  AND media_folder = ?",
+                    (mt, tmdb_id, section_id, new_folder),
                 ).fetchone()
                 if existing_at_new:
                     # Destination row already exists — UPDATE would
@@ -184,21 +199,25 @@ def reconcile_placement_paths(db_path: Path) -> int:
                     conn.execute(
                         """DELETE FROM placements
                            WHERE media_type = ? AND tmdb_id = ?
+                             AND section_id = ?
                              AND media_folder = ?""",
-                        (mt, tmdb_id, old_folder),
+                        (mt, tmdb_id, section_id, old_folder),
                     )
                 else:
                     conn.execute(
                         """UPDATE placements SET media_folder = ?
-                           WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
-                        (new_folder, mt, tmdb_id, old_folder),
+                           WHERE media_type = ? AND tmdb_id = ?
+                             AND section_id = ?
+                             AND media_folder = ?""",
+                        (new_folder, mt, tmdb_id, section_id, old_folder),
                     )
                 conn.execute(
-                    """INSERT INTO jobs (job_type, media_type, tmdb_id, payload,
-                                         status, created_at, next_run_at)
-                       VALUES ('place', ?, ?, '{"force":true,"reason":"folder_relocated"}',
+                    """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                         payload, status, created_at, next_run_at)
+                       VALUES ('place', ?, ?, ?,
+                               '{"force":true,"reason":"folder_relocated"}',
                                'pending', ?, ?)""",
-                    (mt, tmdb_id, now_iso(), now_iso()),
+                    (mt, tmdb_id, section_id, now_iso(), now_iso()),
                 )
                 log_event(db_path, level="INFO", component="plex_enum",
                           media_type=mt, tmdb_id=tmdb_id,

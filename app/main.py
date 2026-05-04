@@ -112,6 +112,38 @@ def main() -> int:
     if purged:
         log.info("Purged %d expired session(s)", purged)
 
+    # v1.12.81: one-shot cleanup of place jobs that pre-date the
+    # scheduler / plex_enum section_id fix. Worker rejects them as
+    # `_JobPermanentFailure("place job missing section_id (v1.11.0
+    # requires per-section routing)")`, leaving them stuck in
+    # status='failed' which the topbar's q.failed counter renders
+    # as a perma-red FAIL dot. Cancel them on startup so the dot
+    # clears once the bad enqueue paths are no longer creating
+    # new ones. Pure cleanup — no side effects beyond the jobs
+    # row and matches the worker's normal _mark_cancelled
+    # behavior. Safe to keep in perpetuity (idempotent — only
+    # touches jobs with NULL section_id, which the new enqueue
+    # paths never produce).
+    try:
+        from .core.db import get_conn
+        from .core.events import now_iso
+        with get_conn(settings.db_path) as conn:
+            cur = conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type IN ('place', 'download')
+                     AND section_id IS NULL
+                     AND status IN ('pending', 'failed')""",
+                (now_iso(),),
+            )
+            if cur.rowcount:
+                log.info(
+                    "Cancelled %d stuck section_id-less job(s) "
+                    "(pre-v1.12.81 scheduler/plex_enum bug)",
+                    cur.rowcount,
+                )
+    except Exception as e:
+        log.warning("Section_id-less job cleanup skipped: %s", e)
+
     # v1.11.0: legacy startup data migrations (relocate_legacy_canonical_files,
     # backfill_hash_match_provenance) are gone — the per-section themes layout
     # is a fresh-start release; the DB is repopulated from upstream sources by
