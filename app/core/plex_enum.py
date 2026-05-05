@@ -48,16 +48,20 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
         log.info("plex_enum: no managed sections, nothing to do")
         return stats
 
-    # v1.12.106: live progress for the ops side-drawer. One parent op
-    # row covers the whole pass; per-section detail flows through
-    # detail_json so the drawer can render a stacked mini-bar per
-    # section (current section's items / total + completed section
-    # count). Cancel: drawer cancel flips status='cancelling',
-    # _cancel_check picks it up at the existing per-section boundary.
+    # v1.12.106: live progress for the ops side-drawer.
+    # v1.12.108: stage_current/total now track CURRENT-SECTION items,
+    # not section count. Pre-fix a single-section enum hit
+    # stage_current=1/stage_total=1 = 100% the instant the section
+    # started, before any items had been processed — bar showed
+    # complete throughout the run. Now stage_total starts at 0 (no
+    # work known yet); per-section we set it to the section's item
+    # count after fetch and bump stage_current as the upsert
+    # completes. processed_total in detail_json carries the
+    # cumulative items count across sections.
     op_progress.start_progress(
         db_path, op_id="plex_enum", kind="plex_enum",
         stage="enumerate", stage_label="Enumerating Plex sections",
-        stage_total=len(managed), processed_est=0,
+        stage_total=0, processed_est=0,
     )
 
     def _cancel_check():
@@ -73,10 +77,14 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 section_id = s["section_id"]
                 section_type = s["type"]
                 stats["sections"] += 1
+                # Pre-fetch: bar resets to 0 of "unknown" so it
+                # doesn't carry the previous section's fill. Label
+                # encodes section index for context.
                 op_progress.update_progress(
                     db_path, "plex_enum",
                     stage_label=f"Section {stats['sections']}/{len(managed)}: {s['title']}",
-                    stage_current=stats["sections"],
+                    stage_current=0,
+                    stage_total=0,
                     activity=f"Fetching '{s['title']}' from Plex",
                 )
                 try:
@@ -92,12 +100,15 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                         activity=f"'{s['title']}' failed: {e}",
                     )
                     continue
-                stats["items_seen"] += len(items)
+                # Now we know the section's item count. Set the bar
+                # to "0 of N" while the upsert runs.
                 op_progress.update_progress(
                     db_path, "plex_enum",
+                    stage_total=len(items),
+                    stage_current=0,
                     activity=f"Upserting {len(items)} items from '{s['title']}'",
-                    processed_total=stats["items_seen"],
                 )
+                stats["items_seen"] += len(items)
                 ins, upd = _upsert_items(
                     db_path, items, cancel_check=_cancel_check,
                     # v1.12.18: pass section_id so the resolve pass that
@@ -112,8 +123,12 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 stats["updated"] += upd
                 log.info("plex_enum: section %s — %d items (%d new, %d updated)",
                          s["title"], len(items), ins, upd)
+                # Section done — fill the bar, bump cumulative.
                 op_progress.update_progress(
                     db_path, "plex_enum",
+                    stage_current=len(items),
+                    stage_total=len(items),
+                    processed_total=stats["items_seen"],
                     activity=f"'{s['title']}': {ins} new, {upd} updated",
                 )
 

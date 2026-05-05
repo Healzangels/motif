@@ -328,6 +328,21 @@
       else if (anyActive) dot.classList.add('dot-amber');
       else if (q.pending > 0) dot.classList.add('dot-amber');
 
+      // v1.12.108: when stats reports a sync just kicked off
+      // (themerrdb or plex_enum) and the ops mini-bar isn't
+      // visible yet, force motifOps to poll right away. Pre-fix
+      // the user saw the legacy yellow dot fire instantly (driven
+      // by /api/stats which polls every 10s) but the new mini-bar
+      // took up to 10s of ops idle-poll before appearing — felt
+      // like "the page must be refreshed". Now: stats and ops
+      // poll cadences cooperate, mini-bar appears within a tick.
+      const opsBar = $('#op-mini');
+      const opsHidden = !opsBar || opsBar.hidden;
+      if ((themerrdbBusy || plexEnumBusy) && opsHidden
+          && window.motifOps && typeof window.motifOps.refresh === 'function') {
+        try { window.motifOps.refresh(); } catch (_) { /* swallow */ }
+      }
+
       // v1.11.73: red dot → click jumps to /queue?status=failed
       // so the user can review failures in context. Pre-fix the
       // user saw a red ● next to 'IDLE' with no explanation of
@@ -3526,14 +3541,25 @@
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
         return ` <span class="tdb-pill tdb-pill-dead" title="Upstream URL broken: ${htmlEscape(why)}${detail}\n\nRecover via SET URL, UPLOAD MP3, or drop a sidecar and ADOPT.">TDB ✗</span>`;
       }
-      // v1.12.106: dropped the .tdb-pill-update variant. The blue
-      // ! title-glyph (rendered by the strict hierarchy above) is
-      // now the sole update signal — having the same state surface
-      // twice (pill + glyph) just to encode the same fact was
-      // visual noise. The lineage pill stays green (TDB tracked)
-      // regardless of update state; the glyph carries "action
-      // required" semantics. Filter is still reachable via the
-      // tdb_pills=update chip and the topbar UPD count.
+      // v1.12.108: restore the blue .tdb-pill-update for any row
+      // with pending_update=true. v1.12.106 collapsed it under
+      // "duplicate of glyph" but the user wants the pill as a
+      // post-KEEP-CURRENT visual cue: glyph clears (action no
+      // longer pending) but pill stays so the row is still
+      // sortable / filterable as "has an upstream update". The
+      // strict per-row hierarchy means the GLYPH is gated on
+      // actionable_update (decision=='pending'); the PILL is
+      // gated on pending_update (decision in pending+declined),
+      // so KEEP CURRENT clears one but not the other.
+      // v1.12.108: pending_update is now also gated on motif
+      // tracking presence per-section in the SQL — the pill
+      // doesn't show on post-PURGE / pure-P / pure-'-' rows.
+      if (it.pending_update && computeSrcLetter(it) !== '-') {
+        if (it.pending_update_kind === 'urls_match') {
+          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches the current ThemerrDB URL — ACCEPT UPDATE in the SOURCE menu to convert this row from U (user-managed) to T (ThemerrDB-managed). The file on disk stays the same; only the classification changes.">TDB ↑</span>';
+        }
+        return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss (the blue pill stays so the row remains sortable as updateable).">TDB ↑</span>';
+      }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
     })();
 
@@ -6814,6 +6840,18 @@
     // bundle) and the per-action `setTimeout(refreshTopbarStatus,
     // 1100)` calls remain so explicit clicks still feel immediate.
     setInterval(refreshTopbarStatus, 10000);
+
+    // v1.12.108: when the ops mini-bar transitions running → idle
+    // (or vice versa), force a stats refresh right away. Pre-fix
+    // the legacy "REFRESHING TV SHOWS…" text + yellow dot lingered
+    // for up to 10s after the sync actually finished because they
+    // were driven by /api/stats's own poll cadence — meanwhile
+    // the ops mini-bar disappeared on the next ops poll (1s).
+    // Same lag in reverse on sync start. Tying the two state
+    // surfaces together makes them appear/disappear together.
+    window.addEventListener('motif:ops-state-changed', () => {
+      refreshTopbarStatus().catch(() => {});
+    });
 
     bindDashboard();
     bindBrowse();

@@ -314,12 +314,31 @@
   }
 
   // ── poll loop ─────────────────────────────────────────────────
+  let lastRunning = false;
   async function poll() {
     const data = await fetchProgress();
     if (data && Array.isArray(data.ops)) {
       state.ops = data.ops;
       const running = state.ops.some((o) =>
         o.status === 'running' || o.status === 'cancelling');
+      // v1.12.108: body attribute drives the CSS suppression of
+      // the legacy refresh UI (yellow dot + REFRESHING text +
+      // per-tab nav-busy). Switch immediately on transitions so
+      // there's no overlap window between the mini-bar appearing
+      // and the legacy text disappearing.
+      document.body.setAttribute(
+        'data-ops-running', running ? '1' : '0');
+      // When ops transitions running → idle, fire a state-change
+      // event so app.js can re-pull /api/stats and clear any
+      // stale "REFRESHING…" text the legacy poller was holding.
+      if (running !== lastRunning) {
+        lastRunning = running;
+        try {
+          window.dispatchEvent(new CustomEvent('motif:ops-state-changed', {
+            detail: { running, ops: state.ops },
+          }));
+        } catch (_) { /* old browsers */ }
+      }
       const newInterval = running ? 1000 : 10000;
       if (newInterval !== state.pollInterval) {
         state.pollInterval = newInterval;

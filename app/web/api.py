@@ -824,11 +824,40 @@ def _library_main_query(
         # the filter excludes update rows from the green-tdb match
         # set (and includes them in the blue-update match set, gated
         # on src != '-' per JS computeTdbPill).
+        # v1.12.108: gate on per-section decision (pu_sec → pu_global
+        # fallback) and motif tracking presence in this section, to
+        # match the read path's pending_update field. CASE wrap
+        # forces a 0/1 boolean — pre-fix the bare COALESCE = 'pending'
+        # comparison returned NULL for rows with no pending_updates
+        # row, and `NOT NULL` evaluated as NULL/false in the WHERE,
+        # accidentally excluding clean TDB rows from the tdb_pills=tdb
+        # filter.
         PENDING_EXISTS = (
-            "EXISTS (SELECT 1 FROM pending_updates pu "
-            "  WHERE pu.media_type = t.media_type "
-            "    AND pu.tmdb_id = t.tmdb_id "
-            "    AND pu.decision = 'pending')"
+            "(CASE WHEN COALESCE("
+            "  (SELECT pu.decision FROM pending_updates pu "
+            "    WHERE pu.media_type = t.media_type "
+            "      AND pu.tmdb_id = t.tmdb_id "
+            "      AND pu.section_id = pi.section_id),"
+            "  (SELECT pu.decision FROM pending_updates pu "
+            "    WHERE pu.media_type = t.media_type "
+            "      AND pu.tmdb_id = t.tmdb_id "
+            "      AND pu.section_id = '')"
+            ") = 'pending'"
+            " AND ("
+            "  EXISTS (SELECT 1 FROM local_files lf2 "
+            "           WHERE lf2.media_type = t.media_type "
+            "             AND lf2.tmdb_id = t.tmdb_id "
+            "             AND lf2.section_id = pi.section_id)"
+            "  OR EXISTS (SELECT 1 FROM user_overrides uo2 "
+            "              WHERE uo2.media_type = t.media_type "
+            "                AND uo2.tmdb_id = t.tmdb_id "
+            "                AND uo2.section_id = pi.section_id)"
+            "  OR EXISTS (SELECT 1 FROM placements p2 "
+            "              WHERE p2.media_type = t.media_type "
+            "                AND p2.tmdb_id = t.tmdb_id "
+            "                AND p2.section_id = pi.section_id)"
+            "  OR pi.local_theme_file = 1"
+            ") THEN 1 ELSE 0 END) = 1"
         )
         # JS computeSrcLetter returns '-' when nothing's themed
         # anywhere on the row — no placement, no sidecar, no Plex
@@ -1021,11 +1050,54 @@ def _library_main_query(
                -- pending_updates without section_id filter, so a
                -- KEEP CURRENT on standard cleared the blue pill on
                -- 4K and the topbar UPD count under-reported.
+               -- v1.12.108: gate on this section having motif
+               -- tracking presence — local_files, user_overrides,
+               -- placements, or a Plex sidecar. Pre-fix the
+               -- title-global '' fallback row (sync's only write
+               -- target) lit up every section that owned the
+               -- title, including post-PURGE / pure-P / pure-'-'
+               -- rows where motif has nothing to "update". Now
+               -- the read path filters out those rows on the spot;
+               -- the v1.12.49 sweep continues to delete pending_
+               -- updates rows when the title has no presence in
+               -- ANY section, but per-section read gating handles
+               -- the partial-presence case (only one of N sections
+               -- owns the title).
                (CASE WHEN COALESCE(pu_sec.decision, pu_global.decision)
                           IN ('pending', 'declined')
+                      AND (
+                        EXISTS (SELECT 1 FROM local_files lf2
+                                 WHERE lf2.media_type = t.media_type
+                                   AND lf2.tmdb_id = t.tmdb_id
+                                   AND lf2.section_id = pi.section_id)
+                        OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                    WHERE uo2.media_type = t.media_type
+                                      AND uo2.tmdb_id = t.tmdb_id
+                                      AND uo2.section_id = pi.section_id)
+                        OR EXISTS (SELECT 1 FROM placements p2
+                                    WHERE p2.media_type = t.media_type
+                                      AND p2.tmdb_id = t.tmdb_id
+                                      AND p2.section_id = pi.section_id)
+                        OR pi.local_theme_file = 1
+                      )
                      THEN 1 ELSE 0 END) AS pending_update,
                COALESCE(pu_sec.kind, pu_global.kind) AS pending_update_kind,
                (CASE WHEN COALESCE(pu_sec.decision, pu_global.decision) = 'pending'
+                      AND (
+                        EXISTS (SELECT 1 FROM local_files lf2
+                                 WHERE lf2.media_type = t.media_type
+                                   AND lf2.tmdb_id = t.tmdb_id
+                                   AND lf2.section_id = pi.section_id)
+                        OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                    WHERE uo2.media_type = t.media_type
+                                      AND uo2.tmdb_id = t.tmdb_id
+                                      AND uo2.section_id = pi.section_id)
+                        OR EXISTS (SELECT 1 FROM placements p2
+                                    WHERE p2.media_type = t.media_type
+                                      AND p2.tmdb_id = t.tmdb_id
+                                      AND p2.section_id = pi.section_id)
+                        OR pi.local_theme_file = 1
+                      )
                      THEN 1 ELSE 0 END) AS actionable_update,
                -- v1.12.86: previous-URL fields resolve from the
                -- previous_urls JOINs (pv_sec + pv_global). Each
@@ -1866,6 +1938,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- title) instances awaiting decision. Pre-fix the
                   -- count was titles-with-pending which under-reported
                   -- when the same title spanned multiple sections.
+                  -- v1.12.108: gate on motif tracking presence in the
+                  -- section. Pre-fix the count spilled over post-PURGE
+                  -- / pure-P / pure-'-' rows via the title-global ''
+                  -- fallback row.
                   (SELECT COUNT(*) FROM plex_items pi2
                    INNER JOIN plex_sections ps2
                      ON ps2.section_id = pi2.section_id AND ps2.included = 1
@@ -1880,6 +1956,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          AND pu.tmdb_id = t2.tmdb_id
                          AND pu.section_id = '')
                    ) = 'pending'
+                   AND (
+                     EXISTS (SELECT 1 FROM local_files lf2
+                              WHERE lf2.media_type = t2.media_type
+                                AND lf2.tmdb_id = t2.tmdb_id
+                                AND lf2.section_id = pi2.section_id)
+                     OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                 WHERE uo2.media_type = t2.media_type
+                                   AND uo2.tmdb_id = t2.tmdb_id
+                                   AND uo2.section_id = pi2.section_id)
+                     OR EXISTS (SELECT 1 FROM placements p2
+                                 WHERE p2.media_type = t2.media_type
+                                   AND p2.tmdb_id = t2.tmdb_id
+                                   AND p2.section_id = pi2.section_id)
+                     OR pi2.local_theme_file = 1
+                   )
                   ) AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total
             """).fetchone()
@@ -2062,6 +2153,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- title) instances awaiting decision. Pre-fix the
                   -- count was titles-with-pending which under-reported
                   -- when the same title spanned multiple sections.
+                  -- v1.12.108: gate on motif tracking presence in the
+                  -- section. Pre-fix the count spilled over post-PURGE
+                  -- / pure-P / pure-'-' rows via the title-global ''
+                  -- fallback row.
                   (SELECT COUNT(*) FROM plex_items pi2
                    INNER JOIN plex_sections ps2
                      ON ps2.section_id = pi2.section_id AND ps2.included = 1
@@ -2076,6 +2171,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          AND pu.tmdb_id = t2.tmdb_id
                          AND pu.section_id = '')
                    ) = 'pending'
+                   AND (
+                     EXISTS (SELECT 1 FROM local_files lf2
+                              WHERE lf2.media_type = t2.media_type
+                                AND lf2.tmdb_id = t2.tmdb_id
+                                AND lf2.section_id = pi2.section_id)
+                     OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                 WHERE uo2.media_type = t2.media_type
+                                   AND uo2.tmdb_id = t2.tmdb_id
+                                   AND uo2.section_id = pi2.section_id)
+                     OR EXISTS (SELECT 1 FROM placements p2
+                                 WHERE p2.media_type = t2.media_type
+                                   AND p2.tmdb_id = t2.tmdb_id
+                                   AND p2.section_id = pi2.section_id)
+                     OR pi2.local_theme_file = 1
+                   )
                   ) AS updates_pending,
                   -- v1.10.50: exclude acked rows from the topbar
                   -- failure counts. Acked = the user dealt with it

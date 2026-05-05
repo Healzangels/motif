@@ -163,6 +163,22 @@
   100% { background-position: -100% 0%; }
 }
 
+/* ── legacy-surface suppression while ops mini-bar is live ──────
+ *
+ * v1.12.108: when any op is running we own the topbar's status
+ * surface — the legacy yellow dot, REFRESHING/SYNCING text, and
+ * per-tab .nav-busy::after pulse are redundant with (and lag
+ * behind) the op-mini's live progress strip. ops.js sets
+ * body[data-ops-running="1"] when ≥1 op is active; CSS hides the
+ * legacy bits while that holds. As soon as ops finishes the
+ * attribute clears and the legacy UI returns to its idle state.
+ */
+body[data-ops-running="1"] #topbar-idle-dot,
+body[data-ops-running="1"] .nav a.nav-busy::after,
+body[data-ops-running="1"] #topbar-status-text {
+  display: none !important;
+}
+
 /* ── ops-drawer ───────────────────────────────────────────────── */
 
 .ops-drawer {
