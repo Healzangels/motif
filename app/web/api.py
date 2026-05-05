@@ -972,6 +972,24 @@ def _library_main_query(
                ps.title AS section_title,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
+               -- v1.12.107: row's currently-applied URL — matches the
+               -- worker's two-step fetch (per-section override → ''
+               -- override → themes.youtube_url). Surfaces so the SET
+               -- URL dialog can warn when the user is about to set
+               -- the same URL that's already applied (no-op overlap
+               -- with the existing v1.12.54 TDB-match warning, which
+               -- only catches the U→T conversion case).
+               COALESCE(
+                 (SELECT youtube_url FROM user_overrides uo
+                   WHERE uo.media_type = t.media_type
+                     AND uo.tmdb_id = t.tmdb_id
+                     AND uo.section_id = pi.section_id),
+                 (SELECT youtube_url FROM user_overrides uo
+                   WHERE uo.media_type = t.media_type
+                     AND uo.tmdb_id = t.tmdb_id
+                     AND uo.section_id = ''),
+                 t.youtube_url
+               ) AS applied_youtube_url,
                t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
                lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
                -- v1.11.99: mismatch state drives the DL=amber + LINK=≠

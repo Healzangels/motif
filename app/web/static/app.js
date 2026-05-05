@@ -3604,6 +3604,13 @@
         // create the U→T conversion loop the v1.12.53 sweep was
         // designed to surface, with extra UI churn for no benefit.
         extras.ytUrl !== undefined ? `data-yt-url="${htmlEscape(extras.ytUrl)}"` : '',
+        // v1.12.107: row's currently-applied URL (per-section
+        // override → '' override → themes.youtube_url) flows
+        // through to the SET URL dialog so its match-warning
+        // can fire when the user types the URL that's already
+        // applied — covers the U-overrides-itself case the
+        // v1.12.54 TDB-match warning didn't catch.
+        extras.appliedUrl !== undefined ? `data-applied-url="${htmlEscape(extras.appliedUrl)}"` : '',
         // v1.12.62: row's current SRC letter flows through too so
         // the SET URL match-warning copy can branch — for src='-'
         // there's no file to "re-download", just to download.
@@ -3818,6 +3825,7 @@
       'manual-url', 'SET URL',
       'Provide a YouTube URL as a manual override.',
       { rk: it.rating_key, tone: 'user', ytUrl: it.youtube_url || '',
+        appliedUrl: it.applied_youtube_url || '',
         srcLetter: srcLetter },
     ));
     sourceItems.push(menuItemHtml(
@@ -5628,6 +5636,7 @@
           title: btn.dataset.title || '',
           year: btn.dataset.year || '',
           tdbUrl: btn.dataset.ytUrl || '',
+          appliedUrl: btn.dataset.appliedUrl || '',
           srcLetter: btn.dataset.srcLetter || '',
         });
       } else if (act === 'open-override') {
@@ -6501,7 +6510,7 @@
     return m ? m[1] : null;
   }
 
-  function openManualUrlDialog({ ratingKey, title, year, tdbUrl, srcLetter }) {
+  function openManualUrlDialog({ ratingKey, title, year, tdbUrl, appliedUrl, srcLetter }) {
     const dlg = document.getElementById('manual-url-dlg');
     if (!dlg) return;
     document.getElementById('manual-url-rk').value = ratingKey;
@@ -6512,7 +6521,12 @@
     // v1.12.62: also stash srcLetter so the match-warning can
     // branch its copy — '-' rows have no file to re-download
     // (the alternative action is DOWNLOAD TDB, not RE-DOWNLOAD).
+    // v1.12.107: stash appliedUrl too so the warning can fire
+    // when the user is about to set the SAME URL that's already
+    // applied — covers the U-overrides-itself case (typing the
+    // same user URL again is a guaranteed no-op).
     dlg.dataset.tdbUrl = tdbUrl || '';
+    dlg.dataset.appliedUrl = appliedUrl || '';
     dlg.dataset.srcLetter = srcLetter || '';
     const meta = document.getElementById('manual-url-dlg-meta');
     const ylabel = year ? ` (${htmlEscape(year)})` : '';
@@ -6555,18 +6569,54 @@
       let matchTimer = null;
       const checkMatch = () => {
         const tdbUrl = dlg.dataset.tdbUrl || '';
-        if (!tdbUrl) {
+        const appliedUrl = dlg.dataset.appliedUrl || '';
+        const userVid = extractYouTubeVideoId(input.value.trim());
+        if (!userVid) {
           hint.style.display = 'none';
           return;
         }
-        const userVid = extractYouTubeVideoId(input.value.trim());
+        // v1.12.107: two match cases land different copy.
+        // 1) Input == currently-applied URL → no-op set. Most
+        //    actionable case for the user — they'd be replacing
+        //    a URL with itself. Suggest DOWNLOAD/RE-DOWNLOAD as
+        //    the action they probably wanted.
+        // 2) Input == TDB URL (and the row's TDB URL differs from
+        //    the applied URL — i.e. they're not setting their
+        //    own existing override) → U→T conversion case the
+        //    v1.12.54 hint covered.
+        // The applied-URL match is checked first because it's the
+        // strict superset on T rows (where applied == TDB) but
+        // distinct on U rows.
+        const appliedVid = extractYouTubeVideoId(appliedUrl);
         const tdbVid = extractYouTubeVideoId(tdbUrl);
-        if (userVid && tdbVid && userVid === tdbVid) {
-          // v1.12.62: copy branches on srcLetter — the alternative
-          // action depends on whether the row currently has a file:
-          //   '-' (no theme)  → DOWNLOAD TDB
-          //   T/U/A/M/P (has) → RE-DOWNLOAD TDB
-          const srcLetter = dlg.dataset.srcLetter || '';
+        const srcLetter = dlg.dataset.srcLetter || '';
+        if (appliedVid && userVid === appliedVid) {
+          const altAction = (srcLetter === '-') ? 'DOWNLOAD TDB' : 'RE-DOWNLOAD TDB';
+          const altIntent = (srcLetter === '-')
+            ? 'fetch from ThemerrDB'
+            : 'refresh the file';
+          // Differentiate U-row vs T-row copy. On a U row the
+          // applied URL IS the user override, so the user is
+          // about to set it to the same thing — pure no-op. On
+          // a T row applied == TDB, so the U→T-conversion warning
+          // is more accurate.
+          if (appliedVid !== tdbVid) {
+            // Pure U-overrides-itself case.
+            hint.textContent = 'This URL matches the row\'s currently-applied user URL. '
+              + 'Setting it again would be a no-op — no override change, no download. '
+              + `Use ${altAction} if you want to ${altIntent}.`;
+          } else {
+            // Applied == TDB (T row).
+            hint.textContent = 'This URL matches the current ThemerrDB URL. '
+              + 'Setting it as a manual override pins the row as U-source — '
+              + 'the next sync will surface a "convert U → T" prompt anyway. '
+              + `Use ${altAction} instead if you just want to ${altIntent}.`;
+          }
+          hint.style.display = '';
+        } else if (tdbVid && userVid === tdbVid) {
+          // Input matches TDB but not applied — user is on a U
+          // row and is about to flip back to TDB-by-URL. Same
+          // U→T-conversion advice as before.
           const altAction = (srcLetter === '-') ? 'DOWNLOAD TDB' : 'RE-DOWNLOAD TDB';
           const altIntent = (srcLetter === '-')
             ? 'fetch from ThemerrDB'
