@@ -5064,12 +5064,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # state. The "previous URL" lives on themes.previous_*
             # (not pending_updates) since v1.12.37 generalized
             # REVERT beyond the post-accept-on-U flow.
-            pu = conn.execute(
-                "SELECT old_youtube_url, new_youtube_url, decision, "
-                "       decision_at, decision_by, detected_at "
-                "FROM pending_updates WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            ).fetchone()
+            # v1.12.117: scope to the row's section (per-section
+            # first, '' fallback) AND gate on motif tracking presence
+            # for that section, mirroring the library SQL's
+            # pending_update field added in v1.12.108. Pre-fix this
+            # query returned ANY pending_update for the title — so
+            # the standard row's INFO card rendered the 4K row's
+            # PROPOSED CHANGE diff (or the legacy '' row's), bleeding
+            # cross-section. Now post-PURGE / pure-P / no-motif-tracking
+            # rows correctly show no pending update in INFO, just like
+            # the row pill.
+            pu = None
+            if section_id is not None:
+                # Check motif tracking presence first; if the row
+                # has no motif state (no override / placement /
+                # canonical / sidecar), don't surface a pending
+                # update for it even if Plex has one for this title.
+                has_presence = conn.execute(
+                    "SELECT 1 FROM plex_items pi "
+                    "WHERE pi.section_id = ? "
+                    "  AND ((CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END) = ?) "
+                    "  AND pi.guid_tmdb = ? "
+                    "  AND ("
+                    "       pi.local_theme_file = 1 "
+                    "    OR EXISTS (SELECT 1 FROM local_files lf "
+                    "                WHERE lf.media_type = ? AND lf.tmdb_id = ? "
+                    "                  AND lf.section_id = pi.section_id) "
+                    "    OR EXISTS (SELECT 1 FROM user_overrides uo "
+                    "                WHERE uo.media_type = ? AND uo.tmdb_id = ? "
+                    "                  AND uo.section_id = pi.section_id) "
+                    "    OR EXISTS (SELECT 1 FROM placements p "
+                    "                WHERE p.media_type = ? AND p.tmdb_id = ? "
+                    "                  AND p.section_id = pi.section_id) "
+                    "  ) "
+                    "LIMIT 1",
+                    (section_id, media_type, tmdb_id,
+                     media_type, tmdb_id,
+                     media_type, tmdb_id,
+                     media_type, tmdb_id),
+                ).fetchone()
+                if has_presence:
+                    pu = conn.execute(
+                        "SELECT old_youtube_url, new_youtube_url, decision, "
+                        "       decision_at, decision_by, detected_at "
+                        "  FROM pending_updates "
+                        " WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                        (media_type, tmdb_id, section_id),
+                    ).fetchone()
+                    if pu is None:
+                        pu = conn.execute(
+                            "SELECT old_youtube_url, new_youtube_url, decision, "
+                            "       decision_at, decision_by, detected_at "
+                            "  FROM pending_updates "
+                            " WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                            (media_type, tmdb_id),
+                        ).fetchone()
+            else:
+                # No section_id passed (legacy / orphan path). Fall
+                # back to the original any-row query so non-row INFO
+                # opens still surface the update.
+                pu = conn.execute(
+                    "SELECT old_youtube_url, new_youtube_url, decision, "
+                    "       decision_at, decision_by, detected_at "
+                    "  FROM pending_updates "
+                    " WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                ).fetchone()
             # v1.12.84: scope events by section_id when provided, like
             # audit_events. Title-global entries (section_id IS NULL —
             # legacy pre-migration rows + sync/scan events that span
@@ -6370,23 +6430,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         _require_admin(request)
         with get_conn(db) as conn:
-            existing = _load_previous_url(
-                conn, media_type, tmdb_id, section_id=section_id,
-            )
-            if existing is None:
-                raise HTTPException(
-                    status_code=409,
-                    detail="no captured previous URL to clear",
-                )
-            old_url = existing["youtube_url"]
+            # v1.12.117: figure out which previous_urls row is actually
+            # showing. _load_previous_url tries section-specific then
+            # falls back to ''. Pre-fix CLEAR URL deleted only the
+            # section_id row even when the visible previous URL came
+            # from the '' fallback (legacy pre-v1.12.105 captures from
+            # other sections), so DELETE matched 0 rows and the URL
+            # stayed visible — a silent no-op.
+            section_target = section_id if section_id is not None else ""
+            sec_row = None
+            if section_id is not None:
+                sec_row = conn.execute(
+                    "SELECT youtube_url FROM previous_urls "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                ).fetchone()
+            if sec_row is None:
+                # No section-specific row — the visible previous URL is
+                # from the '' fallback (or there's nothing). Target ''.
+                global_row = conn.execute(
+                    "SELECT youtube_url FROM previous_urls "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                    (media_type, tmdb_id),
+                ).fetchone()
+                if global_row is None:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="no captured previous URL to clear",
+                    )
+                old_url = global_row["youtube_url"]
+                section_target = ""
+            else:
+                old_url = sec_row["youtube_url"]
             _clear_previous_url(
-                conn, media_type, tmdb_id, section_id=section_id,
+                conn, media_type, tmdb_id, section_id=section_target,
             )
             _record_audit(
                 conn, actor=request.state.user, action="clear_previous_url",
                 media_type=media_type, tmdb_id=tmdb_id,
                 section_id=section_id,
-                details={"old_url": old_url},
+                details={"old_url": old_url,
+                         "cleared_from_section": section_target},
             )
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
