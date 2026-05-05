@@ -1040,35 +1040,77 @@ def _library_main_query(
                -- play. Gating the redundancy check on
                -- "canonical exists" keeps RESTORE available
                -- whenever there's something to actually restore.
+               -- v1.12.103: post-PURGE clean-overlap case —
+               -- when the row has no canonical AND the captured
+               -- URL is themerrdb-kind AND equals themes.youtube_url
+               -- AND there's no hidden chain to preserve, RESTORE
+               -- and DOWNLOAD TDB are functionally identical:
+               -- both fetch the same URL into the canonical, no
+               -- prior state to walk back to. Hide RESTORE in
+               -- that exact case so the SOURCE menu doesn't
+               -- carry two buttons with the same effect. The
+               -- hidden_url IS NULL gate is load-bearing: a
+               -- captured chain (PURGE on a row with a prior
+               -- user URL) makes RESTORE → REVERT walk back to
+               -- a URL DOWNLOAD TDB can't reach, so RESTORE is
+               -- the unique way to start that walk. User-kind
+               -- captures stay visible regardless (DOWNLOAD TDB
+               -- can't reach a user URL). And if TDB has rolled
+               -- the URL since the PURGE (themes.youtube_url
+               -- changed), the URLs don't match and RESTORE
+               -- locks to the captured URL — meaningfully
+               -- different from DOWNLOAD TDB.
                (CASE WHEN COALESCE(pv_sec.youtube_url, pv_global.youtube_url) IS NOT NULL
-                      AND lf.file_path IS NOT NULL
                       AND (
-                        (COALESCE(pv_sec.kind, pv_global.kind) = 'themerrdb'
-                         AND EXISTS (
-                           SELECT 1 FROM pending_updates pu
-                            WHERE pu.media_type = t.media_type
-                              AND pu.tmdb_id = t.tmdb_id
-                              AND pu.decision IN ('pending', 'declined')
-                              AND pu.new_youtube_url = COALESCE(pv_sec.youtube_url, pv_global.youtube_url)
-                         ))
+                        -- v1.12.101 branch: row HAS a canonical
+                        -- (REVERT competes with the existing-state
+                        -- actions — pending update accept, no-op
+                        -- swap to the same URL).
+                        (lf.file_path IS NOT NULL AND (
+                          (COALESCE(pv_sec.kind, pv_global.kind) = 'themerrdb'
+                           AND EXISTS (
+                             SELECT 1 FROM pending_updates pu
+                              WHERE pu.media_type = t.media_type
+                                AND pu.tmdb_id = t.tmdb_id
+                                AND pu.decision IN ('pending', 'declined')
+                                AND pu.new_youtube_url = COALESCE(pv_sec.youtube_url, pv_global.youtube_url)
+                           ))
+                          OR
+                          COALESCE(pv_sec.youtube_url, pv_global.youtube_url) = COALESCE(
+                            -- v1.12.72: prefer section-specific
+                            -- override; fall back to global ('') row;
+                            -- final fallback to themes.youtube_url.
+                            -- Mirrors the worker's two-step fetch so
+                            -- the row's "currently applied" URL is
+                            -- the same value the worker would use.
+                            (SELECT youtube_url FROM user_overrides uo
+                              WHERE uo.media_type = t.media_type
+                                AND uo.tmdb_id = t.tmdb_id
+                                AND uo.section_id = pi.section_id),
+                            (SELECT youtube_url FROM user_overrides uo
+                              WHERE uo.media_type = t.media_type
+                                AND uo.tmdb_id = t.tmdb_id
+                                AND uo.section_id = ''),
+                            t.youtube_url
+                          )
+                        ))
                         OR
-                        COALESCE(pv_sec.youtube_url, pv_global.youtube_url) = COALESCE(
-                          -- v1.12.72: prefer section-specific
-                          -- override; fall back to global ('') row;
-                          -- final fallback to themes.youtube_url.
-                          -- Mirrors the worker's two-step fetch so
-                          -- the row's "currently applied" URL is
-                          -- the same value the worker would use.
-                          (SELECT youtube_url FROM user_overrides uo
-                            WHERE uo.media_type = t.media_type
-                              AND uo.tmdb_id = t.tmdb_id
-                              AND uo.section_id = pi.section_id),
-                          (SELECT youtube_url FROM user_overrides uo
-                            WHERE uo.media_type = t.media_type
-                              AND uo.tmdb_id = t.tmdb_id
-                              AND uo.section_id = ''),
-                          t.youtube_url
-                        )
+                        -- v1.12.103 branch: post-PURGE/UNMANAGE
+                        -- clean overlap. RESTORE and DOWNLOAD TDB
+                        -- would fetch the same URL with no chain
+                        -- to preserve, so RESTORE adds nothing.
+                        -- All four conditions matter: no canonical
+                        -- to revert against, kind=themerrdb (user
+                        -- URLs aren't reachable via DOWNLOAD TDB),
+                        -- no hidden chain (RESTORE would otherwise
+                        -- be the only way to start the chain walk),
+                        -- and TDB hasn't rolled the URL since the
+                        -- capture (else RESTORE locks to the older
+                        -- URL — meaningfully different).
+                        (lf.file_path IS NULL
+                         AND COALESCE(pv_sec.kind, pv_global.kind) = 'themerrdb'
+                         AND COALESCE(pv_sec.hidden_url, pv_global.hidden_url) IS NULL
+                         AND COALESCE(pv_sec.youtube_url, pv_global.youtube_url) = t.youtube_url)
                       )
                      THEN 1 ELSE 0 END) AS revert_redundant,
                -- v1.12.35: accepted_update = the row's pending
