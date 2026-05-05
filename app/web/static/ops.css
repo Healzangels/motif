@@ -151,6 +151,20 @@
   animation: op-mini-shimmer 2.2s linear infinite;
 }
 
+.op-mini.op-tone-warn .op-mini-bar-fill {
+  background: linear-gradient(
+    90deg, transparent 0%, var(--tone-warn) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: op-mini-shimmer 2.2s linear infinite;
+}
+
+/* v1.12.109: indeterminate variant for queue ops where stage_total
+ * isn't known. Bar is a continuous shimmer at full width; the mini
+ * pct hides since "X%" of an unknown total reads as noise. */
+.op-mini.op-mini-indet .op-mini-bar-fill {
+  width: 100% !important;
+}
+
 .op-mini .op-mini-pct {
   font-variant-numeric: tabular-nums;
   opacity: 0.85;

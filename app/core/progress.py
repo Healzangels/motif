@@ -226,6 +226,14 @@ def load_active(db_path: Path) -> list[dict]:
     """Read all running/cancelling rows + the most recent finished
     row per kind (so the drawer can show "last completion" summaries
     in idle state). Ordered by started_at DESC.
+
+    v1.12.109: also synthesizes queue ops for download / place / scan
+    job types straight off the jobs table — those don't write
+    op_progress rows (the worker already tracks them via job
+    lifecycle), but the UI wants the same op-card / op-mini render
+    treatment so the legacy "QUEUED · 3R / 5P" topbar text can
+    retire. Synthesized rows are read-only (cancel-all isn't wired);
+    per-job cancel still lives at /queue.
     """
     with get_conn(db_path) as conn:
         active = conn.execute(
@@ -242,6 +250,20 @@ def load_active(db_path: Path) -> list[dict]:
                  ORDER BY finished_at DESC
                  LIMIT 10"""
         ).fetchall()
+        # Synthesized queue rows. One row per job_type with at least
+        # one pending or running job. Counts drive the mini-bar
+        # label; bar runs in indeterminate-shimmer mode (stage_total=0)
+        # since a queue depth changes faster than a fixed-total
+        # progress bar can usefully represent.
+        queue_counts = conn.execute(
+            """SELECT job_type,
+                      SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running_n,
+                      SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_n
+                 FROM jobs
+                WHERE status IN ('pending','running')
+                  AND job_type IN ('download','place','scan')
+                GROUP BY job_type"""
+        ).fetchall()
     out: list[dict] = []
     for row in list(active) + list(finished):
         d = dict(row)
@@ -250,6 +272,55 @@ def load_active(db_path: Path) -> list[dict]:
         except (TypeError, ValueError):
             d["detail"] = {}
         out.append(d)
+    out.extend(_synthesize_queue_ops(queue_counts))
+    return out
+
+
+def _synthesize_queue_ops(counts) -> list[dict]:
+    """Build virtual op rows from jobs counts. Mirrors the shape of
+    a real op_progress row so the UI doesn't need a separate render
+    path. Status='running' whenever any job is running; 'pending'
+    when only queued (worker not yet picked up).
+    """
+    label_map = {
+        "download": ("DOWNLOAD QUEUE", "Downloading themes"),
+        "place":    ("PLACE QUEUE",    "Placing themes into Plex"),
+        "scan":     ("DISK SCAN",      "Scanning canonical themes"),
+    }
+    now = now_iso()
+    out: list[dict] = []
+    for row in counts:
+        jt = row["job_type"]
+        running_n = row["running_n"] or 0
+        pending_n = row["pending_n"] or 0
+        if running_n + pending_n == 0:
+            continue
+        kind_label, stage_label = label_map.get(jt, (jt.upper(), jt))
+        # Detail label encodes counts so the mini-bar's stage_label
+        # carries the info the legacy "QUEUED · NR / MP" text used
+        # to. Bar itself runs indeterminate (stage_total=0).
+        if running_n and pending_n:
+            stage = f"{stage_label} — {running_n} running, {pending_n} queued"
+        elif running_n:
+            stage = f"{stage_label} — {running_n} running"
+        else:
+            stage = f"{stage_label} — {pending_n} queued"
+        out.append({
+            "op_id": f"queue:{jt}",
+            "kind": f"{jt}_queue",
+            "status": "running" if running_n else "pending",
+            "started_at": now,
+            "updated_at": now,
+            "finished_at": None,
+            "stage": jt,
+            "stage_label": stage,
+            "stage_current": running_n,
+            "stage_total": running_n + pending_n,
+            "processed_total": running_n,
+            "processed_est": running_n + pending_n,
+            "error_count": 0,
+            "detail": {"activity": [], "throughput": [], "synthetic": True},
+        })
     return out
 
 

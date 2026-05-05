@@ -34,10 +34,27 @@
       { key: 'enumerate',    label: 'Enumerate' },
       { key: 'reconcile',    label: 'Reconcile' },
     ],
+    // Queue ops have no fixed stage timeline — just a single
+    // indeterminate stage that pulses for as long as work remains.
+    download_queue: [],
+    place_queue:    [],
+    scan_queue:     [],
   };
 
-  const TONE_BY_KIND = { tdb_sync: 'tdb', plex_enum: 'plex' };
-  const KIND_LABEL   = { tdb_sync: 'THEMERRDB SYNC', plex_enum: 'PLEX SCAN' };
+  const TONE_BY_KIND = {
+    tdb_sync:       'tdb',
+    plex_enum:      'plex',
+    download_queue: 'warn',
+    place_queue:    'warn',
+    scan_queue:     'warn',
+  };
+  const KIND_LABEL = {
+    tdb_sync:       'THEMERRDB SYNC',
+    plex_enum:      'PLEX SCAN',
+    download_queue: 'DOWNLOAD QUEUE',
+    place_queue:    'PLACE QUEUE',
+    scan_queue:     'DISK SCAN',
+  };
 
   // ── state ─────────────────────────────────────────────────────
   let state = {
@@ -265,28 +282,43 @@
   }
 
   function renderTopbar(ops) {
-    const running = ops.filter((o) => o.status === 'running' || o.status === 'cancelling');
+    const running = ops.filter((o) =>
+      o.status === 'running' || o.status === 'pending' || o.status === 'cancelling');
     const mini = document.getElementById('op-mini');
+    const overflow = document.getElementById('op-mini-overflow');
     if (!mini) return;
     if (!running.length) {
       mini.hidden = true;
+      if (overflow) overflow.hidden = true;
       return;
     }
-    // Pick the most-recently-updated running op (drives the mini-bar
-    // when both syncs run in parallel — usually the more interesting
-    // one to surface).
+    // v1.12.109: when multiple ops run concurrently (e.g., TDB sync
+    // + downloads + places), the topbar carries one mini-bar for
+    // the most-recently-updated op plus a "+N ops" pill that opens
+    // the drawer where the rest live. Keeps the topbar uncluttered
+    // without losing surface area for the others.
     const op = running.slice().sort((a, b) =>
       String(b.updated_at).localeCompare(String(a.updated_at)))[0];
     const tone = TONE_BY_KIND[op.kind] || 'tdb';
     const pct = pctOf(op);
+    const indeterminate = (op.stage_total || 0) <= 0;
     mini.hidden = false;
-    mini.className = `op-mini op-tone-${tone}`;
+    mini.className = `op-mini op-tone-${tone}` + (indeterminate ? ' op-mini-indet' : '');
     mini.innerHTML = `
       <span class="op-mini-label">${esc(op.stage_label || KIND_LABEL[op.kind] || '…')}</span>
       <span class="op-mini-bar"><span class="op-mini-bar-fill"
-            style="width:${pct != null ? pct.toFixed(1) : 30}%"></span></span>
-      <span class="op-mini-pct">${pct != null ? pct.toFixed(0) + '%' : ''}</span>
+            style="width:${indeterminate ? 100 : (pct != null ? pct.toFixed(1) : 30)}%"></span></span>
+      <span class="op-mini-pct">${indeterminate ? '' : (pct != null ? pct.toFixed(0) + '%' : '')}</span>
     `;
+    if (overflow) {
+      const extra = running.length - 1;
+      if (extra > 0) {
+        overflow.hidden = false;
+        overflow.innerHTML = `<span class="op-pill-count">+${extra}</span><span class="op-pill-label">OPS</span>`;
+      } else {
+        overflow.hidden = true;
+      }
+    }
   }
 
   // ── interpolation tween ───────────────────────────────────────
