@@ -39,6 +39,9 @@
     download_queue: [],
     place_queue:    [],
     scan_queue:     [],
+    refresh_queue:  [],
+    relink_queue:   [],
+    adopt_queue:    [],
   };
 
   const TONE_BY_KIND = {
@@ -47,6 +50,11 @@
     download_queue: 'warn',
     place_queue:    'warn',
     scan_queue:     'warn',
+    // v1.12.118: post-place Plex refresh / relink-stale-paths /
+    // adopt-sidecar queues join the same ops surface.
+    refresh_queue:  'warn',
+    relink_queue:   'warn',
+    adopt_queue:    'warn',
   };
   const KIND_LABEL = {
     tdb_sync:       'THEMERRDB SYNC',
@@ -54,7 +62,14 @@
     download_queue: 'DOWNLOAD QUEUE',
     place_queue:    'PLACE QUEUE',
     scan_queue:     'DISK SCAN',
+    refresh_queue:  'REFRESH QUEUE',
+    relink_queue:   'RELINK QUEUE',
+    adopt_queue:    'ADOPT QUEUE',
   };
+  const STAGE_TIMELINE_QUEUE = []; // queue ops have no fixed timeline
+  ['refresh_queue', 'relink_queue', 'adopt_queue'].forEach(
+    (k) => { /* placeholder; STAGE_TIMELINE map updated below */ },
+  );
 
   // ── state ─────────────────────────────────────────────────────
   let state = {
@@ -291,12 +306,18 @@
       o.status === 'running' || o.status === 'pending' || o.status === 'cancelling');
     const mini = document.getElementById('op-mini');
     const overflow = document.getElementById('op-mini-overflow');
+    const idle = document.getElementById('op-status-idle');
     if (!mini) return;
     if (!running.length) {
+      // v1.12.118: idle pill replaces the legacy green dot + "IDLE"
+      // text. Same visual family as the FAIL/UPD/active op-pills, no
+      // dot-to-bar flip when an op finishes.
       mini.hidden = true;
       if (overflow) overflow.hidden = true;
+      if (idle) idle.hidden = false;
       return;
     }
+    if (idle) idle.hidden = true;
     // v1.12.109: when multiple ops run concurrently (e.g., TDB sync
     // + downloads + places), the topbar carries one mini-bar for
     // the most-recently-updated op plus a "+N ops" pill that opens

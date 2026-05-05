@@ -736,16 +736,20 @@ def _library_main_query(
                         "AND lf.file_path IS NULL "
                         "AND p.media_folder IS NULL")
     elif status == "has_theme":
-        # v1.10.54: any theme source — T (ThemerrDB-tracked + maybe
-        # downloaded), U/A (motif-managed manual), M (sidecar), P
-        # (Plex agent), or a downloaded canonical waiting for
-        # placement. Inverse of UNTRACKED.
+        # v1.12.118: THEMED = "actual theme applied to THIS row".
+        # Pre-fix the filter included a `t.tmdb_id IS NOT NULL AND
+        # t.upstream_source != 'plex_orphan'` OR-arm, which let any
+        # row through that had TDB tracking — even if no theme was
+        # actually applied to that row. Stacking with the ED pill
+        # surfaced "every edition that ThemerrDB knows about" instead
+        # of "every edition that has a theme". Now: strict inverse
+        # of UNTHEMED — any of placement, canonical, sidecar, or
+        # Plex-served theme present.
         where_extra += (" AND ("
-                        "  (t.tmdb_id IS NOT NULL AND t.upstream_source != 'plex_orphan')"
+                        "  pi.has_theme = 1"
                         "  OR pi.local_theme_file = 1"
-                        "  OR pi.has_theme = 1"
-                        "  OR p.media_folder IS NOT NULL"
                         "  OR lf.file_path IS NOT NULL"
+                        "  OR p.media_folder IS NOT NULL"
                         ")")
     elif status == "downloaded":
         # motif has the theme file on disk (placed or not). Mirrors the

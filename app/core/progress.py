@@ -255,13 +255,19 @@ def load_active(db_path: Path) -> list[dict]:
         # label; bar runs in indeterminate-shimmer mode (stage_total=0)
         # since a queue depth changes faster than a fixed-total
         # progress bar can usefully represent.
+        # v1.12.118: also synthesize refresh/relink/adopt so those job
+        # types flow through the ops drawer instead of the legacy
+        # "REFRESH PENDING · N" / "QUEUED · NR / NP" status text.
+        # 'sync' and 'plex_enum' have real op_progress rows so they're
+        # excluded here.
         queue_counts = conn.execute(
             """SELECT job_type,
                       SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS running_n,
                       SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending_n
                  FROM jobs
                 WHERE status IN ('pending','running')
-                  AND job_type IN ('download','place','scan')
+                  AND job_type IN ('download','place','scan',
+                                   'refresh','relink','adopt')
                 GROUP BY job_type"""
         ).fetchall()
     out: list[dict] = []
@@ -286,6 +292,13 @@ def _synthesize_queue_ops(counts) -> list[dict]:
         "download": ("DOWNLOAD QUEUE", "Downloading themes"),
         "place":    ("PLACE QUEUE",    "Placing themes into Plex"),
         "scan":     ("DISK SCAN",      "Scanning canonical themes"),
+        # v1.12.118: refresh = post-place Plex metadata nudges (~30s
+        # delay) so Plex re-scans the folder and picks up the sidecar.
+        # relink = repair stale placements (folder paths Plex moved).
+        # adopt = bulk-adopt sidecars motif found via scan.
+        "refresh":  ("REFRESH QUEUE",  "Nudging Plex to re-scan"),
+        "relink":   ("RELINK QUEUE",   "Re-linking moved placements"),
+        "adopt":    ("ADOPT QUEUE",    "Adopting sidecars"),
     }
     now = now_iso()
     out: list[dict] = []

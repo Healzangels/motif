@@ -197,181 +197,61 @@
   // entry and misses the freshly-pending row. This sets the label
   // and dot directly so feedback lands the same frame as the click,
   // then queues a real refresh past the cache TTL to reconcile.
-  function paintTopbarSyncing(label) {
-    const topbarText = $('#topbar-status-text');
-    if (topbarText) topbarText.textContent = label;
-    const topbarDot = $('#topbar-status .dot');
-    if (topbarDot) {
-      topbarDot.classList.remove('dot-red');
-      topbarDot.classList.add('dot-amber');
-    }
+  // v1.12.118: legacy paintTopbarSyncing retired with the dot+text.
+  // Click feedback is now handled by triggering motifOps.refresh()
+  // immediately so the new op-mini bar appears within a tick, plus
+  // a follow-up refreshTopbarStatus to reconcile UPD/FAIL pills. The
+  // function name is kept as a thin shim so existing callers don't
+  // need rewiring.
+  function paintTopbarSyncing(_label) {
+    try {
+      if (window.motifOps && typeof window.motifOps.refresh === 'function') {
+        window.motifOps.refresh();
+      }
+    } catch (_) { /* swallow */ }
     setTimeout(refreshTopbarStatus, 1100);
   }
 
   async function refreshTopbarStatus() {
     try {
       const stats = await api('GET', '/api/stats');
-      // v1.11.17: probe job_type retired — only real worker activities
-      // (sync / plex_enum / download / place / scan) drive the topbar
-      // text. Priority: sync > download > place > scan > idle.
       const q = stats.queue || {};
-      // v1.11.35: banner text reflects what's *actually running*, not
-      // what's queued. _in_flight (pending OR running) drives the
-      // button locks; _running (status='running' only) drives the
-      // banner so we don't claim 'SYNCING WITH PLEX' while plex_enum
-      // is queued behind a sync that hasn't finished yet (the worker
-      // is single-threaded today).
+      // v1.12.118: legacy "what's running" status text + dot retired.
+      // The new ops mini-bar (driven by /api/progress polling in
+      // ops.js) covers every active operation surface — TDB sync,
+      // Plex enum, download/place/scan/refresh/relink/adopt queues —
+      // through one uniform pill style. The idle pill stays visible
+      // when nothing's running. refreshTopbarStatus's job here is
+      // limited to: keep UPD/FAIL pills in sync, kick the ops
+      // poller when stats sees a fresh sync flag (so the bar
+      // appears within a tick of the click rather than after the
+      // ops idle-poll cadence), and reset the idle pill to its
+      // healthy state.
+      const idle = $('#op-status-idle');
+      if (idle) {
+        idle.classList.remove('op-pill-offline');
+        idle.querySelector('.op-pill-label').textContent = 'IDLE';
+      }
+      // Trigger fast ops refresh on sync transitions so the
+      // mini-bar lights up immediately.
       const plexEnumBusy = q.plex_enum_in_flight > 0;
       const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
-      const plexEnumRunning = (q.plex_enum_running || 0) > 0;
-      const themerrdbRunning = (q.themerrdb_sync_running || 0) > 0;
-      const downloadBusy = q.download_in_flight > 0;
-      const placeBusy = q.place_in_flight > 0;
-      const scanBusy = q.scan_in_flight > 0;
-      // v1.11.48: banner text reflects the user's mental model
-      // post-click. Pre-fix the "SYNCING WITH X" text only fired
-      // on _running (status='running'), so the 1-2s window between
-      // job enqueue and worker pickup left the banner showing the
-      // generic "{N}R / {M}P" fallback — the user clicked SYNC
-      // and saw nothing change. Now: prefer _running when
-      // available (avoids claiming concurrent activity that's
-      // actually queued behind a different long-thread job), but
-      // fall back to _in_flight when nothing's running so a
-      // freshly-enqueued job lights the banner immediately.
-      // v1.12.21: align verb with the button that triggered the
-      // action. SYNC THEMERRDB → "SYNCING THEMERRDB"; REFRESH FROM
-      // PLEX → "REFRESHING <scope>". Pre-fix the topbar said
-      // "SYNCING <scope>" while the row button said "REFRESHING
-      // <scope>" — same job, two verbs, mild user confusion.
-      const plexScope = activePlexEnumScopeLabel(q.plex_enum_active);
-      const plexLabel = plexScope ? `REFRESHING ${plexScope}` : 'REFRESHING PLEX';
-      let txt;
-      if (themerrdbRunning && plexEnumRunning) {
-        txt = `SYNCING THEMERRDB + ${plexLabel}`;
-      } else if (themerrdbRunning) {
-        txt = 'SYNCING THEMERRDB';
-      } else if (plexEnumRunning) {
-        txt = plexLabel;
-      } else if (themerrdbBusy) {
-        txt = 'SYNCING THEMERRDB';
-      } else if (plexEnumBusy) {
-        txt = plexLabel;
-      } else if (downloadBusy) {
-        txt = `DOWNLOADING ${q.download_in_flight}`;
-      } else if (placeBusy) {
-        txt = `PLACING ${q.place_in_flight}`;
-      } else if (scanBusy) {
-        txt = 'SCANNING DISK';
-      } else if ((q.running || 0) > 0 || (q.pending || 0) > 0) {
-        // v1.12.15: friendlier label when nothing's actively running
-        // but the queue isn't empty — the most common case is
-        // post-place refresh nudges with a 30s delay before they
-        // pick up. Surface what's actually queued instead of the
-        // cryptic "0R / 1P".
-        const refresh = q.refresh_in_flight || 0;
-        const dl = q.download_in_flight || 0;
-        const pl = q.place_in_flight || 0;
-        if (refresh > 0 && refresh === (q.pending || 0) + (q.running || 0)) {
-          txt = `REFRESH PENDING · ${refresh}`;
-        } else if (dl > 0) {
-          txt = `DOWNLOAD QUEUED · ${dl}`;
-        } else if (pl > 0) {
-          txt = `PLACE QUEUED · ${pl}`;
-        } else {
-          txt = `QUEUED · ${q.running || 0}R / ${q.pending || 0}P`;
-        }
-      } else {
-        txt = 'IDLE';
-      }
-      $('#topbar-status-text').textContent = txt;
-      // v1.12.15: dot + status-text tooltip so the amber dot isn't
-      // mute. Breaks down what's actually queued / running so the
-      // user can see whether the activity is meaningful work
-      // (download / place) or just the post-place refresh nudge
-      // (which sits at "pending" for ~30s by design — see
-      // _do_place's delayed-refresh schedule in worker.py).
-      const tipParts = [];
-      if (themerrdbBusy) tipParts.push(`ThemerrDB sync: ${q.themerrdb_sync_in_flight}`);
-      if (plexEnumBusy) tipParts.push(`Plex enum: ${q.plex_enum_in_flight}`);
-      if (downloadBusy) tipParts.push(`download: ${q.download_in_flight}`);
-      if (placeBusy) tipParts.push(`place: ${q.place_in_flight}`);
-      if (scanBusy) tipParts.push(`scan: ${q.scan_in_flight}`);
-      if ((q.refresh_in_flight || 0) > 0) {
-        tipParts.push(`refresh: ${q.refresh_in_flight} (Plex metadata nudge, post-place delay ~30s)`);
-      }
-      // v1.12.87: topbar dot color is driven by unacked_failures
-      // (themes-based "active alarm" count) rather than q.failed
-      // (jobs.status='failed' count). ACK FAILURE clears
-      // failure_acked_at on the theme, which immediately drops
-      // unacked_failures regardless of whether the underlying
-      // failed-status job rows survive in the queue as audit trail.
-      // Pre-fix the dot stayed red after ACK because the failed
-      // job row was still counted; users had to "clear failed"
-      // separately or wait for a sweep that no longer existed.
-      const unacked = q.unacked_failures || 0;
-      const queueTip = tipParts.length
-        ? `In flight:\n  • ${tipParts.join('\n  • ')}\n\nClick LOGS for details.`
-        : (unacked > 0
-            ? `${unacked} active failure(s) — open the row's INFO card to see and ACK`
-            : 'idle');
-      const dotEl = $('#topbar-status .dot');
-      if (dotEl && unacked === 0) {
-        // failures-tip already wired below — only override when no
-        // failures (failures-tooltip wins on click affordance).
-        dotEl.title = queueTip;
-      }
-      const dot = $('#topbar-status .dot');
-      dot.classList.remove('dot-amber', 'dot-red');
-      const anyActive = themerrdbBusy || plexEnumBusy || downloadBusy
-                     || placeBusy || scanBusy;
-      if (unacked > 0) dot.classList.add('dot-red');
-      else if (anyActive) dot.classList.add('dot-amber');
-      else if (q.pending > 0) dot.classList.add('dot-amber');
-
-      // v1.12.108: when stats reports a sync just kicked off
-      // (themerrdb or plex_enum) and the ops mini-bar isn't
-      // visible yet, force motifOps to poll right away. Pre-fix
-      // the user saw the legacy yellow dot fire instantly (driven
-      // by /api/stats which polls every 10s) but the new mini-bar
-      // took up to 10s of ops idle-poll before appearing — felt
-      // like "the page must be refreshed". Now: stats and ops
-      // poll cadences cooperate, mini-bar appears within a tick.
       const opsBar = $('#op-mini');
       const opsHidden = !opsBar || opsBar.hidden;
       if ((themerrdbBusy || plexEnumBusy) && opsHidden
           && window.motifOps && typeof window.motifOps.refresh === 'function') {
         try { window.motifOps.refresh(); } catch (_) { /* swallow */ }
       }
+      // unacked count drives the FAIL pill below + the
+      // __motif_failed_count global other code reads.
+      const unacked = q.unacked_failures || 0;
 
-      // v1.11.73: red dot → click jumps to /queue?status=failed
-      // so the user can review failures in context. Pre-fix the
-      // user saw a red ● next to 'IDLE' with no explanation of
-      // what was wrong. Now the dot + status text get a tooltip,
-      // a pointer cursor, and a click handler when failed > 0.
-      // v1.12.76: the LOGS // CLEAR FAILED button is gone (per
-      // user feedback) so reviewing on /queue is read-only;
-      // dismiss happens via per-row ACK FAILURE on the library
-      // page (which also cancels the underlying failed job per
-      // v1.12.74). The __motif_failed_count global is kept in
-      // case other future code wants to gate on it.
-      // v1.12.87: clickable status now tracks unacked_failures
-      // (themes-based) so the click target follows the dot color.
-      // Routes to /queue?status=failed (audit view) — the actual
-      // ACK happens on the row's INFO card.
-      const statusEl = $('#topbar-status');
+      // v1.12.118: failure-count signaling moved to the FAIL op-pill
+      // (already pulses red on its own). The legacy #topbar-status
+      // click-through is retired since the dot+text are gone.
+      // __motif_failed_count global stays so other code that gates
+      // on it doesn't need rewiring.
       window.__motif_failed_count = unacked;
-      if (unacked > 0) {
-        const tip = `${unacked} active failure(s) — click to review on /queue, ACK on the row's INFO card`;
-        if (dot) dot.title = tip;
-        $('#topbar-status-text').title = tip;
-        statusEl?.classList.add('topbar-status-clickable');
-        statusEl?.setAttribute('data-failed-link', '1');
-      } else {
-        if (dot) dot.removeAttribute('title');
-        $('#topbar-status-text').removeAttribute('title');
-        statusEl?.classList.remove('topbar-status-clickable');
-        statusEl?.removeAttribute('data-failed-link');
-      }
 
       // v1.11.77: per-media-type 'we have TDB data for this' flags.
       // Pre-fix the TDB pill was gated on last_sync_at (a successful
@@ -458,14 +338,8 @@
           failBadge.hidden = true;
         }
       }
-      // v1.12.106: hide the legacy idle dot whenever the op-mini
-      // is showing a live progress strip — they'd otherwise stack
-      // visually for the same state.
-      const idleDot = $('#topbar-idle-dot');
-      const opMini = $('#op-mini');
-      if (idleDot && opMini) {
-        idleDot.style.display = opMini.hidden ? '' : 'none';
-      }
+      // v1.12.118: legacy idle-dot retired — ops.js renderTopbar
+      // owns the idle pill / op-mini handoff now (no flip).
 
       // v1.11.27: hide every tab's nav link when no managed section
       // backs it. v1.11.33: cache the availability map in localStorage
@@ -670,7 +544,15 @@
         }
       }
     } catch (e) {
-      $('#topbar-status-text').textContent = 'OFFLINE';
+      // v1.12.118: stats poll failed — flip the idle pill to an
+      // OFFLINE state. Same visual family as IDLE but tone-keyed
+      // red so the user notices motif lost its connection.
+      const idle = $('#op-status-idle');
+      if (idle) {
+        idle.classList.add('op-pill-offline');
+        const lbl = idle.querySelector('.op-pill-label');
+        if (lbl) lbl.textContent = 'OFFLINE';
+      }
       // v1.12.2: log the actual error so future "OFFLINE for no
       // apparent reason" debugging doesn't require code-archeology.
       // Silent catch in v1.11.97 hid a ReferenceError for ~5 days.

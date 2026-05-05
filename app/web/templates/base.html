@@ -63,8 +63,14 @@
          title="Click to expand live ops"></a>
       <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden
          data-ops-trigger title="Multiple ops running — click to expand all"></a>
-      <span class="dot dot-pulse" id="topbar-idle-dot"></span>
-      <span class="muted" id="topbar-status-text">…</span>
+      <!-- v1.12.118: idle pill replaces the legacy green dot + IDLE
+           text. Same visual family as the active op-mini bar; no
+           dot-to-bar flip when an op finishes. Click opens the ops
+           drawer so users can see "last 5 ops" history. -->
+      <a href="#" class="op-pill op-pill-idle" id="op-status-idle"
+         data-ops-trigger title="No active ops — click to view recent history">
+        <span class="op-pill-label">IDLE</span>
+      </a>
       <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
     </div>
   </header>
