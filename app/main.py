@@ -144,6 +144,35 @@ def main() -> int:
     except Exception as e:
         log.warning("Section_id-less job cleanup skipped: %s", e)
 
+    # v1.12.113: zombie running-job sweep. If a previous motif process
+    # died mid-job (SIGKILL, OOM, container crash), jobs.status='running'
+    # rows survive — but the worker thread that owned them is gone. Pre-fix
+    # those rows lingered indefinitely; the v1.12.109 ops mini-bar would
+    # render "1 running, N queued" forever even though nothing was actually
+    # running. Worker can't be holding any 'running' row at this point in
+    # startup (it hasn't started yet), so flipping every running row to
+    # 'failed' is safe and clears the ghost.
+    try:
+        from .core.events import now_iso  # noqa: F811 — defensive re-import
+        with get_conn(settings.db_path) as conn:
+            cur = conn.execute(
+                """UPDATE jobs SET status = 'failed',
+                                  finished_at = ?,
+                                  last_error = COALESCE(last_error,
+                                    'session_expired: motif process restarted '
+                                    'while this job was running')
+                   WHERE status = 'running'""",
+                (now_iso(),),
+            )
+            if cur.rowcount:
+                log.info(
+                    "Reset %d zombie running job(s) to failed "
+                    "(prior motif process died mid-job)",
+                    cur.rowcount,
+                )
+    except Exception as e:
+        log.warning("Zombie running-job sweep skipped: %s", e)
+
     # v1.11.0: legacy startup data migrations (relocate_legacy_canonical_files,
     # backfill_hash_match_provenance) are gone — the per-section themes layout
     # is a fresh-start release; the DB is repopulated from upstream sources by
