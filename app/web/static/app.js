@@ -3946,13 +3946,24 @@
       // "destructive action just happened, bring my URL back".
       const isRestore = (srcLetter === '-' || srcLetter === 'M');
       const restoreLabel = isRestore ? 'RESTORE' : 'REVERT';
+      // v1.12.103: tone tracks the captured kind, not a hardcoded
+      // 'user'. Pre-fix the post-PURGE RESTORE on a T row landed
+      // purple even though it was bringing back a themerrdb URL —
+      // visually inconsistent with the green TDB chip the row
+      // showed before the purge. Now: themerrdb-kind → green,
+      // user-kind → purple, so the button color answers "where is
+      // this URL coming from?" the same way the row's SRC badge does.
+      const restoreTone = it.previous_youtube_kind === 'themerrdb'
+        ? 'themerrdb' : 'user';
       const restoreTip = isRestore
-        ? "Restore the user URL captured before PURGE/UNMANAGE and re-download in this section."
-        : "Revert to the previously-active user URL and re-download in this section.";
+        ? (restoreTone === 'themerrdb'
+            ? 'Restore the ThemerrDB URL captured before PURGE/UNMANAGE and re-download in this section.'
+            : 'Restore the user URL captured before PURGE/UNMANAGE and re-download in this section.')
+        : 'Revert to the previously-active URL and re-download in this section.';
       sourceItems.push(menuItemHtml(
         'revert', restoreLabel,
         restoreTip,
-        { mt: themeMt, id: themeId, sectionId: it.section_id, tone: 'user' },
+        { mt: themeMt, id: themeId, sectionId: it.section_id, tone: restoreTone },
       ));
     }
 
