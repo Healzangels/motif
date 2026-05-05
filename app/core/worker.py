@@ -1188,9 +1188,16 @@ class Worker:
                             (folder_str, plex_type),
                         )
                     elif outcome.reason == "plex_has_theme":
+                        # v1.12.110: clear motif_unplaced_at too. Worker
+                        # got an active confirmation from Plex during a
+                        # placement attempt ("you can't place, I already
+                        # have my own theme") — that's a stronger signal
+                        # than plex_enum's read of cached metadata, so
+                        # the row genuinely is P now.
                         conn.execute(
                             "UPDATE plex_items SET has_theme = 1, "
-                            "                     local_theme_file = 0 "
+                            "                     local_theme_file = 0, "
+                            "                     motif_unplaced_at = NULL "
                             "WHERE folder_path = ? AND media_type = ?",
                             (folder_str, plex_type),
                         )
