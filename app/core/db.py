@@ -474,6 +474,22 @@ CREATE TABLE IF NOT EXISTS previous_urls (
     youtube_url  TEXT NOT NULL,
     kind         TEXT NOT NULL CHECK (kind IN ('user', 'themerrdb')),
     captured_at  TEXT NOT NULL,
+    -- v1.12.102: 2-deep undo for PURGE/UNMANAGE → RESTORE → REVERT.
+    -- Pre-fix the v1.12.99 user-kind preservation rule meant a PURGE
+    -- on a T row with a prior user-kind previous_url couldn't capture
+    -- the URL being purged (existing user-kind capture won the
+    -- "what's most useful to undo" coin flip). RESTORE then brought
+    -- back the older user URL, not the URL the user just purged.
+    -- New rule: PURGE/UNMANAGE always overwrites previous_url with
+    -- the URL being dropped, but the prior previous_url moves into
+    -- hidden_* so REVERT after RESTORE walks the chain back to it.
+    -- Non-PURGE captures (SET URL, ACCEPT UPDATE, REPLACE TDB)
+    -- clear hidden_* — the chain only survives the round-trip that
+    -- created it.
+    hidden_url          TEXT,
+    hidden_kind         TEXT CHECK (hidden_kind IN ('user', 'themerrdb')
+                                    OR hidden_kind IS NULL),
+    hidden_captured_at  TEXT,
     PRIMARY KEY (media_type, tmdb_id, section_id),
     -- v1.12.86: when the parent themes row is dropped (PURGE/UNMANAGE
     -- last-section orphan, or api_delete_item full destruction), the
@@ -507,7 +523,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 31
+CURRENT_SCHEMA_VERSION = 32
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1209,6 +1225,35 @@ def _migrate_v30_to_v31(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
+    """v32 adds a hidden URL slot to previous_urls so PURGE/UNMANAGE
+    captures don't have to choose between "preserve the older user
+    override" and "capture the URL we're about to drop". Now both
+    survive: previous_url holds the just-dropped URL (RESTORE target),
+    hidden_url holds whatever previous_url was before PURGE (becomes
+    the new previous_url after RESTORE so REVERT continues the chain).
+
+    Pre-fix the v1.12.99 user-kind preservation rule kept the older
+    user URL but blocked the PURGE-time capture from landing — RESTORE
+    then brought back the older user URL, not what was just purged.
+    The hidden slot lets us preserve both, in chronological order.
+
+    Schema change is purely additive: three new nullable columns. No
+    backfill needed — existing previous_urls rows are still valid as
+    single-deep undo, hidden_* defaults to NULL.
+    """
+    log.info("Migrating to schema v32 (previous_urls hidden slot)")
+    conn.executescript(
+        """
+        ALTER TABLE previous_urls ADD COLUMN hidden_url TEXT;
+        ALTER TABLE previous_urls ADD COLUMN hidden_kind TEXT
+            CHECK (hidden_kind IN ('user', 'themerrdb')
+                   OR hidden_kind IS NULL);
+        ALTER TABLE previous_urls ADD COLUMN hidden_captured_at TEXT;
+        """
+    )
+
+
 def _migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
     """v29 adds events.section_id + per-(media_type, tmdb_id, section_id)
     index. Previously the events table was title-global — a single
@@ -1772,6 +1817,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 30:
                     _migrate_v30_to_v31(conn)
                     current = 31
+                elif current == 31:
+                    _migrate_v31_to_v32(conn)
+                    current = 32
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

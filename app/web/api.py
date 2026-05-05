@@ -214,6 +214,7 @@ def _require_admin(request: Request) -> Principal:
 def _capture_previous_url(
     conn, media_type: str, tmdb_id: int,
     *, section_id: str | None = None,
+    on_purge: bool = False,
 ) -> None:
     """v1.12.37: snapshot the row's current canonical URL so REVERT
     can swap back one step. Called from any handler that's about to
@@ -234,6 +235,18 @@ def _capture_previous_url(
       2. themes.youtube_url otherwise — kind='themerrdb'.
     A null URL produces a no-op (no INSERT). The library SQL hides
     REVERT/RESTORE on rows with no previous_urls entry.
+
+    v1.12.102: on_purge=True triggers the 2-deep undo flow used by
+    PURGE/UNMANAGE. Pre-fix the v1.12.99 user-kind preservation rule
+    blocked these handlers from capturing the URL they were about to
+    drop whenever a prior user-kind capture existed — RESTORE then
+    brought back an older URL instead of the one just purged. New
+    behavior: any existing previous_urls row is moved to the hidden_*
+    slot (preserved for the post-RESTORE → REVERT step), then the
+    just-dropped URL is written as the new previous_url regardless
+    of kind. Non-purge captures (default) keep the old user-kind
+    preservation rule and clear hidden_* on update — the hidden
+    slot is only meaningful across a PURGE → RESTORE round-trip.
     """
     ovr = None
     if section_id is not None:
@@ -275,6 +288,36 @@ def _capture_previous_url(
     if not prev_url or not prev_kind:
         return
     target_section = section_id if section_id is not None else ""
+    existing = conn.execute(
+        "SELECT youtube_url, kind, captured_at FROM previous_urls "
+        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+        (media_type, tmdb_id, target_section),
+    ).fetchone()
+    if on_purge:
+        # v1.12.102: PURGE/UNMANAGE always captures the URL being
+        # dropped. The prior previous_url (if any) moves into hidden_*
+        # so REVERT after RESTORE walks back to it. The v1.12.99
+        # user-kind preservation rule does NOT apply here — losing the
+        # just-dropped URL would defeat RESTORE's whole purpose.
+        hidden_url = existing["youtube_url"] if existing else None
+        hidden_kind = existing["kind"] if existing else None
+        hidden_captured_at = existing["captured_at"] if existing else None
+        conn.execute(
+            """INSERT INTO previous_urls
+                 (media_type, tmdb_id, section_id, youtube_url, kind,
+                  captured_at, hidden_url, hidden_kind, hidden_captured_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                   youtube_url = excluded.youtube_url,
+                   kind = excluded.kind,
+                   captured_at = excluded.captured_at,
+                   hidden_url = excluded.hidden_url,
+                   hidden_kind = excluded.hidden_kind,
+                   hidden_captured_at = excluded.hidden_captured_at""",
+            (media_type, tmdb_id, target_section, prev_url, prev_kind,
+             now_iso(), hidden_url, hidden_kind, hidden_captured_at),
+        )
+        return
     # v1.12.99: don't overwrite a user-kind capture with a themerrdb-kind
     # one. Pre-fix the M*A*S*H scenario lost the user's URL through this
     # cascade:
@@ -290,22 +333,24 @@ def _capture_previous_url(
     # user-kind captures. User-kind URLs are meaningful for one-step
     # undo; themerrdb URLs are always reachable via DOWNLOAD TDB
     # regardless of whether previous_urls knows about them.
-    if prev_kind == "themerrdb":
-        existing = conn.execute(
-            "SELECT kind FROM previous_urls "
-            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
-            (media_type, tmdb_id, target_section),
-        ).fetchone()
-        if existing and existing["kind"] == "user":
-            return
+    if prev_kind == "themerrdb" and existing and existing["kind"] == "user":
+        return
+    # v1.12.102: non-purge captures (SET URL, ACCEPT UPDATE, REPLACE
+    # TDB, etc.) clear hidden_*. The hidden slot is meant to survive a
+    # single PURGE → RESTORE round-trip; any other URL change
+    # invalidates the chain (the user's not undoing the purge anymore).
     conn.execute(
         """INSERT INTO previous_urls
-             (media_type, tmdb_id, section_id, youtube_url, kind, captured_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+             (media_type, tmdb_id, section_id, youtube_url, kind,
+              captured_at, hidden_url, hidden_kind, hidden_captured_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
            ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                youtube_url = excluded.youtube_url,
                kind = excluded.kind,
-               captured_at = excluded.captured_at""",
+               captured_at = excluded.captured_at,
+               hidden_url = NULL,
+               hidden_kind = NULL,
+               hidden_captured_at = NULL""",
         (media_type, tmdb_id, target_section, prev_url, prev_kind, now_iso()),
     )
 
@@ -314,20 +359,23 @@ def _load_previous_url(
     conn, media_type: str, tmdb_id: int, *, section_id: str | None = None,
 ):
     """v1.12.86: read the one-step REVERT/RESTORE snapshot for a row.
-    Returns (youtube_url, kind, captured_at) or None when no snapshot
+    Returns the previous_urls row (youtube_url, kind, captured_at,
+    plus the v1.12.102 hidden_* columns) or None when no snapshot
     exists. Resolution: section's own row first, then '' fallback —
     mirrors the user_overrides + worker URL-resolution pattern.
     """
+    cols = ("youtube_url, kind, captured_at, "
+            "hidden_url, hidden_kind, hidden_captured_at")
     if section_id is not None:
         row = conn.execute(
-            "SELECT youtube_url, kind, captured_at FROM previous_urls "
+            f"SELECT {cols} FROM previous_urls "
             "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
             (media_type, tmdb_id, section_id),
         ).fetchone()
         if row:
             return row
     row = conn.execute(
-        "SELECT youtube_url, kind, captured_at FROM previous_urls "
+        f"SELECT {cols} FROM previous_urls "
         "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
         (media_type, tmdb_id),
     ).fetchone()
@@ -5418,8 +5466,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # delete so the row keeps a one-step RESTORE path
                 # post-UNMANAGE. Mirrors the PURGE capture; the
                 # snapshot survives _drop_motif_tracking via v1.12.64.
+                # v1.12.102: on_purge=True so any prior previous_url
+                # moves to the hidden slot — RESTORE brings the
+                # just-dropped URL back, REVERT after RESTORE walks
+                # the chain to whatever was previous before this.
                 _capture_previous_url(conn, media_type, tmdb_id,
-                                      section_id=section_id)
+                                      section_id=section_id,
+                                      on_purge=True)
                 conn.execute(
                     "DELETE FROM placements "
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
@@ -5754,8 +5807,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Last-section path below also keeps this snapshot
                 # intact — _drop_motif_tracking deliberately
                 # preserves previous_* per v1.12.64.
+                # v1.12.102: on_purge=True so any prior previous_url
+                # moves to the hidden slot — RESTORE brings the
+                # just-purged URL back, REVERT after RESTORE walks
+                # the chain to whatever was previous before this.
                 _capture_previous_url(conn, media_type, tmdb_id,
-                                      section_id=section_id)
+                                      section_id=section_id,
+                                      on_purge=True)
                 conn.execute(
                     "DELETE FROM placements "
                     "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
@@ -6184,17 +6242,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # current before this revert — REVERT becomes
             # round-trippable. v1.12.86: per-section write (was a
             # title-global update on themes columns).
-            if new_prev_url and new_prev_kind:
-                target_section = section_id if section_id is not None else ""
+            # v1.12.102: when the snapshot we just consumed has a
+            # hidden_* slot (PURGE/UNMANAGE pre-loaded it with the
+            # URL that was previous BEFORE the destructive action),
+            # promote hidden_* to previous_url instead of swapping.
+            # This is the post-RESTORE step: previous_url goes back
+            # to whatever was previous before the user purged, so a
+            # subsequent REVERT continues the chain. The hidden slot
+            # is consumed (cleared) since the round-trip is complete.
+            target_section = section_id if section_id is not None else ""
+            hidden_url = snapshot["hidden_url"] if snapshot else None
+            hidden_kind = snapshot["hidden_kind"] if snapshot else None
+            if hidden_url and hidden_kind:
                 conn.execute(
                     """INSERT INTO previous_urls
                          (media_type, tmdb_id, section_id, youtube_url,
-                          kind, captured_at)
-                       VALUES (?, ?, ?, ?, ?, ?)
+                          kind, captured_at,
+                          hidden_url, hidden_kind, hidden_captured_at)
+                       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
                        ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                            youtube_url = excluded.youtube_url,
                            kind = excluded.kind,
-                           captured_at = excluded.captured_at""",
+                           captured_at = excluded.captured_at,
+                           hidden_url = NULL,
+                           hidden_kind = NULL,
+                           hidden_captured_at = NULL""",
+                    (media_type, tmdb_id, target_section,
+                     hidden_url, hidden_kind, now_iso()),
+                )
+            elif new_prev_url and new_prev_kind:
+                conn.execute(
+                    """INSERT INTO previous_urls
+                         (media_type, tmdb_id, section_id, youtube_url,
+                          kind, captured_at,
+                          hidden_url, hidden_kind, hidden_captured_at)
+                       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL)
+                       ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                           youtube_url = excluded.youtube_url,
+                           kind = excluded.kind,
+                           captured_at = excluded.captured_at,
+                           hidden_url = NULL,
+                           hidden_kind = NULL,
+                           hidden_captured_at = NULL""",
                     (media_type, tmdb_id, target_section,
                      new_prev_url, new_prev_kind, now_iso()),
                 )
