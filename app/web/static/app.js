@@ -401,13 +401,13 @@
         );
       } catch (_) { /* private mode / quota — fine, just lose the cache */ }
 
-      // Updates badge
+      // Updates badge — v1.12.106: op-pill primitive, [hidden] attr.
       const updBadge = $('#topbar-updates-badge');
       if (updBadge) {
         const n = (stats.updates && stats.updates.pending) || 0;
         if (n > 0) {
           $('#topbar-updates-count').textContent = n;
-          updBadge.style.display = '';
+          updBadge.hidden = false;
           // v1.12.48: route the badge to whichever tab owns the
           // first row with a pending update (mirrors the FAIL
           // badge's tab_hint logic). Apply the blue TDB ↑ pill
@@ -417,16 +417,22 @@
           const tabHint = (stats.updates && stats.updates.tab_hint) || 'movies';
           updBadge.href = `/${tabHint}?tdb_pills=update`;
         } else {
-          updBadge.style.display = 'none';
+          updBadge.hidden = true;
         }
       }
-      // Failures badge
+      // Failures badge — v1.12.106: op-pill primitive, [hidden] attr.
+      // Driver unified with per-row glyph: count every unacked
+      // failure_kind, not just the four 'unavailable' kinds.
+      // Pre-fix the topbar showed FAIL=0 while rows with
+      // cookies_expired / network_error / unknown still rendered
+      // the red ⚠ glyph — visible mismatch between the topbar
+      // attention surface and the per-row signal.
       const failBadge = $('#topbar-failures-badge');
       if (failBadge) {
-        const n = (stats.failures && stats.failures.unavailable) || 0;
+        const n = (stats.failures && stats.failures.total) || 0;
         if (n > 0) {
           $('#topbar-failures-count').textContent = n;
-          failBadge.style.display = '';
+          failBadge.hidden = false;
           // v1.12.11: route the badge to whichever tab owns the
           // first failing row (anime / tv / movies). Pre-fix the
           // link was hardcoded to /movies which mis-routed every
@@ -434,8 +440,16 @@
           const tabHint = (stats.failures && stats.failures.tab_hint) || 'movies';
           failBadge.href = `/${tabHint}?tdb_pills=dead`;
         } else {
-          failBadge.style.display = 'none';
+          failBadge.hidden = true;
         }
+      }
+      // v1.12.106: hide the legacy idle dot whenever the op-mini
+      // is showing a live progress strip — they'd otherwise stack
+      // visually for the same state.
+      const idleDot = $('#topbar-idle-dot');
+      const opMini = $('#op-mini');
+      if (idleDot && opMini) {
+        idleDot.style.display = opMini.hidden ? '' : 'none';
       }
 
       // v1.11.27: hide every tab's nav link when no managed section
@@ -3365,75 +3379,23 @@
     // v1.12.66: awaitingApproval declaration moved up to the dl/pl
     // block. It was here originally but pl now needs it earlier;
     // declaring twice would shadow + ReferenceError under TDZ.
-    if (it.job_in_flight) {
-      // Theme has a pending or running download/place job — pulse a cyan
-      // glyph so users can watch their just-clicked URL/upload land. Pairs
-      // with the rapid-poll mode kicked off by manual actions.
-      const jobLabel = it.job_in_flight === 'download' ? 'downloading'
-                     : it.job_in_flight === 'place'    ? 'placing into Plex folder'
-                     :                                   'processing';
-      titleGlyphs.push(
-        `<span class="title-glyph title-glyph-pending" title="${htmlEscape(jobLabel)}">⟳</span>`
-      );
-    } else if (awaitingApproval) {
-      // v1.12.65: glyph used to be a link to /pending which was
-      // removed in v1.12.41. Now a non-link button-styled span
-      // with copy that points at the actual recovery action.
-      // Amber color matches the new amber PL state pill so both
-      // attention signals agree visually.
-      titleGlyphs.push(
-        `<span class="title-glyph title-glyph-await" title="Awaiting placement — canonical downloaded but not placed in Plex. Open INFO for context; PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.">!</span>`
-      );
-    }
-    // v1.11.62: 'DL broken' glyph — motif's canonical was deleted but
-    // the placement in the Plex folder is still there. Click jumps to
-    // the dl_missing filter so the user can find every affected row.
-    if (dlBroken) {
-      titleGlyphs.push(
-        `<a class="title-glyph title-glyph-broken" title="canonical missing under /themes — placement in Plex folder is still there. Open RESTORE FROM PLEX in PLACE menu to recover." href="/${libraryState.tab}?status=dl_missing">↺</a>`
-      );
-    }
-    // v1.12.5: ↑ row-title glyph removed. The blue TDB ↑ pill (from
-    // the TDB-pill render below) is now the only update indicator —
-    // a single visual cue is less noisy than two redundant ones.
-    // ACCEPT UPDATE / KEEP CURRENT live in the SOURCE menu.
-    // v1.12.78: blue ! glyph reinstated as an attention signal
-    // matching the red ! (failure) and amber ! (await placement)
-    // pattern — color encodes the kind, ! shape signals "action
-    // required". Gated on actionable_update (decision='pending')
-    // so KEEP CURRENT clears it; suppressed during in-flight jobs
-    // (cyan spinner already owns the row) and on src='-' rows
-    // (DOWNLOAD path covers them, no theme to update from).
-    if (it.actionable_update && !it.job_in_flight
-        && computeSrcLetter(it) !== '-') {
-      // v1.12.87: tooltip points at INFO + SOURCE so users have a
-      // single mental model — `!` means "click for context, ACK
-      // (for failures) or decide (ACCEPT/KEEP) in the menu/INFO".
-      const updTip = (it.pending_update_kind === 'urls_match')
-        ? 'ThemerrDB now matches your override URL — open INFO to see the diff, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.'
-        : 'ThemerrDB has a new URL for this row — open INFO to see the proposed change, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.';
-      titleGlyphs.push(
-        `<span class="title-glyph title-glyph-update title-glyph-action" title="${htmlEscape(updTip)}">!</span>`
-      );
-    }
-    // v1.12.81: amber ! for mismatch state — canonical content
-    // diverged from the placement file (e.g., SET URL / UPLOAD MP3
-    // over an existing placement). Same attention-glyph pattern as
-    // the red ! (failure) / blue ! (update) / amber ! (await
-    // placement). Gated on mismatch_state='pending' so KEEP MISMATCH
-    // (which flips to 'acked') clears it. Color reuses the existing
-    // amber `.title-glyph-await` palette since both signal "PLACE
-    // menu has work to do" — distinct from the upstream-update blue.
-    if (it.mismatch_state === 'pending' && !it.job_in_flight) {
-      titleGlyphs.push(
-        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical content diverged from the Plex-folder file. Open INFO for the diff; resolve in PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">!</span>`
-      );
-    }
-    // v1.10.50: only show the ! glyph when the failure hasn't been
-    // acknowledged. Acked rows keep their red TDB pill (still failing
-    // upstream) but no longer pull attention; they're hidden from the
-    // FAILURES filter for the same reason.
+    // v1.12.106: strict one-glyph hierarchy. Pre-fix a row could
+    // stack up to FOUR glyphs (failure + job + update + await /
+    // mismatch / broken) which read as visual noise — users had
+    // to decode the order to figure out what was actually
+    // attention-worthy. New rule: surface the highest-priority
+    // signal as the single glyph; the rest stay reachable in the
+    // INFO card and via the row tinting (.row-failure) /
+    // state-pill columns. Order: failure > in-flight job >
+    // pending update > await/mismatch/broken > none.
+    let glyphHtml = null;
     if (it.failure_kind && !it.failure_acked_at) {
+      // v1.10.50: only show the ! glyph when the failure hasn't been
+      // acknowledged. Acked rows keep their red TDB pill (still
+      // failing upstream) but no longer pull attention; they're
+      // hidden from the FAILURES filter for the same reason.
+      // v1.12.87: clicking opens INFO — INFO is the single ACK
+      // entry-point with the raw yt-dlp error + recovery options.
       const human = {
         'cookies_expired': 'YouTube cookies expired',
         'video_private': 'Video is private',
@@ -3443,24 +3405,51 @@
         'network_error': 'Network error',
         'unknown': 'Unknown failure'
       }[it.failure_kind] || it.failure_kind;
-      // v1.12.87: clicking the red ! glyph now opens the row's
-      // INFO card (was inline-acknowledge pre-.87). INFO is the
-      // single ACK entry-point — // TRY THIS NEXT shows the raw
-      // yt-dlp error + recovery options first, then ACK FAILURE
-      // dismisses the alarm. The previous inline-clear flow
-      // dismissed the warning without ever showing the user
-      // *why* the download failed, which was a usability gap on
-      // ambiguous failures (e.g. UNKNOWN → user couldn't tell
-      // if it was URL-fixable or transient).
       const ackTip = `${human} — click to view in INFO and ACK`;
-      titleGlyphs.push(
+      glyphHtml =
         `<button class="title-glyph title-glyph-fail" title="${htmlEscape(ackTip)}" `
         + `data-act="info" data-mt="${themeMt}" data-id="${themeId}" `
         + `data-section-id="${htmlEscape(it.section_id || '')}" `
-        + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`
-      );
+        + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`;
       rowExtra = ' class="row-failure"';
+    } else if (it.job_in_flight) {
+      // Theme has a pending or running download/place job — pulse a
+      // cyan glyph so users can watch their just-clicked URL/upload
+      // land. Pairs with the rapid-poll mode kicked off by manual
+      // actions.
+      const jobLabel = it.job_in_flight === 'download' ? 'downloading'
+                     : it.job_in_flight === 'place'    ? 'placing into Plex folder'
+                     :                                   'processing';
+      glyphHtml =
+        `<span class="title-glyph title-glyph-pending" title="${htmlEscape(jobLabel)}">⟳</span>`;
+    } else if (it.actionable_update && computeSrcLetter(it) !== '-') {
+      // v1.12.78: blue ! glyph for pending upstream updates. Gated
+      // on actionable_update (decision='pending') so KEEP CURRENT
+      // clears it. Suppressed on src='-' rows (DOWNLOAD path covers
+      // them, no theme to update from).
+      const updTip = (it.pending_update_kind === 'urls_match')
+        ? 'ThemerrDB now matches your override URL — open INFO to see the diff, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.'
+        : 'ThemerrDB has a new URL for this row — open INFO to see the proposed change, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.';
+      glyphHtml =
+        `<span class="title-glyph title-glyph-update title-glyph-action" title="${htmlEscape(updTip)}">!</span>`;
+    } else if (it.mismatch_state === 'pending') {
+      // v1.12.81: canonical content diverged from the placement
+      // file (SET URL / UPLOAD MP3 over an existing placement).
+      // PLACE menu has the resolution actions.
+      glyphHtml =
+        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical content diverged from the Plex-folder file. Open INFO for the diff; resolve in PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">!</span>`;
+    } else if (awaitingApproval) {
+      // v1.12.65: amber ! for canonical-downloaded-but-not-placed.
+      // PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.
+      glyphHtml =
+        `<span class="title-glyph title-glyph-await" title="Awaiting placement — canonical downloaded but not placed in Plex. Open INFO for context; PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.">!</span>`;
+    } else if (dlBroken) {
+      // v1.11.62: motif's canonical was deleted but the placement
+      // is still in the Plex folder. RESTORE FROM PLEX recovers.
+      glyphHtml =
+        `<a class="title-glyph title-glyph-broken" title="canonical missing under /themes — placement in Plex folder is still there. Open RESTORE FROM PLEX in PLACE menu to recover." href="/${libraryState.tab}?status=dl_missing">↺</a>`;
     }
+    if (glyphHtml) titleGlyphs.push(glyphHtml);
 
     const imdb = it.guid_imdb || '';
     const imdbLink = imdb
@@ -3537,25 +3526,14 @@
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
         return ` <span class="tdb-pill tdb-pill-dead" title="Upstream URL broken: ${htmlEscape(why)}${detail}\n\nRecover via SET URL, UPLOAD MP3, or drop a sidecar and ADOPT.">TDB ✗</span>`;
       }
-      // v1.11.96: pending-update state takes precedence over the
-      // generic green TDB pill so the user can scan the library page
-      // and immediately see which rows have an upstream URL update
-      // available. Blue ties to the ↑ glyph and the UPDATES filter.
-      // v1.12.48: gate on src!='-' — if the row has no theme anywhere
-      // there's nothing to ACCEPT UPDATE against (the action would
-      // just download the current URL), so render the plain green
-      // TDB pill that prompts DOWNLOAD via the SOURCE menu.
-      // v1.12.54: branch on pending_update_kind so the synthetic
-      // 'urls_match' rows (v1.12.53 sweep — the user's override URL
-      // already equals TDB's URL, so ACCEPT UPDATE is really a U→T
-      // reclassify) get an accurate tooltip instead of the
-      // upstream-changed wording that was a lie for those rows.
-      if (it.pending_update && computeSrcLetter(it) !== '-') {
-        if (it.pending_update_kind === 'urls_match') {
-          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches the current ThemerrDB URL — ACCEPT UPDATE in the SOURCE menu to convert this row from U (user-managed) to T (ThemerrDB-managed). The file on disk stays the same; only the classification changes.">TDB ↑</span>';
-        }
-        return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss.">TDB ↑</span>';
-      }
+      // v1.12.106: dropped the .tdb-pill-update variant. The blue
+      // ! title-glyph (rendered by the strict hierarchy above) is
+      // now the sole update signal — having the same state surface
+      // twice (pill + glyph) just to encode the same fact was
+      // visual noise. The lineage pill stays green (TDB tracked)
+      // regardless of update state; the glyph carries "action
+      // required" semantics. Filter is still reachable via the
+      // tdb_pills=update chip and the topbar UPD count.
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
     })();
 

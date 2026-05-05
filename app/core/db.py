@@ -239,6 +239,46 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     error           TEXT
 );
 
+-- v1.12.106: live progress surface for long-running ops (TDB sync,
+-- Plex enum). One row per op, upserted by the worker on each
+-- natural checkpoint already in the code (per-page index fetch,
+-- per-batch flush, per-section enum). The /api/progress endpoint
+-- reads running rows; the UI polls 1s while active, 10s idle.
+--
+-- Finished rows survive for 24h so the ops panel can show a
+-- "last N ops" tail in idle state. A periodic sweep (run on
+-- /api/progress reads) prunes anything older.
+--
+-- Cancel protocol: writers set status='cancelling', the worker
+-- checks at each checkpoint and exits cleanly, then sets status
+-- ='cancelled' + finished_at on the way out.
+CREATE TABLE IF NOT EXISTS op_progress (
+    op_id           TEXT PRIMARY KEY,
+    kind            TEXT NOT NULL
+                       CHECK (kind IN ('tdb_sync', 'plex_enum')),
+    status          TEXT NOT NULL DEFAULT 'running'
+                       CHECK (status IN ('running', 'cancelling',
+                                         'done', 'failed', 'cancelled')),
+    started_at      TEXT NOT NULL,
+    updated_at      TEXT NOT NULL,
+    finished_at     TEXT,
+    stage           TEXT,
+    stage_label     TEXT,
+    stage_current   INTEGER NOT NULL DEFAULT 0,
+    stage_total     INTEGER NOT NULL DEFAULT 0,
+    processed_total INTEGER NOT NULL DEFAULT 0,
+    processed_est   INTEGER NOT NULL DEFAULT 0,
+    error_count     INTEGER NOT NULL DEFAULT 0,
+    -- detail_json holds: latest activity lines (rolling 5),
+    -- per-stage breakdown for the timeline, throughput history
+    -- (rolling 30 samples for sparkline), error_message if failed.
+    detail_json     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_op_progress_status
+    ON op_progress (status, updated_at);
+CREATE INDEX IF NOT EXISTS idx_op_progress_finished
+    ON op_progress (finished_at);
+
 CREATE TABLE IF NOT EXISTS user_overrides (
     media_type      TEXT NOT NULL,
     tmdb_id         INTEGER NOT NULL,
@@ -523,7 +563,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 32
+CURRENT_SCHEMA_VERSION = 33
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1254,6 +1294,47 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v32_to_v33(conn: sqlite3.Connection) -> None:
+    """v33 adds the op_progress table: one row per long-running op
+    (TDB sync, Plex enum) so the ops side-drawer can render live
+    per-stage progress, throughput, ETA, and a cancel button. Pre-fix
+    the topbar showed only a spinning dot + "REFRESHING…" text driven
+    by /api/stats counts — no per-step visibility into syncs that
+    routinely take 10–40 minutes.
+
+    Schema is purely additive: new table, new indexes, no changes
+    to existing tables.
+    """
+    log.info("Migrating to schema v33 (op_progress table)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS op_progress (
+            op_id           TEXT PRIMARY KEY,
+            kind            TEXT NOT NULL
+                               CHECK (kind IN ('tdb_sync', 'plex_enum')),
+            status          TEXT NOT NULL DEFAULT 'running'
+                               CHECK (status IN ('running', 'cancelling',
+                                                 'done', 'failed', 'cancelled')),
+            started_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            stage           TEXT,
+            stage_label     TEXT,
+            stage_current   INTEGER NOT NULL DEFAULT 0,
+            stage_total     INTEGER NOT NULL DEFAULT 0,
+            processed_total INTEGER NOT NULL DEFAULT 0,
+            processed_est   INTEGER NOT NULL DEFAULT 0,
+            error_count     INTEGER NOT NULL DEFAULT 0,
+            detail_json     TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_op_progress_status
+            ON op_progress (status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_op_progress_finished
+            ON op_progress (finished_at);
+        """
+    )
+
+
 def _migrate_v28_to_v29(conn: sqlite3.Connection) -> None:
     """v29 adds events.section_id + per-(media_type, tmdb_id, section_id)
     index. Previously the events table was title-global — a single
@@ -1820,6 +1901,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 31:
                     _migrate_v31_to_v32(conn)
                     current = 32
+                elif current == 32:
+                    _migrate_v32_to_v33(conn)
+                    current = 33
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

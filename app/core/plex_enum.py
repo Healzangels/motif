@@ -22,6 +22,7 @@ from .db import get_conn, transaction
 from .events import log_event, now_iso
 from .plex import PlexClient, PlexConfig, PlexLibraryItem
 from .sections import list_sections
+from . import progress as op_progress
 
 log = logging.getLogger(__name__)
 
@@ -47,54 +48,115 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
         log.info("plex_enum: no managed sections, nothing to do")
         return stats
 
-    with PlexClient(plex_cfg) as client:
-        for s in managed:
-            # v1.11.36: cooperative cancellation between sections.
-            if cancel_check():
-                from .worker import _JobCancelled
-                raise _JobCancelled()
-            section_id = s["section_id"]
-            section_type = s["type"]
-            stats["sections"] += 1
-            try:
-                items = client.enumerate_section_items(
-                    section_id=section_id, media_type=section_type,
+    # v1.12.106: live progress for the ops side-drawer. One parent op
+    # row covers the whole pass; per-section detail flows through
+    # detail_json so the drawer can render a stacked mini-bar per
+    # section (current section's items / total + completed section
+    # count). Cancel: drawer cancel flips status='cancelling',
+    # _cancel_check picks it up at the existing per-section boundary.
+    op_progress.start_progress(
+        db_path, op_id="plex_enum", kind="plex_enum",
+        stage="enumerate", stage_label="Enumerating Plex sections",
+        stage_total=len(managed), processed_est=0,
+    )
+
+    def _cancel_check():
+        return cancel_check() or op_progress.is_cancelled(db_path, "plex_enum")
+
+    try:
+        with PlexClient(plex_cfg) as client:
+            for s in managed:
+                # v1.11.36: cooperative cancellation between sections.
+                if _cancel_check():
+                    from .worker import _JobCancelled
+                    raise _JobCancelled()
+                section_id = s["section_id"]
+                section_type = s["type"]
+                stats["sections"] += 1
+                op_progress.update_progress(
+                    db_path, "plex_enum",
+                    stage_label=f"Section {stats['sections']}/{len(managed)}: {s['title']}",
+                    stage_current=stats["sections"],
+                    activity=f"Fetching '{s['title']}' from Plex",
                 )
-            except Exception as e:
-                log.warning("plex_enum: section %s failed: %s", s["title"], e)
-                stats["errors"] += 1
-                continue
-            stats["items_seen"] += len(items)
-            ins, upd = _upsert_items(
-                db_path, items, cancel_check=cancel_check,
-                # v1.12.18: pass section_id so the resolve pass that
-                # runs at the end of _upsert_items can scope itself
-                # to JUST the rows we just touched. Pre-fix the
-                # resolve always ran against the full plex_items
-                # table (~10K+ rows on a populated install), which
-                # turned a 28-item section refresh into a 70s+ job.
-                section_id=section_id,
-            )
-            stats["inserted"] += ins
-            stats["updated"] += upd
-            log.info("plex_enum: section %s — %d items (%d new, %d updated)",
-                     s["title"], len(items), ins, upd)
+                try:
+                    items = client.enumerate_section_items(
+                        section_id=section_id, media_type=section_type,
+                    )
+                except Exception as e:
+                    log.warning("plex_enum: section %s failed: %s", s["title"], e)
+                    stats["errors"] += 1
+                    op_progress.update_progress(
+                        db_path, "plex_enum",
+                        error_count=stats["errors"],
+                        activity=f"'{s['title']}' failed: {e}",
+                    )
+                    continue
+                stats["items_seen"] += len(items)
+                op_progress.update_progress(
+                    db_path, "plex_enum",
+                    activity=f"Upserting {len(items)} items from '{s['title']}'",
+                    processed_total=stats["items_seen"],
+                )
+                ins, upd = _upsert_items(
+                    db_path, items, cancel_check=_cancel_check,
+                    # v1.12.18: pass section_id so the resolve pass that
+                    # runs at the end of _upsert_items can scope itself
+                    # to JUST the rows we just touched. Pre-fix the
+                    # resolve always ran against the full plex_items
+                    # table (~10K+ rows on a populated install), which
+                    # turned a 28-item section refresh into a 70s+ job.
+                    section_id=section_id,
+                )
+                stats["inserted"] += ins
+                stats["updated"] += upd
+                log.info("plex_enum: section %s — %d items (%d new, %d updated)",
+                         s["title"], len(items), ins, upd)
+                op_progress.update_progress(
+                    db_path, "plex_enum",
+                    activity=f"'{s['title']}': {ins} new, {upd} updated",
+                )
 
-    # v1.10.8: detect Plex folder renames/moves and re-link the canonical
-    # theme. plex_items.folder_path now reflects the current Plex-side
-    # location; placements.media_folder reflects where motif previously
-    # placed the hardlink. When they diverge, the OLD path is stale —
-    # update the placement to the new path and enqueue a place job so
-    # Plex finds the theme in its current folder.
-    relinked = reconcile_placement_paths(db_path)
-    stats["relinked"] = relinked
+        op_progress.update_progress(
+            db_path, "plex_enum",
+            stage="reconcile",
+            stage_label="Reconciling placement paths",
+            activity="Checking for Plex folder renames",
+        )
+        # v1.10.8: detect Plex folder renames/moves and re-link the canonical
+        # theme. plex_items.folder_path now reflects the current Plex-side
+        # location; placements.media_folder reflects where motif previously
+        # placed the hardlink. When they diverge, the OLD path is stale —
+        # update the placement to the new path and enqueue a place job so
+        # Plex finds the theme in its current folder.
+        relinked = reconcile_placement_paths(db_path)
+        stats["relinked"] = relinked
 
-    log_event(db_path, level="INFO", component="plex_enum",
-              message=f"Enumerated {stats['sections']} sections, "
-                      f"{stats['items_seen']} items "
-                      f"({stats['inserted']} new, {stats['updated']} updated"
-                      f"{', ' + str(relinked) + ' relinked' if relinked else ''})")
-    return stats
+        log_event(db_path, level="INFO", component="plex_enum",
+                  message=f"Enumerated {stats['sections']} sections, "
+                          f"{stats['items_seen']} items "
+                          f"({stats['inserted']} new, {stats['updated']} updated"
+                          f"{', ' + str(relinked) + ' relinked' if relinked else ''})")
+        op_progress.update_progress(
+            db_path, "plex_enum",
+            activity=(
+                f"Done — {stats['sections']} sections, "
+                f"{stats['items_seen']} items, "
+                f"{stats['inserted']} new, {stats['updated']} updated"
+                + (f", {relinked} relinked" if relinked else "")
+            ),
+        )
+        op_progress.finish_progress(db_path, "plex_enum", status="done")
+        return stats
+    except Exception as e:
+        from .worker import _JobCancelled
+        op_progress.finish_progress(
+            db_path, "plex_enum",
+            status="cancelled" if isinstance(e, _JobCancelled) else "failed",
+            error_message=("cancelled by user"
+                           if isinstance(e, _JobCancelled) else str(e)),
+        )
+        raise
 
 
 def reconcile_placement_paths(db_path: Path) -> int:

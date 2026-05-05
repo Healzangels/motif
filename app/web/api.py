@@ -7401,6 +7401,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"download_only": bool(body.get("download_only", False))} if isinstance(body, dict) else None)
         return {"ok": True, "job_id": job_id}
 
+    @app.get("/api/progress")
+    async def api_progress(db: Path = Depends(get_db_path)):
+        """v1.12.106: live progress feed for the ops side-drawer.
+
+        Returns currently-running ops + a tail of recently-finished
+        ops so the drawer can show "last completion" summaries when
+        nothing is active. Polled at 1s by the UI when any op is
+        running, 10s when idle.
+
+        Each row carries: stage label, stage_current/total,
+        processed_total, error_count, throughput history (drives
+        the items/sec sparkline + ETA), and the rolling activity
+        feed. The drawer renders one card per row.
+        """
+        from ..core import progress as op_progress
+        rows = await run_in_threadpool(op_progress.load_active, db)
+        # Cheap on the read path so we don't need a dedicated sweeper.
+        await run_in_threadpool(op_progress.prune_finished, db)
+        return {"ops": rows, "now": now_iso()}
+
+    @app.post("/api/progress/{op_id}/cancel")
+    async def api_progress_cancel(
+        op_id: str, request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v1.12.106: signal cooperative cancellation. Sets
+        op_progress.status='cancelling'; the worker checks at its
+        next checkpoint and bails (raises _JobCancelled), then the
+        finally path stamps status='cancelled' + finished_at.
+
+        Returns 409 if no running op matches op_id (already finished
+        or never existed) so the UI can refresh its state.
+        """
+        _require_admin(request)
+        from ..core import progress as op_progress
+        ok = await run_in_threadpool(op_progress.request_cancel, db, op_id)
+        if not ok:
+            raise HTTPException(
+                status_code=409,
+                detail="op not running (already finished or unknown id)",
+            )
+        log_event(db, level="INFO", component="api",
+                  message=f"Cancel requested for op {op_id} by {request.state.user}")
+        return {"ok": True}
+
     @app.get("/healthz")
     async def healthz():
         return JSONResponse({"status": "ok"})

@@ -11,7 +11,9 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css?v={{ motif_version }}" />
+  <link rel="stylesheet" href="/static/ops.css?v={{ motif_version }}" />
   <script defer src="/static/app.js?v={{ motif_version }}"></script>
+  <script defer src="/static/ops.js?v={{ motif_version }}"></script>
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
@@ -40,30 +42,46 @@
       <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
     </nav>
     <div class="topbar-status" id="topbar-status">
-      <!-- v1.12.44: badges moved BACK to before the dot+text per
-           user preference. The v1.12.21 "after" placement was to
-           avoid jitter when the badges popped in/out, but the
-           user prefers the [UPD] [FAIL] ● IDLE layout visually.
-           The jitter is mild (dot shifts left a bit when a badge
-           appears) and lives only at the badge-edge transitions,
-           not on every tab change like the pre-1.12.21 bug. -->
-      <a href="/movies?tdb_pills=update" class="topbar-badge" id="topbar-updates-badge"
-         style="display:none"
+      <!-- v1.12.106: unified op-pill vocabulary (cf. ops.css).
+           UPD / FAIL / OPS now read consistently — same shape,
+           tone-keyed colors, same hover/click behavior. Mini-bar
+           shows live progress when a sync is running and replaces
+           the old spinning dot for that state. -->
+      <a href="/movies?tdb_pills=update" class="op-pill op-tone-upd" id="topbar-updates-badge"
+         hidden
          title="ThemerrDB upstream URL changed on one or more themes motif manages. Click to review with the blue TDB ↑ pill filter.">
-        <span id="topbar-updates-count">0</span>
-        <span class="topbar-badge-label">UPD</span>
+        <span class="op-pill-count" id="topbar-updates-count">0</span>
+        <span class="op-pill-label">UPD</span>
       </a>
-      <a href="/movies?tdb_pills=dead" class="topbar-badge topbar-badge-warn" id="topbar-failures-badge"
-         style="display:none"
+      <a href="/movies?tdb_pills=dead" class="op-pill op-tone-fail" id="topbar-failures-badge"
+         hidden
          title="ThemerrDB upstream URL is broken (removed / private / restricted) on one or more themes. Click to review with the red TDB ✗ pill filter.">
-        <span id="topbar-failures-count">0</span>
-        <span class="topbar-badge-label">FAIL</span>
+        <span class="op-pill-count" id="topbar-failures-count">0</span>
+        <span class="op-pill-label">FAIL</span>
       </a>
-      <span class="dot dot-pulse"></span>
+      <a href="#" class="op-mini" id="op-mini" hidden data-ops-trigger
+         title="Click to expand live ops"></a>
+      <span class="dot dot-pulse" id="topbar-idle-dot"></span>
       <span class="muted" id="topbar-status-text">…</span>
       <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
     </div>
   </header>
+
+  <!-- v1.12.106: ops side-drawer. Hidden by default; opens on click
+       of the topbar mini-bar or any element with [data-ops-trigger].
+       Renders one card per running op + a tail of recent finishes. -->
+  <div id="ops-drawer" class="ops-drawer" hidden aria-hidden="true">
+    <div class="ops-drawer-scrim"></div>
+    <aside class="ops-drawer-panel" role="dialog" aria-label="Live ops">
+      <header class="ops-drawer-head">
+        <h2>// LIVE OPS</h2>
+        <button class="ops-drawer-close" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="ops-drawer-body" id="ops-drawer-body">
+        <div class="ops-drawer-empty">// loading…</div>
+      </div>
+    </aside>
+  </div>
   {% endif %}
 
   <main class="content">

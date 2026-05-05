@@ -37,6 +37,7 @@ import httpx
 
 from .db import get_conn, transaction
 from .events import log_event, now_iso
+from . import progress as op_progress
 from .normalize import titles_equal
 
 log = logging.getLogger(__name__)
@@ -710,9 +711,35 @@ def run_sync(db_path, base_url: str, *,
 
     log_event(db_path, level="INFO", component="sync", message=f"Sync run #{run_id} started")
 
+    # v1.12.106: live progress surface for the ops side-drawer. One row
+    # in op_progress, upserted at every natural checkpoint already
+    # iterated by the existing log path. The drawer renders stage
+    # timeline + smoothed throughput + ETA from these writes.
+    op_progress.start_progress(
+        db_path, op_id="tdb_sync", kind="tdb_sync",
+        stage="index", stage_label="Connecting to ThemerrDB",
+    )
+
+    # Combined cancel: worker's existing cancel_check (job cancellation
+    # via jobs.status='cancelled') OR the user clicking // CANCEL in
+    # the ops drawer (op_progress.status='cancelling'). Either flips
+    # the worker's cancellation path; we keep _JobCancelled as the
+    # bail signal so partial-stats persistence (line 1056+) still
+    # fires uniformly.
+    def _cancel_check():
+        return cancel_check() or op_progress.is_cancelled(db_path, "tdb_sync")
+
     try:
         with _make_client() as client:
             for media_type, media_path in (("movie", "movies"), ("tv", "tv_shows")):
+                stage_key = f"index_{media_type}"
+                op_progress.update_progress(
+                    db_path, "tdb_sync",
+                    stage=stage_key,
+                    stage_label=f"Fetching {media_type} index",
+                    stage_current=0, stage_total=0,
+                    activity=f"Fetching {media_type} index from ThemerrDB",
+                )
                 index = _fetch_index(client, base_url, media_path)
                 log.info("ThemerrDB %s: %d items in index", media_type, len(index))
                 if media_type == "movie":
@@ -752,13 +779,21 @@ def run_sync(db_path, base_url: str, *,
                     upstream_source = "imdb" if imdb_id else "themoviedb"
                     return (media_type, int(tmdb_id), record, upstream_source)
 
+                fetch_stage = f"fetch_{media_type}"
+                op_progress.update_progress(
+                    db_path, "tdb_sync",
+                    stage=fetch_stage,
+                    stage_label=f"Fetching {media_type} themes",
+                    stage_current=0, stage_total=len(index),
+                    processed_est=stats.movies_seen + stats.tv_seen,
+                )
                 with ThreadPoolExecutor(
                     max_workers=_FETCH_WORKERS,
                     thread_name_prefix=f"motif-sync-{media_type}",
                 ) as ex:
                     futures = []
                     for entry in index:
-                        if cancel_check():
+                        if _cancel_check():
                             ex.shutdown(cancel_futures=True)
                             raise _JobCancelled()
                         futures.append(ex.submit(_do_fetch, entry))
@@ -771,8 +806,10 @@ def run_sync(db_path, base_url: str, *,
                     completed = 0
                     last_progress = time.monotonic()
                     total = len(futures)
+                    media_processed_base = (
+                        0 if media_type == "movie" else stats.movies_seen)
                     for fut in as_completed(futures):
-                        if cancel_check():
+                        if _cancel_check():
                             ex.shutdown(cancel_futures=True)
                             raise _JobCancelled()
                         result = fut.result()
@@ -787,6 +824,16 @@ def run_sync(db_path, base_url: str, *,
                                 stats.errors, len(batch),
                             )
                             last_progress = time.monotonic()
+                            # v1.12.106: mirror the throttled log
+                            # cadence into op_progress so the
+                            # drawer's items/sec + ETA stay live.
+                            op_progress.update_progress(
+                                db_path, "tdb_sync",
+                                stage_current=completed,
+                                stage_total=total,
+                                processed_total=media_processed_base + completed,
+                                error_count=stats.errors,
+                            )
                         if result is None:
                             continue
                         if result[0] == "error":
@@ -825,6 +872,13 @@ def run_sync(db_path, base_url: str, *,
                     )
                     batch.clear()
 
+        op_progress.update_progress(
+            db_path, "tdb_sync",
+            stage="resolve",
+            stage_label="Resolving theme links",
+            stage_current=0, stage_total=0,
+            activity="Refreshing plex_items.theme_id",
+        )
         # v1.11.26: refresh plex_items.theme_id now that themes has
         # absorbed the new / updated rows from this sync. Keeps the
         # /api/library JOIN's PK lookup column in sync with the latest
@@ -854,6 +908,13 @@ def run_sync(db_path, base_url: str, *,
         # protects a fresh SET URL whose download hasn't started yet
         # (user_overrides exists, local_files doesn't, but there's
         # a queued download job).
+        op_progress.update_progress(
+            db_path, "tdb_sync",
+            stage="prune",
+            stage_label="Pruning stale state",
+            stage_current=0, stage_total=0,
+            activity="Sweeping orphan overrides",
+        )
         with get_conn(db_path) as conn:
             stale_overrides = conn.execute(
                 """
@@ -1051,6 +1112,14 @@ def run_sync(db_path, base_url: str, *,
                 "errors": stats.errors,
             },
         )
+        op_progress.update_progress(
+            db_path, "tdb_sync",
+            activity=(
+                f"Done — {stats.movies_seen + stats.tv_seen} items, "
+                f"{stats.new_count} new, {stats.updated_count} updated"
+            ),
+        )
+        op_progress.finish_progress(db_path, "tdb_sync", status="done")
         return stats
 
     except Exception as e:
@@ -1091,5 +1160,10 @@ def run_sync(db_path, base_url: str, *,
                 "new": stats.new_count, "updated": stats.updated_count,
                 "errors": stats.errors,
             },
+        )
+        op_progress.finish_progress(
+            db_path, "tdb_sync",
+            status="cancelled" if isinstance(e, _JobCancelled) else "failed",
+            error_message=err_text,
         )
         raise
