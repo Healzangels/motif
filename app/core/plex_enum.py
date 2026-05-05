@@ -656,13 +656,17 @@ def _verify_theme_claims(
 
     Targets only ambiguous rows: `has_theme=1` AND `local_theme_file=0`
     (no sidecar — so SRC would land in case 7) AND verification needs
-    to run. v1.12.113 broadens the "needs verification" predicate from
-    just `verified_ok IS NULL` (untested) to ALSO retry rows where a
-    prior HEAD returned 404 more than 7 days ago. Pre-fix a transient
-    Plex bug (HEAD 404 for a theme that comes back later) left the
-    row stuck at SRC=`'-'` forever — the URI didn't change so reset
-    logic never fired, and there was no other re-test path. Now stale
-    `verified_ok=0` rows self-heal on the next enum after the TTL.
+    to run. v1.12.113 broadened "needs verification" to include
+    `verified_ok=0` rows older than 7 days (handle transient Plex
+    404s). v1.12.115 adds the symmetric TTL on `verified_ok=1` —
+    after 30 days, re-verify successful claims too. Closes the
+    edge case where Plex's in-memory cache served a just-deleted
+    theme during PURGE inline-verify, motif marked verified_ok=1,
+    and Plex evicted its cache later but motif kept the stale 1
+    forever (until URI changed). 30-day cycle keeps steady-state
+    HEAD cost near zero — for a library with 100 P-classified rows,
+    ~3–4 verifications per day average.
+
     Sidecared rows (M/T/U/A) classify earlier in the SRC priority
     chain and don't need this signal.
 
@@ -680,6 +684,9 @@ def _verify_theme_claims(
         "    OR (plex_theme_verified_ok = 0 "
         "        AND (plex_theme_verified_at IS NULL "
         "             OR plex_theme_verified_at < datetime('now', '-7 days')))"
+        "    OR (plex_theme_verified_ok = 1 "
+        "        AND (plex_theme_verified_at IS NULL "
+        "             OR plex_theme_verified_at < datetime('now', '-30 days')))"
         "  ) "
     )
     params: tuple = ()

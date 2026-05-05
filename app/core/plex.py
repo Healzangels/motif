@@ -144,6 +144,19 @@ class PlexClient:
     def __exit__(self, *exc):
         self.close()
 
+    @staticmethod
+    def _rk_path(rating_key: str, suffix: str = "") -> str:
+        """v1.12.115: build /library/metadata/{rk}{suffix} with the
+        rating_key URL-encoded. Plex's rating_keys are integers in
+        practice, but defense-in-depth — if a stray '/' or '..' ever
+        landed in the value, raw f-string interpolation would
+        re-target the request to a different endpoint. quote(safe='')
+        also encodes ':' and other reserved chars, so a malformed
+        value 404s cleanly instead of silently mis-routing.
+        """
+        from urllib.parse import quote
+        return f"/library/metadata/{quote(str(rating_key), safe='')}{suffix}"
+
     # ---- Internal HTTP ----
 
     def _get(self, path: str, params: dict | None = None,
@@ -336,11 +349,11 @@ class PlexClient:
 
     def item_has_theme(self, rating_key: str) -> bool:
         # Probe /metadata/<rk>/theme
-        status = self._head_or_get_status(f"/library/metadata/{rating_key}/theme")
+        status = self._head_or_get_status(self._rk_path(rating_key, "/theme"))
         if status == 200:
             return True
         # Fallback: parse the metadata XML for a theme="..." attr
-        r = self._get(f"/library/metadata/{rating_key}")
+        r = self._get(self._rk_path(rating_key))
         if r is not None and r.status_code == 200:
             return ' theme="' in r.text
         return False
@@ -360,7 +373,7 @@ class PlexClient:
         the caller can leave verified_ok=NULL and try again next enum
         rather than penalizing the row for a network blip.
         """
-        status = self._head_or_get_status(f"/library/metadata/{rating_key}/theme")
+        status = self._head_or_get_status(self._rk_path(rating_key, "/theme"))
         if status == 200:
             return True
         if status == 404:
@@ -440,12 +453,12 @@ class PlexClient:
         we fall back to analyze (which on most Plex builds also has the side
         effect of picking up sidecar assets).
         """
-        code = self._put(f"/library/metadata/{rating_key}/refresh",
+        code = self._put(self._rk_path(rating_key, "/refresh"),
                          params={"force": "1"})
         if code in (200, 204):
             return True
         # Fallback: analyze (legacy behavior of merge-themes.sh)
-        code = self._put(f"/library/metadata/{rating_key}/analyze")
+        code = self._put(self._rk_path(rating_key, "/analyze"))
         return code in (200, 204)
 
     # Backward-compatible alias for code that still calls .analyze()
@@ -628,7 +641,7 @@ class PlexClient:
 
     def get_item_paths(self, rating_key: str) -> list[str]:
         """Return all file paths for an item (for finding the media folder)."""
-        r = self._get(f"/library/metadata/{rating_key}")
+        r = self._get(self._rk_path(rating_key))
         if r is None or r.status_code != 200:
             return []
         try:
