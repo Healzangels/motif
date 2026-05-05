@@ -662,11 +662,18 @@
                       : s.tab === 'tv'    ? 'TV'
                       :                     'MOVIES';
       const href = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}`;
+      // v1.12.120: failures + pending cells own click-through to a
+      // pre-filtered library view. Failures land on the red ✗ pill
+      // filter; pending lands on the blue ↑ pill filter. Cells set
+      // data-href + class="col-clickable" so the row's own
+      // click-through skips them (handler checks the closest <td>).
+      const failureHref = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}&tdb_pills=dead`;
+      const pendingHref = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}&tdb_pills=update`;
       const failureCell = s.failures > 0
-        ? `<td class="col-num accent-red">${fmt.num(s.failures)}</td>`
+        ? `<td class="col-num accent-red col-clickable" data-href="${htmlEscape(failureHref)}" title="Click to filter library to broken upstream URLs">${fmt.num(s.failures)}</td>`
         : `<td class="col-num muted">0</td>`;
       const pendingCell = s.pending_updates > 0
-        ? `<td class="col-num accent">${fmt.num(s.pending_updates)}</td>`
+        ? `<td class="col-num accent col-clickable" data-href="${htmlEscape(pendingHref)}" title="Click to filter library to pending TDB updates">${fmt.num(s.pending_updates)}</td>`
         : `<td class="col-num muted">0</td>`;
       const unthemedCell = s.unthemed > 0
         ? `<td class="col-num">${fmt.num(s.unthemed)}</td>`
@@ -690,9 +697,19 @@
     }).join('');
     // Bind click-through. Idempotent: removing-and-readding a
     // listener on each render avoids leaks across loadDashboard
-    // calls.
+    // calls. v1.12.120: a click that originated on a cell with
+    // its own data-href (failures / pending count) takes
+    // precedence over the row's default tab landing — so the
+    // user lands on the filtered view they asked for instead of
+    // the raw library tab.
     body.querySelectorAll('tr.section-coverage-row').forEach((tr) => {
-      tr.addEventListener('click', () => {
+      tr.addEventListener('click', (ev) => {
+        const cell = ev.target.closest('td.col-clickable');
+        if (cell && cell.dataset.href) {
+          ev.stopPropagation();
+          window.location.href = cell.dataset.href;
+          return;
+        }
         const href = tr.getAttribute('data-href');
         if (href) window.location.href = href;
       });
@@ -4241,6 +4258,25 @@
     // KEEP ALL CURRENT actions are reachable without forcing a
     // SELECT ALL FILTERED first.
     const onUpdateFilter = libraryState.tdbPills.has('update');
+    // v1.12.120: "tdb_pills=update WITHOUT other filters" gate.
+    // ACCEPT ALL UPDATES is global by design (server-side it walks
+    // every eligible per-section pending update). If the user has
+    // narrowed the view with status / src / dl / pl / link /
+    // edition / search filters, the visible page is a subset and
+    // // ACCEPT ALL would silently fan out beyond it. So the
+    // bulk-no-selection path is gated to "update pill is the
+    // ONLY active filter".
+    const noOtherFilters = (
+      libraryState.status === 'all'
+      && (!libraryState.tdb || libraryState.tdb === 'any')
+      && (libraryState.srcFilter?.size || 0) === 0
+      && (libraryState.dlPills?.size  || 0) === 0
+      && (libraryState.plPills?.size  || 0) === 0
+      && (libraryState.linkPills?.size|| 0) === 0
+      && (libraryState.edPills?.size  || 0) === 0
+      && libraryState.tdbPills.size === 1   // exactly {'update'}
+      && !(libraryState.q && libraryState.q.trim())
+    );
     // v1.12.101: count rows on the current page that are actually
     // actionable as a pending update (pending_update flag set, src
     // is not '-' since we suppress update treatment on plex-orphans
@@ -4253,7 +4289,22 @@
     const visiblePendingUpdates = (libraryState.items || []).filter(
       (it) => it.pending_update && computeSrcLetter(it) !== '-',
     ).length;
-    const showBarForUpdates = onUpdateFilter && visiblePendingUpdates > 0;
+    // v1.12.120: also expose ACCEPT/KEEP ALL when items are
+    // selected and at least one carries a pending_update — the
+    // click handler scopes the action to just the eligible
+    // selection, ignoring the rest. Pre-fix the buttons were
+    // hidden whenever the user had any other filter active +
+    // selection, so the only way to bulk-accept a hand-picked
+    // set was to first strip filters (lost intent).
+    const selectedEligibleUpdates = (libraryState.items || []).filter(
+      (it) => libraryState.selected.has(libKey(it))
+              && it.pending_update
+              && computeSrcLetter(it) !== '-',
+    ).length;
+    const showBarForUpdates = (
+      (onUpdateFilter && noOtherFilters && visiblePendingUpdates > 0)
+      || selectedEligibleUpdates > 0
+    );
     bar.style.display = (n > 0 || showBarForUpdates) ? '' : 'none';
     // When nothing is selected but the bar is showing because of
     // the update filter, hide the "N selected" prefix entirely and
@@ -5184,7 +5235,61 @@
     // server-side endpoints that iterate every pending_updates row
     // with decision='pending', so the action is one HTTP round-trip
     // regardless of how many pending updates exist.
+    // v1.12.120: accept/decline ALL UPDATES is two-mode now.
+    // (a) No selection — call /api/updates/accept-all (server walks
+    //     every eligible per-section pending update). The button
+    //     only renders in this mode when tdb_pills=update is the
+    //     ONLY active filter (see updateLibrarySelectionUi); using
+    //     it on a narrowed view would silently fan out beyond what
+    //     the user is looking at.
+    // (b) With selection — iterate the selected rows, call per-row
+    //     /api/updates/{type}/{id}/accept (?section_id=...) on the
+    //     ones with a live pending_update, skip the rest. User's
+    //     bug report: "if someone tries a bulk action against an
+    //     item which doesn't allow that don't attempt the action
+    //     against that row" — the filter is the skip rule.
+    function _selectedActionableForUpdates() {
+      return (libraryState.items || []).filter(
+        (it) => libraryState.selected.has(libKey(it))
+                && it.pending_update
+                && computeSrcLetter(it) !== '-',
+      );
+    }
+
     document.getElementById('library-accept-all-updates-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const orig = btn.textContent;
+      const selection = _selectedActionableForUpdates();
+      if (selection.length > 0) {
+        const skipped = libraryState.selected.size - selection.length;
+        const skipNote = skipped > 0
+          ? `\n\n${skipped} selected row${skipped !== 1 ? 's' : ''} without a pending update will be skipped.`
+          : '';
+        const ok = confirm(
+          `Accept ${selection.length} pending update${selection.length !== 1 ? 's' : ''} from selection?`
+          + skipNote
+          + `\n\nFor URL-match rows this is instant; the rest get a download queued and the existing theme replaced. Per-row REVERT remains available.`
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        let ok_n = 0, fail_n = 0;
+        for (let i = 0; i < selection.length; i++) {
+          const it = selection[i];
+          btn.textContent = `// ACCEPTING ${i + 1}/${selection.length}`;
+          try {
+            const params = it.section_id ? `?section_id=${encodeURIComponent(it.section_id)}` : '';
+            await api('POST', `/api/updates/${it.theme_media_type}/${it.theme_tmdb}/accept${params}`);
+            ok_n++;
+          } catch (_) { fail_n++; }
+        }
+        btn.textContent = `// ${ok_n} ACCEPTED${fail_n ? ` · ${fail_n} FAILED` : ''}${skipped ? ` · ${skipped} SKIPPED` : ''}`;
+        libraryState.selected.clear();
+        libraryRapidPoll();
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+        return;
+      }
+      // No selection — global accept-all path.
       let pending = 0;
       try {
         const res = await api('GET', '/api/updates/count');
@@ -5203,9 +5308,7 @@
           + `cannot be undone in bulk; per-row REVERT remains available.`
       );
       if (!ok) return;
-      const btn = e.currentTarget;
       btn.disabled = true;
-      const orig = btn.textContent;
       btn.textContent = `// ACCEPTING ${pending}…`;
       try {
         const res = await api('POST', '/api/updates/accept-all');
@@ -5225,6 +5328,39 @@
     });
 
     document.getElementById('library-decline-all-updates-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const orig = btn.textContent;
+      const selection = _selectedActionableForUpdates();
+      if (selection.length > 0) {
+        const skipped = libraryState.selected.size - selection.length;
+        const skipNote = skipped > 0
+          ? `\n\n${skipped} selected row${skipped !== 1 ? 's' : ''} without a pending update will be skipped.`
+          : '';
+        const ok = confirm(
+          `Dismiss ${selection.length} pending update${selection.length !== 1 ? 's' : ''} from selection?`
+          + skipNote
+          + `\n\nThe blue ↑ pill stays on each row for filter/sort, but the topbar UPD count drops accordingly.`
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        let ok_n = 0, fail_n = 0;
+        for (let i = 0; i < selection.length; i++) {
+          const it = selection[i];
+          btn.textContent = `// DISMISSING ${i + 1}/${selection.length}`;
+          try {
+            const params = it.section_id ? `?section_id=${encodeURIComponent(it.section_id)}` : '';
+            await api('POST', `/api/updates/${it.theme_media_type}/${it.theme_tmdb}/decline${params}`);
+            ok_n++;
+          } catch (_) { fail_n++; }
+        }
+        btn.textContent = `// ${ok_n} DISMISSED${fail_n ? ` · ${fail_n} FAILED` : ''}${skipped ? ` · ${skipped} SKIPPED` : ''}`;
+        libraryState.selected.clear();
+        libraryRapidPoll();
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+        return;
+      }
+      // No selection — global decline-all path.
       let pending = 0;
       try {
         const res = await api('GET', '/api/updates/count');
@@ -5241,9 +5377,7 @@
           + `updates again.`
       );
       if (!ok) return;
-      const btn = e.currentTarget;
       btn.disabled = true;
-      const orig = btn.textContent;
       btn.textContent = `// DISMISSING ${pending}…`;
       try {
         const res = await api('POST', '/api/updates/decline-all');

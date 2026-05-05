@@ -2609,13 +2609,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         Themed = any of: motif placement exists, Plex sidecar (file
         in Plex folder), or Plex agent reports has_theme. Unthemed
-        is the inverse on counted plex_items rows. Failures and
-        pending_updates count titles whose theme record (themes
-        row) has the corresponding flag — pending_updates is
-        keyed on (media_type, tmdb_id) without section_id, so a
-        single TDB-URL change for a multi-section title increments
-        each owning section's count (each section will need its
-        own ACCEPT UPDATE).
+        is the inverse on counted plex_items rows. Failures count
+        titles whose theme record has an unacked failure_kind set.
+
+        v1.12.120: pending_updates is now gated by the same
+        motif-presence + no-op + per-section decision filter as
+        /api/updates/count, the row-level pending_update flag, and
+        the tdb_pills=update filter. Pre-fix the count was a raw
+        EXISTS check on pending_updates without section_id scoping,
+        which over-counted (cross-section bleed from legacy '' rows
+        + no-op urls_match rows for T sources where current = TDB).
+        Now the dashboard PER-SECTION COVERAGE column matches what
+        the user sees on the corresponding library tab.
 
         Excluded sections (ps.included = 0) are filtered out so
         the dashboard shows what motif actually manages.
@@ -2639,16 +2644,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         ELSE 0
                       END), 0) AS failures,
                       COALESCE(SUM(CASE
-                        WHEN EXISTS (
-                          SELECT 1 FROM pending_updates pu
-                          WHERE pu.media_type = (
-                            CASE pi.media_type
-                              WHEN 'show' THEN 'tv'
-                              ELSE pi.media_type
-                            END)
-                            AND pu.tmdb_id = pi.guid_tmdb
-                            AND pu.decision = 'pending'
-                        ) THEN 1 ELSE 0
+                        WHEN COALESCE(
+                              (SELECT pu.decision FROM pending_updates pu
+                                WHERE pu.media_type = t.media_type
+                                  AND pu.tmdb_id = t.tmdb_id
+                                  AND pu.section_id = pi.section_id),
+                              (SELECT pu.decision FROM pending_updates pu
+                                WHERE pu.media_type = t.media_type
+                                  AND pu.tmdb_id = t.tmdb_id
+                                  AND pu.section_id = '')
+                            ) = 'pending'
+                         AND (
+                            EXISTS (SELECT 1 FROM local_files lf
+                                     WHERE lf.media_type = t.media_type
+                                       AND lf.tmdb_id = t.tmdb_id
+                                       AND lf.section_id = pi.section_id)
+                            OR EXISTS (SELECT 1 FROM user_overrides uo
+                                        WHERE uo.media_type = t.media_type
+                                          AND uo.tmdb_id = t.tmdb_id
+                                          AND uo.section_id = pi.section_id)
+                            OR EXISTS (SELECT 1 FROM placements p2
+                                        WHERE p2.media_type = t.media_type
+                                          AND p2.tmdb_id = t.tmdb_id
+                                          AND p2.section_id = pi.section_id)
+                            OR pi.local_theme_file = 1
+                         )
+                         AND (
+                            COALESCE(
+                              (SELECT pu.kind FROM pending_updates pu
+                                WHERE pu.media_type = t.media_type
+                                  AND pu.tmdb_id = t.tmdb_id
+                                  AND pu.section_id = pi.section_id),
+                              (SELECT pu.kind FROM pending_updates pu
+                                WHERE pu.media_type = t.media_type
+                                  AND pu.tmdb_id = t.tmdb_id
+                                  AND pu.section_id = '')
+                            ) = 'urls_match'
+                            OR COALESCE(
+                              (SELECT pu.new_youtube_url FROM pending_updates pu
+                                WHERE pu.media_type = t.media_type
+                                  AND pu.tmdb_id = t.tmdb_id
+                                  AND pu.section_id = pi.section_id),
+                              (SELECT pu.new_youtube_url FROM pending_updates pu
+                                WHERE pu.media_type = t.media_type
+                                  AND pu.tmdb_id = t.tmdb_id
+                                  AND pu.section_id = '')
+                            ) != COALESCE(
+                              (SELECT youtube_url FROM user_overrides uo
+                                WHERE uo.media_type = t.media_type
+                                  AND uo.tmdb_id = t.tmdb_id
+                                  AND uo.section_id = pi.section_id),
+                              (SELECT youtube_url FROM user_overrides uo
+                                WHERE uo.media_type = t.media_type
+                                  AND uo.tmdb_id = t.tmdb_id
+                                  AND uo.section_id = ''),
+                              t.youtube_url
+                            )
+                         )
+                        THEN 1 ELSE 0
                       END), 0) AS pending_updates
                     FROM plex_sections ps
                     LEFT JOIN plex_items pi
@@ -3749,10 +3802,79 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/updates/count")
     async def api_updates_count(db: Path = Depends(get_db_path)):
+        """v1.12.120: counts only ACTIONABLE pending updates — must
+        match the visible blue ↑ pill set. Pre-fix this returned the
+        raw COUNT of pending_updates rows with decision='pending',
+        which included no-op self-updates (T rows where current=TDB)
+        and cross-section bleed (legacy '' rows with no per-section
+        motif tracking). Now scoped to (section × title) instances
+        that pass the v1.12.119 motif-presence + no-op gate, so
+        the count, the row pill, the topbar UPD badge, and the
+        tdb_pills=update filter all agree."""
         with get_conn(db) as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS n FROM pending_updates WHERE decision = 'pending'"
-            ).fetchone()
+            row = conn.execute("""
+                SELECT COUNT(*) AS n FROM plex_items pi2
+                INNER JOIN plex_sections ps2
+                  ON ps2.section_id = pi2.section_id AND ps2.included = 1
+                INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                WHERE COALESCE(
+                    (SELECT pu.decision FROM pending_updates pu
+                      WHERE pu.media_type = t2.media_type
+                        AND pu.tmdb_id = t2.tmdb_id
+                        AND pu.section_id = pi2.section_id),
+                    (SELECT pu.decision FROM pending_updates pu
+                      WHERE pu.media_type = t2.media_type
+                        AND pu.tmdb_id = t2.tmdb_id
+                        AND pu.section_id = '')
+                ) = 'pending'
+                AND (
+                    EXISTS (SELECT 1 FROM local_files lf2
+                             WHERE lf2.media_type = t2.media_type
+                               AND lf2.tmdb_id = t2.tmdb_id
+                               AND lf2.section_id = pi2.section_id)
+                    OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                WHERE uo2.media_type = t2.media_type
+                                  AND uo2.tmdb_id = t2.tmdb_id
+                                  AND uo2.section_id = pi2.section_id)
+                    OR EXISTS (SELECT 1 FROM placements p2
+                                WHERE p2.media_type = t2.media_type
+                                  AND p2.tmdb_id = t2.tmdb_id
+                                  AND p2.section_id = pi2.section_id)
+                    OR pi2.local_theme_file = 1
+                )
+                AND (
+                    COALESCE(
+                      (SELECT pu.kind FROM pending_updates pu
+                        WHERE pu.media_type = t2.media_type
+                          AND pu.tmdb_id = t2.tmdb_id
+                          AND pu.section_id = pi2.section_id),
+                      (SELECT pu.kind FROM pending_updates pu
+                        WHERE pu.media_type = t2.media_type
+                          AND pu.tmdb_id = t2.tmdb_id
+                          AND pu.section_id = '')
+                    ) = 'urls_match'
+                    OR COALESCE(
+                      (SELECT pu.new_youtube_url FROM pending_updates pu
+                        WHERE pu.media_type = t2.media_type
+                          AND pu.tmdb_id = t2.tmdb_id
+                          AND pu.section_id = pi2.section_id),
+                      (SELECT pu.new_youtube_url FROM pending_updates pu
+                        WHERE pu.media_type = t2.media_type
+                          AND pu.tmdb_id = t2.tmdb_id
+                          AND pu.section_id = '')
+                    ) != COALESCE(
+                      (SELECT youtube_url FROM user_overrides uo
+                        WHERE uo.media_type = t2.media_type
+                          AND uo.tmdb_id = t2.tmdb_id
+                          AND uo.section_id = pi2.section_id),
+                      (SELECT youtube_url FROM user_overrides uo
+                        WHERE uo.media_type = t2.media_type
+                          AND uo.tmdb_id = t2.tmdb_id
+                          AND uo.section_id = ''),
+                      t2.youtube_url
+                    )
+                )
+            """).fetchone()
         return {"pending": row["n"]}
 
     @app.post("/api/updates/{media_type}/{tmdb_id}/accept")
@@ -4115,21 +4237,108 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         eager_flipped = 0
         enqueued = 0
         with get_conn(db) as conn:
-            rows = conn.execute(
-                """SELECT media_type, tmdb_id, new_youtube_url, kind
-                     FROM pending_updates
-                    WHERE decision = 'pending'"""
-            ).fetchall()
+            # v1.12.120: iterate (section × title) tuples that pass
+            # the same gate as the row pill / topbar count. Pre-fix
+            # the query was `WHERE decision='pending'` raw, which
+            # accepted: (a) no-op self-updates on T rows, (b) rows
+            # with no motif tracking presence in any section, (c) the
+            # legacy '' fallback row even when sections had their
+            # own per-section decisions. The result was bulk accept
+            # firing downloads for rows the user couldn't see as
+            # pending.
+            tuples = conn.execute("""
+                SELECT pi2.section_id, t2.media_type, t2.tmdb_id,
+                       COALESCE(
+                         (SELECT pu.new_youtube_url FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = pi2.section_id),
+                         (SELECT pu.new_youtube_url FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = '')
+                       ) AS new_url,
+                       COALESCE(
+                         (SELECT pu.kind FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = pi2.section_id),
+                         (SELECT pu.kind FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = '')
+                       ) AS kind
+                  FROM plex_items pi2
+            INNER JOIN plex_sections ps2
+                    ON ps2.section_id = pi2.section_id AND ps2.included = 1
+            INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                 WHERE COALESCE(
+                         (SELECT pu.decision FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = pi2.section_id),
+                         (SELECT pu.decision FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = '')
+                       ) = 'pending'
+                   AND (
+                       EXISTS (SELECT 1 FROM local_files lf2
+                                WHERE lf2.media_type = t2.media_type
+                                  AND lf2.tmdb_id = t2.tmdb_id
+                                  AND lf2.section_id = pi2.section_id)
+                       OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                   WHERE uo2.media_type = t2.media_type
+                                     AND uo2.tmdb_id = t2.tmdb_id
+                                     AND uo2.section_id = pi2.section_id)
+                       OR EXISTS (SELECT 1 FROM placements p2
+                                   WHERE p2.media_type = t2.media_type
+                                     AND p2.tmdb_id = t2.tmdb_id
+                                     AND p2.section_id = pi2.section_id)
+                       OR pi2.local_theme_file = 1
+                   )
+            """).fetchall()
             from ..core.sync import _enqueue_download
-            for row in rows:
-                media_type = row["media_type"]
-                tmdb_id = row["tmdb_id"]
-                new_tdb_url = row["new_youtube_url"]
+            for tup in tuples:
+                section_id = tup["section_id"]
+                media_type = tup["media_type"]
+                tmdb_id = tup["tmdb_id"]
+                new_tdb_url = tup["new_url"]
+                kind = tup["kind"]
+                applied = conn.execute(
+                    "SELECT COALESCE("
+                    "  (SELECT youtube_url FROM user_overrides "
+                    "    WHERE media_type = ? AND tmdb_id = ? "
+                    "      AND section_id = ?),"
+                    "  (SELECT youtube_url FROM user_overrides "
+                    "    WHERE media_type = ? AND tmdb_id = ? "
+                    "      AND section_id = ''),"
+                    "  (SELECT youtube_url FROM themes "
+                    "    WHERE media_type = ? AND tmdb_id = ?)"
+                    ") AS applied",
+                    (media_type, tmdb_id, section_id,
+                     media_type, tmdb_id,
+                     media_type, tmdb_id),
+                ).fetchone()
+                applied_url = applied["applied"] if applied else None
+                # No-op gate: skip rows where new_url == applied URL
+                # unless kind=urls_match (meaningful classification flip).
+                if (kind != "urls_match"
+                        and applied_url
+                        and new_tdb_url == applied_url):
+                    continue
+                # Per-section override fetch (v1.12.108+ semantics).
                 override = conn.execute(
                     "SELECT youtube_url FROM user_overrides "
-                    "WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
                 ).fetchone()
+                if override is None:
+                    override = conn.execute(
+                        "SELECT youtube_url FROM user_overrides "
+                        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                        (media_type, tmdb_id),
+                    ).fetchone()
                 url_match = bool(
                     override
                     and new_tdb_url
@@ -4137,12 +4346,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     and override["youtube_url"].strip() == new_tdb_url.strip()
                 )
                 if not url_match:
-                    _capture_previous_url(conn, media_type, tmdb_id)
+                    _capture_previous_url(
+                        conn, media_type, tmdb_id, section_id=section_id,
+                    )
                 if override:
                     conn.execute(
                         "DELETE FROM user_overrides "
-                        "WHERE media_type = ? AND tmdb_id = ?",
-                        (media_type, tmdb_id),
+                        "WHERE media_type = ? AND tmdb_id = ? "
+                        "  AND section_id = ?",
+                        (media_type, tmdb_id, section_id),
                     )
                     if url_match:
                         conn.execute(
@@ -4150,23 +4362,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                   SET provenance = 'auto',
                                       source_kind = 'themerrdb'
                                 WHERE media_type = ?
-                                  AND tmdb_id = ?""",
-                            (media_type, tmdb_id),
+                                  AND tmdb_id = ?
+                                  AND section_id = ?""",
+                            (media_type, tmdb_id, section_id),
                         )
                         eager_flipped += 1
-                conn.execute(
-                    """UPDATE pending_updates SET decision = 'accepted',
-                           decision_at = ?, decision_by = ?
-                       WHERE media_type = ? AND tmdb_id = ?""",
-                    (now_iso(), request.state.principal.username,
-                     media_type, tmdb_id),
+                _set_pending_update_decision(
+                    conn, media_type=media_type, tmdb_id=tmdb_id,
+                    section_id=section_id, decision="accepted",
+                    decided_by=request.state.principal.username,
                 )
                 _enqueue_download(
                     conn, media_type=media_type, tmdb_id=tmdb_id,
                     reason="bulk_update_accepted",
                     auto_place=True,
                     force_place=True,
-                    only_section_id=None,
+                    only_section_id=section_id,
                 )
                 enqueued += 1
                 accepted += 1
@@ -4191,20 +4402,88 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_decline_all_updates(
         request: Request, db: Path = Depends(get_db_path),
     ):
-        """v1.12.55: bulk-decline every pending update. Flips
-        decision='declined' for every row currently at 'pending'.
-        The blue ↑ pill stays for filter/sort but the topbar UPD
-        count drops to 0. Sticky — won't re-prompt unless
-        ThemerrDB updates again."""
+        """v1.12.55: bulk-decline every pending update.
+        v1.12.120: scoped to (section × title) tuples that pass the
+        same v1.12.108/119 gate as the row pill — declines only what
+        the user can actually see as actionable, leaves no-op /
+        cross-section-bleed rows alone."""
         _require_admin(request)
+        declined = 0
         with get_conn(db) as conn:
-            cur = conn.execute(
-                """UPDATE pending_updates SET decision = 'declined',
-                       decision_at = ?, decision_by = ?
-                   WHERE decision = 'pending'""",
-                (now_iso(), request.state.principal.username),
-            )
-            declined = cur.rowcount
+            tuples = conn.execute("""
+                SELECT pi2.section_id, t2.media_type, t2.tmdb_id
+                  FROM plex_items pi2
+            INNER JOIN plex_sections ps2
+                    ON ps2.section_id = pi2.section_id AND ps2.included = 1
+            INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                 WHERE COALESCE(
+                         (SELECT pu.decision FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = pi2.section_id),
+                         (SELECT pu.decision FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = '')
+                       ) = 'pending'
+                   AND (
+                       EXISTS (SELECT 1 FROM local_files lf2
+                                WHERE lf2.media_type = t2.media_type
+                                  AND lf2.tmdb_id = t2.tmdb_id
+                                  AND lf2.section_id = pi2.section_id)
+                       OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                   WHERE uo2.media_type = t2.media_type
+                                     AND uo2.tmdb_id = t2.tmdb_id
+                                     AND uo2.section_id = pi2.section_id)
+                       OR EXISTS (SELECT 1 FROM placements p2
+                                   WHERE p2.media_type = t2.media_type
+                                     AND p2.tmdb_id = t2.tmdb_id
+                                     AND p2.section_id = pi2.section_id)
+                       OR pi2.local_theme_file = 1
+                   )
+                   AND (
+                       COALESCE(
+                         (SELECT pu.kind FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = pi2.section_id),
+                         (SELECT pu.kind FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = '')
+                       ) = 'urls_match'
+                       OR COALESCE(
+                         (SELECT pu.new_youtube_url FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = pi2.section_id),
+                         (SELECT pu.new_youtube_url FROM pending_updates pu
+                           WHERE pu.media_type = t2.media_type
+                             AND pu.tmdb_id = t2.tmdb_id
+                             AND pu.section_id = '')
+                       ) != COALESCE(
+                         (SELECT youtube_url FROM user_overrides uo
+                           WHERE uo.media_type = t2.media_type
+                             AND uo.tmdb_id = t2.tmdb_id
+                             AND uo.section_id = pi2.section_id),
+                         (SELECT youtube_url FROM user_overrides uo
+                           WHERE uo.media_type = t2.media_type
+                             AND uo.tmdb_id = t2.tmdb_id
+                             AND uo.section_id = ''),
+                         t2.youtube_url
+                       )
+                   )
+            """).fetchall()
+            for tup in tuples:
+                _set_pending_update_decision(
+                    conn,
+                    media_type=tup["media_type"],
+                    tmdb_id=tup["tmdb_id"],
+                    section_id=tup["section_id"],
+                    decision="declined",
+                    decided_by=request.state.principal.username,
+                )
+                declined += 1
         log_event(
             db, level="INFO", component="api",
             message=(

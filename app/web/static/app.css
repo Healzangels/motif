@@ -2152,6 +2152,20 @@ pre code, .codeblock {
 .section-coverage-row:hover td:first-child {
   color: var(--cyan);
 }
+/* v1.12.120: cells with their own click target (FAILURES /
+   PENDING counts that drill into a pre-filtered library view).
+   Underline-on-hover signals the override; the row's default
+   landing still works elsewhere. */
+.section-coverage-row td.col-clickable {
+  cursor: pointer;
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.12s, background 0.12s;
+}
+.section-coverage-row td.col-clickable:hover {
+  text-decoration-color: currentColor;
+  background: rgba(109, 211, 255, 0.10);
+}
 
 .form-env-badge {
   font-size: var(--t-tiny);
