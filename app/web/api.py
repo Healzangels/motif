@@ -581,19 +581,22 @@ _SRC_LETTER_SQL = (
     ") THEN 'U' "
     "WHEN p.media_folder IS NOT NULL AND p.provenance = 'manual' THEN 'A' "
     "WHEN p.media_folder IS NULL AND pi.local_theme_file = 1 THEN 'M' "
-    # v1.12.111: 'P' (Plex's own theme) only applies to TV — Plex
-    # provides cloud themes via the Plex Pass theme service for TV
-    # shows but NOT for movies. For movies, Plex's `theme` XML
-    # attribute is set ONLY when its local-media-assets agent reads
-    # a sidecar file off disk. So has_theme=1 on a movie means "Plex
-    # saw a sidecar"; if local_theme_file=0 too, Plex's metadata
-    # cache is just stale (file's gone, Plex hasn't refreshed). The
-    # row should fall through to '-' rather than masquerading as P.
-    # Reverts the v1.12.110 motif_unplaced_at tombstone — that
-    # treated the symptom across both media types instead of the
-    # root cause that movies can't legitimately classify as P.
+    # v1.12.112: 'P' = Plex actually serves a theme for this row.
+    # has_theme=1 alone is just Plex's CLAIM (the `theme="..."` XML
+    # attribute, which can come from themerr-plex embeds, Plex Pass
+    # cloud themes, sidecars Plex saw at some point, OR a stale
+    # metadata cache pointing at a file that's been deleted). The
+    # plex_theme_verified_ok column is the source-of-truth: 1=HEAD
+    # against /library/metadata/{rk}/theme returned 200, 0=404,
+    # NULL=untested. We trust the claim optimistically when untested
+    # (COALESCE to 1) so a fresh install / network blip doesn't drop
+    # P's; only definitively-stale (verified_ok=0) falls through.
+    # plex_enum runs the verification opportunistically for ambiguous
+    # rows (has_theme=1 + local_theme_file=0) and resets it when
+    # Plex's URI changes. Reverts v1.12.111's media_type='tv' gate —
+    # that wrongly hid legitimate themerr-plex embeds on movies.
     "WHEN p.media_folder IS NULL AND pi.has_theme = 1 "
-        "AND t.media_type = 'tv' THEN 'P' "
+        "AND COALESCE(pi.plex_theme_verified_ok, 1) = 1 THEN 'P' "
     "ELSE '-' END"
 )
 
@@ -1010,6 +1013,10 @@ def _library_main_query(
                pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
                pi.folder_path, pi.has_theme AS plex_has_theme,
                pi.local_theme_file AS plex_local_theme,
+               -- v1.12.112: HEAD-verified Plex theme claim. JS
+               -- computeSrcLetter mirrors the SRC SQL's gate so the
+               -- row badge agrees with the server-side classification.
+               pi.plex_theme_verified_ok,
                ps.title AS section_title,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
@@ -1623,6 +1630,7 @@ def _library_not_in_plex(
             NULL AS folder_path,
             NULL AS plex_has_theme,
             NULL AS plex_local_theme,
+            NULL AS plex_theme_verified_ok,
             NULL AS section_title,
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,

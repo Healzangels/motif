@@ -97,6 +97,13 @@ class PlexLibraryItem:
     guid_tvdb: int | None
     folder_path: str  # absolute path of the item's media folder
     has_theme: bool  # what Plex itself says
+    # v1.12.112: Plex's theme URL verbatim — empty string when no theme
+    # is claimed. Captured so plex_enum can detect URI changes between
+    # enums (the trailing version suffix bumps when the underlying
+    # theme content changes) and so the row can be HEAD-probed via
+    # /library/metadata/{rating_key}/theme to verify Plex actually
+    # serves content. The HEAD primitive lives in PlexClient.item_has_theme.
+    plex_theme_uri: str = ""
 
 
 @dataclass
@@ -338,6 +345,28 @@ class PlexClient:
             return ' theme="' in r.text
         return False
 
+    def verify_theme_claim(self, rating_key: str) -> bool | None:
+        """v1.12.112: source-of-truth check for `theme="..."` claims.
+
+        Plex's /library/metadata/{rk}/theme endpoint serves the actual
+        theme bytes. A HEAD against it tells us whether Plex really
+        delivers content for the theme it advertises in metadata —
+        distinguishing legitimate themes (themerr-plex embeds, Plex
+        Pass cloud themes, sidecars) from stale metadata cache pointing
+        at a file motif (or someone else) deleted.
+
+        Returns True for 200 (verified live), False for 404 (verified
+        stale), None for transient errors (network, timeout, 5xx) so
+        the caller can leave verified_ok=NULL and try again next enum
+        rather than penalizing the row for a network blip.
+        """
+        status = self._head_or_get_status(f"/library/metadata/{rating_key}/theme")
+        if status == 200:
+            return True
+        if status == 404:
+            return False
+        return None
+
     # ---- Resolve ratingKey ----
 
     def resolve_rating_key(
@@ -539,6 +568,7 @@ class PlexClient:
                     guid_tvdb=_safe_int(guids.get("tvdb")),
                     folder_path=folder,
                     has_theme=el.get("theme") is not None,
+                    plex_theme_uri=el.get("theme") or "",
                 ))
             if container_size < page_size:
                 break  # last page

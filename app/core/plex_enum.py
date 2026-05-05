@@ -123,13 +123,28 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 stats["updated"] += upd
                 log.info("plex_enum: section %s — %d items (%d new, %d updated)",
                          s["title"], len(items), ins, upd)
+                # v1.12.112: verify Plex's theme claims for this
+                # section's rows. Targets exactly the ambiguous case
+                # (has_theme=1 with no fresh verification) — by far
+                # the minority of rows in any library. The HEAD probe
+                # distinguishes legitimate Plex-served themes
+                # (themerr-plex embeds, Plex Pass cloud, sidecars)
+                # from stale metadata cache. Steady-state cost is
+                # near zero: once verified, the result is cached and
+                # only re-tested when Plex's URI changes.
+                verified_n = _verify_theme_claims(
+                    db_path, client, section_id=section_id,
+                    cancel_check=_cancel_check,
+                )
                 # Section done — fill the bar, bump cumulative.
                 op_progress.update_progress(
                     db_path, "plex_enum",
                     stage_current=len(items),
                     stage_total=len(items),
                     processed_total=stats["items_seen"],
-                    activity=f"'{s['title']}': {ins} new, {upd} updated",
+                    activity=(f"'{s['title']}': {ins} new, {upd} updated"
+                              + (f", {verified_n} themes verified"
+                                 if verified_n else "")),
                 )
 
         op_progress.update_progress(
@@ -559,22 +574,50 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                 except Exception:
                     tn = (it.title or "").lower()
                 existing = conn.execute(
-                    "SELECT 1 FROM plex_items WHERE rating_key = ?",
+                    "SELECT plex_theme_uri FROM plex_items "
+                    "WHERE rating_key = ?",
                     (it.rating_key,),
                 ).fetchone()
                 if existing:
-                    conn.execute(
-                        """UPDATE plex_items SET
-                              section_id = ?, media_type = ?, title = ?, year = ?,
-                              guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
-                              folder_path = ?, has_theme = ?, local_theme_file = ?,
-                              title_norm = ?, last_seen_at = ?
-                           WHERE rating_key = ?""",
-                        (it.section_id, it.media_type, it.title, it.year,
-                         it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                         it.folder_path, 1 if it.has_theme else 0, sidecar,
-                         tn, now, it.rating_key),
-                    )
+                    # v1.12.112: detect theme-URI change. Plex's URL
+                    # has a trailing version suffix that bumps when
+                    # the underlying theme content changes (or when
+                    # the metadata refresh produces a new URL). If
+                    # the URI changed, prior verification is invalid
+                    # — reset verified_* to NULL so the post-upsert
+                    # verification pass re-tests the new claim.
+                    new_uri = it.plex_theme_uri or None
+                    old_uri = existing["plex_theme_uri"] or None
+                    if new_uri != old_uri:
+                        conn.execute(
+                            """UPDATE plex_items SET
+                                  section_id = ?, media_type = ?, title = ?, year = ?,
+                                  guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
+                                  folder_path = ?, has_theme = ?, local_theme_file = ?,
+                                  title_norm = ?, last_seen_at = ?,
+                                  plex_theme_uri = ?,
+                                  plex_theme_verified_at = NULL,
+                                  plex_theme_verified_ok = NULL
+                               WHERE rating_key = ?""",
+                            (it.section_id, it.media_type, it.title, it.year,
+                             it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
+                             it.folder_path, 1 if it.has_theme else 0, sidecar,
+                             tn, now, new_uri, it.rating_key),
+                        )
+                    else:
+                        # URI unchanged — keep prior verification.
+                        conn.execute(
+                            """UPDATE plex_items SET
+                                  section_id = ?, media_type = ?, title = ?, year = ?,
+                                  guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
+                                  folder_path = ?, has_theme = ?, local_theme_file = ?,
+                                  title_norm = ?, last_seen_at = ?
+                               WHERE rating_key = ?""",
+                            (it.section_id, it.media_type, it.title, it.year,
+                             it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
+                             it.folder_path, 1 if it.has_theme else 0, sidecar,
+                             tn, now, it.rating_key),
+                        )
                     updated += 1
                 else:
                     conn.execute(
@@ -582,12 +625,13 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                            (rating_key, section_id, media_type, title, year,
                             guid_imdb, guid_tmdb, guid_tvdb, folder_path,
                             has_theme, local_theme_file, title_norm,
+                            plex_theme_uri,
                             first_seen_at, last_seen_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (it.rating_key, it.section_id, it.media_type, it.title,
                          it.year, it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
                          it.folder_path, 1 if it.has_theme else 0, sidecar,
-                         tn, now, now),
+                         tn, it.plex_theme_uri or None, now, now),
                     )
                     inserted += 1
     # v1.11.26: stamp theme_id once per enum so /api/library's row
@@ -600,6 +644,60 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     # with the writer lock the whole time.
     resolve_theme_ids(db_path, section_id=section_id, cancel_check=cancel_check)
     return inserted, updated
+
+
+def _verify_theme_claims(
+    db_path: Path, client: PlexClient,
+    *, section_id: str | None = None,
+    cancel_check=lambda: False,
+) -> int:
+    """v1.12.112: HEAD-probe Plex's `theme="..."` claims so motif's
+    SRC=P reflects ground truth instead of Plex's metadata cache.
+
+    Targets only ambiguous rows: `has_theme=1` AND `local_theme_file=0`
+    (no sidecar — so SRC would land in case 7) AND `verified_ok IS NULL`
+    (untested or freshly invalidated by URI change). Sidecared rows
+    (M/T/U/A) classify earlier in the SRC priority chain and don't
+    need this signal.
+
+    Each probe writes either ok=1 (200), ok=0 (404), or leaves
+    ok=NULL on transient errors so a network blip doesn't penalize
+    the row. Returns the count of rows that received a definitive
+    verification (200 or 404) so the caller can surface progress.
+    """
+    sql = (
+        "SELECT rating_key FROM plex_items "
+        "WHERE has_theme = 1 "
+        "  AND local_theme_file = 0 "
+        "  AND plex_theme_verified_ok IS NULL "
+    )
+    params: tuple = ()
+    if section_id is not None:
+        sql += "  AND section_id = ? "
+        params = (section_id,)
+    with get_conn(db_path) as conn:
+        rows = conn.execute(sql, params).fetchall()
+    if not rows:
+        return 0
+    decided = 0
+    for row in rows:
+        if cancel_check():
+            from .worker import _JobCancelled
+            raise _JobCancelled()
+        rk = row["rating_key"]
+        result = client.verify_theme_claim(rk)
+        if result is None:
+            # Transient — leave verified_ok NULL so we retry next enum.
+            continue
+        with get_conn(db_path) as conn:
+            conn.execute(
+                "UPDATE plex_items SET plex_theme_verified_at = ?, "
+                "                      plex_theme_verified_ok = ? "
+                "WHERE rating_key = ?",
+                (now_iso(), 1 if result else 0, rk),
+            )
+        decided += 1
+    return decided
 
 
 def resolve_theme_ids(

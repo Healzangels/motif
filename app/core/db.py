@@ -365,14 +365,24 @@ CREATE TABLE IF NOT EXISTS plex_items (
     -- without re-running normalize_title() on every row. Populated by
     -- plex_enum.
     title_norm       TEXT,
-    -- v1.12.110 / DEPRECATED in v1.12.111: tombstone for "motif just
-    -- removed its theme from this row's section". v1.12.111 reverted
-    -- the SRC SQL read of this column — the underlying issue
-    -- (movies classifying as P) was a structural bug, not a stale
-    -- cache problem: Plex doesn't provide cloud themes for movies,
-    -- so SRC=P should be TV-only. Column kept for v34-installed DBs;
-    -- no reads, no writes. Future migration may drop it cleanly.
+    -- v1.12.110 / DEPRECATED in v1.12.111: tombstone column from a
+    -- discarded approach. No reads, no writes. Kept so v34-installed
+    -- DBs don't need a destructive ALTER TABLE DROP COLUMN.
     motif_unplaced_at TEXT,
+    -- v1.12.112: source-of-truth verification of Plex's theme claim.
+    -- Plex's API returns `theme="/library/metadata/{rk}/theme/{ver}"`
+    -- as a CLAIM that Plex serves a theme; but the underlying source
+    -- can be a sidecar (motif's or manual), a themerr-plex embed, a
+    -- Plex Pass cloud theme — or a stale metadata cache pointing at
+    -- a file that no longer exists. plex_theme_uri stores Plex's
+    -- claim verbatim; plex_theme_verified_ok records whether a HEAD
+    -- against that URL actually returns 200 (1) or 404 (0). Default
+    -- NULL = untested → SRC SQL trusts the claim optimistically.
+    -- Verification fires from plex_enum for has_theme=1 rows when
+    -- verified_ok IS NULL or the URI changed since last enum.
+    plex_theme_uri          TEXT,
+    plex_theme_verified_at  TEXT,
+    plex_theme_verified_ok  INTEGER,
     first_seen_at    TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
@@ -571,7 +581,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 34
+CURRENT_SCHEMA_VERSION = 35
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1302,6 +1312,30 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v34_to_v35(conn: sqlite3.Connection) -> None:
+    """v35 adds Plex theme-claim verification on plex_items. Plex's API
+    advertises theme URLs that may or may not actually serve content
+    — themerr-plex embeds, Plex Pass cloud themes, manual sidecars,
+    and stale metadata caches all surface the same way. Now plex_enum
+    captures the URI and runs a cheap HEAD against it to verify Plex
+    actually serves something, so SRC=P reflects the truth on disk
+    (Plex serving a real theme) rather than just Plex's claim.
+
+    Schema change is purely additive: three new nullable columns.
+    Existing rows have verified_ok=NULL which the SRC SQL treats as
+    "untested → trust the claim optimistically", so behavior is
+    identical to pre-v1.12.112 until the first plex_enum runs.
+    """
+    log.info("Migrating to schema v35 (plex_items theme verification)")
+    conn.executescript(
+        """
+        ALTER TABLE plex_items ADD COLUMN plex_theme_uri TEXT;
+        ALTER TABLE plex_items ADD COLUMN plex_theme_verified_at TEXT;
+        ALTER TABLE plex_items ADD COLUMN plex_theme_verified_ok INTEGER;
+        """
+    )
+
+
 def _migrate_v33_to_v34(conn: sqlite3.Connection) -> None:
     """v34 adds plex_items.motif_unplaced_at — a tombstone for "motif
     just removed its theme from this section". Pre-fix a PURGE/UNMANAGE
@@ -1938,6 +1972,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 33:
                     _migrate_v33_to_v34(conn)
                     current = 34
+                elif current == 34:
+                    _migrate_v34_to_v35(conn)
+                    current = 35
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

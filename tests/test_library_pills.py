@@ -53,22 +53,42 @@ def seeded_db():
     init_db(db_path)
 
     now = "2026-01-01T00:00:00Z"
-    # v1.12.111: P fixture moved to TV. The SRC=P case is structurally
-    # TV-only — Plex doesn't provide cloud themes for movies, so a
-    # movie row with has_theme=1 + no sidecar can't legitimately be P.
-    # Tests that touch P pass tab='tv' to _run.
+    # v1.12.112: P is verified-server-truth, not media-type-derived.
+    # The fixture set covers:
+    #   - 105 P-tv (verified): TV show with Plex serving its theme
+    #   - 107 P-movie (verified): movie with themerr-plex-style embed,
+    #         Plex serves the theme. Same SRC=P; different media type.
+    #   - 108 stale-movie ('-'): movie with has_theme=1 but Plex's
+    #         claim is 404 (verified_ok=0) — must classify as '-'
+    #         even though Plex's metadata still says theme=true.
+    # All other letters keep their movie fixtures.
+    # Main fixture: exactly one row per SRC class. P is intentionally
+    # a movie (themerr-plex embed pattern: has_theme=1, verified_ok=1)
+    # to enforce that P is NOT media-type-gated. A separate
+    # test_stale_plex_cache_movie_classifies_as_dash test below
+    # covers the (has_theme=1, verified_ok=0) → '-' path without
+    # disturbing this fixture's per-class invariant.
     fixtures = [
-        # (tmdb, label, mt, sec, upstream, local_files(sk, vid, prov), placements(folder, prov, kind))
+        # (tmdb, label, mt, sec, upstream, lf_data, p_data,
+        #  has_theme, verified_ok)
         (101, "T", "movie", "1", "imdb",
-            ("themerrdb", "abc12345678", "auto"), ("/m/T", "auto", "hardlink")),
+            ("themerrdb", "abc12345678", "auto"),
+            ("/m/T", "auto", "hardlink"),
+            0, None),
         (102, "U", "movie", "1", "imdb",
-            ("url", "def12345678", "manual"), ("/m/U", "manual", "hardlink")),
+            ("url", "def12345678", "manual"),
+            ("/m/U", "manual", "hardlink"),
+            0, None),
         (103, "A", "movie", "1", "plex_orphan",
             ("adopt", "sha-prefix-not-yt", "manual"),
-            ("/m/A", "manual", "hardlink")),
-        (104, "M", "movie", "1", "plex_orphan", None, None),
-        (105, "P", "tv",    "2", "plex_orphan", None, None),
-        (106, "-", "movie", "1", "plex_orphan", None, None),
+            ("/m/A", "manual", "hardlink"),
+            0, None),
+        (104, "M", "movie", "1", "plex_orphan", None, None,
+            0, None),
+        (105, "P", "movie", "1", "plex_orphan", None, None,
+            1, 1),  # themerr-plex embed: Plex's claim verified live
+        (106, "-", "movie", "1", "plex_orphan", None, None,
+            0, None),
     ]
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -77,12 +97,7 @@ def seeded_db():
         "discovered_at, last_seen_at) VALUES ('1', 'Movies', 'movie', 1, ?, ?)",
         (now, now),
     )
-    conn.execute(
-        "INSERT INTO plex_sections (section_id, title, type, included, "
-        "discovered_at, last_seen_at) VALUES ('2', 'TV', 'show', 1, ?, ?)",
-        (now, now),
-    )
-    for tmdb, label, mt, sec, upstream, lf_data, p_data in fixtures:
+    for tmdb, label, mt, sec, upstream, lf_data, p_data, has_theme, verified_ok in fixtures:
         conn.execute(
             "INSERT INTO themes (media_type, tmdb_id, title, upstream_source, "
             "last_seen_sync_at, first_seen_sync_at, youtube_url) "
@@ -99,12 +114,13 @@ def seeded_db():
         conn.execute(
             "INSERT INTO plex_items (rating_key, section_id, media_type, "
             "title, year, guid_tmdb, theme_id, local_theme_file, has_theme, "
-            "first_seen_at, last_seen_at) "
-            "VALUES (?, ?, ?, ?, '2024', ?, ?, ?, ?, ?, ?)",
+            "plex_theme_verified_ok, first_seen_at, last_seen_at) "
+            "VALUES (?, ?, ?, ?, '2024', ?, ?, ?, ?, ?, ?, ?)",
             (
                 f"rk{tmdb}", sec, plex_mt, label, tmdb, theme_id,
                 1 if label == "M" else 0,
-                1 if label == "P" else 0,
+                has_theme,
+                verified_ok,
                 now, now,
             ),
         )
@@ -133,8 +149,11 @@ def seeded_db():
 
 
 def _tab_for(letter: str) -> str:
-    """v1.12.111: P fixture lives in TV; everything else in movies."""
-    return "tv" if letter == "P" else "movies"
+    """v1.12.112: all 6 SRC fixtures live in the movies section
+    (P now lives there too, mirroring themerr-plex's embed-on-movies
+    pattern). Helper kept for backward compatibility with tests that
+    parametrize across letters and want a tab arg."""
+    return "movies"
 
 
 def _run(db_path: Path, **kwargs):
@@ -172,11 +191,7 @@ def test_src_single_pill(seeded_db, letter):
 
 @pytest.mark.parametrize(
     "combo",
-    # v1.12.111: combos with P only valid in tab='tv' (where the P
-    # fixture lives) and there's only one row in tv, so pair tests
-    # involving P would need cross-tab. Drop combos with P and add
-    # a separate single-tab pair test below.
-    list(combinations(["T", "U", "A", "M", "-"], 2)),
+    list(combinations(["T", "U", "A", "M", "P", "-"], 2)),
 )
 def test_src_pair_pills(seeded_db, combo):
     """OR-within-axis: any 2 pills selected → exactly 2 rows match."""
@@ -186,16 +201,76 @@ def test_src_pair_pills(seeded_db, combo):
     )
 
 
-def test_src_all_pills_movies(seeded_db):
-    """Selecting all movie-tab pills returns every movie fixture (5)."""
-    result = _run(seeded_db, src_pills={"T", "U", "A", "M", "-"})
-    assert result["total"] == 5
+def test_src_all_pills(seeded_db):
+    """Selecting every pill should return every row (6 fixtures)."""
+    result = _run(seeded_db, src_pills={"T", "U", "A", "M", "P", "-"})
+    assert result["total"] == 6
 
 
-def test_src_p_pill_tv_tab(seeded_db):
-    """P pill in tv tab returns the single tv P fixture."""
-    result = _run(seeded_db, tab="tv", src_pills={"P"})
-    assert result["total"] == 1
+def _insert_synthetic(seeded_db, tmdb, label, has_theme, verified_ok):
+    """Helper: add a synthetic plex_items+themes row for a focused test.
+    Caller must call _delete_synthetic to clean up before fixture
+    pollution affects other tests sharing the module-scoped seeded_db."""
+    import sqlite3
+    conn = sqlite3.connect(str(seeded_db))
+    conn.execute(
+        "INSERT INTO themes (media_type, tmdb_id, title, upstream_source, "
+        "last_seen_sync_at, first_seen_sync_at, youtube_url) "
+        "VALUES ('movie', ?, ?, 'plex_orphan', "
+        "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z', NULL)",
+        (tmdb, label),
+    )
+    theme_id = conn.execute(
+        "SELECT id FROM themes WHERE tmdb_id = ?", (tmdb,),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO plex_items (rating_key, section_id, media_type, "
+        "title, year, guid_tmdb, theme_id, local_theme_file, has_theme, "
+        "plex_theme_verified_ok, first_seen_at, last_seen_at) "
+        "VALUES (?, '1', 'movie', ?, '2024', ?, ?, 0, ?, ?, "
+        "'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+        (f"rk{tmdb}", label, tmdb, theme_id, has_theme, verified_ok),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _delete_synthetic(seeded_db, tmdb):
+    import sqlite3
+    conn = sqlite3.connect(str(seeded_db))
+    conn.execute("DELETE FROM plex_items WHERE rating_key = ?", (f"rk{tmdb}",))
+    conn.execute("DELETE FROM themes WHERE tmdb_id = ?", (tmdb,))
+    conn.commit()
+    conn.close()
+
+
+def test_stale_plex_cache_movie_classifies_as_dash(seeded_db):
+    """v1.12.112: a movie row with has_theme=1 but
+    plex_theme_verified_ok=0 (HEAD against Plex returned 404 — stale
+    metadata cache pointing at a deleted file) classifies as '-' even
+    though Plex's API still claims a theme."""
+    _insert_synthetic(seeded_db, 999, "STALE",
+                      has_theme=1, verified_ok=0)
+    try:
+        p = _run(seeded_db, src_pills={"P"}, q="STALE")
+        dash = _run(seeded_db, src_pills={"-"}, q="STALE")
+        assert p["total"] == 0, "stale-cache row should NOT match src=P"
+        assert dash["total"] == 1, "stale-cache row should match src='-'"
+    finally:
+        _delete_synthetic(seeded_db, 999)
+
+
+def test_unverified_plex_theme_optimistic_p(seeded_db):
+    """v1.12.112: has_theme=1 + verified_ok=NULL (untested) trusts
+    Plex's claim optimistically — a fresh install or transient
+    network failure shouldn't cause a regression in P classification."""
+    _insert_synthetic(seeded_db, 998, "UNTESTED",
+                      has_theme=1, verified_ok=None)
+    try:
+        p = _run(seeded_db, src_pills={"P"}, q="UNTESTED")
+        assert p["total"] == 1, "untested has_theme=1 row should match src=P (optimistic)"
+    finally:
+        _delete_synthetic(seeded_db, 998)
 
 
 # ── SRC × status (catches the v1.12.99 missing-JOIN regression) ──
