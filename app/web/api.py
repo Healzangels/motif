@@ -6155,6 +6155,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         #   - transient (None) → leave verified_ok=NULL → optimistic;
         #     v1.12.113's TTL re-verifies later
         if rk_clear and settings.plex_enabled and settings.plex_token:
+            # v1.12.116: per-row try/except so a single rating_key's
+            # verify failure (network blip, DB lock, transient 5xx)
+            # doesn't abort verification for the remaining rks. Also
+            # reuses one DB connection across all UPDATEs in the
+            # batch instead of opening per-row. Pre-fix the outer
+            # try/except caught the first exception and bailed,
+            # leaving subsequent rks unverified for a multi-section
+            # PURGE.
             try:
                 from ..core.plex import PlexClient, PlexConfig
                 cfg = PlexConfig(
@@ -6162,12 +6170,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     movie_section=settings.plex_movie_section,
                     tv_section=settings.plex_tv_section, enabled=True,
                 )
-                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:  # type: ignore[arg-type]
+                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex, \
+                        get_conn(db) as conn:  # type: ignore[arg-type]
                     for rk in rk_clear:
-                        result = plex.verify_theme_claim(rk)
-                        if result is None:
-                            continue
-                        with get_conn(db) as conn:
+                        try:
+                            result = plex.verify_theme_claim(rk)
+                            if result is None:
+                                continue
                             conn.execute(
                                 "UPDATE plex_items SET "
                                 "  has_theme = ?, "
@@ -6177,6 +6186,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 (1 if result else 0, now_iso(),
                                  1 if result else 0, rk),
                             )
+                        except Exception as e:
+                            log.debug(
+                                "PURGE inline verify rk=%s skipped: %s",
+                                rk, e)
+                            continue
             except Exception as e:
                 log.debug("PURGE inline verify skipped: %s", e)
 

@@ -433,9 +433,14 @@ class Worker:
                 # deleted, AND flip pending_updates.decision back to
                 # 'pending' so the row's blue ! glyph returns and the
                 # user can choose again.
+                # v1.12.116: wrap both writes in transaction() so a
+                # crash between them can't leave the row half-rolled-
+                # back (override restored, pending_updates still
+                # 'accepted' — no blue glyph, no actionable signal).
                 replaced = rb.get("replaced_user_url")
                 if replaced:
-                    with get_conn(self.settings.db_path) as conn:
+                    with get_conn(self.settings.db_path) as conn, \
+                            transaction(conn):
                         conn.execute(
                             """INSERT INTO user_overrides
                                  (media_type, tmdb_id, youtube_url, set_at,
@@ -469,9 +474,13 @@ class Worker:
                 # AND restore the prior override (or clear if there
                 # wasn't one). Together this puts the row back where
                 # it was before the user clicked REVERT.
+                # v1.12.116: transaction() wraps all writes so a partial
+                # rollback (override restored but previous_urls chain
+                # not yet) can't leave the row in a half-state.
                 prior_override = rb.get("prior_override_url")
                 prior_prev = rb.get("prior_previous_url_row")  # dict or None
-                with get_conn(self.settings.db_path) as conn:
+                with get_conn(self.settings.db_path) as conn, \
+                        transaction(conn):
                     if prior_override:
                         conn.execute(
                             """INSERT INTO user_overrides

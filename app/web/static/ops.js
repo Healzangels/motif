@@ -251,11 +251,16 @@
         ${renderSparkline(op)}
         ${renderActivity(op)}
         ${renderError(op)}
-        ${isLive ? `
+        ${isLive && !(op.detail && op.detail.synthetic) ? `
           <button class="op-card-cancel" data-op-cancel="${esc(op.op_id)}"
                   ${op.status === 'cancelling' ? 'disabled' : ''}>
             ${op.status === 'cancelling' ? '// CANCELLING…' : '// CANCEL'}
           </button>` : ''}
+        ${isLive && (op.detail && op.detail.synthetic) ? `
+          <div class="op-card-cancel-note muted small"
+               style="margin-top:10px;text-align:center;opacity:0.6">
+            // per-job cancel via /queue
+          </div>` : ''}
       </div>`;
   }
 

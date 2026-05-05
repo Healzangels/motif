@@ -698,23 +698,35 @@ def _verify_theme_claims(
     if not rows:
         return 0
     decided = 0
-    for row in rows:
-        if cancel_check():
-            from .worker import _JobCancelled
-            raise _JobCancelled()
-        rk = row["rating_key"]
-        result = client.verify_theme_claim(rk)
-        if result is None:
-            # Transient — leave verified_ok NULL so we retry next enum.
-            continue
-        with get_conn(db_path) as conn:
-            conn.execute(
-                "UPDATE plex_items SET plex_theme_verified_at = ?, "
-                "                      plex_theme_verified_ok = ? "
-                "WHERE rating_key = ?",
-                (now_iso(), 1 if result else 0, rk),
-            )
-        decided += 1
+    # v1.12.116: open a single connection for the whole batch instead
+    # of per-row, AND wrap each row's HEAD+UPDATE in its own try/except
+    # so a single transient (DB lock timeout, network blip, etc.)
+    # doesn't abort verification for the rest of the section.
+    # Pre-fix the loop bailed on the first row's exception, plex_enum
+    # then marked the whole op 'failed' — a 100-row library lost all
+    # verification progress because one row hit a 5s lock.
+    with get_conn(db_path) as conn:
+        for row in rows:
+            if cancel_check():
+                from .worker import _JobCancelled
+                raise _JobCancelled()
+            rk = row["rating_key"]
+            try:
+                result = client.verify_theme_claim(rk)
+                if result is None:
+                    # Transient — leave verified_ok NULL so we retry
+                    # next enum (or after the v1.12.115 TTL).
+                    continue
+                conn.execute(
+                    "UPDATE plex_items SET plex_theme_verified_at = ?, "
+                    "                      plex_theme_verified_ok = ? "
+                    "WHERE rating_key = ?",
+                    (now_iso(), 1 if result else 0, rk),
+                )
+                decided += 1
+            except Exception as e:
+                log.debug("verify_theme_claim row %s failed: %s", rk, e)
+                continue
     return decided
 
 
