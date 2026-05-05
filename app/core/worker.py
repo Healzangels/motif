@@ -1095,6 +1095,19 @@ class Worker:
                        WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
                     (media_type, tmdb_id, section_id),
                 )
+                # v1.12.110: clear the post-PURGE/UNMANAGE tombstone for
+                # this section's plex_items row. Motif placed a fresh
+                # theme, so the row's true state is now 'managed by
+                # motif' (T/U/A) — the SRC SQL's case 1-5 wins anyway,
+                # but keeping the column tidy avoids surprise if the
+                # placement is later removed (the next PURGE will
+                # re-set the tombstone correctly).
+                conn.execute(
+                    """UPDATE plex_items SET motif_unplaced_at = NULL
+                        WHERE section_id = ?
+                          AND folder_path = ?""",
+                    (section_id, str(outcome.target_folder)),
+                )
                 # v1.10.46: Plex's first refresh sometimes lands before
                 # the filesystem watcher / local-media-assets agent has
                 # re-stat'd the folder, so the new theme.mp3 isn't

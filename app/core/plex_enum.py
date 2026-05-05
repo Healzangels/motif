@@ -563,18 +563,41 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                     (it.rating_key,),
                 ).fetchone()
                 if existing:
-                    conn.execute(
-                        """UPDATE plex_items SET
-                              section_id = ?, media_type = ?, title = ?, year = ?,
-                              guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
-                              folder_path = ?, has_theme = ?, local_theme_file = ?,
-                              title_norm = ?, last_seen_at = ?
-                           WHERE rating_key = ?""",
-                        (it.section_id, it.media_type, it.title, it.year,
-                         it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                         it.folder_path, 1 if it.has_theme else 0, sidecar,
-                         tn, now, it.rating_key),
-                    )
+                    # v1.12.110: clear motif_unplaced_at when plex_enum
+                    # detects a real sidecar (sidecar=1). The tombstone
+                    # only survives while motif's "I just unplaced
+                    # everything here" view holds; a sidecar back in the
+                    # folder proves the row's state has resolved (the
+                    # SRC SQL will classify as 'M' from this point).
+                    # When sidecar=0 we leave the tombstone alone — Plex
+                    # may still be reporting has_theme=1 stale.
+                    if sidecar:
+                        conn.execute(
+                            """UPDATE plex_items SET
+                                  section_id = ?, media_type = ?, title = ?, year = ?,
+                                  guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
+                                  folder_path = ?, has_theme = ?, local_theme_file = ?,
+                                  title_norm = ?, last_seen_at = ?,
+                                  motif_unplaced_at = NULL
+                               WHERE rating_key = ?""",
+                            (it.section_id, it.media_type, it.title, it.year,
+                             it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
+                             it.folder_path, 1 if it.has_theme else 0, sidecar,
+                             tn, now, it.rating_key),
+                        )
+                    else:
+                        conn.execute(
+                            """UPDATE plex_items SET
+                                  section_id = ?, media_type = ?, title = ?, year = ?,
+                                  guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
+                                  folder_path = ?, has_theme = ?, local_theme_file = ?,
+                                  title_norm = ?, last_seen_at = ?
+                               WHERE rating_key = ?""",
+                            (it.section_id, it.media_type, it.title, it.year,
+                             it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
+                             it.folder_path, 1 if it.has_theme else 0, sidecar,
+                             tn, now, it.rating_key),
+                        )
                     updated += 1
                 else:
                     conn.execute(

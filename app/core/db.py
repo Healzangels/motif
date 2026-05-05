@@ -365,6 +365,14 @@ CREATE TABLE IF NOT EXISTS plex_items (
     -- without re-running normalize_title() on every row. Populated by
     -- plex_enum.
     title_norm       TEXT,
+    -- v1.12.110: tombstone for "motif just removed its theme from this
+    -- row's section". Set on PURGE/UNMANAGE; cleared when motif places
+    -- something new OR when plex_enum detects a real sidecar
+    -- (local_theme_file=1) — either signal proves the row's true state.
+    -- The SRC SQL suppresses 'P' when this is non-NULL, so a stale Plex
+    -- has_theme=1 (cached metadata that motif knows is bogus because we
+    -- just unplaced) doesn't masquerade as "Plex has its own theme".
+    motif_unplaced_at TEXT,
     first_seen_at    TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
@@ -563,7 +571,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 33
+CURRENT_SCHEMA_VERSION = 34
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1294,6 +1302,29 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v33_to_v34(conn: sqlite3.Connection) -> None:
+    """v34 adds plex_items.motif_unplaced_at — a tombstone for "motif
+    just removed its theme from this section". Pre-fix a PURGE/UNMANAGE
+    cleared has_theme=0 + local_theme_file=0 locally, but Plex's own
+    metadata cache could legitimately or stalely report theme=true on
+    the next plex_enum. The row would re-classify as P (Plex has cloud
+    theme), surfacing a phantom theme even though motif just unplaced.
+
+    Now PURGE/UNMANAGE stamp the tombstone; the SRC SQL suppresses 'P'
+    when it's set; the tombstone clears when motif places again OR
+    when plex_enum detects a real sidecar (local_theme_file=1) — both
+    are independent proofs that the row's state has resolved.
+
+    Schema change is purely additive (one nullable column).
+    """
+    log.info("Migrating to schema v34 (plex_items.motif_unplaced_at)")
+    conn.executescript(
+        """
+        ALTER TABLE plex_items ADD COLUMN motif_unplaced_at TEXT;
+        """
+    )
+
+
 def _migrate_v32_to_v33(conn: sqlite3.Connection) -> None:
     """v33 adds the op_progress table: one row per long-running op
     (TDB sync, Plex enum) so the ops side-drawer can render live
@@ -1904,6 +1935,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 32:
                     _migrate_v32_to_v33(conn)
                     current = 33
+                elif current == 33:
+                    _migrate_v33_to_v34(conn)
+                    current = 34
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
