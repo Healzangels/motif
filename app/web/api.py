@@ -299,6 +299,19 @@ def _capture_previous_url(
         # so REVERT after RESTORE walks back to it. The v1.12.99
         # user-kind preservation rule does NOT apply here — losing the
         # just-dropped URL would defeat RESTORE's whole purpose.
+        # v1.12.105: if the existing previous_url already matches what
+        # we're about to capture (same URL + same kind), the capture
+        # is a no-op — the visible chain wouldn't change. Don't move
+        # it to hidden either: that would create a degenerate
+        # hidden==previous pair that still trips the
+        # "hidden IS NOT NULL" gate in the redundancy check, hiding
+        # RESTORE's correctly-redundant state. Early-return so the
+        # existing row (and any pre-existing hidden slot it carries
+        # from an earlier PURGE) survives untouched.
+        if (existing
+                and existing["youtube_url"] == prev_url
+                and existing["kind"] == prev_kind):
+            return
         hidden_url = existing["youtube_url"] if existing else None
         hidden_kind = existing["kind"] if existing else None
         hidden_captured_at = existing["captured_at"] if existing else None
@@ -1066,7 +1079,18 @@ def _library_main_query(
                         -- (REVERT competes with the existing-state
                         -- actions — pending update accept, no-op
                         -- swap to the same URL).
-                        (lf.file_path IS NOT NULL AND (
+                        -- v1.12.105: also require hidden_url IS NULL.
+                        -- Pre-fix the PURGE → DOWNLOAD TDB sequence
+                        -- left a hidden user URL in the chain but
+                        -- this branch fired (previous == current
+                        -- post-download), hiding RESTORE — making
+                        -- the hidden chain unreachable. The hidden
+                        -- slot is the only path back to a URL that
+                        -- DOWNLOAD TDB doesn't surface, so RESTORE
+                        -- must stay visible whenever it's set.
+                        (lf.file_path IS NOT NULL
+                         AND COALESCE(pv_sec.hidden_url, pv_global.hidden_url) IS NULL
+                         AND (
                           (COALESCE(pv_sec.kind, pv_global.kind) = 'themerrdb'
                            AND EXISTS (
                              SELECT 1 FROM pending_updates pu
@@ -3522,7 +3546,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and override["youtube_url"]
                 and override["youtube_url"].strip() == new_tdb_url.strip()
             )
-            _capture_previous_url(conn, media_type, tmdb_id)
+            # v1.12.105: scope the capture to the row's section so
+            # the section-specific previous_urls slot tracks the URL
+            # being replaced. Pre-fix the call wrote to section_id=''
+            # while the user's ACCEPT UPDATE actually changed the
+            # section-scoped override — the per-section previous_url
+            # stayed stale (mirrors the SET URL bug). For bulk
+            # accept-all the section_id is None by design (the bulk
+            # endpoint fans out, no per-row context).
+            _capture_previous_url(conn, media_type, tmdb_id,
+                                  section_id=section_id)
 
             if override:
                 # v1.12.72: scoped delete using the section_id we
@@ -4385,7 +4418,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # upsert overwrites the current state. Lets REVERT
             # round-trip back to the URL that was active before
             # this SET URL call.
-            _capture_previous_url(conn, theme_media_type, tmdb_id)
+            # v1.12.105: scope the capture to the row's section.
+            # Pre-fix the call passed no section_id so the capture
+            # read user_overrides via ORDER BY section_id LIMIT 1
+            # (right URL by accident if only one section owned the
+            # title) but always WROTE to section_id='' — the
+            # section-scoped previous_urls row stayed stale forever.
+            # User saw "previous=oldest" instead of "previous=URL
+            # I just replaced". Library SQL prefers pv_sec over
+            # pv_global so the global-fallback write was invisible.
+            section_id_for_override = pi["section_id"] or ""
+            _capture_previous_url(conn, theme_media_type, tmdb_id,
+                                  section_id=section_id_for_override)
 
             # v1.12.72: SET URL writes a per-section override scoped
             # to the rating_key's plex_items.section_id. Pre-fix, all
@@ -4397,7 +4441,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # coexist; ON CONFLICT clause updates only the matching
             # section's row, leaving sibling-section overrides
             # untouched.
-            section_id_for_override = pi["section_id"] or ""
+            # section_id_for_override defined above (v1.12.105).
             prior_override = conn.execute(
                 "SELECT youtube_url FROM user_overrides "
                 "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
