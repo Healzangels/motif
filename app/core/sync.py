@@ -386,6 +386,7 @@ def _enqueue_download(
     auto_place: bool | None = None,
     force_place: bool = False,
     only_section_id: str | None = None,
+    rollback: dict | None = None,
 ) -> int:
     """v1.11.0: enqueue one download job per (media_type, tmdb_id, section)
     where this item lives — sections discovered via plex_items joined to
@@ -408,6 +409,13 @@ def _enqueue_download(
     has_theme=true — the file got downloaded into canonical but never
     replaced the placement file in /movies/, leaving Plex playing the
     old U theme.
+
+    v1.12.114: `rollback` carries optional recovery state the worker
+    reads on permanent download failure. Used by ACCEPT UPDATE
+    (rollback to user_overrides + decision='pending') and REVERT
+    (rollback to prior previous_urls + override). Without rollback,
+    a download failure leaves motif in the post-action state with
+    the old state already destroyed — user has no easy recovery.
     """
     plex_type = "show" if media_type == "tv" else "movie"
     # v1.12.46: scope to a single section when only_section_id is
@@ -467,6 +475,10 @@ def _enqueue_download(
             payload["auto_place"] = bool(auto_place)
         if force_place:
             payload["force_place"] = True
+        if rollback is not None:
+            # v1.12.114: stamped per-section so the worker can restore
+            # the right override / previous_urls row on failure.
+            payload["rollback"] = {**rollback, "section_id": section_id}
         conn.execute(
             """
             INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,

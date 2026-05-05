@@ -3801,12 +3801,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # multiple libraries with separately-themed editions
             # (e.g., standard + 4K). The library row UI passes
             # section_id; sync/scheduled callers omit it.
+            # v1.12.114: rollback recipe stamps replaced_user_url so the
+            # worker can restore the override + flip pending_updates back
+            # to 'pending' if the new TDB download fails terminally.
+            # Without this, an accept whose download fails silently
+            # destroys the user's URL — they see the red ⚠ but their
+            # state is gone with no easy recovery.
+            rollback = None
+            if override and override["youtube_url"]:
+                rollback = {
+                    "kind": "accept_update",
+                    "replaced_user_url": override["youtube_url"],
+                }
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason="upstream_update_accepted",
                 auto_place=True,
                 force_place=True,
                 only_section_id=section_id,
+                rollback=rollback,
             )
         # v1.12.43: log message references url_match (computed
         # above) instead of the v1.12.35-era replaced_user_url
@@ -6124,6 +6137,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as e:
             log.debug("plex item refresh skipped: %s", e)
 
+        # v1.12.114: inline-verify Plex's theme claim for each affected
+        # rating_key. Pre-fix the rk_clear UPDATE above set
+        # has_theme=0 + local_theme_file=0, so SRC dropped to '-'
+        # immediately — accurate when Plex has nothing to fall back
+        # on, but WRONG when motif's theme was layered over a
+        # pre-existing themerr-plex embed (or Plex Pass cloud TV
+        # theme). For those rows the embed survives in Plex's DB
+        # independently of motif's sidecar, so SRC should snap back
+        # to P the moment motif's file is gone. Inline HEAD probe
+        # here lets motif know Plex's current view at the response
+        # boundary instead of waiting for the next plex_enum:
+        #   - HEAD 200 → Plex still serves a theme (embed/cloud) →
+        #     pi.has_theme=1, plex_theme_verified_ok=1 → SRC=P
+        #   - HEAD 404 → Plex has nothing → has_theme stays 0,
+        #     verified_ok=0 → SRC='-' (correct already)
+        #   - transient (None) → leave verified_ok=NULL → optimistic;
+        #     v1.12.113's TTL re-verifies later
+        if rk_clear and settings.plex_enabled and settings.plex_token:
+            try:
+                from ..core.plex import PlexClient, PlexConfig
+                cfg = PlexConfig(
+                    url=settings.plex_url, token=settings.plex_token,
+                    movie_section=settings.plex_movie_section,
+                    tv_section=settings.plex_tv_section, enabled=True,
+                )
+                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:  # type: ignore[arg-type]
+                    for rk in rk_clear:
+                        result = plex.verify_theme_claim(rk)
+                        if result is None:
+                            continue
+                        with get_conn(db) as conn:
+                            conn.execute(
+                                "UPDATE plex_items SET "
+                                "  has_theme = ?, "
+                                "  plex_theme_verified_at = ?, "
+                                "  plex_theme_verified_ok = ? "
+                                "WHERE rating_key = ?",
+                                (1 if result else 0, now_iso(),
+                                 1 if result else 0, rk),
+                            )
+            except Exception as e:
+                log.debug("PURGE inline verify skipped: %s", e)
+
         with get_conn(db) as conn:
             _record_audit(
                 conn, actor=request.state.user, action="purge",
@@ -6551,12 +6607,33 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # into canonical but never replaced the placement,
             # so Plex kept playing the post-accept theme.
             from ..core.sync import _enqueue_download
+            # v1.12.114: rollback recipe restores the pre-REVERT state
+            # if the download fails terminally. Without this, REVERT
+            # consumes the previous_urls chain + replaces/deletes the
+            # override eagerly — a download failure would leave the
+            # row in a half-applied state with no easy recovery.
+            prior_prev_row = {
+                "youtube_url": snapshot["youtube_url"],
+                "kind": snapshot["kind"],
+                "captured_at": snapshot["captured_at"],
+                "hidden_url": snapshot["hidden_url"],
+                "hidden_kind": snapshot["hidden_kind"],
+                "hidden_captured_at": snapshot["hidden_captured_at"],
+            } if snapshot else None
+            prior_override_url = (ovr["youtube_url"]
+                                  if ovr and ovr["youtube_url"] else None)
+            rollback = {
+                "kind": "revert",
+                "prior_override_url": prior_override_url,
+                "prior_previous_url_row": prior_prev_row,
+            }
             _enqueue_download(
                 conn, media_type=media_type, tmdb_id=tmdb_id,
                 reason=f"revert_to_{prev_kind}_url",
                 auto_place=True,
                 force_place=True,
                 only_section_id=section_id,
+                rollback=rollback,
             )
             _record_audit(
                 conn, actor=request.state.user, action="revert",

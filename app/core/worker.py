@@ -267,9 +267,23 @@ class Worker:
             except _JobPermanentFailure as e:
                 log.info("Job %s permanently failed: %s", job["id"], e)
                 self._safe_mark(self._mark_failed_terminal, job["id"], str(e))
+                self._run_rollback_safe(job, str(e))
             except Exception as e:
                 log.exception("Job %s crashed: %s", job["id"], e)
+                # v1.12.114: only run rollback on FINAL retry exhaustion.
+                # _mark_failed checks attempts vs max_attempts; if attempts
+                # haven't been used up the job goes back to 'pending' for
+                # retry, and rolling back prematurely would discard a
+                # download that's about to succeed on next attempt.
+                with get_conn(self.settings.db_path) as conn:
+                    row = conn.execute(
+                        "SELECT attempts, max_attempts, status "
+                        "FROM jobs WHERE id = ?",
+                        (job["id"],),
+                    ).fetchone()
                 self._safe_mark(self._mark_failed, job["id"], str(e))
+                if row and row["attempts"] >= row["max_attempts"]:
+                    self._run_rollback_safe(job, str(e))
         log.info("Worker loop stopped")
 
     def _safe_mark(self, fn, *args) -> None:
@@ -385,6 +399,136 @@ class Worker:
                     """,
                     (err, next_run, job_id),
                 )
+
+    def _run_rollback_safe(self, job: sqlite3.Row, err_text: str) -> None:
+        """v1.12.114: post-failure recovery for actions that destroyed
+        prior state before queueing the download. ACCEPT UPDATE deletes
+        the user_overrides row before the new TDB download runs; REVERT
+        swaps the previous_urls chain. If those downloads fail terminally,
+        the user is stranded in a half-applied state — their old
+        URL/override is gone, the new one didn't materialize.
+
+        The action site stamps `payload['rollback']` with the recovery
+        recipe at enqueue time. This method reads it on terminal failure
+        and undoes the destructive prep so the row goes back to its
+        pre-action state. Wrapped in a try/except so a buggy rollback
+        can't crash the worker — the original failure already surfaces
+        via failure_kind, the user just keeps the half-applied state if
+        rollback can't run.
+        """
+        try:
+            payload_raw = job["payload"]
+            if not payload_raw:
+                return
+            payload = json.loads(payload_raw)
+            rb = payload.get("rollback")
+            if not isinstance(rb, dict):
+                return
+            kind = rb.get("kind")
+            mt = job["media_type"]
+            tmdb = job["tmdb_id"]
+            section_id = rb.get("section_id") or job["section_id"] or ""
+            if kind == "accept_update":
+                # Restore the user_overrides row that ACCEPT UPDATE
+                # deleted, AND flip pending_updates.decision back to
+                # 'pending' so the row's blue ! glyph returns and the
+                # user can choose again.
+                replaced = rb.get("replaced_user_url")
+                if replaced:
+                    with get_conn(self.settings.db_path) as conn:
+                        conn.execute(
+                            """INSERT INTO user_overrides
+                                 (media_type, tmdb_id, youtube_url, set_at,
+                                  set_by, note, section_id)
+                               VALUES (?, ?, ?, ?, 'system', ?, ?)
+                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                                   youtube_url = excluded.youtube_url,
+                                   set_at = excluded.set_at,
+                                   set_by = excluded.set_by,
+                                   note = excluded.note""",
+                            (mt, tmdb, replaced, now_iso(),
+                             "rollback after ACCEPT UPDATE download "
+                             f"failed: {err_text[:120]}", section_id),
+                        )
+                        conn.execute(
+                            """UPDATE pending_updates SET
+                                  decision = 'pending',
+                                  decision_at = NULL,
+                                  decision_by = NULL,
+                                  replaced_user_url = NULL
+                               WHERE media_type = ? AND tmdb_id = ?
+                                 AND section_id = ?
+                                 AND decision = 'accepted'""",
+                            (mt, tmdb, section_id),
+                        )
+                    log.info(
+                        "rollback: restored override for accept-update "
+                        "failure on %s/%s/%s", mt, tmdb, section_id)
+            elif kind == "revert":
+                # Restore the previous_urls row that REVERT consumed,
+                # AND restore the prior override (or clear if there
+                # wasn't one). Together this puts the row back where
+                # it was before the user clicked REVERT.
+                prior_override = rb.get("prior_override_url")
+                prior_prev = rb.get("prior_previous_url_row")  # dict or None
+                with get_conn(self.settings.db_path) as conn:
+                    if prior_override:
+                        conn.execute(
+                            """INSERT INTO user_overrides
+                                 (media_type, tmdb_id, youtube_url, set_at,
+                                  set_by, note, section_id)
+                               VALUES (?, ?, ?, ?, 'system', ?, ?)
+                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                                   youtube_url = excluded.youtube_url,
+                                   set_at = excluded.set_at,
+                                   set_by = excluded.set_by,
+                                   note = excluded.note""",
+                            (mt, tmdb, prior_override, now_iso(),
+                             "rollback after REVERT download failed: "
+                             f"{err_text[:120]}", section_id),
+                        )
+                    else:
+                        conn.execute(
+                            "DELETE FROM user_overrides "
+                            "WHERE media_type = ? AND tmdb_id = ? "
+                            "  AND section_id = ?",
+                            (mt, tmdb, section_id),
+                        )
+                    if prior_prev:
+                        conn.execute(
+                            """INSERT INTO previous_urls
+                                 (media_type, tmdb_id, section_id,
+                                  youtube_url, kind, captured_at,
+                                  hidden_url, hidden_kind, hidden_captured_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                                   youtube_url = excluded.youtube_url,
+                                   kind = excluded.kind,
+                                   captured_at = excluded.captured_at,
+                                   hidden_url = excluded.hidden_url,
+                                   hidden_kind = excluded.hidden_kind,
+                                   hidden_captured_at = excluded.hidden_captured_at""",
+                            (mt, tmdb, section_id,
+                             prior_prev.get("youtube_url"),
+                             prior_prev.get("kind"),
+                             prior_prev.get("captured_at"),
+                             prior_prev.get("hidden_url"),
+                             prior_prev.get("hidden_kind"),
+                             prior_prev.get("hidden_captured_at")),
+                        )
+                    else:
+                        conn.execute(
+                            "DELETE FROM previous_urls "
+                            "WHERE media_type = ? AND tmdb_id = ? "
+                            "  AND section_id = ?",
+                            (mt, tmdb, section_id),
+                        )
+                log.info(
+                    "rollback: restored revert state on %s/%s/%s",
+                    mt, tmdb, section_id)
+        except Exception as e:
+            log.warning("rollback runner failed for job %s: %s",
+                        job["id"], e)
 
     def _dispatch(self, job: sqlite3.Row) -> None:
         jt = job["job_type"]
