@@ -3237,11 +3237,12 @@
       return (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
     }
     if (sidecarOnly) return 'M';
-    // v1.12.110: P only when Plex says has_theme AND motif's
-    // post-PURGE/UNMANAGE tombstone is clear. With the tombstone
-    // set, Plex's has_theme=1 might be stale cache — fall through
-    // to '-'. Mirrors the _SRC_LETTER_SQL change.
-    if (it.plex_has_theme && !it.motif_unplaced_at) return 'P';
+    // v1.12.111: 'P' is TV-only — Plex doesn't provide cloud themes
+    // for movies, so has_theme=1 on a movie just means Plex saw a
+    // sidecar (which would already classify as M via plex_local_theme).
+    // If the file's gone but Plex's cache still says theme=true,
+    // fall through to '-'. Mirrors the _SRC_LETTER_SQL change.
+    if (it.plex_has_theme && it.theme_media_type === 'tv') return 'P';
     return '-';
   }
 

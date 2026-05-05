@@ -53,17 +53,22 @@ def seeded_db():
     init_db(db_path)
 
     now = "2026-01-01T00:00:00Z"
+    # v1.12.111: P fixture moved to TV. The SRC=P case is structurally
+    # TV-only — Plex doesn't provide cloud themes for movies, so a
+    # movie row with has_theme=1 + no sidecar can't legitimately be P.
+    # Tests that touch P pass tab='tv' to _run.
     fixtures = [
-        # (tmdb, label, themes(upstream), local_files(sk, vid, prov), placements(folder, prov, kind))
-        (101, "T", "imdb",        ("themerrdb", "abc12345678", "auto"),
-                                  ("/m/T", "auto", "hardlink")),
-        (102, "U", "imdb",        ("url",       "def12345678", "manual"),
-                                  ("/m/U", "manual", "hardlink")),
-        (103, "A", "plex_orphan", ("adopt",     "sha-prefix-not-yt", "manual"),
-                                  ("/m/A", "manual", "hardlink")),
-        (104, "M", "plex_orphan", None, None),
-        (105, "P", "plex_orphan", None, None),
-        (106, "-", "plex_orphan", None, None),
+        # (tmdb, label, mt, sec, upstream, local_files(sk, vid, prov), placements(folder, prov, kind))
+        (101, "T", "movie", "1", "imdb",
+            ("themerrdb", "abc12345678", "auto"), ("/m/T", "auto", "hardlink")),
+        (102, "U", "movie", "1", "imdb",
+            ("url", "def12345678", "manual"), ("/m/U", "manual", "hardlink")),
+        (103, "A", "movie", "1", "plex_orphan",
+            ("adopt", "sha-prefix-not-yt", "manual"),
+            ("/m/A", "manual", "hardlink")),
+        (104, "M", "movie", "1", "plex_orphan", None, None),
+        (105, "P", "tv",    "2", "plex_orphan", None, None),
+        (106, "-", "movie", "1", "plex_orphan", None, None),
     ]
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA foreign_keys = ON")
@@ -72,26 +77,32 @@ def seeded_db():
         "discovered_at, last_seen_at) VALUES ('1', 'Movies', 'movie', 1, ?, ?)",
         (now, now),
     )
-    for tmdb, label, upstream, lf_data, p_data in fixtures:
+    conn.execute(
+        "INSERT INTO plex_sections (section_id, title, type, included, "
+        "discovered_at, last_seen_at) VALUES ('2', 'TV', 'show', 1, ?, ?)",
+        (now, now),
+    )
+    for tmdb, label, mt, sec, upstream, lf_data, p_data in fixtures:
         conn.execute(
             "INSERT INTO themes (media_type, tmdb_id, title, upstream_source, "
             "last_seen_sync_at, first_seen_sync_at, youtube_url) "
-            "VALUES ('movie', ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
-                tmdb, label, upstream, now, now,
+                mt, tmdb, label, upstream, now, now,
                 "https://yt/x" if upstream != "plex_orphan" else None,
             ),
         )
         theme_id = conn.execute(
             "SELECT id FROM themes WHERE tmdb_id = ?", (tmdb,),
         ).fetchone()[0]
+        plex_mt = "show" if mt == "tv" else mt
         conn.execute(
             "INSERT INTO plex_items (rating_key, section_id, media_type, "
             "title, year, guid_tmdb, theme_id, local_theme_file, has_theme, "
             "first_seen_at, last_seen_at) "
-            "VALUES (?, '1', 'movie', ?, '2024', ?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, '2024', ?, ?, ?, ?, ?, ?)",
             (
-                f"rk{tmdb}", label, tmdb, theme_id,
+                f"rk{tmdb}", sec, plex_mt, label, tmdb, theme_id,
                 1 if label == "M" else 0,
                 1 if label == "P" else 0,
                 now, now,
@@ -102,9 +113,9 @@ def seeded_db():
             conn.execute(
                 "INSERT INTO local_files (media_type, tmdb_id, section_id, "
                 "file_path, source_video_id, downloaded_at, source_kind, "
-                "provenance) VALUES ('movie', ?, '1', ?, ?, ?, ?, ?)",
+                "provenance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
-                    tmdb, f"movies/{label}/theme.mp3", vid, now, sk, prov,
+                    mt, tmdb, sec, f"{mt}/{label}/theme.mp3", vid, now, sk, prov,
                 ),
             )
         if p_data is not None:
@@ -112,13 +123,18 @@ def seeded_db():
             conn.execute(
                 "INSERT INTO placements (media_type, tmdb_id, section_id, "
                 "media_folder, placement_kind, provenance, placed_at) "
-                "VALUES ('movie', ?, '1', ?, ?, ?, ?)",
-                (tmdb, folder, kind, prov, now),
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (mt, tmdb, sec, folder, kind, prov, now),
             )
     conn.commit()
     conn.close()
     yield db_path
     db_path.unlink(missing_ok=True)
+
+
+def _tab_for(letter: str) -> str:
+    """v1.12.111: P fixture lives in TV; everything else in movies."""
+    return "tv" if letter == "P" else "movies"
 
 
 def _run(db_path: Path, **kwargs):
@@ -144,7 +160,7 @@ def _run(db_path: Path, **kwargs):
 @pytest.mark.parametrize("letter", ["T", "U", "A", "M", "P", "-"])
 def test_src_single_pill(seeded_db, letter):
     """Each SRC pill matches exactly the one fixture row of that class."""
-    result = _run(seeded_db, src_pills={letter})
+    result = _run(seeded_db, tab=_tab_for(letter), src_pills={letter})
     assert result["total"] == 1, (
         f"src={letter} expected 1 match (one fixture per class), "
         f"got {result['total']}"
@@ -156,7 +172,11 @@ def test_src_single_pill(seeded_db, letter):
 
 @pytest.mark.parametrize(
     "combo",
-    list(combinations(["T", "U", "A", "M", "P", "-"], 2)),
+    # v1.12.111: combos with P only valid in tab='tv' (where the P
+    # fixture lives) and there's only one row in tv, so pair tests
+    # involving P would need cross-tab. Drop combos with P and add
+    # a separate single-tab pair test below.
+    list(combinations(["T", "U", "A", "M", "-"], 2)),
 )
 def test_src_pair_pills(seeded_db, combo):
     """OR-within-axis: any 2 pills selected → exactly 2 rows match."""
@@ -166,10 +186,16 @@ def test_src_pair_pills(seeded_db, combo):
     )
 
 
-def test_src_all_pills(seeded_db):
-    """Selecting every pill should return every row (6 fixtures)."""
-    result = _run(seeded_db, src_pills={"T", "U", "A", "M", "P", "-"})
-    assert result["total"] == 6
+def test_src_all_pills_movies(seeded_db):
+    """Selecting all movie-tab pills returns every movie fixture (5)."""
+    result = _run(seeded_db, src_pills={"T", "U", "A", "M", "-"})
+    assert result["total"] == 5
+
+
+def test_src_p_pill_tv_tab(seeded_db):
+    """P pill in tv tab returns the single tv P fixture."""
+    result = _run(seeded_db, tab="tv", src_pills={"P"})
+    assert result["total"] == 1
 
 
 # ── SRC × status (catches the v1.12.99 missing-JOIN regression) ──
@@ -205,7 +231,7 @@ def test_src_pill_with_tdb_axis(seeded_db, tdb):
 @pytest.mark.parametrize("letter", ["T", "U", "A", "M", "P", "-"])
 def test_src_pill_with_sort_src(seeded_db, letter):
     """sort=src reuses _SRC_LETTER_SQL as an ORDER BY expression."""
-    result = _run(seeded_db, sort="src", src_pills={letter})
+    result = _run(seeded_db, tab=_tab_for(letter), sort="src", src_pills={letter})
     assert result["total"] == 1
 
 
@@ -243,6 +269,10 @@ def test_src_with_tdb_pill(seeded_db):
 
 
 def test_src_orphan_with_tdb_none(seeded_db):
-    """SRC=- is a plex_orphan → tdb_pills=none matches."""
+    """SRC=- is a plex_orphan → tdb_pills=none matches.
+    v1.12.111: P fixture moved to tv tab so movies tab has 1 plex_orphan
+    row with no upstream URL (the '-' fixture). The M fixture is also a
+    plex_orphan but has src='M' (different SRC class).
+    """
     result = _run(seeded_db, src_pills={"-"}, tdb_pills={"none"})
     assert result["total"] == 1

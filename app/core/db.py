@@ -365,13 +365,13 @@ CREATE TABLE IF NOT EXISTS plex_items (
     -- without re-running normalize_title() on every row. Populated by
     -- plex_enum.
     title_norm       TEXT,
-    -- v1.12.110: tombstone for "motif just removed its theme from this
-    -- row's section". Set on PURGE/UNMANAGE; cleared when motif places
-    -- something new OR when plex_enum detects a real sidecar
-    -- (local_theme_file=1) — either signal proves the row's true state.
-    -- The SRC SQL suppresses 'P' when this is non-NULL, so a stale Plex
-    -- has_theme=1 (cached metadata that motif knows is bogus because we
-    -- just unplaced) doesn't masquerade as "Plex has its own theme".
+    -- v1.12.110 / DEPRECATED in v1.12.111: tombstone for "motif just
+    -- removed its theme from this row's section". v1.12.111 reverted
+    -- the SRC SQL read of this column — the underlying issue
+    -- (movies classifying as P) was a structural bug, not a stale
+    -- cache problem: Plex doesn't provide cloud themes for movies,
+    -- so SRC=P should be TV-only. Column kept for v34-installed DBs;
+    -- no reads, no writes. Future migration may drop it cleanly.
     motif_unplaced_at TEXT,
     first_seen_at    TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL

@@ -581,17 +581,19 @@ _SRC_LETTER_SQL = (
     ") THEN 'U' "
     "WHEN p.media_folder IS NOT NULL AND p.provenance = 'manual' THEN 'A' "
     "WHEN p.media_folder IS NULL AND pi.local_theme_file = 1 THEN 'M' "
-    # v1.12.110: 'P' requires motif_unplaced_at IS NULL — the row hasn't
-    # been PURGEd/UNMANAGEd by motif since the last placement. Pre-fix a
-    # row whose Plex metadata reported has_theme=1 (legitimate cloud
-    # theme OR stale post-PURGE cache) classified as P. After PURGE we
-    # can't tell those apart from Plex's API alone, so we trust motif's
-    # local "I just removed everything here" tombstone over Plex's
-    # has_theme=1 until either (a) plex_enum detects a real sidecar
-    # (local_theme_file=1, classified as M) or (b) motif places again
-    # (placed-state takes precedence anyway). Both clear the tombstone.
+    # v1.12.111: 'P' (Plex's own theme) only applies to TV — Plex
+    # provides cloud themes via the Plex Pass theme service for TV
+    # shows but NOT for movies. For movies, Plex's `theme` XML
+    # attribute is set ONLY when its local-media-assets agent reads
+    # a sidecar file off disk. So has_theme=1 on a movie means "Plex
+    # saw a sidecar"; if local_theme_file=0 too, Plex's metadata
+    # cache is just stale (file's gone, Plex hasn't refreshed). The
+    # row should fall through to '-' rather than masquerading as P.
+    # Reverts the v1.12.110 motif_unplaced_at tombstone — that
+    # treated the symptom across both media types instead of the
+    # root cause that movies can't legitimately classify as P.
     "WHEN p.media_folder IS NULL AND pi.has_theme = 1 "
-        "AND pi.motif_unplaced_at IS NULL THEN 'P' "
+        "AND t.media_type = 'tv' THEN 'P' "
     "ELSE '-' END"
 )
 
@@ -1008,10 +1010,6 @@ def _library_main_query(
                pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
                pi.folder_path, pi.has_theme AS plex_has_theme,
                pi.local_theme_file AS plex_local_theme,
-               -- v1.12.110: post-PURGE/UNMANAGE tombstone. Drives the
-               -- JS computeSrcLetter check that suppresses 'P' when
-               -- motif knows it just removed everything for this row.
-               pi.motif_unplaced_at,
                ps.title AS section_title,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
@@ -1625,7 +1623,6 @@ def _library_not_in_plex(
             NULL AS folder_path,
             NULL AS plex_has_theme,
             NULL AS plex_local_theme,
-            NULL AS motif_unplaced_at,
             NULL AS section_title,
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,
@@ -5301,11 +5298,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # re-confirm against the live Plex API).
             for folder in affected_folders:
                 conn.execute(
-                    "UPDATE plex_items SET local_theme_file = 0, "
-                    "                      has_theme = 0, "
-                    "                      motif_unplaced_at = ? "
+                    "UPDATE plex_items SET local_theme_file = 0, has_theme = 0 "
                     "WHERE folder_path = ?",
-                    (now_iso(), folder),
+                    (folder,),
                 )
             # v1.10.28: skip the section enum here — see the matching
             # comment in api_forget_item. DEL deletes the Plex-folder
@@ -6107,17 +6102,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # holds Plex's real id, or NULL).
             if rk_clear:
                 qmarks = ",".join("?" for _ in rk_clear)
-                # v1.12.110: stamp motif_unplaced_at on each cleared
-                # rating_key so the SRC SQL knows to suppress 'P' even
-                # if Plex's metadata cache flips has_theme=1 back on
-                # the next plex_enum. Tombstone clears when motif
-                # places again or plex_enum detects a real sidecar.
                 conn.execute(
                     f"UPDATE plex_items SET local_theme_file = 0, "
-                    f"                      has_theme = 0, "
-                    f"                      motif_unplaced_at = ? "
+                    f"                      has_theme = 0 "
                     f"WHERE rating_key IN ({qmarks})",
-                    (now_iso(), *rk_clear),
+                    tuple(rk_clear),
                 )
         # v1.10.28: skip the section enum (it would re-fetch has_theme
         # from Plex's stale cache and bring back a phantom P badge);
@@ -6267,14 +6256,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             if rk_clear:
                 qmarks = ",".join("?" for _ in rk_clear)
-                # v1.12.110: tombstone for the unmanage flow — see PURGE
-                # comment for the full rationale.
                 conn.execute(
                     f"UPDATE plex_items SET local_theme_file = 0, "
-                    f"                      has_theme = 0, "
-                    f"                      motif_unplaced_at = ? "
+                    f"                      has_theme = 0 "
                     f"WHERE rating_key IN ({qmarks})",
-                    (now_iso(), *rk_clear),
+                    tuple(rk_clear),
                 )
 
         log_event(db, level="INFO", component="api",

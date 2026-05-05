@@ -1095,19 +1095,6 @@ class Worker:
                        WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
                     (media_type, tmdb_id, section_id),
                 )
-                # v1.12.110: clear the post-PURGE/UNMANAGE tombstone for
-                # this section's plex_items row. Motif placed a fresh
-                # theme, so the row's true state is now 'managed by
-                # motif' (T/U/A) — the SRC SQL's case 1-5 wins anyway,
-                # but keeping the column tidy avoids surprise if the
-                # placement is later removed (the next PURGE will
-                # re-set the tombstone correctly).
-                conn.execute(
-                    """UPDATE plex_items SET motif_unplaced_at = NULL
-                        WHERE section_id = ?
-                          AND folder_path = ?""",
-                    (section_id, str(outcome.target_folder)),
-                )
                 # v1.10.46: Plex's first refresh sometimes lands before
                 # the filesystem watcher / local-media-assets agent has
                 # re-stat'd the folder, so the new theme.mp3 isn't
@@ -1188,16 +1175,9 @@ class Worker:
                             (folder_str, plex_type),
                         )
                     elif outcome.reason == "plex_has_theme":
-                        # v1.12.110: clear motif_unplaced_at too. Worker
-                        # got an active confirmation from Plex during a
-                        # placement attempt ("you can't place, I already
-                        # have my own theme") — that's a stronger signal
-                        # than plex_enum's read of cached metadata, so
-                        # the row genuinely is P now.
                         conn.execute(
                             "UPDATE plex_items SET has_theme = 1, "
-                            "                     local_theme_file = 0, "
-                            "                     motif_unplaced_at = NULL "
+                            "                     local_theme_file = 0 "
                             "WHERE folder_path = ? AND media_type = ?",
                             (folder_str, plex_type),
                         )
