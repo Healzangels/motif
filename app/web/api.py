@@ -851,6 +851,19 @@ def _library_main_query(
         # row, and `NOT NULL` evaluated as NULL/false in the WHERE,
         # accidentally excluding clean TDB rows from the tdb_pills=tdb
         # filter.
+        # v1.12.119: align PENDING_EXISTS exactly with the library SQL's
+        # pending_update field so the tdb_pills=update filter and the
+        # blue ↑ row pill match the same set of rows. Two changes
+        # vs the prior version:
+        # - decision IN ('pending','declined') (was just 'pending').
+        #   The blue pill stays after KEEP CURRENT for filter/sort
+        #   per v1.12.5; pre-fix the filter excluded declined rows
+        #   even though they still showed the pill, so clicking the
+        #   chip surfaced fewer rows than the user could see.
+        # - no-op gate: kind='urls_match' OR new_url != applied.
+        #   T rows where applied URL == TDB's URL render no pill
+        #   (pending_update suppressed in v1.12.119); the filter
+        #   matches that suppression.
         PENDING_EXISTS = (
             "(CASE WHEN COALESCE("
             "  (SELECT pu.decision FROM pending_updates pu "
@@ -861,7 +874,7 @@ def _library_main_query(
             "    WHERE pu.media_type = t.media_type "
             "      AND pu.tmdb_id = t.tmdb_id "
             "      AND pu.section_id = '')"
-            ") = 'pending'"
+            ") IN ('pending','declined')"
             " AND ("
             "  EXISTS (SELECT 1 FROM local_files lf2 "
             "           WHERE lf2.media_type = t.media_type "
@@ -876,6 +889,38 @@ def _library_main_query(
             "                AND p2.tmdb_id = t.tmdb_id "
             "                AND p2.section_id = pi.section_id)"
             "  OR pi.local_theme_file = 1"
+            ")"
+            " AND ("
+            "  COALESCE("
+            "    (SELECT pu.kind FROM pending_updates pu "
+            "      WHERE pu.media_type = t.media_type "
+            "        AND pu.tmdb_id = t.tmdb_id "
+            "        AND pu.section_id = pi.section_id),"
+            "    (SELECT pu.kind FROM pending_updates pu "
+            "      WHERE pu.media_type = t.media_type "
+            "        AND pu.tmdb_id = t.tmdb_id "
+            "        AND pu.section_id = '')"
+            "  ) = 'urls_match'"
+            "  OR COALESCE("
+            "    (SELECT pu.new_youtube_url FROM pending_updates pu "
+            "      WHERE pu.media_type = t.media_type "
+            "        AND pu.tmdb_id = t.tmdb_id "
+            "        AND pu.section_id = pi.section_id),"
+            "    (SELECT pu.new_youtube_url FROM pending_updates pu "
+            "      WHERE pu.media_type = t.media_type "
+            "        AND pu.tmdb_id = t.tmdb_id "
+            "        AND pu.section_id = '')"
+            "  ) != COALESCE("
+            "    (SELECT youtube_url FROM user_overrides uo "
+            "      WHERE uo.media_type = t.media_type "
+            "        AND uo.tmdb_id = t.tmdb_id "
+            "        AND uo.section_id = pi.section_id),"
+            "    (SELECT youtube_url FROM user_overrides uo "
+            "      WHERE uo.media_type = t.media_type "
+            "        AND uo.tmdb_id = t.tmdb_id "
+            "        AND uo.section_id = ''),"
+            "    t.youtube_url"
+            "  )"
             ") THEN 1 ELSE 0 END) = 1"
         )
         # JS computeSrcLetter returns '-' when nothing's themed
@@ -1086,6 +1131,17 @@ def _library_main_query(
                -- ANY section, but per-section read gating handles
                -- the partial-presence case (only one of N sections
                -- owns the title).
+               -- v1.12.119: also gate on new_youtube_url differing
+               -- from the row's current applied URL. Sync writes
+               -- pending_updates whenever TDB has a URL and motif
+               -- has tracking for the title — but for T rows where
+               -- current = TDB URL, accepting would just re-download
+               -- the same URL. No-op prompt. Suppress at read time.
+               -- For U rows where override == TDB URL the existing
+               -- 'urls_match' kind covers a different surface (U→T
+               -- conversion); both predicates can fire simultaneously
+               -- and we let urls_match through since it's a
+               -- meaningful classification flip.
                (CASE WHEN COALESCE(pu_sec.decision, pu_global.decision)
                           IN ('pending', 'declined')
                       AND (
@@ -1102,6 +1158,21 @@ def _library_main_query(
                                       AND p2.tmdb_id = t.tmdb_id
                                       AND p2.section_id = pi.section_id)
                         OR pi.local_theme_file = 1
+                      )
+                      AND (
+                        COALESCE(pu_sec.kind, pu_global.kind) = 'urls_match'
+                        OR COALESCE(pu_sec.new_youtube_url, pu_global.new_youtube_url)
+                           != COALESCE(
+                             (SELECT youtube_url FROM user_overrides uo
+                               WHERE uo.media_type = t.media_type
+                                 AND uo.tmdb_id = t.tmdb_id
+                                 AND uo.section_id = pi.section_id),
+                             (SELECT youtube_url FROM user_overrides uo
+                               WHERE uo.media_type = t.media_type
+                                 AND uo.tmdb_id = t.tmdb_id
+                                 AND uo.section_id = ''),
+                             t.youtube_url
+                           )
                       )
                      THEN 1 ELSE 0 END) AS pending_update,
                COALESCE(pu_sec.kind, pu_global.kind) AS pending_update_kind,
@@ -1120,6 +1191,21 @@ def _library_main_query(
                                       AND p2.tmdb_id = t.tmdb_id
                                       AND p2.section_id = pi.section_id)
                         OR pi.local_theme_file = 1
+                      )
+                      AND (
+                        COALESCE(pu_sec.kind, pu_global.kind) = 'urls_match'
+                        OR COALESCE(pu_sec.new_youtube_url, pu_global.new_youtube_url)
+                           != COALESCE(
+                             (SELECT youtube_url FROM user_overrides uo
+                               WHERE uo.media_type = t.media_type
+                                 AND uo.tmdb_id = t.tmdb_id
+                                 AND uo.section_id = pi.section_id),
+                             (SELECT youtube_url FROM user_overrides uo
+                               WHERE uo.media_type = t.media_type
+                                 AND uo.tmdb_id = t.tmdb_id
+                                 AND uo.section_id = ''),
+                             t.youtube_url
+                           )
                       )
                      THEN 1 ELSE 0 END) AS actionable_update,
                -- v1.12.86: previous-URL fields resolve from the
@@ -1966,6 +2052,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- section. Pre-fix the count spilled over post-PURGE
                   -- / pure-P / pure-'-' rows via the title-global ''
                   -- fallback row.
+                  -- v1.12.119: also gate on new_youtube_url differing
+                  -- from the row's currently-applied URL — see library
+                  -- SQL pending_update for the rationale (no-op
+                  -- prompts on T rows where current = TDB URL).
                   (SELECT COUNT(*) FROM plex_items pi2
                    INNER JOIN plex_sections ps2
                      ON ps2.section_id = pi2.section_id AND ps2.included = 1
@@ -1994,6 +2084,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                    AND p2.tmdb_id = t2.tmdb_id
                                    AND p2.section_id = pi2.section_id)
                      OR pi2.local_theme_file = 1
+                   )
+                   AND (
+                     COALESCE(
+                       (SELECT pu.kind FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = pi2.section_id),
+                       (SELECT pu.kind FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = '')
+                     ) = 'urls_match'
+                     OR COALESCE(
+                       (SELECT pu.new_youtube_url FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = pi2.section_id),
+                       (SELECT pu.new_youtube_url FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = '')
+                     ) != COALESCE(
+                       (SELECT youtube_url FROM user_overrides uo
+                         WHERE uo.media_type = t2.media_type
+                           AND uo.tmdb_id = t2.tmdb_id
+                           AND uo.section_id = pi2.section_id),
+                       (SELECT youtube_url FROM user_overrides uo
+                         WHERE uo.media_type = t2.media_type
+                           AND uo.tmdb_id = t2.tmdb_id
+                           AND uo.section_id = ''),
+                       t2.youtube_url
+                     )
                    )
                   ) AS updates_pending,
                   (SELECT COUNT(*) FROM themes WHERE failure_kind IS NOT NULL) AS failures_total
@@ -2181,6 +2303,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- section. Pre-fix the count spilled over post-PURGE
                   -- / pure-P / pure-'-' rows via the title-global ''
                   -- fallback row.
+                  -- v1.12.119: also gate on new_youtube_url differing
+                  -- from the row's currently-applied URL — see library
+                  -- SQL pending_update for the rationale (no-op
+                  -- prompts on T rows where current = TDB URL).
                   (SELECT COUNT(*) FROM plex_items pi2
                    INNER JOIN plex_sections ps2
                      ON ps2.section_id = pi2.section_id AND ps2.included = 1
@@ -2209,6 +2335,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                    AND p2.tmdb_id = t2.tmdb_id
                                    AND p2.section_id = pi2.section_id)
                      OR pi2.local_theme_file = 1
+                   )
+                   AND (
+                     COALESCE(
+                       (SELECT pu.kind FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = pi2.section_id),
+                       (SELECT pu.kind FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = '')
+                     ) = 'urls_match'
+                     OR COALESCE(
+                       (SELECT pu.new_youtube_url FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = pi2.section_id),
+                       (SELECT pu.new_youtube_url FROM pending_updates pu
+                         WHERE pu.media_type = t2.media_type
+                           AND pu.tmdb_id = t2.tmdb_id
+                           AND pu.section_id = '')
+                     ) != COALESCE(
+                       (SELECT youtube_url FROM user_overrides uo
+                         WHERE uo.media_type = t2.media_type
+                           AND uo.tmdb_id = t2.tmdb_id
+                           AND uo.section_id = pi2.section_id),
+                       (SELECT youtube_url FROM user_overrides uo
+                         WHERE uo.media_type = t2.media_type
+                           AND uo.tmdb_id = t2.tmdb_id
+                           AND uo.section_id = ''),
+                       t2.youtube_url
+                     )
                    )
                   ) AS updates_pending,
                   -- v1.10.50: exclude acked rows from the topbar
@@ -5110,7 +5268,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if has_presence:
                     pu = conn.execute(
                         "SELECT old_youtube_url, new_youtube_url, decision, "
-                        "       decision_at, decision_by, detected_at "
+                        "       decision_at, decision_by, detected_at, kind "
                         "  FROM pending_updates "
                         " WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
                         (media_type, tmdb_id, section_id),
@@ -5118,11 +5276,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if pu is None:
                         pu = conn.execute(
                             "SELECT old_youtube_url, new_youtube_url, decision, "
-                            "       decision_at, decision_by, detected_at "
+                            "       decision_at, decision_by, detected_at, kind "
                             "  FROM pending_updates "
                             " WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
                             (media_type, tmdb_id),
                         ).fetchone()
+                    # v1.12.119: suppress no-op pending updates — when
+                    # new_youtube_url == the row's currently-applied URL,
+                    # accepting would just re-download the same URL. The
+                    # 'urls_match' kind is the special case where
+                    # accepting is meaningful (U→T classification flip)
+                    # so we keep that one through.
+                    if pu is not None and pu["kind"] != "urls_match":
+                        applied = conn.execute(
+                            "SELECT COALESCE("
+                            "  (SELECT youtube_url FROM user_overrides "
+                            "     WHERE media_type = ? AND tmdb_id = ? "
+                            "       AND section_id = ?),"
+                            "  (SELECT youtube_url FROM user_overrides "
+                            "     WHERE media_type = ? AND tmdb_id = ? "
+                            "       AND section_id = ''),"
+                            "  (SELECT youtube_url FROM themes "
+                            "     WHERE media_type = ? AND tmdb_id = ?)"
+                            ") AS applied",
+                            (media_type, tmdb_id, section_id,
+                             media_type, tmdb_id,
+                             media_type, tmdb_id),
+                        ).fetchone()
+                        applied_url = applied["applied"] if applied else None
+                        if applied_url and pu["new_youtube_url"] == applied_url:
+                            pu = None
             else:
                 # No section_id passed (legacy / orphan path). Fall
                 # back to the original any-row query so non-row INFO
@@ -6852,20 +7035,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.delete("/api/items/{media_type}/{tmdb_id}/events")
     async def api_item_events_clear(
         request: Request, media_type: MediaType, tmdb_id: int,
+        # v1.12.119: section_id scopes the clear to one section's events.
+        # Pre-fix the DELETE was title-wide, so clicking CLEAR on the
+        # standard's INFO card also wiped the 4K's history (different
+        # libraries / editions despite same tmdb_id). Each section's
+        # INFO card now owns its own history. Title-wide events
+        # (section_id IS NULL — sync runs, scans, etc.) survive a
+        # per-section clear; legacy callers without section_id keep
+        # the original title-wide semantic.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """v1.12.83: clear the rolling events log entries for a row
-        (drives the INFO card's // HISTORY section). Title-global —
-        events table has no section_id column, so this clears across
-        all sections that own the title. Admin-only."""
+        (drives the INFO card's // HISTORY section). v1.12.119:
+        per-section by default (events.section_id added in schema v29);
+        omit section_id query param for the legacy title-wide clear.
+        Admin-only."""
         _require_admin(request)
         with get_conn(db) as conn:
-            cur = conn.execute(
-                "DELETE FROM events "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
-            )
-        return {"ok": True, "deleted": cur.rowcount}
+            if section_id is not None:
+                # Delete only this section's events. Title-wide events
+                # (section_id IS NULL) survive — they're shared signal
+                # like sync runs and scans.
+                cur = conn.execute(
+                    "DELETE FROM events "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "  AND section_id = ?",
+                    (media_type, tmdb_id, section_id),
+                )
+            else:
+                cur = conn.execute(
+                    "DELETE FROM events "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (media_type, tmdb_id),
+                )
+        return {"ok": True, "deleted": cur.rowcount,
+                "scope": "section" if section_id is not None else "title"}
 
     @app.get("/api/items/{media_type}/{tmdb_id}/theme.mp3")
     async def api_item_theme_audio(

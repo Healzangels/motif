@@ -6048,12 +6048,17 @@
     if (!confirm(`Clear ${label} for this row?\n\nThis cannot be undone.`)) return;
     btn.disabled = true;
     try {
-      const sec = sid && which === 'audit'
+      // v1.12.119: HISTORY clear is now per-section too. Pre-fix the
+      // events DELETE was title-wide, so clearing on the standard's
+      // INFO card wiped the 4K's history (different libraries / editions
+      // despite the shared tmdb_id). audit was already per-section
+      // since v1.12.83; this aligns history with it.
+      const sec = sid
         ? `?section_id=${encodeURIComponent(sid)}`
         : '';
       const path = which === 'audit'
         ? `/api/items/${mt}/${id}/audit${sec}`
-        : `/api/items/${mt}/${id}/events`;
+        : `/api/items/${mt}/${id}/events${sec}`;
       await api('DELETE', path);
       if (which === 'audit') {
         // Re-hydrate the audit slot. With zero events the slot
