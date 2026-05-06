@@ -1972,9 +1972,14 @@ def run_sync(db_path, base_url: str, *,
     sync_ts = now_iso()
 
     with get_conn(db_path) as conn:
+        # v1.13.2 (#1): stamp transport at start so the dashboard
+        # sparkline can color this run by which path was requested,
+        # even if the run later cascades to a slower tier (the
+        # fallback target lands in fallback_reason at finish).
         run_id = conn.execute(
-            "INSERT INTO sync_runs (started_at, status) VALUES (?, 'running')",
-            (sync_ts,),
+            "INSERT INTO sync_runs (started_at, status, transport) "
+            "VALUES (?, 'running', ?)",
+            (sync_ts, source),
         ).lastrowid
 
     log_event(db_path, level="INFO", component="sync", message=f"Sync run #{run_id} started")
@@ -2549,16 +2554,41 @@ def run_sync(db_path, base_url: str, *,
                 detail={"synthetic": synthetic},
             )
 
+        # v1.13.2 (#1): finalize telemetry. fallback_reason is sourced
+        # from op_progress.detail (set by the cascade dispatch); a
+        # clean run on the originally-requested transport leaves it
+        # NULL. no_changes flips to 1 when either Phase A.5's 304 or
+        # Phase B's no-new-commits short-circuit fired.
+        finalize_fallback_reason = None
+        finalize_no_changes = 0
+        try:
+            with get_conn(db_path) as conn:
+                row = conn.execute(
+                    "SELECT detail_json FROM op_progress WHERE op_id = 'tdb_sync'"
+                ).fetchone()
+            if row is not None and row["detail_json"]:
+                _detail = json.loads(row["detail_json"])
+                if _detail.get("fallback_active"):
+                    finalize_fallback_reason = _detail.get(
+                        "fallback_reason") or "unknown"
+                if _detail.get("no_changes"):
+                    finalize_no_changes = 1
+        except Exception as e:
+            log.debug("telemetry detail read failed: %s", e)
+
         with get_conn(db_path) as conn:
             conn.execute(
                 """
                 UPDATE sync_runs SET
                     finished_at = ?, status = 'success',
-                    movies_seen = ?, tv_seen = ?, new_count = ?, updated_count = ?
+                    movies_seen = ?, tv_seen = ?, new_count = ?, updated_count = ?,
+                    fallback_reason = ?, no_changes = ?
                 WHERE id = ?
                 """,
                 (now_iso(), stats.movies_seen, stats.tv_seen,
-                 stats.new_count, stats.updated_count, run_id),
+                 stats.new_count, stats.updated_count,
+                 finalize_fallback_reason, finalize_no_changes,
+                 run_id),
             )
 
         log_event(
@@ -2606,16 +2636,35 @@ def run_sync(db_path, base_url: str, *,
         from .worker import _JobCancelled
         err_text = ("cancelled by user"
                     if isinstance(e, _JobCancelled) else str(e))
+        # v1.13.2 (#1): on the failure path read fallback_reason out of
+        # op_progress.detail so a run that cascaded but THEN crashed
+        # still records what the cascade was. Same shape as the
+        # success path.
+        fail_fallback_reason = None
+        try:
+            with get_conn(db_path) as conn:
+                row = conn.execute(
+                    "SELECT detail_json FROM op_progress WHERE op_id = 'tdb_sync'"
+                ).fetchone()
+            if row is not None and row["detail_json"]:
+                _detail = json.loads(row["detail_json"])
+                if _detail.get("fallback_active"):
+                    fail_fallback_reason = _detail.get(
+                        "fallback_reason") or "unknown"
+        except Exception:
+            pass
         with get_conn(db_path) as conn:
             conn.execute(
                 """UPDATE sync_runs SET
                        finished_at = ?, status = 'failed', error = ?,
                        movies_seen = ?, tv_seen = ?,
-                       new_count = ?, updated_count = ?
+                       new_count = ?, updated_count = ?,
+                       fallback_reason = ?
                    WHERE id = ?""",
                 (now_iso(), err_text,
                  stats.movies_seen, stats.tv_seen,
-                 stats.new_count, stats.updated_count, run_id),
+                 stats.new_count, stats.updated_count,
+                 fail_fallback_reason, run_id),
             )
         log_event(
             db_path,

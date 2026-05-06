@@ -2667,6 +2667,186 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _stats_cache["value"] = response
         return response
 
+    @app.get("/api/sync/history")
+    async def api_sync_history(
+        limit: int = 30,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.13.2 (#1): recent sync_runs for the dashboard sparkline.
+        Returns up to `limit` (max 200) most recent runs in
+        chronological order — oldest first so the JS can plot
+        left-to-right without reversing.
+
+        Each entry exposes the wall-clock seconds (finished_at -
+        started_at) precomputed server-side so the JS doesn't have
+        to do timezone arithmetic per render. Running rows have
+        wall_clock_seconds=null.
+        """
+        n = max(1, min(200, int(limit) or 30))
+
+        def _q():
+            with get_conn(db) as conn:
+                rows = conn.execute(
+                    """SELECT id, started_at, finished_at, status,
+                              transport, fallback_reason, no_changes,
+                              movies_seen, tv_seen, new_count, updated_count,
+                              error,
+                              CASE
+                                WHEN finished_at IS NULL THEN NULL
+                                ELSE CAST(
+                                  (julianday(finished_at) - julianday(started_at))
+                                  * 86400.0 AS REAL)
+                              END AS wall_clock_seconds
+                         FROM sync_runs
+                         ORDER BY id DESC
+                         LIMIT ?""",
+                    (n,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        rows = await run_in_threadpool(_q)
+        # Reverse so caller gets oldest → newest.
+        rows.reverse()
+        # Per-transport summary: avg wall-clock + count, only for
+        # successful + fully-loaded runs (not 'no_changes' short-
+        # circuits, which would skew the avg toward zero and hide
+        # the real cost of a working sync).
+        summary: dict[str, dict] = {}
+        for r in rows:
+            if r["status"] != "success":
+                continue
+            if r["wall_clock_seconds"] is None:
+                continue
+            tr = r["transport"] or "unknown"
+            s = summary.setdefault(tr, {
+                "transport": tr, "count": 0, "no_change_count": 0,
+                "fallback_count": 0, "avg_wall_clock": 0.0,
+                "_sum_full": 0.0, "_n_full": 0,
+            })
+            s["count"] += 1
+            if r["no_changes"]:
+                s["no_change_count"] += 1
+            else:
+                s["_sum_full"] += r["wall_clock_seconds"]
+                s["_n_full"] += 1
+            if r["fallback_reason"]:
+                s["fallback_count"] += 1
+        for s in summary.values():
+            s["avg_wall_clock"] = (
+                round(s["_sum_full"] / s["_n_full"], 2)
+                if s["_n_full"] else 0.0
+            )
+            s.pop("_sum_full"); s.pop("_n_full")
+        return {"runs": rows,
+                "summary": list(summary.values())}
+
+    @app.post("/api/sync/probe")
+    async def api_sync_probe(
+        request: Request,
+        source: str | None = Query(None),
+        url: str | None = Query(None),
+        branch: str | None = Query(None),
+    ):
+        """v1.13.2 (#3): pre-flight transport handshake. Lets the
+        settings UI show "the new SYNC SOURCE you just chose can
+        actually reach upstream" inline, instead of letting a
+        misconfigured cron silently degrade until the next 13:00 UTC
+        run.
+
+        Defaults to the currently-configured source/url/branch when
+        the query params are omitted (auto-probe on settings load
+        flow). Each transport runs the cheapest handshake that
+        proves it can reach upstream:
+
+          remote   — HEAD movies/pages.json against db_url
+          database — HEAD the codeload tarball URL
+          git      — dulwich.client.HttpGitClient.get_refs (ls-remote)
+
+        Returns {ok, transport, latency_ms, detail|error}. Always
+        returns 200 — the JSON ok flag carries pass/fail so the JS
+        can render inline without needing exception handling.
+        """
+        _require_admin(request)
+        chosen = (source or settings.sync_source).strip().lower()
+        if chosen not in ("remote", "database", "git"):
+            return {"ok": False, "transport": chosen,
+                    "error": f"unknown source {chosen!r}"}
+        import time as _t
+        t0 = _t.monotonic()
+
+        def _probe_remote():
+            target = (url or settings.motifdb_base_url).rstrip("/")
+            with httpx.Client(timeout=10.0,
+                              headers={"User-Agent": "motif-probe/1.0"}) as client:
+                r = client.head(f"{target}/movies/pages.json")
+                if r.status_code in (405, 501):
+                    # Some CDNs reject HEAD; retry with a small GET.
+                    r = client.get(f"{target}/movies/pages.json")
+                if r.status_code != 200:
+                    return False, f"HTTP {r.status_code} from {target}/movies/pages.json"
+                return True, f"200 from {target}/movies/pages.json"
+
+        def _probe_database():
+            target = url or settings.sync_database_url
+            with httpx.Client(timeout=10.0,
+                              headers={"User-Agent": "motif-probe/1.0"},
+                              follow_redirects=True) as client:
+                r = client.head(target)
+                if r.status_code in (405, 501):
+                    # codeload may not advertise HEAD; range-GET 0-0
+                    # is the cheapest fallback.
+                    r = client.get(target, headers={"Range": "bytes=0-0"})
+                if r.status_code not in (200, 206):
+                    return False, f"HTTP {r.status_code} from {target}"
+                return True, f"{r.status_code} from {target}"
+
+        def _probe_git():
+            target_url = url or settings.sync_git_url
+            target_branch = branch or settings.sync_git_branch
+            try:
+                from dulwich.client import HttpGitClient
+                from urllib.parse import urlparse
+                parsed = urlparse(target_url)
+                base = f"{parsed.scheme}://{parsed.netloc}"
+                path = parsed.path or "/"
+                client = HttpGitClient(base)
+                refs_result = client.get_refs(path.encode())
+                # dulwich versions return dict[bytes,bytes] or
+                # FetchPackResult.refs. Normalize.
+                refs = (refs_result.refs
+                        if hasattr(refs_result, "refs") else refs_result)
+                if not refs:
+                    return False, f"no refs returned from {target_url}"
+                ref_name = f"refs/heads/{target_branch}".encode()
+                if ref_name not in refs:
+                    available = sorted(
+                        r.decode() for r in refs
+                        if r.startswith(b"refs/heads/")
+                    )[:5]
+                    return False, (
+                        f"branch {target_branch!r} not found at {target_url}; "
+                        f"available: {available}"
+                    )
+                return True, (f"branch {target_branch} at "
+                              f"{refs[ref_name][:8].decode()}")
+            except ImportError:
+                return False, "dulwich not installed (Phase B dep)"
+            except Exception as e:
+                return False, f"{type(e).__name__}: {e}"
+
+        try:
+            if chosen == "remote":
+                ok, detail = await run_in_threadpool(_probe_remote)
+            elif chosen == "database":
+                ok, detail = await run_in_threadpool(_probe_database)
+            else:
+                ok, detail = await run_in_threadpool(_probe_git)
+        except Exception as e:
+            ok, detail = False, f"{type(e).__name__}: {e}"
+        latency_ms = int((_t.monotonic() - t0) * 1000)
+        return {"ok": ok, "transport": chosen,
+                "latency_ms": latency_ms,
+                ("detail" if ok else "error"): detail}
+
     @app.get("/api/sections/coverage")
     async def api_sections_coverage(db: Path = Depends(get_db_path)):
         """v1.12.67: per-section coverage breakdown. Returns one row

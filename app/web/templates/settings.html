@@ -466,6 +466,15 @@
     <div class="form-actions">
       <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>
       <span class="form-status" data-save-status="sync"></span>
+      <!-- v1.13.2 (#3): pre-flight transport probe. Uses the
+           CURRENTLY-SAVED sync.source/url/branch (so click after
+           save, not before). Status renders inline next to the
+           button — green check + latency on success, red text on
+           failure. Auto-fires once on page load so the user sees
+           today's reachability without clicking. -->
+      <button class="btn btn-tiny" id="sync-probe-btn" type="button"
+              title="Test that the configured SYNC SOURCE can reach upstream right now.">// PROBE TRANSPORT</button>
+      <span class="form-status" id="sync-probe-status"></span>
     </div>
   </div>
 </section>

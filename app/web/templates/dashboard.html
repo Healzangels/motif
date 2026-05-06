@@ -134,6 +134,23 @@
   </table>
 </section>
 
+<!-- v1.13.2 (#1): sync history sparkline. Hidden on first paint;
+     loadDashboard populates from /api/sync/history. Each bar = one
+     sync run; height = wall-clock seconds; color = transport. Hover
+     for the per-run tooltip. Below the bars: per-transport summary
+     (avg + count + fallback note) so the user can see GIT vs
+     DATABASE empirically in their environment. -->
+<section class="block" id="sync-history-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC HISTORY</h2>
+    <span class="muted small">last 30 runs · hover a bar for detail</span>
+  </header>
+  <div class="block-body" style="padding:12px 18px">
+    <div class="sync-history-bars" id="sync-history-bars"></div>
+    <div class="sync-history-summary" id="sync-history-summary"></div>
+  </div>
+</section>
+
 <!-- Copies-block: only renders when there are placements that fell back to
      copy (cross-FS situation). Was on /coverage; moved here in v1.8.1 since
      /coverage went away. // RE-LINK ALL converts them to hardlinks where

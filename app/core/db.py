@@ -243,7 +243,23 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     tv_seen         INTEGER NOT NULL DEFAULT 0,
     new_count       INTEGER NOT NULL DEFAULT 0,
     updated_count   INTEGER NOT NULL DEFAULT 0,
-    error           TEXT
+    error           TEXT,
+    -- v1.13.2 (#1): which transport this run actually used. Stamped
+    -- at run_id INSERT from settings.sync_source ('git' / 'database'
+    -- / 'remote'). On a fallback cascade the original-requested
+    -- transport stays here; fallback_reason explains what happened.
+    transport       TEXT,
+    -- v1.13.2 (#1): non-NULL when this run cascaded to a slower
+    -- tier ('git: <reason>' or 'database: <reason>'). Drives the
+    -- dashboard sparkline's amber-tinted bar so the user can see
+    -- at a glance which days the fast path failed.
+    fallback_reason TEXT,
+    -- v1.13.2 (#1): 1 when codeload returned 304 (Phase A.5) or
+    -- the git fetch produced no new commits (Phase B). Distinct
+    -- from "0 changes after a full walk" so the dashboard chart
+    -- can color a sub-second no-op run differently from a
+    -- full-walk run with no upstream churn.
+    no_changes      INTEGER NOT NULL DEFAULT 0
 );
 
 -- v1.12.106: live progress surface for long-running ops (TDB sync,
@@ -588,7 +604,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 36
+CURRENT_SCHEMA_VERSION = 37
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1319,6 +1335,37 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v36_to_v37(conn: sqlite3.Connection) -> None:
+    """v37 (#1, v1.13.2) adds telemetry columns to sync_runs so the
+    dashboard sparkline + per-transport summary can show actual perf
+    in the user's environment. Existing rows backfill to NULL /
+    default 0 — no behavior change until the next sync writes.
+
+    Three columns:
+      - transport       which sync.source actually executed (git /
+                        database / remote). NULL on legacy rows.
+      - fallback_reason set when this run cascaded down a tier.
+                        NULL = the requested transport completed
+                        cleanly.
+      - no_changes      1 when the run short-circuited via Phase
+                        A.5's 304 or Phase B's no-new-commits path.
+                        Distinct from "0 changes after a full walk"
+                        so the dashboard chart can render a sub-
+                        second no-op differently from a slow run
+                        that happened to find no churn.
+    """
+    log.info("Migrating to schema v37 (sync_runs telemetry)")
+    conn.executescript(
+        """
+        ALTER TABLE sync_runs ADD COLUMN transport TEXT;
+        ALTER TABLE sync_runs ADD COLUMN fallback_reason TEXT;
+        ALTER TABLE sync_runs ADD COLUMN no_changes INTEGER NOT NULL DEFAULT 0;
+        CREATE INDEX IF NOT EXISTS idx_sync_runs_started
+            ON sync_runs (started_at DESC);
+        """
+    )
+
+
 def _migrate_v35_to_v36(conn: sqlite3.Connection) -> None:
     """v36 (Phase C, v1.13.1) adds themes.tdb_dropped_at — the
     timestamp at which ThemerrDB stopped publishing this
@@ -2012,6 +2059,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 35:
                     _migrate_v35_to_v36(conn)
                     current = 36
+                elif current == 36:
+                    _migrate_v36_to_v37(conn)
+                    current = 37
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

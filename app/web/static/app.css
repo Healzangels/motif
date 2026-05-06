@@ -2198,6 +2198,59 @@ pre code, .codeblock {
   background: rgba(109, 211, 255, 0.10);
 }
 
+/* v1.13.2 (#1): sync history sparkline. Each bar is one sync run;
+   color encodes the transport that ran, modifier classes flag
+   no-op (304/no-new-commits) and fallback runs. The chart reads
+   left-to-right (oldest → newest). */
+.sync-history-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 64px;
+  padding-bottom: 2px;
+}
+.sync-history-bar {
+  flex: 1 0 8px;
+  min-width: 6px;
+  border-radius: 1px;
+  background: var(--fg-mute);
+  cursor: help;
+  transition: filter 0.12s;
+}
+.sync-history-bar:hover { filter: brightness(1.4); }
+.sync-history-bar-git      { background: var(--cyan); }
+.sync-history-bar-database { background: var(--magenta); }
+.sync-history-bar-remote   { background: var(--fg-mute); }
+.sync-history-bar-noop     { background: var(--green); opacity: 0.85; }
+.sync-history-bar-fallback {
+  /* Amber wedge on the right edge so the user can see the
+     cascade at a glance. */
+  border-right: 2px solid var(--amber);
+}
+.sync-history-bar-failed {
+  background: var(--red) !important;
+  opacity: 0.7;
+}
+.sync-history-summary {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-size: var(--t-tiny);
+}
+.sync-history-sum {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.sync-history-sum-label {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.sync-history-sum-git      .sync-history-sum-label { color: var(--cyan); }
+.sync-history-sum-database .sync-history-sum-label { color: var(--magenta); }
+.sync-history-sum-remote   .sync-history-sum-label { color: var(--fg-mute); }
+
 .form-env-badge {
   font-size: var(--t-tiny);
   letter-spacing: 0.15em;
@@ -2223,6 +2276,10 @@ pre code, .codeblock {
 }
 .form-status.ok { color: var(--green); }
 .form-status.err { color: var(--red); }
+/* v1.13.2 (#3): pre-flight probe result tints. Match the OK/ERR
+   palette so the visual language stays consistent. */
+.form-status.form-status-ok { color: var(--green); }
+.form-status.form-status-fail { color: var(--red); }
 
 /* ---- Disabled inputs (env-overridden) ---- */
 .input:disabled, select.input:disabled {

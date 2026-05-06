@@ -690,6 +690,13 @@
     // rhythm is legible at a glance without a /settings detour.
     renderDashSyncLine(stats);
 
+    // v1.13.2 (#1): sync history sparkline. Hidden when there's
+    // no telemetry data yet (fresh install or pre-v37 schema).
+    try {
+      const hist = await api('GET', '/api/sync/history?limit=30');
+      renderSyncHistory(hist);
+    } catch (_) { /* swallow; widget stays hidden */ }
+
     // v1.12.67: per-section coverage. Hidden if there's only one
     // managed section (no comparison value); rendered as a table
     // with click-through to the matching library tab + 4K toggle.
@@ -768,6 +775,70 @@
     nextEl.textContent = nextTxt;
     lastEl.textContent = lastTxt;
     line.style.display = '';
+  }
+
+  // v1.13.2 (#1): sync history sparkline + per-transport summary.
+  // Bar height encodes wall-clock seconds; color encodes transport
+  // (git=cyan, database=magenta, remote=fg-mute). A no-changes
+  // run (304 / no-new-commits) renders short with a green-tint
+  // overlay so it's distinguishable from a fast full walk. A
+  // fallback run (cascaded down a tier) gets an amber tint on the
+  // bar's right edge so the user can spot at a glance which days
+  // the fast path failed.
+  function renderSyncHistory(payload) {
+    const block = document.getElementById('sync-history-block');
+    const barsEl = document.getElementById('sync-history-bars');
+    const sumEl = document.getElementById('sync-history-summary');
+    if (!block || !barsEl || !sumEl) return;
+    const runs = (payload && payload.runs) || [];
+    if (!runs.length) { block.style.display = 'none'; return; }
+    block.style.display = '';
+    // Scale: tallest bar should fit in 60px. Anything over 180s
+    // (a really slow run) clamps to 60px; bars below 1s pin to a
+    // 4px floor so they're still hoverable.
+    const max = Math.max(60, ...runs.map(r => r.wall_clock_seconds || 0));
+    const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString());
+    barsEl.innerHTML = runs.map((r) => {
+      const sec = r.wall_clock_seconds == null
+        ? 0 : Math.max(0.5, r.wall_clock_seconds);
+      const pctH = Math.max(4, Math.round((sec / max) * 60));
+      const transport = r.transport || 'unknown';
+      const cls = ['sync-history-bar',
+                   `sync-history-bar-${transport}`,
+                   r.no_changes ? 'sync-history-bar-noop' : '',
+                   r.fallback_reason ? 'sync-history-bar-fallback' : '',
+                   r.status === 'failed' ? 'sync-history-bar-failed' : '',
+                  ].filter(Boolean).join(' ');
+      const wcTxt = r.wall_clock_seconds == null
+        ? 'running' : `${r.wall_clock_seconds.toFixed(1)}s`;
+      const noopTxt = r.no_changes ? '\nshort-circuit (no upstream changes)' : '';
+      const fbTxt = r.fallback_reason ? `\nfallback: ${r.fallback_reason}` : '';
+      const errTxt = r.error ? `\nerror: ${r.error}` : '';
+      const tip = `#${r.id} · ${transport} · ${wcTxt}\n`
+        + `started ${r.started_at}\n`
+        + `${fmt(r.movies_seen)} movies · ${fmt(r.tv_seen)} tv · `
+        + `${fmt(r.new_count)} new · ${fmt(r.updated_count)} updated`
+        + noopTxt + fbTxt + errTxt;
+      return `<span class="${cls}" style="height:${pctH}px"
+              title="${htmlEscape(tip)}"></span>`;
+    }).join('');
+    const summary = (payload && payload.summary) || [];
+    if (!summary.length) {
+      sumEl.innerHTML = '<span class="muted small">// no completed runs yet</span>';
+      return;
+    }
+    sumEl.innerHTML = summary.map((s) => {
+      const fbNote = s.fallback_count
+        ? ` <span class="muted">· ${s.fallback_count} fb</span>` : '';
+      const noopNote = s.no_change_count
+        ? ` <span class="muted">· ${s.no_change_count} no-op</span>` : '';
+      return `<span class="sync-history-sum sync-history-sum-${s.transport}">`
+        + `<span class="sync-history-sum-label">${htmlEscape(s.transport.toUpperCase())}</span> `
+        + `<b>${s.avg_wall_clock}s</b> avg `
+        + `<span class="muted">· ${s.count} runs</span>`
+        + fbNote + noopNote
+        + `</span>`;
+    }).join('');
   }
 
   // v1.12.67: render the per-section coverage table on the
@@ -2752,6 +2823,47 @@
     });
 
     return out;
+  }
+
+  // v1.13.2 (#3): pre-flight transport probe wiring. Auto-fires
+  // once on settings load so the user sees today's reachability
+  // without clicking; click-to-rerun for manual re-test (handy
+  // after editing the URL fields). Uses CURRENTLY-SAVED config —
+  // user must save first if they want to probe a new value.
+  function bindSyncProbe() {
+    const btn = document.getElementById('sync-probe-btn');
+    const status = document.getElementById('sync-probe-status');
+    if (!btn || !status) return;
+    async function runProbe() {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PROBING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        const res = await api('POST', '/api/sync/probe');
+        if (res.ok) {
+          status.textContent = `✓ ${res.transport.toUpperCase()} `
+            + `reachable · ${res.latency_ms}ms · ${res.detail || ''}`;
+          status.classList.add('form-status-ok');
+        } else {
+          status.textContent = `✗ ${res.transport.toUpperCase()} failed: `
+            + (res.error || 'unknown error');
+          status.classList.add('form-status-fail');
+        }
+      } catch (e) {
+        status.textContent = `✗ probe request failed: ${e.message}`;
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    }
+    btn.addEventListener('click', () => { runProbe().catch(()=>{}); });
+    // Auto-probe once on load. Small delay so /api/config has
+    // landed and the dropdown shows the actual current value
+    // before the result text appears.
+    setTimeout(() => { runProbe().catch(()=>{}); }, 800);
   }
 
   function bindConfigSaves() {
@@ -7155,6 +7267,7 @@
     loadTokens().catch(console.error);
     loadLibraries().catch(console.error);
     loadConfigIntoForms().catch(console.error);
+    bindSyncProbe();
     loadPending().catch(console.error);
     loadLibrary().catch(console.error);
 
