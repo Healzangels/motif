@@ -884,8 +884,9 @@
       return `
         <tr class="section-coverage-row" data-href="${htmlEscape(href)}">
           <td>${htmlEscape(s.title || '')}</td>
-          <td class="col-year">
-            <span class="muted small">${typeLabel} · ${fourkLabel}</span>
+          <td class="col-year col-section-type">
+            <span class="section-type-main">${typeLabel}</span>
+            <span class="section-type-sub muted small">${fourkLabel}</span>
           </td>
           <td class="col-num"><b>${fmt.num(s.total || 0)}</b></td>
           <td class="col-num accent-green">${fmt.num(s.themed || 0)}</td>
@@ -6318,8 +6319,31 @@
     // the fetch lands; if the row has no audit history (older row
     // pre-v1.12.80), the section stays hidden.
     const auditPlaceholder = '<div id="audit-section-slot"></div>';
+    // v1.13.3 (Issue 4): explicit section + edition tag right
+    // under the title so the user doesn't have to infer 4K-vs-
+    // Standard from the placement folder path. Renders as a
+    // small chip row: e.g. [4K Movie] [edition: 4K] for the
+    // 4K-section copy of Willy Wonka, or [Standard Movie] for
+    // the std copy. Hidden when section_context is null
+    // (legacy callers / orphan paths).
+    const sc = data.section_context;
+    let scopeChips = '';
+    if (sc) {
+      const scopeLbl = htmlEscape(sc.scope_label || '');
+      const variantTone = sc.is_4k ? 'fourk' : 'standard';
+      scopeChips = `<div class="info-scope-row">`
+        + `<span class="info-scope-chip info-scope-chip-${variantTone}">${scopeLbl}</span>`
+        + (sc.section_title
+            ? `<span class="info-scope-chip info-scope-chip-section">${htmlEscape(sc.section_title)}</span>`
+            : '')
+        + (sc.edition
+            ? `<span class="info-scope-chip info-scope-chip-edition">edition: ${htmlEscape(sc.edition)}</span>`
+            : '')
+        + `</div>`;
+    }
     body.innerHTML = `
       <h3>${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
+      ${scopeChips}
       <dl class="dlg-grid">
         <dt>imdb</dt><dd>${imdb}</dd>
         <dt>tmdb</dt><dd>${tmdbLink}</dd>

@@ -630,25 +630,61 @@ _LIBRARY_SORTS_MAIN = {
     # frontend's // NEEDS WORK sort button. Title is the
     # secondary key (added in the SQL builder via _LIBRARY_SORT_TIE)
     # so equal-priority rows stay alphabetized.
+    # v1.13.3: priorities 2 + 6 (pending and declined) now use the
+    # per-section + '' fallback pattern that the row pill render
+    # established in v1.12.99 / v1.12.119, plus the motif-tracking-
+    # presence gate. Pre-fix a stale '' fallback row from an older
+    # sync would float every section's copy of a multi-section
+    # title to the top of // NEEDS WORK even if one section had
+    # actually been ACCEPTed (its per-section decision='accepted'
+    # got overshadowed by the legacy '' row's 'pending'). Now
+    # priorities are evaluated against THIS section's effective
+    # decision (per-section first, '' fallback second) and only
+    # when motif actually tracks the row in this section.
     "attention": (
         "CASE "
         # Active failure (red TDB ✗ pill, not yet acked)
         "WHEN t.failure_kind IS NOT NULL AND t.failure_acked_at IS NULL THEN 1 "
         # Pending upstream update (blue TDB ↑ pill, not yet decided)
-        "WHEN EXISTS (SELECT 1 FROM pending_updates pu "
-        "  WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
-        "    AND pu.decision = 'pending') THEN 2 "
+        # — only when motif has presence in THIS section AND the URL
+        # actually differs (no-op suppression).
+        "WHEN COALESCE("
+        "  (SELECT pu.decision FROM pending_updates pu "
+        "    WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
+        "      AND pu.section_id = pi.section_id),"
+        "  (SELECT pu.decision FROM pending_updates pu "
+        "    WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
+        "      AND pu.section_id = '')"
+        ") = 'pending' "
+        " AND ("
+        "   EXISTS (SELECT 1 FROM local_files lf2 "
+        "            WHERE lf2.media_type = t.media_type "
+        "              AND lf2.tmdb_id = t.tmdb_id "
+        "              AND lf2.section_id = pi.section_id)"
+        "   OR EXISTS (SELECT 1 FROM user_overrides uo2 "
+        "               WHERE uo2.media_type = t.media_type "
+        "                 AND uo2.tmdb_id = t.tmdb_id "
+        "                 AND uo2.section_id = pi.section_id)"
+        "   OR EXISTS (SELECT 1 FROM placements p3 "
+        "               WHERE p3.media_type = t.media_type "
+        "                 AND p3.tmdb_id = t.tmdb_id "
+        "                 AND p3.section_id = pi.section_id)"
+        "   OR pi.local_theme_file = 1"
+        " ) THEN 2 "
         # Awaiting placement (canonical exists, no placement)
         "WHEN lf.file_path IS NOT NULL AND p.media_folder IS NULL THEN 3 "
         # Mismatch (canonical and placement file diverged)
         "WHEN lf.mismatch_state = 'pending' THEN 4 "
-        # Acked failure or KEEP-CURRENTed update — a passive
-        # "still broken" cue, lower urgency than the unhandled
-        # cases above but higher than ordinary rows.
-        "WHEN t.failure_kind IS NOT NULL THEN 5 "
-        "WHEN EXISTS (SELECT 1 FROM pending_updates pu "
-        "  WHERE pu.media_type = t.media_type AND pu.tmdb_id = t.tmdb_id "
-        "    AND pu.decision = 'declined') THEN 6 "
+        # v1.13.3 (Issue 5): acked failures (priority 5 pre-fix)
+        # are no longer prioritized in NEEDS WORK. The user
+        # explicitly said "I dealt with it" by clicking ACK
+        # FAILURE; pulling them back to the top of NEEDS WORK
+        # contradicts that intent. The TDB ✗ pill stays on the
+        # row so the broken upstream is still visible — only the
+        # ranking changes. Same for KEEP-CURRENTed updates
+        # (priority 6 pre-fix) — the user actively dismissed
+        # them, so don't re-surface. Both fall to the default
+        # priority 7 with the rest of the catalog.
         "ELSE 7 END"
     ),
 }
@@ -4361,8 +4397,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # reference NameError'd accept-update for U-source rows,
         # 500ing the response even though the DB transaction +
         # download enqueue succeeded.
+        # v1.13.3: pass section_id so the event lands on the calling
+        # section's HISTORY only — pre-fix the NULL section_id matched
+        # every section's history view.
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_id,
                   message=(f"Update accepted by {request.state.principal.username}"
                            + (" (user URL captured for revert)"
                               if (override and not url_match)
@@ -5944,6 +5984,66 @@ def create_app(settings: Settings | None = None) -> FastAPI:
              "captured_at": prev_row["captured_at"]}
             if prev_row else None
         )
+        # v1.13.3 (Issue 4): explicit section + edition context so the
+        # INFO card doesn't have to imply 4K-vs-Standard from the
+        # placement folder path. Looks up the plex_section row for
+        # the requested section_id (title, type, is_4k, is_anime),
+        # plus extracts the {edition-X} tag from each placement's
+        # media_folder if present. NULL when no section_id was
+        # passed (legacy callers / orphan paths).
+        section_context = None
+        if section_id is not None:
+            with get_conn(db) as conn:
+                sec = conn.execute(
+                    "SELECT section_id, title, type, is_4k, is_anime "
+                    "FROM plex_sections WHERE section_id = ?",
+                    (section_id,),
+                ).fetchone()
+            if sec is not None:
+                if sec["is_anime"]:
+                    type_label = "Anime"
+                elif sec["type"] == "show":
+                    type_label = "TV"
+                else:
+                    type_label = "Movie"
+                variant_label = "4K" if sec["is_4k"] else "Standard"
+                section_context = {
+                    "section_id": sec["section_id"],
+                    "section_title": sec["title"],
+                    "type": sec["type"],
+                    "is_4k": bool(sec["is_4k"]),
+                    "is_anime": bool(sec["is_anime"]),
+                    "type_label": type_label,
+                    "variant_label": variant_label,
+                    # Compose the human label the INFO card renders:
+                    # "4K Movie", "Standard TV", "Anime · Standard"
+                    "scope_label": (
+                        f"{variant_label} {type_label}"
+                        if not sec["is_anime"]
+                        else f"{type_label} · {variant_label}"
+                    ),
+                }
+        # Edition extraction from placement folders. Plex tags
+        # editions with {edition-NAME} in the folder name; if any
+        # placement carries one, surface it on the section_context
+        # block so the user can see "edition: 4K" inline without
+        # parsing the path themselves. We pick the first non-empty
+        # match across this row's placements (typically only one).
+        if section_context is not None:
+            import re as _re
+            edition_label = None
+            edition_pattern = _re.compile(r"\{edition-([^}]+)\}")
+            for p in placements:
+                mf = (p["media_folder"] if "media_folder" in p.keys()
+                      else None)
+                if not mf:
+                    continue
+                m = edition_pattern.search(mf)
+                if m:
+                    edition_label = m.group(1)
+                    break
+            section_context["edition"] = edition_label
+
         return {
             "theme": dict(t),
             "local_file": local_payloads[0] if local_payloads else None,
@@ -5964,6 +6064,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "motif_added_at": motif_added,
             "motif_edited_at": motif_edited,
             "events": [dict(e) for e in recent_events],
+            "section_context": section_context,
         }
 
     def _trigger_plex_item_refresh(
@@ -7187,8 +7288,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 details={"old_url": old_url,
                          "cleared_from_section": section_target},
             )
+        # v1.13.3: pass section_id so the event lands on the calling
+        # section's HISTORY only — pre-fix the NULL section_id matched
+        # every section's history view (NULL is the cross-section
+        # scope by design), so CLEAR URL on standard surfaced on the
+        # 4K card's HISTORY too. Mirrors the per-section semantic the
+        # ack-failure / accept-update / decline-update handlers use.
         log_event(db, level="INFO", component="api",
                   media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=section_target,
                   message=f"Previous URL cleared by {request.state.user}")
         return {"ok": True}
 

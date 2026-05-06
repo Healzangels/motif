@@ -2177,6 +2177,30 @@ pre code, .codeblock {
   cursor: pointer;
   transition: background 0.12s;
 }
+/* v1.13.3: TYPE column reads as two stacked tokens (type on top,
+   variant below) so MOVIES/TV/ANIME and STD/4K stack consistently
+   regardless of column width. Pre-fix the inline "TYPE · VARIANT"
+   wrapped after the bullet on narrow rows but stayed inline on
+   wider ones — visually inconsistent across the table. */
+.col-section-type {
+  white-space: nowrap;
+  line-height: 1.15;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.section-type-main {
+  display: block;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.12em;
+  color: var(--fg-mute);
+}
+.section-type-sub {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  margin-top: 1px;
+  opacity: 0.7;
+}
 .section-coverage-row:hover {
   background: rgba(109, 211, 255, 0.06);
 }
@@ -2250,6 +2274,48 @@ pre code, .codeblock {
 .sync-history-sum-git      .sync-history-sum-label { color: var(--cyan); }
 .sync-history-sum-database .sync-history-sum-label { color: var(--magenta); }
 .sync-history-sum-remote   .sync-history-sum-label { color: var(--fg-mute); }
+
+/* v1.13.3 (Issue 4): scope chip row on the INFO card. Surfaces
+   4K-vs-Standard, the Plex section title, and the edition tag
+   (parsed out of the placement's {edition-X} folder fragment) so
+   the user can identify which row's INFO they're looking at
+   without inferring from a long folder path. */
+.info-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  margin-bottom: 14px;
+}
+.info-scope-chip {
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.info-scope-chip-standard {
+  border: 1px solid rgba(109,255,181,0.4);
+  color: var(--green);
+  background: rgba(109,255,181,0.06);
+}
+.info-scope-chip-fourk {
+  border: 1px solid rgba(255,184,74,0.4);
+  color: var(--amber);
+  background: rgba(255,184,74,0.06);
+}
+.info-scope-chip-section {
+  border: 1px solid var(--line);
+  color: var(--fg-mute);
+  background: transparent;
+  font-weight: 400;
+}
+.info-scope-chip-edition {
+  border: 1px solid rgba(255,122,214,0.4);
+  color: var(--magenta);
+  background: rgba(255,122,214,0.06);
+}
 
 .form-env-badge {
   font-size: var(--t-tiny);
