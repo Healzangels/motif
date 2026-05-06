@@ -55,11 +55,23 @@ def _disk_free_mb(path: Path) -> int | None:
     or None if the lookup fails (path missing, permission denied, etc).
     Walks up the parent chain so a not-yet-created subdir still resolves
     to its parent's filesystem.
+
+    v1.13.15: emit a DEBUG log when we walk past the original path so
+    a misconfigured themes_dir (typo, broken mount) is diagnosable. The
+    walk-up itself is still the right behavior for the legitimate
+    "themes_dir parent exists, target subdir created on first write"
+    case — we just want operators to see when the answer comes from a
+    different filesystem than they think.
     """
     p = path
-    for _ in range(10):
+    for i in range(10):
         try:
             usage = shutil.disk_usage(p)
+            if i > 0:
+                log.debug(
+                    "_disk_free_mb: %s unreachable, reporting free space "
+                    "from %s (walked %d level(s))", path, p, i,
+                )
             return int(usage.free // (1024 * 1024))
         except (OSError, FileNotFoundError):
             if p.parent == p:

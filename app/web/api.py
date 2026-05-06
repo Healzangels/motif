@@ -4781,14 +4781,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # cache thrashed, re-fetching popular videos. move_to_end on every
     # hit gives proper recency ordering for ~free.
     from collections import OrderedDict as _OrderedDict
+    import threading as _threading
     _OEMBED_CACHE: "_OrderedDict[str, dict]" = _OrderedDict()
     _OEMBED_CACHE_MAX = 512
+    # v1.13.15: oEmbed lookups arrive via run_in_threadpool, so multiple
+    # FastAPI requests can hit _fetch_youtube_oembed concurrently. Pre-
+    # fix two concurrent calls on the same URL could race past the
+    # `if cached is not None` check and both perform the HTTP fetch
+    # (wasted bandwidth) — and concurrent move_to_end / popitem on
+    # OrderedDict isn't atomic, so the LRU order could briefly corrupt.
+    # The lock is held only around the dict mutations + the HTTP read
+    # is outside the critical section so a slow YouTube response
+    # doesn't block other lookups.
+    _OEMBED_CACHE_LOCK = _threading.Lock()
 
     def _fetch_youtube_oembed(yt_url: str) -> dict | None:
-        cached = _OEMBED_CACHE.get(yt_url)
-        if cached is not None:
-            _OEMBED_CACHE.move_to_end(yt_url)
-            return cached
+        with _OEMBED_CACHE_LOCK:
+            cached = _OEMBED_CACHE.get(yt_url)
+            if cached is not None:
+                _OEMBED_CACHE.move_to_end(yt_url)
+                return cached
         try:
             import httpx
             with httpx.Client(timeout=8.0, follow_redirects=True) as c:
@@ -4811,13 +4823,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         }
         # True LRU eviction: OrderedDict.popitem(last=False) drops the
         # least-recently-used entry (the one not move_to_end'd most
-        # recently).
-        while len(_OEMBED_CACHE) >= _OEMBED_CACHE_MAX:
-            try:
-                _OEMBED_CACHE.popitem(last=False)
-            except KeyError:
-                break
-        _OEMBED_CACHE[yt_url] = slim
+        # recently). Insert + evict together under the lock so size
+        # stays bounded even under concurrent inserts.
+        with _OEMBED_CACHE_LOCK:
+            while len(_OEMBED_CACHE) >= _OEMBED_CACHE_MAX:
+                try:
+                    _OEMBED_CACHE.popitem(last=False)
+                except KeyError:
+                    break
+            _OEMBED_CACHE[yt_url] = slim
         return slim
 
     @app.get("/api/youtube/oembed")

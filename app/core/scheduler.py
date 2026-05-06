@@ -171,14 +171,21 @@ def _stuck_job_sweep(db_path: Path) -> None:
                         f"{threshold}min runtime — worker likely hung. "
                         "Reset to failed; will retry per backoff schedule."
                     )
-                    conn.execute(
+                    # v1.13.15: re-check status='running' inside the
+                    # UPDATE so a worker that finished naturally between
+                    # our SELECT (line above) and this UPDATE doesn't
+                    # get its legitimate 'done'/'cancelled' overwritten
+                    # to 'failed'. cur.rowcount tells us whether we
+                    # actually killed something or the worker beat us.
+                    cur = conn.execute(
                         "UPDATE jobs SET status = 'failed', "
                         "                finished_at = ?, "
                         "                last_error = COALESCE(last_error, ?) "
-                        "WHERE id = ?",
+                        "WHERE id = ? AND status = 'running'",
                         (now_iso(), msg, row["id"]),
                     )
-                    killed += 1
+                    if cur.rowcount:
+                        killed += 1
         if killed:
             log_event(db_path, level="WARNING", component="scheduler",
                       message=f"Stuck-job sweep reset {killed} runaway job(s)")
@@ -281,8 +288,12 @@ def _check_release_update(settings: "Settings") -> None:
             return
         data = r.json()
         if data.get("draft") or data.get("prerelease"):
-            # Treat as a success — endpoint returned a valid payload, just
-            # not one we surface. Resets the streak.
+            # v1.13.15: prerelease/draft is treated as connectivity-success
+            # (the endpoint answered, the streak resets) but NOT as
+            # update-available. The /releases/latest endpoint normally
+            # excludes both — if we land here it's the rare case where
+            # the repo's only published releases are prereleases, so the
+            # topbar suffix legitimately stays hidden. No log spam.
             _record_success()
             return
         payload = {
