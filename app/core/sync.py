@@ -2337,12 +2337,21 @@ def run_sync(db_path, base_url: str, *,
         # removed); the git path uses the explicit ChangeSet.removed
         # list with a survivors check (one-of-imdb-or-themoviedb).
         # Both honor a 5%-of-catalog cap so a buggy upstream export
-        # can't cascade-drop the whole library. Skip on the no-op
-        # short-circuit paths — there's nothing to detect when no
-        # upsert ran.
-        if not skip_upsert:
+        # can't cascade-drop the whole library.
+        #
+        # v1.13.7: split the trigger so the git-active-changes path
+        # actually runs detection. Pre-fix `if not skip_upsert:`
+        # gated everything off skip_upsert which is True for ALL
+        # git-mode runs (the differential upsert helper does its
+        # work above and sets skip_upsert=True to skip the full-tree
+        # walk below). Result: _detect_and_stamp_drops_git was dead
+        # code; drops were silently never stamped on source=git.
+        ran_git_diff = (git_mirror is not None
+                        and not git_mirror.is_unchanged())
+        ran_full_walk = not skip_upsert
+        if ran_git_diff or ran_full_walk:
             try:
-                if git_mirror is not None:
+                if ran_git_diff:
                     n_dropped = _detect_and_stamp_drops_git(
                         db_path, git_mirror, sync_ts=sync_ts)
                 else:
@@ -2634,21 +2643,32 @@ def run_sync(db_path, base_url: str, *,
             },
         )
         # v1.12.126 Phase A.5: distinct activity line on the no-change
-        # path so the ops drawer's "Last Ops" card reads honestly
-        # ("Done — no upstream changes" rather than "Done — 0 items").
-        if skip_upsert:
-            op_progress.update_progress(
-                db_path, "tdb_sync",
-                activity="Done — no upstream changes (304)",
-            )
+        # path so the ops drawer's "Last Ops" card reads honestly.
+        # v1.13.7: four distinct cases — snapshot 304 (skipped),
+        # git unchanged (skipped), git active-changes (differential
+        # upsert ran above), and full-tree walk (snapshot/remote).
+        # The skip_upsert flag overlaps the first three cases (set
+        # whenever git_mirror is not None) so we can't gate on it
+        # alone; explicitly disambiguate by transport state.
+        snapshot_skipped = (snapshot is not None
+                            and snapshot.is_unchanged())
+        git_unchanged = (git_mirror is not None
+                         and git_mirror.is_unchanged())
+        if snapshot_skipped:
+            done_msg = "Done — no upstream changes (304)"
+        elif git_unchanged:
+            done_msg = "Done — no new commits"
         else:
-            op_progress.update_progress(
-                db_path, "tdb_sync",
-                activity=(
-                    f"Done — {stats.movies_seen + stats.tv_seen} items, "
-                    f"{stats.new_count} new, {stats.updated_count} updated"
-                ),
+            # Full-tree walk OR git differential. Both populate
+            # stats.movies_seen / tv_seen / new_count / updated_count.
+            done_msg = (
+                f"Done — {stats.movies_seen + stats.tv_seen} items, "
+                f"{stats.new_count} new, {stats.updated_count} updated"
             )
+        op_progress.update_progress(
+            db_path, "tdb_sync",
+            activity=done_msg,
+        )
         op_progress.finish_progress(db_path, "tdb_sync", status="done")
         return stats
 
