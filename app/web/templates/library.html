@@ -186,12 +186,14 @@
     <button type="button" class="link-glyph link-glyph-mismatch"
             data-link-pill="m"
             title="Mismatch — canonical content differs from the Plex-folder file. Resolve via PLACE menu.">M</button>
-    <!-- v1.13.4: hollow square distinguishes the "no placement"
-         filter from the em-dash separator the user could mistake
-         it for. Same gray-off tone, just a different glyph. -->
-    <button type="button" class="state-pill-btn state-pill-btn-off"
+    <!-- v1.13.9: glyph reverted to the em-dash but the button shape
+         is now square (state-pill-btn-square) instead of the round
+         dot used by the on/await/broken filters above. The square
+         silhouette is the actual visual cue for "no placement";
+         the dash sits inside it. -->
+    <button type="button" class="state-pill-btn state-pill-btn-square state-pill-btn-off"
             data-link-pill="none"
-            title="No placement.">□</button>
+            title="No placement.">—</button>
     <button type="button" class="pill-filter-clear" data-link-pill=""
             title="Clear all LINK selections.">CLEAR</button>
   </div>
@@ -208,11 +210,12 @@
     <button type="button" class="ed-pill-btn ed-pill-btn-on"
             data-ed-pill="has"
             title="Show only rows with a Plex {edition-...} folder tag (Director's Cut, Extended, IMAX, etc.).">ED</button>
-    <!-- v1.13.4: hollow square mirrors the LINK row's "none"
-         glyph so the two "no-state" filters scan the same way. -->
-    <button type="button" class="state-pill-btn state-pill-btn-off"
+    <!-- v1.13.9: square shape (state-pill-btn-square) with the
+         em-dash glyph mirrors the LINK row's "no placement" filter
+         so the two "no-state" filters scan the same way. -->
+    <button type="button" class="state-pill-btn state-pill-btn-square state-pill-btn-off"
             data-ed-pill="none"
-            title="Show only rows without an edition tag.">□</button>
+            title="Show only rows without an edition tag.">—</button>
     <button type="button" class="pill-filter-clear" data-ed-pill=""
             title="Clear all EDITION selections.">CLEAR</button>
   </div>

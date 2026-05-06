@@ -1033,6 +1033,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .state-pill-btn-on   { color: var(--green); border-color: rgba(109,255,181,0.4); }
 .state-pill-btn-off  { color: var(--fg-mute); }
+/* v1.13.9: square-silhouette variant for the "no-state" filters on
+   the LINK + ED rows. Round dots already convey on/off/await/broken
+   for DL+PL+LINK+ED's actual states; the no-state pill needs to read
+   as "not a state" — a square distinguishes it from the dots without
+   the em-dash being misread as a separator. The em-dash glyph still
+   sits inside, just inside a square frame instead of a circle. */
+.state-pill-btn-square { border-radius: 2px; }
 .state-pill-btn-broken { color: var(--red); border-color: rgba(255,107,107,0.4); }
 /* v1.12.70: amber 'await' PL filter button — matches the amber
    .state-pill.await dot in the PL column for rows where the
