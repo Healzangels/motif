@@ -1042,8 +1042,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
      the longest label + monospace letter-spacing. Every label
      now fits in the column without expanding it, so all pill
      rows have ALL/CLEAR buttons starting at exactly the same X
-     for a clean scannable grid. */
-  min-width: 64px;
+     for a clean scannable grid.
+     v1.13.13: bumped 64 -> 72px to fit "PRESET:" (the new row
+     added in v1.13.11) without truncation, so PRESET's select
+     starts at the same X as ALL on every other row. */
+  min-width: 72px;
   text-align: right;
   padding-right: 6px;
   font-weight: 600;
@@ -1258,6 +1261,22 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--fg-mute);
+}
+/* v1.13.13 (Option C): pulse-tint a state pill amber while a download
+   or place job for that row is in flight. Doesn't add a 4th DL state
+   to the legend — it's a transient cue that lifts during bulk
+   operations so the user can see which rows are working at this
+   second. The animation overrides whatever base state the dot is in
+   (gray off → amber pulsing), and clears the moment the job finishes
+   and the next loadLibrary() repaints with job_in_flight=null. */
+.state-pill-pending {
+  background: var(--amber) !important;
+  box-shadow: 0 0 6px var(--amber);
+  animation: state-pill-pulse 1.4s ease-in-out infinite;
+}
+@keyframes state-pill-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.92); }
+  50%      { opacity: 1;    transform: scale(1.08); }
 }
 .state-pill.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .state-pill.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }

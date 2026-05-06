@@ -660,7 +660,7 @@
     const btn = $('#dry-run-disable-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
-      if (!confirm('Disable dry-run? After this, downloads will hit YouTube and themes will be placed into Plex media folders.')) return;
+      if (!confirm('Disable dry-run? Real downloads and placements will resume.')) return;
       try {
         const fd = new FormData();
         fd.append('enabled', 'false');
@@ -1154,7 +1154,7 @@
         if (it.upstream_source === 'plex_orphan') {
           srcCell = '<span class="link-badge link-badge-orphan" title="adopted orphan (no upstream record)">O</span>';
         } else if (provenance === 'manual') {
-          srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar — theme.mp3 at the Plex folder that motif doesn\'t manage yet (click ADOPT to take ownership)">M</span>';
+          srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar (click ADOPT to manage)">M</span>';
         } else if (provenance === 'cloud') {
           srcCell = '<span class="link-badge link-badge-cloud" title="Plex cloud theme">☁</span>';
         } else if (provenance === 'auto') {
@@ -1174,11 +1174,11 @@
           ? `<button class="btn btn-tiny btn-danger" data-act="delete-orphan" data-mt="${it.media_type}" data-id="${it.tmdb_id}" data-title="${htmlEscape(it.title || '')}" title="purge this orphan: deletes motif's database record and every associated theme file — your Plex library item itself stays put. Cannot be undone.">× DEL</button>`
           : '';
         const actions = it.pending_update
-          ? `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="open the per-item dialog with full theme details, history and available actions">DETAILS</button>
-             <button class="btn btn-tiny btn-info" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="apply the new ThemerrDB URL — re-downloads from the new YouTube source and overwrites motif's current theme file">ACCEPT</button>
-             <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="ignore this update — the ↑ glyph clears and your existing theme stays in place">KEEP</button>
+          ? `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="Open details for this row">DETAILS</button>
+             <button class="btn btn-tiny btn-info" data-act="accept-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="Apply the new TDB URL">ACCEPT</button>
+             <button class="btn btn-tiny" data-act="decline-update" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="Dismiss this update">KEEP</button>
              ${deleteBtn}`
-          : `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="open the per-item dialog with full theme details, history and available actions">DETAILS</button>
+          : `<button class="btn btn-tiny" data-act="open" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="Open details for this row">DETAILS</button>
              <button class="btn btn-tiny btn-warn" data-act="redl" data-mt="${it.media_type}" data-id="${it.tmdb_id}" title="re-download from ThemerrDB — replaces motif's current theme file with a fresh download from the upstream URL">RE-DL</button>
              ${deleteBtn}`;
 
@@ -1872,7 +1872,7 @@
     const btn = $('#relink-all-btn');
     if (!btn) return;
     btn.addEventListener('click', async () => {
-      if (!confirm('Re-link all copies? This converts copies to hardlinks where the filesystem allows it. Safe to run; failures are skipped.')) return;
+      if (!confirm('Re-link all copies as hardlinks?')) return;
       btn.disabled = true;
       const orig = btn.textContent;
       btn.textContent = '// QUEUED';
@@ -2323,7 +2323,7 @@
           <td class="muted">${htmlEscape(fmt.time(t.created_at))}</td>
           <td class="muted">${t.last_used_at ? htmlEscape(fmt.time(t.last_used_at)) : '<span class="muted">never</span>'}</td>
           <td class="col-actions">
-            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}" title="revoke this API token — anything currently using it will start returning 401 immediately. Cannot be undone; create a fresh token if you need access back.">REVOKE</button>`}
+            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}" title="Revoke this token (clients using it will start failing)">REVOKE</button>`}
           </td>
         </tr>
       `;
@@ -2995,7 +2995,7 @@
       btn.addEventListener('click', async () => {
         const path = btn.dataset.cfgClear;
         if (path !== 'plex.token') return;
-        if (!confirm('Clear the saved Plex token? motif will not be able to talk to Plex until you set a new one.')) return;
+        if (!confirm('Clear Plex token? motif will lose Plex access until you set a new one.')) return;
         try {
           await api('PATCH', '/api/config', { plex: { token: null } });
           await loadConfigIntoForms();
@@ -3079,7 +3079,7 @@
           <td><span class="${reasonCls}">${htmlEscape(reasonText)}</span></td>
           <td><span class="muted small">${dlAt}</span></td>
           <td class="col-actions">
-            <button class="btn btn-tiny" data-pending-approve="${htmlEscape(k)}" title="place this download into the matching Plex media folder; if a sidecar already exists there it will be overwritten">APPROVE</button>
+            <button class="btn btn-tiny" data-pending-approve="${htmlEscape(k)}" title="Place into Plex (overwrites any existing sidecar)">APPROVE</button>
             <button class="btn btn-tiny btn-warn" data-pending-discard="${htmlEscape(k)}" title="delete the staged download and drop motif's local_files row — Plex's existing theme (if any) is left alone">DISCARD</button>
           </td>
         </tr>
@@ -3291,6 +3291,9 @@
     const tabEl = document.getElementById('library-tab');
     if (!tabEl) return;
     libraryState.tab = tabEl.value;
+    // v1.13.13: persist filter combo so a hop to another library
+    // tab (MOVIES → TV SHOWS) lands with the same filters applied.
+    _saveLibraryFilterState();
     const params = new URLSearchParams({
       tab: libraryState.tab,
       fourk: libraryState.fourk ? 'true' : 'false',
@@ -3498,6 +3501,93 @@
       p.set('sort_dir', libraryState.sortDir);
     }
     return p.toString();
+  }
+
+  // v1.13.13: cross-tab filter + search persistence.
+  //
+  // Pre-fix switching between MOVIES → TV SHOWS → ANIME walked the user
+  // back to a no-filter library every time, since each tab is a fresh
+  // page load with empty URL params. Now libraryState gets snapshotted
+  // to localStorage on every loadLibrary() call and replayed when the
+  // user lands on another library tab without filter URL params.
+  //
+  // Precedence: URL deep-links (e.g., topbar UPD click → /movies?
+  // tdb_pills=update) always win; localStorage only fills in when the
+  // URL carries no filter keys. CLEAR ALL nukes the localStorage
+  // snapshot too so the next tab visit truly starts clean.
+  const _LIB_STATE_KEY = 'motif:library_filter_state';
+  const _LIB_FILTER_URL_KEYS = [
+    'status', 'tdb', 'tdb_pills', 'src_pills', 'dl_pills', 'pl_pills',
+    'link_pills', 'ed_pills', 'sort', 'sort_dir', 'q',
+  ];
+
+  function _saveLibraryFilterState() {
+    try {
+      const payload = {
+        q: libraryState.q,
+        status: libraryState.status,
+        tdb: libraryState.tdb,
+        srcFilter: Array.from(libraryState.srcFilter || []),
+        tdbPills: Array.from(libraryState.tdbPills || []),
+        dlPills: Array.from(libraryState.dlPills || []),
+        plPills: Array.from(libraryState.plPills || []),
+        linkPills: Array.from(libraryState.linkPills || []),
+        edPills: Array.from(libraryState.edPills || []),
+        sort: libraryState.sort,
+        sortDir: libraryState.sortDir,
+      };
+      localStorage.setItem(_LIB_STATE_KEY, JSON.stringify(payload));
+    } catch (_) { /* private mode / quota — fine */ }
+  }
+
+  function _hydrateLibraryFromStorage() {
+    let raw;
+    try { raw = localStorage.getItem(_LIB_STATE_KEY); } catch (_) { return; }
+    if (!raw) return;
+    let payload;
+    try { payload = JSON.parse(raw); } catch (_) { return; }
+    if (!payload || typeof payload !== 'object') return;
+    if (payload.q) {
+      libraryState.q = String(payload.q);
+      const search = document.getElementById('library-search');
+      if (search) search.value = libraryState.q;
+    }
+    if (payload.status && payload.status !== 'all') {
+      libraryState.status = payload.status;
+      document.querySelectorAll('[data-status]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.status === payload.status));
+    }
+    if (payload.tdb && payload.tdb !== 'any') {
+      libraryState.tdb = payload.tdb;
+      document.querySelectorAll('[data-tdb]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.tdb === payload.tdb));
+    }
+    const HYDRATE_MAP = [
+      { key: 'srcFilter', attr: 'srcFilter', activeClass: 'src-key-btn-active' },
+      { key: 'tdbPills',  attr: 'tdbPill',   activeClass: 'tdb-pill-btn-active' },
+      { key: 'dlPills',   attr: 'dlPill',    activeClass: 'state-pill-btn-active' },
+      { key: 'plPills',   attr: 'plPill',    activeClass: 'state-pill-btn-active' },
+      { key: 'linkPills', attr: 'linkPill',  activeClass: 'link-pill-btn-active' },
+      { key: 'edPills',   attr: 'edPill',    activeClass: 'state-pill-btn-active' },
+    ];
+    for (const m of HYDRATE_MAP) {
+      const arr = payload[m.key];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      arr.forEach((v) => libraryState[m.key].add(v));
+      const kebab = m.attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+      document.querySelectorAll(`[data-${kebab}]`).forEach((x) => {
+        const xVal = x.dataset[m.attr];
+        if (xVal && libraryState[m.key].has(xVal)) {
+          x.classList.add(m.activeClass);
+        }
+      });
+    }
+    if (payload.sort && payload.sort !== 'title') libraryState.sort = payload.sort;
+    if (payload.sortDir && payload.sortDir !== 'asc') libraryState.sortDir = payload.sortDir;
+  }
+
+  function _clearLibraryFilterStorage() {
+    try { localStorage.removeItem(_LIB_STATE_KEY); } catch (_) { /* fine */ }
   }
 
   let _libraryPresets = [];
@@ -3744,9 +3834,9 @@
     if (placed && sourceKind === 'themerrdb') {
       srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
     } else if (placed && sourceKind === 'adopt') {
-      srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+      srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link)">A</span>';
     } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
-      srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+      srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL)">U</span>';
     } else if (placed && placedProv === 'auto') {
       // Legacy rows (source_kind NULL) — provenance='auto' === T.
       srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
@@ -3755,14 +3845,14 @@
       const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId);
       const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
       if (kind === 'adopt') {
-        srcCell = '<span class="link-badge link-badge-adopt" title="motif adopted an existing local theme.mp3 (sidecar is the source of truth, no ThemerrDB link)">A</span>';
+        srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link)">A</span>';
       } else {
-        srcCell = '<span class="link-badge link-badge-user" title="motif manages this user-provided theme (UI upload or manual YouTube URL)">U</span>';
+        srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL)">U</span>';
       }
     } else if (sidecarOnly) {
-      srcCell = '<span class="link-badge link-badge-manual" title="local theme.mp3 sidecar — motif does not manage this file (click ADOPT to take ownership)">M</span>';
+      srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar (click ADOPT to manage)">M</span>';
     } else if (it.plex_has_theme) {
-      srcCell = '<span class="link-badge link-badge-cloud" title="theme present in Plex (Plex agent / cloud) — motif does not manage this file">P</span>';
+      srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud theme">P</span>';
     } else {
       srcCell = '<span class="muted" title="no theme">—</span>';
     }
@@ -3807,28 +3897,40 @@
              : placed ? 'on'
              : awaitingApproval ? 'await'
              : '';
-    // v1.12.81: hover tooltips for the DL / PL state dots so each
-    // color is self-describing — pre-fix the user had to memorize
-    // green=on / amber=await / red=broken from the filter chips.
-    const dlTip = dl === 'broken'
-      ? 'BROKEN — local_files row says canonical exists but the file is missing from /themes. PUSH TO PLEX still works (placement file survives); RESTORE FROM PLEX rebuilds the canonical from it.'
-      : dl === 'on'
-        ? 'ON — canonical theme file is on disk under /themes.'
-        : 'OFF — no canonical file recorded.';
-    const plTip = pl === 'broken'
-      ? 'BROKEN — placement row exists but theme.mp3 is missing from the Plex folder. RE-PUSH (PLACE menu) re-creates the placement from the canonical.'
-      : pl === 'on'
-        ? 'ON — theme is in the Plex folder.'
-        : pl === 'await'
-          ? 'AWAIT — canonical exists but no placement. Use PUSH TO PLEX to apply, or PURGE to drop.'
-          : 'OFF — not placed in the Plex folder.';
+    // v1.13.13 (Option C): pulse-tint the DL dot amber when a
+    // download job is in flight for this row. Doesn't add a new
+    // state to the legend — it's a transient cue that disappears
+    // when the job lands. job_in_flight encodes the job_type
+    // (download / place); pl gets a similar pulse when a place
+    // job is in flight for symmetry.
+    const downloadInFlight = it.job_in_flight === 'download';
+    const placeInFlight = it.job_in_flight === 'place';
+    // v1.12.81 / v1.13.13: hover tooltips for the DL / PL state dots
+    // so each color is self-describing. KISS pass — short reasons
+    // first, action hints stay terse.
+    const dlTip = downloadInFlight
+      ? 'Download in progress…'
+      : dl === 'broken'
+        ? 'Canonical missing on disk (Plex copy intact).'
+        : dl === 'on'
+          ? 'Canonical theme is on disk.'
+          : 'No canonical downloaded.';
+    const plTip = placeInFlight
+      ? 'Placement in progress…'
+      : pl === 'broken'
+        ? 'Placement file missing from Plex folder.'
+        : pl === 'on'
+          ? 'Placed in Plex folder.'
+          : pl === 'await'
+            ? 'Downloaded, awaiting placement.'
+            : 'Not placed in Plex folder.';
     let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
     if (isMismatch && placed) {
-      linkCell = '<span class="link-glyph link-glyph-mismatch" title="MISMATCH — canonical (DL) does not match the file at the Plex folder. Resolve via PUSH TO PLEX, ADOPT FROM PLEX, or KEEP MISMATCH in the PLACE menu.">M</span>';
+      linkCell = '<span class="link-glyph link-glyph-mismatch" title="Mismatch — canonical differs from Plex copy">M</span>';
     } else if (it.placement_kind === 'hardlink') {
-      linkCell = '<span class="link-glyph link-glyph-hardlink" title="hardlink (efficient — canonical and Plex-folder file share an inode)">HL</span>';
+      linkCell = '<span class="link-glyph link-glyph-hardlink" title="Hardlink (shared inode)">HL</span>';
     } else if (it.placement_kind === 'copy') {
-      linkCell = '<span class="link-glyph link-glyph-copy" title="copy (uses extra disk space — fallback when canonical and Plex folder are on different filesystems)">C</span>';
+      linkCell = '<span class="link-glyph link-glyph-copy" title="Copy (cross-FS fallback — uses extra disk)">C</span>';
     }
 
     // Title-cell glyphs
@@ -3895,17 +3997,17 @@
       // file (SET URL / UPLOAD MP3 over an existing placement).
       // PLACE menu has the resolution actions.
       glyphHtml =
-        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical content diverged from the Plex-folder file. Open INFO for the diff; resolve in PLACE → PUSH TO PLEX / ADOPT FROM PLEX / KEEP MISMATCH.">!</span>`;
+        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical differs from Plex copy. Open INFO for the diff.">!</span>`;
     } else if (awaitingApproval) {
       // v1.12.65: amber ! for canonical-downloaded-but-not-placed.
       // PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.
       glyphHtml =
-        `<span class="title-glyph title-glyph-await" title="Awaiting placement — canonical downloaded but not placed in Plex. Open INFO for context; PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.">!</span>`;
+        `<span class="title-glyph title-glyph-await" title="Downloaded, awaiting placement">!</span>`;
     } else if (dlBroken) {
       // v1.11.62: motif's canonical was deleted but the placement
       // is still in the Plex folder. RESTORE FROM PLEX recovers.
       glyphHtml =
-        `<a class="title-glyph title-glyph-broken" title="canonical missing under /themes — placement in Plex folder is still there. Open RESTORE FROM PLEX in PLACE menu to recover." href="/${libraryState.tab}?status=dl_missing">↺</a>`;
+        `<a class="title-glyph title-glyph-broken" title="Canonical missing — Plex copy intact (RESTORE FROM PLEX)" href="/${libraryState.tab}?status=dl_missing">↺</a>`;
     }
     if (glyphHtml) titleGlyphs.push(glyphHtml);
 
@@ -3977,12 +4079,12 @@
         if (window.__motif_cookies_present) {
           // Cookies are configured — the next download attempt should
           // succeed and clear the flag. Stay green.
-          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracks this title. cookies.txt is configured; the next download will clear the cookies_expired flag.">TDB</span>';
+          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracked (cookies will refresh on next download)">TDB</span>';
         }
-        return ` <span class="tdb-pill tdb-pill-cookies" title="Cookies required: ${htmlEscape(why)}${detail}\n\nDrop a valid cookies.txt at the configured path, or use SET URL / UPLOAD MP3 / ADOPT.">TDB ⚠</span>`;
+        return ` <span class="tdb-pill tdb-pill-cookies" title="Cookies required: ${htmlEscape(why)}${detail}">TDB ⚠</span>`;
       }
       if (it.failure_kind && TDB_DEAD_FAILURES.has(it.failure_kind)) {
-        return ` <span class="tdb-pill tdb-pill-dead" title="Upstream URL broken: ${htmlEscape(why)}${detail}\n\nRecover via SET URL, UPLOAD MP3, or drop a sidecar and ADOPT.">TDB ✗</span>`;
+        return ` <span class="tdb-pill tdb-pill-dead" title="Upstream URL broken: ${htmlEscape(why)}${detail}">TDB ✗</span>`;
       }
       // v1.12.108: restore the blue .tdb-pill-update for any row
       // with pending_update=true. v1.12.106 collapsed it under
@@ -3999,9 +4101,9 @@
       // doesn't show on post-PURGE / pure-P / pure-'-' rows.
       if (it.pending_update && computeSrcLetter(it) !== '-') {
         if (it.pending_update_kind === 'urls_match') {
-          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches the current ThemerrDB URL — ACCEPT UPDATE in the SOURCE menu to convert this row from U (user-managed) to T (ThemerrDB-managed). The file on disk stays the same; only the classification changes.">TDB ↑</span>';
+          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches TDB — ACCEPT UPDATE to convert U → T (no re-download).">TDB ↑</span>';
         }
-        return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss (the blue pill stays so the row remains sortable as updateable).">TDB ↑</span>';
+        return ' <span class="tdb-pill tdb-pill-update" title="Upstream URL changed — ACCEPT or KEEP from SOURCE menu.">TDB ↑</span>';
       }
       // v1.13.1 (Phase C): gray TDB◌ for items TDB used to publish
       // and has now stopped publishing. The local theme still works;
@@ -4012,9 +4114,9 @@
                     && it.tdb_dropped_at.length >= 10)
                     ? it.tdb_dropped_at.slice(0, 10) : '';
         const since = dt ? ` (since ${dt})` : '';
-        return ` <span class="tdb-pill tdb-pill-dropped" title="ThemerrDB no longer publishes this title${since}. Your local theme still works — use ACK DROP to dismiss, CONVERT TO MANUAL to take ownership, or PURGE to remove.">TDB ◌</span>`;
+        return ` <span class="tdb-pill tdb-pill-dropped" title="ThemerrDB stopped tracking this title${since}.">TDB ◌</span>`;
       }
-      return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
+      return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracked">TDB</span>';
     })();
 
     // v1.10.24 Option C row actions — collapse the wide button row into
@@ -4653,8 +4755,8 @@
         </td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>
         <td class="col-state">${srcCell}</td>
-        <td class="col-state"><span class="state-pill ${dl}" title="${htmlEscape(dlTip)}"></span></td>
-        <td class="col-state"><span class="state-pill ${pl}" title="${htmlEscape(plTip)}"></span></td>
+        <td class="col-state"><span class="state-pill ${dl}${downloadInFlight ? ' state-pill-pending' : ''}" title="${htmlEscape(dlTip)}"></span></td>
+        <td class="col-state"><span class="state-pill ${pl}${placeInFlight ? ' state-pill-pending' : ''}" title="${htmlEscape(plTip)}"></span></td>
         <td class="col-state">${linkCell}</td>
         <td class="col-imdb">${imdbLink}</td>
         <td class="col-actions">${actions}</td>
@@ -5105,6 +5207,17 @@
       }
     } catch (_) { /* URLSearchParams not supported — skip */ }
 
+    // v1.13.13: if the URL carried no filter params, hydrate from
+    // the localStorage snapshot (last loadLibrary() call). Lets a
+    // user filter MOVIES then click TV SHOWS without starting over.
+    // URL deep-links still win — only fires when sp has none of the
+    // recognized filter keys.
+    try {
+      const sp2 = new URLSearchParams(window.location.search);
+      const hasFilterParam = _LIB_FILTER_URL_KEYS.some((k) => sp2.has(k));
+      if (!hasFilterParam) _hydrateLibraryFromStorage();
+    } catch (_) { /* fine */ }
+
     // 4K toggle
     document.querySelectorAll('.chips [data-fourk]').forEach((b) => {
       b.addEventListener('click', () => {
@@ -5366,6 +5479,50 @@
       });
     }
     _syncClearVisibility();
+
+    // v1.13.13: CLEAR ALL — wipe every filter axis, search, and sort
+    // back to defaults; clear the cross-tab persistence snapshot too
+    // so the next library tab the user visits also lands clean. Saved
+    // presets are explicitly NOT touched (selecting a preset is the
+    // path to re-apply it, not lose it).
+    document.getElementById('library-clear-all')?.addEventListener('click', () => {
+      libraryState.q = '';
+      libraryState.status = 'all';
+      libraryState.tdb = 'any';
+      libraryState.srcFilter.clear();
+      libraryState.tdbPills.clear();
+      libraryState.dlPills.clear();
+      libraryState.plPills.clear();
+      libraryState.linkPills.clear();
+      libraryState.edPills.clear();
+      libraryState.sort = 'title';
+      libraryState.sortDir = 'asc';
+      libraryState.page = 1;
+      const search = document.getElementById('library-search');
+      if (search) search.value = '';
+      const clearBtn = document.getElementById('library-search-clear');
+      if (clearBtn) clearBtn.style.display = 'none';
+      // Reset every visual chip / pill back to its default.
+      document.querySelectorAll('[data-status]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.status === 'all'));
+      document.querySelectorAll('[data-tdb]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.tdb === 'any'));
+      [['src-key-btn-active', 'src-key-btn'],
+       ['tdb-pill-btn-active', 'tdb-pill-btn'],
+       ['state-pill-btn-active', 'state-pill-btn'],
+       ['link-pill-btn-active', 'link-pill-btn']].forEach(([cls]) => {
+        document.querySelectorAll('.' + cls).forEach((x) => x.classList.remove(cls));
+      });
+      _clearLibraryFilterStorage();
+      // Also strip URL filter keys so a refresh + share-link land
+      // clean rather than re-applying whatever the URL still carries.
+      try {
+        const url = new URL(window.location.href);
+        _LIB_FILTER_URL_KEYS.forEach((k) => url.searchParams.delete(k));
+        window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      } catch (_) { /* fine */ }
+      loadLibrary().catch(console.error);
+    });
 
     // Refresh — v1.10.6: send {tab, fourk} so the backend only enumerates
     // sections backing the current tab variant. While the enum runs the
@@ -6017,7 +6174,7 @@
         alert('No unacknowledged failures in selection.');
         return;
       }
-      if (!confirm(`Acknowledge ${candidates.length} failure(s)? The topbar FAIL count drops; the red TDB ✗ pill stays so the broken upstream is still visible on the row.`)) return;
+      if (!confirm(`Acknowledge ${candidates.length} failure(s)?`)) return;
       const btn = e.currentTarget;
       btn.disabled = true;
       const orig = btn.textContent;
@@ -6136,7 +6293,7 @@
         // row's section. Without it the endpoint clears every
         // section's snapshot for the title (legacy behavior).
         const title = btn.dataset.title || 'this theme';
-        if (!confirm(`Clear the captured previous URL for "${title}"?\n\nREVERT will no longer be available on this row. Current theme is unaffected.`)) return;
+        if (!confirm(`Clear previous URL for "${title}"?\nREVERT will no longer be available.`)) return;
         clearUrlOverride(
           btn.dataset.mt, btn.dataset.id, btn,
           btn.dataset.sectionId || undefined,
@@ -6227,7 +6384,7 @@
         // v1.11.62: recreate the missing canonical from the surviving
         // placement file. Hardlink first, copy fallback on cross-FS.
         const title = btn.dataset.title || 'this item';
-        if (!confirm(`Restore the canonical /themes copy for "${title}" from the existing Plex-folder file?\n\nMotif will hardlink (or copy on cross-FS) the placement back to <themes_dir>/<canonical_path>.`)) return;
+        if (!confirm(`Restore canonical /themes copy for "${title}" from the Plex-folder file?`)) return;
         try {
           const r = await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/restore-canonical`);
           if (r.skipped && r.skipped.length) {
@@ -6323,10 +6480,7 @@
         const mt = btn.dataset.mt, id = btn.dataset.id;
         const sectionId = btn.dataset.sectionId || '';
         if (!mt || !id) return;
-        if (!confirm('Take ownership of this row?\n\n'
-            + 'The current ThemerrDB URL becomes a user override. '
-            + 'Future syncs will leave the row alone. SRC flips '
-            + 'from T to U; the file on disk stays the same.')) return;
+        if (!confirm('Convert to manual? Future syncs will skip this row.')) return;
         try {
           const params = sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : '';
           await api('POST',
@@ -6380,7 +6534,7 @@
         // the gate gave no warning.
         const it = findItemForButton(btn);
         if (!isPlexAgentRow(it)) {
-          if (!confirm(`Replace the existing theme for "${title}" with the ThemerrDB download?\n\nMotif will fetch from upstream and overwrite the current sidecar.`)) return;
+          if (!confirm(`Replace "${title}" theme with the ThemerrDB version?`)) return;
         }
         try {
           await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/replace-with-themerrdb`);
@@ -7122,7 +7276,7 @@
           data-clear="events"
           data-mt="${htmlEscape(mediaType)}"
           data-id="${htmlEscape(tmdbId)}"
-          title="Delete every HISTORY entry for this row (title-global — events table has no section_id).">CLEAR</button>`
+          title="Delete history for this row.">CLEAR</button>`
       : '';
     return `
       <details class="history-section" data-info-section="history">

@@ -149,10 +149,17 @@
   font-size: 11px;
   cursor: pointer;
   text-decoration: none;
-  color: var(--text, #d8e0dc);
+  /* v1.13.13: tint label + pct inherit by op tone. Pre-fix the
+     mini-bar text was hardcoded to a near-white --text, which read
+     as a flash of "system white" against the cyan/green/amber
+     palette of the rest of the topbar. Each tone now overrides
+     below so the text matches the bar fill. */
+  color: var(--tone-tdb);
 }
 .op-mini[hidden] { display: none !important; }
 .op-mini:hover { background: var(--bg-elev-2); }
+.op-mini.op-tone-plex { color: var(--tone-plex); }
+.op-mini.op-tone-warn { color: var(--tone-warn); }
 
 .op-mini .op-mini-label {
   letter-spacing: 0.04em;
@@ -160,6 +167,9 @@
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* v1.13.13: explicit currentColor so any future override on .op-mini
+     cascades cleanly without a re-declaration here. */
+  color: currentColor;
 }
 
 .op-mini .op-mini-bar {

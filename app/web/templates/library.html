@@ -13,7 +13,7 @@
         <button class="chip chip-active" data-fourk="0">// STANDARD</button>
         <button class="chip" data-fourk="1">// 4K</button>
       </div>
-      <button class="btn btn-tiny" id="library-refresh-btn" type="button">// REFRESH FROM PLEX</button>
+      <button class="btn btn-tiny" id="library-refresh-btn" type="button">// SCAN PLEX</button>
     </div>
   </div>
   <p class="muted">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>
@@ -31,11 +31,11 @@
 
 <!-- Scan-needed hint — shown when motif has not yet enumerated Plex.
      Without a scan, the missing-themes count would be comparing ThemerrDB
-     against nothing. Click REFRESH FROM PLEX above to populate. -->
+     against nothing. Click SCAN PLEX above to populate. -->
 <div id="library-scan-hint" class="missing-banner" style="display:none;border-color:var(--cyan);background:rgba(109,211,255,0.04)">
   <span class="missing-banner-glyph" style="color:var(--cyan)">▸</span>
   <span class="missing-banner-text">
-    no Plex scan on record yet — click <strong>// REFRESH FROM PLEX</strong>
+    no Plex scan on record yet — click <strong>// SCAN PLEX</strong>
     to enumerate this library so motif can compare it against ThemerrDB.
   </span>
 </div>
@@ -69,7 +69,7 @@
   <div class="chips" role="tablist">
     <button class="chip chip-active" data-status="all" title="Every item in this tab.">ALL</button>
     <button class="chip" data-status="has_theme" title="Items with any theme source.">THEMED</button>
-    <button class="chip" data-status="untracked" title="No theme anywhere. Stack with the pill rows to scope further.">UNTHEMED</button>
+    <button class="chip" data-status="untracked" title="No theme anywhere.">UNTHEMED</button>
   </div>
 
   <!-- Pill filter rows. Order matches the row column order
@@ -86,16 +86,16 @@
             title="ThemerrDB tracks this title; URL is healthy.">TDB</button>
     <button type="button" class="tdb-pill tdb-pill-update tdb-pill-btn"
             data-tdb-pill="update"
-            title="Upstream URL changed — review via ACCEPT UPDATE / KEEP CURRENT.">TDB ↑</button>
+            title="Upstream URL changed.">TDB ↑</button>
     <button type="button" class="tdb-pill tdb-pill-cookies tdb-pill-btn"
             data-tdb-pill="cookies"
-            title="YouTube needs a sign-in cookie. Drop cookies.txt at the configured path.">TDB ⚠</button>
+            title="YouTube cookies needed.">TDB ⚠</button>
     <button type="button" class="tdb-pill tdb-pill-dead tdb-pill-btn"
             data-tdb-pill="dead"
             title="Upstream URL is broken. Use SET URL or UPLOAD MP3.">TDB ✗</button>
     <button type="button" class="tdb-pill tdb-pill-dropped tdb-pill-btn"
             data-tdb-pill="dropped"
-            title="ThemerrDB used to publish this title and has now stopped — local theme still works. Use ACK DROP, CONVERT TO MANUAL, or PURGE.">TDB ◌</button>
+            title="ThemerrDB stopped tracking this title.">TDB ◌</button>
     <button type="button" class="tdb-pill tdb-pill-no tdb-pill-btn"
             data-tdb-pill="none"
             title="No ThemerrDB record for this title.">no TDB</button>
@@ -118,13 +118,13 @@
             title="Adopted — motif claimed an existing Plex-folder theme.mp3.">A</button>
     <button type="button" class="link-badge link-badge-manual src-key-btn"
             data-src-filter="M"
-            title="Manual sidecar — Plex-folder theme.mp3 not managed by motif.">M</button>
+            title="Manual sidecar (not managed by motif).">M</button>
     <button type="button" class="link-badge link-badge-cloud src-key-btn"
             data-src-filter="P"
-            title="Plex agent / cloud — Plex supplies the theme; no local file.">P</button>
+            title="Plex agent / cloud theme.">P</button>
     <button type="button" class="link-badge src-key-btn src-key-btn-tdb-only"
             data-tdb-only="1"
-            title="ThemerrDB-only browse — titles in TDB you don't own in Plex.">T</button>
+            title="In TDB but not in Plex.">T</button>
     <button type="button" class="link-badge src-key-btn src-key-btn-none"
             data-src-filter="-"
             title="No theme anywhere.">—</button>
@@ -146,7 +146,7 @@
             title="Motif has a downloaded canonical for this row.">●</button>
     <button type="button" class="state-pill-btn state-pill-btn-broken"
             data-dl-pill="broken"
-            title="Canonical missing on disk; the placement file survives. Use RESTORE FROM PLEX.">●</button>
+            title="Canonical missing on disk (Plex copy intact).">●</button>
     <button type="button" class="state-pill-btn state-pill-btn-off"
             data-dl-pill="off"
             title="No downloaded canonical.">●</button>
@@ -166,14 +166,14 @@
          need a PUSH TO PLEX (or PURGE) to leave the awaiting state. -->
     <button type="button" class="state-pill-btn state-pill-btn-await"
             data-pl-pill="await"
-            title="Awaiting placement — canonical downloaded but not placed in Plex (post-DEL). Use PLACE → PUSH TO PLEX, or REMOVE → PURGE.">●</button>
+            title="Downloaded, awaiting placement.">●</button>
     <!-- v1.12.81: broken filter — placement row exists but theme.mp3
          is missing from the Plex folder (Plex deleted it, file moved
          manually, etc.). Symmetry with DL=broken on the canonical
          side; same red palette so users can spot the inverse case. -->
     <button type="button" class="state-pill-btn state-pill-btn-broken"
             data-pl-pill="broken"
-            title="Broken — placement row exists but theme.mp3 is missing from the Plex folder. RE-PUSH (PLACE menu) restores from the canonical.">●</button>
+            title="Placement file missing from Plex folder.">●</button>
     <button type="button" class="state-pill-btn state-pill-btn-off"
             data-pl-pill="off"
             title="Not placed in the Plex folder.">●</button>
@@ -193,7 +193,7 @@
             title="Copy — uses extra disk; cross-filesystem fallback.">C</button>
     <button type="button" class="link-glyph link-glyph-mismatch"
             data-link-pill="m"
-            title="Mismatch — canonical content differs from the Plex-folder file. Resolve via PLACE menu.">M</button>
+            title="Mismatch — canonical differs from Plex copy.">M</button>
     <!-- v1.13.9: glyph reverted to the em-dash but the button shape
          is now square (state-pill-btn-square) instead of the round
          dot used by the on/await/broken filters above. The square
@@ -217,13 +217,13 @@
             title="Select every EDITION state.">ALL</button>
     <button type="button" class="ed-pill-btn ed-pill-btn-on"
             data-ed-pill="has"
-            title="Show only rows with a Plex {edition-...} folder tag (Director's Cut, Extended, IMAX, etc.).">ED</button>
+            title="Has a Plex edition tag (Director's Cut, IMAX, etc).">ED</button>
     <!-- v1.13.9: square shape (state-pill-btn-square) with the
          em-dash glyph mirrors the LINK row's "no placement" filter
          so the two "no-state" filters scan the same way. -->
     <button type="button" class="state-pill-btn state-pill-btn-square state-pill-btn-off"
             data-ed-pill="none"
-            title="Show only rows without an edition tag.">—</button>
+            title="No edition tag.">—</button>
     <button type="button" class="pill-filter-clear" data-ed-pill=""
             title="Clear all EDITION selections.">CLEAR</button>
   </div>
@@ -244,8 +244,14 @@
             title="Snapshot the current filter combo as a named preset.">+ SAVE</button>
     <button type="button" class="pill-filter-clear library-presets-action library-presets-action-danger"
             id="library-presets-delete"
-            title="Delete the currently-applied saved filter."
+            title="Delete the active saved filter."
             style="display:none">× DELETE</button>
+    <!-- v1.13.13: hard reset for every filter axis + search + sort.
+         Leaves the saved-preset selection alone (selecting a preset
+         is the way to re-apply, not lose, a saved combo). -->
+    <button type="button" class="pill-filter-clear library-clear-all"
+            id="library-clear-all"
+            title="Clear all filters, search, and sort.">// CLEAR ALL</button>
   </div>
 </section>
 
@@ -260,26 +266,26 @@
     <span class="muted small" id="library-bulk-detail"></span>
   </span>
   <button class="btn btn-tiny" id="library-select-all-filtered-btn" type="button"
-          title="Select every row matching the current filter, across all pages.">// SELECT ALL FILTERED</button>
+          title="Select every filtered row across all pages.">// SELECT ALL FILTERED</button>
   <button class="btn btn-tiny" id="library-clear-selection-btn" type="button"
-          title="Clear all selections.">// CLEAR</button>
+          title="Clear selection.">// CLEAR</button>
   <button class="btn btn-tiny lib-source-themerrdb" id="library-download-selected-btn" type="button"
-          title="Download and place each selected row from ThemerrDB.">// DOWNLOAD FROM TDB</button>
+          title="Download selected from ThemerrDB.">// DOWNLOAD FROM TDB</button>
   <button class="btn btn-tiny lib-source-adopt" id="library-adopt-selected-btn" type="button"
-          title="Claim each selected sidecar as motif-managed.">// ADOPT SELECTED</button>
+          title="Adopt selected sidecars.">// ADOPT SELECTED</button>
   <button class="btn btn-tiny" id="library-export-csv-btn" type="button"
-          title="Export selection to CSV (Title (Year), imdb id) — drop-in for mdblist / radarr import lists.">// EXPORT CSV</button>
+          title="Export selection to CSV.">// EXPORT CSV</button>
   <button class="btn btn-tiny btn-warn" id="library-ack-selected-btn" type="button" style="display:none"
-          title="Acknowledge each selected failure. Topbar FAIL count drops; the red TDB ✗ pill stays.">// ACK SELECTED</button>
+          title="Acknowledge selected failures.">// ACK SELECTED</button>
   <!-- v1.12.55: bulk update actions. Visible only when the user
        is on the blue-↑-pill click-through (tdb_pills=update),
        which is what the topbar UPD badge routes to. Both call
        server-side bulk endpoints so the action is one HTTP
        round-trip regardless of how many pending updates exist. -->
   <button class="btn btn-tiny btn-info" id="library-accept-all-updates-btn" type="button" style="display:none"
-          title="Accept every pending ThemerrDB update across all libraries. Eager-flips the urls_match rows (no download) and queues downloads for the rest.">// ACCEPT ALL UPDATES</button>
+          title="Accept all pending TDB updates.">// ACCEPT ALL UPDATES</button>
   <button class="btn btn-tiny" id="library-decline-all-updates-btn" type="button" style="display:none"
-          title="Dismiss every pending update. The blue ↑ pill stays for filter/sort; the topbar UPD count drops to 0.">// KEEP ALL CURRENT</button>
+          title="Dismiss all pending updates.">// KEEP ALL CURRENT</button>
 </div>
 
 <section class="block">
@@ -297,7 +303,7 @@
            this attention sort; the active state is reflected by
            the chip-active class. -->
       <button class="chip" id="library-sort-attention-btn" type="button"
-              title="Re-order rows by attention priority: failures → pending updates → awaiting placements → mismatches → rest. Click again to return to the previous column sort.">// NEEDS WORK</button>
+              title="Sort by attention priority. Click again to undo.">// NEEDS WORK</button>
       <div class="pager" id="library-pager"></div>
     </div>
   </header>
