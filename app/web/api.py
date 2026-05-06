@@ -4637,12 +4637,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # browser-side fetch fails intermittently — proxying server-side
     # avoids that, and the LRU cache amortizes repeat lookups
     # across rows that share videos (e.g. franchise themes).
-    _OEMBED_CACHE: dict[str, dict] = {}
+    #
+    # v1.13.10: switched dict → OrderedDict so eviction is true LRU.
+    # Prior FIFO eviction dropped the oldest *insertion* even if it
+    # was a hot key — on libraries with >512 unique YouTube URLs the
+    # cache thrashed, re-fetching popular videos. move_to_end on every
+    # hit gives proper recency ordering for ~free.
+    from collections import OrderedDict as _OrderedDict
+    _OEMBED_CACHE: "_OrderedDict[str, dict]" = _OrderedDict()
     _OEMBED_CACHE_MAX = 512
 
     def _fetch_youtube_oembed(yt_url: str) -> dict | None:
         cached = _OEMBED_CACHE.get(yt_url)
         if cached is not None:
+            _OEMBED_CACHE.move_to_end(yt_url)
             return cached
         try:
             import httpx
@@ -4664,14 +4672,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "author_url": data.get("author_url"),
             "thumbnail_url": data.get("thumbnail_url"),
         }
-        # Naive LRU eviction — drop the oldest entry when full.
-        # dict iteration order is insertion-ordered (Python 3.7+).
-        if len(_OEMBED_CACHE) >= _OEMBED_CACHE_MAX:
+        # True LRU eviction: OrderedDict.popitem(last=False) drops the
+        # least-recently-used entry (the one not move_to_end'd most
+        # recently).
+        while len(_OEMBED_CACHE) >= _OEMBED_CACHE_MAX:
             try:
-                first_key = next(iter(_OEMBED_CACHE))
-                _OEMBED_CACHE.pop(first_key, None)
-            except StopIteration:
-                pass
+                _OEMBED_CACHE.popitem(last=False)
+            except KeyError:
+                break
         _OEMBED_CACHE[yt_url] = slim
         return slim
 
@@ -8890,6 +8898,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"download_only": bool(body.get("download_only", False))} if isinstance(body, dict) else None)
         return {"ok": True, "job_id": job_id}
 
+    # v1.13.10: 750ms TTL cache for /api/progress. The drawer polls at
+    # 1Hz while any op runs, and several pages wire their own
+    # refreshTopbarStatus + drawer ticks on top — each call ran
+    # load_active (3 SELECTs + synthesis) plus prune_finished. With
+    # multiple tabs open the rate scaled linearly. A sub-poll-interval
+    # TTL collapses concurrent calls into a single DB hit while staying
+    # well below human perception of staleness.
+    _progress_cache: dict = {"key": None, "ts": 0.0, "value": None}
+    _progress_cache_ttl = 0.75
+
     @app.get("/api/progress")
     async def api_progress(db: Path = Depends(get_db_path)):
         """v1.12.106: live progress feed for the ops side-drawer.
@@ -8904,11 +8922,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         the items/sec sparkline + ETA), and the rolling activity
         feed. The drawer renders one card per row.
         """
+        import time as _t
+        now = _t.monotonic()
+        cached = _progress_cache
+        if (cached["key"] == str(db)
+                and (now - cached["ts"]) < _progress_cache_ttl
+                and cached["value"] is not None):
+            return cached["value"]
         from ..core import progress as op_progress
         rows = await run_in_threadpool(op_progress.load_active, db)
         # Cheap on the read path so we don't need a dedicated sweeper.
         await run_in_threadpool(op_progress.prune_finished, db)
-        return {"ops": rows, "now": now_iso()}
+        response = {"ops": rows, "now": now_iso()}
+        _progress_cache["key"] = str(db)
+        _progress_cache["ts"] = now
+        _progress_cache["value"] = response
+        return response
 
     @app.post("/api/progress/{op_id}/cancel")
     async def api_progress_cancel(

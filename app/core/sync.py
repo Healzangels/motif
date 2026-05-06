@@ -1588,9 +1588,25 @@ class _GitMirror:
             return None
         try:
             txt = self.last_sync_path.read_text().strip()
-        except OSError:
+        except OSError as e:
+            # v1.13.10 (#16): an unreadable MOTIF_LAST_SYNC silently
+            # triggers full-walk recovery, which is correct behavior
+            # but invisible to the operator. Surface it once at WARN
+            # so a corrupt FS / permissions issue is debuggable.
+            log.warning(
+                "git mirror: MOTIF_LAST_SYNC unreadable (%s) — "
+                "falling back to full-walk recovery", e)
+            return None
+        if not txt:
+            log.warning(
+                "git mirror: MOTIF_LAST_SYNC is empty — falling back "
+                "to full-walk recovery")
             return None
         if len(txt) != 40 or any(c not in "0123456789abcdef" for c in txt.lower()):
+            log.warning(
+                "git mirror: MOTIF_LAST_SYNC contents %r are not a "
+                "valid SHA — falling back to full-walk recovery",
+                txt[:64])
             return None
         sha = txt.encode()
         # Verify the SHA is actually present in the repo. A leftover

@@ -114,6 +114,37 @@ _RELEASE_API = "https://api.github.com/repos/Healzangels/motif/releases/latest"
 _RELEASE_CACHE_FILENAME = "release.json"
 
 
+def _cleanup_sessions_job(db_path: Path) -> None:
+    """v1.13.10 (#14): daily sweep of expired auth_sessions rows.
+
+    Pre-fix `cleanup_expired_sessions` only ran once at boot
+    (main.py:125), so long-running containers accumulated dead
+    session rows indefinitely between restarts. Cheap UPDATE
+    keyed on idx_auth_sessions_expires; no-op when nothing's
+    expired. Logged at INFO when rows are actually purged so the
+    operator can see the table staying bounded.
+    """
+    from .auth import cleanup_expired_sessions
+    try:
+        purged = cleanup_expired_sessions(db_path)
+    except Exception as e:
+        log.warning("Session cleanup job failed: %s", e)
+        return
+    if purged:
+        log_event(db_path, level="INFO", component="scheduler",
+                  message=f"Purged {purged} expired session(s)")
+
+
+# v1.13.10 (#15): track consecutive release-check failures across
+# scheduler invocations so we can surface persistent breakage
+# (renamed repo, sustained 5xx, missing API token, etc.) without
+# spamming the log on every transient blip. WARN once when we cross
+# the threshold; reset on the next success. Module-level state is
+# fine — there's only one scheduler per process.
+_RELEASE_CHECK_FAIL_STREAK = {"count": 0, "warned": False}
+_RELEASE_CHECK_FAIL_THRESHOLD = 3
+
+
 def _check_release_update(settings: "Settings") -> None:
     """v1.13.8 (#8): poll GitHub's releases API for the latest stable
     motif release and cache it so the topbar can render an upgrade
@@ -144,6 +175,29 @@ def _check_release_update(settings: "Settings") -> None:
         log.debug("release check: cache dir mkdir failed: %s", e)
         return
     target = cache_dir / _RELEASE_CACHE_FILENAME
+
+    def _record_failure(reason: str) -> None:
+        # v1.13.10 (#15): elevate persistent failures to WARN once per
+        # streak so a misconfigured repo / sustained 5xx is visible in
+        # logs. Single transient blip stays at DEBUG.
+        _RELEASE_CHECK_FAIL_STREAK["count"] += 1
+        if (_RELEASE_CHECK_FAIL_STREAK["count"] >= _RELEASE_CHECK_FAIL_THRESHOLD
+                and not _RELEASE_CHECK_FAIL_STREAK["warned"]):
+            log.warning(
+                "release check has failed %d consecutive times (%s) — "
+                "topbar update suffix will stay hidden until this clears",
+                _RELEASE_CHECK_FAIL_STREAK["count"], reason,
+            )
+            _RELEASE_CHECK_FAIL_STREAK["warned"] = True
+
+    def _record_success() -> None:
+        if (_RELEASE_CHECK_FAIL_STREAK["count"]
+                or _RELEASE_CHECK_FAIL_STREAK["warned"]):
+            log.info("release check recovered after %d failure(s)",
+                     _RELEASE_CHECK_FAIL_STREAK["count"])
+        _RELEASE_CHECK_FAIL_STREAK["count"] = 0
+        _RELEASE_CHECK_FAIL_STREAK["warned"] = False
+
     try:
         with httpx.Client(timeout=10.0,
                           headers={"User-Agent": "motif-release-check/1.0",
@@ -151,9 +205,13 @@ def _check_release_update(settings: "Settings") -> None:
             r = client.get(_RELEASE_API)
         if r.status_code != 200:
             log.debug("release check: HTTP %s", r.status_code)
+            _record_failure(f"HTTP {r.status_code}")
             return
         data = r.json()
         if data.get("draft") or data.get("prerelease"):
+            # Treat as a success — endpoint returned a valid payload, just
+            # not one we surface. Resets the streak.
+            _record_success()
             return
         payload = {
             "checked_at": now_iso(),
@@ -162,10 +220,13 @@ def _check_release_update(settings: "Settings") -> None:
             "name": str(data.get("name") or data.get("tag_name") or "").strip(),
         }
         if not payload["tag_name"]:
+            _record_failure("response missing tag_name")
             return
         target.write_text(json.dumps(payload))
+        _record_success()
     except Exception as e:
         log.debug("release check: failed: %s", e)
+        _record_failure(f"{type(e).__name__}: {e}")
 
 
 def start_scheduler(settings: Settings) -> BackgroundScheduler:
@@ -204,6 +265,15 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         id="release_check", replace_existing=True, max_instances=1,
     )
 
+    # v1.13.10 (#14): daily expired-session purge at 03:00 UTC. Runs
+    # before the release check (04:17) and well clear of the default
+    # sync (13:00) so writer contention is impossible.
+    scheduler.add_job(
+        _cleanup_sessions_job, args=[settings.db_path],
+        trigger=CronTrigger(minute="0", hour="3", timezone="UTC"),
+        id="session_cleanup", replace_existing=True, max_instances=1,
+    )
+
     # Daily Plex section discovery (catches newly-added libraries).
     # Scheduled 30 minutes before the sync so sync sees fresh section list.
     section_minute, section_hour = minute, str((int(hour) - 1) % 24) if hour.isdigit() else hour
@@ -215,8 +285,12 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     )
 
     scheduler.start()
-    log.info("Scheduler started: daily sync at %s UTC, placement retry hourly, section refresh 1h before sync",
-             settings.sync_cron)
+    log.info(
+        "Scheduler started: daily sync at %s UTC, placement retry hourly, "
+        "section refresh 1h before sync, release check 04:17, "
+        "session cleanup 03:00",
+        settings.sync_cron,
+    )
     # v1.13.8: kick the release check once at startup (in a background
     # thread so motif boot isn't delayed if GitHub is slow). Without
     # this, a freshly-deployed install waits up to 24h for the daily
