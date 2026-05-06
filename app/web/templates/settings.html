@@ -463,6 +463,25 @@
         </p>
       </label>
     </div>
+    <!-- v1.13.8 (Phase D): operational cache observability. Reports
+         the total + per-artifact size of <db_dir>/cache/ so the
+         user can see Phase A's tarball, Phase B's git mirror,
+         Phase A.5's ETag cache, and #8's release JSON adding up.
+         Hidden when no cache exists yet (fresh install). Currently
+         informational only — auto-prune (Phase D actual GC) defers
+         until growth proves to be real in observed installs. -->
+    <div class="cache-gauge" id="cache-gauge" hidden>
+      <header class="cache-gauge-head">
+        <span class="cache-gauge-label">// CACHE</span>
+        <span class="cache-gauge-total muted small" id="cache-gauge-total">—</span>
+      </header>
+      <ul class="cache-gauge-list" id="cache-gauge-list"></ul>
+      <p class="form-hint" style="margin-top:6px">
+        Operational cache for the snapshot/git transports plus motif
+        bookkeeping. Grows ~tens of KB per sync on the git path.
+        Safe to delete (motif rebuilds from scratch on the next sync).
+      </p>
+    </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>
       <span class="form-status" data-save-status="sync"></span>

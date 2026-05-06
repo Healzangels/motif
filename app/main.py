@@ -106,6 +106,20 @@ def main() -> int:
         for path, var in overrides.items():
             log.debug("    %s ← %s", path, var)
 
+    # v1.13.8: log non-themes_dir validation errors at startup so a
+    # hand-edited motif.yaml with an out-of-range value (e.g.,
+    # sync.source="garbage") surfaces immediately instead of failing
+    # opaquely on the next sync. themes_dir is intentionally
+    # excluded — first-run setup hasn't asked the user for a path
+    # yet, so missing is expected.
+    config_errors = settings.validate_current(require_themes_dir=False)
+    config_errors = [e for e in config_errors if "themes_dir" not in e]
+    if config_errors:
+        log.warning("config validation surfaced %d issue(s):",
+                    len(config_errors))
+        for e in config_errors:
+            log.warning("  · %s", e)
+
     init_db(settings.db_path)
     init_auth_schema(settings.db_path)
     purged = cleanup_expired_sessions(settings.db_path)

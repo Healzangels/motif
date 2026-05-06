@@ -100,6 +100,28 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .brand-mark { font-size: 10px; letter-spacing: 0.3em; color: var(--amber); animation: blink 2.4s steps(2) infinite; }
 .brand-name { color: var(--green-bright); }
 .brand-version { color: var(--fg-mute); font-size: var(--t-tiny); letter-spacing: 0.2em; }
+/* v1.13.8 (#8): self-update suffix next to the version pill.
+   Hidden by default; revealed by app.js checkSelfUpdate() when the
+   cached GitHub latest tag is greater than __version__. Cyan tint
+   distinguishes from the muted current-version pill so the eye
+   tracks "you have v1.13.7 → v1.14.0 is out". */
+.brand-update[hidden] { display: none; }
+.brand-update {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(109,211,255,0.45);
+  border-radius: 3px;
+  color: var(--cyan);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  text-decoration: none;
+  font-weight: 600;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.brand-update:hover {
+  background: rgba(109,211,255,0.08);
+  box-shadow: 0 0 8px rgba(109,211,255,0.25);
+}
 
 .nav { display: flex; gap: 0; }
 .nav a {
@@ -1368,6 +1390,60 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    one-line text rows above so the layout doesn't jump when audio
    loads metadata. */
 .info-audio { width: 100%; max-width: 480px; height: 32px; }
+/* v1.13.8 (#5): TDB preview button + iframe. The button collapses
+   to a single small chip until clicked; on click it replaces with
+   a 320x180 YouTube embed clipped to 30s. Distinct visual identity
+   from the on-disk .info-audio above so the user reads them as
+   different things ("play what's on disk" vs "preview what TDB
+   suggests"). */
+/* v1.13.8 (Phase D): operational cache gauge on the settings page.
+   Surfaces <db_dir>/cache/ size so the user can spot Phase A's
+   tarball, Phase B's git mirror, etc. growing without surprise.
+   Read-only display; no GC trigger here — that's deferred until
+   real-world growth proves it needs automation. */
+.cache-gauge {
+  margin-top: 18px;
+  padding: 10px 14px;
+  border-left: 2px solid var(--cyan);
+  background: rgba(109,211,255,0.04);
+  border-radius: 0 3px 3px 0;
+}
+.cache-gauge-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.cache-gauge-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.18em;
+  color: var(--cyan);
+  font-weight: 700;
+}
+.cache-gauge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--t-tiny);
+  font-family: var(--font-mono);
+}
+.cache-gauge-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: var(--fg-mute);
+}
+.cache-gauge-list .cache-gauge-bytes { font-variant-numeric: tabular-nums; }
+
+.info-tdb-preview-btn { font-weight: 600; letter-spacing: 0.1em; }
+.info-tdb-preview-iframe {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #000;
+  max-width: 100%;
+}
 .dlg-actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
 .dlg-form { display: flex; gap: 8px; margin-top: 8px; }
 .dlg-form .input { flex: 1; }

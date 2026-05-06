@@ -32,6 +32,15 @@
       <span class="brand-mark">▰▰▰</span>
       <span class="brand-name">motif</span>
       <span class="brand-version">v{{ motif_version }}</span>
+      <!-- v1.13.8 (#8): self-update suffix populated by app.js on
+           load from /api/release/latest. Hidden by default; reveals
+           with → vX.Y.Z when the latest GitHub stable release is
+           newer than what's currently running. Click opens the
+           release page in a new tab. -->
+      <a class="brand-update" id="brand-update-suffix"
+         href="https://github.com/Healzangels/motif/releases/latest"
+         target="_blank" rel="noopener" hidden
+         title="A newer motif release is available. Click to view release notes."></a>
     </a>
     <nav class="nav">
       <a href="/" data-nav="dashboard">DASH</a>

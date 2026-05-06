@@ -2826,6 +2826,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if chosen not in ("remote", "database", "git"):
             return {"ok": False, "transport": chosen,
                     "error": f"unknown source {chosen!r}"}
+        # v1.13.8: scheme allowlist on caller-supplied URLs. Even
+        # though the endpoint requires admin auth, defending in depth
+        # against pasting file:// or other unexpected schemes (which
+        # httpx + dulwich both technically support) keeps the surface
+        # area honest. None values fall through to settings defaults
+        # which have always been https.
+        from urllib.parse import urlparse as _urlparse
+        for arg_name, arg_val in (("url", url), ("branch", branch)):
+            if arg_val is None:
+                continue
+            if arg_name == "branch":
+                continue  # branch is a name, not a URL
+            sch = _urlparse(arg_val).scheme.lower()
+            if sch not in ("http", "https"):
+                return {"ok": False, "transport": chosen,
+                        "error": f"unsupported url scheme {sch!r} "
+                                 f"(http/https only)"}
         import time as _t
         t0 = _t.monotonic()
 
@@ -2902,6 +2919,154 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"ok": ok, "transport": chosen,
                 "latency_ms": latency_ms,
                 ("detail" if ok else "error"): detail}
+
+    @app.get("/api/release/latest")
+    async def api_release_latest(db: Path = Depends(get_db_path)):
+        """v1.13.8 (#8): surface the cached GitHub-latest-release info
+        so the topbar can render an upgrade-available suffix when
+        running motif < latest stable.
+
+        Returns:
+          {
+            "current": "1.13.8",
+            "latest":  "1.13.9" | null,    (null = no cache yet)
+            "html_url": "...",
+            "checked_at": "...",
+            "update_available": bool,
+          }
+
+        Cache lives at <db_dir>/cache/release.json populated by the
+        scheduler's daily release-check job. /api/release/latest is
+        a pure read — no GitHub call here, so it's cheap to poll
+        from every page load.
+
+        Version comparison uses motif's own __version__ as the
+        ground truth for current. Tag comparison strips an optional
+        leading 'v' and parses semver-style integer tuples; if the
+        tag doesn't parse cleanly, update_available stays False
+        (don't show an upgrade nag for malformed tags).
+        """
+        import json
+        import re
+        from .. import __version__ as motif_version
+        cache_path = db.parent / "cache" / "release.json"
+        latest = None
+        html_url = ""
+        checked_at = None
+        if cache_path.is_file():
+            try:
+                payload = json.loads(cache_path.read_text())
+                latest = payload.get("tag_name") or None
+                html_url = payload.get("html_url") or ""
+                checked_at = payload.get("checked_at")
+            except (OSError, ValueError):
+                pass
+
+        def _parse(v: str) -> tuple[int, ...] | None:
+            v = (v or "").strip().lstrip("v")
+            # Drop pre-release / build metadata after the first
+            # non-numeric/dot character so 1.13.8-rc1 → (1,13,8).
+            m = re.match(r"^(\d+(?:\.\d+)*)", v)
+            if not m:
+                return None
+            try:
+                return tuple(int(x) for x in m.group(1).split("."))
+            except ValueError:
+                return None
+
+        cur_t = _parse(motif_version)
+        lat_t = _parse(latest) if latest else None
+        update_available = bool(
+            cur_t and lat_t and lat_t > cur_t
+        )
+        return {
+            "current": motif_version,
+            "latest": latest,
+            "html_url": html_url,
+            "checked_at": checked_at,
+            "update_available": update_available,
+        }
+
+    @app.get("/api/cache/size")
+    async def api_cache_size(db: Path = Depends(get_db_path)):
+        """v1.13.8 (Phase D): observability endpoint for the operational
+        cache directory at <db_dir>/cache/. Reports total bytes + per-
+        artifact breakdown so the user can see growth trends before
+        we automate GC. Returns zero counts (no error) when the cache
+        dir doesn't exist yet — fresh installs report cleanly.
+
+        Tracks the artifacts we know about by name:
+          - themerrdb-database.tar.gz       (Phase A snapshot)
+          - themerrdb-database.tar.gz.meta  (Phase A.5 ETag cache)
+          - themerrdb-database.git/         (Phase B bare repo)
+          - release.json                    (#8 release-check cache)
+
+        Anything else in cache/ is reported under 'other' so we can
+        spot mystery files without enumerating every name.
+        """
+        cache_dir = db.parent / "cache"
+        if not cache_dir.is_dir():
+            return {"total_bytes": 0, "artifacts": [], "exists": False}
+
+        def _size_of(path: Path) -> int:
+            if not path.exists():
+                return 0
+            if path.is_file():
+                try:
+                    return path.stat().st_size
+                except OSError:
+                    return 0
+            total = 0
+            try:
+                for sub in path.rglob("*"):
+                    if sub.is_file():
+                        try:
+                            total += sub.stat().st_size
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+            return total
+
+        def _query():
+            known_names = {
+                "themerrdb-database.tar.gz": "snapshot tarball",
+                "themerrdb-database.tar.gz.meta": "snapshot etag cache",
+                "themerrdb-database.tar.gz.partial": "snapshot partial",
+                "themerrdb-database.git": "git mirror",
+                "release.json": "release-check cache",
+            }
+            artifacts = []
+            seen = set()
+            for name, label in known_names.items():
+                p = cache_dir / name
+                size = _size_of(p)
+                if size > 0 or p.exists():
+                    artifacts.append({
+                        "name": name, "label": label,
+                        "bytes": size, "is_dir": p.is_dir(),
+                    })
+                seen.add(name)
+            other_total = 0
+            other_count = 0
+            try:
+                for entry in cache_dir.iterdir():
+                    if entry.name in seen:
+                        continue
+                    other_total += _size_of(entry)
+                    other_count += 1
+            except OSError:
+                pass
+            if other_count:
+                artifacts.append({
+                    "name": "other", "label": f"other ({other_count} entries)",
+                    "bytes": other_total, "is_dir": False,
+                })
+            total = sum(a["bytes"] for a in artifacts)
+            return {"total_bytes": total, "artifacts": artifacts,
+                    "exists": True}
+
+        return await run_in_threadpool(_query)
 
     @app.get("/api/sections/coverage")
     async def api_sections_coverage(db: Path = Depends(get_db_path)):

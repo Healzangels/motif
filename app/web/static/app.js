@@ -8,6 +8,20 @@
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const fmt = {
     num: (n) => (n ?? 0).toLocaleString(),
+    // v1.13.8 (Phase D): byte-count humanizer. Used by the cache
+    // gauge on /settings; kept generic so other size displays
+    // (sync_runs, snapshot meta, etc.) can reuse without local
+    // formatters.
+    bytes: (n) => {
+      const v = Number(n) || 0;
+      if (v < 1024) return `${v} B`;
+      const units = ['KB', 'MB', 'GB', 'TB'];
+      let x = v;
+      let i = -1;
+      do { x /= 1024; i++; } while (x >= 1024 && i < units.length - 1);
+      const decimals = x >= 100 ? 0 : x >= 10 ? 1 : 2;
+      return `${x.toFixed(decimals)} ${units[i]}`;
+    },
     time: (iso) => {
       if (!iso) return '—';
       const d = new Date(iso);
@@ -2826,6 +2840,35 @@
     return out;
   }
 
+  // v1.13.8 (Phase D): cache observability gauge for the settings
+  // page. Read-only — surfaces what's in <db_dir>/cache/ so the
+  // user can see Phase A's tarball + Phase B's git mirror + etc.
+  // accumulating without surprise. Hidden until /api/cache/size
+  // returns exists=true with a non-empty artifact list.
+  async function loadCacheGauge() {
+    const block = document.getElementById('cache-gauge');
+    const totalEl = document.getElementById('cache-gauge-total');
+    const listEl = document.getElementById('cache-gauge-list');
+    if (!block || !totalEl || !listEl) return;
+    try {
+      const data = await api('GET', '/api/cache/size');
+      if (!data || !data.exists || !data.artifacts || data.artifacts.length === 0) {
+        block.hidden = true;
+        return;
+      }
+      totalEl.textContent = `${fmt.bytes(data.total_bytes || 0)} total`;
+      listEl.innerHTML = data.artifacts.map((a) => `
+        <li>
+          <span>${htmlEscape(a.label || a.name)}${a.is_dir ? '/' : ''}</span>
+          <span class="cache-gauge-bytes">${fmt.bytes(a.bytes || 0)}</span>
+        </li>
+      `).join('');
+      block.hidden = false;
+    } catch (_) {
+      block.hidden = true;
+    }
+  }
+
   // v1.13.2 (#3): pre-flight transport probe wiring. Auto-fires
   // once on settings load so the user sees today's reachability
   // without clicking; click-to-rerun for manual re-test (handy
@@ -5583,7 +5626,15 @@
             const params = it.section_id ? `?section_id=${encodeURIComponent(it.section_id)}` : '';
             await api('POST', `/api/updates/${it.theme_media_type}/${it.theme_tmdb}/accept${params}`);
             ok_n++;
-          } catch (_) { fail_n++; }
+          } catch (err) {
+            // v1.13.8: surface the per-item error to the browser
+            // console so the user has a stack trace when X failed
+            // pops in the toast — pre-fix the underlying reason
+            // was completely silent. fail_n still drives the toast
+            // count; the console gets the diagnostic detail.
+            try { console.error('bulk action failed for item:', it, err); } catch (_) {}
+            fail_n++;
+          }
         }
         btn.textContent = `// ${ok_n} ACCEPTED${fail_n ? ` · ${fail_n} FAILED` : ''}${skipped ? ` · ${skipped} SKIPPED` : ''}`;
         libraryState.selected.clear();
@@ -5654,7 +5705,15 @@
             const params = it.section_id ? `?section_id=${encodeURIComponent(it.section_id)}` : '';
             await api('POST', `/api/updates/${it.theme_media_type}/${it.theme_tmdb}/decline${params}`);
             ok_n++;
-          } catch (_) { fail_n++; }
+          } catch (err) {
+            // v1.13.8: surface the per-item error to the browser
+            // console so the user has a stack trace when X failed
+            // pops in the toast — pre-fix the underlying reason
+            // was completely silent. fail_n still drives the toast
+            // count; the console gets the diagnostic detail.
+            try { console.error('bulk action failed for item:', it, err); } catch (_) {}
+            fail_n++;
+          }
         }
         btn.textContent = `// ${ok_n} DISMISSED${fail_n ? ` · ${fail_n} FAILED` : ''}${skipped ? ` · ${skipped} SKIPPED` : ''}`;
         libraryState.selected.clear();
@@ -6287,6 +6346,39 @@
           return `<dt>play</dt><dd><audio controls preload="metadata" src="${htmlEscape(src)}" class="info-audio">your browser doesn't support inline audio playback</audio></dd>`;
         })()
       : '';
+    // v1.13.8 (#5): in-card preview of the TDB-suggested YouTube
+    // URL — distinct from `play` above (which streams the on-disk
+    // theme.mp3). The preview lets the user hear what motif WOULD
+    // download via DOWNLOAD-FROM-TDB or what ACCEPT UPDATE would
+    // pull in, before actually doing it.
+    //
+    // Suppression rules to keep the card clean:
+    //   - hide when the row has no TDB video id (no upstream URL)
+    //   - hide when on-disk file's source_video_id matches the TDB
+    //     video id (would play the same content twice)
+    // Result: T rows in steady state see only `play`; rows with a
+    // pending TDB↑ update or rows without an on-disk file see the
+    // preview as a distinct row.
+    //
+    // Click-to-load: the iframe stays absent until the user clicks
+    // the button, so opening the dialog doesn't fire a YouTube
+    // page request the user didn't ask for. Iframe params clip to
+    // 30 seconds via start=0 + end=30; modestbranding=1 keeps the
+    // YouTube logo subdued; autoplay=1 starts immediately on
+    // click.
+    const tdbVidId = t.youtube_video_id || null;
+    const onDiskVidId = (lf && lf.source_video_id) || null;
+    const tdbPreviewRelevant = !!(
+      tdbVidId
+      && (!onDiskVidId || onDiskVidId !== tdbVidId)
+    );
+    const tdbPreviewBlock = tdbPreviewRelevant
+      ? `<dt>tdb preview</dt><dd>
+          <button type="button" class="btn btn-tiny info-tdb-preview-btn"
+                  data-yt-id="${htmlEscape(tdbVidId)}"
+                  title="Preview the first 30s of ThemerrDB's recommended URL — the on-disk play above streams the canonical motif has saved.">▸ preview tdb (30s)</button>
+        </dd>`
+      : '';
     // v1.12.56: pending-update diff section. When an actionable
     // upstream-changed update is queued, show side-by-side tiles
     // (current vs proposed) so the user can pre-validate ACCEPT
@@ -6370,6 +6462,7 @@
         ${dlBlock}
         ${placedBlock}
         ${audioBlock}
+        ${tdbPreviewBlock}
       </dl>
       ${recoveryPlaceholder}
       ${diffSection}
@@ -6913,6 +7006,30 @@
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
     document.getElementById('info-dlg-close')?.addEventListener('click', closeInfoDialog);
+    // v1.13.8 (#5): TDB-preview click handler. Delegated off the
+    // dialog so each render of openInfoDialog reuses the binding
+    // without re-registering. On click, the button replaces itself
+    // with a YouTube iframe that auto-plays the first 30 seconds.
+    // The iframe gets torn down when the dialog closes (closeInfoDialog
+    // re-renders the body to '<p class="muted">loading…</p>' on next
+    // open, dropping the iframe + stopping playback).
+    dlg.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.info-tdb-preview-btn');
+      if (!btn) return;
+      const ytId = btn.dataset.ytId;
+      if (!ytId) return;
+      const iframe = document.createElement('iframe');
+      iframe.className = 'info-tdb-preview-iframe';
+      iframe.width = '320';
+      iframe.height = '180';
+      iframe.allow = 'autoplay; encrypted-media';
+      iframe.title = 'ThemerrDB preview';
+      // start=0 + end=30 clips to 30s; modestbranding=1 hides the
+      // YouTube logo overlay; rel=0 suppresses related-videos at end.
+      iframe.src = `https://www.youtube.com/embed/${encodeURIComponent(ytId)}`
+        + `?start=0&end=30&autoplay=1&modestbranding=1&rel=0`;
+      btn.replaceWith(iframe);
+    });
   }
 
 
@@ -7205,9 +7322,37 @@
 
   // ---- Bootstrap ----
 
+  // v1.13.8 (#8): self-update notifier. /api/release/latest reads
+  // a daily-cached payload populated by the scheduler's
+  // _check_release_update job. When the cached latest tag parses
+  // higher than the running version, reveal a small "→ vX.Y.Z"
+  // suffix next to the brand-version pill. Click opens the GitHub
+  // release page in a new tab via the static href in base.html.
+  // Polled once at page load — release availability changes on the
+  // order of days, no need for repeat checks per session.
+  async function checkSelfUpdate() {
+    const el = document.getElementById('brand-update-suffix');
+    if (!el) return;
+    try {
+      const r = await api('GET', '/api/release/latest');
+      if (r && r.update_available && r.latest) {
+        el.textContent = `→ ${r.latest}`;
+        if (r.html_url) el.href = r.html_url;
+        el.title = `motif ${r.latest} is available `
+          + `(running ${r.current}). Click to view release notes.`;
+        el.hidden = false;
+      } else {
+        el.hidden = true;
+      }
+    } catch (_) {
+      el.hidden = true;
+    }
+  }
+
   document.addEventListener('DOMContentLoaded', () => {
     highlightNav();
     refreshTopbarStatus();
+    checkSelfUpdate().catch(()=>{});
 
     // v1.11.73: clicking the topbar dot/text when red navigates to
     // the failed-jobs filter on /queue. The data-failed-link attr
@@ -7300,6 +7445,7 @@
     loadLibraries().catch(console.error);
     loadConfigIntoForms().catch(console.error);
     bindSyncProbe();
+    loadCacheGauge().catch(()=>{});
     loadPending().catch(console.error);
     loadLibrary().catch(console.error);
 
