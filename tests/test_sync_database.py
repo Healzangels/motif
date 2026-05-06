@@ -272,6 +272,42 @@ def test_snapshot_validate_rejects_schema_drift(db_path: Path):
 
 # ---------- HTTP failure -----------------------------------------------------
 
+def test_snapshot_cancellation_propagates_unchanged(db_path: Path):
+    """A // CANCEL during snapshot acquisition must raise
+    _JobCancelled, not _SnapshotError. Pre-fix the acquire() except
+    chain swallowed _JobCancelled (which inherits Exception) and
+    converted it to _SnapshotError, which then triggered the run_sync
+    fallback path — silently overriding the user's cancel and sticking
+    a spurious // FALLBACK indicator on the idle pill. v1.12.121."""
+    from app.core import progress as op_progress
+    from app.core.sync import _DatabaseSnapshot, _SnapshotError
+    from app.core.worker import _JobCancelled
+
+    op_progress.start_progress(
+        db_path, op_id="tdb_sync", kind="tdb_sync",
+        stage="snapshot_download", stage_label="…",
+    )
+    body = _build_database_tarball({
+        "movies": {"all_pages": [[]]},
+        "tv_shows": {"all_pages": [[]]},
+    })
+
+    # Cancel immediately on the first cancel poll inside the chunk loop.
+    cancel_calls = {"n": 0}
+    def _cancel_now():
+        cancel_calls["n"] += 1
+        return cancel_calls["n"] >= 1
+
+    client = _make_client(_StaticHandler(body=body))
+    snap = _DatabaseSnapshot(
+        db_path, "tdb_sync",
+        "https://codeload.invalid/tar.gz/database",
+        cancel_check=_cancel_now,
+    )
+    with pytest.raises(_JobCancelled):
+        snap.acquire(client)
+
+
 def test_snapshot_http_503_raises_snapshoterror(db_path: Path):
     from app.core import progress as op_progress
     from app.core.sync import _DatabaseSnapshot, _SnapshotError

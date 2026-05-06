@@ -776,12 +776,25 @@ class _DatabaseSnapshot:
 
     def acquire(self, client: httpx.Client) -> None:
         """Download + extract + validate. Raises _SnapshotError on
-        any failure that should trigger fallback to the remote path."""
+        any failure that should trigger fallback to the remote path.
+
+        Cancellation propagates through unchanged: a // CANCEL during
+        snapshot acquisition raises _JobCancelled, which is the
+        sync-wide bail signal — wrapping it as _SnapshotError would
+        spuriously trigger the fallback path (and stick the warn-tone
+        pill on the idle indicator) instead of ending the run cleanly
+        as 'cancelled'.
+        """
+        # Imported lazily to keep the worker→sync→worker cycle tractable.
+        from .worker import _JobCancelled
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         try:
             self._download(client)
             self._extract()
             self._validate()
+        except _JobCancelled:
+            self.release()
+            raise
         except _SnapshotError:
             self.release()
             raise
@@ -863,6 +876,12 @@ class _DatabaseSnapshot:
         except httpx.HTTPError as e:
             partial.unlink(missing_ok=True)
             raise _SnapshotError(f"download HTTP error: {e}") from e
+        except BaseException:
+            # Catches _JobCancelled (via Exception) and KeyboardInterrupt
+            # so the half-written .partial doesn't linger across runs.
+            # Re-raises untouched — acquire() decides how to dispatch.
+            partial.unlink(missing_ok=True)
+            raise
 
     def _extract(self) -> None:
         op_progress.update_progress(
