@@ -156,12 +156,21 @@ def main() -> int:
         from .core.events import now_iso  # noqa: F811 — defensive re-import
         with get_conn(settings.db_path) as conn:
             cur = conn.execute(
-                """UPDATE jobs SET status = 'failed',
-                                  finished_at = ?,
-                                  last_error = COALESCE(last_error,
-                                    'session_expired: motif process restarted '
-                                    'while this job was running')
-                   WHERE status = 'running'""",
+                # v1.12.123: SQL fix — adjacent string literals don't
+                # concatenate inside a triple-quoted Python string, so
+                # the prior 'session_expired: motif process restarted '
+                # 'while this job was running' became two consecutive
+                # SQL string literals (invalid syntax). The zombie sweep
+                # silently skipped on every startup since v1.12.113,
+                # leaving 'running' jobs stuck in the table — which kept
+                # themerrdb_sync_in_flight non-zero and stuck the
+                # dashboard SYNC button on // SYNCING THEMERRDB… until
+                # a manual DB poke. Single-line literal here.
+                "UPDATE jobs SET status = 'failed', "
+                "                finished_at = ?, "
+                "                last_error = COALESCE(last_error, "
+                "  'session_expired: motif process restarted while this job was running') "
+                "WHERE status = 'running'",
                 (now_iso(),),
             )
             if cur.rowcount:
