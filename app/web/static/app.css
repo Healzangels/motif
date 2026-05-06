@@ -216,6 +216,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 
 .hero { margin-bottom: 36px; }
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+/* v1.13.1 (#2): live last/next sync line under the hero. Subtle —
+   doesn't compete with the title or stat cards. The middot
+   separator is dim so the two halves read as one cohesive line. */
+.dash-sync-line {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+.dash-sync-line .dash-sync-sep {
+  opacity: 0.5;
+  margin: 0 4px;
+}
 .title {
   font-family: var(--font-display);
   font-size: var(--t-huge);
@@ -1626,6 +1639,16 @@ pre code, .codeblock {
   color: var(--amber);
   border: 1px solid rgba(255,184,74,0.45);
   background: rgba(255,184,74,0.08);
+}
+/* v1.13.1 (Phase C): dropped-from-TDB state — LizardByte used to
+   publish this title and has stopped. The URL still works (else
+   .tdb-pill-dead would have ranked higher); only the upstream
+   metadata went away. Muted gray distinguishes it from
+   .tdb-pill-no (never tracked) and .tdb-pill-dead (broken URL). */
+.tdb-pill-dropped {
+  color: var(--fg-mute);
+  border: 1px solid rgba(180,180,180,0.35);
+  background: rgba(180,180,180,0.06);
 }
 /* v1.11.96: pending-update state — ThemerrDB has a new URL for this
    theme. Blue ties together with .title-glyph-update, .chip-info,

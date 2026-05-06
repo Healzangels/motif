@@ -338,6 +338,21 @@
           failBadge.hidden = true;
         }
       }
+      // v1.13.1 (Phase C): DROP badge — count of themes ThemerrDB
+      // stopped publishing. No tab_hint yet (drops happen anywhere);
+      // route to /movies as a sensible default — the pill filter
+      // and the drilled-in row let the user reach any tab.
+      const dropBadge = $('#topbar-drops-badge');
+      if (dropBadge) {
+        const n = (stats.drops && stats.drops.total) || 0;
+        const cnt = $('#topbar-drops-count');
+        if (n > 0) {
+          if (cnt) cnt.textContent = n;
+          dropBadge.hidden = false;
+        } else {
+          dropBadge.hidden = true;
+        }
+      }
       // v1.12.118: legacy idle-dot retired — ops.js renderTopbar
       // owns the idle pill / op-mini handoff now (no flip).
 
@@ -669,6 +684,12 @@
       $('#last-sync').textContent = 'no sync runs yet — click SYNC NOW to start';
     }
 
+    // v1.13.1 (#2): live last/next sync line under the hero. Reads
+    // stats.last_sync (most recent sync_runs row) + stats.next_sync_at
+    // (computed from cron); renders relative times so the daily
+    // rhythm is legible at a glance without a /settings detour.
+    renderDashSyncLine(stats);
+
     // v1.12.67: per-section coverage. Hidden if there's only one
     // managed section (no comparison value); rendered as a table
     // with click-through to the matching library tab + 4K toggle.
@@ -688,6 +709,65 @@
         <span class="event-msg" title="${htmlEscape(e.message)}">${htmlEscape(e.message)}</span>
       </li>
     `).join('');
+  }
+
+  // v1.13.1 (#2): dashboard last/next sync line. Renders relative
+  // times next to the hero so the user can see at a glance when
+  // motif last ran and when the next scheduled run is. Hidden
+  // until the first /api/stats response lands so we don't render
+  // an empty line on first paint.
+  function fmtRelativePast(iso) {
+    if (!iso) return null;
+    try {
+      const t = new Date(iso).getTime();
+      if (!isFinite(t)) return null;
+      const sec = Math.max(0, (Date.now() - t) / 1000);
+      if (sec < 60)        return 'just now';
+      if (sec < 3600)      return `${Math.floor(sec / 60)}m ago`;
+      if (sec < 86400)     return `${Math.floor(sec / 3600)}h ago`;
+      if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
+      return new Date(iso).toLocaleDateString();
+    } catch (_) { return null; }
+  }
+  function fmtRelativeFuture(iso) {
+    if (!iso) return null;
+    try {
+      const t = new Date(iso).getTime();
+      if (!isFinite(t)) return null;
+      const sec = Math.max(0, (t - Date.now()) / 1000);
+      if (sec < 60)        return 'in <1m';
+      if (sec < 3600)      return `in ${Math.floor(sec / 60)}m`;
+      if (sec < 86400)     return `in ${Math.floor(sec / 3600)}h`;
+      if (sec < 86400 * 7) return `in ${Math.floor(sec / 86400)}d`;
+      return new Date(iso).toLocaleString();
+    } catch (_) { return null; }
+  }
+  function renderDashSyncLine(stats) {
+    const line = document.getElementById('dash-sync-line');
+    const nextEl = document.getElementById('dash-sync-next');
+    const lastEl = document.getElementById('dash-sync-last');
+    if (!line || !nextEl || !lastEl) return;
+    const nextRel = fmtRelativeFuture(stats.next_sync_at);
+    const ls = stats.last_sync;
+    let lastTxt = '';
+    if (ls && ls.finished_at) {
+      const rel = fmtRelativePast(ls.finished_at);
+      const tot = (ls.new_count || 0) + (ls.updated_count || 0);
+      const summary = (ls.status === 'success'
+        ? (tot === 0 ? 'no changes' : `${fmt.num(tot)} change${tot !== 1 ? 's' : ''}`)
+        : `${ls.status}`);
+      lastTxt = `Last run ${rel || ls.finished_at} · ${summary}`;
+    } else if (ls && ls.started_at) {
+      lastTxt = `Last run started ${fmtRelativePast(ls.started_at) || ls.started_at} (still running)`;
+    } else {
+      lastTxt = 'No sync runs yet';
+    }
+    const nextTxt = nextRel
+      ? `Next sync ${nextRel}`
+      : 'Next sync schedule unavailable';
+    nextEl.textContent = nextTxt;
+    lastEl.textContent = lastTxt;
+    line.style.display = '';
   }
 
   // v1.12.67: render the per-section coverage table on the
@@ -3183,6 +3263,11 @@
         && !window.__motif_cookies_present) {
       return 'cookies';
     }
+    // v1.13.1 (Phase C): dropped state ranks below failures — a
+    // dropped-AND-broken row should still surface as red TDB✗ so
+    // the user fixes the URL first. Only reach 'dropped' when the
+    // URL still works.
+    if (it.tdb_dropped_at) return 'dropped';
     return 'tdb';
   }
 
@@ -3538,6 +3623,17 @@
         }
         return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB upstream URL changed — ACCEPT UPDATE in the SOURCE menu to switch, or KEEP CURRENT to dismiss (the blue pill stays so the row remains sortable as updateable).">TDB ↑</span>';
       }
+      // v1.13.1 (Phase C): gray TDB◌ for items TDB used to publish
+      // and has now stopped publishing. The local theme still works;
+      // it's just no longer endorsed upstream. ACK DROP / CONVERT TO
+      // MANUAL in the SOURCE menu let the user dismiss.
+      if (it.tdb_dropped_at) {
+        const dt = (typeof it.tdb_dropped_at === 'string'
+                    && it.tdb_dropped_at.length >= 10)
+                    ? it.tdb_dropped_at.slice(0, 10) : '';
+        const since = dt ? ` (since ${dt})` : '';
+        return ` <span class="tdb-pill tdb-pill-dropped" title="ThemerrDB no longer publishes this title${since}. Your local theme still works — use ACK DROP to dismiss, CONVERT TO MANUAL to take ownership, or PURGE to remove.">TDB ◌</span>`;
+      }
       return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB has this title — TDB action available in the SOURCE menu">TDB</span>';
     })();
 
@@ -3837,6 +3933,33 @@
       'Upload an MP3 file as the theme.',
       { rk: it.rating_key, tone: 'user' },
     ));
+
+    // ── 3.5. TDB DROPPED REMEDIATION (Phase C, v1.13.1) ─────
+    // When ThemerrDB stops publishing this title, the row gets a
+    // gray TDB◌ pill. Two dismissal paths:
+    //   ACK DROP — clear the flag, leave SRC=T as-is. The local
+    //              theme stays linked to the (no-longer-published)
+    //              TDB record. If TDB ever re-adds it, the next
+    //              sync clears the flag automatically.
+    //   CONVERT TO MANUAL — promote the current youtube_url into
+    //              user_overrides; SRC reclassifies T → U; future
+    //              syncs leave the row alone.
+    if (it.tdb_dropped_at && themeMt && themeId !== null
+        && themeId !== undefined) {
+      sourceItems.push(menuItemHtml(
+        'ack-drop', 'ACK DROP',
+        "ThemerrDB stopped publishing this title. Dismiss the TDB◌ flag — the local theme stays as-is.",
+        { mt: themeMt, id: themeId, tone: 'themerrdb' },
+      ));
+      if (it.youtube_url) {
+        sourceItems.push(menuItemHtml(
+          'convert-to-manual', 'CONVERT TO MANUAL',
+          "Take ownership of this row: promote the current URL into user_overrides. SRC flips T → U; sync stops touching it.",
+          { mt: themeMt, id: themeId, sectionId: it.section_id || '',
+            tone: 'user' },
+        ));
+      }
+    }
 
     // ── 4. CROSS-SOURCE REPLACE ───────────────────────────────
     // REPLACE TDB — fires when the user is swapping motif's
@@ -5767,6 +5890,35 @@
           kindHuman: btn.dataset.kindHuman || 'failure',
           message: btn.dataset.msg || '',
         });
+      } else if (act === 'ack-drop') {
+        // v1.13.1 (Phase C): clear tdb_dropped_at without removing
+        // the row. The TDB◌ pill goes away; SRC stays as-is.
+        const mt = btn.dataset.mt, id = btn.dataset.id;
+        if (!mt || !id) return;
+        try {
+          await api('POST', `/api/items/${mt}/${id}/ack-drop`);
+          loadLibrary().catch(()=>{});
+        } catch (err) {
+          alert('ACK DROP failed: ' + err.message);
+        }
+      } else if (act === 'convert-to-manual') {
+        // v1.13.1 (Phase C): promote themes.youtube_url into
+        // user_overrides for this section. SRC reclassifies T→U.
+        const mt = btn.dataset.mt, id = btn.dataset.id;
+        const sectionId = btn.dataset.sectionId || '';
+        if (!mt || !id) return;
+        if (!confirm('Take ownership of this row?\n\n'
+            + 'The current ThemerrDB URL becomes a user override. '
+            + 'Future syncs will leave the row alone. SRC flips '
+            + 'from T to U; the file on disk stays the same.')) return;
+        try {
+          const params = sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : '';
+          await api('POST',
+            `/api/items/${mt}/${id}/convert-to-manual${params}`);
+          loadLibrary().catch(()=>{});
+        } catch (err) {
+          alert('CONVERT TO MANUAL failed: ' + err.message);
+        }
       } else if (act === 'adopt-sidecar') {
         // v1.10.9: inline adopt — claim the sidecar at this Plex folder.
         // v1.10.21: surface the match kind in the confirm prompt so the

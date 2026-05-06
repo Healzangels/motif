@@ -75,6 +75,12 @@
 .op-pill.op-tone-plex:hover     { box-shadow: 0 0 10px rgba(109,255,181,0.35); }
 .op-pill.op-tone-warn     { border-color: rgba(255,184,74,0.5); color: var(--tone-warn); }
 .op-pill.op-tone-warn:hover     { box-shadow: 0 0 10px rgba(255,184,74,0.35); }
+/* v1.13.1 (Phase C): muted gray for the DROP badge. Distinct from
+   the red FAIL pulse (drops aren't broken — TDB just stopped
+   publishing) and from the green idle pill (drops are something to
+   review, not pure idle). */
+.op-pill.op-tone-drop     { border-color: rgba(180,180,180,0.45); color: var(--fg-mute); }
+.op-pill.op-tone-drop:hover     { box-shadow: 0 0 10px rgba(180,180,180,0.30); }
 
 /* When live: subtle pulse so the pill reads as "currently doing
  * something" without being noisy. Used for op-pill-active (sync

@@ -940,23 +940,24 @@ def _library_main_query(
                 # v1.12.95: green TDB pill render is the FALLTHROUGH
                 # in JS computeTdbPill — wins only when none of
                 # update / dead-failure / cookies-blocked match.
-                # Pre-fix the SQL was `tracked AND (no failure OR
-                # cookies_expired-with-cookies)`, which silently
-                # included rows whose row-pill showed blue update
-                # or red dead. Strict alignment now: also exclude
-                # pending_update + dead-failure (and
-                # cookies_expired when no cookies present).
+                # Strict alignment now: also exclude pending_update +
+                # dead-failure (and cookies_expired when no cookies
+                # present).
+                # v1.13.1 (Phase C): also exclude dropped items so
+                # they show as gray TDB◌ exclusively, not green.
                 if cookies_present:
                     branches.append(
                         "(t.upstream_source IN ('imdb','themoviedb') "
                         "AND (t.failure_kind IS NULL OR t.failure_kind = 'cookies_expired') "
-                        f"AND NOT {PENDING_EXISTS})"
+                        f"AND NOT {PENDING_EXISTS} "
+                        "AND t.tdb_dropped_at IS NULL)"
                     )
                 else:
                     branches.append(
                         "(t.upstream_source IN ('imdb','themoviedb') "
                         "AND t.failure_kind IS NULL "
-                        f"AND NOT {PENDING_EXISTS})"
+                        f"AND NOT {PENDING_EXISTS} "
+                        "AND t.tdb_dropped_at IS NULL)"
                     )
             elif p == "update":
                 # v1.12.48: scoped to decision='pending' (was IN
@@ -979,6 +980,14 @@ def _library_main_query(
                 branches.append(f"(t.failure_kind IN {DEAD_KINDS})")
             elif p == "none":
                 branches.append("(t.tmdb_id IS NULL OR t.upstream_source = 'plex_orphan')")
+            elif p == "dropped":
+                # v1.13.1 (Phase C): gray TDB◌ pill — TDB used to
+                # publish this title, then stopped. Set by sync's
+                # drop-detection sweep; cleared on re-add or via
+                # ACK DROP. Independent of failure_kind (an item
+                # can be dropped AND have a broken URL — both
+                # surface to the user).
+                branches.append("(t.tdb_dropped_at IS NOT NULL)")
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
     # v1.12.81: when 'broken' is in dl_pills or pl_pills the filter
@@ -1088,6 +1097,10 @@ def _library_main_query(
                  t.youtube_url
                ) AS applied_youtube_url,
                t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
+               -- v1.13.1 (Phase C): tdb_dropped_at drives the gray
+               -- TDB◌ pill render and the ACK DROP / CONVERT TO
+               -- MANUAL items in the SOURCE menu.
+               t.tdb_dropped_at,
                lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
                -- v1.11.99: mismatch state drives the DL=amber + LINK=≠
                -- visual on the row and the PUSH TO PLEX / ADOPT FROM
@@ -1725,6 +1738,7 @@ def _library_not_in_plex(
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,
             t.failure_kind, t.failure_message, t.failure_acked_at, t.upstream_source,
+            t.tdb_dropped_at,
             lf.file_path, lf.source_video_id, lf.provenance, lf.source_kind,
             lf.mismatch_state,
             p.media_folder, p.placement_kind, p.provenance AS placement_provenance,
@@ -2385,6 +2399,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                    WHERE failure_kind = 'cookies_expired'
                      AND failure_acked_at IS NULL) AS failures_cookies,
                   (SELECT COUNT(*) FROM themes WHERE upstream_source = 'plex_orphan') AS orphans_total,
+                  -- v1.13.1 (Phase C): count of themes ThemerrDB
+                  -- stopped publishing. Drives the topbar DROP
+                  -- badge + the gray TDB◌ row pill.
+                  (SELECT COUNT(*) FROM themes
+                   WHERE tdb_dropped_at IS NOT NULL
+                     AND upstream_source != 'plex_orphan') AS drops_total,
                   -- Tab availability for adaptive nav/toggle rendering.
                   -- A "tab" is present if at least one *included* section
                   -- with the matching flag pair exists. The Movies and TV
@@ -2471,6 +2491,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # one DB hit. The cache key is the db path so multi-tenant isn't
     # broken (single-tenant install has one key).
     _stats_cache: dict = {"key": None, "ts": 0.0, "value": None}
+
+    # v1.13.1 (#2): compute the next-fire time of the sync cron so the
+    # dashboard can render "Next sync at <relative time>" without
+    # adding a new dep — apscheduler is already required and its
+    # CronTrigger is the same parser the scheduler uses internally,
+    # so the displayed time is exact (no DST drift between display
+    # and actual fire).
+    def _compute_next_cron_fire(cron_expr: str) -> str | None:
+        try:
+            from apscheduler.triggers.cron import CronTrigger
+            from datetime import datetime, timezone
+        except Exception:
+            return None
+        try:
+            trig = CronTrigger.from_crontab(cron_expr, timezone=timezone.utc)
+            now_utc = datetime.now(timezone.utc)
+            nxt = trig.get_next_fire_time(None, now_utc)
+            if nxt is None:
+                return None
+            # Returns an aware datetime; serialize as ISO 8601 with
+            # explicit Z suffix so the JS Date constructor parses
+            # consistently across browsers.
+            return nxt.astimezone(timezone.utc).strftime(
+                "%Y-%m-%dT%H:%M:%SZ")
+        except Exception:
+            return None
     _stats_cache_ttl = 1.0
 
     @app.get("/api/stats")
@@ -2581,6 +2627,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     else None
                 ),
             },
+            # v1.13.1 (Phase C): drops surface = topbar DROP badge.
+            # Same shape as failures but keyed on tdb_dropped_at IS
+            # NOT NULL. Click-through on the badge filters the
+            # library to tdb_pills=dropped.
+            "drops": {
+                "total": row["drops_total"],
+            },
             "config": {
                 "paths_ready": settings.is_paths_ready(),
                 "themes_dir": str(settings.themes_dir) if settings.is_paths_ready() else None,
@@ -2600,6 +2653,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
             "dry_run": dry,
             "last_sync": dict(last_sync) if last_sync else None,
+            # v1.13.1 (#2): compute the next-scheduled-sync time from
+            # the cron expression so the dashboard can render
+            # "Next sync at <relative>" without an extra round-trip.
+            # apscheduler's CronTrigger is already a transitive dep,
+            # so no new install. Returns None on parse failures —
+            # the JS handles by simply not rendering the segment.
+            "next_sync_at": _compute_next_cron_fire(settings.sync_cron),
         }
         # Stash for the next caller within the TTL window.
         _stats_cache["key"] = str(db)
@@ -4555,7 +4615,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return set()
             return {p for p in (x.strip() for x in s.split(",")) if p in valid}
         src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "-"})
-        tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none"})
+        tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none", "dropped"})
         dl_set = _pset(dl_pills, {"on", "off", "broken"})
         pl_set = _pset(pl_pills, {"on", "await", "off", "broken"})
         link_set = _pset(link_pills, {"hl", "c", "m", "none"})
@@ -7707,6 +7767,103 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   detail={"failure_kind": row["failure_kind"]})
         return {"ok": True, "title": row["title"],
                 "acked_kind": row["failure_kind"]}
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/ack-drop")
+    async def api_ack_drop(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.13.1 (Phase C): clear themes.tdb_dropped_at without
+        deleting the row. The local theme + placement stay as-is; the
+        gray TDB◌ pill goes away; the topbar DROP badge decrements.
+        Mirrors clear-failure's "I dealt with it" semantic.
+
+        If TDB later re-publishes the item, normal sync upserts will
+        also clear this flag automatically — ACK DROP is the manual
+        path for users who don't want to wait."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT tdb_dropped_at, title FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            if row["tdb_dropped_at"] is None:
+                return {"ok": True, "no_op": True,
+                        "note": "no drop to acknowledge"}
+            conn.execute(
+                "UPDATE themes SET tdb_dropped_at = NULL "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  message=f"TDB drop acknowledged on {row['title']!r} "
+                          f"by {request.state.principal.username}")
+        return {"ok": True, "title": row["title"]}
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/convert-to-manual")
+    async def api_convert_to_manual(
+        request: Request, media_type: MediaType, tmdb_id: int,
+        section_id: str | None = Query(None),
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.13.1 (Phase C): take ownership of a dropped item by
+        promoting its current themes.youtube_url into user_overrides
+        — same shape SET URL produces. Result: SRC reclassifies from
+        T → U (user's URL is now authoritative), tdb_dropped_at
+        clears, and future syncs leave the row alone.
+
+        section_id (optional) scopes the override to one section, like
+        SET URL. When omitted, writes the global '' override row.
+        """
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT youtube_url, tdb_dropped_at, title FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="theme not found")
+            if not row["youtube_url"]:
+                raise HTTPException(
+                    status_code=400,
+                    detail="theme has no youtube_url to promote",
+                )
+            target_section = section_id or ""
+            now = now_iso()
+            conn.execute(
+                """INSERT INTO user_overrides
+                       (media_type, tmdb_id, youtube_url,
+                        set_at, set_by, note, section_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE
+                   SET youtube_url = excluded.youtube_url,
+                       set_at      = excluded.set_at,
+                       set_by      = excluded.set_by,
+                       note        = excluded.note""",
+                (media_type, tmdb_id, row["youtube_url"],
+                 now, request.state.principal.username,
+                 "promoted via CONVERT TO MANUAL after TDB drop",
+                 target_section),
+            )
+            # Clear the drop flag — the row is now self-managed and
+            # not subject to TDB drop tracking.
+            conn.execute(
+                "UPDATE themes SET tdb_dropped_at = NULL "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
+            )
+        log_event(db, level="INFO", component="api",
+                  media_type=media_type, tmdb_id=tmdb_id,
+                  section_id=target_section or None,
+                  message=f"Converted dropped {row['title']!r} to manual "
+                          f"by {request.state.principal.username}")
+        return {"ok": True, "title": row["title"],
+                "section_id": target_section, "url": row["youtube_url"]}
 
     @app.post("/api/items/{media_type}/{tmdb_id}/redownload")
     async def api_redownload(

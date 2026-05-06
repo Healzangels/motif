@@ -53,6 +53,13 @@ CREATE TABLE IF NOT EXISTS themes (
     -- v1.10.32: normalized title (normalize_title in app/core/normalize.py)
     -- for the title-fallback library match. Populated by sync.
     title_norm           TEXT,
+    -- v1.13.1 (Phase C): set when ThemerrDB stops publishing this
+    -- (media_type, tmdb_id) — i.e. the per-item JSON disappeared
+    -- from the database branch between syncs. NULL = currently in
+    -- TDB. Sync writes the timestamp; the user dismisses via
+    -- ACK DROP (clears) or CONVERT TO MANUAL (clears + reclassifies
+    -- as U). A re-add by ThemerrDB also clears it automatically.
+    tdb_dropped_at       TEXT,
     UNIQUE (media_type, tmdb_id)
 );
 
@@ -581,7 +588,7 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
 """
 
-CURRENT_SCHEMA_VERSION = 35
+CURRENT_SCHEMA_VERSION = 36
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1312,6 +1319,33 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migrate_v35_to_v36(conn: sqlite3.Connection) -> None:
+    """v36 (Phase C, v1.13.1) adds themes.tdb_dropped_at — the
+    timestamp at which ThemerrDB stopped publishing this
+    (media_type, tmdb_id). Pre-fix motif silently kept the row as
+    SRC=T forever even though TDB had withdrawn its endorsement;
+    now sync stamps the column on detected removals and the UI
+    surfaces a gray TDB◌ pill so the user can decide between
+    keeping the local theme (ACK DROP), reclassifying it as a
+    user-managed override (CONVERT TO MANUAL), or removing it
+    (PURGE). Cleared automatically when the item reappears in
+    TDB.
+
+    Schema change is purely additive — existing rows have
+    tdb_dropped_at=NULL which the SQL treats as "not dropped",
+    identical to pre-v36 behavior until the next sync runs.
+    """
+    log.info("Migrating to schema v36 (themes.tdb_dropped_at)")
+    conn.executescript(
+        """
+        ALTER TABLE themes ADD COLUMN tdb_dropped_at TEXT;
+        CREATE INDEX IF NOT EXISTS idx_themes_dropped
+            ON themes (tdb_dropped_at)
+            WHERE tdb_dropped_at IS NOT NULL;
+        """
+    )
+
+
 def _migrate_v34_to_v35(conn: sqlite3.Connection) -> None:
     """v35 adds Plex theme-claim verification on plex_items. Plex's API
     advertises theme URLs that may or may not actually serve content
@@ -1975,6 +2009,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 34:
                     _migrate_v34_to_v35(conn)
                     current = 35
+                elif current == 35:
+                    _migrate_v35_to_v36(conn)
+                    current = 36
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

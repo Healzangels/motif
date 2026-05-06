@@ -338,7 +338,12 @@ def _upsert_theme(
                 UPDATE themes SET
                     imdb_id = ?, title = ?, original_title = ?, year = ?, release_date = ?,
                     upstream_source = ?, raw_json = ?, last_seen_sync_at = ?,
-                    title_norm = ?
+                    title_norm = ?,
+                    -- v1.13.1 (Phase C): if the item was previously
+                    -- dropped from TDB and has now reappeared, clear
+                    -- the dropped flag automatically — re-adding is
+                    -- the canonical "undo drop" signal.
+                    tdb_dropped_at = NULL
                 WHERE media_type = ? AND tmdb_id = ?
                 """,
                 (
@@ -355,7 +360,8 @@ def _upsert_theme(
                 imdb_id = ?, title = ?, original_title = ?, year = ?, release_date = ?,
                 youtube_url = ?, youtube_video_id = ?, youtube_added_at = ?,
                 youtube_edited_at = ?, upstream_source = ?, raw_json = ?,
-                last_seen_sync_at = ?, title_norm = ?
+                last_seen_sync_at = ?, title_norm = ?,
+                tdb_dropped_at = NULL
             WHERE media_type = ? AND tmdb_id = ?
             """,
             (
@@ -1770,6 +1776,176 @@ def _run_git_differential_upsert(
     git_mirror.commit_sync_ok()
 
 
+# v1.13.1 (Phase C): drop detection. Catches items LizardByte
+# stopped publishing — the per-item JSON disappears from the
+# database branch. Sync stamps tdb_dropped_at; the UI surfaces a
+# gray TDB◌ pill and ACK DROP / CONVERT TO MANUAL actions in the
+# SOURCE menu so the user can decide what to do.
+_DROP_SAFETY_PCT = 0.05
+_DROP_SAFETY_FLOOR = 50  # never block when total drops are tiny
+
+
+def _detect_and_stamp_drops_full_walk(
+    db_path,
+    *,
+    sync_ts: str,
+    media_types_seen: set[str],
+) -> int:
+    """Snapshot/remote-path drop detection. After a successful
+    full-tree walk both transports update last_seen_sync_at on every
+    upserted row; anything in themes whose last_seen_sync_at < this
+    run's sync_ts AND upstream_source != 'plex_orphan' AND
+    tdb_dropped_at IS NULL was implicitly removed upstream.
+
+    Only stamps if the implied drop count stays within
+    _DROP_SAFETY_PCT of the surviving catalog (per media_type).
+    A LizardByte regression that mass-removes items would otherwise
+    cascade: motif would mark everything as dropped, the user
+    would either ignore (continuing to use stale data) or panic-
+    purge (catastrophic). Bail loud, let the operator review.
+
+    Returns the number of rows stamped across all media_types.
+    """
+    if not media_types_seen:
+        return 0
+    stamped_total = 0
+    with get_conn(db_path) as conn:
+        for mt in sorted(media_types_seen):
+            current_n = conn.execute(
+                "SELECT COUNT(*) FROM themes "
+                "WHERE media_type = ? AND upstream_source != 'plex_orphan'",
+                (mt,),
+            ).fetchone()[0] or 0
+            implied_n = conn.execute(
+                """SELECT COUNT(*) FROM themes
+                    WHERE media_type = ?
+                      AND upstream_source != 'plex_orphan'
+                      AND tdb_dropped_at IS NULL
+                      AND last_seen_sync_at < ?""",
+                (mt, sync_ts),
+            ).fetchone()[0] or 0
+            if implied_n == 0:
+                continue
+            cap = max(_DROP_SAFETY_FLOOR,
+                      int(current_n * _DROP_SAFETY_PCT))
+            if implied_n > cap:
+                log.warning(
+                    "drop detection: %s implied_drops=%d exceeds cap=%d "
+                    "(catalog=%d) — skipping stamp; review upstream",
+                    mt, implied_n, cap, current_n,
+                )
+                continue
+            cur = conn.execute(
+                """UPDATE themes SET tdb_dropped_at = ?
+                    WHERE media_type = ?
+                      AND upstream_source != 'plex_orphan'
+                      AND tdb_dropped_at IS NULL
+                      AND last_seen_sync_at < ?""",
+                (sync_ts, mt, sync_ts),
+            )
+            stamped_total += cur.rowcount or 0
+    return stamped_total
+
+
+def _detect_and_stamp_drops_git(
+    db_path,
+    git_mirror: "_GitMirror",
+    *,
+    sync_ts: str,
+) -> int:
+    """Git-path drop detection. The change set's `removed` list is
+    the authoritative signal — but a single (media_type, tmdb_id)
+    can have BOTH an imdb/<id>.json AND a themoviedb/<id>.json path
+    in the tree. Removal of one doesn't necessarily mean TDB
+    stopped publishing the item — it might just be a re-key. Only
+    stamp dropped if NO surviving path in the new tree references
+    this (media_type, tmdb_id).
+
+    Same 5%-of-catalog safety cap as the full-walk path. Returns
+    the number of rows stamped.
+    """
+    changes = git_mirror.list_changes()
+    if not changes.removed:
+        return 0
+    candidates: dict[tuple[str, int], dict] = {}
+    for rel_path in changes.removed:
+        cls = _classify_git_path(rel_path)
+        if cls is None:
+            continue
+        media_type, imdb_id, tmdb_id = cls
+        # When the removed path was an imdb-keyed file we don't yet
+        # know the tmdb_id (the JSON is gone). Resolve from themes.
+        if tmdb_id is None and imdb_id is not None:
+            with get_conn(db_path) as conn:
+                row = conn.execute(
+                    "SELECT tmdb_id FROM themes "
+                    "WHERE media_type = ? AND imdb_id = ?",
+                    (media_type, imdb_id),
+                ).fetchone()
+            if row is None:
+                continue
+            tmdb_id = int(row["tmdb_id"])
+        if tmdb_id is None:
+            continue
+        candidates.setdefault((media_type, tmdb_id), {})
+    # For each candidate, verify NO surviving path in the new tree
+    # still references it. If imdb/<id>.json went away but
+    # themoviedb/<id>.json is still there, the item is NOT dropped.
+    actually_dropped: list[tuple[str, int]] = []
+    for (mt, tmdb_id) in candidates:
+        # Look up the imdb_id we'd expect from themes for the
+        # imdb-path probe.
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT imdb_id FROM themes "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (mt, tmdb_id),
+            ).fetchone()
+        imdb_id_from_db = row["imdb_id"] if row else None
+        media_path = "movies" if mt == "movie" else "tv_shows"
+        survives_tmdb = git_mirror.read_json(
+            f"{media_path}/themoviedb/{tmdb_id}.json") is not None
+        survives_imdb = (imdb_id_from_db is not None) and (
+            git_mirror.read_json(
+                f"{media_path}/imdb/{imdb_id_from_db}.json") is not None
+        )
+        if not (survives_tmdb or survives_imdb):
+            actually_dropped.append((mt, tmdb_id))
+    if not actually_dropped:
+        return 0
+    # Safety cap (per media_type).
+    by_type: dict[str, list[int]] = {}
+    for mt, tmdb_id in actually_dropped:
+        by_type.setdefault(mt, []).append(tmdb_id)
+    stamped_total = 0
+    with get_conn(db_path) as conn:
+        for mt, ids in by_type.items():
+            current_n = conn.execute(
+                "SELECT COUNT(*) FROM themes "
+                "WHERE media_type = ? AND upstream_source != 'plex_orphan'",
+                (mt,),
+            ).fetchone()[0] or 0
+            cap = max(_DROP_SAFETY_FLOOR,
+                      int(current_n * _DROP_SAFETY_PCT))
+            if len(ids) > cap:
+                log.warning(
+                    "drop detection (git): %s implied_drops=%d exceeds "
+                    "cap=%d (catalog=%d) — skipping stamp",
+                    mt, len(ids), cap, current_n,
+                )
+                continue
+            for tmdb_id in ids:
+                cur = conn.execute(
+                    """UPDATE themes SET tdb_dropped_at = ?
+                        WHERE media_type = ? AND tmdb_id = ?
+                          AND upstream_source != 'plex_orphan'
+                          AND tdb_dropped_at IS NULL""",
+                    (sync_ts, mt, tmdb_id),
+                )
+                stamped_total += cur.rowcount or 0
+    return stamped_total
+
+
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
              enqueue_downloads: bool = True,
@@ -2115,6 +2291,40 @@ def run_sync(db_path, base_url: str, *,
                         stats=stats,
                     )
                     batch.clear()
+
+        # v1.13.1 (Phase C): drop detection. Stamp tdb_dropped_at on
+        # themes whose upstream JSON disappeared between syncs. The
+        # snapshot/remote paths use the implicit last_seen_sync_at
+        # signal (anything not touched this run is implicitly
+        # removed); the git path uses the explicit ChangeSet.removed
+        # list with a survivors check (one-of-imdb-or-themoviedb).
+        # Both honor a 5%-of-catalog cap so a buggy upstream export
+        # can't cascade-drop the whole library. Skip on the no-op
+        # short-circuit paths — there's nothing to detect when no
+        # upsert ran.
+        if not skip_upsert:
+            try:
+                if git_mirror is not None:
+                    n_dropped = _detect_and_stamp_drops_git(
+                        db_path, git_mirror, sync_ts=sync_ts)
+                else:
+                    media_types_seen: set[str] = set()
+                    if stats.movies_seen:
+                        media_types_seen.add("movie")
+                    if stats.tv_seen:
+                        media_types_seen.add("tv")
+                    n_dropped = _detect_and_stamp_drops_full_walk(
+                        db_path, sync_ts=sync_ts,
+                        media_types_seen=media_types_seen)
+                if n_dropped:
+                    log_event(
+                        db_path, level="INFO", component="sync",
+                        message=f"Sync run #{run_id}: stamped "
+                                f"{n_dropped} item(s) as TDB-dropped",
+                        detail={"dropped": n_dropped},
+                    )
+            except Exception as e:
+                log.warning("drop detection failed: %s", e)
 
         op_progress.update_progress(
             db_path, "tdb_sync",

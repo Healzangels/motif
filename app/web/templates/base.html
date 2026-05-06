@@ -59,6 +59,16 @@
         <span class="op-pill-count" id="topbar-failures-count">0</span>
         <span class="op-pill-label">FAIL</span>
       </a>
+      <!-- v1.13.1 (Phase C): DROP badge — count of themes ThemerrDB
+           stopped publishing. Click filters the library to the gray
+           TDB◌ pill so the user can ACK DROP / CONVERT TO MANUAL
+           through them in bulk. -->
+      <a href="/movies?tdb_pills=dropped" class="op-pill op-tone-drop" id="topbar-drops-badge"
+         hidden
+         title="ThemerrDB stopped publishing one or more themes motif tracks. Click to review with the gray TDB◌ pill filter.">
+        <span class="op-pill-count" id="topbar-drops-count">0</span>
+        <span class="op-pill-label">DROP</span>
+      </a>
       <a href="#" class="op-mini" id="op-mini" hidden data-ops-trigger
          title="Click to expand live ops"></a>
       <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden

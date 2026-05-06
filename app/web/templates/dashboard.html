@@ -8,6 +8,15 @@
             title="Pull latest ThemerrDB metadata, then re-enumerate every managed Plex section so new theme matches show up on /movies, /tv, /anime. Downloads + placement still happen from those tabs (manual or scheduled).">// SYNC + REFRESH</button>
   </div>
   <p class="muted">theme coverage at a glance · sync schedule in <a href="/settings#schedule">/settings</a></p>
+  <!-- v1.13.1 (#2): live last-sync + next-sync line so the daily
+       rhythm is visible without /settings + /queue detours. JS
+       populates from /api/stats; hidden until that lands so we
+       don't render an empty bar on first paint. -->
+  <p class="muted small dash-sync-line" id="dash-sync-line" style="display:none">
+    <span id="dash-sync-next"></span>
+    <span class="dash-sync-sep"> · </span>
+    <span id="dash-sync-last"></span>
+  </p>
 </section>
 
 <section class="grid grid-stats" id="stats-grid">
