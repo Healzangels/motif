@@ -357,17 +357,39 @@
   }
 
   function renderDrawerBody(ops) {
-    const running = ops.filter((o) => o.status === 'running' || o.status === 'cancelling');
-    const finished = ops.filter((o) => o.status !== 'running' && o.status !== 'cancelling').slice(0, 3);
+    // v1.13.5: 'pending' counts as active. Queue-synthesized rows
+    // (REFRESH QUEUE, DOWNLOAD QUEUE, etc.) sit in 'pending' status
+    // when the worker hasn't picked up the next job yet — they're
+    // still ongoing work the user wants visible at the top of the
+    // drawer, not buried under finished ops in // LAST OPS.
+    // Sort within active: running first, then pending; both ordered
+    // by updated_at DESC so the freshest activity floats to the top.
+    const active = ops.filter((o) =>
+      o.status === 'running' || o.status === 'cancelling' || o.status === 'pending');
+    active.sort((a, b) => {
+      // running > cancelling > pending — by raw status weight first.
+      const w = (s) => s === 'running' ? 0 : s === 'cancelling' ? 1 : 2;
+      const dw = w(a.status) - w(b.status);
+      if (dw !== 0) return dw;
+      return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+    });
+    const finished = ops
+      .filter((o) => o.status !== 'running' && o.status !== 'cancelling'
+                     && o.status !== 'pending')
+      .slice(0, 3);
     const body = document.getElementById('ops-drawer-body');
     if (!body) return;
-    if (!running.length && !finished.length) {
+    if (!active.length && !finished.length) {
       body.innerHTML = '<div class="ops-drawer-empty">// idle · no ops in the last 24 hours</div>';
       return;
     }
     let html = '';
-    if (running.length) {
-      html += running.map(renderCard).join('');
+    if (active.length) {
+      // Header so the active section reads as deliberately first
+      // even when only a single pending row is present (which on
+      // its own could look like a stray finished card).
+      html += `<div class="op-card-kind" style="margin:0 0 6px">// ACTIVE</div>`;
+      html += active.map(renderCard).join('');
     } else {
       html += '<div class="ops-drawer-empty" style="padding:14px 0">// idle · no ops running</div>';
     }
