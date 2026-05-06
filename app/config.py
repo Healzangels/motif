@@ -266,6 +266,18 @@ class Settings:
     def sync_cron(self) -> str:
         return self._cfg.sync.cron
 
+    # v1.12.121 (Phase A): snapshot-tarball path for ThemerrDB sync.
+    # `sync_source` returns "remote" (HTTP-per-item) or "database"
+    # (codeload tarball). `sync_database_url` is the tarball
+    # endpoint, overridable for mirrors.
+    @property
+    def sync_source(self) -> str:
+        return self._cfg.sync.source
+
+    @property
+    def sync_database_url(self) -> str:
+        return self._cfg.sync.database_url
+
     # ---- Web section ----
 
     @property

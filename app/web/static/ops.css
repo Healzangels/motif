@@ -101,6 +101,19 @@
   color: var(--red);
   animation: op-pill-fail-pulse 2.4s ease-in-out infinite;
 }
+/* v1.12.121 (Phase A): sticky FALLBACK tint on the idle pill. Set
+   when the most-recent tdb_sync had to fall back to the slow remote
+   path — usually because GitHub codeload was unreachable. Cleared
+   automatically by the next successful snapshot run. Warn (amber)
+   tone; not red, because the data is still fresh, just acquired
+   the slow way. */
+.op-pill.op-pill-idle.op-pill-fallback {
+  border-color: rgba(255,184,108,0.55);
+  color: var(--orange, #ffb86c);
+}
+.op-pill.op-pill-idle.op-pill-fallback:hover {
+  box-shadow: 0 0 10px rgba(255,184,108,0.30);
+}
 .op-pill.op-pill-idle[hidden] { display: none !important; }
 
 @keyframes op-pill-live-pulse {
@@ -567,5 +580,29 @@ body[data-ops-running="1"] #topbar-status-text {
   border-left: 2px solid var(--red);
   font-size: 11px;
   color: var(--red);
+  word-break: break-word;
+}
+
+/* v1.12.121 (Phase A): warn-tone fallback callout on the op-card.
+   Surfaces "the snapshot path failed and we ran the slow remote
+   path" without escalating to error styling — the data is still
+   fresh, just acquired more expensively. */
+.op-card-fallback {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255,184,108,0.08);
+  border-left: 2px solid var(--orange, #ffb86c);
+  font-size: 11px;
+  color: var(--orange, #ffb86c);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.op-card-fallback-mark {
+  font-weight: 700;
+}
+.op-card-fallback-text {
+  flex: 1;
   word-break: break-word;
 }

@@ -101,6 +101,22 @@ class PlacementConfig:
 class SyncConfig:
     db_url: str = "https://app.lizardbyte.dev/ThemerrDB"
     cron: str = "0 13 * * *"
+    # v1.12.121 (Phase A): pick the transport for the daily ThemerrDB
+    # pull.
+    #   "remote"   — original behavior. Walk pages.json + per-item
+    #                JSON over HTTP against `db_url` (gh-pages CDN).
+    #                Battle-tested; ~10k+ HTTP calls per sync.
+    #   "database" — pull a single tarball of the LizardByte
+    #                ThemerrDB `database` branch from
+    #                codeload.github.com, extract to a temp dir, then
+    #                resolve every item from local files. Same JSON
+    #                shape, ~1000× fewer HTTP calls.
+    # Default is "remote" until A.1 burn-in clears.
+    source: str = "remote"
+    # codeload tarball URL for the snapshot path. Overridable for
+    # self-hosted mirrors of the database branch (e.g. a corporate
+    # proxy of the same content).
+    database_url: str = "https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
 
 
 @dataclass
@@ -173,6 +189,8 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     # sync
     ("MOTIF_DB_URL",              "sync.db_url",                     str),
     ("MOTIF_SYNC_CRON",           "sync.cron",                       str),
+    ("MOTIF_SYNC_SOURCE",         "sync.source",                     str),
+    ("MOTIF_DB_TAR_URL",          "sync.database_url",               str),
     # web
     ("MOTIF_WEB_HOST",            "web.host",                        str),
     ("MOTIF_WEB_PORT",            "web.port",                        int),
@@ -251,6 +269,11 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
     parts = cfg.sync.cron.split()
     if len(parts) != 5:
         errors.append(f"sync.cron must be 5-field cron (got {len(parts)} fields)")
+
+    if cfg.sync.source not in ("remote", "database"):
+        errors.append(
+            f"sync.source must be 'remote' or 'database' (got {cfg.sync.source!r})"
+        )
 
     if cfg.runtime.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         errors.append(f"runtime.log_level must be DEBUG, INFO, WARNING, or ERROR")

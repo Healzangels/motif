@@ -694,10 +694,391 @@ def _flush_sync_batch(
                         )
 
 
+# ----- v1.12.121 Phase A: snapshot path -----
+#
+# The remote path makes one HTTP request per item against gh-pages — at
+# ~10k items that's the dominant cost of a sync. The snapshot path pulls
+# a single tarball of LizardByte/ThemerrDB's `database` branch from
+# codeload.github.com, extracts it to a temp dir, and resolves every
+# item from the local tree. Same JSON shape, same upsert path; ~1000×
+# fewer HTTP requests + free differential sync once Phase B lands.
+#
+# Failure here is non-fatal — `run_sync` falls through to the remote
+# path and flags `op_progress.detail.fallback_active=True` so the
+# status bar can surface "last sync used the fallback".
+
+import io
+import os
+import tarfile
+import tempfile
+from contextlib import contextmanager
+
+
+class _SnapshotError(RuntimeError):
+    """Snapshot acquisition (download/extract/validate) failed.
+    Caller should fall back to the remote path."""
+
+
+# Hard-coded ceiling on the extracted tree. Catches a runaway tarball
+# (e.g. zip-bomb-style nested archives that decompress into hundreds of
+# GB) before it fills the disk. The real database branch sits at ~52
+# MB extracted; a 500 MB ceiling gives 10× headroom and still flags
+# anything pathological. v1.12.121.
+_SNAPSHOT_MAX_BYTES = 500 * 1024 * 1024
+# Reject archives with absurd member counts. Real branch has ~30k
+# members; 200k catches a degenerate millions-of-empty-files tarball
+# without false-positiving on legitimate growth.
+_SNAPSHOT_MAX_MEMBERS = 200_000
+
+
+class _DatabaseSnapshot:
+    """Codeload tarball view of the ThemerrDB `database` branch.
+
+    Lifecycle:
+      snap = _DatabaseSnapshot(db_path, op_id, url, cancel_check)
+      snap.acquire(client)              # download + extract + validate
+      try:
+          idx = snap.index("movies")    # local read of pages.json + all_page_*.json
+          rec = snap.fetch_item("movies", imdb_id="tt...", tmdb_id=123)
+      finally:
+          snap.release()                # rmtree the temp dir
+
+    Cancel check is polled between download chunks and between
+    extracted members so a // CANCEL during snapshot acquisition
+    bails within ~1MB / ~1k files.
+
+    The cached tarball lives at <db_dir>/cache/themerrdb-database.tar.gz.
+    On a successful pull it survives so a future sync that fails to
+    re-download can fall back to the prior snapshot (Phase B will
+    use it as the diff baseline).
+    """
+
+    def __init__(
+        self,
+        db_path: Path,
+        op_id: str,
+        tar_url: str,
+        cancel_check,
+    ):
+        self.db_path = Path(db_path)
+        self.op_id = op_id
+        self.tar_url = tar_url
+        self._cancel_check = cancel_check
+        # Where the tarball is cached. Lives next to motif.db, not under
+        # themes_dir — it's operational state, not user content.
+        self.cache_dir = self.db_path.parent / "cache"
+        self.tar_path = self.cache_dir / "themerrdb-database.tar.gz"
+        # Populated on acquire().
+        self._tmpdir: tempfile.TemporaryDirectory | None = None
+        self.root: Path | None = None
+
+    # -- acquisition --
+
+    def acquire(self, client: httpx.Client) -> None:
+        """Download + extract + validate. Raises _SnapshotError on
+        any failure that should trigger fallback to the remote path."""
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._download(client)
+            self._extract()
+            self._validate()
+        except _SnapshotError:
+            self.release()
+            raise
+        except Exception as e:
+            self.release()
+            raise _SnapshotError(
+                f"snapshot acquire failed: {type(e).__name__}: {e}"
+            ) from e
+
+    def release(self) -> None:
+        if self._tmpdir is not None:
+            try:
+                self._tmpdir.cleanup()
+            except Exception as e:
+                log.warning("snapshot tmpdir cleanup failed: %s", e)
+            self._tmpdir = None
+            self.root = None
+
+    # -- stages --
+
+    def _download(self, client: httpx.Client) -> None:
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage="snapshot_download",
+            stage_label="Downloading ThemerrDB snapshot",
+            stage_current=0, stage_total=0,
+            activity=f"GET {self.tar_url}",
+        )
+        # Stream to a sibling .partial file then atomic-rename. Crash
+        # mid-download leaves only the .partial; the next run discards
+        # it and starts fresh.
+        partial = self.tar_path.with_suffix(self.tar_path.suffix + ".partial")
+        try:
+            with client.stream("GET", self.tar_url) as r:
+                if r.status_code != 200:
+                    raise _SnapshotError(
+                        f"codeload returned HTTP {r.status_code}"
+                    )
+                total = int(r.headers.get("content-length") or 0)
+                if total > _SNAPSHOT_MAX_BYTES:
+                    raise _SnapshotError(
+                        f"snapshot Content-Length {total} exceeds ceiling "
+                        f"{_SNAPSHOT_MAX_BYTES}"
+                    )
+                op_progress.update_progress(
+                    self.db_path, self.op_id,
+                    stage_current=0, stage_total=total,
+                )
+                received = 0
+                last_emit = time.monotonic()
+                with partial.open("wb") as fp:
+                    for chunk in r.iter_bytes(chunk_size=64 * 1024):
+                        if self._cancel_check():
+                            from .worker import _JobCancelled
+                            raise _JobCancelled()
+                        fp.write(chunk)
+                        received += len(chunk)
+                        if received > _SNAPSHOT_MAX_BYTES:
+                            raise _SnapshotError(
+                                f"snapshot download exceeded ceiling "
+                                f"{_SNAPSHOT_MAX_BYTES} bytes"
+                            )
+                        if (time.monotonic() - last_emit) > 0.5:
+                            op_progress.update_progress(
+                                self.db_path, self.op_id,
+                                stage_current=received,
+                                stage_total=total,
+                            )
+                            last_emit = time.monotonic()
+            os.replace(partial, self.tar_path)
+            op_progress.update_progress(
+                self.db_path, self.op_id,
+                stage_current=received, stage_total=received,
+                activity=f"Snapshot downloaded ({received} bytes)",
+            )
+        except _SnapshotError:
+            partial.unlink(missing_ok=True)
+            raise
+        except httpx.HTTPError as e:
+            partial.unlink(missing_ok=True)
+            raise _SnapshotError(f"download HTTP error: {e}") from e
+
+    def _extract(self) -> None:
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage="snapshot_extract",
+            stage_label="Extracting snapshot",
+            stage_current=0, stage_total=0,
+            activity="Extracting tarball",
+        )
+        self._tmpdir = tempfile.TemporaryDirectory(prefix="motif-tdb-")
+        dest = Path(self._tmpdir.name)
+        # Strict member filter: reject anything that isn't a regular
+        # file or directory under <prefix>/(movies|tv_shows)/, and
+        # refuse symlinks/hardlinks/devices outright. Path components
+        # are checked for `..` and absolute roots.
+        allowed_subdirs = ("movies", "tv_shows")
+        try:
+            with tarfile.open(self.tar_path, mode="r:gz") as tf:
+                # Enumerate first so we can report stage_total.
+                members = tf.getmembers()
+                if len(members) > _SNAPSHOT_MAX_MEMBERS:
+                    raise _SnapshotError(
+                        f"snapshot has {len(members)} members "
+                        f"(ceiling {_SNAPSHOT_MAX_MEMBERS})"
+                    )
+                op_progress.update_progress(
+                    self.db_path, self.op_id,
+                    stage_current=0, stage_total=len(members),
+                )
+                # Detect the prefix dir (e.g. "ThemerrDB-database/").
+                # codeload tarballs always have a single top-level
+                # directory named "<repo>-<branch>".
+                prefix: str | None = None
+                for m in members:
+                    head = m.name.split("/", 1)[0]
+                    if head and not head.startswith("."):
+                        prefix = head
+                        break
+                if prefix is None:
+                    raise _SnapshotError("snapshot has no top-level directory")
+
+                extracted = 0
+                last_emit = time.monotonic()
+                total_bytes = 0
+                for i, m in enumerate(members):
+                    if i % 256 == 0 and self._cancel_check():
+                        from .worker import _JobCancelled
+                        raise _JobCancelled()
+                    if not (m.isreg() or m.isdir()):
+                        # symlink, hardlink, fifo, device, char — reject.
+                        continue
+                    # Strip the codeload prefix.
+                    if not m.name.startswith(prefix + "/") and m.name != prefix:
+                        continue
+                    rel = m.name[len(prefix) + 1:] if m.name != prefix else ""
+                    if not rel:
+                        continue
+                    # Tar-slip defenses.
+                    if rel.startswith("/") or ".." in rel.split("/"):
+                        raise _SnapshotError(
+                            f"snapshot member has unsafe path: {m.name!r}"
+                        )
+                    # Only keep movies/ and tv_shows/. Everything else
+                    # (root README.md, .github/, etc.) is dropped.
+                    if not any(
+                        rel == sub or rel.startswith(sub + "/")
+                        for sub in allowed_subdirs
+                    ):
+                        continue
+                    target = dest / rel
+                    # Final paranoia: resolved target must stay under dest.
+                    if not str(target.resolve()).startswith(
+                        str(dest.resolve()) + os.sep
+                    ) and target.resolve() != dest.resolve():
+                        raise _SnapshotError(
+                            f"snapshot member resolves outside dest: {m.name!r}"
+                        )
+                    if m.isdir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        f = tf.extractfile(m)
+                        if f is None:
+                            continue
+                        data = f.read()
+                        total_bytes += len(data)
+                        if total_bytes > _SNAPSHOT_MAX_BYTES:
+                            raise _SnapshotError(
+                                f"extracted size exceeds ceiling "
+                                f"{_SNAPSHOT_MAX_BYTES}"
+                            )
+                        with target.open("wb") as fp:
+                            fp.write(data)
+                    extracted += 1
+                    if (time.monotonic() - last_emit) > 0.5:
+                        op_progress.update_progress(
+                            self.db_path, self.op_id,
+                            stage_current=extracted,
+                            stage_total=len(members),
+                        )
+                        last_emit = time.monotonic()
+                op_progress.update_progress(
+                    self.db_path, self.op_id,
+                    stage_current=extracted, stage_total=len(members),
+                    activity=f"Extracted {extracted} files ({total_bytes} bytes)",
+                )
+        except tarfile.TarError as e:
+            raise _SnapshotError(f"tar extraction failed: {e}") from e
+        # Sanity check: at least one of the expected media subdirs
+        # must exist after extraction.
+        if not any((dest / sub).is_dir() for sub in allowed_subdirs):
+            raise _SnapshotError(
+                f"snapshot missing expected dirs: {allowed_subdirs}"
+            )
+        self.root = dest
+
+    def _validate(self) -> None:
+        """Smoke check: read pages.json + one per-item file from the
+        movies tree. Confirm the JSON shape still has `youtube_theme_url`
+        addressable on a record. Catches schema drift before we
+        upsert thousands of malformed rows."""
+        if self.root is None:
+            raise _SnapshotError("validate before extract")
+        movies_dir = self.root / "movies"
+        pages = movies_dir / "pages.json"
+        if not pages.is_file():
+            raise _SnapshotError("snapshot missing movies/pages.json")
+        try:
+            meta = json.loads(pages.read_text())
+        except (OSError, ValueError) as e:
+            raise _SnapshotError(f"pages.json unreadable: {e}") from e
+        if not isinstance(meta, dict) or "pages" not in meta:
+            raise _SnapshotError("pages.json shape unexpected")
+        # Read first page; sample one record.
+        first_page = movies_dir / "all_page_1.json"
+        if first_page.is_file():
+            try:
+                entries = json.loads(first_page.read_text())
+            except (OSError, ValueError) as e:
+                raise _SnapshotError(f"all_page_1.json unreadable: {e}") from e
+            if entries and isinstance(entries, list):
+                sample = entries[0]
+                tmdb_id = sample.get("id")
+                imdb_id = sample.get("imdb_id")
+                rec = self._read_item("movies", imdb_id=imdb_id, tmdb_id=tmdb_id)
+                if rec is None:
+                    raise _SnapshotError(
+                        f"sample item not resolvable in snapshot "
+                        f"(tmdb={tmdb_id}, imdb={imdb_id})"
+                    )
+                # Don't require a value (may legitimately be null);
+                # do require the key be present so the upsert path
+                # can read it.
+                if "youtube_theme_url" not in rec:
+                    raise _SnapshotError(
+                        "sample item missing youtube_theme_url field "
+                        "(schema drift?)"
+                    )
+
+    # -- read-side, mirrors the remote helpers --
+
+    def index(self, media_path: str) -> list[dict]:
+        if self.root is None:
+            raise _SnapshotError("index before acquire")
+        media_dir = self.root / media_path
+        pages_file = media_dir / "pages.json"
+        if not pages_file.is_file():
+            return []
+        try:
+            meta = json.loads(pages_file.read_text())
+        except (OSError, ValueError) as e:
+            raise _SnapshotError(f"{pages_file}: {e}") from e
+        total_pages = int(meta.get("pages", 0))
+        items: list[dict] = []
+        for n in range(1, total_pages + 1):
+            page_file = media_dir / f"all_page_{n}.json"
+            try:
+                items.extend(json.loads(page_file.read_text()))
+            except (OSError, ValueError) as e:
+                log.warning("snapshot page %s unreadable: %s", page_file, e)
+        return items
+
+    def fetch_item(
+        self, media_path: str, *,
+        imdb_id: str | None, tmdb_id: int,
+    ) -> dict | None:
+        return self._read_item(media_path, imdb_id=imdb_id, tmdb_id=tmdb_id)
+
+    def _read_item(
+        self, media_path: str, *,
+        imdb_id: str | None, tmdb_id: int | None,
+    ) -> dict | None:
+        if self.root is None:
+            return None
+        media_dir = self.root / media_path
+        candidates = []
+        if imdb_id:
+            candidates.append(media_dir / "imdb" / f"{imdb_id}.json")
+        if tmdb_id is not None:
+            candidates.append(media_dir / "themoviedb" / f"{tmdb_id}.json")
+        for path in candidates:
+            try:
+                if path.is_file():
+                    return json.loads(path.read_text())
+            except (OSError, ValueError) as e:
+                log.debug("snapshot item %s unreadable: %s", path, e)
+                continue
+        return None
+
+
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
              enqueue_downloads: bool = True,
-             cancel_check=lambda: False) -> SyncStats:
+             cancel_check=lambda: False,
+             source: str = "remote",
+             database_url: str | None = None) -> SyncStats:
     """Run a full ThemerrDB sync. Returns stats.
 
     `auto_place_override=None` lets the worker fall back to the global
@@ -741,8 +1122,48 @@ def run_sync(db_path, base_url: str, *,
     def _cancel_check():
         return cancel_check() or op_progress.is_cancelled(db_path, "tdb_sync")
 
+    snapshot: _DatabaseSnapshot | None = None
     try:
         with _make_client() as client:
+            # v1.12.121 (Phase A): snapshot path. When sync.source =
+            # "database", try to pull a single tarball of LizardByte's
+            # database branch up-front. On any failure, log + flag
+            # fallback_active and fall through to the remote per-item
+            # HTTP path so the run still completes.
+            if source == "database":
+                tar_url = database_url or (
+                    "https://codeload.github.com/LizardByte/ThemerrDB/"
+                    "tar.gz/database"
+                )
+                try:
+                    snapshot = _DatabaseSnapshot(
+                        db_path, "tdb_sync", tar_url, _cancel_check,
+                    )
+                    snapshot.acquire(client)
+                    log_event(
+                        db_path, level="INFO", component="sync",
+                        message=f"Sync run #{run_id}: snapshot acquired "
+                                f"from {tar_url}",
+                    )
+                except _SnapshotError as e:
+                    log_event(
+                        db_path, level="WARNING", component="sync",
+                        message=f"Sync run #{run_id}: snapshot path "
+                                f"failed ({e}); falling back to remote",
+                    )
+                    op_progress.set_detail_field(
+                        db_path, "tdb_sync", "fallback_active", True,
+                    )
+                    op_progress.set_detail_field(
+                        db_path, "tdb_sync", "fallback_reason", str(e),
+                    )
+                    op_progress.update_progress(
+                        db_path, "tdb_sync",
+                        activity=f"Snapshot unavailable — using remote "
+                                 f"fallback ({e})",
+                    )
+                    snapshot = None
+
             for media_type, media_path in (("movie", "movies"), ("tv", "tv_shows")):
                 stage_key = f"index_{media_type}"
                 op_progress.update_progress(
@@ -752,7 +1173,10 @@ def run_sync(db_path, base_url: str, *,
                     stage_current=0, stage_total=0,
                     activity=f"Fetching {media_type} index from ThemerrDB",
                 )
-                index = _fetch_index(client, base_url, media_path)
+                if snapshot is not None:
+                    index = snapshot.index(media_path)
+                else:
+                    index = _fetch_index(client, base_url, media_path)
                 log.info("ThemerrDB %s: %d items in index", media_type, len(index))
                 if media_type == "movie":
                     stats.movies_seen = len(index)
@@ -782,10 +1206,16 @@ def run_sync(db_path, base_url: str, *,
                     if tmdb_id is None:
                         return None
                     imdb_id = entry.get("imdb_id") or None
-                    record = _fetch_item(
-                        client, base_url, media_path,
-                        imdb_id=imdb_id, tmdb_id=int(tmdb_id),
-                    )
+                    if snapshot is not None:
+                        record = snapshot.fetch_item(
+                            media_path,
+                            imdb_id=imdb_id, tmdb_id=int(tmdb_id),
+                        )
+                    else:
+                        record = _fetch_item(
+                            client, base_url, media_path,
+                            imdb_id=imdb_id, tmdb_id=int(tmdb_id),
+                        )
                     if record is None:
                         return ("error", int(tmdb_id))
                     upstream_source = "imdb" if imdb_id else "themoviedb"
@@ -1179,3 +1609,6 @@ def run_sync(db_path, base_url: str, *,
             error_message=err_text,
         )
         raise
+    finally:
+        if snapshot is not None:
+            snapshot.release()

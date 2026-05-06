@@ -194,6 +194,36 @@ def finish_progress(
             )
 
 
+def set_detail_field(db_path: Path, op_id: str, key: str, value: Any) -> None:
+    """Patch a single arbitrary key into the running op's detail_json
+    without touching the standard fields (activity / throughput / stage).
+
+    v1.12.121 (Phase A): used to flag `fallback_active=True` when the
+    snapshot path couldn't reach codeload and the run fell back to the
+    remote per-item HTTP path. Surfaced through /api/progress so the
+    status bar can render a sticky // FALLBACK indicator on the most
+    recent finished tdb_sync row until the next successful run.
+
+    Idempotent on missing op_id (no-op).
+    """
+    with get_conn(db_path) as conn:
+        row = conn.execute(
+            "SELECT detail_json FROM op_progress WHERE op_id = ?",
+            (op_id,),
+        ).fetchone()
+        if row is None:
+            return
+        try:
+            detail = json.loads(row["detail_json"] or "{}")
+        except (TypeError, ValueError):
+            detail = {}
+        detail[key] = value
+        conn.execute(
+            "UPDATE op_progress SET detail_json = ? WHERE op_id = ?",
+            (json.dumps(detail), op_id),
+        )
+
+
 def is_cancelled(db_path: Path, op_id: str) -> bool:
     """Worker checkpoint: returns True if the API marked this op
     'cancelling'. Worker should bail at the next safe boundary,

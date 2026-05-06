@@ -22,7 +22,13 @@
 
   // ── stage timelines per op kind ───────────────────────────────
   const STAGE_TIMELINE = {
+    // v1.12.121 (Phase A): snapshot stages run before index/fetch
+    // when sync.source = "database". They never appear on the
+    // remote path, so the timeline render flags them as is-skipped
+    // when stage advances past them without their key showing up.
     tdb_sync: [
+      { key: 'snapshot_download', label: 'Snap dl' },
+      { key: 'snapshot_extract',  label: 'Extract' },
       { key: 'index_movie',  label: 'Movies idx' },
       { key: 'fetch_movie',  label: 'Movies' },
       { key: 'index_tv',     label: 'TV idx' },
@@ -207,6 +213,42 @@
     return `<div class="op-card-error">${esc(msg)}</div>`;
   }
 
+  // v1.12.121 (Phase A): sticky fallback indicator.
+  // When the snapshot path failed and the run fell back to remote,
+  // sync.py sets detail.fallback_active=true (+ detail.fallback_reason
+  // for the tooltip). The op-card surfaces it as a warn-tone callout;
+  // the idle pill picks it up from the most-recent finished tdb_sync
+  // and stays warn-tinted until the next successful sync clears it.
+  function renderFallbackBadge(op) {
+    if (!(op.detail && op.detail.fallback_active)) return '';
+    const why = op.detail.fallback_reason
+      ? esc(op.detail.fallback_reason)
+      : 'GitHub snapshot unavailable';
+    return `
+      <div class="op-card-fallback" title="${why}">
+        <span class="op-card-fallback-mark">!</span>
+        <span class="op-card-fallback-text">
+          // FALLBACK · ran via slow remote path (${why})
+        </span>
+      </div>`;
+  }
+
+  function latestSyncFallbackInfo(ops) {
+    // Find the most-recently-updated tdb_sync row (running or
+    // finished). If it carries fallback_active, the idle pill should
+    // tint warn until the next clean run.
+    const syncs = ops.filter((o) => o.kind === 'tdb_sync');
+    if (!syncs.length) return null;
+    syncs.sort((a, b) =>
+      String(b.updated_at || b.finished_at || '')
+        .localeCompare(String(a.updated_at || a.finished_at || '')));
+    const top = syncs[0];
+    if (top && top.detail && top.detail.fallback_active) {
+      return { reason: top.detail.fallback_reason || 'GitHub snapshot unavailable' };
+    }
+    return null;
+  }
+
   function renderCard(op) {
     const tone = TONE_BY_KIND[op.kind] || 'tdb';
     const isLive = (op.status === 'running' || op.status === 'cancelling');
@@ -262,6 +304,7 @@
               <span>${fmtNum(op.error_count)}</span>
             </span>` : ''}
         </div>
+        ${renderFallbackBadge(op)}
         ${renderTimeline(op)}
         ${renderSparkline(op)}
         ${renderActivity(op)}
@@ -308,6 +351,22 @@
     const overflow = document.getElementById('op-mini-overflow');
     const idle = document.getElementById('op-status-idle');
     if (!mini) return;
+    // v1.12.121 (Phase A): idle pill picks up the most-recent
+    // tdb_sync run's fallback flag and stays warn-tinted with a
+    // descriptive tooltip until the next successful sync clears it.
+    const fallback = latestSyncFallbackInfo(ops);
+    if (idle) {
+      idle.classList.toggle('op-pill-fallback', !!fallback);
+      if (fallback) {
+        idle.title = `Last sync used the slow remote fallback (${fallback.reason}) — GitHub may have been unreachable. Will retry the snapshot next sync.`;
+        const lbl = idle.querySelector('.op-pill-label');
+        if (lbl) lbl.textContent = 'FALLBACK';
+      } else {
+        idle.title = 'No active ops — click to view recent history';
+        const lbl = idle.querySelector('.op-pill-label');
+        if (lbl) lbl.textContent = 'IDLE';
+      }
+    }
     if (!running.length) {
       // v1.12.118: idle pill replaces the legacy green dot + "IDLE"
       // text. Same visual family as the FAIL/UPD/active op-pills, no

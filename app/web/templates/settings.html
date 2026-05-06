@@ -353,6 +353,51 @@
           unless you know why you'd want to change it.
         </p>
       </label>
+
+      <!-- v1.12.121 (Phase A): snapshot tarball path. EXPERIMENTAL until
+           A.1 burn-in clears; default is "remote" (battle-tested HTTP-
+           per-item). Selecting "database" pulls a single tarball of
+           the LizardByte/ThemerrDB database branch from codeload —
+           ~1000× fewer HTTP requests, finishes in seconds instead of
+           minutes. Falls back to remote automatically if codeload is
+           unreachable; the topbar idle pill goes amber to flag it. -->
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">
+            SYNC SOURCE
+            <span class="form-env-badge" style="background:rgba(255,184,108,0.15);border-color:rgba(255,184,108,0.4);color:var(--orange,#ffb86c)">// EXPERIMENTAL</span>
+          </span>
+          <span class="form-env-badge" data-env-badge="sync.source" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <select class="input" data-cfg-field="sync.source">
+          <option value="remote">REMOTE — per-item HTTP (default, battle-tested)</option>
+          <option value="database">DATABASE — single-tarball snapshot (faster, opt-in)</option>
+        </select>
+        <p class="form-hint">
+          <strong>REMOTE</strong> walks gh-pages and fetches one JSON per item
+          (~10k+ requests, several minutes on a fresh sync).<br>
+          <strong>DATABASE</strong> pulls one tarball of the
+          <code>database</code> branch from codeload.github.com and reads every
+          item locally (~1 request, seconds). On any failure (codeload
+          unreachable, schema drift) motif falls back to REMOTE for that run
+          and surfaces a // FALLBACK indicator on the idle pill until the next
+          successful snapshot run.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">DATABASE SNAPSHOT URL</span>
+          <span class="form-env-badge" data-env-badge="sync.database_url" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.database_url"
+               placeholder="https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+               autocomplete="off" />
+        <p class="form-hint">
+          Tarball endpoint used when SYNC SOURCE is DATABASE. Override only
+          if you're mirroring the <code>database</code> branch privately.
+        </p>
+      </label>
     </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>

@@ -619,6 +619,8 @@ class Worker:
             auto_place_override=auto_place_override,
             enqueue_downloads=enqueue_downloads,
             cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
+            source=self.settings.sync_source,
+            database_url=self.settings.sync_database_url,
         )
         # Auto-enqueue a plex_enum after every sync so the unified browse view
         # stays current. Dedupe so concurrent syncs don't pile up.
