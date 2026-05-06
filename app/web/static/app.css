@@ -479,6 +479,71 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   background: var(--bg-elev);
   border: 1px solid var(--line);
 }
+
+/* v1.13.12: search field gets an inline ✕ clear control. Wrapper is
+   inline-block so the input keeps its flex-grow behavior in
+   .filterbar; the button is absolutely positioned over the right
+   edge of the input and only renders when there's text to clear. */
+.library-search-wrap {
+  position: relative;
+  flex: 1 1 320px;
+  min-width: 240px;
+  display: inline-block;
+}
+.library-search-wrap > .input { width: 100%; padding-right: 30px; }
+.library-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-mute);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.library-search-clear:hover {
+  color: var(--fg);
+  border-color: var(--line);
+  background: var(--bg);
+}
+
+/* v1.13.12: PRESET row styling. Restyles SAVE / DELETE to match
+   the muted text-button family used by the per-row CLEAR controls,
+   and tones the select down so the row doesn't read like a
+   green-frame toolbar that fights the pill rows above. */
+.library-presets-select {
+  background: transparent;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  padding: 3px 22px 3px 8px;
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  /* Native dropdown chevron — keep it OS-default so the control
+     looks like a proper select rather than a clickable label. */
+  appearance: auto;
+  min-width: 160px;
+}
+.library-presets-select:hover { border-color: var(--cyan); }
+.library-presets-action {
+  /* Inherits pill-filter-clear (muted text-button); adds a faint
+     accent so SAVE reads as the primary action without a hard
+     fill. */
+  color: var(--fg);
+}
+.library-presets-action:hover { color: var(--cyan); border-color: var(--cyan); }
+.library-presets-action-danger:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
 .input {
   flex: 1; min-width: 240px;
   background: var(--bg);
@@ -647,22 +712,25 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    already uses. */
 #library-table th.col-state { padding-left: 6px; padding-right: 6px; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
-.col-actions { width: 300px; text-align: right; }
+.col-actions { width: 320px; text-align: right; }
 /* v1.13.6: bump col-actions left padding so the right-aligned
    action cluster sits with extra breathing room from the IMDB
    column. Pre-fix the (i) info button landed ~22px from the
    col-actions left edge (300px col − 14px*2 padding = 272px
    content area − ~264px button cluster = ~8px slack), which
-   put it visually adjacent to the centered IMDB ID. The
-   cluster-width-vs-cell-width math meant the slack was nearly
-   zero on rows with all four buttons present, producing a
-   noticeably tighter gap on the actions side than between LINK
-   and IMDB. Adding 24px of dedicated left padding shifts the
-   cluster rightward without changing button widths, restoring
-   visual symmetry around the centered IMDB column. */
+   put it visually adjacent to the centered IMDB ID.
+   v1.13.12: padding bumped to 60px AND col-actions widened by
+   20px — the v1.13.6 fix wasn't enough on rows with all four
+   action buttons present, where the cluster filled the cell
+   and butted up against the IMDB ID. Nudging the IMDB column
+   right edge inward (col-imdb padding-right: 24px on td) and
+   the actions content leftward (padding-left: 60px) opens a
+   visible gap on every row regardless of action density. */
 #library-table td.col-actions,
-#library-table th.col-actions { padding-left: 38px; }
+#library-table th.col-actions { padding-left: 60px; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
+#library-table td.col-imdb,
+#library-table th.col-imdb { padding-right: 24px; }
 /* v1.12.28: every header cell centers its label + sort
    indicator as a single unit. v1.12.27 forced left-align
    to put all eight headers on one X anchor, but the user

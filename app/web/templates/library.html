@@ -49,8 +49,16 @@
 
 
 <section class="filterbar">
-  <input type="text" id="library-search" placeholder="search title or imdb id…"
-         class="input" autocomplete="off" />
+  <!-- v1.13.12: search field + inline ✕ clear. The button auto-hides
+       when the input is empty so the bar reads clean by default. -->
+  <div class="library-search-wrap">
+    <input type="text" id="library-search" placeholder="search title or imdb id…"
+           class="input" autocomplete="off" />
+    <button type="button" id="library-search-clear"
+            class="library-search-clear"
+            title="Clear search" aria-label="Clear search"
+            style="display:none">×</button>
+  </div>
   <!-- v1.12.23: status row trimmed to its three semantic-view chips.
        DOWNLOADED, PLACED, DL MISSING removed — they're now covered
        by the dedicated DL pill row below (which mirrors the row's
@@ -220,25 +228,24 @@
             title="Clear all EDITION selections.">CLEAR</button>
   </div>
 
-  <!-- v1.13.11: saved-filter presets row. Snapshot the current
-       URL-driven filter state under a name; replay later from the
-       dropdown. Scope is hard-coded to 'library' for now (the
-       endpoint accepts other scopes for future pages). The dropdown
-       is hidden until at least one preset exists so a fresh install
-       doesn't surface an empty control. -->
-  <div class="pill-filter-row" id="library-presets-row"
+  <!-- v1.13.11: saved-filter presets row.
+       v1.13.12: restyled to match the pill-row family — bare select
+       (no green frame), text-only SAVE / DELETE buttons that pick up
+       the same muted styling as the per-row CLEAR controls. -->
+  <div class="pill-filter-row library-presets-row" id="library-presets-row"
        aria-label="saved filter presets">
-    <span class="pill-filter-label muted small">FILTERS:</span>
-    <select class="input input-tiny" id="library-presets-select"
-            title="Apply a saved filter preset."
-            style="display:none">
-      <option value="" disabled selected>// SAVED FILTERS</option>
+    <span class="pill-filter-label muted small">PRESET:</span>
+    <select class="library-presets-select" id="library-presets-select"
+            title="Apply a saved filter preset.">
+      <option value="" disabled selected>// none</option>
     </select>
-    <button type="button" class="btn btn-tiny" id="library-presets-save"
-            title="Snapshot the current filter combo as a named preset.">// SAVE FILTER</button>
-    <button type="button" class="btn btn-tiny" id="library-presets-delete"
+    <button type="button" class="pill-filter-clear library-presets-action"
+            id="library-presets-save"
+            title="Snapshot the current filter combo as a named preset.">+ SAVE</button>
+    <button type="button" class="pill-filter-clear library-presets-action library-presets-action-danger"
+            id="library-presets-delete"
             title="Delete the currently-applied saved filter."
-            style="display:none">// DELETE</button>
+            style="display:none">× DELETE</button>
   </div>
 </section>
 

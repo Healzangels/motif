@@ -507,14 +507,28 @@ body[data-ops-running="1"] #topbar-status-text {
   50%      { opacity: 1; }
 }
 
+/* v1.13.12: each label takes an equal flex slot mirroring the
+   bar widths above (which use flex:1 + gap:4px), with hard
+   truncation as a safety net for any future label longer than
+   the slot width. Pre-fix the row used justify-content:
+   space-between with natural-width labels, which let long
+   labels collide and overflow on narrow drawers. */
 .op-card-timeline-labels {
   display: flex;
-  justify-content: space-between;
+  gap: 4px;
   font-size: 9px;
-  letter-spacing: 0.12em;
-  opacity: 0.45;
+  letter-spacing: 0.06em;
+  opacity: 0.55;
   margin-top: 4px;
   text-transform: uppercase;
+}
+.op-card-timeline-labels > span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── activity feed ────────────────────────────────────────────── */

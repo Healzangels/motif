@@ -28,18 +28,21 @@
     // sync.source = "git" and supplant the snapshot + index/fetch
     // stages entirely on the differential path. resolve + prune
     // always run.
+    // v1.13.12: short labels (≤5 chars) so 11 stages fit a typical
+    // drawer width without overlap. Hover tooltip on each step still
+    // carries the long form via title=.
     tdb_sync: [
-      { key: 'git_fetch',         label: 'Git fetch' },
-      { key: 'git_diff',          label: 'Diff' },
-      { key: 'git_apply',         label: 'Apply' },
-      { key: 'snapshot_download', label: 'Snap dl' },
-      { key: 'snapshot_extract',  label: 'Extract' },
-      { key: 'index_movie',  label: 'Movies idx' },
-      { key: 'fetch_movie',  label: 'Movies' },
-      { key: 'index_tv',     label: 'TV idx' },
-      { key: 'fetch_tv',     label: 'TV' },
-      { key: 'resolve',      label: 'Resolve' },
-      { key: 'prune',        label: 'Prune' },
+      { key: 'git_fetch',         label: 'GIT',   long: 'Git fetch' },
+      { key: 'git_diff',          label: 'DIFF',  long: 'Diff' },
+      { key: 'git_apply',         label: 'APPLY', long: 'Apply' },
+      { key: 'snapshot_download', label: 'SNAP',  long: 'Snapshot download' },
+      { key: 'snapshot_extract',  label: 'EXTR',  long: 'Snapshot extract' },
+      { key: 'index_movie',  label: 'M·IX', long: 'Movies index' },
+      { key: 'fetch_movie',  label: 'MOV',  long: 'Movies fetch' },
+      { key: 'index_tv',     label: 'T·IX', long: 'TV index' },
+      { key: 'fetch_tv',     label: 'TV',   long: 'TV fetch' },
+      { key: 'resolve',      label: 'RES',  long: 'Resolve theme ids' },
+      { key: 'prune',        label: 'PRUN', long: 'Prune stale state' },
     ],
     plex_enum: [
       { key: 'enumerate',    label: 'Enumerate' },
@@ -181,9 +184,15 @@
         // Op finished — every step counts as done.
         cls = 'is-done';
       }
-      return `<div class="op-card-timeline-step ${cls}" title="${esc(s.label)}"></div>`;
+      return `<div class="op-card-timeline-step ${cls}" title="${esc(s.long || s.label)}"></div>`;
     }).join('');
-    const labels = stages.map((s) => `<span>${esc(s.label)}</span>`).join('');
+    // v1.13.12: each label gets a fixed flex slot matching the bar
+    // width above so labels stay column-aligned and never overflow
+    // into each other. title= carries the long form for hover.
+    const labels = stages.map((s) => {
+      const long = esc(s.long || s.label);
+      return `<span title="${long}">${esc(s.label)}</span>`;
+    }).join('');
     return `<div class="op-card-timeline">${cells}</div>
             <div class="op-card-timeline-labels">${labels}</div>`;
   }
@@ -273,6 +282,27 @@
     return null;
   }
 
+  // v1.13.12: when an op finishes, the headline used to freeze on
+  // whatever stage_label was last in flight ("Pruning stale state",
+  // "Reconciling placement paths", etc.), which made the drawer
+  // read like work was still happening even with the corner
+  // status flipped to DONE. Synthesize a completion headline from
+  // the op's terminal state instead.
+  function _doneHeadline(op) {
+    if (op.status === 'cancelled') return 'Cancelled';
+    if (op.status === 'failed') return 'Failed';
+    // 'done' — try to surface what was accomplished. tdb_sync rows
+    // carry no_changes / new_count / updated_count via the sync_runs
+    // payload, but op_progress doesn't have those fields directly;
+    // fall back to a generic line that reads as a clear endpoint.
+    const detail = op.detail || {};
+    if (detail.no_changes) return 'Done — no upstream changes';
+    if (op.processed_total > 0) {
+      return `Done — ${fmtNum(op.processed_total)} item${op.processed_total === 1 ? '' : 's'} processed`;
+    }
+    return 'Done';
+  }
+
   function renderCard(op) {
     const tone = TONE_BY_KIND[op.kind] || 'tdb';
     const isLive = (op.status === 'running' || op.status === 'cancelling');
@@ -283,6 +313,9 @@
       ? (new Date(op.finished_at || Date.now())
           - new Date(op.started_at)) / 1000
       : null;
+    const headline = isLive
+      ? (op.stage_label || op.stage || '…')
+      : _doneHeadline(op);
 
     return `
       <div class="op-card op-tone-${tone} op-status-${op.status}"
@@ -291,7 +324,7 @@
           <span class="op-card-kind">// ${esc(KIND_LABEL[op.kind] || op.kind)}</span>
           <span class="op-card-status">${esc(op.status.toUpperCase())}</span>
         </div>
-        <div class="op-card-stage">${esc(op.stage_label || op.stage || '…')}</div>
+        <div class="op-card-stage">${esc(headline)}</div>
         ${(op.stage_total > 0) ? `
           <div class="op-card-counter">
             <span class="op-card-counter-current"
@@ -356,6 +389,13 @@
       </div>`;
   }
 
+  // v1.13.12: cache the last rendered HTML of the drawer body. Skip
+  // the swap when nothing changed (idle polls + the 750ms /api/progress
+  // server-side cache mean most poll cycles return identical data).
+  // Pre-fix every poll tore down + rebuilt every op-card, which read
+  // as a hard flicker during active sync runs.
+  let _lastDrawerHtml = '';
+
   function renderDrawerBody(ops) {
     // v1.13.5: 'pending' counts as active. Queue-synthesized rows
     // (REFRESH QUEUE, DOWNLOAD QUEUE, etc.) sit in 'pending' status
@@ -379,24 +419,27 @@
       .slice(0, 3);
     const body = document.getElementById('ops-drawer-body');
     if (!body) return;
+    let html;
     if (!active.length && !finished.length) {
-      body.innerHTML = '<div class="ops-drawer-empty">// idle · no ops in the last 24 hours</div>';
-      return;
-    }
-    let html = '';
-    if (active.length) {
-      // Header so the active section reads as deliberately first
-      // even when only a single pending row is present (which on
-      // its own could look like a stray finished card).
-      html += `<div class="op-card-kind" style="margin:0 0 6px">// ACTIVE</div>`;
-      html += active.map(renderCard).join('');
+      html = '<div class="ops-drawer-empty">// idle · no ops in the last 24 hours</div>';
     } else {
-      html += '<div class="ops-drawer-empty" style="padding:14px 0">// idle · no ops running</div>';
+      html = '';
+      if (active.length) {
+        // Header so the active section reads as deliberately first
+        // even when only a single pending row is present (which on
+        // its own could look like a stray finished card).
+        html += `<div class="op-card-kind" style="margin:0 0 6px">// ACTIVE</div>`;
+        html += active.map(renderCard).join('');
+      } else {
+        html += '<div class="ops-drawer-empty" style="padding:14px 0">// idle · no ops running</div>';
+      }
+      if (finished.length) {
+        html += `<div class="op-card-kind" style="margin:18px 0 6px">// LAST OPS</div>`;
+        html += finished.map(renderCard).join('');
+      }
     }
-    if (finished.length) {
-      html += `<div class="op-card-kind" style="margin:18px 0 6px">// LAST OPS</div>`;
-      html += finished.map(renderCard).join('');
-    }
+    if (html === _lastDrawerHtml) return;
+    _lastDrawerHtml = html;
     body.innerHTML = html;
   }
 

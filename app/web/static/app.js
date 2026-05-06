@@ -817,6 +817,11 @@
   // fallback run (cascaded down a tier) gets an amber tint on the
   // bar's right edge so the user can spot at a glance which days
   // the fast path failed.
+  // v1.13.12: sync-history render guard. Same flicker-suppression
+  // story as renderSectionCoverage — most dashboard polls hit the
+  // /api/sync/history cache and return identical payloads.
+  let _lastSyncHistoryKey = '';
+
   function renderSyncHistory(payload) {
     const block = document.getElementById('sync-history-block');
     const barsEl = document.getElementById('sync-history-bars');
@@ -824,6 +829,12 @@
     if (!block || !barsEl || !sumEl) return;
     const runs = (payload && payload.runs) || [];
     if (!runs.length) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(payload);
+    if (key === _lastSyncHistoryKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastSyncHistoryKey = key;
     block.style.display = '';
     // Scale: tallest bar should fit in 60px. Anything over 180s
     // (a really slow run) clamps to 60px; bars below 1s pin to a
@@ -843,14 +854,22 @@
                   ].filter(Boolean).join(' ');
       const wcTxt = r.wall_clock_seconds == null
         ? 'running' : `${r.wall_clock_seconds.toFixed(1)}s`;
-      const noopTxt = r.no_changes ? '\nshort-circuit (no upstream changes)' : '';
-      const fbTxt = r.fallback_reason ? `\nfallback: ${r.fallback_reason}` : '';
-      const errTxt = r.error ? `\nerror: ${r.error}` : '';
-      const tip = `#${r.id} · ${transport} · ${wcTxt}\n`
-        + `started ${r.started_at}\n`
-        + `${fmt(r.movies_seen)} movies · ${fmt(r.tv_seen)} tv · `
-        + `${fmt(r.new_count)} new · ${fmt(r.updated_count)} updated`
-        + noopTxt + fbTxt + errTxt;
+      // v1.13.12: tooltip rewrite — lead with the timestamp + transport
+      // so hover scans like a log line. Pre-fix it led with "#19" which
+      // wasn't useful; the clarifying info (date, transport, changes)
+      // came at the end and was easy to miss in a 30-bar row.
+      const startedShort = (r.started_at || '').replace('T', ' ').replace(/\..*$/, '').replace(/\+.*$/, '');
+      const tot = (r.new_count || 0) + (r.updated_count || 0);
+      const changeTxt = r.no_changes ? 'no changes (short-circuit)'
+        : tot > 0 ? `${fmt(r.new_count)} new · ${fmt(r.updated_count)} updated`
+        : 'no changes';
+      const fbTxt = r.fallback_reason ? `\n⚠ fallback: ${r.fallback_reason}` : '';
+      const errTxt = r.error ? `\n✗ error: ${r.error}` : '';
+      const tip = `${startedShort} UTC\n`
+        + `${transport.toUpperCase()} · ${wcTxt}\n`
+        + `${changeTxt}\n`
+        + `${fmt(r.movies_seen)} movies · ${fmt(r.tv_seen)} tv scanned`
+        + fbTxt + errTxt;
       return `<span class="${cls}" style="height:${pctH}px"
               title="${htmlEscape(tip)}"></span>`;
     }).join('');
@@ -879,6 +898,12 @@
   // total / themed / unthemed / failures / pending-updates plus
   // a click-through that lands the user on the right library
   // tab + 4K variant.
+  // v1.13.12: section-coverage render guard. Pre-fix every dashboard
+  // poll (30s + post-sync) re-wrote body.innerHTML even when the
+  // numbers hadn't changed, causing a brief but visible flash. Hash
+  // the inputs and skip the swap when nothing differs.
+  let _lastSectionCoverageKey = '';
+
   function renderSectionCoverage(sections) {
     const block = document.getElementById('section-coverage-block');
     const body = document.getElementById('section-coverage-body');
@@ -887,6 +912,13 @@
       block.style.display = 'none';
       return;
     }
+    const key = JSON.stringify(sections);
+    if (key === _lastSectionCoverageKey) {
+      // Idempotent — no DOM swap, no flash.
+      block.style.display = '';
+      return;
+    }
+    _lastSectionCoverageKey = key;
     block.style.display = '';
     body.innerHTML = sections.map((s) => {
       const fourkLabel = s.is_4k ? '4K' : 'STD';
@@ -3549,6 +3581,24 @@
     }
   }
 
+  // v1.13.12: clear the dropdown selection (and hide DELETE) once
+  // libraryState drifts from the active preset, so a subsequent
+  // selection of the SAME preset re-fires the change event. Pre-fix
+  // a saved preset that drifted left the select stuck on its name
+  // and re-applying required a manual page refresh.
+  function _refreshPresetSelectionIfDrifted() {
+    const select = document.getElementById('library-presets-select');
+    const delBtn = document.getElementById('library-presets-delete');
+    if (!select || _activePresetId == null) return;
+    const here = _buildPresetQueryString();
+    const preset = _libraryPresets.find((f) => f.id === _activePresetId);
+    if (!preset || preset.query_json !== here) {
+      select.value = '';
+      _activePresetId = null;
+      if (delBtn) delBtn.style.display = 'none';
+    }
+  }
+
   function bindLibraryPresets() {
     const select = document.getElementById('library-presets-select');
     const saveBtn = document.getElementById('library-presets-save');
@@ -3568,6 +3618,11 @@
         deleteActiveLibraryPreset().catch((e) => console.error(e));
       });
     }
+    // v1.13.12: detect filter-state drift so the dropdown unsticks
+    // when the user changes pills/search/sort after applying a preset.
+    // Light polling — no need for granular event hooks across every
+    // pill since drift detection is just a string compare.
+    setInterval(_refreshPresetSelectionIfDrifted, 600);
     loadLibraryPresets().catch((e) => console.error(e));
   }
 
@@ -5283,7 +5338,15 @@
     // Search debounce
     const search = document.getElementById('library-search');
     let dt;
+    // v1.13.12: ✕ clear button. Toggle visibility by input emptiness;
+    // click fires the same load path as typing-and-deleting would.
+    const clearBtn = document.getElementById('library-search-clear');
+    function _syncClearVisibility() {
+      if (!clearBtn || !search) return;
+      clearBtn.style.display = search.value ? '' : 'none';
+    }
     search?.addEventListener('input', () => {
+      _syncClearVisibility();
       clearTimeout(dt);
       dt = setTimeout(() => {
         libraryState.q = search.value.trim();
@@ -5291,6 +5354,18 @@
         loadLibrary().catch(console.error);
       }, 250);
     });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        if (!search) return;
+        search.value = '';
+        _syncClearVisibility();
+        libraryState.q = '';
+        libraryState.page = 1;
+        search.focus();
+        loadLibrary().catch(console.error);
+      });
+    }
+    _syncClearVisibility();
 
     // Refresh — v1.10.6: send {tab, fourk} so the backend only enumerates
     // sections backing the current tab variant. While the enum runs the
