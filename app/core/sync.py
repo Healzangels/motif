@@ -28,7 +28,7 @@ import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterator
@@ -1182,12 +1182,602 @@ class _DatabaseSnapshot:
         return None
 
 
+# ----- v1.13.0 Phase B: git differential -----
+#
+# Phase A pulls the full database tarball every sync regardless of how
+# much actually changed. On a quiet day TDB might publish 5-50 changed
+# items; we still re-walk all 5,178. Phase B keeps a bare git mirror
+# of the LizardByte/ThemerrDB `database` branch via dulwich and
+# fetches only the delta. First run shallow-clones (~30 MB pack);
+# subsequent runs fetch ~tens-of-KB pack-deltas.
+#
+# Failure here is non-fatal — run_sync falls through to Phase A
+# (snapshot tarball) and flags fallback_active accordingly. If the
+# snapshot path also fails, the existing fallback continues to remote.
+
+
+class _GitMirrorError(RuntimeError):
+    """Git mirror acquisition failed (network, dulwich error, repo
+    corruption). Caller should fall back to the snapshot/remote
+    path."""
+
+
+class _GitMirrorUnchanged(Exception):
+    """Fetch returned no new commits — branch HEAD on the remote is
+    identical to our last successful sync. NOT a failure: caller
+    should skip the upsert pipeline and proceed to prune sweeps."""
+
+
+# Hard-coded ceilings on the bare repo. Catches a repo that has
+# grown unreasonably large (fetched megabytes of binary blobs we
+# don't actually want) before it fills disk.
+_GIT_MIRROR_MAX_BYTES = 500 * 1024 * 1024
+# Max number of changed paths we'll process in one run. Real branch
+# changes are typically a handful per day; tens of thousands would be
+# a re-import event we should fall back from rather than try to
+# digest in one transaction. Phase A's snapshot path can replay the
+# whole tree if we land in this case.
+_GIT_MIRROR_MAX_CHANGES = 50_000
+
+
+class _GitMirror:
+    """Bare-git-repo view of the ThemerrDB `database` branch.
+
+    Lifecycle:
+      mirror = _GitMirror(db_path, op_id, repo_url, branch, cancel_check)
+      mirror.acquire(client)        # clone (first run) or fetch (subsequent)
+      if mirror.is_unchanged():
+          # remote HEAD didn't move; skip upsert, run prune only.
+          ...
+      else:
+          changes = mirror.list_changes()    # ChangeSet
+          for media_type, path in changes.changed:
+              record = mirror.read_json(path)
+              ...
+          mirror.commit_sync_ok()           # advance MOTIF_LAST_SYNC
+
+    The repo lives at <db_dir>/cache/themerrdb-database.git/. Last-
+    known-synced HEAD is persisted at .../MOTIF_LAST_SYNC alongside
+    the repo files (single-line text: 40-char hex SHA). On any
+    inconsistency (missing file, SHA not present in repo) we treat
+    the next acquire as a first run so we can re-establish a known
+    baseline.
+    """
+
+    def __init__(
+        self,
+        db_path: Path,
+        op_id: str,
+        repo_url: str,
+        branch: str,
+        cancel_check,
+    ):
+        self.db_path = Path(db_path)
+        self.op_id = op_id
+        self.repo_url = repo_url
+        self.branch = branch
+        self.branch_ref = f"refs/heads/{branch}".encode()
+        self._cancel_check = cancel_check
+        self.cache_dir = self.db_path.parent / "cache"
+        self.repo_path = self.cache_dir / "themerrdb-database.git"
+        self.last_sync_path = self.repo_path / "MOTIF_LAST_SYNC"
+        # Populated by acquire().
+        self._repo = None  # type: ignore[assignment]
+        self._old_head: bytes | None = None
+        self._new_head: bytes | None = None
+        self._unchanged = False
+
+    # -- public API --
+
+    def is_unchanged(self) -> bool:
+        return self._unchanged
+
+    def acquire(self, _client_unused=None) -> None:
+        """Clone (first run) or fetch (subsequent). On fetch with no
+        new commits, raises _GitMirrorUnchanged via internal flag.
+
+        The httpx client param is accepted-but-ignored for parity with
+        _DatabaseSnapshot.acquire's signature; dulwich uses its own
+        HTTP transport.
+
+        Raises _GitMirrorError on any failure that should trigger
+        fallback to the snapshot path.
+        """
+        from .worker import _JobCancelled
+        try:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            if self._repo_is_initialized():
+                self._fetch()
+            else:
+                self._clone()
+            self._post_acquire_validate()
+        except _JobCancelled:
+            self._close()
+            raise
+        except _GitMirrorError:
+            self._close()
+            raise
+        except Exception as e:
+            self._close()
+            raise _GitMirrorError(
+                f"git mirror acquire failed: {type(e).__name__}: {e}"
+            ) from e
+
+    def list_changes(self):
+        """Compute the diff between MOTIF_LAST_SYNC (or empty) and
+        new HEAD. Returns _ChangeSet with three lists of relative
+        paths under the branch root.
+
+        On a first run (no prior MOTIF_LAST_SYNC), returns every
+        path in the new tree as 'added' — caller treats it as a
+        full-index walk equivalent to Phase A.
+        """
+        from dulwich.diff_tree import tree_changes
+        if self._repo is None or self._new_head is None:
+            raise _GitMirrorError("list_changes before acquire")
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage="git_diff", stage_label="Computing git diff",
+            stage_current=0, stage_total=0,
+            activity=f"diff {self._summary_sha(self._old_head)}..."
+                     f"{self._summary_sha(self._new_head)}",
+        )
+        new_commit = self._repo[self._new_head]
+        if self._old_head is None:
+            # First run — every path is "new". Walk the new tree to
+            # collect all blob paths so the upsert path knows what
+            # to read. Same scope as Phase A's full-index walk.
+            return _ChangeSet(
+                added=self._walk_tree_paths(new_commit.tree),
+                modified=[],
+                removed=[],
+            )
+        old_commit = self._repo[self._old_head]
+        added: list[str] = []
+        modified: list[str] = []
+        removed: list[str] = []
+        n = 0
+        for ch in tree_changes(self._repo.object_store, old_commit.tree, new_commit.tree):
+            if n >= _GIT_MIRROR_MAX_CHANGES:
+                raise _GitMirrorError(
+                    f"git diff produced > {_GIT_MIRROR_MAX_CHANGES} "
+                    f"changed paths — falling back"
+                )
+            n += 1
+            old_path = (ch.old.path.decode() if ch.old and ch.old.path else None)
+            new_path = (ch.new.path.decode() if ch.new and ch.new.path else None)
+            if ch.type == "add":
+                if new_path:
+                    added.append(new_path)
+            elif ch.type == "modify":
+                if new_path:
+                    modified.append(new_path)
+            elif ch.type == "delete":
+                if old_path:
+                    removed.append(old_path)
+            elif ch.type == "rename":
+                # Treat rename as remove + add for our purposes.
+                if old_path:
+                    removed.append(old_path)
+                if new_path:
+                    added.append(new_path)
+        return _ChangeSet(added=added, modified=modified, removed=removed)
+
+    def read_json(self, rel_path: str) -> dict | None:
+        """Read a file from the new HEAD's tree, parse as JSON.
+        Returns None if the path doesn't exist in the tree (caller
+        should treat as "ThemerrDB no longer publishes this item")."""
+        from dulwich.objects import Tree as DTree
+        if self._repo is None or self._new_head is None:
+            return None
+        commit = self._repo[self._new_head]
+        try:
+            cur = self._repo[commit.tree]
+        except KeyError:
+            return None
+        for part in rel_path.encode().split(b"/"):
+            if not isinstance(cur, DTree):
+                return None
+            try:
+                _mode, sha = cur[part]
+            except KeyError:
+                return None
+            cur = self._repo[sha]
+        if isinstance(cur, DTree):
+            return None
+        try:
+            return json.loads(cur.as_raw_string())
+        except (ValueError, AttributeError):
+            return None
+
+    def commit_sync_ok(self) -> None:
+        """Persist the new HEAD as MOTIF_LAST_SYNC so the next sync
+        can diff against it. Call only after the upsert pipeline
+        completes successfully — committing too early would skip
+        items if the run aborts mid-pipeline."""
+        if self._new_head is None:
+            return
+        try:
+            self.last_sync_path.write_text(self._new_head.decode())
+        except OSError as e:
+            log.warning("git mirror: MOTIF_LAST_SYNC write failed: %s", e)
+
+    def release(self) -> None:
+        """Close repo handles. Repo files stay on disk — they're
+        the cache for the next sync."""
+        self._close()
+
+    def _close(self) -> None:
+        if self._repo is not None:
+            try:
+                self._repo.close()
+            except Exception:
+                pass
+            self._repo = None
+
+    # -- stages --
+
+    def _repo_is_initialized(self) -> bool:
+        return (self.repo_path / "config").is_file() or (self.repo_path / "HEAD").is_file()
+
+    def _clone(self) -> None:
+        from dulwich.porcelain import clone
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage="git_fetch",
+            stage_label="Cloning ThemerrDB mirror (first run)",
+            stage_current=0, stage_total=0,
+            activity=f"git clone --bare --depth 1 -b {self.branch} {self.repo_url}",
+        )
+        # Wipe any partial state from a previous failed clone so we
+        # don't try to fetch into a half-initialized dir.
+        if self.repo_path.exists():
+            import shutil
+            shutil.rmtree(self.repo_path, ignore_errors=True)
+        # Shallow clone keeps history bounded. dulwich's clone is
+        # synchronous; cancel-check fires after it returns.
+        clone(
+            self.repo_url,
+            str(self.repo_path),
+            bare=True,
+            branch=self.branch.encode(),
+            depth=1,
+        )
+        if self._cancel_check():
+            from .worker import _JobCancelled
+            raise _JobCancelled()
+        self._open_repo()
+        self._old_head = None  # first run: no previous baseline
+        new_head = self._repo.refs.as_dict().get(self.branch_ref)
+        if new_head is None:
+            raise _GitMirrorError(
+                f"clone succeeded but branch {self.branch!r} ref missing"
+            )
+        self._new_head = new_head
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage_current=1, stage_total=1,
+            activity=f"Cloned {self.branch} at "
+                     f"{self._summary_sha(new_head)}",
+        )
+
+    def _fetch(self) -> None:
+        from dulwich.porcelain import fetch
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage="git_fetch",
+            stage_label="Fetching ThemerrDB delta",
+            stage_current=0, stage_total=0,
+            activity=f"git fetch {self.repo_url}",
+        )
+        self._open_repo()
+        # Read prior HEAD from MOTIF_LAST_SYNC. If absent or the SHA
+        # isn't actually in the local object store, treat as first
+        # run (no diff baseline; list_changes returns the full tree
+        # as 'added').
+        old_head = self._read_last_sync()
+        # Even with a corrupt/missing MOTIF_LAST_SYNC, we may still
+        # have a local refs/heads/<branch> pointer from a prior
+        # successful clone. Use it as a soft fallback.
+        if old_head is None and self.branch_ref in self._repo.refs:
+            old_head = self._repo.refs[self.branch_ref]
+        self._old_head = old_head
+        # The actual fetch.
+        try:
+            res = fetch(str(self.repo_path), self.repo_url, depth=1)
+        except Exception as e:
+            raise _GitMirrorError(f"dulwich fetch failed: {e}") from e
+        if self._cancel_check():
+            from .worker import _JobCancelled
+            raise _JobCancelled()
+        new_head = res.refs.get(self.branch_ref)
+        if new_head is None:
+            raise _GitMirrorError(
+                f"fetch did not return branch {self.branch!r}; refs="
+                f"{list(res.refs.keys())[:5]}"
+            )
+        # Advance the local tracking ref so a future open sees the
+        # latest baseline even if MOTIF_LAST_SYNC writing fails.
+        self._repo.refs[self.branch_ref] = new_head
+        self._new_head = new_head
+        if old_head is not None and old_head == new_head:
+            # No new commits. is_unchanged() True; caller skips upsert.
+            self._unchanged = True
+            op_progress.update_progress(
+                self.db_path, self.op_id,
+                activity=f"No new commits since {self._summary_sha(old_head)}",
+            )
+            return
+        op_progress.update_progress(
+            self.db_path, self.op_id,
+            stage_current=1, stage_total=1,
+            activity=f"Fetched {self._summary_sha(old_head) if old_head else 'first run'}"
+                     f" → {self._summary_sha(new_head)}",
+        )
+
+    def _post_acquire_validate(self) -> None:
+        """Defense in depth: confirm the new HEAD's tree carries the
+        expected media subdirs (movies/, tv_shows/) before we let
+        list_changes loose. Catches a branch that's been renamed or
+        repurposed without breaking the sync silently."""
+        if self._new_head is None or self._unchanged:
+            return
+        from dulwich.objects import Tree as DTree
+        try:
+            commit = self._repo[self._new_head]
+            tree = self._repo[commit.tree]
+        except KeyError as e:
+            raise _GitMirrorError(f"new HEAD tree missing: {e}") from e
+        if not isinstance(tree, DTree):
+            raise _GitMirrorError("new HEAD tree is not a tree object")
+        names = {entry.path for entry in tree.iteritems()}
+        if b"movies" not in names and b"tv_shows" not in names:
+            raise _GitMirrorError(
+                "branch HEAD missing both movies/ and tv_shows/ — "
+                "schema drift or wrong branch"
+            )
+
+    # -- helpers --
+
+    def _open_repo(self) -> None:
+        from dulwich.repo import Repo
+        if self._repo is None:
+            self._repo = Repo(str(self.repo_path))
+
+    def _read_last_sync(self) -> bytes | None:
+        if not self.last_sync_path.is_file():
+            return None
+        try:
+            txt = self.last_sync_path.read_text().strip()
+        except OSError:
+            return None
+        if len(txt) != 40 or any(c not in "0123456789abcdef" for c in txt.lower()):
+            return None
+        sha = txt.encode()
+        # Verify the SHA is actually present in the repo. A leftover
+        # MOTIF_LAST_SYNC from a partially-deleted cache would
+        # otherwise cause diff_tree to KeyError.
+        try:
+            _ = self._repo[sha]
+        except KeyError:
+            log.warning(
+                "git mirror: MOTIF_LAST_SYNC %s missing from repo "
+                "object store — treating as first run", txt[:8])
+            return None
+        return sha
+
+    def _walk_tree_paths(self, tree_sha: bytes, prefix: bytes = b"") -> list[str]:
+        """Yield every blob path under the tree, relative to the
+        branch root. Used on first-run when there's no diff
+        baseline."""
+        from dulwich.objects import Tree as DTree
+        out: list[str] = []
+        try:
+            tree = self._repo[tree_sha]
+        except KeyError:
+            return out
+        if not isinstance(tree, DTree):
+            return out
+        for entry in tree.iteritems():
+            full = (prefix + b"/" + entry.path) if prefix else entry.path
+            obj = self._repo[entry.sha]
+            if isinstance(obj, DTree):
+                out.extend(self._walk_tree_paths(entry.sha, full))
+            else:
+                out.append(full.decode())
+        return out
+
+    @staticmethod
+    def _summary_sha(sha: bytes | None) -> str:
+        if sha is None:
+            return "(none)"
+        return sha[:8].decode() if isinstance(sha, bytes) else str(sha)[:8]
+
+
+@dataclass
+class _ChangeSet:
+    """Three lists of repo-relative paths produced by _GitMirror.list_changes."""
+    added: list[str] = field(default_factory=list)
+    modified: list[str] = field(default_factory=list)
+    removed: list[str] = field(default_factory=list)
+
+    @property
+    def changed(self) -> list[str]:
+        """Convenience: paths that need to be re-read (added + modified)."""
+        return self.added + self.modified
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.added or self.modified or self.removed)
+
+    @property
+    def total(self) -> int:
+        return len(self.added) + len(self.modified) + len(self.removed)
+
+
+def _classify_git_path(rel_path: str) -> tuple[str, str | None, int | None] | None:
+    """Translate a `database`-branch-relative path into the
+    (media_type, imdb_id, tmdb_id) it represents. Returns None for
+    paths we don't process (pages.json, all_page_*.json, README, etc.).
+
+    v1.13.0 (Phase B): only the per-item JSON files under
+    movies/{imdb,themoviedb}/ and tv_shows/{imdb,themoviedb}/ feed
+    the upsert path. The pages.json + all_page_*.json files are
+    Phase A's index-walk artifacts; we don't need them in the
+    differential path.
+    """
+    parts = rel_path.split("/")
+    if len(parts) != 3:
+        return None
+    top, kind, leaf = parts
+    if not leaf.endswith(".json"):
+        return None
+    if top == "movies":
+        media_type = "movie"
+    elif top == "tv_shows":
+        media_type = "tv"
+    else:
+        return None
+    stem = leaf[:-5]  # strip .json
+    if kind == "imdb":
+        return (media_type, stem, None)
+    if kind == "themoviedb":
+        try:
+            return (media_type, None, int(stem))
+        except ValueError:
+            return None
+    return None
+
+
+def _run_git_differential_upsert(
+    db_path,
+    git_mirror: "_GitMirror",
+    stats: SyncStats,
+    *,
+    sync_ts: str,
+    enqueue_downloads: bool,
+    auto_place_override: bool | None,
+    cancel_check,
+) -> None:
+    """Walk the git mirror's change set, read each changed item's
+    JSON from the new HEAD's tree, and feed (media_type, tmdb_id,
+    record, upstream_source) tuples into _flush_sync_batch — the
+    same plumbing Phase A's full-index walk uses, but scoped to the
+    delta. Updates stats.movies_seen / tv_seen / new_count /
+    updated_count / errors as it goes.
+
+    Removes are NOT processed yet — Phase A's "items in DB that
+    didn't appear in this sync are NOT deleted" rule still holds;
+    a true tdb-removed UI affordance is Phase C.
+
+    Marks the run successful via git_mirror.commit_sync_ok() at the
+    end so the next sync diffs from this HEAD. If the upsert raises
+    we deliberately do NOT advance MOTIF_LAST_SYNC — the next sync
+    will re-process the same delta, which is idempotent (themes
+    upsert is keyed on (media_type, tmdb_id)).
+    """
+    changes = git_mirror.list_changes()
+    op_progress.update_progress(
+        db_path, "tdb_sync",
+        stage="git_apply",
+        stage_label=f"Applying {changes.total} changed paths",
+        stage_current=0,
+        stage_total=len(changes.changed),
+        activity=(f"git diff: {len(changes.added)} added, "
+                  f"{len(changes.modified)} modified, "
+                  f"{len(changes.removed)} removed"),
+    )
+    if changes.is_empty:
+        # Tree changed (e.g. a README edit) but no per-item paths
+        # we care about. Skip upsert; commit so next run has the
+        # latest baseline.
+        git_mirror.commit_sync_ok()
+        return
+
+    seen: set[tuple[str, int]] = set()
+    batch: list[tuple[str, int, dict, str]] = []
+    completed = 0
+    last_ui = time.monotonic()
+    total = len(changes.changed)
+    for rel_path in changes.changed:
+        if cancel_check():
+            from .worker import _JobCancelled
+            raise _JobCancelled()
+        completed += 1
+        classification = _classify_git_path(rel_path)
+        if classification is None:
+            continue
+        media_type, imdb_id, tmdb_id = classification
+        record = git_mirror.read_json(rel_path)
+        if record is None:
+            stats.errors += 1
+            continue
+        # The record's `id` field is the TMDB id regardless of
+        # whether we landed via the imdb/ or themoviedb/ subtree.
+        try:
+            real_tmdb = int(tmdb_id if tmdb_id is not None
+                            else record.get("id"))
+        except (TypeError, ValueError):
+            stats.errors += 1
+            continue
+        # Dedupe: a record can show up via both imdb and themoviedb
+        # paths in the same commit (LizardByte mirrors the same
+        # JSON). Process once.
+        key = (media_type, real_tmdb)
+        if key in seen:
+            continue
+        seen.add(key)
+        if media_type == "movie":
+            stats.movies_seen += 1
+        else:
+            stats.tv_seen += 1
+        upstream_source = "imdb" if imdb_id else "themoviedb"
+        batch.append((media_type, real_tmdb, record, upstream_source))
+        if len(batch) >= _SYNC_BATCH:
+            _flush_sync_batch(
+                db_path, batch, sync_ts=sync_ts,
+                enqueue_downloads=enqueue_downloads,
+                auto_place_override=auto_place_override,
+                stats=stats,
+            )
+            batch.clear()
+            time.sleep(0.05)  # yield writer lock briefly
+        if (time.monotonic() - last_ui) > 0.3:
+            last_ui = time.monotonic()
+            op_progress.update_progress(
+                db_path, "tdb_sync",
+                stage_current=completed,
+                stage_total=total,
+                processed_total=stats.movies_seen + stats.tv_seen,
+                error_count=stats.errors,
+            )
+    if batch:
+        _flush_sync_batch(
+            db_path, batch, sync_ts=sync_ts,
+            enqueue_downloads=enqueue_downloads,
+            auto_place_override=auto_place_override,
+            stats=stats,
+        )
+        batch.clear()
+    op_progress.update_progress(
+        db_path, "tdb_sync",
+        stage_current=total, stage_total=total,
+        processed_total=stats.movies_seen + stats.tv_seen,
+        error_count=stats.errors,
+        activity=(f"Applied {len(seen)} unique items "
+                  f"({stats.new_count} new, {stats.updated_count} updated)"),
+    )
+    git_mirror.commit_sync_ok()
+
+
 def run_sync(db_path, base_url: str, *,
              auto_place_override: bool | None = None,
              enqueue_downloads: bool = True,
              cancel_check=lambda: False,
              source: str = "remote",
-             database_url: str | None = None) -> SyncStats:
+             database_url: str | None = None,
+             git_url: str | None = None,
+             git_branch: str | None = None) -> SyncStats:
     """Run a full ThemerrDB sync. Returns stats.
 
     `auto_place_override=None` lets the worker fall back to the global
@@ -1232,8 +1822,64 @@ def run_sync(db_path, base_url: str, *,
         return cancel_check() or op_progress.is_cancelled(db_path, "tdb_sync")
 
     snapshot: _DatabaseSnapshot | None = None
+    git_mirror: _GitMirror | None = None
     try:
         with _make_client() as client:
+            # v1.13.0 (Phase B): git mirror path. When sync.source =
+            # "git", maintain a bare git mirror of the database
+            # branch and fetch only the delta. First run shallow-
+            # clones; subsequent runs fetch + diff. On _GitMirrorError
+            # we cascade to the snapshot path; on snapshot failure
+            # we cascade to remote. Three-tier fallback chain so a
+            # single transport failure can't take down the daily sync.
+            if source == "git":
+                resolved_git_url = git_url or (
+                    "https://github.com/LizardByte/ThemerrDB.git"
+                )
+                resolved_branch = git_branch or "database"
+                try:
+                    git_mirror = _GitMirror(
+                        db_path, "tdb_sync",
+                        resolved_git_url, resolved_branch,
+                        _cancel_check,
+                    )
+                    git_mirror.acquire(client)
+                    if git_mirror.is_unchanged():
+                        log_event(
+                            db_path, level="INFO", component="sync",
+                            message=f"Sync run #{run_id}: git mirror "
+                                    f"unchanged — skipping upsert",
+                        )
+                        op_progress.set_detail_field(
+                            db_path, "tdb_sync", "no_changes", True,
+                        )
+                    else:
+                        log_event(
+                            db_path, level="INFO", component="sync",
+                            message=f"Sync run #{run_id}: git mirror "
+                                    f"acquired from {resolved_git_url}",
+                        )
+                except _GitMirrorError as e:
+                    log_event(
+                        db_path, level="WARNING", component="sync",
+                        message=f"Sync run #{run_id}: git mirror "
+                                f"failed ({e}); cascading to snapshot",
+                    )
+                    op_progress.set_detail_field(
+                        db_path, "tdb_sync", "fallback_active", True,
+                    )
+                    op_progress.set_detail_field(
+                        db_path, "tdb_sync", "fallback_reason",
+                        f"git: {e}",
+                    )
+                    op_progress.update_progress(
+                        db_path, "tdb_sync",
+                        activity=f"Git mirror unavailable — using "
+                                 f"snapshot fallback ({e})",
+                    )
+                    git_mirror = None
+                    source = "database"  # cascade
+
             # v1.12.121 (Phase A): snapshot path. When sync.source =
             # "database", try to pull a single tarball of LizardByte's
             # database branch up-front. On any failure, log + flag
@@ -1283,14 +1929,31 @@ def run_sync(db_path, base_url: str, *,
                     )
                     snapshot = None
 
+            # v1.13.0 (Phase B): git differential path. When the git
+            # mirror reports new commits, diff the trees and walk
+            # ONLY changed paths — typically tens of items vs. the
+            # 5k+ full-index walk. Skips the index/fetch loop entirely
+            # for both media types; resolve + prune sweeps still run.
+            if (git_mirror is not None
+                    and not git_mirror.is_unchanged()):
+                _run_git_differential_upsert(
+                    db_path, git_mirror, stats, sync_ts=sync_ts,
+                    enqueue_downloads=enqueue_downloads,
+                    auto_place_override=auto_place_override,
+                    cancel_check=_cancel_check,
+                )
+
             # v1.12.126 Phase A.5: skip the per-media-type upsert pipeline
             # entirely when codeload reported 304 (no upstream change).
             # Stats stay zero on this path; the resolve + prune sweeps
             # below still run since they depend on local DB state, not
-            # TDB state. is_unchanged is only set for the snapshot path;
-            # remote-fallback runs always do the full upsert.
-            skip_upsert = (snapshot is not None
-                           and snapshot.is_unchanged())
+            # TDB state. is_unchanged is only set for the snapshot path
+            # OR the git path; remote-fallback runs always do the full
+            # upsert.
+            skip_upsert = (
+                (snapshot is not None and snapshot.is_unchanged())
+                or (git_mirror is not None)
+            )
             media_iter = (() if skip_upsert
                           else (("movie", "movies"), ("tv", "tv_shows")))
             for media_type, media_path in media_iter:
@@ -1764,3 +2427,5 @@ def run_sync(db_path, base_url: str, *,
     finally:
         if snapshot is not None:
             snapshot.release()
+        if git_mirror is not None:
+            git_mirror.release()

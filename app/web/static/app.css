@@ -908,6 +908,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   align-items: center;
   justify-content: center;
   line-height: 1;
+  /* v1.13.0: zero out per-pill margins so the row's flex
+     gap (5px) is the ONLY horizontal spacing. Pre-fix
+     .tdb-pill carried margin-left: 6px (inherited from
+     its row-level pill use), which stacked onto the
+     parent's gap and pushed TDB pills apart by 11px while
+     SRC / DL / PL / LINK / ED rows used the bare 5px gap.
+     Result: misaligned filter rows on /movies, /tv, /anime. */
+  margin: 0;
 }
 .pill-filter-label {
   letter-spacing: 0.12em;

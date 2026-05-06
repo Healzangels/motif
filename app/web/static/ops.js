@@ -23,10 +23,15 @@
   // ── stage timelines per op kind ───────────────────────────────
   const STAGE_TIMELINE = {
     // v1.12.121 (Phase A): snapshot stages run before index/fetch
-    // when sync.source = "database". They never appear on the
-    // remote path, so the timeline render flags them as is-skipped
-    // when stage advances past them without their key showing up.
+    // when sync.source = "database".
+    // v1.13.0 (Phase B): git_fetch + git_diff + git_apply run when
+    // sync.source = "git" and supplant the snapshot + index/fetch
+    // stages entirely on the differential path. resolve + prune
+    // always run.
     tdb_sync: [
+      { key: 'git_fetch',         label: 'Git fetch' },
+      { key: 'git_diff',          label: 'Diff' },
+      { key: 'git_apply',         label: 'Apply' },
       { key: 'snapshot_download', label: 'Snap dl' },
       { key: 'snapshot_extract',  label: 'Extract' },
       { key: 'index_movie',  label: 'Movies idx' },

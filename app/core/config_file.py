@@ -101,22 +101,42 @@ class PlacementConfig:
 class SyncConfig:
     db_url: str = "https://app.lizardbyte.dev/ThemerrDB"
     cron: str = "0 13 * * *"
-    # v1.12.121 (Phase A): pick the transport for the daily ThemerrDB
-    # pull.
-    #   "remote"   — original behavior. Walk pages.json + per-item
-    #                JSON over HTTP against `db_url` (gh-pages CDN).
-    #                Battle-tested; ~10k+ HTTP calls per sync.
-    #   "database" — pull a single tarball of the LizardByte
-    #                ThemerrDB `database` branch from
-    #                codeload.github.com, extract to a temp dir, then
-    #                resolve every item from local files. Same JSON
-    #                shape, ~1000× fewer HTTP calls.
-    # Default is "remote" until A.1 burn-in clears.
+    # Pick the transport for the daily ThemerrDB pull.
+    #   "remote"   — original behavior (v1.x). Walk pages.json +
+    #                per-item JSON over HTTP against `db_url`
+    #                (gh-pages CDN). Battle-tested; ~10k+ HTTP
+    #                calls per sync.
+    #   "database" — Phase A (v1.12.121). Pull a single tarball
+    #                of the LizardByte ThemerrDB `database` branch
+    #                from codeload.github.com, extract to a temp
+    #                dir, then resolve every item from local
+    #                files. Same JSON shape, ~1000× fewer HTTP
+    #                calls. Phase A.5 (v1.12.126) added an ETag
+    #                short-circuit so an unchanged tree skips the
+    #                upsert pipeline entirely.
+    #   "git"      — Phase B (v1.13.0). Maintain a bare git mirror
+    #                of the database branch via dulwich. First run
+    #                shallow-clones (~30 MB pack); subsequent runs
+    #                fetch the delta (typically <100 KB) and walk
+    #                only the changed paths. Fastest and lowest-
+    #                bandwidth on busy days; subsumes A's ETag
+    #                short-circuit (a no-op fetch returns no new
+    #                objects).
+    # Default is "remote" until each phase clears burn-in. On
+    # snapshot/git-path failure motif falls through to the next-
+    # tier transport so a single sync cycle still completes.
     source: str = "remote"
     # codeload tarball URL for the snapshot path. Overridable for
     # self-hosted mirrors of the database branch (e.g. a corporate
     # proxy of the same content).
     database_url: str = "https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+    # v1.13.0 (Phase B): git URL for the dulwich mirror. Standard
+    # GitHub HTTPS — no auth required for public repos.
+    git_url: str = "https://github.com/LizardByte/ThemerrDB.git"
+    # The branch motif tracks. LizardByte publishes daily exports
+    # to `database`. Overridable so a self-hosted mirror can use
+    # a different branch name.
+    git_branch: str = "database"
     # v1.12.126: auto-enqueue a plex_enum job after every successful
     # ThemerrDB sync. The TDB sync's own resolve_theme_ids step
     # already links new TDB rows to existing plex_items, so the
@@ -205,6 +225,8 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_SYNC_CRON",           "sync.cron",                       str),
     ("MOTIF_SYNC_SOURCE",         "sync.source",                     str),
     ("MOTIF_DB_TAR_URL",          "sync.database_url",               str),
+    ("MOTIF_DB_GIT_URL",          "sync.git_url",                    str),
+    ("MOTIF_DB_GIT_BRANCH",       "sync.git_branch",                 str),
     ("MOTIF_AUTO_ENUM_AFTER_SYNC","sync.auto_enum_after_sync",       _to_bool),
     # web
     ("MOTIF_WEB_HOST",            "web.host",                        str),
@@ -285,9 +307,10 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
     if len(parts) != 5:
         errors.append(f"sync.cron must be 5-field cron (got {len(parts)} fields)")
 
-    if cfg.sync.source not in ("remote", "database"):
+    if cfg.sync.source not in ("remote", "database", "git"):
         errors.append(
-            f"sync.source must be 'remote' or 'database' (got {cfg.sync.source!r})"
+            f"sync.source must be 'remote', 'database', or 'git' "
+            f"(got {cfg.sync.source!r})"
         )
 
     if cfg.runtime.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):

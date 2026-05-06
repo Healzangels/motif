@@ -372,16 +372,21 @@
         <select class="input" data-cfg-field="sync.source">
           <option value="remote">REMOTE — per-item HTTP (default, battle-tested)</option>
           <option value="database">DATABASE — single-tarball snapshot (faster, opt-in)</option>
+          <option value="git">GIT — incremental fetch + diff (fastest, opt-in)</option>
         </select>
         <p class="form-hint">
           <strong>REMOTE</strong> walks gh-pages and fetches one JSON per item
           (~10k+ requests, several minutes on a fresh sync).<br>
           <strong>DATABASE</strong> pulls one tarball of the
           <code>database</code> branch from codeload.github.com and reads every
-          item locally (~1 request, seconds). On any failure (codeload
-          unreachable, schema drift) motif falls back to REMOTE for that run
-          and surfaces a // FALLBACK indicator on the idle pill until the next
-          successful snapshot run.
+          item locally (~1 request, seconds). An ETag short-circuit (304)
+          skips the upsert pipeline entirely when the tree hasn't changed.<br>
+          <strong>GIT</strong> maintains a bare git mirror of the
+          <code>database</code> branch via dulwich. First run shallow-clones
+          (~30 MB pack); subsequent runs fetch the delta (typically &lt;100 KB)
+          and walk only the changed paths. Lowest bandwidth on busy days; a
+          no-change day finishes in seconds. On failure motif cascades to
+          DATABASE, then REMOTE.
         </p>
       </label>
 
@@ -396,6 +401,37 @@
         <p class="form-hint">
           Tarball endpoint used when SYNC SOURCE is DATABASE. Override only
           if you're mirroring the <code>database</code> branch privately.
+        </p>
+      </label>
+
+      <!-- v1.13.0 (Phase B): git mirror URL + branch. Default is the
+           public LizardByte repo on github.com. Override only if you
+           run a private mirror. -->
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">GIT MIRROR URL</span>
+          <span class="form-env-badge" data-env-badge="sync.git_url" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.git_url"
+               placeholder="https://github.com/LizardByte/ThemerrDB.git"
+               autocomplete="off" />
+        <p class="form-hint">
+          Git URL used when SYNC SOURCE is GIT. Standard HTTPS — no auth
+          required for public repos.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">GIT BRANCH</span>
+          <span class="form-env-badge" data-env-badge="sync.git_branch" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.git_branch"
+               placeholder="database" autocomplete="off" />
+        <p class="form-hint">
+          Branch motif tracks. LizardByte publishes daily exports to
+          <code>database</code>. Leave default unless you're tracking a
+          self-hosted branch.
         </p>
       </label>
 

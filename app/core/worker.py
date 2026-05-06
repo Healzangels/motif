@@ -621,6 +621,8 @@ class Worker:
             cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
             source=self.settings.sync_source,
             database_url=self.settings.sync_database_url,
+            git_url=self.settings.sync_git_url,
+            git_branch=self.settings.sync_git_branch,
         )
         # v1.12.126: post-sync plex_enum is now opt-in via
         # sync.auto_enum_after_sync (default True). The TDB sync's own

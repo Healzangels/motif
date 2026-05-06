@@ -12,6 +12,12 @@ python-multipart==0.0.*
 bcrypt==4.2.*
 pyyaml==6.0.*
 
+# v1.13.0 (Phase B): pure-Python git client for the differential
+# ThemerrDB sync path (sync.source="git"). Pulls only the delta
+# from LizardByte/ThemerrDB's database branch instead of the full
+# 16 MB tarball every run. No system git binary required.
+dulwich==1.2.*
+
 # yt-dlp updates often (sometimes weekly) to stay ahead of YouTube changes.
 # We pin to a recent stable but the Dockerfile rebuilds rebuild against the
 # latest patch by default. Users who hit YouTube extractor breakage can rebuild.

@@ -279,6 +279,14 @@ class Settings:
         return self._cfg.sync.database_url
 
     @property
+    def sync_git_url(self) -> str:
+        return self._cfg.sync.git_url
+
+    @property
+    def sync_git_branch(self) -> str:
+        return self._cfg.sync.git_branch
+
+    @property
     def sync_auto_enum_after_sync(self) -> bool:
         return self._cfg.sync.auto_enum_after_sync
 
