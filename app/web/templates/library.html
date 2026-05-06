@@ -128,19 +128,20 @@
     <span class="pill-filter-label muted small">DL:</span>
     <button type="button" class="pill-filter-clear" data-dl-pill-all="1"
             title="Select every DL state.">ALL</button>
+    <!-- v1.13.4: ordering matches PL's [on / await / broken / off]
+         pattern — red broken comes BEFORE gray off so the user's eye
+         sweeps green→red→gray (most important on the left) instead
+         of green→gray→red. Mismatch DL pill stays out (per v1.12.81;
+         content divergence lives on the LINK row). -->
     <button type="button" class="state-pill-btn state-pill-btn-on"
             data-dl-pill="on"
             title="Motif has a downloaded canonical for this row.">●</button>
-    <button type="button" class="state-pill-btn state-pill-btn-off"
-            data-dl-pill="off"
-            title="No downloaded canonical.">●</button>
     <button type="button" class="state-pill-btn state-pill-btn-broken"
             data-dl-pill="broken"
             title="Canonical missing on disk; the placement file survives. Use RESTORE FROM PLEX.">●</button>
-    <!-- v1.12.81: mismatch DL pill removed — content divergence is
-         now expressed exclusively via the LINK column's M glyph and
-         the amber `!` row-title attention glyph. DL answers a single
-         question: is the canonical file present? -->
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-dl-pill="off"
+            title="No downloaded canonical.">●</button>
     <button type="button" class="pill-filter-clear" data-dl-pill=""
             title="Clear all DL selections.">CLEAR</button>
   </div>
@@ -185,9 +186,12 @@
     <button type="button" class="link-glyph link-glyph-mismatch"
             data-link-pill="m"
             title="Mismatch — canonical content differs from the Plex-folder file. Resolve via PLACE menu.">M</button>
+    <!-- v1.13.4: hollow square distinguishes the "no placement"
+         filter from the em-dash separator the user could mistake
+         it for. Same gray-off tone, just a different glyph. -->
     <button type="button" class="state-pill-btn state-pill-btn-off"
             data-link-pill="none"
-            title="No placement.">—</button>
+            title="No placement.">□</button>
     <button type="button" class="pill-filter-clear" data-link-pill=""
             title="Clear all LINK selections.">CLEAR</button>
   </div>
@@ -204,9 +208,11 @@
     <button type="button" class="ed-pill-btn ed-pill-btn-on"
             data-ed-pill="has"
             title="Show only rows with a Plex {edition-...} folder tag (Director's Cut, Extended, IMAX, etc.).">ED</button>
+    <!-- v1.13.4: hollow square mirrors the LINK row's "none"
+         glyph so the two "no-state" filters scan the same way. -->
     <button type="button" class="state-pill-btn state-pill-btn-off"
             data-ed-pill="none"
-            title="Show only rows without an edition tag.">—</button>
+            title="Show only rows without an edition tag.">□</button>
     <button type="button" class="pill-filter-clear" data-ed-pill=""
             title="Clear all EDITION selections.">CLEAR</button>
   </div>

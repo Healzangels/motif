@@ -6194,7 +6194,15 @@
       : previousKind === 'themerrdb'
         ? '<span class="muted small" style="color:var(--green-bright)">themerrdb</span>'
         : '';
-    const previousUrlLink = previousUrl
+    // v1.13.4 (Issue 2): suppress the INFO card's "previous url"
+    // row when the captured-prev equals what's currently applied —
+    // three identical URLs is visual noise. The library row's
+    // CLEAR URL / REVERT menu items are gated by the same condition
+    // server-side via has_previous_url's WHERE-clause check
+    // (api.py: COALESCE(pv...) != COALESCE(uo..., t.youtube_url)),
+    // so the menu and the card stay in lockstep without a JS shim.
+    const hidePrev = previousUrl !== '' && previousUrl === currentUrl;
+    const previousUrlLink = (previousUrl && !hidePrev)
       ? `${linkOrDash(previousUrl, prevColor)} ${prevKindLabel}`
       : '<span class="muted">—</span>';
     const ytLink = currentUrlLink;

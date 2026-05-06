@@ -1265,7 +1265,27 @@ def _library_main_query(
                -- on the themes table; per-section keying eliminates
                -- cross-section bleed (PURGE in section A no longer
                -- overwrites the snapshot for section B).
+               -- v1.13.4 (Issue 2): also require the previous URL to
+               -- DIFFER from what's currently applied. If they match
+               -- (commonly: a recent ACCEPT UPDATE captured the user's
+               -- old URL into prev, but it was identical to the TDB
+               -- URL), CLEAR URL would be a no-op and REVERT would
+               -- just re-create the override at the same URL the row
+               -- already has. Suppress has_previous_url=1 in that
+               -- case so the SOURCE menu's CLEAR URL / REVERT items
+               -- and the INFO card's "previous url" row hide.
                (CASE WHEN COALESCE(pv_sec.youtube_url, pv_global.youtube_url) IS NOT NULL
+                          AND COALESCE(pv_sec.youtube_url, pv_global.youtube_url) != COALESCE(
+                                (SELECT youtube_url FROM user_overrides uo
+                                  WHERE uo.media_type = t.media_type
+                                    AND uo.tmdb_id = t.tmdb_id
+                                    AND uo.section_id = pi.section_id),
+                                (SELECT youtube_url FROM user_overrides uo
+                                  WHERE uo.media_type = t.media_type
+                                    AND uo.tmdb_id = t.tmdb_id
+                                    AND uo.section_id = ''),
+                                t.youtube_url
+                              )
                      THEN 1 ELSE 0 END) AS has_previous_url,
                COALESCE(pv_sec.kind, pv_global.kind) AS previous_youtube_kind,
                -- v1.12.40: revert_redundant = the previous URL is
@@ -6999,12 +7019,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # holds Plex's real id, or NULL).
             if rk_clear:
                 qmarks = ",".join("?" for _ in rk_clear)
+                # v1.13.4: snapshot pre-purge has_theme so the inline
+                # verify below can distinguish "Plex was the original
+                # source (themerr-plex embed / Plex Pass cloud)" from
+                # "motif was the only source". For motif-only sources,
+                # skip inline verify entirely — Plex's metadata cache
+                # can return 200 to /library/metadata/{rk}/theme for
+                # several seconds after motif deleted the sidecar,
+                # falsely confirming a phantom theme that the user-
+                # facing XML already correctly shows as gone. Result:
+                # SRC reverts to 'P' incorrectly, and the user sees a
+                # ghost theme until the next plex_enum reconciles.
+                pre_has_theme: dict[str, int] = {
+                    r["rating_key"]: int(r["has_theme"] or 0)
+                    for r in conn.execute(
+                        f"SELECT rating_key, has_theme FROM plex_items "
+                        f"WHERE rating_key IN ({qmarks})",
+                        tuple(rk_clear),
+                    ).fetchall()
+                }
                 conn.execute(
                     f"UPDATE plex_items SET local_theme_file = 0, "
-                    f"                      has_theme = 0 "
+                    f"                      has_theme = 0, "
+                    # v1.13.4: also stamp verified_ok=0 so the optimistic
+                    # COALESCE in _SRC_LETTER_SQL (which treats NULL as
+                    # "trust the claim") doesn't trip on a stale NULL
+                    # in the brief window before inline-verify runs (or
+                    # at all when verify is skipped per the snapshot
+                    # logic).
+                    f"                      plex_theme_verified_ok = 0 "
                     f"WHERE rating_key IN ({qmarks})",
                     tuple(rk_clear),
                 )
+            else:
+                pre_has_theme = {}
         # v1.10.28: skip the section enum (it would re-fetch has_theme
         # from Plex's stale cache and bring back a phantom P badge);
         # trigger a per-item refresh instead so Plex updates its cache.
@@ -7049,6 +7097,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex, \
                         get_conn(db) as conn:  # type: ignore[arg-type]
                     for rk in rk_clear:
+                        # v1.13.4: only inline-verify rks that had
+                        # has_theme=1 BEFORE purge — those are the ones
+                        # where Plex might have an independent embed
+                        # (themerr-plex / Plex Pass cloud) that should
+                        # survive the file deletion. For rks that had
+                        # has_theme=0, motif was the sole source; the
+                        # post-purge state is definitively '-' and an
+                        # inline verify against Plex's cache risks a
+                        # false 200. Skip them.
+                        if not pre_has_theme.get(rk, 0):
+                            continue
                         try:
                             result = plex.verify_theme_claim(rk)
                             if result is None:

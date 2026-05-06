@@ -312,11 +312,22 @@ def load_active(db_path: Path) -> list[dict]:
     return out
 
 
+_QUEUE_BURST_HW: dict[str, int] = {}
+
+
 def _synthesize_queue_ops(counts) -> list[dict]:
     """Build virtual op rows from jobs counts. Mirrors the shape of
     a real op_progress row so the UI doesn't need a separate render
     path. Status='running' whenever any job is running; 'pending'
     when only queued (worker not yet picked up).
+
+    v1.13.4: track a per-job-type high-water mark so we can express
+    queue progress as (hw - remaining) / hw — a real number bar
+    fill instead of v1.12.124's indeterminate shimmer. The HW
+    resets to 0 when both running + pending hit 0 (queue drained).
+    Pre-fix the bar pulsed full-width without a number; the user
+    couldn't tell whether a long refresh queue was 10% or 90%
+    through.
     """
     label_map = {
         "download": ("DOWNLOAD QUEUE", "Downloading themes"),
@@ -332,12 +343,28 @@ def _synthesize_queue_ops(counts) -> list[dict]:
     }
     now = now_iso()
     out: list[dict] = []
+    # v1.13.4: bookkeeping pass — reset HW for any job_type that
+    # has fully drained since the last poll, so the next burst
+    # starts fresh from 0. The counts query only returns job_types
+    # with at least one in-flight row, so absence here = drained.
+    seen_active = {row["job_type"] for row in counts
+                   if (row["running_n"] or 0) + (row["pending_n"] or 0) > 0}
+    for jt in list(_QUEUE_BURST_HW.keys()):
+        if jt not in seen_active:
+            del _QUEUE_BURST_HW[jt]
     for row in counts:
         jt = row["job_type"]
         running_n = row["running_n"] or 0
         pending_n = row["pending_n"] or 0
         if running_n + pending_n == 0:
             continue
+        remaining = running_n + pending_n
+        # Update high-water if the queue has grown (new jobs landed
+        # mid-burst). Never decreases until the queue fully drains.
+        prior_hw = _QUEUE_BURST_HW.get(jt, 0)
+        hw = max(prior_hw, remaining)
+        _QUEUE_BURST_HW[jt] = hw
+        completed_in_burst = max(0, hw - remaining)
         kind_label, stage_label = label_map.get(jt, (jt.upper(), jt))
         # Detail label encodes counts so the mini-bar's stage_label
         # carries the info the legacy "QUEUED · NR / MP" text used
@@ -357,19 +384,18 @@ def _synthesize_queue_ops(counts) -> list[dict]:
             "finished_at": None,
             "stage": jt,
             "stage_label": stage,
-            # v1.12.124: queue ops render indeterminate (pulsing full-
-            # width bar). Pre-fix `stage_current=running_n,
-            # stage_total=running_n+pending_n` produced a moving
-            # divisor — bar showed 1/1 = 100% while a single job ran,
-            # then jumped to 0/N when more queued, then crawled back.
-            # Mostly looked stuck at 100% since bursts usually drain
-            # one at a time. Counts already in stage_label, so
-            # surfacing a bar percentage adds nothing real. ops.js
-            # treats stage_total == 0 as indeterminate.
-            "stage_current": 0,
-            "stage_total": 0,
-            "processed_total": running_n,
-            "processed_est": running_n + pending_n,
+            # v1.13.4: real progress via high-water mark. stage_total
+            # is the burst's HW (max remaining we've seen since the
+            # queue last drained); stage_current is what's completed
+            # so far in this burst. A 5-job burst with 1 done shows
+            # 1/5 = 20%, ticks to 5/5 as the worker drains. Bursts
+            # that grow mid-flight (new jobs queued while others
+            # finish) push HW higher so the bar resets relative to
+            # the new ceiling — never goes backwards visually.
+            "stage_current": completed_in_burst,
+            "stage_total": hw,
+            "processed_total": completed_in_burst,
+            "processed_est": hw,
             "error_count": 0,
             "detail": {"activity": [], "throughput": [], "synthetic": True},
         })
