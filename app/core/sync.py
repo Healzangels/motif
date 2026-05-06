@@ -1466,7 +1466,11 @@ def run_sync(db_path, base_url: str, *,
         # themes data without waiting for the next plex_enum.
         try:
             from .plex_enum import resolve_theme_ids
-            resolve_theme_ids(db_path)
+            # v1.12.127: route resolve progress through tdb_sync's
+            # op_progress row so the ops drawer renders a real %
+            # bar during the resolve stage instead of the prior
+            # stage_total=0 indeterminate shimmer.
+            resolve_theme_ids(db_path, progress_op_id="tdb_sync")
         except Exception as e:
             log.warning("post-sync resolve_theme_ids failed: %s", e)
 

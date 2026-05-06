@@ -763,6 +763,7 @@ def resolve_theme_ids(
     chunk_size: int = 500,
     section_id: str | None = None,
     cancel_check=lambda: False,
+    progress_op_id: str | None = None,
 ) -> int:
     """Bulk-populate plex_items.theme_id for every row whose match
     against themes can be resolved by tmdb_id, imdb_id, or
@@ -796,6 +797,7 @@ def resolve_theme_ids(
         return _resolve_theme_ids_impl(
             db_path, chunk_size=chunk_size,
             section_id=section_id, cancel_check=cancel_check,
+            progress_op_id=progress_op_id,
         )
 
 
@@ -807,6 +809,7 @@ def _resolve_theme_ids_impl(
     *,
     chunk_size: int = 500,
     section_id: str | None = None,
+    progress_op_id: str | None = None,
     cancel_check=lambda: False,
 ) -> int:
     # v1.12.18: optional section_id scope. When set, restrict the
@@ -913,6 +916,20 @@ def _resolve_theme_ids_impl(
         chunk_size,
     )
     progress_t0 = _time.monotonic()
+    # v1.12.127: real-progress emit cadence into op_progress. Pre-fix
+    # the resolve stage had stage_total=0 set by the caller, so the
+    # ops drawer rendered an indeterminate shimmer bar — accurate
+    # ("we don't know") but less informative than counting actual
+    # rows progressed. With the row_count known up front we can
+    # surface a real % via the same chunk-driven loop the log
+    # cadence already uses. Time-throttled so SQLite write volume
+    # stays bounded.
+    if progress_op_id is not None:
+        op_progress.update_progress(
+            db_path, progress_op_id,
+            stage_current=0, stage_total=row_count,
+        )
+    last_ui_emit = _time.monotonic()
     while offset < row_count:
         # v1.12.18: cancel-check between chunks so a stuck resolve
         # can be interrupted from the /logs CANCEL button. Also
@@ -950,6 +967,19 @@ def _resolve_theme_ids_impl(
             log.info("resolve_theme_ids: progress %d/%d (%.1fs)",
                      offset, row_count, elapsed)
             progress_t0 = _time.monotonic()
+        # v1.12.127: op_progress emit at ~300ms cadence so the
+        # ops-drawer bar ticks smoothly without saturating the
+        # writer lock. Capped at offset (not min(offset, row_count))
+        # because offset < row_count is the loop invariant — final
+        # value is row_count.
+        if (progress_op_id is not None
+                and (_time.monotonic() - last_ui_emit) > 0.3):
+            last_ui_emit = _time.monotonic()
+            op_progress.update_progress(
+                db_path, progress_op_id,
+                stage_current=min(offset, row_count),
+                stage_total=row_count,
+            )
         # v1.11.54: yield ~250ms between chunks (was 50ms). Each chunk
         # holds BEGIN IMMEDIATE for ~1-2s on a 15K-row plex_items;
         # 50ms gap kept the writer at 95%+ duty cycle and starved

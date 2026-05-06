@@ -478,27 +478,35 @@
         }
       };
       // v1.12.125: SYNC + REFRESH, per-tab REFRESH, and settings
-      // REFRESH FROM PLEX are all mutually exclusive — locked
-      // whenever EITHER a tdb sync OR a plex_enum is in flight.
-      // Pre-fix:
-      //   - Dashboard SYNC button locked only on themerrdbBusy, so
-      //     it became clickable the moment the sync job finished
-      //     even though plex_enum (the "REFRESH" half of the action
-      //     it just triggered) was still mid-run. User could click
-      //     SYNC + REFRESH again and stack up duplicate work.
-      //   - Per-tab REFRESH locked only on plex_enum_in_flight, so
-      //     during the sync phase of a dashboard click (before the
-      //     auto-enqueued enum lands in the queue) the per-tab
-      //     button was still clickable. Same stacking risk.
-      // Now they share one gate so any active sync-or-refresh
-      // disables the others until the whole pipeline drains.
-      const syncOrEnumBusy = themerrdbBusy || plexEnumBusy;
-      // Library page REFRESH FROM PLEX — was: lock if THIS
-      // tab+fourk variant was the one currently enumerating. v1.12.125:
-      // also lock during a tdb sync (since the auto-enqueued enum
-      // will follow it and the user shouldn't be able to queue a
-      // duplicate enum on this tab in between). Busy text still
-      // reflects the tab+variant scope when available.
+      // REFRESH FROM PLEX share one mutual-exclusion gate.
+      //
+      // v1.12.127: gate is now CONDITIONAL on auto_enum_after_sync.
+      // When the user has disabled the post-sync auto-enqueue:
+      //   - Dashboard button label drops to // SYNC (no refresh
+      //     phase will follow on this click).
+      //   - Per-tab + settings REFRESH stay UNLOCKED during a tdb
+      //     sync — no plex_enum cascade is coming, so there's no
+      //     conflict to guard against.
+      // When auto_enum is on, behavior matches v1.12.125: any active
+      // sync-or-enum disables every other button until the whole
+      // pipeline drains.
+      const autoEnum = (q.auto_enum_after_sync !== false);
+      // Bus for the dashboard SYNC button: locked when the action
+      // it represents is in progress. With auto_enum=ON that's the
+      // full sync→enum pipeline; with auto_enum=OFF it's just sync.
+      const dashSyncBtnBusy = autoEnum
+        ? (themerrdbBusy || plexEnumBusy)
+        : themerrdbBusy;
+      // Bus for the refresh buttons (per-tab + settings global):
+      // locked while either an enum is running OR a sync is running
+      // that will cascade into one. With auto_enum=OFF and only sync
+      // running, refresh stays available.
+      const refreshBtnBusy = autoEnum
+        ? (themerrdbBusy || plexEnumBusy)
+        : plexEnumBusy;
+      // Library page REFRESH FROM PLEX. Busy text reflects scope:
+      // tab+variant if THIS tab is the one enumerating, else the
+      // generic phase label.
       const libRefreshBtn = document.getElementById('library-refresh-btn');
       if (libRefreshBtn) {
         const tabEl = document.getElementById('library-tab');
@@ -508,21 +516,40 @@
         const lockReason = tabBusy
           ? `// REFRESHING ${libraryRefreshLabel()}…`
           : (themerrdbBusy ? '// SYNCING…' : '// REFRESHING PLEX…');
-        lockBtn(libRefreshBtn, syncOrEnumBusy, lockReason);
+        lockBtn(libRefreshBtn, refreshBtnBusy, lockReason);
       }
-      // Settings global REFRESH FROM PLEX — locked through the whole
-      // enum window AND through any tdb sync (since the sync auto-
-      // enqueues an enum on completion).
+      // Settings global REFRESH FROM PLEX.
       lockBtn(
         document.getElementById('refresh-libraries-btn'),
-        syncOrEnumBusy,
+        refreshBtnBusy,
         themerrdbBusy && !plexEnumBusy ? '// SYNCING…' : '// REFRESHING PLEX…',
       );
-      // Dashboard SYNC + REFRESH — locked while EITHER half of the
-      // pipeline is running. Stays disabled until plex_enum drains.
+      // Dashboard SYNC button. Idle label reflects whether a refresh
+      // phase will follow (// SYNC + REFRESH) or not (// SYNC).
+      // Stash on the button itself so setSyncButtonState (called by
+      // the watcher) can pick up the right idle text on transition
+      // back to idle without re-reading config.
+      const syncBtn = document.getElementById('sync-now-btn');
+      if (syncBtn) {
+        const idleLabel = autoEnum ? '// SYNC + REFRESH' : '// SYNC';
+        // Don't clobber the dataset.origLabel mid-busy — lockBtn
+        // restores from it. Only update the idle text when the
+        // button is currently in idle (not locked).
+        if (!syncBtn.disabled && !syncBtn.dataset.origLabel
+            && syncBtn.textContent !== idleLabel) {
+          syncBtn.textContent = idleLabel;
+        }
+        // If a transition just unlocked the button, repair the
+        // origLabel record so the next lock cycle restores to the
+        // current setting's label, not whatever was there before.
+        if (syncBtn.dataset.origLabel
+            && syncBtn.dataset.origLabel !== idleLabel) {
+          syncBtn.dataset.origLabel = idleLabel;
+        }
+      }
       lockBtn(
         document.getElementById('sync-now-btn'),
-        syncOrEnumBusy,
+        dashSyncBtnBusy,
         themerrdbBusy ? '// SYNCING…' : '// REFRESHING…',
       );
       // Per-section REFRESH — lock only if THIS section is enumerating.
@@ -744,19 +771,17 @@
   let syncWatcher = null;
 
   function setSyncButtonState(state) {
-    // v1.12.124: button now reads // SYNC + REFRESH because the
-    // dashboard action is two-phase: a TDB sync writes new theme
-    // rows, then a plex_enum re-resolves theme_id linkage so the
-    // new matches actually appear on the library tabs. The watcher
-    // still polls themerrdb_sync_in_flight only — plex_enum runs
-    // concurrently with the sync's batched flushes, so the user
-    // shouldn't see SYNCING + REFRESHING… stuck on this button
-    // until the unrelated enum drains.
+    // v1.12.127: idle label is dynamic — driven by the latest
+    // auto_enum_after_sync setting from /api/stats (cached on the
+    // button via dataset.origLabel by refreshTopbarStatus). When
+    // unknown (initial load before the first /api/stats response),
+    // fall back to // SYNC + REFRESH (the default-on case).
     const btn = $('#sync-now-btn');
     if (!btn) return;
+    const idleLabel = btn.dataset.origLabel || '// SYNC + REFRESH';
     if (state === 'idle') {
       btn.disabled = false;
-      btn.textContent = '// SYNC + REFRESH';
+      btn.textContent = idleLabel;
     } else if (state === 'running') {
       btn.disabled = true;
       btn.textContent = '// SYNCING…';
@@ -783,14 +808,11 @@
         return;
       }
       paintTopbarSyncing('SYNCING THEMERRDB');
-      // v1.12.125: poll BOTH themerrdb_sync_in_flight AND
-      // plex_enum_in_flight; the dashboard SYNC + REFRESH button
-      // represents the two-phase pipeline (sync → auto-enqueued
-      // plex_enum), so 'done' means BOTH have drained. Pre-fix the
-      // watcher only tracked themerrdb_sync_in_flight — button
-      // flipped back to idle the moment the sync job finished, even
-      // though plex_enum was still running mid-section. User could
-      // click SYNC + REFRESH again and stack duplicate work.
+      // v1.12.127: 'done' means the action this user triggered has
+      // finished. With auto_enum=ON that's both phases (sync + the
+      // auto-enqueued enum); with auto_enum=OFF it's just the sync
+      // job. Polling auto_enum_after_sync per-tick lets the user
+      // change the setting mid-flight and have the watcher adapt.
       if (syncWatcher) clearInterval(syncWatcher);
       let primed = false;
       syncWatcher = setInterval(async () => {
@@ -798,7 +820,10 @@
           const s = await api('GET', '/api/stats');
           const tdbInFlight = (s.queue && s.queue.themerrdb_sync_in_flight) || 0;
           const enumInFlight = (s.queue && s.queue.plex_enum_in_flight) || 0;
-          const inFlight = tdbInFlight + enumInFlight;
+          const autoEnum = !(s.queue && s.queue.auto_enum_after_sync === false);
+          const inFlight = autoEnum
+            ? (tdbInFlight + enumInFlight)
+            : tdbInFlight;
           if (inFlight > 0) primed = true;
           if (primed && inFlight === 0) {
             clearInterval(syncWatcher);
@@ -812,13 +837,13 @@
 
     // If the page loads while a sync OR plex_enum is already in
     // progress (left running by another tab/session, or daily cron
-    // mid-run), reflect that. v1.12.125: extended to plex_enum so
-    // re-entering the dashboard during the REFRESH phase still shows
-    // the button locked until the whole pipeline drains.
+    // mid-run), reflect that. v1.12.127: also honors auto_enum.
     api('GET', '/api/stats').then((s) => {
       const tdbBusy = (s && s.queue && s.queue.themerrdb_sync_in_flight) || 0;
       const enumBusy = (s && s.queue && s.queue.plex_enum_in_flight) || 0;
-      if (tdbBusy + enumBusy > 0) {
+      const autoEnum = !(s && s.queue && s.queue.auto_enum_after_sync === false);
+      const initialBusy = autoEnum ? (tdbBusy + enumBusy) : tdbBusy;
+      if (initialBusy > 0) {
         setSyncButtonState('running');
         if (syncWatcher) clearInterval(syncWatcher);
         let primed = true;
@@ -827,7 +852,9 @@
             const s2 = await api('GET', '/api/stats');
             const t2 = (s2.queue && s2.queue.themerrdb_sync_in_flight) || 0;
             const e2 = (s2.queue && s2.queue.plex_enum_in_flight) || 0;
-            if (primed && (t2 + e2) === 0) {
+            const ae2 = !(s2.queue && s2.queue.auto_enum_after_sync === false);
+            const inFlight2 = ae2 ? (t2 + e2) : t2;
+            if (primed && inFlight2 === 0) {
               clearInterval(syncWatcher);
               syncWatcher = null;
               setSyncButtonState('done');

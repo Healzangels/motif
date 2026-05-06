@@ -2539,6 +2539,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # granular UI button locking.
                 "plex_enum_active": plex_enum_active,
                 "plex_enum_running_section_ids": plex_enum_running_section_ids,
+                # v1.12.127: surface auto_enum_after_sync to the JS so
+                # the dashboard SYNC button label and the sync/refresh
+                # mutual-exclusion lock can adapt to the current
+                # setting without an extra round-trip to /api/config.
+                # When False: button label drops to // SYNC (no
+                # post-sync enum will run) and per-tab/settings REFRESH
+                # buttons stay UNLOCKED during a tdb sync (since no
+                # enum cascade is coming).
+                "auto_enum_after_sync": settings.sync_auto_enum_after_sync,
             },
             "storage": {
                 "hardlinks": row["hardlinks"],
