@@ -420,6 +420,32 @@ body[data-ops-running="1"] #topbar-status-text {
 .op-card.op-tone-tdb  .op-card-bar-fill { background: linear-gradient(90deg, rgba(109,211,255,0.4), var(--cyan)); }
 .op-card.op-tone-plex .op-card-bar-fill { background: linear-gradient(90deg, rgba(109,255,181,0.4), var(--green-bright)); }
 
+/* v1.12.124: indeterminate-bar variant for queue ops where the
+   forward total isn't known. Shimmer overlay slides across; the
+   numeric "N / M" counter is hidden so we don't lie about progress.
+   Mirrors the op-mini-indet treatment in the topbar mini-bar. */
+.op-card-bar.op-card-bar-indet .op-card-bar-fill {
+  width: 100%;
+  background-size: 200% 100%;
+  background-image: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.18) 45%,
+    rgba(255,255,255,0.04) 100%
+  ),
+  linear-gradient(90deg, var(--line), var(--cyan));
+  animation: op-mini-shimmer 2.2s linear infinite;
+}
+.op-card.op-tone-warn .op-card-bar.op-card-bar-indet .op-card-bar-fill {
+  background-image: linear-gradient(
+    90deg,
+    rgba(255,255,255,0.04) 0%,
+    rgba(255,255,255,0.18) 45%,
+    rgba(255,255,255,0.04) 100%
+  ),
+  linear-gradient(90deg, var(--line), var(--orange, #ffb86c));
+}
+
 .op-card-meta {
   display: flex;
   gap: 14px;

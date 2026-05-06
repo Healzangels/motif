@@ -1265,7 +1265,8 @@ def run_sync(db_path, base_url: str, *,
                     # line — a slow connection looked indistinguishable
                     # from a hang.
                     completed = 0
-                    last_progress = time.monotonic()
+                    last_log = time.monotonic()
+                    last_ui = time.monotonic()
                     total = len(futures)
                     media_processed_base = (
                         0 if media_type == "movie" else stats.movies_seen)
@@ -1275,19 +1276,28 @@ def run_sync(db_path, base_url: str, *,
                             raise _JobCancelled()
                         result = fut.result()
                         completed += 1
-                        if completed == 1 or completed == total \
-                                or completed % 500 == 0 \
-                                or (time.monotonic() - last_progress) > 30.0:
+                        # v1.12.124: split log cadence from progress UI
+                        # cadence. Pre-fix both fired together at every
+                        # 500 items + a 30s wallclock fallback — on a
+                        # snapshot run that turns into a ~12% step per
+                        # batch, with the bar visibly jumping rather
+                        # than ticking. The log line stays at 500-item
+                        # milestones (so log files stay terse), but
+                        # op_progress now updates every ~300ms so the
+                        # bar feels live regardless of items/sec.
+                        if (completed == 1 or completed == total
+                                or completed % 500 == 0
+                                or (time.monotonic() - last_log) > 30.0):
                             log.info(
                                 "sync %s progress: %d/%d "
                                 "(errors=%d, queued_for_flush=%d)",
                                 media_type, completed, total,
                                 stats.errors, len(batch),
                             )
-                            last_progress = time.monotonic()
-                            # v1.12.106: mirror the throttled log
-                            # cadence into op_progress so the
-                            # drawer's items/sec + ETA stay live.
+                            last_log = time.monotonic()
+                        if (completed == 1 or completed == total
+                                or (time.monotonic() - last_ui) > 0.3):
+                            last_ui = time.monotonic()
                             op_progress.update_progress(
                                 db_path, "tdb_sync",
                                 stage_current=completed,

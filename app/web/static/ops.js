@@ -281,7 +281,16 @@
             <div class="op-card-bar-fill"
                  style="width:${pct != null ? pct.toFixed(1) : 0}%"></div>
           </div>
-        ` : ''}
+        ` : (isLive ? `
+          <!-- v1.12.124: indeterminate bar for live ops with no known
+               total (queue ops + tdb_sync's pre-fetch / extract /
+               resolve / prune phases). Pulses full-width instead of
+               the bar disappearing entirely; counter is hidden so
+               we don't display a fake "X / 0". -->
+          <div class="op-card-bar op-card-bar-indet">
+            <div class="op-card-bar-fill"></div>
+          </div>
+        ` : '')}
         <div class="op-card-meta">
           ${(rate > 0) ? `
             <span class="op-card-meta-item">

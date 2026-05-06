@@ -357,8 +357,17 @@ def _synthesize_queue_ops(counts) -> list[dict]:
             "finished_at": None,
             "stage": jt,
             "stage_label": stage,
-            "stage_current": running_n,
-            "stage_total": running_n + pending_n,
+            # v1.12.124: queue ops render indeterminate (pulsing full-
+            # width bar). Pre-fix `stage_current=running_n,
+            # stage_total=running_n+pending_n` produced a moving
+            # divisor — bar showed 1/1 = 100% while a single job ran,
+            # then jumped to 0/N when more queued, then crawled back.
+            # Mostly looked stuck at 100% since bursts usually drain
+            # one at a time. Counts already in stage_label, so
+            # surfacing a bar percentage adds nothing real. ops.js
+            # treats stage_total == 0 as indeterminate.
+            "stage_current": 0,
+            "stage_total": 0,
             "processed_total": running_n,
             "processed_est": running_n + pending_n,
             "error_count": 0,

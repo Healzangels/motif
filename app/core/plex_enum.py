@@ -118,6 +118,11 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                     # table (~10K+ rows on a populated install), which
                     # turned a 28-item section refresh into a 70s+ job.
                     section_id=section_id,
+                    # v1.12.124: drive op_progress per batch so the
+                    # bar reflects in-section progress instead of
+                    # jumping 0 → 100% at section boundaries.
+                    progress_op_id="plex_enum",
+                    progress_total=len(items),
                 )
                 stats["inserted"] += ins
                 stats["updated"] += upd
@@ -437,7 +442,10 @@ def stat_theme_sidecar(folder_path: str) -> bool | None:
 
 def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                    *, cancel_check=lambda: False,
-                   section_id: str | None = None) -> tuple[int, int]:
+                   section_id: str | None = None,
+                   progress_op_id: str | None = None,
+                   progress_total: int | None = None,
+                   progress_base: int = 0) -> tuple[int, int]:
     """Upsert one section's items into plex_items. Returns
     (inserted_count, updated_count).
 
@@ -551,6 +559,12 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     updated = 0
     now = now_iso()
     import time as _t
+    # v1.12.124: tick op_progress per batch + on a ~300ms timer so the
+    # bar reflects forward progress through the upsert phase. Pre-fix
+    # the caller set stage_current=0 before _upsert_items and
+    # stage_current=len(items) after; the bar sat at 0 for the whole
+    # upsert (5-15s on a 4K-item section) then jumped to 100%.
+    last_ui = _t.monotonic()
     for batch_start in range(0, len(enriched), _UPSERT_BATCH):
         # v1.11.36: cooperative cancellation between upsert batches.
         if cancel_check():
@@ -563,6 +577,19 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
         if batch_start > 0:
             _t.sleep(0.15)
         batch = enriched[batch_start:batch_start + _UPSERT_BATCH]
+        # Emit progress at the START of each batch — ticks the bar
+        # as we work through the section's items rather than at the
+        # post-section update point only.
+        if progress_op_id and progress_total is not None and (
+                batch_start == 0
+                or (_t.monotonic() - last_ui) > 0.3):
+            last_ui = _t.monotonic()
+            op_progress.update_progress(
+                db_path, progress_op_id,
+                stage_current=batch_start,
+                stage_total=progress_total,
+                processed_total=progress_base + batch_start,
+            )
         with get_conn(db_path) as conn, transaction(conn):
             for it, sidecar in batch:
                 # v1.10.32: precompute the normalized title so the library

@@ -722,14 +722,22 @@
   let syncWatcher = null;
 
   function setSyncButtonState(state) {
+    // v1.12.124: button now reads // SYNC + REFRESH because the
+    // dashboard action is two-phase: a TDB sync writes new theme
+    // rows, then a plex_enum re-resolves theme_id linkage so the
+    // new matches actually appear on the library tabs. The watcher
+    // still polls themerrdb_sync_in_flight only — plex_enum runs
+    // concurrently with the sync's batched flushes, so the user
+    // shouldn't see SYNCING + REFRESHING… stuck on this button
+    // until the unrelated enum drains.
     const btn = $('#sync-now-btn');
     if (!btn) return;
     if (state === 'idle') {
       btn.disabled = false;
-      btn.textContent = '// SYNC THEMERRDB';
+      btn.textContent = '// SYNC + REFRESH';
     } else if (state === 'running') {
       btn.disabled = true;
-      btn.textContent = '// SYNCING THEMERRDB…';
+      btn.textContent = '// SYNCING…';
     } else if (state === 'done') {
       btn.disabled = true;
       btn.textContent = '✓ DONE';
