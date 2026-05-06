@@ -1397,12 +1397,35 @@ class _GitMirror:
             return None
 
     def commit_sync_ok(self) -> None:
-        """Persist the new HEAD as MOTIF_LAST_SYNC so the next sync
-        can diff against it. Call only after the upsert pipeline
-        completes successfully — committing too early would skip
-        items if the run aborts mid-pipeline."""
+        """Persist the new HEAD as MOTIF_LAST_SYNC and advance the
+        local tracking ref atomically. Call only after the upsert
+        pipeline completes successfully — committing too early would
+        either skip items (if MOTIF_LAST_SYNC advances) or
+        misclassify the next run as is_unchanged (if the ref
+        advances but MOTIF_LAST_SYNC doesn't and the prior SHA gets
+        GC'd from the shallow object store).
+
+        v1.13.6: ref-write moved here from _fetch so a crash mid-
+        pipeline leaves MOTIF_LAST_SYNC, the local ref, AND the
+        previous successful HEAD all in sync. The new objects from
+        the fetch are kept in dulwich's object store regardless of
+        ref state, so list_changes / read_json continue to work for
+        the rest of THIS run.
+        """
         if self._new_head is None:
             return
+        # Advance the local ref first so the file write below is the
+        # last commit-point — if writing the file fails the ref still
+        # advances, and on the next run _read_last_sync()'s soft
+        # fallback to the ref (line ~1488) keeps motif behavior
+        # equivalent to a successful write.
+        if self._repo is not None:
+            try:
+                self._repo.refs[self.branch_ref] = self._new_head
+            except Exception as e:
+                log.warning(
+                    "git mirror: ref %s write failed: %s",
+                    self.branch_ref, e)
         try:
             self.last_sync_path.write_text(self._new_head.decode())
         except OSError as e:
@@ -1477,16 +1500,18 @@ class _GitMirror:
             activity=f"git fetch {self.repo_url}",
         )
         self._open_repo()
-        # Read prior HEAD from MOTIF_LAST_SYNC. If absent or the SHA
-        # isn't actually in the local object store, treat as first
-        # run (no diff baseline; list_changes returns the full tree
-        # as 'added').
+        # Read prior HEAD from MOTIF_LAST_SYNC. Missing or out-of-store
+        # → treat as first run (old_head=None) so list_changes returns
+        # the full tree as 'added'. This is also the crash-recovery
+        # path: if a prior run advanced the local ref via fetch but
+        # crashed before commit_sync_ok wrote MOTIF_LAST_SYNC, we
+        # must NOT diff from the ref (would give is_unchanged on the
+        # next run with no new commits, silently dropping the
+        # never-processed delta). Pre-v1.13.6 the soft fallback to
+        # refs/heads/<branch> did exactly that — replaced now with a
+        # full-walk recovery so the crashed-mid-pipeline state can be
+        # safely retried.
         old_head = self._read_last_sync()
-        # Even with a corrupt/missing MOTIF_LAST_SYNC, we may still
-        # have a local refs/heads/<branch> pointer from a prior
-        # successful clone. Use it as a soft fallback.
-        if old_head is None and self.branch_ref in self._repo.refs:
-            old_head = self._repo.refs[self.branch_ref]
         self._old_head = old_head
         # The actual fetch.
         try:
@@ -1502,9 +1527,17 @@ class _GitMirror:
                 f"fetch did not return branch {self.branch!r}; refs="
                 f"{list(res.refs.keys())[:5]}"
             )
-        # Advance the local tracking ref so a future open sees the
-        # latest baseline even if MOTIF_LAST_SYNC writing fails.
-        self._repo.refs[self.branch_ref] = new_head
+        # v1.13.6: do NOT advance the local tracking ref here. Wait for
+        # commit_sync_ok() to write both MOTIF_LAST_SYNC and the ref
+        # atomically, so a crash between fetch and upsert keeps both
+        # at the prior good SHA. Pre-fix the ref advanced immediately
+        # but MOTIF_LAST_SYNC didn't; on the next run _read_last_sync()
+        # would fail (the prior SHA was GC'd from the shallow store)
+        # and fall back to the now-advanced ref, treating the
+        # unprocessed delta as is_unchanged and silently dropping it.
+        # The new objects from this fetch are kept in the object store
+        # by dulwich whether or not the ref points at them, so
+        # list_changes / read_json work fine for the rest of this run.
         self._new_head = new_head
         if old_head is not None and old_head == new_head:
             # No new commits. is_unchanged() True; caller skips upsert.

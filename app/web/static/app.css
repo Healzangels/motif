@@ -626,6 +626,20 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 #library-table th.col-state { padding-left: 6px; padding-right: 6px; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .col-actions { width: 300px; text-align: right; }
+/* v1.13.6: bump col-actions left padding so the right-aligned
+   action cluster sits with extra breathing room from the IMDB
+   column. Pre-fix the (i) info button landed ~22px from the
+   col-actions left edge (300px col − 14px*2 padding = 272px
+   content area − ~264px button cluster = ~8px slack), which
+   put it visually adjacent to the centered IMDB ID. The
+   cluster-width-vs-cell-width math meant the slack was nearly
+   zero on rows with all four buttons present, producing a
+   noticeably tighter gap on the actions side than between LINK
+   and IMDB. Adding 24px of dedicated left padding shifts the
+   cluster rightward without changing button widths, restoring
+   visual symmetry around the centered IMDB column. */
+#library-table td.col-actions,
+#library-table th.col-actions { padding-left: 38px; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
 /* v1.12.28: every header cell centers its label + sort
    indicator as a single unit. v1.12.27 forced left-align
