@@ -2575,6 +2575,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return None
     _stats_cache_ttl = 1.0
 
+    def _disk_status_for_stats(s) -> dict:
+        """v1.13.11: shape the disk-space telemetry dict that /api/stats
+        returns. Returns {free_mb, min_mb, low} or all-Nones when the
+        guard is disabled / themes_dir not yet configured. Cheap
+        (one statvfs call); inlined into the stats path so the topbar
+        doesn't need a second round-trip.
+        """
+        from ..core.worker import _disk_free_mb
+        if not s.is_paths_ready() or s.min_free_disk_mb <= 0:
+            return {"free_mb": None, "min_mb": None, "low": None}
+        td = s.themes_dir
+        if td is None:
+            return {"free_mb": None, "min_mb": None, "low": None}
+        free_mb = _disk_free_mb(td)
+        if free_mb is None:
+            return {"free_mb": None, "min_mb": int(s.min_free_disk_mb),
+                    "low": None}
+        min_mb = int(s.min_free_disk_mb)
+        return {"free_mb": int(free_mb), "min_mb": min_mb,
+                "low": free_mb < min_mb}
+
     @app.get("/api/stats")
     async def api_stats(db: Path = Depends(get_db_path)):
         import time as _t
@@ -2699,6 +2720,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "cookies_present": (settings.cookies_file is not None
                                     and settings.cookies_file.is_file()),
             },
+            # v1.13.11: free-disk telemetry for the topbar warning pill.
+            # Only computed when themes_dir is configured AND the guard
+            # is enabled (min_mb > 0). disk_low=True means downloads
+            # are currently being blocked / will be blocked on next
+            # attempt; the pill renders amber. None values disable the
+            # pill entirely (first-run state or operator opt-out).
+            "disk": _disk_status_for_stats(settings),
             "tab_availability": {
                 "movies": {"standard": bool(row["movies_std"]),
                            "fourk":   bool(row["movies_4k"])},
@@ -3067,6 +3095,115 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "exists": True}
 
         return await run_in_threadpool(_query)
+
+    @app.get("/api/saved-filters")
+    async def api_saved_filters_list(
+        scope: str = "library",
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.13.11: list saved filter presets for a given scope.
+
+        Currently `library` is the only consumer; the `scope` column
+        in the table lets future pages reuse the same endpoint with
+        their own preset namespace. Ordered by name so the UI's
+        dropdown is stable across reloads.
+        """
+        with get_conn(db) as conn:
+            rows = [
+                dict(r) for r in conn.execute(
+                    "SELECT id, name, scope, query_json, created_at, "
+                    "       created_by "
+                    "  FROM saved_filters WHERE scope = ? "
+                    "  ORDER BY name COLLATE NOCASE",
+                    (scope,),
+                )
+            ]
+        return {"filters": rows}
+
+    @app.post("/api/saved-filters")
+    async def api_saved_filters_create(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v1.13.11: persist a new saved filter preset. Body:
+            { name: str, scope?: str (default 'library'),
+              query_json: str (URL query fragment, raw text) }
+
+        Names are unique within a scope — if a preset by that name
+        already exists, it gets overwritten (UPSERT). Lets the user
+        "save filter" repeatedly without clearing the previous version
+        first.
+        """
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        if not isinstance(body, dict):
+            raise HTTPException(status_code=400, detail="body must be an object")
+        name = (body.get("name") or "").strip()
+        scope = (body.get("scope") or "library").strip() or "library"
+        query_json = body.get("query_json")
+        if not name:
+            raise HTTPException(status_code=400, detail="name is required")
+        if not isinstance(query_json, str) or not query_json.strip():
+            raise HTTPException(
+                status_code=400, detail="query_json is required and must be a string")
+        if len(name) > 80:
+            raise HTTPException(
+                status_code=400, detail="name must be <= 80 characters")
+        if len(query_json) > 4000:
+            raise HTTPException(
+                status_code=400, detail="query_json too long (>4000 chars)")
+        with get_conn(db) as conn:
+            existing = conn.execute(
+                "SELECT id FROM saved_filters WHERE scope = ? AND name = ?",
+                (scope, name),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE saved_filters SET query_json = ?, "
+                    "       created_at = ?, created_by = ? WHERE id = ?",
+                    (query_json, now_iso(),
+                     request.state.principal.username, existing["id"]),
+                )
+                fid = existing["id"]
+            else:
+                cur = conn.execute(
+                    "INSERT INTO saved_filters "
+                    "  (name, scope, query_json, created_at, created_by) "
+                    "  VALUES (?, ?, ?, ?, ?)",
+                    (name, scope, query_json, now_iso(),
+                     request.state.principal.username),
+                )
+                fid = cur.lastrowid
+        log_event(db, level="INFO", component="api",
+                  message=f"Saved filter {name!r} (scope={scope}) by "
+                          f"{request.state.principal.username}")
+        return {"ok": True, "id": fid}
+
+    @app.delete("/api/saved-filters/{filter_id}")
+    async def api_saved_filters_delete(
+        filter_id: int, request: Request,
+        db: Path = Depends(get_db_path),
+    ):
+        """v1.13.11: delete a saved filter by id. Returns 404 if it
+        doesn't exist; otherwise 200 with the deleted name for the
+        UI's confirmation toast."""
+        _require_admin(request)
+        with get_conn(db) as conn:
+            row = conn.execute(
+                "SELECT name, scope FROM saved_filters WHERE id = ?",
+                (filter_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(status_code=404, detail="filter not found")
+            conn.execute(
+                "DELETE FROM saved_filters WHERE id = ?", (filter_id,))
+        log_event(db, level="INFO", component="api",
+                  message=f"Deleted saved filter {row['name']!r} "
+                          f"(scope={row['scope']}) by "
+                          f"{request.state.principal.username}")
+        return {"ok": True, "name": row["name"]}
 
     @app.get("/api/sections/coverage")
     async def api_sections_coverage(db: Path = Depends(get_db_path)):

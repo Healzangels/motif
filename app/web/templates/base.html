@@ -78,6 +78,17 @@
         <span class="op-pill-count" id="topbar-drops-count">0</span>
         <span class="op-pill-label">DROP</span>
       </a>
+      <!-- v1.13.11: DISK warning pill — surfaced when free space on
+           themes_dir's filesystem dips below paths.min_free_disk_mb.
+           Downloads are being blocked transiently while this is
+           visible. Click jumps to /settings#paths so the operator
+           can review the threshold or free space. -->
+      <a href="/settings#paths" class="op-pill op-tone-warn" id="topbar-disk-badge"
+         hidden
+         title="Free space on themes_dir's filesystem is below the configured threshold — downloads are blocked until space frees up.">
+        <span class="op-pill-count" id="topbar-disk-free">0</span>
+        <span class="op-pill-label">DISK</span>
+      </a>
       <a href="#" class="op-mini" id="op-mini" hidden data-ops-trigger
          title="Click to expand live ops"></a>
       <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden

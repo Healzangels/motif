@@ -602,9 +602,24 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_target
     ON audit_events (media_type, tmdb_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_events_occurred
     ON audit_events (occurred_at DESC);
+
+-- v1.13.11: saved filter presets. Currently scoped to the library page;
+-- `scope` lets future pages (queue, history) share the same table.
+-- query_json stores the URL query-string fragments verbatim so the UI
+-- can apply a saved preset by re-issuing the same fetch params.
+CREATE TABLE IF NOT EXISTS saved_filters (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    name        TEXT NOT NULL,
+    scope       TEXT NOT NULL DEFAULT 'library',
+    query_json  TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
+    created_by  TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_saved_filters_scope
+    ON saved_filters (scope, name);
 """
 
-CURRENT_SCHEMA_VERSION = 37
+CURRENT_SCHEMA_VERSION = 38
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1331,6 +1346,29 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
             CHECK (hidden_kind IN ('user', 'themerrdb')
                    OR hidden_kind IS NULL);
         ALTER TABLE previous_urls ADD COLUMN hidden_captured_at TEXT;
+        """
+    )
+
+
+def _migrate_v37_to_v38(conn: sqlite3.Connection) -> None:
+    """v38 (v1.13.11): add saved_filters table for the library page's
+    saved-preset dropdown. Schema is generic — `scope` column lets
+    future pages reuse the same table without another migration.
+    Idempotent CREATE so a re-run is safe.
+    """
+    log.info("Migrating to schema v38 (saved_filters)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS saved_filters (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            name        TEXT NOT NULL,
+            scope       TEXT NOT NULL DEFAULT 'library',
+            query_json  TEXT NOT NULL,
+            created_at  TEXT NOT NULL,
+            created_by  TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_saved_filters_scope
+            ON saved_filters (scope, name);
         """
     )
 
@@ -2062,6 +2100,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 36:
                     _migrate_v36_to_v37(conn)
                     current = 37
+                elif current == 37:
+                    _migrate_v37_to_v38(conn)
+                    current = 38
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

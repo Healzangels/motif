@@ -367,6 +367,24 @@
           dropBadge.hidden = true;
         }
       }
+      // v1.13.11: DISK warning pill. Only renders when the guard is
+      // enabled (stats.disk.low is non-null) AND we're below the
+      // threshold. Free-MB count goes inline so the operator sees
+      // headroom at a glance.
+      const diskBadge = $('#topbar-disk-badge');
+      if (diskBadge) {
+        const disk = stats.disk || {};
+        const free = $('#topbar-disk-free');
+        if (disk.low === true) {
+          if (free) free.textContent = (disk.free_mb != null) ? `${disk.free_mb}M` : '!';
+          diskBadge.hidden = false;
+          if (disk.free_mb != null && disk.min_mb != null) {
+            diskBadge.title = `${disk.free_mb}MB free on themes_dir's filesystem (min ${disk.min_mb}MB) — downloads are blocked until space frees up.`;
+          }
+        } else {
+          diskBadge.hidden = true;
+        }
+      }
       // v1.12.118: legacy idle-dot retired — ops.js renderTopbar
       // owns the idle pill / op-mini handoff now (no flip).
 
@@ -3402,6 +3420,157 @@
   // declined) lights up blue regardless of the underlying tracked
   // state; the row's actionable_update flag is what gates the
   // ACCEPT / KEEP menu actions but isn't relevant for filtering.
+  // ============================================================
+  // v1.13.11: saved filter presets — snapshot the current library
+  // filter combo as a named preset and replay later from a dropdown.
+  // Uses /api/saved-filters (scope='library'). Snapshot string is the
+  // exact URL query the deep-link hydration code in bindLibrary
+  // already understands, so applying a preset = setting
+  // window.location.search to it.
+  // ============================================================
+
+  function _buildPresetQueryString() {
+    // Mirror loadLibrary's params logic but EXCLUDE pagination/tab/
+    // fourk — those are page context, not filter state. The deep-link
+    // hydration code (bindLibrary) reads each of these keys.
+    const p = new URLSearchParams();
+    if (libraryState.q) p.set('q', libraryState.q);
+    if (libraryState.status && libraryState.status !== 'all') {
+      p.set('status', libraryState.status);
+    }
+    if (libraryState.tdb && libraryState.tdb !== 'any') {
+      p.set('tdb', libraryState.tdb);
+    }
+    if (libraryState.srcFilter && libraryState.srcFilter.size > 0) {
+      p.set('src_pills', Array.from(libraryState.srcFilter).join(','));
+    }
+    if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
+      p.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+    }
+    if (libraryState.dlPills && libraryState.dlPills.size > 0) {
+      p.set('dl_pills', Array.from(libraryState.dlPills).join(','));
+    }
+    if (libraryState.plPills && libraryState.plPills.size > 0) {
+      p.set('pl_pills', Array.from(libraryState.plPills).join(','));
+    }
+    if (libraryState.edPills && libraryState.edPills.size > 0) {
+      p.set('ed_pills', Array.from(libraryState.edPills).join(','));
+    }
+    if (libraryState.linkPills && libraryState.linkPills.size > 0) {
+      p.set('link_pills', Array.from(libraryState.linkPills).join(','));
+    }
+    if (libraryState.sort && libraryState.sort !== 'title') {
+      p.set('sort', libraryState.sort);
+    }
+    if (libraryState.sortDir && libraryState.sortDir !== 'asc') {
+      p.set('sort_dir', libraryState.sortDir);
+    }
+    return p.toString();
+  }
+
+  let _libraryPresets = [];
+  let _activePresetId = null;
+
+  async function loadLibraryPresets() {
+    const select = document.getElementById('library-presets-select');
+    const delBtn = document.getElementById('library-presets-delete');
+    if (!select) return;
+    let data;
+    try {
+      data = await api('GET', '/api/saved-filters?scope=library');
+    } catch (e) {
+      console.error('saved-filters load failed:', e);
+      return;
+    }
+    _libraryPresets = (data && data.filters) || [];
+    // Preserve the placeholder + rebuild option list.
+    select.innerHTML =
+      '<option value="" disabled selected>// SAVED FILTERS</option>' +
+      _libraryPresets.map((f) => {
+        return `<option value="${f.id}">${htmlEscape(f.name)}</option>`;
+      }).join('');
+    select.style.display = _libraryPresets.length > 0 ? '' : 'none';
+    if (delBtn) delBtn.style.display = 'none';
+    _activePresetId = null;
+    // If we landed via a saved-preset replay, hi-light the matching
+    // option so the user can re-delete or modify.
+    const here = _buildPresetQueryString();
+    const match = _libraryPresets.find((f) => f.query_json === here);
+    if (match && select) {
+      select.value = String(match.id);
+      _activePresetId = match.id;
+      if (delBtn) delBtn.style.display = '';
+    }
+  }
+
+  async function saveLibraryPreset() {
+    const queryStr = _buildPresetQueryString();
+    if (!queryStr) {
+      alert('No filters active — select at least one filter, search, or sort before saving.');
+      return;
+    }
+    const name = (prompt('Save current filter as:') || '').trim();
+    if (!name) return;
+    try {
+      await api('POST', '/api/saved-filters', {
+        name, scope: 'library', query_json: queryStr,
+      });
+      await loadLibraryPresets();
+    } catch (e) {
+      alert('Save failed: ' + (e.message || e));
+    }
+  }
+
+  function applyLibraryPreset(id) {
+    const preset = _libraryPresets.find((f) => f.id === Number(id));
+    if (!preset) return;
+    // Replace location.search and let the page reload through the
+    // existing init hydration. Cleaner than syncing libraryState in-
+    // place — guarantees the URL reflects the applied preset so a
+    // subsequent share-link works.
+    const path = window.location.pathname;
+    const hash = window.location.hash || '';
+    const sep = preset.query_json ? '?' : '';
+    window.location.href = `${path}${sep}${preset.query_json}${hash}`;
+  }
+
+  async function deleteActiveLibraryPreset() {
+    if (!_activePresetId) return;
+    const preset = _libraryPresets.find((f) => f.id === _activePresetId);
+    if (!preset) return;
+    if (!confirm(`Delete saved filter "${preset.name}"?`)) return;
+    try {
+      await api('DELETE', `/api/saved-filters/${_activePresetId}`);
+      // Strip the URL to clear the applied filter, then re-fetch the
+      // dropdown so the deleted entry vanishes.
+      window.location.href = window.location.pathname;
+    } catch (e) {
+      alert('Delete failed: ' + (e.message || e));
+    }
+  }
+
+  function bindLibraryPresets() {
+    const select = document.getElementById('library-presets-select');
+    const saveBtn = document.getElementById('library-presets-save');
+    const delBtn = document.getElementById('library-presets-delete');
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        saveLibraryPreset().catch((e) => console.error(e));
+      });
+    }
+    if (select) {
+      select.addEventListener('change', (e) => {
+        if (e.target.value) applyLibraryPreset(e.target.value);
+      });
+    }
+    if (delBtn) {
+      delBtn.addEventListener('click', () => {
+        deleteActiveLibraryPreset().catch((e) => console.error(e));
+      });
+    }
+    loadLibraryPresets().catch((e) => console.error(e));
+  }
+
   function computeTdbPill(it) {
     const isThemerrDbAvail = it.upstream_source
       && it.upstream_source !== 'plex_orphan';
@@ -7408,6 +7577,10 @@
     bindPending();
     bindOverrideDialog();
     bindLibrary();
+    // v1.13.11: saved filter presets — only meaningful on the library
+    // pages where #library-presets-select exists. Bind unconditionally
+    // (the function no-ops when the elements are absent).
+    bindLibraryPresets();
     bindUploadDialog();
     bindManualUrlDialog();
     bindInfoDialog();

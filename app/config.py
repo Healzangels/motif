@@ -173,6 +173,12 @@ class Settings:
     def cookies_file(self) -> Path:
         return Path(self._cfg.paths.cookies_file)
 
+    @property
+    def min_free_disk_mb(self) -> int:
+        """v1.13.11: minimum free space (in MB) required on themes_dir's
+        filesystem before a download will start. 0 = guard disabled."""
+        return int(self._cfg.paths.min_free_disk_mb)
+
     def is_paths_ready(self) -> bool:
         """True iff themes_dir is configured. The worker/scheduler check
         this before download/place jobs run; sync runs regardless."""

@@ -50,6 +50,24 @@ def _safe_link(src: Path, dst: Path) -> None:
         shutil.copy2(src, dst)
 
 
+def _disk_free_mb(path: Path) -> int | None:
+    """v1.13.11: return free space (MB) on the filesystem hosting `path`,
+    or None if the lookup fails (path missing, permission denied, etc).
+    Walks up the parent chain so a not-yet-created subdir still resolves
+    to its parent's filesystem.
+    """
+    p = path
+    for _ in range(10):
+        try:
+            usage = shutil.disk_usage(p)
+            return int(usage.free // (1024 * 1024))
+        except (OSError, FileNotFoundError):
+            if p.parent == p:
+                return None
+            p = p.parent
+    return None
+
+
 class _JobPermanentFailure(Exception):
     """v1.10.40: raised by job handlers when retry won't fix it
     (e.g. yt-dlp says the video is removed). The worker treats
@@ -719,6 +737,29 @@ class Worker:
                 message="Skipped: themes_dir not configured. Set it on /settings.",
             )
             raise RuntimeError("themes_dir not configured")
+
+        # v1.13.11: pre-download free-space guard. yt-dlp + ffmpeg can
+        # eat several hundred MB of working space mid-extract; on a full
+        # filesystem motif used to silently spam yt-dlp errors and rack
+        # up retries. Now we fail transiently with a clear "low disk"
+        # reason — exponential backoff (1m → 5m → 25m → ...) gives the
+        # user a window to free space before the job exhausts attempts.
+        # 0 = guard disabled (operator opts out).
+        min_mb = self.settings.min_free_disk_mb
+        if min_mb > 0:
+            td = self.settings.themes_dir
+            free_mb = _disk_free_mb(td) if td is not None else None
+            if free_mb is not None and free_mb < min_mb:
+                msg = (
+                    f"low disk: {free_mb}MB free on {td} "
+                    f"(min {min_mb}MB) — free space and the download will retry"
+                )
+                log_event(
+                    self.settings.db_path, level="WARNING",
+                    component="download", media_type=media_type,
+                    tmdb_id=tmdb_id, section_id=section_id, message=msg,
+                )
+                raise RuntimeError(msg)
 
         # Look up theme + any user override + the section's themes_subdir.
         with get_conn(self.settings.db_path) as conn:

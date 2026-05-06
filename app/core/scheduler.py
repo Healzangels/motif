@@ -114,6 +114,78 @@ _RELEASE_API = "https://api.github.com/repos/Healzangels/motif/releases/latest"
 _RELEASE_CACHE_FILENAME = "release.json"
 
 
+# v1.13.11: per-job-type "this should never run longer than" thresholds
+# for the runtime stuck-job sweep. Conservative — set to a multiple of
+# the worst observed duration so a slow run never gets euthanized
+# mid-flight. Anything not in the map uses _STUCK_JOB_DEFAULT_MIN.
+_STUCK_JOB_THRESHOLDS_MIN = {
+    "sync":      120,
+    "plex_enum": 120,
+    "scan":       60,
+    "download":   30,
+    "place":      10,
+    "refresh":    10,
+    "relink":     10,
+    "adopt":      15,
+}
+_STUCK_JOB_DEFAULT_MIN = 60
+
+
+def _stuck_job_sweep(db_path: Path) -> None:
+    """v1.13.11: scan jobs.status='running' for rows whose started_at is
+    older than the per-job-type threshold and reset them to 'failed'
+    with a clear last_error. This is the runtime counterpart to the
+    boot-time zombie sweep in main.py (which only fires on process
+    restart) — a worker that hangs in C-extension land but doesn't
+    die would otherwise leave a permanent ghost row + spinning UI.
+
+    Threshold map is conservative; sync/plex_enum get 120 minutes,
+    place gets 10 minutes. Anything not in the map uses 60 minutes.
+
+    Idempotent: an already-failed row is a no-op. Safe to run on a
+    cadence (default: every 15 minutes via the scheduler).
+    """
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    cutoffs = {
+        jt: (now - timedelta(minutes=mins)).isoformat(timespec="seconds")
+        for jt, mins in _STUCK_JOB_THRESHOLDS_MIN.items()
+    }
+    default_cutoff = (now - timedelta(minutes=_STUCK_JOB_DEFAULT_MIN)) \
+        .isoformat(timespec="seconds")
+    try:
+        with get_conn(db_path) as conn:
+            stuck = conn.execute(
+                "SELECT id, job_type, started_at FROM jobs "
+                "WHERE status = 'running' AND started_at IS NOT NULL"
+            ).fetchall()
+            killed = 0
+            for row in stuck:
+                jt = row["job_type"]
+                cutoff = cutoffs.get(jt, default_cutoff)
+                if (row["started_at"] or "") < cutoff:
+                    threshold = _STUCK_JOB_THRESHOLDS_MIN.get(
+                        jt, _STUCK_JOB_DEFAULT_MIN)
+                    msg = (
+                        f"stuck_job_sweep: {jt} job exceeded "
+                        f"{threshold}min runtime — worker likely hung. "
+                        "Reset to failed; will retry per backoff schedule."
+                    )
+                    conn.execute(
+                        "UPDATE jobs SET status = 'failed', "
+                        "                finished_at = ?, "
+                        "                last_error = COALESCE(last_error, ?) "
+                        "WHERE id = ?",
+                        (now_iso(), msg, row["id"]),
+                    )
+                    killed += 1
+        if killed:
+            log_event(db_path, level="WARNING", component="scheduler",
+                      message=f"Stuck-job sweep reset {killed} runaway job(s)")
+    except Exception as e:
+        log.warning("Stuck-job sweep failed: %s", e)
+
+
 def _cleanup_sessions_job(db_path: Path) -> None:
     """v1.13.10 (#14): daily sweep of expired auth_sessions rows.
 
@@ -274,6 +346,17 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         id="session_cleanup", replace_existing=True, max_instances=1,
     )
 
+    # v1.13.11: stuck-job sweep every 15 minutes. Per-job-type
+    # thresholds reset jobs.status='running' rows whose started_at is
+    # older than the worst plausible runtime, so a hung worker doesn't
+    # leave a permanent spinner + blocked queue between container
+    # restarts.
+    scheduler.add_job(
+        _stuck_job_sweep, args=[settings.db_path],
+        trigger=IntervalTrigger(minutes=15),
+        id="stuck_job_sweep", replace_existing=True, max_instances=1,
+    )
+
     # Daily Plex section discovery (catches newly-added libraries).
     # Scheduled 30 minutes before the sync so sync sees fresh section list.
     section_minute, section_hour = minute, str((int(hour) - 1) % 24) if hour.isdigit() else hour
@@ -288,7 +371,7 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     log.info(
         "Scheduler started: daily sync at %s UTC, placement retry hourly, "
         "section refresh 1h before sync, release check 04:17, "
-        "session cleanup 03:00",
+        "session cleanup 03:00, stuck-job sweep every 15min",
         settings.sync_cron,
     )
     # v1.13.8: kick the release check once at startup (in a background

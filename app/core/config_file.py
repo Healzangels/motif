@@ -57,6 +57,12 @@ class PathsConfig:
     # mount.
     themes_dir: str = ""
     cookies_file: str = "/config/cookies.txt"
+    # v1.13.11: pre-download free-space guard. If themes_dir's filesystem
+    # has less than this many MB free, downloads fail transiently with a
+    # "low disk" error and the topbar shows a warning pill. Set to 0 to
+    # disable the guard entirely. Default of 500MB is comfortably above
+    # any single theme.mp3 (~5MB) plus yt-dlp's working space.
+    min_free_disk_mb: int = 500
 
 
 @dataclass
@@ -199,6 +205,7 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     # paths
     ("MOTIF_THEMES_DIR",          "paths.themes_dir",                str),
     ("MOTIF_COOKIES_FILE",        "paths.cookies_file",              str),
+    ("MOTIF_MIN_FREE_DISK_MB",    "paths.min_free_disk_mb",          int),
     # plex
     ("MOTIF_PLEX_ENABLED",        "plex.enabled",                    _to_bool),
     ("MOTIF_PLEX_URL",            "plex.url",                        str),
@@ -285,6 +292,12 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
             errors.append("paths.themes_dir is not set — visit /settings to choose where motif should write theme files")
         elif not os.path.isabs(cfg.paths.themes_dir):
             errors.append(f"paths.themes_dir must be an absolute path, got {cfg.paths.themes_dir!r}")
+
+    if cfg.paths.min_free_disk_mb < 0:
+        errors.append(
+            f"paths.min_free_disk_mb must be >= 0 (0 disables the guard), "
+            f"got {cfg.paths.min_free_disk_mb}"
+        )
 
     if cfg.web.port < 1 or cfg.web.port > 65535:
         errors.append(f"web.port {cfg.web.port} is out of range (1-65535)")

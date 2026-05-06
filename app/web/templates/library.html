@@ -219,6 +219,27 @@
     <button type="button" class="pill-filter-clear" data-ed-pill=""
             title="Clear all EDITION selections.">CLEAR</button>
   </div>
+
+  <!-- v1.13.11: saved-filter presets row. Snapshot the current
+       URL-driven filter state under a name; replay later from the
+       dropdown. Scope is hard-coded to 'library' for now (the
+       endpoint accepts other scopes for future pages). The dropdown
+       is hidden until at least one preset exists so a fresh install
+       doesn't surface an empty control. -->
+  <div class="pill-filter-row" id="library-presets-row"
+       aria-label="saved filter presets">
+    <span class="pill-filter-label muted small">FILTERS:</span>
+    <select class="input input-tiny" id="library-presets-select"
+            title="Apply a saved filter preset."
+            style="display:none">
+      <option value="" disabled selected>// SAVED FILTERS</option>
+    </select>
+    <button type="button" class="btn btn-tiny" id="library-presets-save"
+            title="Snapshot the current filter combo as a named preset.">// SAVE FILTER</button>
+    <button type="button" class="btn btn-tiny" id="library-presets-delete"
+            title="Delete the currently-applied saved filter."
+            style="display:none">// DELETE</button>
+  </div>
 </section>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row

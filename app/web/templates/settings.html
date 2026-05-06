@@ -63,6 +63,25 @@
           age_restricted errors.
         </p>
       </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">MIN FREE DISK (MB)</span>
+          <span class="form-env-badge" data-env-badge="paths.min_free_disk_mb" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="number" min="0" step="50"
+               data-cfg-field="paths.min_free_disk_mb"
+               placeholder="500" autocomplete="off" />
+        <p class="form-hint">
+          Pre-download free-space guard. If the filesystem hosting
+          <code>themes_dir</code> has less than this many MB free, downloads
+          fail transiently with a clear "low disk" reason and the topbar
+          shows an amber DISK warning pill — instead of yt-dlp/ffmpeg silently
+          spamming I/O errors and racking up retries. The job stays in the
+          queue and resumes once you free space. Set to <code>0</code> to
+          disable the guard entirely.
+        </p>
+      </label>
     </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="paths">// SAVE PATHS</button>
