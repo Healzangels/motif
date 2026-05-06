@@ -719,6 +719,14 @@ class _SnapshotError(RuntimeError):
     Caller should fall back to the remote path."""
 
 
+class _SnapshotUnchanged(Exception):
+    """Codeload returned 304 Not Modified — the tarball at HEAD of
+    the database branch is byte-identical to what we last pulled.
+    NOT a failure: caller should skip the entire upsert pipeline
+    (no need to re-walk 5k items whose data hasn't changed) and
+    proceed to the prune sweeps. v1.12.126 Phase A.5."""
+
+
 # Hard-coded ceiling on the extracted tree. Catches a runaway tarball
 # (e.g. zip-bomb-style nested archives that decompress into hundreds of
 # GB) before it fills the disk. The real database branch sits at ~52
@@ -768,15 +776,34 @@ class _DatabaseSnapshot:
         # themes_dir — it's operational state, not user content.
         self.cache_dir = self.db_path.parent / "cache"
         self.tar_path = self.cache_dir / "themerrdb-database.tar.gz"
+        # v1.12.126 Phase A.5: conditional-GET state lives next to the
+        # cached tarball. JSON file: {"etag": "...", "last_modified": "..."}.
+        # On the next sync we send these as If-None-Match + If-
+        # Modified-Since; codeload returns 304 if the database branch
+        # head hasn't moved, and we skip the whole upsert pipeline.
+        self.meta_path = self.cache_dir / "themerrdb-database.tar.gz.meta"
         # Populated on acquire().
         self._tmpdir: tempfile.TemporaryDirectory | None = None
         self.root: Path | None = None
+        # v1.12.126: True when codeload returned 304 (no upstream change).
+        # Caller checks via is_unchanged() and skips index/fetch.
+        self._unchanged = False
 
     # -- acquisition --
+
+    def is_unchanged(self) -> bool:
+        return self._unchanged
 
     def acquire(self, client: httpx.Client) -> None:
         """Download + extract + validate. Raises _SnapshotError on
         any failure that should trigger fallback to the remote path.
+
+        v1.12.126 Phase A.5: when codeload returns 304 Not Modified
+        the download short-circuits via _SnapshotUnchanged, which
+        acquire() catches and translates into self._unchanged=True.
+        Caller checks via is_unchanged() and skips the upsert
+        pipeline. NOT a failure — the data is still fresh, just
+        identical to what we already have.
 
         Cancellation propagates through unchanged: a // CANCEL during
         snapshot acquisition raises _JobCancelled, which is the
@@ -792,6 +819,11 @@ class _DatabaseSnapshot:
             self._download(client)
             self._extract()
             self._validate()
+        except _SnapshotUnchanged:
+            # 304 short-circuit. Don't release — there's no tmpdir
+            # to clean (we never extracted). is_unchanged() now True.
+            self._unchanged = True
+            return
         except _JobCancelled:
             self.release()
             raise
@@ -823,16 +855,56 @@ class _DatabaseSnapshot:
             stage_current=0, stage_total=0,
             activity=f"GET {self.tar_url}",
         )
+        # v1.12.126 Phase A.5: conditional GET. If we have ETag /
+        # Last-Modified from the prior successful download AND the
+        # cached tarball is still on disk, send the If-None-Match /
+        # If-Modified-Since headers. codeload returns 304 if the
+        # tree hasn't changed — at which point we short-circuit
+        # the entire sync (skip extract + index + fetch + flush).
+        # Headers are only useful when we'd actually use the cache,
+        # so gate on tar_path existing too — protects against the
+        # case where the user wiped the cache dir but the meta file
+        # somehow survived.
+        cond_headers: dict[str, str] = {}
+        if self.tar_path.is_file() and self.meta_path.is_file():
+            try:
+                meta = json.loads(self.meta_path.read_text())
+                if meta.get("etag"):
+                    cond_headers["If-None-Match"] = meta["etag"]
+                if meta.get("last_modified"):
+                    cond_headers["If-Modified-Since"] = meta["last_modified"]
+            except (OSError, ValueError) as e:
+                log.debug("snapshot meta unreadable: %s", e)
         # Stream to a sibling .partial file then atomic-rename. Crash
         # mid-download leaves only the .partial; the next run discards
         # it and starts fresh.
         partial = self.tar_path.with_suffix(self.tar_path.suffix + ".partial")
         try:
-            with client.stream("GET", self.tar_url) as r:
+            with client.stream("GET", self.tar_url, headers=cond_headers) as r:
+                if r.status_code == 304:
+                    # Tree unchanged. Update mtime on the meta file so
+                    # future "is the cache fresh" checks (Phase B may
+                    # add one) see the latest verification time.
+                    op_progress.update_progress(
+                        self.db_path, self.op_id,
+                        activity="Snapshot unchanged (304) — skipping pipeline",
+                    )
+                    log.info(
+                        "snapshot: codeload returned 304 (tree unchanged); "
+                        "skipping extract + upsert"
+                    )
+                    raise _SnapshotUnchanged()
                 if r.status_code != 200:
                     raise _SnapshotError(
                         f"codeload returned HTTP {r.status_code}"
                     )
+                # Capture validators for the next conditional GET. Save
+                # them only after the body streams successfully (below)
+                # — a corrupted/truncated download must NOT advance
+                # the meta or we'd 304 onto a half-broken cached tarball
+                # next time.
+                fresh_etag = r.headers.get("etag")
+                fresh_last_mod = r.headers.get("last-modified")
                 total = int(r.headers.get("content-length") or 0)
                 if total > _SNAPSHOT_MAX_BYTES:
                     raise _SnapshotError(
@@ -865,12 +937,30 @@ class _DatabaseSnapshot:
                             )
                             last_emit = time.monotonic()
             os.replace(partial, self.tar_path)
+            # v1.12.126 Phase A.5: persist conditional-GET validators
+            # only after the body lands. A truncated download must
+            # not advance the meta — next run would otherwise 304
+            # against a half-broken cached tarball.
+            if fresh_etag or fresh_last_mod:
+                meta_payload: dict[str, str] = {}
+                if fresh_etag:
+                    meta_payload["etag"] = fresh_etag
+                if fresh_last_mod:
+                    meta_payload["last_modified"] = fresh_last_mod
+                try:
+                    self.meta_path.write_text(json.dumps(meta_payload))
+                except OSError as e:
+                    log.warning("snapshot meta write failed: %s", e)
             op_progress.update_progress(
                 self.db_path, self.op_id,
                 stage_current=received, stage_total=received,
                 activity=f"Snapshot downloaded ({received} bytes)",
             )
         except _SnapshotError:
+            partial.unlink(missing_ok=True)
+            raise
+        except _SnapshotUnchanged:
+            # 304 path — no partial to clean up, no error to wrap.
             partial.unlink(missing_ok=True)
             raise
         except httpx.HTTPError as e:
@@ -1159,11 +1249,21 @@ def run_sync(db_path, base_url: str, *,
                         db_path, "tdb_sync", tar_url, _cancel_check,
                     )
                     snapshot.acquire(client)
-                    log_event(
-                        db_path, level="INFO", component="sync",
-                        message=f"Sync run #{run_id}: snapshot acquired "
-                                f"from {tar_url}",
-                    )
+                    if snapshot.is_unchanged():
+                        log_event(
+                            db_path, level="INFO", component="sync",
+                            message=f"Sync run #{run_id}: snapshot "
+                                    f"unchanged (304) — skipping upsert",
+                        )
+                        op_progress.set_detail_field(
+                            db_path, "tdb_sync", "no_changes", True,
+                        )
+                    else:
+                        log_event(
+                            db_path, level="INFO", component="sync",
+                            message=f"Sync run #{run_id}: snapshot acquired "
+                                    f"from {tar_url}",
+                        )
                 except _SnapshotError as e:
                     log_event(
                         db_path, level="WARNING", component="sync",
@@ -1183,7 +1283,17 @@ def run_sync(db_path, base_url: str, *,
                     )
                     snapshot = None
 
-            for media_type, media_path in (("movie", "movies"), ("tv", "tv_shows")):
+            # v1.12.126 Phase A.5: skip the per-media-type upsert pipeline
+            # entirely when codeload reported 304 (no upstream change).
+            # Stats stay zero on this path; the resolve + prune sweeps
+            # below still run since they depend on local DB state, not
+            # TDB state. is_unchanged is only set for the snapshot path;
+            # remote-fallback runs always do the full upsert.
+            skip_upsert = (snapshot is not None
+                           and snapshot.is_unchanged())
+            media_iter = (() if skip_upsert
+                          else (("movie", "movies"), ("tv", "tv_shows")))
+            for media_type, media_path in media_iter:
                 stage_key = f"index_{media_type}"
                 op_progress.update_progress(
                     db_path, "tdb_sync",
@@ -1583,13 +1693,22 @@ def run_sync(db_path, base_url: str, *,
                 "errors": stats.errors,
             },
         )
-        op_progress.update_progress(
-            db_path, "tdb_sync",
-            activity=(
-                f"Done — {stats.movies_seen + stats.tv_seen} items, "
-                f"{stats.new_count} new, {stats.updated_count} updated"
-            ),
-        )
+        # v1.12.126 Phase A.5: distinct activity line on the no-change
+        # path so the ops drawer's "Last Ops" card reads honestly
+        # ("Done — no upstream changes" rather than "Done — 0 items").
+        if skip_upsert:
+            op_progress.update_progress(
+                db_path, "tdb_sync",
+                activity="Done — no upstream changes (304)",
+            )
+        else:
+            op_progress.update_progress(
+                db_path, "tdb_sync",
+                activity=(
+                    f"Done — {stats.movies_seen + stats.tv_seen} items, "
+                    f"{stats.new_count} new, {stats.updated_count} updated"
+                ),
+            )
         op_progress.finish_progress(db_path, "tdb_sync", status="done")
         return stats
 

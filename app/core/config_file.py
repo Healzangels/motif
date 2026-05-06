@@ -117,6 +117,20 @@ class SyncConfig:
     # self-hosted mirrors of the database branch (e.g. a corporate
     # proxy of the same content).
     database_url: str = "https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+    # v1.12.126: auto-enqueue a plex_enum job after every successful
+    # ThemerrDB sync. The TDB sync's own resolve_theme_ids step
+    # already links new TDB rows to existing plex_items, so the
+    # post-sync enum is for catching PLEX-side changes (new titles
+    # added, folders moved, sidecars added/removed) and re-verifying
+    # plex_theme_uri claims via the TTL HEAD probe.
+    #
+    # Default True for safety — daily cron syncs need the auto-enum
+    # since no human is around to manually click REFRESH afterward.
+    # Users who want manual control on dashboard-button clicks can
+    # disable this; the daily cron + manual click both honor the
+    # setting (set up a separate plex_enum cron if you want different
+    # behavior).
+    auto_enum_after_sync: bool = True
 
 
 @dataclass
@@ -191,6 +205,7 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_SYNC_CRON",           "sync.cron",                       str),
     ("MOTIF_SYNC_SOURCE",         "sync.source",                     str),
     ("MOTIF_DB_TAR_URL",          "sync.database_url",               str),
+    ("MOTIF_AUTO_ENUM_AFTER_SYNC","sync.auto_enum_after_sync",       _to_bool),
     # web
     ("MOTIF_WEB_HOST",            "web.host",                        str),
     ("MOTIF_WEB_PORT",            "web.port",                        int),

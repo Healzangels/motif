@@ -97,20 +97,49 @@ def _add_evil_tar(*members: tarfile.TarInfo) -> bytes:
 
 class _StaticHandler:
     """Minimal httpx MockTransport handler that returns canned bytes
-    or a status code for any GET to a single URL."""
+    or a status code for any GET to a single URL.
 
-    def __init__(self, body: bytes | None = None, status: int = 200):
+    v1.12.126: optionally returns ETag / Last-Modified response
+    headers, and can branch on If-None-Match / If-Modified-Since
+    request headers to test the conditional-GET short-circuit."""
+
+    def __init__(
+        self,
+        body: bytes | None = None,
+        status: int = 200,
+        *,
+        etag: str | None = None,
+        last_modified: str | None = None,
+        match_etag: str | None = None,
+        match_last_modified: str | None = None,
+    ):
         self.body = body
         self.status = status
+        self.etag = etag
+        self.last_modified = last_modified
+        self.match_etag = match_etag
+        self.match_last_modified = match_last_modified
+        self.last_request_headers: dict[str, str] = {}
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.last_request_headers = dict(request.headers)
+        # v1.12.126 conditional-GET path: if the caller sent
+        # If-None-Match matching match_etag (or If-Modified-Since
+        # matching match_last_modified), short-circuit with 304.
+        inm = request.headers.get("If-None-Match") or request.headers.get("if-none-match")
+        ims = request.headers.get("If-Modified-Since") or request.headers.get("if-modified-since")
+        if (self.match_etag and inm == self.match_etag) or (
+            self.match_last_modified and ims == self.match_last_modified
+        ):
+            return httpx.Response(304)
         if self.body is None:
             return httpx.Response(self.status)
-        return httpx.Response(
-            self.status,
-            content=self.body,
-            headers={"content-length": str(len(self.body))},
-        )
+        headers = {"content-length": str(len(self.body))}
+        if self.etag:
+            headers["ETag"] = self.etag
+        if self.last_modified:
+            headers["Last-Modified"] = self.last_modified
+        return httpx.Response(self.status, content=self.body, headers=headers)
 
 
 def _make_client(handler) -> httpx.Client:
@@ -369,6 +398,155 @@ def test_load_active_exposes_fallback_to_api(db_path: Path):
     sync_rows = [r for r in rows if r.get("kind") == "tdb_sync"]
     assert sync_rows, "tdb_sync row not surfaced via load_active"
     assert sync_rows[0].get("detail", {}).get("fallback_active") is True
+
+
+# ---------- Phase A.5: ETag short-circuit ------------------------------------
+
+def test_snapshot_first_run_persists_etag(db_path: Path):
+    """First-ever run has no .meta file. Snapshot acquires normally;
+    after success, .meta carries the response ETag + Last-Modified
+    so the next run can send conditional headers."""
+    from app.core import progress as op_progress
+    from app.core.sync import _DatabaseSnapshot
+
+    op_progress.start_progress(
+        db_path, op_id="tdb_sync", kind="tdb_sync",
+        stage="snapshot_download", stage_label="…",
+    )
+
+    movie_rec = {
+        "imdb_id": "tt0000001", "id": 100, "title": "Test Movie",
+        "release_date": "2020-01-01", "youtube_theme_url": "https://youtu.be/abc",
+    }
+    body = _build_database_tarball({
+        "movies": {
+            "all_pages": [[{"id": 100, "imdb_id": "tt0000001", "title": "Test Movie"}]],
+            "imdb": {"tt0000001": movie_rec},
+        },
+        "tv_shows": {"all_pages": [[]]},
+    })
+    handler = _StaticHandler(
+        body=body,
+        etag='W/"abc123"',
+        last_modified="Tue, 05 May 2026 21:00:00 GMT",
+    )
+    client = _make_client(handler)
+    snap = _DatabaseSnapshot(
+        db_path, "tdb_sync",
+        "https://codeload.invalid/tar.gz/database",
+        cancel_check=lambda: False,
+    )
+    try:
+        snap.acquire(client)
+        assert snap.is_unchanged() is False
+        # First-run shouldn't send conditional headers.
+        assert "If-None-Match" not in handler.last_request_headers
+        assert "If-Modified-Since" not in handler.last_request_headers
+        # Meta file written.
+        assert snap.meta_path.is_file()
+        meta = json.loads(snap.meta_path.read_text())
+        assert meta.get("etag") == 'W/"abc123"'
+        assert meta.get("last_modified") == "Tue, 05 May 2026 21:00:00 GMT"
+    finally:
+        snap.release()
+
+
+def test_snapshot_304_short_circuits(db_path: Path):
+    """Second run with matching ETag → 304 → is_unchanged() True,
+    no extract, no validate, no tmpdir."""
+    from app.core import progress as op_progress
+    from app.core.sync import _DatabaseSnapshot
+
+    op_progress.start_progress(
+        db_path, op_id="tdb_sync", kind="tdb_sync",
+        stage="snapshot_download", stage_label="…",
+    )
+
+    # Seed the cache as if a prior run had landed.
+    cache_dir = db_path.parent / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "themerrdb-database.tar.gz").write_bytes(b"prior-tarball-bytes")
+    (cache_dir / "themerrdb-database.tar.gz.meta").write_text(
+        json.dumps({"etag": 'W/"abc123"',
+                    "last_modified": "Tue, 05 May 2026 21:00:00 GMT"})
+    )
+
+    handler = _StaticHandler(
+        body=b"<would not be served>",
+        match_etag='W/"abc123"',
+    )
+    client = _make_client(handler)
+    snap = _DatabaseSnapshot(
+        db_path, "tdb_sync",
+        "https://codeload.invalid/tar.gz/database",
+        cancel_check=lambda: False,
+    )
+    snap.acquire(client)
+    assert snap.is_unchanged() is True
+    # The conditional headers MUST have been sent.
+    headers = {k.lower(): v for k, v in handler.last_request_headers.items()}
+    assert headers.get("if-none-match") == 'W/"abc123"'
+    # No tmpdir was allocated since extract was skipped.
+    assert snap.root is None
+
+
+def test_snapshot_200_with_changed_etag_advances_meta(db_path: Path):
+    """When the ETag has changed, the conditional GET still goes
+    through (server returns 200), and the .meta file is rewritten
+    with the new validators."""
+    from app.core import progress as op_progress
+    from app.core.sync import _DatabaseSnapshot
+
+    op_progress.start_progress(
+        db_path, op_id="tdb_sync", kind="tdb_sync",
+        stage="snapshot_download", stage_label="…",
+    )
+    cache_dir = db_path.parent / "cache"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    (cache_dir / "themerrdb-database.tar.gz").write_bytes(b"prior")
+    (cache_dir / "themerrdb-database.tar.gz.meta").write_text(
+        json.dumps({"etag": 'W/"old"'})
+    )
+
+    movie_rec = {
+        "imdb_id": "tt0000001", "id": 100, "title": "Test Movie",
+        "release_date": "2020-01-01", "youtube_theme_url": "https://youtu.be/abc",
+    }
+    body = _build_database_tarball({
+        "movies": {
+            "all_pages": [[{"id": 100, "imdb_id": "tt0000001", "title": "Test Movie"}]],
+            "imdb": {"tt0000001": movie_rec},
+        },
+        "tv_shows": {"all_pages": [[]]},
+    })
+    # match_etag is set to a DIFFERENT value, so the server returns 200
+    # with a NEW etag rather than 304.
+    handler = _StaticHandler(
+        body=body,
+        etag='W/"new"',
+        match_etag='W/"never-matches"',
+    )
+    client = _make_client(handler)
+    snap = _DatabaseSnapshot(
+        db_path, "tdb_sync",
+        "https://codeload.invalid/tar.gz/database",
+        cancel_check=lambda: False,
+    )
+    try:
+        snap.acquire(client)
+        assert snap.is_unchanged() is False
+        meta = json.loads(snap.meta_path.read_text())
+        assert meta.get("etag") == 'W/"new"'
+    finally:
+        snap.release()
+
+
+# ---------- auto_enum_after_sync toggle --------------------------------------
+
+def test_config_auto_enum_default_true():
+    from app.core.config_file import MotifConfig
+    cfg = MotifConfig()
+    assert cfg.sync.auto_enum_after_sync is True
 
 
 # ---------- config schema ----------------------------------------------------

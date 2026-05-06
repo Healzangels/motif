@@ -278,6 +278,10 @@ class Settings:
     def sync_database_url(self) -> str:
         return self._cfg.sync.database_url
 
+    @property
+    def sync_auto_enum_after_sync(self) -> bool:
+        return self._cfg.sync.auto_enum_after_sync
+
     # ---- Web section ----
 
     @property

@@ -398,6 +398,34 @@
           if you're mirroring the <code>database</code> branch privately.
         </p>
       </label>
+
+      <!-- v1.12.126: post-sync plex_enum is now opt-in. Default ON
+           because daily cron syncs rely on it to pick up Plex-side
+           changes (new titles, folder moves, sidecar adds/removes).
+           Toggling OFF means manual control: TDB sync runs alone;
+           click REFRESH FROM PLEX on the library tab when you want
+           the Plex side reconciled. -->
+      <label class="form-label form-label-checkbox">
+        <div class="form-label-row">
+          <span class="form-label-text">AUTO-REFRESH PLEX AFTER SYNC</span>
+          <span class="form-env-badge" data-env-badge="sync.auto_enum_after_sync" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" data-cfg-field="sync.auto_enum_after_sync" />
+          <span>After every ThemerrDB sync, run a full Plex enumeration to pick up Plex-side changes</span>
+        </label>
+        <p class="form-hint">
+          The TDB sync's own resolve step already links new TDB rows to
+          existing Plex items, so this auto-refresh is for catching
+          changes on the <em>Plex</em> side: new titles, folder moves, manual
+          sidecar adds/removes, and Plex theme-claim re-verification.<br>
+          <strong>Recommended ON</strong> if you depend on the daily cron
+          sync (no human is around to manually click REFRESH afterward).
+          <strong>Toggle OFF</strong> if you want manual control over when
+          the slower Plex enumeration runs — the dashboard SYNC + REFRESH
+          button will then only do the TDB sync.
+        </p>
+      </label>
     </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>

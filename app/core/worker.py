@@ -622,19 +622,28 @@ class Worker:
             source=self.settings.sync_source,
             database_url=self.settings.sync_database_url,
         )
-        # Auto-enqueue a plex_enum after every sync so the unified browse view
-        # stays current. Dedupe so concurrent syncs don't pile up.
-        with get_conn(self.settings.db_path) as conn:
-            existing = conn.execute(
-                "SELECT 1 FROM jobs WHERE job_type = 'plex_enum' "
-                "AND status IN ('pending','running')"
-            ).fetchone()
-            if not existing:
-                conn.execute(
-                    "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
-                    "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
-                    (now_iso(), now_iso()),
-                )
+        # v1.12.126: post-sync plex_enum is now opt-in via
+        # sync.auto_enum_after_sync (default True). The TDB sync's own
+        # resolve_theme_ids step already links new TDB rows to existing
+        # plex_items; the auto-enum is for picking up PLEX-side changes
+        # (new titles, moved folders, manual sidecar adds/removes) and
+        # re-verifying plex_theme_uri claims via the TTL HEAD probe.
+        # Daily cron syncs need it (no human around to manually click
+        # REFRESH); users who want manual control on the dashboard
+        # button can disable.
+        if self.settings.sync_auto_enum_after_sync:
+            # Dedupe so concurrent syncs don't pile up.
+            with get_conn(self.settings.db_path) as conn:
+                existing = conn.execute(
+                    "SELECT 1 FROM jobs WHERE job_type = 'plex_enum' "
+                    "AND status IN ('pending','running')"
+                ).fetchone()
+                if not existing:
+                    conn.execute(
+                        "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                        "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
+                        (now_iso(), now_iso()),
+                    )
 
     def _do_scan(self, job: sqlite3.Row) -> None:
         """Run a Plex folder scan. Payload optionally carries

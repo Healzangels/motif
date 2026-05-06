@@ -213,6 +213,25 @@
     return `<div class="op-card-error">${esc(msg)}</div>`;
   }
 
+  // v1.12.126 Phase A.5: green-tone callout for a no-op sync — the
+  // 304-short-circuit path. Codeload reported the database tree
+  // hasn't moved since last sync, so motif skipped the entire
+  // upsert pipeline and only ran the local prune sweeps. This is
+  // the desired-good-case for a daily cron run and the user should
+  // be able to tell at a glance that nothing changed (vs. a full
+  // run with 0 new + 0 updated, which looks identical from the
+  // movies_seen / tv_seen counters alone).
+  function renderNoChangesBadge(op) {
+    if (!(op.detail && op.detail.no_changes)) return '';
+    return `
+      <div class="op-card-nochanges" title="ThemerrDB tree at HEAD is byte-identical to the last sync — codeload returned 304 Not Modified. Local prune sweeps still ran.">
+        <span class="op-card-nochanges-mark">✓</span>
+        <span class="op-card-nochanges-text">
+          // NO CHANGES — TDB tree unchanged since last sync
+        </span>
+      </div>`;
+  }
+
   // v1.12.121 (Phase A): sticky fallback indicator.
   // When the snapshot path failed and the run fell back to remote,
   // sync.py sets detail.fallback_active=true (+ detail.fallback_reason
@@ -313,6 +332,7 @@
               <span>${fmtNum(op.error_count)}</span>
             </span>` : ''}
         </div>
+        ${renderNoChangesBadge(op)}
         ${renderFallbackBadge(op)}
         ${renderTimeline(op)}
         ${renderSparkline(op)}

@@ -609,6 +609,29 @@ body[data-ops-running="1"] #topbar-status-text {
   word-break: break-word;
 }
 
+/* v1.12.126 (Phase A.5): green-tone "no changes" callout on the
+   op-card for a 304-short-circuit sync. Symmetric to op-card-
+   fallback (warn) and op-card-error (red) — same shape, calm tone. */
+.op-card-nochanges {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(109,255,181,0.08);
+  border-left: 2px solid var(--green);
+  font-size: 11px;
+  color: var(--green);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.op-card-nochanges-mark {
+  font-weight: 700;
+}
+.op-card-nochanges-text {
+  flex: 1;
+  word-break: break-word;
+}
+
 /* v1.12.121 (Phase A): warn-tone fallback callout on the op-card.
    Surfaces "the snapshot path failed and we ran the slow remote
    path" without escalating to error styling — the data is still
