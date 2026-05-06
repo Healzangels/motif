@@ -87,9 +87,29 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                     stage_total=0,
                     activity=f"Fetching '{s['title']}' from Plex",
                 )
+                # v1.12.128: per-page progress emit during the Plex
+                # fetch. Pre-fix the bar sat at stage_total=0
+                # (indeterminate shimmer) for the whole fetch — on a
+                # 10k-item section that's ~17s of "is this even
+                # working?" silence. Now we tick (received / total)
+                # as Plex feeds back pages of 500.
+                import time as _t
+                _last_fetch_emit = [_t.monotonic()]
+                def _on_fetch_progress(received: int, total: int | None) -> None:
+                    if (_t.monotonic() - _last_fetch_emit[0]) < 0.3:
+                        return
+                    _last_fetch_emit[0] = _t.monotonic()
+                    op_progress.update_progress(
+                        db_path, "plex_enum",
+                        stage_label=(f"Section {stats['sections']}/{len(managed)}: "
+                                     f"{s['title']} (fetch)"),
+                        stage_current=received,
+                        stage_total=total or 0,
+                    )
                 try:
                     items = client.enumerate_section_items(
                         section_id=section_id, media_type=section_type,
+                        progress_callback=_on_fetch_progress,
                     )
                 except Exception as e:
                     log.warning("plex_enum: section %s failed: %s", s["title"], e)
@@ -109,6 +129,8 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                     activity=f"Upserting {len(items)} items from '{s['title']}'",
                 )
                 stats["items_seen"] += len(items)
+                _scope_label = (f"Section {stats['sections']}/{len(managed)}: "
+                                f"{s['title']}")
                 ins, upd = _upsert_items(
                     db_path, items, cancel_check=_cancel_check,
                     # v1.12.18: pass section_id so the resolve pass that
@@ -121,8 +143,13 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                     # v1.12.124: drive op_progress per batch so the
                     # bar reflects in-section progress instead of
                     # jumping 0 → 100% at section boundaries.
+                    # v1.12.128: distinct phase labels so the user
+                    # can read which step of the section's pipeline
+                    # is currently running.
                     progress_op_id="plex_enum",
                     progress_total=len(items),
+                    progress_phase1_label=f"{_scope_label} (sidecar)",
+                    progress_phase2_label=f"{_scope_label} (upsert)",
                 )
                 stats["inserted"] += ins
                 stats["updated"] += upd
@@ -445,7 +472,9 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                    section_id: str | None = None,
                    progress_op_id: str | None = None,
                    progress_total: int | None = None,
-                   progress_base: int = 0) -> tuple[int, int]:
+                   progress_base: int = 0,
+                   progress_phase1_label: str | None = None,
+                   progress_phase2_label: str | None = None) -> tuple[int, int]:
     """Upsert one section's items into plex_items. Returns
     (inserted_count, updated_count).
 
@@ -506,6 +535,19 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
         sidecar_results: dict[int, int | None] = {}
         log.info("plex_enum: Phase 1 (sidecar stat) on %d items", len(items))
         phase1_start = _t.monotonic()
+        # v1.12.128: emit op_progress at the start of Phase 1 so the
+        # bar tick'd by the fetch stage carries forward into the
+        # sidecar-stat phase. The label clarifies which phase is
+        # running so the user can read the bar honestly.
+        if progress_op_id is not None:
+            op_progress.update_progress(
+                db_path, progress_op_id,
+                stage_label=(progress_phase1_label
+                             or "Sidecar stat"),
+                stage_current=0,
+                stage_total=len(items),
+            )
+        last_phase1_emit = _t.monotonic()
         with ThreadPoolExecutor(max_workers=16,
                                 thread_name_prefix="motif-sidecar") as ex:
             futures = {
@@ -539,6 +581,18 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                 if done % 200 == 0:
                     log.info("plex_enum: Phase 1 progress %d/%d (%.1fs)",
                              done, len(items), _t.monotonic() - phase1_start)
+                # v1.12.128: time-throttled op_progress emit so the
+                # bar tick'd in the fetch stage keeps moving through
+                # Phase 1 (typically ~1.5s on a 10k-item section, so
+                # 5-6 emits at 300ms is plenty).
+                if (progress_op_id is not None
+                        and (_t.monotonic() - last_phase1_emit) > 0.3):
+                    last_phase1_emit = _t.monotonic()
+                    op_progress.update_progress(
+                        db_path, progress_op_id,
+                        stage_current=done,
+                        stage_total=len(items),
+                    )
         log.info("plex_enum: Phase 1 done in %.1fs",
                  _t.monotonic() - phase1_start)
         # Resolve indeterminate (None) results against the previously-
@@ -584,11 +638,18 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                 batch_start == 0
                 or (_t.monotonic() - last_ui) > 0.3):
             last_ui = _t.monotonic()
+            # v1.12.128: distinct label for Phase 2 so the bar text
+            # changes from "(fetch)" → "Sidecar stat" → "Upsert"
+            # as the user watches.
+            update_kwargs = {
+                "stage_current": batch_start,
+                "stage_total": progress_total,
+                "processed_total": progress_base + batch_start,
+            }
+            if progress_phase2_label is not None and batch_start == 0:
+                update_kwargs["stage_label"] = progress_phase2_label
             op_progress.update_progress(
-                db_path, progress_op_id,
-                stage_current=batch_start,
-                stage_total=progress_total,
-                processed_total=progress_base + batch_start,
+                db_path, progress_op_id, **update_kwargs,
             )
         with get_conn(db_path) as conn, transaction(conn):
             for it, sidecar in batch:

@@ -492,6 +492,7 @@ class PlexClient:
 
     def enumerate_section_items(
         self, *, section_id: str, media_type: str,
+        progress_callback=None,
     ) -> list[PlexLibraryItem]:
         """Full enumeration of one library section. Returns one PlexLibraryItem
         per content row, with GUIDs and folder paths extracted.
@@ -504,6 +505,14 @@ class PlexClient:
         per-call timeout. The explicit type=1 (movie) / type=2 (show)
         filter ensures the response is at the section's primary level
         (movies / shows) instead of the leaf level (episodes).
+
+        v1.12.128: optional progress_callback(received, total) fires
+        after each page is appended so callers can drive a UI bar
+        during the fetch. `total` is None on the first call (we don't
+        learn it until Plex's first response carries totalSize),
+        then concrete on subsequent calls. Exceptions inside the
+        callback are caught — progress emission must never wedge
+        the enum.
         """
         type_id = "1" if media_type == "movie" else "2"
         url = f"/library/sections/{section_id}/all"
@@ -583,6 +592,14 @@ class PlexClient:
                     has_theme=el.get("theme") is not None,
                     plex_theme_uri=el.get("theme") or "",
                 ))
+            # v1.12.128: emit per-page progress so the ops drawer's
+            # bar can tick during the fetch instead of sitting at the
+            # post-fetch stage_total=0 indeterminate-shimmer state.
+            if progress_callback is not None:
+                try:
+                    progress_callback(len(out), total_size)
+                except Exception as e:
+                    log.debug("enumerate progress callback failed: %s", e)
             if container_size < page_size:
                 break  # last page
             if total_size is not None and (offset + container_size) >= total_size:
