@@ -3946,8 +3946,15 @@
     // attention-worthy. New rule: surface the highest-priority
     // signal as the single glyph; the rest stay reachable in the
     // INFO card and via the row tinting (.row-failure) /
-    // state-pill columns. Order: failure > in-flight job >
-    // pending update > await/mismatch/broken > none.
+    // state-pill columns.
+    //
+    // v1.13.14: in-flight (download/place) branch removed from the
+    // glyph hierarchy. The DL/PL state-pill-pending pulse (v1.13.13
+    // Option C) covers transient operational state in the columns
+    // where it belongs; the title-cell glyph slot is reserved for
+    // attention signals that need user intervention (failure,
+    // pending update, await, mismatch, broken). Order is now:
+    // failure > pending update > mismatch > await > broken > none.
     let glyphHtml = null;
     if (it.failure_kind && !it.failure_acked_at) {
       // v1.10.50: only show the ! glyph when the failure hasn't been
@@ -3972,16 +3979,6 @@
         + `data-section-id="${htmlEscape(it.section_id || '')}" `
         + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`;
       rowExtra = ' class="row-failure"';
-    } else if (it.job_in_flight) {
-      // Theme has a pending or running download/place job — pulse a
-      // cyan glyph so users can watch their just-clicked URL/upload
-      // land. Pairs with the rapid-poll mode kicked off by manual
-      // actions.
-      const jobLabel = it.job_in_flight === 'download' ? 'downloading'
-                     : it.job_in_flight === 'place'    ? 'placing into Plex folder'
-                     :                                   'processing';
-      glyphHtml =
-        `<span class="title-glyph title-glyph-pending" title="${htmlEscape(jobLabel)}">⟳</span>`;
     } else if (it.actionable_update && computeSrcLetter(it) !== '-') {
       // v1.12.78: blue ! glyph for pending upstream updates. Gated
       // on actionable_update (decision='pending') so KEEP CURRENT

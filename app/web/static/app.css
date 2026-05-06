@@ -1363,8 +1363,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    required" glyphs share one visual treatment, color-coded by kind. */
 .title-glyph-action  { font-weight: 700;
                        animation: fail-pulse 2s ease-in-out infinite; }
-.title-glyph-pending { color: var(--cyan);   text-shadow: 0 0 6px rgba(109,211,255,0.55);
-                       display: inline-block; animation: spin-glyph 1.4s linear infinite; }
+/* v1.13.14: .title-glyph-pending removed. The in-flight spinner
+   that used this class was dropped from the title-cell glyph
+   hierarchy — DL/PL .state-pill-pending in the columns now
+   covers transient operational state. */
 /* v1.12.65: await glyph color flipped from cyan → amber to read
    as "action required" instead of "informational". Matches the
    new amber .state-pill.await in the PL column so the row's
@@ -1375,7 +1377,8 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 /* v1.11.62: dlBroken cycle glyph — clicks through to the dl_missing filter. */
 .title-glyph-broken  { color: var(--amber);  text-shadow: 0 0 6px rgba(255,184,74,0.55);
                        text-decoration: none; font-weight: 700; }
-@keyframes spin-glyph { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+/* v1.13.14: @keyframes spin-glyph removed — the only consumer
+   (.title-glyph-pending) was retired with the in-flight spinner. */
 
 /* Override dialog: extra polish for the modal body */
 .dlg-head {
