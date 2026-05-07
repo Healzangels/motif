@@ -134,3 +134,18 @@ Open `docs/PROJECT_HISTORY.md` § "Recurring Bug Classes" first —
 chances are the bug class is already catalogued with its fix
 pattern and version markers. Only synthesize a new fix once you've
 ruled out a known pattern.
+
+## Session journaling
+
+`docs/SESSION_JOURNAL.md` is an append-only log of every Claude
+Code session — what we worked on, why, where we left off. The
+SessionStart hook (`.claude/hooks/session-start.sh`) tails the file
+and prints it as initial context for the next session, so a fresh
+chat (after a crash, after `/compact`, or just on a new day) picks
+up where the previous one left off without the user re-pasting.
+
+**Every meaningful task ends with a journal entry.** New entries
+go at the **bottom** of the file (newest last, so `tail` surfaces
+recent work). When a session ends mid-task, the entry captures
+in-flight state under "Open threads" so the next session can
+resume cleanly. See the file's header for the entry format.
