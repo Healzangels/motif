@@ -1,2 +1,2 @@
 """motif — automated theme orchestration for Plex via ThemerrDB."""
-__version__ = "1.13.19"
+__version__ = "1.13.21"

@@ -493,6 +493,7 @@ class PlexClient:
     def enumerate_section_items(
         self, *, section_id: str, media_type: str,
         progress_callback=None,
+        fallback_progress_callback=None,
     ) -> list[PlexLibraryItem]:
         """Full enumeration of one library section. Returns one PlexLibraryItem
         per content row, with GUIDs and folder paths extracted.
@@ -513,6 +514,14 @@ class PlexClient:
         then concrete on subsequent calls. Exceptions inside the
         callback are caught — progress emission must never wedge
         the enum.
+
+        v1.13.21 (was v1.13.20): optional fallback_progress_callback
+        (done, total) fires every 25 items during the per-show
+        /library/metadata fetch fallback (the slow-path that runs when
+        the bulk listing missed Location elements). Pre-fix the bar
+        sat at the bulk-list's 100% for the entire ~30s fallback,
+        looking stuck. Same exception-swallow contract as the bulk
+        progress_callback.
         """
         type_id = "1" if media_type == "movie" else "2"
         url = f"/library/sections/{section_id}/all"
@@ -641,12 +650,30 @@ class PlexClient:
                 # Modest concurrency — Plex tolerates this fine and the
                 # alternative is sequential which is unusable for big
                 # libraries.
+                # v1.13.21: emit a progress tick every 25 items (and at
+                # completion) so the ops drawer's bar advances through
+                # this phase instead of sitting at the bulk-list's
+                # 100%. Throttling to 25 keeps the SQLite write rate
+                # tolerable on large libraries (~400 ticks for a 10K
+                # show library). Both the modulus and the final emit
+                # are guarded against callback exceptions — progress is
+                # decorative, never load-bearing.
+                done = 0
+                fallback_total = len(missing)
                 with ThreadPoolExecutor(max_workers=8) as ex:
                     for idx, p in ex.map(_fill, missing):
                         if p:
                             out[idx] = PlexLibraryItem(
                                 **{**out[idx].__dict__, "folder_path": p}
                             )
+                        done += 1
+                        if (fallback_progress_callback is not None
+                                and (done % 25 == 0 or done == fallback_total)):
+                            try:
+                                fallback_progress_callback(done, fallback_total)
+                            except Exception as e:
+                                log.debug(
+                                    "fallback progress callback failed: %s", e)
                 still_missing = sum(1 for it in out if not it.folder_path)
                 log.info(
                     "enumerate_section_items: section %s — per-item "

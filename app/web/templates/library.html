@@ -13,7 +13,7 @@
         <button class="chip chip-active" data-fourk="0">// STANDARD</button>
         <button class="chip" data-fourk="1">// 4K</button>
       </div>
-      <button class="btn" id="library-refresh-btn" type="button">// SCAN PLEX</button>
+      <button class="btn" id="library-refresh-btn" type="button">// SYNC PLEX</button>
     </div>
   </div>
   <p class="muted">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>
@@ -34,11 +34,11 @@
 
 <!-- Scan-needed hint — shown when motif has not yet enumerated Plex.
      Without a scan, the missing-themes count would be comparing ThemerrDB
-     against nothing. Click SCAN PLEX above to populate. -->
+     against nothing. Click SYNC PLEX above to populate. -->
 <div id="library-scan-hint" class="missing-banner" style="display:none;border-color:var(--cyan);background:rgba(109,211,255,0.04)">
   <span class="missing-banner-glyph" style="color:var(--cyan)">▸</span>
   <span class="missing-banner-text">
-    no Plex scan on record yet — click <strong>// SCAN PLEX</strong>
+    no Plex scan on record yet — click <strong>// SYNC PLEX</strong>
     to enumerate this library so motif can compare it against ThemerrDB.
   </span>
 </div>

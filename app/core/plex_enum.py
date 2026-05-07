@@ -119,10 +119,29 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                         stage_current=received,
                         stage_total=total or 0,
                     )
+                # v1.13.21 (was v1.13.20): per-show folder-path fallback
+                # also emits progress so the bar doesn't appear stuck
+                # at 100% while plex.py walks /library/metadata per
+                # show. Stage label adds "(folder paths)" to make the
+                # phase legible.
+                _last_fb_emit = [_t.monotonic()]
+                def _on_fallback_progress(done: int, total: int) -> None:
+                    if (_t.monotonic() - _last_fb_emit[0]) < 0.3 and done < total:
+                        return
+                    _last_fb_emit[0] = _t.monotonic()
+                    op_progress.update_progress(
+                        db_path, "plex_enum",
+                        stage_label=_section_label(
+                            stats['sections'], len(managed),
+                            s['title'], "fetch") + " (folder paths)",
+                        stage_current=done,
+                        stage_total=total,
+                    )
                 try:
                     items = client.enumerate_section_items(
                         section_id=section_id, media_type=section_type,
                         progress_callback=_on_fetch_progress,
+                        fallback_progress_callback=_on_fallback_progress,
                     )
                 except Exception as e:
                     log.warning("plex_enum: section %s failed: %s", s["title"], e)

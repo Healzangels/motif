@@ -73,9 +73,10 @@
 </section>
 
 <!-- ============================ PLEX COVERAGE ============================ -->
-<!-- Moved here in v1.8.0 from /coverage. The graph stats cross-reference what
-     Plex sees against motif's themes catalog. Click-through to Movies/TV for
-     actionable rows. -->
+<!-- Moved here in v1.8.0 from /coverage. v1.13.21 dashboard refresh: dropped
+     the standalone WASTED ON COPIES tile (now a foot-line on COPIES) and
+     pulled ORPHANS into the same 5-column grid as the row above so nothing
+     hangs alone on a half-empty row. -->
 <section class="grid grid-stats">
   <article class="stat">
     <header class="stat-head"><span class="stat-label">PLEX MOVIES</span></header>
@@ -100,10 +101,9 @@
   <article class="stat stat-mini">
     <header class="stat-head"><span class="stat-label">COPIES</span></header>
     <div class="stat-num accent" id="storage-copies">—</div>
-  </article>
-  <article class="stat stat-mini">
-    <header class="stat-head"><span class="stat-label">WASTED ON COPIES</span></header>
-    <div class="stat-num accent-red" id="storage-wasted">—</div>
+    <footer class="stat-foot">
+      <span class="muted"><b id="storage-wasted">—</b> wasted</span>
+    </footer>
   </article>
   <article class="stat stat-mini">
     <header class="stat-head"><span class="stat-label">ORPHANS</span></header>
@@ -140,16 +140,41 @@
   </table>
 </section>
 
-<!-- v1.13.2 (#1): sync history sparkline. Hidden on first paint;
-     loadDashboard populates from /api/sync/history. Each bar = one
-     sync run; height = wall-clock seconds; color = transport. Hover
-     for the per-run tooltip. Below the bars: per-transport summary
-     (avg + count + fallback note) so the user can see GIT vs
-     DATABASE empirically in their environment. -->
+<!-- v1.13.21: theme-source pie. Buckets every plex_items row by the
+     same SRC letter (T/A/U/M/P/-) the library shows as a row pill;
+     the chart agrees with the row glyphs the user already reads.
+     Legend pills are click-to-toggle (filter slices in/out) and
+     "no theme" can be hidden when the user wants to focus on the
+     covered portion. Hidden until the first /api/stats response
+     lands so the donut doesn't render at zero on first paint. -->
+<section class="block" id="source-breakdown-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SOURCE BREAKDOWN</h2>
+    <span class="muted small" id="source-breakdown-summary">—</span>
+  </header>
+  <div class="source-breakdown-body">
+    <div class="source-breakdown-chart">
+      <svg viewBox="0 0 42 42" id="source-pie-svg" aria-label="theme source distribution">
+        <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
+        <g id="source-pie-slices"></g>
+        <text x="21" y="20" class="source-pie-center-num" text-anchor="middle"
+              id="source-pie-center-num">—</text>
+        <text x="21" y="25" class="source-pie-center-label" text-anchor="middle">items</text>
+      </svg>
+    </div>
+    <div class="source-breakdown-legend" id="source-breakdown-legend"></div>
+  </div>
+</section>
+
+<!-- v1.13.2 (#1): sync history block. Originally rendered as a
+     sparkline; v1.13.16 (B1) swapped it for a 5-row table with
+     timestamp / transport / duration / changes / status columns.
+     Below the table: per-transport summary (avg + count + fallback
+     note) so the user can see GIT vs DATABASE empirically. -->
 <section class="block" id="sync-history-block" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// SYNC HISTORY</h2>
-    <span class="muted small">last 30 runs · hover a bar for detail</span>
+    <span class="muted small">last 5 runs · per-transport averages below</span>
   </header>
   <div class="block-body" style="padding:12px 18px">
     <div class="sync-history-bars" id="sync-history-bars"></div>
@@ -181,12 +206,10 @@
   </table>
 </section>
 
-<section class="block">
-  <header class="block-head">
-    <h2 class="block-title">// LAST SYNC</h2>
-  </header>
-  <pre class="block-body" id="last-sync"></pre>
-</section>
+<!-- v1.13.21: LAST SYNC pre-block removed. The hero has the
+     `Last run …` relative-time line, and the LIVE OPS drawer
+     surfaces a richer per-stage report. The wall-of-text block
+     was duplicating both surfaces with no extra signal. -->
 
 <section class="block">
   <header class="block-head">

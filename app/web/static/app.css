@@ -844,15 +844,20 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    right edge inward (col-imdb padding-right: 24px on td) and
    the actions content leftward (padding-left: 60px) opens a
    visible gap on every row regardless of action density. */
-#library-table td.col-actions,
-#library-table th.col-actions { padding-left: 60px; }
+#library-table td.col-actions { padding-left: 60px; }
 /* v1.13.16: ACTIONS header centers OVER the right-aligned button
    cluster instead of right-aligning to the cell edge. Pre-fix the
    v1.13.13 padding bump shifted the cluster left while the header
    text stayed pinned to the right padding, so "ACTIONS" sat well
    to the right of where the buttons actually rendered. Centering
    the th puts the label visually above the cluster on rows with
-   the full 4-button set. */
+   the full 4-button set.
+   v1.13.21 (was v1.13.20): the padding-left:60 shifts the
+   button-cluster cell content rightward but it should NOT shift
+   the header text, since "ACTIONS" centers within the cell —
+   if it inherits the same 60px left pad it ends up offset
+   right of the visual middle. Keep padding on td only and let
+   the th center within the full cell content area. */
 #library-table th.col-actions { text-align: center; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
 #library-table td.col-imdb,
@@ -2608,6 +2613,129 @@ pre code, .codeblock {
 .sync-history-sum-git      .sync-history-sum-label { color: var(--cyan); }
 .sync-history-sum-database .sync-history-sum-label { color: var(--magenta); }
 .sync-history-sum-remote   .sync-history-sum-label { color: var(--fg-mute); }
+
+/* v1.13.21: SOURCE BREAKDOWN — donut chart + click-to-filter
+   legend. Slices are SVG circles with stroke-dasharray sliced
+   into percentages of the 100-unit-circumference (r=15.915).
+   Color-coded to match the row SRC pill palette so the chart and
+   the per-row glyphs read as the same axis. The legend entries
+   are buttons; clicking one toggles its slice off (dimmed +
+   excluded from the center total). */
+.source-breakdown-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  align-items: center;
+  padding: 18px;
+}
+@media (max-width: 700px) {
+  .source-breakdown-body { grid-template-columns: 1fr; }
+  .source-breakdown-chart { justify-self: center; }
+}
+.source-breakdown-chart { display: flex; justify-content: center; }
+.source-breakdown-chart svg {
+  width: 200px; height: 200px;
+  transform: rotate(-90deg);
+}
+.source-pie-ring {
+  fill: transparent;
+  stroke: var(--bg-elev-2);
+  stroke-width: 3;
+}
+.source-pie-slice {
+  fill: transparent;
+  stroke-width: 3;
+  transition: stroke-dasharray 0.4s ease, opacity 0.2s ease;
+}
+.source-pie-slice.dim { opacity: 0.18; }
+.source-pie-center-num {
+  font-family: var(--font-display);
+  font-size: 5px;
+  fill: var(--green-bright);
+  transform: rotate(90deg);
+  transform-origin: 21px 21px;
+}
+.source-pie-center-label {
+  font-size: 2px;
+  letter-spacing: 0.16em;
+  fill: var(--fg-mute);
+  transform: rotate(90deg);
+  transform-origin: 21px 21px;
+}
+/* Letter palette mirrors the SRC row pills (T green, U violet,
+   A cyan, M magenta, P amber, "-" muted). */
+.source-pie-T { stroke: var(--green-bright); }
+.source-pie-U { stroke: var(--violet); }
+.source-pie-A { stroke: var(--cyan); }
+.source-pie-M { stroke: var(--magenta); }
+.source-pie-P { stroke: var(--amber); }
+.source-pie-X { stroke: var(--fg-mute); } /* "no theme" / dash */
+
+.source-pie-T-text { color: var(--green-bright); }
+.source-pie-U-text { color: var(--violet); }
+.source-pie-A-text { color: var(--cyan); }
+.source-pie-M-text { color: var(--magenta); }
+.source-pie-P-text { color: var(--amber); }
+.source-pie-X-text { color: var(--fg-mute); }
+
+.source-legend-swatch-T { background: var(--green-bright); }
+.source-legend-swatch-U { background: var(--violet); }
+.source-legend-swatch-A { background: var(--cyan); }
+.source-legend-swatch-M { background: var(--magenta); }
+.source-legend-swatch-P { background: var(--amber); }
+.source-legend-swatch-X { background: var(--fg-mute); }
+
+.source-breakdown-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 18px;
+  font-size: var(--t-tiny);
+}
+.source-legend-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.source-legend-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--line);
+}
+.source-legend-item.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-mute);
+}
+.source-legend-swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.source-legend-letter {
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+}
+.source-legend-name { color: var(--fg-dim); flex: 1; }
+.source-legend-count {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.source-legend-pct {
+  color: var(--fg-mute);
+  font-size: 10px;
+  margin-left: 4px;
+}
 
 /* v1.13.3 (Issue 4): scope chip row on the INFO card. Surfaces
    4K-vs-Standard, the Plex section title, and the edition tag

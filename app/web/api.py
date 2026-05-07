@@ -2536,8 +2536,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 WHERE pu.decision = 'pending'
                 LIMIT 1
             """).fetchone()
+            # v1.13.21: theme-source breakdown for the dashboard
+            # source pie. Counts each plex_items row by the same
+            # SRC letter the library renders (T/A/U/M/P/-) so the
+            # chart agrees with the row pills the user is already
+            # looking at. Single grouped query — joins mirror the
+            # /api/library FROM block.
+            src_rows = conn.execute(f"""
+                SELECT {_SRC_LETTER_SQL} AS letter,
+                       pi.media_type AS plex_media_type,
+                       COUNT(*) AS n
+                FROM plex_items pi
+                INNER JOIN plex_sections ps
+                  ON ps.section_id = pi.section_id AND ps.included = 1
+                LEFT JOIN themes t ON t.id = pi.theme_id
+                LEFT JOIN placements p
+                  ON p.media_type = t.media_type
+                 AND p.tmdb_id = t.tmdb_id
+                 AND p.section_id = pi.section_id
+                LEFT JOIN local_files lf
+                  ON lf.media_type = t.media_type
+                 AND lf.tmdb_id = t.tmdb_id
+                 AND lf.section_id = pi.section_id
+                GROUP BY letter, plex_media_type
+            """).fetchall()
             dry = is_dry_run(db, default=settings.dry_run_default)
-        return row, last_sync, enum_running_rows, dry, failure_tab_row, update_tab_row
+        return row, last_sync, enum_running_rows, dry, failure_tab_row, update_tab_row, src_rows
 
     # v1.11.37: short-TTL cache for /api/stats. Topbar polls every 15s
     # AND every page that wires sync/refresh fires it on click — under
@@ -2605,7 +2629,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and (now - cached["ts"]) < _stats_cache_ttl
                 and cached["value"] is not None):
             return cached["value"]
-        row, last_sync, enum_running_rows, dry, failure_tab_row, update_tab_row = await run_in_threadpool(_stats_sync, db)
+        row, last_sync, enum_running_rows, dry, failure_tab_row, update_tab_row, src_rows = await run_in_threadpool(_stats_sync, db)
         # v1.11.27: aggregate the per-section enum_running rows into a
         # tab-variant map and a section_id list so the UI can lock
         # buttons granularly.
@@ -2711,6 +2735,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "drops": {
                 "total": row["drops_total"],
             },
+            # v1.13.21: theme-source distribution for the dashboard
+            # source pie. Per-letter buckets (T/A/U/M/P/-) split by
+            # plex_media_type so the JS can show all-media or filter
+            # to movie/tv/show. Letters mirror the row SRC pill, so
+            # the chart legend matches the library column glyphs.
+            "theme_sources": [
+                {"letter": (r["letter"] or "-"),
+                 "media_type": r["plex_media_type"],
+                 "count": r["n"]}
+                for r in src_rows
+            ],
             "config": {
                 "paths_ready": settings.is_paths_ready(),
                 "themes_dir": str(settings.themes_dir) if settings.is_paths_ready() else None,
@@ -7170,6 +7205,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "AND section_id = ?" if section_id else ""
             )
             section_filter_args = ((section_id,) if section_id else ())
+            # v1.13.21: separately track rks discovered via the
+            # placement-folder match (path 2). Those are rows where
+            # motif owned a sidecar that we just unlinked, so any
+            # post-PURGE HEAD probe against /library/metadata/{rk}/
+            # theme is asking Plex about a file we deleted seconds
+            # ago — Plex's cache routinely answers 200 against that
+            # for several seconds, falsely "verifying" a phantom P
+            # claim. The inline-verify loop below skips these rks.
+            # Multi-edition / multi-section purges where the same
+            # title also has a Plex-served theme on a sibling
+            # section are unaffected: that sibling's rk lives in a
+            # different rating_key, lands via path 1 or 3 alone, and
+            # remains eligible for verification.
+            rk_from_placement: set[str] = set()
             # Path 1: theme_id stamp
             if theme_id_pk_for_clear is not None:
                 for r in conn.execute(
@@ -7188,6 +7237,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (*placement_folders, plex_mt, *section_filter_args),
                 ).fetchall():
                     rk_clear.add(r["rating_key"])
+                    rk_from_placement.add(r["rating_key"])
             # Path 3: real-tmdb match (covers the non-orphan case
             # where motif never had to allocate a synthetic id)
             for r in conn.execute(
@@ -7431,6 +7481,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         # inline verify against Plex's cache risks a
                         # false 200. Skip them.
                         if not pre_has_theme.get(rk, 0):
+                            continue
+                        # v1.13.21: also skip rks where motif had a
+                        # placement (path 2 collection). pre_has_theme
+                        # alone wasn't enough on edition siblings: 4K
+                        # rows that had motif's sidecar showed
+                        # has_theme=1 (Plex saw the file) AND landed
+                        # in rk_from_placement, so the v1.13.4 gate let
+                        # them through and the HEAD probe restored
+                        # has_theme=1 against Plex's stale cache.
+                        # Tracking placement provenance separately
+                        # makes the rule explicit: if motif owned the
+                        # file we just deleted, don't trust Plex's
+                        # next-second view of /theme — wait for the
+                        # background plex_enum to reconcile.
+                        if rk in rk_from_placement:
                             continue
                         try:
                             result = plex.verify_theme_claim(rk)

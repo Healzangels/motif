@@ -557,10 +557,17 @@
       const refreshBtnBusy = autoEnum
         ? (themerrdbBusy || plexEnumBusy)
         : plexEnumBusy;
-      // Library page SCAN PLEX. v1.13.19: one-word busy label —
-      // "// SCANNING…" stays put for the whole run instead of
+      // Library page SYNC PLEX. v1.13.19: one-word busy label —
+      // "// SYNCING…" stays put for the whole run instead of
       // changing mid-stream like the v1.13.16 multi-stage swap.
       // Idle label restored from dataset.origLabel set on click.
+      // v1.13.21 (was v1.13.20): sawBusy flag drives a 1.5s ✓ DONE
+      // flash on the busy → idle transition, mirroring the dashboard
+      // SYNC button. Set when we observe busy; once it flips to
+      // idle and the label is still '// SYNCING…', flash DONE,
+      // schedule a revert, and clear the flag. The flash interval
+      // window is short enough that subsequent polls during the
+      // 1.5s don't fight the displayed text.
       const libRefreshBtn = document.getElementById('library-refresh-btn');
       if (libRefreshBtn) {
         if (refreshBtnBusy) {
@@ -568,18 +575,38 @@
           if (!libRefreshBtn.dataset.origLabel) {
             libRefreshBtn.dataset.origLabel = libRefreshBtn.textContent;
           }
-          libRefreshBtn.textContent = '// SCANNING…';
+          libRefreshBtn.textContent = '// SYNCING…';
+          libRefreshBtn.dataset.sawBusy = '1';
+        } else if (libRefreshBtn.dataset.sawBusy === '1'
+                   && libRefreshBtn.textContent === '// SYNCING…') {
+          // Just transitioned busy → idle. Brief ✓ DONE flash, then
+          // restore the idle label.
+          libRefreshBtn.disabled = false;
+          libRefreshBtn.textContent = '✓ DONE';
+          delete libRefreshBtn.dataset.sawBusy;
+          const orig = libRefreshBtn.dataset.origLabel;
+          setTimeout(() => {
+            // Only revert if no fresh busy state has overwritten us.
+            if (libRefreshBtn.textContent === '✓ DONE' && orig) {
+              libRefreshBtn.textContent = orig;
+              delete libRefreshBtn.dataset.origLabel;
+            }
+          }, 1500);
         } else {
           libRefreshBtn.disabled = false;
-          if (libRefreshBtn.dataset.origLabel) {
+          if (libRefreshBtn.dataset.origLabel
+              && libRefreshBtn.textContent !== '✓ DONE') {
             libRefreshBtn.textContent = libRefreshBtn.dataset.origLabel;
             delete libRefreshBtn.dataset.origLabel;
           }
         }
       }
-      // Settings global SCAN PLEX. v1.13.19: same busy treatment as
+      // Settings global SYNC PLEX. v1.13.19: same busy treatment as
       // the library page button — one-word label, idle restore from
-      // dataset.origLabel.
+      // dataset.origLabel. v1.13.21: verb is unified to SYNC so both
+      // branches read SYNCING; the conditional remains in case future
+      // states want to differentiate, but for now both render the
+      // same string.
       const settingsRefreshBtn = document.getElementById('refresh-libraries-btn');
       if (settingsRefreshBtn) {
         if (refreshBtnBusy) {
@@ -587,8 +614,7 @@
           if (!settingsRefreshBtn.dataset.origLabel) {
             settingsRefreshBtn.dataset.origLabel = settingsRefreshBtn.textContent;
           }
-          settingsRefreshBtn.textContent = themerrdbBusy && !plexEnumBusy
-            ? '// SYNCING…' : '// SCANNING…';
+          settingsRefreshBtn.textContent = '// SYNCING…';
         } else {
           settingsRefreshBtn.disabled = false;
           if (settingsRefreshBtn.dataset.origLabel) {
@@ -614,7 +640,18 @@
         if (dashSyncBtnBusy && syncBtn.textContent === syncBtn.dataset.origLabel) {
           syncBtn.disabled = true;
           syncBtn.textContent = '// SYNCING…';
-        } else if (!dashSyncBtnBusy && syncBtn.textContent === '// SYNCING…') {
+        } else if (!dashSyncBtnBusy && !syncWatcher
+                   && syncBtn.textContent === '// SYNCING…') {
+          // v1.13.21 (was v1.13.20): only unlock here when no
+          // syncWatcher owns the lifecycle. setSyncButtonState's
+          // running → done → idle pipeline (with the 1.5s ✓ DONE
+          // flash) is the canonical owner whenever the user clicked
+          // SYNC from THIS tab. Pre-fix a fast /api/stats poll could
+          // flip the button back to "// SYNC THEMERRDB" before the
+          // watcher's done-flash landed, so the button briefly looked
+          // clickable mid-flight. Unlock only fires for the cross-tab /
+          // cron path (no local watcher) where the poll IS the
+          // lifecycle.
           syncBtn.disabled = false;
           syncBtn.textContent = syncBtn.dataset.origLabel;
         }
@@ -719,22 +756,9 @@
     $('[data-bar-fill="movies"]').style.width = `${movPct}%`;
     $('[data-bar-fill="tv"]').style.width = `${tvPct}%`;
 
-    // Last sync
-    if (stats.last_sync) {
-      const s = stats.last_sync;
-      $('#last-sync').textContent = [
-        `started:    ${s.started_at}`,
-        `finished:   ${s.finished_at || '— still running'}`,
-        `status:     ${s.status}`,
-        `movies:     ${fmt.num(s.movies_seen)}`,
-        `tv:         ${fmt.num(s.tv_seen)}`,
-        `new:        ${fmt.num(s.new_count)}`,
-        `updated:    ${fmt.num(s.updated_count)}`,
-        s.error ? `error:      ${s.error}` : '',
-      ].filter(Boolean).join('\n');
-    } else {
-      $('#last-sync').textContent = 'no sync runs yet — click SYNC NOW to start';
-    }
+    // v1.13.21: LAST SYNC pre-block removed. Hero `Last run …`
+    // line + LIVE OPS drawer cover this surface; no JS populates
+    // a #last-sync element any more.
 
     // v1.13.1 (#2): live last/next sync line under the hero. Reads
     // stats.last_sync (most recent sync_runs row) + stats.next_sync_at
@@ -756,6 +780,13 @@
       const sec = await api('GET', '/api/sections/coverage');
       renderSectionCoverage(sec.sections || []);
     } catch (_) { /* non-fatal — dashboard still renders */ }
+
+    // v1.13.21: theme-source pie. Buckets every plex_items row by
+    // SRC letter. Hidden when the breakdown is empty (fresh install
+    // before first plex_enum); legend is click-to-toggle.
+    try {
+      renderThemeSourcePie(stats.theme_sources || []);
+    } catch (_) { /* non-fatal */ }
 
     // Recent events
     const evs = await api('GET', '/api/events?limit=20');
@@ -920,6 +951,140 @@
         + `</span>`;
     }).join('');
   }
+
+  // v1.13.21: theme-source pie. Renders a donut chart of the
+  // SRC-letter distribution coming from /api/stats.theme_sources.
+  // Legend pills are click-to-toggle: clicking dims the slice and
+  // removes its share from the centered total + percentages so the
+  // user can ask "of just the items WITH a theme, how are sources
+  // split?" by hiding the "-" wedge.
+  //
+  // Persisted hide-set lives in localStorage so the user's filter
+  // preference survives page reloads (mirrors the library filter
+  // chip toolbar's persistence pattern).
+  const _SOURCE_PIE_HIDE_KEY = 'motif:dash:src-hide';
+  const _SOURCE_LETTER_META = [
+    { letter: 'T', cls: 'T', name: 'ThemerrDB' },
+    { letter: 'A', cls: 'A', name: 'Adopted' },
+    { letter: 'U', cls: 'U', name: 'User-supplied' },
+    { letter: 'M', cls: 'M', name: 'Manual sidecar' },
+    { letter: 'P', cls: 'P', name: 'Plex-served' },
+    { letter: '-', cls: 'X', name: 'No theme' },
+  ];
+  let _lastSourcePieKey = '';
+  let _sourcePieHidden = (() => {
+    try {
+      const raw = localStorage.getItem(_SOURCE_PIE_HIDE_KEY);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (_) { return new Set(); }
+  })();
+  function _persistSourcePieHidden() {
+    try {
+      localStorage.setItem(_SOURCE_PIE_HIDE_KEY,
+        JSON.stringify(Array.from(_sourcePieHidden)));
+    } catch (_) { /* localStorage full / disabled */ }
+  }
+  // Cache the most recent rows so legend clicks can re-render
+  // without re-fetching /api/stats.
+  let _lastSourcePieRows = [];
+
+  function renderThemeSourcePie(rows) {
+    const block = document.getElementById('source-breakdown-block');
+    const slicesEl = document.getElementById('source-pie-slices');
+    const legendEl = document.getElementById('source-breakdown-legend');
+    const centerNum = document.getElementById('source-pie-center-num');
+    const sumEl = document.getElementById('source-breakdown-summary');
+    if (!block || !slicesEl || !legendEl || !centerNum) return;
+
+    // Stash for legend click handler.
+    _lastSourcePieRows = rows;
+
+    // Aggregate per-letter across media types — the legend can
+    // be filtered later if a media-type split is wanted; for v1
+    // the chart shows the full library picture.
+    const totals = Object.fromEntries(
+      _SOURCE_LETTER_META.map((m) => [m.letter, 0])
+    );
+    let grand = 0;
+    for (const r of rows) {
+      const k = totals[r.letter] != null ? r.letter : '-';
+      totals[k] += r.count || 0;
+      grand += r.count || 0;
+    }
+    if (grand <= 0) { block.style.display = 'none'; return; }
+
+    // Active = letters NOT in the hidden set.
+    const visibleTotal = _SOURCE_LETTER_META
+      .filter((m) => !_sourcePieHidden.has(m.letter))
+      .reduce((acc, m) => acc + totals[m.letter], 0);
+
+    const key = JSON.stringify({ totals, hidden: Array.from(_sourcePieHidden) });
+    if (key === _lastSourcePieKey) { block.style.display = ''; return; }
+    _lastSourcePieKey = key;
+    block.style.display = '';
+
+    // Build slice <circle>s. r=15.915 → circumference ≈ 100 so the
+    // dasharray length doubles as a percentage. Each slice's offset
+    // advances by the cumulative percentage of preceding visible
+    // slices; hidden slices contribute 0 to the dasharray but stay
+    // in the SVG (dimmed) so toggling back in animates from the
+    // same axis.
+    const denom = visibleTotal > 0 ? visibleTotal : 1;
+    let cumulative = 0;
+    const sliceMarkup = _SOURCE_LETTER_META.map((m) => {
+      const n = totals[m.letter];
+      const hidden = _sourcePieHidden.has(m.letter);
+      const pct = (hidden || n <= 0) ? 0 : (n / denom) * 100;
+      const dash = `${pct.toFixed(3)} ${(100 - pct).toFixed(3)}`;
+      const offset = (100 - cumulative) % 100;
+      cumulative += pct;
+      return `<circle class="source-pie-slice source-pie-${m.cls} ${hidden ? 'dim' : ''}"
+        cx="21" cy="21" r="15.915"
+        stroke-dasharray="${dash}" stroke-dashoffset="${offset.toFixed(3)}"></circle>`;
+    }).join('');
+    slicesEl.innerHTML = sliceMarkup;
+
+    centerNum.textContent = (visibleTotal || grand).toLocaleString();
+
+    // Legend — letter, name, count, percent. Click toggles hide.
+    legendEl.innerHTML = _SOURCE_LETTER_META.map((m) => {
+      const n = totals[m.letter];
+      const hidden = _sourcePieHidden.has(m.letter);
+      const pct = visibleTotal > 0 && !hidden
+        ? ((n / visibleTotal) * 100).toFixed(n / visibleTotal >= 0.1 ? 0 : 1)
+        : '—';
+      const safeLetter = m.letter === '-' ? '–' : m.letter;
+      return `<button type="button" class="source-legend-item ${hidden ? 'off' : ''}"
+                      data-letter="${m.letter}"
+                      title="click to ${hidden ? 'show' : 'hide'} ${htmlEscape(m.name)}">
+        <span class="source-legend-swatch source-legend-swatch-${m.cls}"></span>
+        <span class="source-legend-letter source-pie-${m.cls}-text">${safeLetter}</span>
+        <span class="source-legend-name">${htmlEscape(m.name)}</span>
+        <span class="source-legend-count">${n.toLocaleString()}</span>
+        <span class="source-legend-pct">${hidden ? 'hidden' : pct + '%'}</span>
+      </button>`;
+    }).join('');
+    if (sumEl) {
+      const hiddenCount = _sourcePieHidden.size;
+      sumEl.textContent = hiddenCount > 0
+        ? `${visibleTotal.toLocaleString()} of ${grand.toLocaleString()} items · ${hiddenCount} bucket${hiddenCount === 1 ? '' : 's'} hidden`
+        : `${grand.toLocaleString()} items across all sources`;
+    }
+  }
+
+  // Click delegate for legend toggle. Lives outside the renderer so
+  // re-renders don't accumulate listeners.
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.source-legend-item');
+    if (!btn) return;
+    const letter = btn.dataset.letter;
+    if (!letter) return;
+    if (_sourcePieHidden.has(letter)) _sourcePieHidden.delete(letter);
+    else _sourcePieHidden.add(letter);
+    _persistSourcePieHidden();
+    _lastSourcePieKey = '';  // force re-render
+    renderThemeSourcePie(_lastSourcePieRows);
+  });
 
   // v1.12.67: render the per-section coverage table on the
   // dashboard. Hidden when only one section is managed (no
@@ -3424,13 +3589,31 @@
         ? 'scanning Plex now — items will appear as the enum completes…'
         : 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
       tbody.innerHTML = `<tr><td colspan="9" class="muted center">${msg}</td></tr>`;
+      // v1.13.21: drop the hash so a return to a populated state on
+      // the next poll forces a real render (otherwise a transition
+      // from N items → 0 items → N items could hash-match the first
+      // N's HTML and skip the rebuild).
+      delete tbody.dataset.lastHash;
     } else {
       // v1.12.23: pill filtering moved server-side. The server's
       // sql_count + sql_rows + ORDER BY all honor the pill set, so
       // counts / pagination / sort are correct. dedupedItems is
       // the final list to render — the only client-side trim is
       // the rating_key dedup pass above.
-      tbody.innerHTML = dedupedItems.map(renderLibraryRow).join('');
+      // v1.13.21 (was v1.13.20): hash-skip the innerHTML swap when the
+      // newly-rendered HTML is byte-identical to the previous render.
+      // Pre-fix every triggered loadLibrary (action click, +600ms /
+      // +15s retries, post-place refetch) tore down + rebuilt the
+      // entire tbody even when nothing visible had changed, blowing
+      // the user's scroll position back to the top mid-action. Cost:
+      // one string compare per loadLibrary. The non-empty branch is
+      // the only place we hit; the empty-state branch above always
+      // writes fresh HTML for the prompt and doesn't get hash-guarded.
+      const newHtml = dedupedItems.map(renderLibraryRow).join('');
+      if (tbody.dataset.lastHash !== newHtml) {
+        tbody.innerHTML = newHtml;
+        tbody.dataset.lastHash = newHtml;
+      }
     }
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
@@ -5595,13 +5778,24 @@
       const btn = e.currentTarget;
       btn.disabled = true;
       if (!btn.dataset.origLabel) btn.dataset.origLabel = btn.textContent;
-      btn.textContent = '// SCANNING…';
+      btn.textContent = '// SYNCING…';
       // v1.13.19: optimistic topbar pill so the click → busy
       // transition is instant. Tone 'plex' tints the placeholder
       // green to match the real plex_enum op when it lands.
+      // v1.13.21 (was v1.13.20): the optimistic label reads the
+      // section name ("// SYNCING 4K MOVIES") via libraryRefreshLabel
+      // instead of the generic "// SCANNING PLEX". The real
+      // plex_enum op when it lands carries the same section name in
+      // its stage_label, so there's no jank when the placeholder is
+      // replaced — same string, same tone, no flicker.
       try {
         if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
-          window.motifOps.setOptimisticPlaceholder('plex_enum', '// SCANNING PLEX');
+          const label = (typeof libraryRefreshLabel === 'function')
+            ? libraryRefreshLabel()
+            : 'PLEX';
+          window.motifOps.setOptimisticPlaceholder(
+            'plex_enum', `// SYNCING ${label}`,
+          );
         }
       } catch (_) {}
       try {
@@ -5609,13 +5803,13 @@
           tab: libraryState.tab,
           fourk: !!libraryState.fourk,
         });
-        paintTopbarSyncing(`REFRESHING ${libraryRefreshLabel()}`);
+        paintTopbarSyncing(`SYNCING ${libraryRefreshLabel()}`);
         setTimeout(() => loadLibrary().catch(()=>{}), 5000);
         setTimeout(() => loadLibrary().catch(()=>{}), 15000);
       } catch (err) {
         alert('Refresh failed: ' + err.message);
         btn.disabled = false;
-        btn.textContent = orig;
+        btn.textContent = btn.dataset.origLabel || '// SYNC PLEX';
       }
       // Don't re-enable here — refreshTopbarStatus owns the lock based on
       // plex_enum_in_flight. The button restores once the worker drains.
@@ -6322,6 +6516,25 @@
         setTimeout(() => menuParent.removeAttribute('open'), 0);
       }
       const act = btn.dataset.act;
+      // v1.13.21 (was v1.13.20): boost the ops poll cadence the moment
+      // the user enqueues work. Pre-fix a single fast yt-dlp call
+      // (~10s) could complete entirely between the drawer's idle
+      // 10s polls, so the topbar status pill never appeared and the
+      // user thought nothing happened. The optimistic placeholder
+      // fills the very-first-frame gap; boostPoll keeps it lit until
+      // /api/progress reflects the running op.
+      const _enqueueing = new Set([
+        'download', 'redl', 'place', 'unplace', 'restore', 'refresh',
+        'relink', 'adopt', 'manual-url', 'upload-theme', 'replace',
+        'replace-with-themerrdb', 'accept-update', 'revert', 'clear-url',
+      ]);
+      if (_enqueueing.has(act)) {
+        try {
+          if (window.motifOps && typeof window.motifOps.boostPoll === 'function') {
+            window.motifOps.boostPoll();
+          }
+        } catch (_) { /* swallow — boost is a UX nicety, never fatal */ }
+      }
       // P-agent override gate: prompt before actions that would replace
       // Plex's own theme with motif content.
       if (act === 'redl' || act === 'manual-url' || act === 'upload-theme'

@@ -318,7 +318,7 @@ def load_active(db_path: Path) -> list[dict]:
         except (TypeError, ValueError):
             d["detail"] = {}
         out.append(d)
-    out.extend(_synthesize_queue_ops(queue_counts))
+    out.extend(_synthesize_queue_ops(queue_counts, running_dl_jobs))
     return out
 
 
@@ -344,11 +344,22 @@ def clear_download_progress(job_id: int) -> None:
     _DOWNLOAD_PROGRESS.pop(job_id, None)
 
 
-def _synthesize_queue_ops(counts) -> list[dict]:
+def _synthesize_queue_ops(counts, running_dl_jobs=None) -> list[dict]:
     """Build virtual op rows from jobs counts. Mirrors the shape of
     a real op_progress row so the UI doesn't need a separate render
     path. Status='running' whenever any job is running; 'pending'
     when only queued (worker not yet picked up).
+
+    v1.13.21: running_dl_jobs is the list of currently-running download
+    job ids the caller already pulled from the jobs table. Pre-fix this
+    function used the name as a free variable inherited from the caller's
+    frame, which raised NameError at runtime as soon as queue_counts had
+    any rows (any pending/running job triggered it). The /api/progress
+    handler 500'd, the drawer fell back to its empty state, and no status
+    bars showed during a download (or scan, place, refresh — anything
+    that lands in the synthesized-queue path). Default to [] so callers
+    that only care about non-download queues can keep calling with one
+    arg.
 
     v1.13.4: track a per-job-type high-water mark so we can express
     queue progress as (hw - remaining) / hw — a real number bar
@@ -358,6 +369,8 @@ def _synthesize_queue_ops(counts) -> list[dict]:
     couldn't tell whether a long refresh queue was 10% or 90%
     through.
     """
+    if running_dl_jobs is None:
+        running_dl_jobs = []
     label_map = {
         "download": ("DOWNLOAD QUEUE", "Downloading themes"),
         "place":    ("PLACE QUEUE",    "Placing themes into Plex"),
