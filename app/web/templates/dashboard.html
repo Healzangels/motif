@@ -4,12 +4,14 @@
 <section class="hero">
   <div class="hero-row">
     <h1 class="title">DASH</h1>
-    <!-- v1.13.16: pre-set the SCAN PLEX label inline so a slow
-         /api/stats poll doesn't briefly flash a stale label between
-         page render and the first JS update. autoEnum default is
-         True; if disabled, refreshTopbarStatus rewrites to "// SYNC". -->
-    <button class="btn" id="sync-now-btn" data-orig-default="// SYNC + SCAN PLEX"
-            title="Sync ThemerrDB and re-enumerate Plex sections.">// SYNC + SCAN PLEX</button>
+    <!-- v1.13.18: button text is set entirely by refreshTopbarStatus
+         once /api/stats lands (the label depends on auto_enum). We
+         render with NO inline text so the user sees a brief blank
+         button instead of a stale label that flickers to the
+         correct one. ~200ms invisible vs ~600ms visibly wrong was
+         the right trade. -->
+    <button class="btn" id="sync-now-btn"
+            title="Sync ThemerrDB and re-enumerate Plex sections."></button>
   </div>
   <p class="muted">theme coverage at a glance · sync schedule in <a href="/settings#schedule">/settings</a></p>
   <!-- v1.13.1 (#2): live last-sync + next-sync line so the daily

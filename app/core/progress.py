@@ -300,6 +300,16 @@ def load_active(db_path: Path) -> list[dict]:
                                    'refresh','relink','adopt')
                 GROUP BY job_type"""
         ).fetchall()
+        # v1.13.18 (6C): pull the running download job ids so we can
+        # blend yt-dlp's per-job progress fraction into the synthesized
+        # download_queue card. Only active 'running' download jobs
+        # contribute — pending jobs haven't started, can't have progress.
+        running_dl_jobs = [
+            row["id"] for row in conn.execute(
+                "SELECT id FROM jobs "
+                "WHERE job_type = 'download' AND status = 'running'"
+            ).fetchall()
+        ]
     out: list[dict] = []
     for row in list(active) + list(finished):
         d = dict(row)
@@ -313,6 +323,25 @@ def load_active(db_path: Path) -> list[dict]:
 
 
 _QUEUE_BURST_HW: dict[str, int] = {}
+
+# v1.13.18 (6C): per-job download fraction (0.0-1.0). Updated by
+# yt-dlp's progress_hooks (wired in worker.py); read by
+# _synthesize_queue_ops to enrich the download_queue card with real
+# percentage. Single threaded writes (one worker job at a time) so a
+# plain dict suffices — GIL covers the read in synthesize. Cleared
+# on job finish/cancel so stale entries don't linger.
+_DOWNLOAD_PROGRESS: dict[int, float] = {}
+
+
+def set_download_progress(job_id: int, fraction: float) -> None:
+    """v1.13.18: yt-dlp progress hook entrypoint. fraction in [0, 1]."""
+    if 0.0 <= fraction <= 1.0:
+        _DOWNLOAD_PROGRESS[job_id] = fraction
+
+
+def clear_download_progress(job_id: int) -> None:
+    """v1.13.18: drop the job's progress entry on terminal state."""
+    _DOWNLOAD_PROGRESS.pop(job_id, None)
 
 
 def _synthesize_queue_ops(counts) -> list[dict]:
@@ -390,22 +419,53 @@ def _synthesize_queue_ops(counts) -> list[dict]:
             # so far in this burst. A 5-job burst with 1 done shows
             # 1/5 = 20%, ticks to 5/5 as the worker drains.
             #
-            # v1.13.16 (D1): single-job bursts render as indeterminate
-            # (stage_total=0 → bar shimmers, no percentage) because
-            # a 0%→100% jump is meaningless for a single yt-dlp call
-            # that doesn't expose its own progress. Multi-job bursts
-            # (HW >= 2) keep the real proportional fill — those tell
-            # a useful story over many seconds. Counts are still
-            # available via stage_label so the operator can see
-            # "1 running" without a misleading bar.
+            # v1.13.18 (6C): downloads now carry yt-dlp's per-job
+            # progress fraction via _DOWNLOAD_PROGRESS. Compute the
+            # active-job's fraction and blend it into bar_pct so the
+            # bar fills smoothly during a single yt-dlp call (the
+            # original 0→100 jump complaint). Counter still reads as
+            # integer "X / Y done"; bar_pct in detail is preferred
+            # by the renderer when present.
+            #
+            # Other queue ops (place, refresh, scan, relink, adopt)
+            # don't have intermediate progress, so they get the v1.13.4
+            # HW-based bar — and a counter "0/1" → "1/1" so the user
+            # sees something change instead of a static shimmer.
             "stage_current": completed_in_burst,
-            "stage_total": hw if hw >= 2 else 0,
+            "stage_total": hw,
             "processed_total": completed_in_burst,
             "processed_est": hw,
             "error_count": 0,
-            "detail": {"activity": [], "throughput": [], "synthetic": True},
+            "detail": _build_queue_detail(jt, completed_in_burst, hw, running_dl_jobs),
         })
     return out
+
+
+def _build_queue_detail(job_type, completed_in_burst, hw, running_dl_jobs):
+    """v1.13.18 (6C): assemble the detail block for a synthesized
+    queue op. For downloads, blend yt-dlp's real per-job progress
+    into a smooth bar_pct; for other queue types the bar uses
+    stage_current/stage_total directly (no detail.bar_pct → renderer
+    falls back to the integer ratio).
+    """
+    detail = {"activity": [], "throughput": [], "synthetic": True}
+    if job_type == "download" and hw > 0:
+        # active_progress = avg fraction across currently-running jobs
+        # (typically just one in a single-worker setup, but safe with N).
+        fractions = [
+            _DOWNLOAD_PROGRESS.get(jid)
+            for jid in running_dl_jobs
+            if _DOWNLOAD_PROGRESS.get(jid) is not None
+        ]
+        if fractions:
+            avg_frac = sum(fractions) / len(fractions)
+            # Blend: completed jobs are full bars; active jobs get
+            # avg_frac. Each running job contributes avg_frac of one
+            # job's worth toward the burst total.
+            running_count = len(fractions)
+            blended = (completed_in_burst + avg_frac * running_count) / hw
+            detail["bar_pct"] = max(0.0, min(1.0, blended))
+    return detail
 
 
 def prune_finished(db_path: Path) -> int:

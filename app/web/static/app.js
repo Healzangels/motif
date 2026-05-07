@@ -521,18 +521,14 @@
       } else if (dotBadge) {
         dotBadge.style.display = 'none';
       }
-      const lockBtn = (btn, locked, busyText) => {
+      // v1.13.18: silent variant of lockBtn — toggles disabled but
+      // leaves the label intact. The topbar status pill carries the
+      // live state, so swapping the button label was redundant AND
+      // outlasted the pill in some cases. Pass a busyText only if
+      // you genuinely need a label swap (no current callers do).
+      const lockBtn = (btn, locked, _busyText) => {
         if (!btn) return;
-        const orig = btn.dataset.origLabel || btn.textContent;
-        if (locked) {
-          if (!btn.dataset.origLabel) btn.dataset.origLabel = orig;
-          btn.disabled = true;
-          btn.textContent = busyText;
-        } else if (btn.dataset.origLabel) {
-          btn.disabled = false;
-          btn.textContent = btn.dataset.origLabel;
-          delete btn.dataset.origLabel;
-        }
+        btn.disabled = !!locked;
       };
       // v1.12.125: SYNC + REFRESH, per-tab REFRESH, and settings
       // REFRESH FROM PLEX share one mutual-exclusion gate.
@@ -583,26 +579,20 @@
       );
       // Dashboard SYNC button. Idle label reflects whether a Plex scan
       // phase will follow (// SYNC + SCAN PLEX) or not (// SYNC).
-      // Stash on the button itself so setSyncButtonState (called by
-      // the watcher) can pick up the right idle text on transition
-      // back to idle without re-reading config.
+      // v1.13.18: button text no longer changes on busy (silent
+      // lockBtn), so the only writes to textContent are setting the
+      // idle label here. Always write so the first poll after page
+      // load fills the empty inline text.
       const syncBtn = document.getElementById('sync-now-btn');
       if (syncBtn) {
         const idleLabel = autoEnum ? '// SYNC + SCAN PLEX' : '// SYNC';
-        // Don't clobber the dataset.origLabel mid-busy — lockBtn
-        // restores from it. Only update the idle text when the
-        // button is currently in idle (not locked).
-        if (!syncBtn.disabled && !syncBtn.dataset.origLabel
-            && syncBtn.textContent !== idleLabel) {
+        if (syncBtn.textContent !== idleLabel
+            && syncBtn.textContent !== '✓ DONE') {
           syncBtn.textContent = idleLabel;
         }
-        // If a transition just unlocked the button, repair the
-        // origLabel record so the next lock cycle restores to the
-        // current setting's label, not whatever was there before.
-        if (syncBtn.dataset.origLabel
-            && syncBtn.dataset.origLabel !== idleLabel) {
-          syncBtn.dataset.origLabel = idleLabel;
-        }
+        // Cache for setSyncButtonState's idle-restore on the next
+        // tick after a 'done' flash.
+        syncBtn.dataset.origLabel = idleLabel;
       }
       lockBtn(
         document.getElementById('sync-now-btn'),
@@ -1006,25 +996,24 @@
   let syncWatcher = null;
 
   function setSyncButtonState(state) {
-    // v1.12.127: idle label is dynamic — driven by the latest
-    // auto_enum_after_sync setting from /api/stats (cached on the
-    // button via dataset.origLabel by refreshTopbarStatus). When
-    // unknown (initial load before the first /api/stats response),
-    // fall back to data-orig-default (set inline in the template
-    // to "// SYNC + SCAN PLEX") so the button text is stable from
-    // the very first paint instead of flickering through a JS-set
-    // default.
+    // v1.13.18: button label NEVER changes on busy/done — the topbar
+    // status pill carries the live state, so swapping the button text
+    // was redundant and actually outlasted the topbar pill (the user
+    // saw the button in '// SYNCING…' state after the pill was
+    // already gone). Now we just toggle disabled and let the label
+    // stay put. The 'done' state still flashes ✓ DONE briefly because
+    // that's a useful confirmation that survives the click-away.
     const btn = $('#sync-now-btn');
     if (!btn) return;
-    const idleLabel = btn.dataset.origLabel
-      || btn.dataset.origDefault
-      || '// SYNC + SCAN PLEX';
+    const idleLabel = btn.dataset.origLabel || '';
     if (state === 'idle') {
       btn.disabled = false;
-      btn.textContent = idleLabel;
+      if (idleLabel && btn.textContent !== idleLabel) {
+        btn.textContent = idleLabel;
+      }
     } else if (state === 'running') {
       btn.disabled = true;
-      btn.textContent = '// SYNCING…';
+      // No text change — topbar pill shows the state.
     } else if (state === 'done') {
       btn.disabled = true;
       btn.textContent = '✓ DONE';
@@ -1037,6 +1026,11 @@
     if (!syncBtn) return;
     syncBtn.addEventListener('click', async (ev) => {
       setSyncButtonState('running');
+      // v1.13.18: kick the ops drawer poll to 1s mode immediately
+      // so a short no-op sync (~3s) actually catches a poll and
+      // surfaces the topbar status pill. Pre-fix the drawer was
+      // idling at 10s and a fast sync finished invisibly.
+      try { window.motifOps && window.motifOps.boostPoll && window.motifOps.boostPoll(); } catch (_) {}
       try {
         // metadata_only: don't auto-enqueue downloads. Downloads happen
         // explicitly from /movies, /tv, /anime via the missing-themes
@@ -3617,10 +3611,16 @@
   let _libraryPresets = [];
   let _activePresetId = null;
 
+  // v1.13.18 (A2): popover-driven preset menu. Renders each saved
+  // filter as a clickable list item with an inline × delete; the
+  // bookmark glyph fills (★) when the current state matches a
+  // saved preset so users get a glanceable indicator. The drift
+  // detector flips the bookmark back to ☆ when libraryState
+  // diverges. <details>/<summary> handles open/close natively;
+  // an outside-click listener closes when focus drifts.
   async function loadLibraryPresets() {
-    const select = document.getElementById('library-presets-select');
-    const delBtn = document.getElementById('library-presets-delete');
-    if (!select) return;
+    const list = document.getElementById('library-presets-list');
+    if (!list) return;
     let data;
     try {
       data = await api('GET', '/api/saved-filters?scope=library');
@@ -3629,23 +3629,50 @@
       return;
     }
     _libraryPresets = (data && data.filters) || [];
-    // Preserve the placeholder + rebuild option list.
-    select.innerHTML =
-      '<option value="" disabled selected>// SAVED FILTERS</option>' +
-      _libraryPresets.map((f) => {
-        return `<option value="${f.id}">${htmlEscape(f.name)}</option>`;
-      }).join('');
-    select.style.display = _libraryPresets.length > 0 ? '' : 'none';
-    if (delBtn) delBtn.style.display = 'none';
-    _activePresetId = null;
-    // If we landed via a saved-preset replay, hi-light the matching
-    // option so the user can re-delete or modify.
+    _renderPresetsList();
+    _updatePresetActiveState();
+  }
+
+  function _renderPresetsList() {
+    const list = document.getElementById('library-presets-list');
+    if (!list) return;
+    if (!_libraryPresets.length) {
+      list.innerHTML = '<li class="library-presets-popup-empty muted small">none yet</li>';
+      return;
+    }
+    list.innerHTML = _libraryPresets.map((f) => `
+      <li>
+        <button type="button" class="library-presets-popup-apply"
+                data-preset-id="${f.id}"
+                title="Apply this preset">${htmlEscape(f.name)}</button>
+        <button type="button" class="library-presets-popup-del"
+                data-preset-del="${f.id}"
+                title="Delete">×</button>
+      </li>
+    `).join('');
+  }
+
+  function _updatePresetActiveState() {
+    const menu = document.getElementById('library-presets-menu');
+    const bookmark = menu ? menu.querySelector('.library-presets-bookmark') : null;
+    if (!menu || !bookmark) return;
     const here = _buildPresetQueryString();
     const match = _libraryPresets.find((f) => f.query_json === here);
-    if (match && select) {
-      select.value = String(match.id);
-      _activePresetId = match.id;
-      if (delBtn) delBtn.style.display = '';
+    _activePresetId = match ? match.id : null;
+    if (match) {
+      menu.classList.add('has-active');
+      bookmark.textContent = '★';
+    } else {
+      menu.classList.remove('has-active');
+      bookmark.textContent = '☆';
+    }
+    // Highlight the active item in the list.
+    const list = document.getElementById('library-presets-list');
+    if (list) {
+      list.querySelectorAll('.library-presets-popup-apply').forEach((btn) => {
+        btn.classList.toggle('is-active',
+          match && String(match.id) === btn.dataset.presetId);
+      });
     }
   }
 
@@ -3670,73 +3697,64 @@
   function applyLibraryPreset(id) {
     const preset = _libraryPresets.find((f) => f.id === Number(id));
     if (!preset) return;
-    // Replace location.search and let the page reload through the
-    // existing init hydration. Cleaner than syncing libraryState in-
-    // place — guarantees the URL reflects the applied preset so a
-    // subsequent share-link works.
     const path = window.location.pathname;
     const hash = window.location.hash || '';
     const sep = preset.query_json ? '?' : '';
     window.location.href = `${path}${sep}${preset.query_json}${hash}`;
   }
 
-  async function deleteActiveLibraryPreset() {
-    if (!_activePresetId) return;
-    const preset = _libraryPresets.find((f) => f.id === _activePresetId);
+  async function deletePresetById(id) {
+    const preset = _libraryPresets.find((f) => f.id === Number(id));
     if (!preset) return;
     if (!confirm(`Delete saved filter "${preset.name}"?`)) return;
     try {
-      await api('DELETE', `/api/saved-filters/${_activePresetId}`);
-      // Strip the URL to clear the applied filter, then re-fetch the
-      // dropdown so the deleted entry vanishes.
-      window.location.href = window.location.pathname;
+      await api('DELETE', `/api/saved-filters/${id}`);
+      // If the deleted preset was active, strip the URL so we
+      // land in a clean state. Otherwise just re-fetch the list.
+      if (Number(id) === _activePresetId) {
+        window.location.href = window.location.pathname;
+        return;
+      }
+      await loadLibraryPresets();
     } catch (e) {
       alert('Delete failed: ' + (e.message || e));
     }
   }
 
-  // v1.13.12: clear the dropdown selection (and hide DELETE) once
-  // libraryState drifts from the active preset, so a subsequent
-  // selection of the SAME preset re-fires the change event. Pre-fix
-  // a saved preset that drifted left the select stuck on its name
-  // and re-applying required a manual page refresh.
-  function _refreshPresetSelectionIfDrifted() {
-    const select = document.getElementById('library-presets-select');
-    const delBtn = document.getElementById('library-presets-delete');
-    if (!select || _activePresetId == null) return;
-    const here = _buildPresetQueryString();
-    const preset = _libraryPresets.find((f) => f.id === _activePresetId);
-    if (!preset || preset.query_json !== here) {
-      select.value = '';
-      _activePresetId = null;
-      if (delBtn) delBtn.style.display = 'none';
-    }
-  }
-
   function bindLibraryPresets() {
-    const select = document.getElementById('library-presets-select');
+    const menu = document.getElementById('library-presets-menu');
     const saveBtn = document.getElementById('library-presets-save');
-    const delBtn = document.getElementById('library-presets-delete');
+    const list = document.getElementById('library-presets-list');
+    if (!menu) return;
     if (saveBtn) {
       saveBtn.addEventListener('click', () => {
+        menu.removeAttribute('open');
         saveLibraryPreset().catch((e) => console.error(e));
       });
     }
-    if (select) {
-      select.addEventListener('change', (e) => {
-        if (e.target.value) applyLibraryPreset(e.target.value);
+    if (list) {
+      list.addEventListener('click', (ev) => {
+        const apply = ev.target.closest('.library-presets-popup-apply');
+        if (apply) {
+          applyLibraryPreset(apply.dataset.presetId);
+          return;
+        }
+        const del = ev.target.closest('.library-presets-popup-del');
+        if (del) {
+          ev.stopPropagation();
+          deletePresetById(del.dataset.presetDel).catch((e) => console.error(e));
+        }
       });
     }
-    if (delBtn) {
-      delBtn.addEventListener('click', () => {
-        deleteActiveLibraryPreset().catch((e) => console.error(e));
-      });
-    }
-    // v1.13.12: detect filter-state drift so the dropdown unsticks
-    // when the user changes pills/search/sort after applying a preset.
-    // Light polling — no need for granular event hooks across every
-    // pill since drift detection is just a string compare.
-    setInterval(_refreshPresetSelectionIfDrifted, 600);
+    // Outside-click closes the popover.
+    document.addEventListener('click', (ev) => {
+      if (!menu.hasAttribute('open')) return;
+      if (!menu.contains(ev.target)) menu.removeAttribute('open');
+    });
+    // Drift detection — refresh the bookmark active-state every 600ms
+    // so applying a preset, then editing pills, flips the icon back
+    // to ☆ without a polling-heavy approach.
+    setInterval(_updatePresetActiveState, 600);
     loadLibraryPresets().catch((e) => console.error(e));
   }
 
@@ -5552,9 +5570,10 @@
     document.getElementById('library-refresh-btn')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;
-      const orig = btn.dataset.origLabel || btn.textContent;
-      btn.dataset.origLabel = orig;
-      btn.textContent = `// REFRESHING ${libraryRefreshLabel()}…`;
+      // v1.13.18: button label stays put; topbar pill carries state.
+      // Boost the ops drawer poll so the user sees the status pill
+      // appear within ~50ms instead of waiting for the next 10s tick.
+      try { window.motifOps && window.motifOps.boostPoll && window.motifOps.boostPoll(); } catch (_) {}
       try {
         await api('POST', '/api/library/refresh', {
           tab: libraryState.tab,

@@ -164,6 +164,13 @@
   }
 
   function pctOf(op) {
+    // v1.13.18 (6C): detail.bar_pct (set by the synthesized
+    // download_queue card with real yt-dlp progress) takes precedence
+    // over the integer stage_current/stage_total ratio. Range is 0..1.
+    const detail = op.detail || {};
+    if (typeof detail.bar_pct === 'number') {
+      return Math.min(100, Math.max(0, detail.bar_pct * 100));
+    }
     const total = op.stage_total || op.processed_est || 0;
     const cur = op.stage_current || op.processed_total || 0;
     if (total <= 0) return null;
@@ -345,29 +352,39 @@
           <span class="op-card-status">${esc(op.status.toUpperCase())}</span>
         </div>
         <div class="op-card-stage">${esc(headline)}</div>
-        ${(showLiveSections && op.stage_total > 0) ? `
-          <div class="op-card-counter">
-            <span class="op-card-counter-current"
-                  data-op-counter
-                  data-op-counter-target="${op.stage_current || 0}">
-              ${fmtNum(op.stage_current)}
-            </span>
-            <span class="op-card-counter-total">/ ${fmtNum(op.stage_total)}</span>
-          </div>
-          <div class="op-card-bar">
-            <div class="op-card-bar-fill"
-                 style="width:${pct != null ? pct.toFixed(1) : 0}%"></div>
-          </div>
-        ` : (isLive ? `
-          <!-- v1.12.124: indeterminate bar for live ops with no known
-               total (queue ops + tdb_sync's pre-fetch / extract /
-               resolve / prune phases). Pulses full-width instead of
-               the bar disappearing entirely; counter is hidden so
-               we don't display a fake "X / 0". -->
-          <div class="op-card-bar op-card-bar-indet">
-            <div class="op-card-bar-fill"></div>
-          </div>
-        ` : '')}
+        ${(() => {
+          // v1.13.18: split the counter and bar decisions.
+          //  - Counter: show whenever stage_total > 0 (any value,
+          //    even 1) so the operator sees "0 / 1" → "1 / 1" for
+          //    single-job operations like place/refresh/nudge.
+          //  - Bar style:
+          //      detail.bar_pct present (yt-dlp real %) → real bar
+          //      stage_total > 1                         → real bar
+          //      isLive                                  → indeterminate
+          //      else                                    → no bar
+          if (!showLiveSections) return '';
+          const hasRealPct = op.detail && typeof op.detail.bar_pct === 'number';
+          const useRealBar = hasRealPct || op.stage_total > 1;
+          const showCounter = op.stage_total > 0;
+          const counterHtml = showCounter ? `
+            <div class="op-card-counter">
+              <span class="op-card-counter-current"
+                    data-op-counter
+                    data-op-counter-target="${op.stage_current || 0}">
+                ${fmtNum(op.stage_current)}
+              </span>
+              <span class="op-card-counter-total">/ ${fmtNum(op.stage_total)}</span>
+            </div>` : '';
+          const barHtml = useRealBar
+            ? `<div class="op-card-bar">
+                 <div class="op-card-bar-fill"
+                      style="width:${pct != null ? pct.toFixed(1) : 0}%"></div>
+               </div>`
+            : `<div class="op-card-bar op-card-bar-indet">
+                 <div class="op-card-bar-fill"></div>
+               </div>`;
+          return counterHtml + barHtml;
+        })()}
         <div class="op-card-meta">
           ${(showLiveSections && rate > 0) ? `
             <span class="op-card-meta-item">
@@ -656,12 +673,24 @@
     requestAnimationFrame(tickCounters);
   }
 
+  // v1.13.18: boost the poll cadence to 1s + fire an immediate
+  // poll. Used by the SYNC click handler so a fast sync (no-op git
+  // <3s) doesn't fly under the 10s idle-poll radar — pre-fix the
+  // user could click SYNC and never see the topbar status pill
+  // appear because no poll fired during the running window.
+  function boostPoll() {
+    state.pollInterval = 1000;
+    if (state.pollTimer) clearTimeout(state.pollTimer);
+    state.pollTimer = setTimeout(poll, 50);
+  }
+
   // Public API.
   window.motifOps = {
     init,
     open: openDrawer,
     close: closeDrawer,
     refresh: poll,
+    boostPoll,
     state: () => state,
   };
 

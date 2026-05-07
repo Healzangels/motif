@@ -273,12 +273,18 @@ def download_theme(
     output_dir: Path,
     cookies_file: Path | None,
     audio_quality: str = "0",
+    progress_callback: "callable | None" = None,
 ) -> DownloadResult:
     """
     Download a single YouTube theme to {output_dir}/theme.mp3.
 
     output_dir is item-specific (themes_dir/<movies|tv>/<sanitized title (year)>),
     so a flat filename "theme.mp3" mirrors what motif places into Plex.
+
+    v1.13.18 (6C): progress_callback is invoked with a fraction (0.0-1.0)
+    on each yt-dlp progress event. None disables the per-job
+    progress feed; the worker passes a callback that updates a shared
+    dict so /api/progress can render real download % in the topbar.
 
     If theme.mp3 already exists at the target, this is a no-op — callers that
     need to force a fresh download (e.g. video_id changed) must unlink it first.
@@ -310,6 +316,29 @@ def download_theme(
         cookies_file=cookies_file,
         audio_quality=audio_quality,
     )
+
+    # v1.13.18 (6C): wire yt-dlp's progress_hooks to the optional
+    # callback. The hook fires every ~250ms during a download with
+    # downloaded_bytes / total_bytes (or total_bytes_estimate) so we
+    # can compute a fraction and feed it through to op_progress.
+    # We swallow callback exceptions so a buggy/disconnected progress
+    # consumer can't fail the actual download.
+    if progress_callback is not None:
+        def _yt_progress_hook(d):
+            try:
+                status = d.get("status")
+                if status == "downloading":
+                    downloaded = d.get("downloaded_bytes") or 0
+                    total = (d.get("total_bytes")
+                             or d.get("total_bytes_estimate") or 0)
+                    if total > 0:
+                        progress_callback(min(1.0, downloaded / total))
+                elif status == "finished":
+                    progress_callback(1.0)
+            except Exception:
+                pass
+        opts = dict(opts)
+        opts["progress_hooks"] = [_yt_progress_hook]
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

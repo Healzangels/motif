@@ -292,17 +292,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   min-width: 72px;
   text-align: center;
 }
-/* v1.13.16: stable widths for the dashboard SYNC + library SCAN PLEX
-   buttons. Pre-fix the button width tracked the rendered label, so
-   the transition idle → busy ("// SCAN PLEX" → "// SCANNING TV
-   SHOWS…") visibly reflowed and pushed neighboring layout. The
-   widest label in each set determines the min-width:
-     SYNC button   — "// SYNC + SCAN PLEX"   (~190px)
-     SCAN PLEX btn — "// SCANNING TV SHOWS…" (~200px)
-   Keeping them static at the busy-state width means idle ↔ busy
-   transitions only swap text, never reflow neighbors. */
-#sync-now-btn { min-width: 200px; }
-#library-refresh-btn { min-width: 200px; }
+/* v1.13.18: width-stability via CSS retired. The v1.13.16 min-width
+   workaround is no longer needed — button text no longer changes
+   on idle ↔ busy (just disabled state), so the rendered label
+   is constant and the natural content-width is stable too. */
 .btn-warn { color: var(--amber); border-color: var(--amber); }
 .btn-warn:hover { background: rgba(255,184,74,0.08); box-shadow: 0 0 10px rgba(255,184,74,0.15); }
 /* v1.11.96: btn-info = blue button variant for "informational
@@ -523,31 +516,127 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   background: var(--bg);
 }
 
-/* v1.13.16 (A1): hero-area filter toolbar. Pulls PRESET / SAVE /
-   DELETE / CLEAR ALL out of the pill-row stack so the filter axes
-   below stay focused on per-axis state. The toolbar reads as a
-   page-level utility row, not a filter axis — small, muted, with
-   accent-on-hover. */
-.library-toolbar {
+/* v1.13.18 (A2): saved filter presets collapsed to a single
+   bookmark glyph + popover, anchored next to the status chips
+   inside the filterbar. The bookmark fills (★) when a preset is
+   applied so users get a glanceable "active preset" indicator
+   without giving up real estate. */
+.library-presets-menu {
+  position: relative;
+  display: inline-block;
+  margin-left: auto;          /* pin to right of the search/chips row */
+}
+.library-presets-bookmark {
+  list-style: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--line-bright);
+  border-radius: 2px;
+  color: var(--fg-mute);
+  user-select: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.library-presets-bookmark::-webkit-details-marker { display: none; }
+.library-presets-bookmark::marker { content: ''; }
+.library-presets-bookmark:hover { color: var(--cyan); border-color: var(--cyan); }
+.library-presets-menu.has-active .library-presets-bookmark {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+.library-presets-menu[open] .library-presets-bookmark {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: rgba(109,211,255,0.06);
+}
+
+.library-presets-popup {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-bright);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  overflow: hidden;
+}
+.library-presets-popup-head {
+  padding: 8px 12px 4px;
+  letter-spacing: 0.14em;
+}
+.library-presets-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.library-presets-popup-list li {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-  flex-wrap: wrap;
+  border-top: 1px solid var(--line);
+}
+.library-presets-popup-list li:first-child { border-top: none; }
+.library-presets-popup-empty {
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+}
+.library-presets-popup-list .library-presets-popup-apply {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  text-align: left;
+  font-family: inherit;
   font-size: var(--t-tiny);
+  padding: 6px 8px 6px 12px;
+  cursor: pointer;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
-.library-toolbar-label {
+.library-presets-popup-list .library-presets-popup-apply:hover {
+  background: rgba(109,211,255,0.08);
+  color: var(--cyan);
+}
+.library-presets-popup-list .library-presets-popup-apply.is-active {
+  color: var(--cyan);
+}
+.library-presets-popup-list .library-presets-popup-del {
+  background: transparent;
+  border: 0;
   color: var(--fg-mute);
-  letter-spacing: 0.12em;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 6px 10px;
 }
-.library-toolbar-sep {
+.library-presets-popup-list .library-presets-popup-del:hover { color: var(--red); }
+.library-presets-popup-foot {
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+}
+.library-presets-popup-save {
+  width: 100%;
+  background: transparent;
+  border: 0;
   color: var(--fg-mute);
-  opacity: 0.4;
-  user-select: none;
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.08em;
+  padding: 8px 12px;
+  cursor: pointer;
 }
-.library-toolbar-action {
+.library-presets-popup-save:hover {
+  background: rgba(109,211,255,0.08);
+  color: var(--cyan);
+}
+
+/* CLEAR ALL stays a small text-button. v1.13.18 lives next to the
+   bookmark in the search/chips row instead of the hero toolbar. */
+.library-clear-all-btn {
   background: transparent;
   border: 1px solid transparent;
   color: var(--fg-mute);
@@ -555,36 +644,15 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   font-size: var(--t-tiny);
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  padding: 3px 8px;
+  padding: 4px 10px;
   border-radius: 2px;
   cursor: pointer;
   transition: color 0.15s ease, border-color 0.15s ease;
 }
-.library-toolbar-action:hover {
+.library-clear-all-btn:hover {
   color: var(--cyan);
   border-color: var(--cyan);
 }
-.library-toolbar-action-danger:hover {
-  color: var(--red);
-  border-color: var(--red);
-}
-/* Select keeps its v1.13.13 styling; just sized for the toolbar
-   row instead of the wider pill-row slot. */
-.library-presets-select {
-  background: transparent;
-  color: var(--fg);
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  padding: 3px 22px 3px 8px;
-  font-family: inherit;
-  font-size: var(--t-tiny);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-  appearance: auto;
-  min-width: 140px;
-}
-.library-presets-select:hover { border-color: var(--cyan); }
 .input {
   flex: 1; min-width: 240px;
   background: var(--bg);
@@ -619,6 +687,15 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   cursor: pointer;
   text-transform: uppercase;
   transition: all 0.12s;
+}
+/* v1.13.18: when the resolution toggle (STANDARD / 4K) sits in the
+   library hero alongside the SCAN PLEX button, bump the chips to
+   match the button's visual weight. Pre-fix the chips read as a
+   tighter cluster next to a chunky button — three controls in the
+   same row at three different sizes. */
+.chips[aria-label="resolution"] .chip {
+  padding: 10px 18px;
+  font-size: var(--t-small);
 }
 .chip:hover { color: var(--fg); border-color: var(--green-deep); }
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(109,255,181,0.06); }

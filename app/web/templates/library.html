@@ -13,34 +13,13 @@
         <button class="chip chip-active" data-fourk="0">// STANDARD</button>
         <button class="chip" data-fourk="1">// 4K</button>
       </div>
-      <button class="btn btn-tiny" id="library-refresh-btn" type="button">// SCAN PLEX</button>
+      <button class="btn" id="library-refresh-btn" type="button">// SCAN PLEX</button>
     </div>
   </div>
   <p class="muted">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>
-  <!-- v1.13.16 (A1): PRESET / SAVE / CLEAR moved out of the pill-row
-       stack into a hero-area toolbar so the filter axes stay pure
-       and the "page tools" (saved presets, full-state reset) live
-       at a separate visual altitude. The previous v1.13.13 inline
-       row is preserved (commented) below so a one-line revert is
-       possible if this layout doesn't land well. -->
-  <div class="library-toolbar" id="library-toolbar">
-    <span class="library-toolbar-label muted small">PRESET:</span>
-    <select class="library-presets-select" id="library-presets-select"
-            title="Apply a saved filter preset.">
-      <option value="" disabled selected>// none</option>
-    </select>
-    <button type="button" class="library-toolbar-action"
-            id="library-presets-save"
-            title="Save the current filter combo as a preset.">+ SAVE</button>
-    <button type="button" class="library-toolbar-action library-toolbar-action-danger"
-            id="library-presets-delete"
-            title="Delete the active saved filter."
-            style="display:none">× DELETE</button>
-    <span class="library-toolbar-sep" aria-hidden="true">·</span>
-    <button type="button" class="library-toolbar-action"
-            id="library-clear-all"
-            title="Clear all filters, search, and sort.">// CLEAR ALL</button>
-  </div>
+  <!-- v1.13.16 hero-area toolbar removed in v1.13.18 — the
+       filter-region bookmark + popover (A2) now lives inside the
+       filterbar so users see it where the filters actually live. -->
 </section>
 
 <input type="hidden" id="library-tab" value="{{ tab }}" />
@@ -95,6 +74,33 @@
     <button class="chip" data-status="has_theme" title="Items with any theme source.">THEMED</button>
     <button class="chip" data-status="untracked" title="No theme anywhere.">UNTHEMED</button>
   </div>
+
+  <!-- v1.13.18 (A2): saved-filter presets collapsed to a single
+       bookmark icon next to the chips. Click toggles a small popup
+       listing saved filters; each list item applies on click and
+       has a × to delete. "+ Save current" lives at the bottom of
+       the popup. The bookmark glyph fills (★) when an active
+       preset is applied so users can tell at a glance.
+       The // CLEAR ALL button is right next to it so "page tools"
+       stay grouped near the filters they affect. -->
+  <details class="library-presets-menu" id="library-presets-menu">
+    <summary class="library-presets-bookmark"
+             title="Saved filter presets" aria-label="Saved filter presets">☆</summary>
+    <div class="library-presets-popup" id="library-presets-popup">
+      <header class="library-presets-popup-head muted small">// SAVED FILTERS</header>
+      <ul class="library-presets-popup-list" id="library-presets-list">
+        <li class="library-presets-popup-empty muted small">none yet</li>
+      </ul>
+      <footer class="library-presets-popup-foot">
+        <button type="button" class="library-presets-popup-save"
+                id="library-presets-save"
+                title="Snapshot the current filter combo as a preset.">+ Save current</button>
+      </footer>
+    </div>
+  </details>
+  <button type="button" class="library-clear-all-btn"
+          id="library-clear-all"
+          title="Clear all filters, search, and sort.">// CLEAR ALL</button>
 
   <!-- Pill filter rows. Order matches the row column order
        (TDB, SRC, DL, PL, LINK) so the user's eye tracks naturally

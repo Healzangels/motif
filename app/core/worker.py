@@ -314,6 +314,16 @@ class Worker:
                 self._safe_mark(self._mark_failed, job["id"], str(e))
                 if row and row["attempts"] >= row["max_attempts"]:
                     self._run_rollback_safe(job, str(e))
+            finally:
+                # v1.13.18 (6C): always clear the download-progress
+                # dict entry for this job. Only download jobs ever
+                # populate it, but pop-with-default is a no-op for
+                # other job types.
+                try:
+                    from . import progress as _progress_cleanup
+                    _progress_cleanup.clear_download_progress(job["id"])
+                except Exception:
+                    pass
         log.info("Worker loop stopped")
 
     def _safe_mark(self, fn, *args) -> None:
@@ -959,6 +969,12 @@ class Worker:
             except OSError as e:
                 log.warning("Could not invalidate stale theme.mp3 %s: %s", target_mp3, e)
 
+        # v1.13.18 (6C): yt-dlp progress hook → shared dict so
+        # /api/progress can render real % during a single-job
+        # download. Cleared in finally so a failed/cancelled job
+        # doesn't leave stale fractions visible across the next run.
+        from . import progress as _progress
+        job_id = job["id"]
         try:
             result = download_theme(
                 youtube_url=yt_url,
@@ -966,6 +982,7 @@ class Worker:
                 output_dir=out_dir,
                 cookies_file=self.settings.cookies_file,
                 audio_quality=self.settings.download_audio_quality,
+                progress_callback=lambda f: _progress.set_download_progress(job_id, f),
             )
         except DownloadError as e:
             kind = e.kind if hasattr(e, "kind") else FailureKind.UNKNOWN
