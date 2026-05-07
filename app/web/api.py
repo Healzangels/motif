@@ -8376,10 +8376,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (tmdb_id, plex_mt),
             ).fetchone()
             rating_key = rk_row["rating_key"] if rk_row else None
+            # v1.13.33: detect "locally resolved" state — the TDB URL is
+            # dead but the user has worked around it with a local source
+            # (ADOPT / SET URL / UPLOAD MP3) and motif's canonical is
+            # in place. The recovery section should reflect that the
+            # row is no longer broken from the user's perspective: no
+            # need to push more recovery actions, just acknowledge the
+            # workaround and note that a future TDB sync that revives
+            # the URL will surface a UPDATE pill.
+            local = conn.execute(
+                "SELECT source_kind, file_path FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ? "
+                "  AND file_path IS NOT NULL "
+                "LIMIT 1",
+                (media_type, tmdb_id),
+            ).fetchone()
+            local_source = local["source_kind"] if local else None
+            locally_resolved = bool(
+                local
+                and local_source in ("adopt", "url", "upload")
+            )
         kind = row["failure_kind"]
         if not kind:
             return {"failure_kind": None, "options": [],
-                    "human": None, "needs_manual_override": False}
+                    "human": None, "needs_manual_override": False,
+                    "resolved": False, "resolved_via": None}
         # Static recipe per FailureKind. Each entry is (action,
         # label, tooltip, priority, tone). Frontend renders these
         # as buttons that call into the existing per-action
@@ -8528,6 +8549,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # required reopening to see the same recovery options.
         if row["failure_acked_at"]:
             options = [o for o in options if o["action"] != "clear-failure"]
+        # v1.13.33: when the row is locally-resolved (TDB URL is dead
+        # but the user has a working local source), drop the recovery
+        # paths that would replace what's already working. Keep only
+        # ACK FAILURE (when not yet acked) and add a non-interactive
+        # tile that names the working source so the user sees clearly
+        # "this row is fine, TDB just doesn't track it anymore."
+        if locally_resolved:
+            kept: list[dict] = []
+            if not row["failure_acked_at"]:
+                # ACK FAILURE remains useful — it dismisses the row
+                # from the topbar FAIL counter. Surface it.
+                ack = next((o for o in options
+                            if o.get("action") == "clear-failure"), None)
+                if ack:
+                    kept.append(ack)
+            options = [
+                {"action": "info",
+                 "label": f"// RESOLVED VIA {local_source.upper()}",
+                 "tooltip": (
+                     f"Motif is using your {local_source} copy of this theme. "
+                     "The TDB URL is unavailable, but the row plays its local "
+                     "source. If a future TDB sync revives this URL, you'll "
+                     "see a TDB↑ update pill on this row so you can re-evaluate."
+                 ),
+                 "priority": 1, "tone": "user",
+                 "interactive": False},
+                *kept,
+            ]
         return {
             "failure_kind": kind,
             "failure_message": row["failure_message"],
@@ -8538,6 +8587,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ),
             "acked": bool(row["failure_acked_at"]),
             "rating_key": rating_key,
+            # v1.13.33: locally_resolved + resolved_via let the
+            # frontend re-skin the section header and suppress the
+            # dead-URL preview at the top of the info card.
+            "resolved": locally_resolved,
+            "resolved_via": local_source if locally_resolved else None,
             "options": options,
         }
 

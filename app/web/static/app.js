@@ -5539,6 +5539,12 @@
     // adjusted button label so the user knows they're about to
     // overwrite content, not just fetch.
     let hasReplaceTarget = false;
+    // v1.13.33: count rows in the selection that are downloaded
+    // but awaiting placement. Mirrors the per-row awaitingApproval
+    // gate (line ~4291): file_path set, no media_folder, no
+    // job_in_flight. PUSH TO PLEX bulk action only renders when at
+    // least one such row is selected.
+    let pushableCount = 0;
     if (n > 0) {
       const selectedKeys = libraryState.selected;
       for (const it of (libraryState.items || [])) {
@@ -5560,6 +5566,14 @@
         if (srcLetter !== 'T' && srcLetter !== '-') {
           hasReplaceTarget = true;
         }
+        // v1.13.33: pushable = downloaded canonical exists, no
+        // placement, not currently in flight. Excludes orphans
+        // (theme_tmdb null) since the /replace endpoint won't
+        // resolve them.
+        const awaitingApproval = !it.job_in_flight
+                              && !!it.file_path
+                              && !it.media_folder;
+        if (awaitingApproval && themed) pushableCount++;
       }
     }
     // v1.12.6: TDB-only browse hides DOWNLOAD-FROM-TDB / ADOPT —
@@ -5582,6 +5596,19 @@
     // intent clear: choose for each row, then accept-all or keep-all.
     if (dlBtn)    dlBtn.style.display    = (!onTdbOnly && !onUpdateFilter && hasTdbEligible) ? '' : 'none';
     if (adoptBtn) adoptBtn.style.display = (!onTdbOnly && !onUpdateFilter && hasSidecarOnly) ? '' : 'none';
+    // v1.13.33: PUSH TO PLEX bulk button. Visible when the selection
+    // contains at least one downloaded-but-not-placed row. Gated off
+    // on the TDB-only browse and the update-filter view since
+    // neither flow targets an existing canonical.
+    const pushBtn = document.getElementById('library-push-selected-btn');
+    if (pushBtn) {
+      pushBtn.style.display = (!onTdbOnly && !onUpdateFilter && pushableCount > 0) ? '' : 'none';
+      if (pushableCount > 0) {
+        pushBtn.textContent = pushableCount === n
+          ? '// PUSH TO PLEX'
+          : `// PUSH ${pushableCount} TO PLEX`;
+      }
+    }
     // v1.12.60: relabel DOWNLOAD-FROM-TDB based on selection mix so
     // the user reads accurate intent. Pure '-' (or T) selections
     // are clean fetches; mixing in U/A/M/P means existing themes
@@ -6271,6 +6298,78 @@
       } catch (err) {
         alert('Bulk download failed: ' + err.message);
       }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v1.13.33: bulk PUSH TO PLEX. Walks the selection, fires the
+    // per-row /replace endpoint for each downloaded-but-not-placed
+    // row. The /replace path force-overwrites whatever's in the
+    // Plex folder so a row with M+P state gets motif's canonical
+    // hardlinked over Plex's served theme. Per-row dispatch
+    // matches what the row's PLACE → PUSH TO PLEX action does;
+    // there's no /api/library/place-batch endpoint. Acceptable
+    // for the scale this surfaces (handful of awaiting-placement
+    // rows, not 10K).
+    document.getElementById('library-push-selected-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const selectedKeys = libraryState.selected;
+      const candidates = [];
+      const skipped = [];
+      for (const it of (libraryState.items || [])) {
+        const key = libKey(it);
+        if (!selectedKeys.has(key)) continue;
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        const awaitingApproval = !it.job_in_flight
+                              && !!it.file_path
+                              && !it.media_folder;
+        if (awaitingApproval && themed) {
+          candidates.push({
+            mt: it.theme_media_type,
+            id: it.theme_tmdb,
+            title: it.plex_title || '',
+          });
+        } else {
+          skipped.push(it.plex_title || key);
+        }
+      }
+      if (candidates.length === 0) {
+        alert('Nothing to push — every selected row is already placed, in flight, or has no downloaded canonical.');
+        return;
+      }
+      const lines = [`Push ${candidates.length} downloaded theme${candidates.length === 1 ? '' : 's'} into Plex?`];
+      if (skipped.length) {
+        lines.push('');
+        lines.push(`(${skipped.length} skipped — already placed or no downloaded canonical.)`);
+      }
+      if (!confirm(lines.join('\n'))) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PUSHING…';
+      let ok = 0;
+      let failed = 0;
+      // Fire sequentially so we don't pile 50 concurrent place
+      // jobs on the worker queue when the user has a big selection.
+      // Each /replace call enqueues a place job; the worker drains
+      // them serially anyway. Per-row failure is caught + counted
+      // so a bad row doesn't abort the rest.
+      for (const c of candidates) {
+        try {
+          await api('POST', `/api/items/${c.mt}/${c.id}/replace`);
+          ok++;
+        } catch (_) {
+          failed++;
+        }
+      }
+      const skipNote = skipped.length ? ` (${skipped.length} skipped)` : '';
+      const failNote = failed ? `, ${failed} failed` : '';
+      btn.textContent = `// ${ok} QUEUED${failNote}${skipNote}`;
+      libraryState.selected.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      setTimeout(refreshTopbarStatus, 1100);
+      libraryRapidPoll();
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
     });
 
@@ -7639,6 +7738,28 @@
       return;
     }
     const human = data.human || data.failure_kind;
+    // v1.13.33: locally-resolved rows annotate the dead TDB URL row
+    // at the top of the dialog so the user sees the axis state at a
+    // glance — the title swap on the section header below carries
+    // the rest of the signal.
+    if (data.resolved) {
+      section.classList.add('recovery-section-resolved');
+      try {
+        const dt = root.querySelectorAll('dt');
+        for (const node of dt) {
+          if ((node.textContent || '').trim().toLowerCase() === 'themerrdb url') {
+            const dd = node.nextElementSibling;
+            if (dd && !dd.querySelector('.tdb-unavailable-badge')) {
+              const badge = document.createElement('span');
+              badge.className = 'tdb-unavailable-badge muted small';
+              badge.textContent = ' (unavailable — using local source)';
+              dd.appendChild(badge);
+            }
+            break;
+          }
+        }
+      } catch (_) { /* annotation is cosmetic — never fail the render */ }
+    }
     // v1.12.92: render the acked note on its own line below the
     // header instead of inlining it next to the human label. The
     // inline version made the header wrap to two lines after ACK,
@@ -7682,9 +7803,15 @@
         ${htmlEscape(opt.label)}
       </button>`;
     }).join('');
+    // v1.13.33: title swaps when locally-resolved so the user reads
+    // "this row is fine, the upstream is just dead" instead of "act
+    // now". Body text + options already adapted server-side.
+    const sectionTitleText = data.resolved
+      ? '✓ RESOLVED — TDB UNAVAILABLE'
+      : '// TRY THIS NEXT';
     section.innerHTML = `
       <header class="recovery-section-head">
-        <span class="recovery-section-title">// TRY THIS NEXT</span>
+        <span class="recovery-section-title">${htmlEscape(sectionTitleText)}</span>
         <span class="muted small">${htmlEscape(human)}</span>
       </header>
       ${ackedNoteLine}

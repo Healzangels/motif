@@ -283,6 +283,12 @@
           title="Download selected from ThemerrDB.">// DOWNLOAD FROM TDB</button>
   <button class="btn btn-tiny lib-source-adopt" id="library-adopt-selected-btn" type="button"
           title="Adopt selected sidecars.">// ADOPT SELECTED</button>
+  <!-- v1.13.33: bulk PUSH TO PLEX. Visible when one or more
+       selected rows are downloaded-but-not-placed (DL=on + PL=await).
+       Walks each selection and fires the per-row /replace endpoint
+       (same path as the per-row PLACE → PUSH TO PLEX action). -->
+  <button class="btn btn-tiny" id="library-push-selected-btn" type="button" style="display:none"
+          title="Push downloaded-but-not-placed selections into Plex.">// PUSH TO PLEX</button>
   <button class="btn btn-tiny" id="library-export-csv-btn" type="button"
           title="Export selection to CSV.">// EXPORT CSV</button>
   <button class="btn btn-tiny btn-warn" id="library-ack-selected-btn" type="button" style="display:none"

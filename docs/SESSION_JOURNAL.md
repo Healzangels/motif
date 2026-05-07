@@ -839,3 +839,84 @@ lf.file_path IS NOT NULL"). Slim count → no lf join → 500.
   failure with success guidance).
 - Bulk PUSH TO PLEX for downloaded-but-not-placed rows.
 - Concurrent ops topbar visibility.
+
+---
+
+## 2026-05-07 — v1.13.33: info-card resolved-state, bulk PUSH TO PLEX
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.33`
+
+### Context
+Two follow-up items the user queued earlier:
+1. When a row's TDB URL fails (video private/removed/age/geo) but
+   the user works around via ADOPT (M→A) or SET URL (→U) or UPLOAD,
+   the info-card's "TRY THIS NEXT" section was misleading — the row
+   is fine (has a working local source), there's nothing to act on.
+2. Bulk PUSH TO PLEX for downloaded-but-not-placed selections.
+   v1.13.31's bulk-download force-place fix landed for new
+   downloads, but the user wanted a way to push a hand-picked
+   selection of awaiting-placement rows in one click.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.33`.
+- `app/web/api.py` — `/api/items/{mt}/{id}/recovery-options`:
+  - Detects "locally-resolved" state: `failure_kind` set on
+    themes row AND a `local_files` row exists with
+    `source_kind ∈ ('adopt','url','upload')` and a non-NULL
+    `file_path`. When true, returns `resolved=true,
+    resolved_via=<source>` and replaces the recovery options
+    list with a non-interactive "// RESOLVED VIA <SOURCE>" tile +
+    ACK FAILURE (when not yet acked). Drops RE-DOWNLOAD / SET URL /
+    UPLOAD MP3 since the row is already covered by a working
+    local source.
+- `app/web/static/app.js` — `hydrateRecoverySection` (~line 7637):
+  - Section title swaps from "// TRY THIS NEXT" to
+    "✓ RESOLVED — TDB UNAVAILABLE" on resolved rows.
+  - Adds `.recovery-section-resolved` class so the title color
+    flips amber → green-bright (calmer "this is fine" signal).
+  - Annotates the THEMERRDB URL row at the top of the dialog
+    with "(unavailable — using local source)" so the user
+    sees the upstream-axis state without scrolling.
+- `app/web/static/app.css`:
+  - `.recovery-section-resolved .recovery-section-title` →
+    green-bright color.
+  - `.tdb-unavailable-badge` → amber, small left margin.
+- `app/web/templates/library.html`:
+  - New `library-push-selected-btn` ("// PUSH TO PLEX") in the
+    bulk-action bar. Hidden by default; gated visible when the
+    selection has at least one downloaded-but-not-placed row.
+- `app/web/static/app.js` (bulk handler + selection-ui):
+  - `updateLibrarySelectionUi` walks the selection and counts
+    `pushableCount` (downloaded canonical + no media_folder +
+    no job_in_flight + themed/non-orphan). Button label adapts:
+    "// PUSH TO PLEX" when all selected qualify, "// PUSH N TO
+    PLEX" when only some do.
+  - Click handler: filters the selection to pushable rows,
+    confirms count, fires per-row `/api/items/{mt}/{id}/replace`
+    sequentially. Acceptable for the scale this surfaces
+    (handful of awaiting-placement rows). Failed rows counted
+    separately so one bad row doesn't abort the rest. Topbar
+    poll re-fires after a short delay so the queue counts
+    update.
+
+### How to verify
+1. **Resolved info-card**: find a row with `failure_kind` set
+   that you've worked around (M→A adopt, or SET URL with a
+   non-TDB YouTube URL). Open INFO. Recovery section reads
+   "✓ RESOLVED — TDB UNAVAILABLE" in green; THEMERRDB URL row
+   has "(unavailable — using local source)" badge. ACK FAILURE
+   visible only if not yet acked. RE-DOWNLOAD / SET URL /
+   UPLOAD MP3 hidden (row is already covered).
+2. **Bulk PUSH TO PLEX**: select a few rows that show DL=green
+   + PL=await (the awaiting-placement state — title glyph is
+   the amber `!`). The bulk bar shows the new "// PUSH TO
+   PLEX" button. Click → confirms → one /replace call per row.
+   Rows show DL=green + PL=green after a few seconds.
+
+### Open threads
+- Concurrent ops topbar visibility (defer until needed).
+- Future TDB sync that revives a dead URL: the info card's
+  resolved state will revert automatically (failure_kind
+  clears on next successful sync; recovery-options endpoint
+  returns the regular flow). UPDATE pill (TDB↑) on the row
+  surfaces re-evaluation. Already wired via existing logic;
+  no v1.13.33 change needed for the restore path.
