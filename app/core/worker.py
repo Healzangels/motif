@@ -685,27 +685,34 @@ class Worker:
         # up enumTabsActive correctly, and let the dash SYNC lock
         # hold through the entire sync→enum pipeline.
         if self.settings.sync_auto_enum_after_sync:
+            # v1.13.28: read+write inside BEGIN IMMEDIATE so a cron
+            # tick and a manual click landing within the same
+            # millisecond can't both observe the pre-insert
+            # pending_section_ids snapshot and double-queue the
+            # cascade. SQLite's autocommit (isolation_level=None on
+            # get_conn) doesn't serialize the reads otherwise.
             with get_conn(self.settings.db_path) as conn:
-                included = conn.execute(
-                    "SELECT section_id FROM plex_sections WHERE included = 1"
-                ).fetchall()
-                pending_section_ids = {
-                    r["section_id"] for r in conn.execute(
-                        "SELECT json_extract(payload, '$.section_id') AS section_id "
-                        "FROM jobs WHERE job_type = 'plex_enum' "
-                        "AND status IN ('pending','running')"
-                    ).fetchall() if r["section_id"] is not None
-                }
-                for s in included:
-                    sid = s["section_id"]
-                    if sid in pending_section_ids:
-                        continue
-                    conn.execute(
-                        "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
-                        "VALUES ('plex_enum', ?, 'pending', ?, ?)",
-                        (json.dumps({"section_id": sid, "scope": "cascade"}),
-                         now_iso(), now_iso()),
-                    )
+                with transaction(conn):
+                    included = conn.execute(
+                        "SELECT section_id FROM plex_sections WHERE included = 1"
+                    ).fetchall()
+                    pending_section_ids = {
+                        r["section_id"] for r in conn.execute(
+                            "SELECT json_extract(payload, '$.section_id') AS section_id "
+                            "FROM jobs WHERE job_type = 'plex_enum' "
+                            "AND status IN ('pending','running')"
+                        ).fetchall() if r["section_id"] is not None
+                    }
+                    for s in included:
+                        sid = s["section_id"]
+                        if sid in pending_section_ids:
+                            continue
+                        conn.execute(
+                            "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                            "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                            (json.dumps({"section_id": sid, "scope": "cascade"}),
+                             now_iso(), now_iso()),
+                        )
 
     def _do_scan(self, job: sqlite3.Row) -> None:
         """Run a Plex folder scan. Payload optionally carries

@@ -481,3 +481,82 @@ Two follow-up asks from the v1.13.25 testing batch:
 - Cross-library lock from per-library click — still pending
   user retest. v1.13.25's per-section cascade fix may have
   cleared it.
+
+---
+
+## 2026-05-07 — v1.13.28: audit triage (cron-vs-click race, tab validation, loadLibrary races)
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.28`
+
+### Context
+Subagent code review of v1.13.23 → v1.13.27 surfaced a P0/P1
+punch list. Triaged and addressed in this release.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.28`.
+- `app/core/worker.py` (#2 from audit, P1):
+  - `_do_sync`'s post-sync cascade-enqueue block was reading
+    `pending_section_ids` and inserting the new jobs in autocommit
+    mode (`get_conn` uses `isolation_level=None`). A cron tick and
+    a manual click landing in the same millisecond could both
+    observe the same pre-insert snapshot and both insert duplicate
+    per-section enum jobs. Wrapped in `transaction(conn)` (BEGIN
+    IMMEDIATE), so the second caller blocks on the first's writer
+    lock and re-reads after commit. Same pattern the rest of the
+    codebase uses for race-sensitive inserts.
+- `app/web/api.py` (#1 from audit, P1):
+  - `/api/library/refresh` previously fell through to the legacy
+    global insert when `body["tab"]` was anything other than the
+    allowlisted three values (or null/missing). A typo or older
+    client could therefore queue duplicate global plex_enum jobs
+    bypassing dedupe. Now validates `tab` up front: `null`/missing
+    keeps the legacy "scan everything" path; allowlisted strings
+    take the per-tab branch; anything else 400s with a clear
+    message. The dedupe short-circuit moved from the negative
+    `tab not in (...)` check to an explicit `tab is None` check
+    so the validation gate can't be bypassed.
+- `app/web/static/app.js`:
+  - **#7 colspan**, P2: error branch in `loadLibrary` wrote
+    `colspan="8"` while the loading + empty-state branches
+    wrote `colspan="9"` (table has 9 cols). Aligned to 9.
+  - **#8 in-flight fetch race**, P1: a fast filter-chip click
+    while a prior fetch was in flight could let either response
+    win, possibly clobbering fresher data with stale. Added a
+    monotonic `loadLibrary._seq` token; older calls bail before
+    touching tbody when their token is superseded.
+  - **#11 dead aggregate-coverage code**, nit: removed
+    `movAvail/movNoTdb/tvAvail/tvNoTdb` computations and the
+    transitional comment block. v1.13.27 moved comparison bars
+    to per-section data; the aggregated movies/tv recomputation
+    that fed the v1.13.22 design was orphaned.
+
+### Deferred (lower-severity findings)
+- #3 (json_extract on legacy global rows): tied to #1; resolved
+  indirectly. The validation gate prevents new global rows from
+  being mis-tagged.
+- #4 (HW state can drift if user backgrounds tab): cosmetic
+  inaccuracy on the topbar "(X of Y)" suffix when the tab
+  background-pauses; would require server-side burst tracking
+  to fully resolve. Acceptable for now.
+- #5 (position math assumption): noted, single-worker queue
+  drain is FIFO so the math holds for the kinds we surface.
+- #6 (sawBusyScope cleared on flip): intentional; the existing
+  comment captures the trade-off.
+- #9, #10, #12, #13, #14, #15, #16, #17: minor / edge / nit.
+
+### How to verify (user testing)
+1. Race test: queue a manual sync from /dash while the cron
+   would also fire (~midnight UTC). Worker should emit exactly
+   N enum jobs (one per included section), not 2N. The
+   transaction wrap holds the writer lock through the read+
+   write window.
+2. Bad-tab guard: `curl -X POST /api/library/refresh -d '{"tab":"foo"}'`
+   returns 400 with a clear "unknown tab" detail instead of
+   silently queuing a duplicate global plex_enum.
+3. loadLibrary race: rapid-fire filter chips (status, TDB
+   pills, src letter) on a slow connection — the table stays
+   consistent with the latest click rather than reverting to
+   stale data when an older fetch's response lands second.
+
+### Open threads
+- Cross-library lock from per-library click — still pending
+  user retest.

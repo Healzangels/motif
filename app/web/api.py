@@ -5944,6 +5944,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = {}
         tab = body.get("tab")
         fourk = bool(body.get("fourk"))
+        # v1.13.28: validate `tab` up front. Pre-fix the body's tab
+        # could be any value — non-None/non-allowlisted values fell
+        # through both branches and hit the legacy global insert at
+        # the bottom, bypassing dedupe and queueing duplicate global
+        # plex_enum jobs even when one was already pending. The
+        # legitimate "scan everything" path is body-absent (tab is
+        # None); a body-present-but-wrong tab is a client bug worth
+        # 400ing on.
+        if tab is not None and tab not in ("movies", "tv", "anime"):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown tab {tab!r}; expected 'movies', 'tv', 'anime', or omit",
+            )
 
         with get_conn(db) as conn:
             # v1.13.23: scope dedupe per-section. Pre-fix any
@@ -5955,7 +5968,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # in-flight job, mirroring /api/libraries/refresh.
             # Legacy global-refresh (no tab) keeps the old global
             # short-circuit since its purpose IS "scan everything".
-            if tab not in ("movies", "tv", "anime"):
+            if tab is None:
                 existing = conn.execute(
                     "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
                     "AND status IN ('pending','running')"

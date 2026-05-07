@@ -2142,34 +2142,12 @@
     $('#plex-tv-with-theme').textContent = fmt.num(tvWithTheme);
     $('#plex-tv-motif').textContent = fmt.num(tvMotif);
 
-    // v1.13.22: comparative coverage bars on the dashboard. Same
-    // /api/coverage/plex payload — re-derived counts so the bars
-    // agree with the cards above. "available" = motif_available
-    // AND not has_theme (the cohort motif could help with);
-    // "no_tdb" = !motif_available AND !has_theme (motif can't
-    // help). The themed segment doesn't distinguish source —
-    // SOURCE BREAKDOWN below the bar covers that axis.
-    const movAvail = data.movies.filter(
-      (m) => !m.has_theme && m.motif_available).length;
-    const movNoTdb = data.movies.filter(
-      (m) => !m.has_theme && !m.motif_available).length;
-    const tvAvail = data.tv.filter(
-      (m) => !m.has_theme && m.motif_available).length;
-    const tvNoTdb = data.tv.filter(
-      (m) => !m.has_theme && !m.motif_available).length;
-    // v1.13.27: comparison bars are now driven by /api/sections/coverage
-    // (rendered via the section-coverage block fetcher above) instead
-    // of the aggregated movies/tv totals. The aggregated view collapsed
-    // 4K Movies (28 items, ~90% themed) into Movies (10K items, ~30%
-    // themed) so a small library's healthy coverage was masked by a
-    // big library's gaps. Per-section bars let each library stand on
-    // its own — each row's bar is normalized to its section's total,
-    // making cross-library comparison ("which library has the worst
-    // coverage?") instant.
-    //
-    // The actual data source + render lives in renderSectionCoverage's
-    // sibling renderCoverageComparison call, which fires from the
-    // section-coverage fetch path with the same data the table reads.
+    // v1.13.27: per-section comparison bars live in
+    // renderCoverageComparison and are populated from
+    // /api/sections/coverage (called alongside renderSectionCoverage
+    // in loadDashboard's section-coverage fetch). The earlier
+    // aggregated movies/tv recomputation that lived here was dead
+    // code by v1.13.27 and was removed in v1.13.28.
   }
 
   // v1.13.22: per-row stacked-bar comparison block.
@@ -3721,13 +3699,23 @@
     if (tbody.dataset.lastHash == null) {
       tbody.innerHTML = `<tr><td colspan="9" class="muted center">loading…</td></tr>`;
     }
+    // v1.13.28: in-flight guard. Pre-fix two loadLibrary() calls
+    // could race — a fast filter-chip click while the prior fetch
+    // was still in flight would let whichever response landed second
+    // win, possibly clobbering fresher data with stale. Bumping a
+    // monotonic token on each call lets the older call detect it's
+    // been superseded and bail before touching tbody.
+    loadLibrary._seq = (loadLibrary._seq || 0) + 1;
+    const _myToken = loadLibrary._seq;
     let data;
     try {
       data = await api('GET', '/api/library?' + params.toString());
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="8" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      if (loadLibrary._seq !== _myToken) return;
+      tbody.innerHTML = `<tr><td colspan="9" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
       return;
     }
+    if (loadLibrary._seq !== _myToken) return;
     // v1.10.35: silent dedup keyed on (theme, media_type, folder_path).
     // Plex sometimes lists one movie twice in the same section under
     // different rating_keys (file versions Plex didn't merge). When
