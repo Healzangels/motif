@@ -533,11 +533,12 @@
         <input type="checkbox" data-cfg-field="placement.auto_place" />
         <p class="form-hint">
           When checked (default), every successful download immediately places
-          the theme into Plex's media folder. When unchecked, downloads land
-          in <a href="/pending">/pending</a> for manual approval — useful when
-          you want to review what motif found before publishing.
-          Toggle this off to require manual approval for every download
-          (each one lands on /pending until the user approves).
+          the theme into Plex's media folder. When unchecked, themes still
+          download in the background — the row's DL pill goes solid green —
+          but the file stays in motif's staging tree. The PL pill stays empty,
+          and the row's // SOURCE ▾ menu picks up a // PUSH TO PLEX entry so
+          you can place it manually whenever you're ready, the same way you'd
+          push a downloaded-but-missing-from-Plex item.
         </p>
       </label>
     </div>

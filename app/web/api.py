@@ -67,6 +67,13 @@ MediaType = Literal["movie", "tv"]
 
 _ALLOWED_TOP_LEVEL = {
     "paths", "plex", "downloads", "matching", "sync", "web", "runtime",
+    # v1.13.26: "placement" was missing here. The settings page has a
+    # PLACEMENT MODE block (// SAVE PLACEMENT button) but every save
+    # returned 400 "unknown config section: placement", so users
+    # couldn't actually disable auto_place from the UI even though
+    # MotifConfig.placement: PlacementConfig has existed since
+    # v1.5.3. Adding it here lights the toggle up end-to-end.
+    "placement",
 }
 
 
@@ -2976,8 +2983,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         f"branch {target_branch!r} not found at {target_url}; "
                         f"available: {available}"
                     )
-                return True, (f"branch {target_branch} at "
-                              f"{refs[ref_name][:8].decode()}")
+                # v1.13.26: drop the raw 8-char SHA from the probe
+                # detail — it was meaningless to users (showed up as
+                # "branch database at 06979829" on the settings page).
+                # The SHA was just confirmation that refs came back;
+                # the human-readable confirmation is "branch <name>
+                # reachable". Resolving the SHA to a commit date
+                # would require a second protocol round-trip we
+                # don't need for a transport reachability check.
+                return True, f"branch {target_branch} reachable"
             except ImportError:
                 return False, "dulwich not installed (Phase B dep)"
             except Exception as e:

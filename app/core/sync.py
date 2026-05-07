@@ -1325,8 +1325,8 @@ class _GitMirror:
             self.db_path, self.op_id,
             stage="git_diff", stage_label="Computing git diff",
             stage_current=0, stage_total=0,
-            activity=f"diff {self._summary_sha(self._old_head)}..."
-                     f"{self._summary_sha(self._new_head)}",
+            activity=f"diff {self._summary_commit(self._old_head)}"
+                     f" → {self._summary_commit(self._new_head)}",
         )
         new_commit = self._repo[self._new_head]
         if self._old_head is None:
@@ -1487,7 +1487,7 @@ class _GitMirror:
             self.db_path, self.op_id,
             stage_current=1, stage_total=1,
             activity=f"Cloned {self.branch} at "
-                     f"{self._summary_sha(new_head)}",
+                     f"{self._summary_commit(new_head)}",
         )
 
     def _fetch(self) -> None:
@@ -1602,14 +1602,14 @@ class _GitMirror:
             self._unchanged = True
             op_progress.update_progress(
                 self.db_path, self.op_id,
-                activity=f"No new commits since {self._summary_sha(old_head)}",
+                activity=f"No new commits since {self._summary_commit(old_head)}",
             )
             return
         op_progress.update_progress(
             self.db_path, self.op_id,
             stage_current=1, stage_total=1,
-            activity=f"Fetched {self._summary_sha(old_head) if old_head else 'first run'}"
-                     f" → {self._summary_sha(new_head)}",
+            activity=f"Fetched {self._summary_commit(old_head) if old_head else 'first run'}"
+                     f" → {self._summary_commit(new_head)}",
         )
 
     def _post_acquire_validate(self) -> None:
@@ -1705,6 +1705,28 @@ class _GitMirror:
         if sha is None:
             return "(none)"
         return sha[:8].decode() if isinstance(sha, bytes) else str(sha)[:8]
+
+    def _summary_commit(self, sha: bytes | None) -> str:
+        """v1.13.26: human-readable commit summary for the activity
+        feed and any other surface where the SHA was previously shown
+        raw. Returns 'YYYY-MM-DD HH:MM UTC' when the commit can be
+        loaded from the local mirror, falling back to the 8-char
+        SHA when the object isn't available (e.g., MOTIF_LAST_SYNC
+        pointing at a pruned object). Pre-fix activity messages
+        like 'No new commits since 06979829' showed raw SHAs that
+        were meaningless to users; now they read 'No new commits
+        since 2026-05-07 14:30 UTC' (drawer info, dashboard sync
+        history, settings page).
+        """
+        if sha is None:
+            return "(none)"
+        try:
+            commit = self._repo[sha]
+            from datetime import datetime as _dt, timezone as _tz
+            t = _dt.fromtimestamp(commit.commit_time, tz=_tz.utc)
+            return t.strftime("%Y-%m-%d %H:%M UTC")
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return self._summary_sha(sha)
 
 
 @dataclass

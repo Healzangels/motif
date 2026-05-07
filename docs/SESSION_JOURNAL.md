@@ -318,3 +318,94 @@ User testing v1.13.24 reported:
   that I couldn't trigger from reading code. Holding on those
   three pending clarification — see chat for the question batch.
 - Tag `v1.13.25` pushed; image build in progress.
+
+---
+
+## 2026-05-07 — v1.13.26: SHA→date in sync activity, probe message cleanup, placement.auto_place save fix
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.26`
+
+### Context
+User testing v1.13.25 reported:
+1. Sync activity feed and the settings probe-transport message
+   surfaced raw 8-char SHAs ("06979829") which are meaningless to
+   users. Visible in the drawer info, dashboard, and settings.
+2. Settings → PLACEMENT MODE → // SAVE PLACEMENT returned 400
+   `{"detail":"unknown config section: placement"}`, so users
+   couldn't disable auto-place from the UI even though
+   MotifConfig.placement: PlacementConfig has existed since v1.5.3.
+3. Stale /pending references in the placement-mode help text
+   (the /pending tab was removed in v1.12.41).
+
+### Root causes
+1. `_summary_sha(sha) -> sha[:8].decode()` was used for activity
+   messages directly. No effort to resolve the SHA to its commit
+   date, which is what users actually care about ("when was this
+   commit?"). The probe message took the same shortcut on the
+   refs lookup result.
+2. `_ALLOWED_TOP_LEVEL` in `_apply_partial_config` listed the
+   six original sections (paths/plex/downloads/matching/sync/
+   web/runtime) but never picked up `placement` when v1.5.3
+   added the dataclass field. Every save body whose top-level
+   key was `placement` raised ValueError → 400.
+3. Help-text drift; v1.12.41 dropped /pending without sweeping
+   /settings copy.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.26`.
+- `app/core/sync.py`:
+  - New `_summary_commit(sha)` instance method that resolves the
+    SHA via `self._repo[sha]` and returns
+    `"YYYY-MM-DD HH:MM UTC"` from `commit.commit_time`. Falls
+    back to `_summary_sha` on KeyError so a missing-from-mirror
+    sentinel still degrades gracefully.
+  - Replaced every activity-message call site that previously
+    used `_summary_sha`: clone-at, fetch range, "no new commits
+    since X", diff range. Drawer now reads "Fetched 2026-05-06
+    13:00 UTC → 2026-05-07 14:30 UTC" instead of "Fetched
+    df6b6835 → 06979829".
+- `app/web/api.py`:
+  - `_probe_git`: detail message dropped the SHA suffix; now
+    just `"branch <name> reachable"`. The probe is a transport
+    reachability check, not an "is this commit interesting?"
+    check, so the SHA was incidental noise.
+  - `_ALLOWED_TOP_LEVEL`: added `"placement"`. Settings →
+    PLACEMENT MODE → // SAVE PLACEMENT now persists.
+- `app/web/templates/settings.html`:
+  - Replaced the auto-place help text. Was: "downloads land in
+    /pending for manual approval — useful when you want to
+    review what motif found before publishing. Toggle this off
+    to require manual approval for every download (each one
+    lands on /pending until the user approves)." Now describes
+    the actual flow: download still happens (DL pill green),
+    PL pill stays empty, // SOURCE menu picks up // PUSH TO
+    PLEX, same affordance as the downloaded-but-missing-from-
+    Plex case. No /pending references.
+
+### How to verify (user testing)
+1. Settings → SCHEDULE → PROBE TRANSPORT. Result reads
+   "✓ GIT reachable · 274ms · branch database reachable" — no
+   raw SHA on the end.
+2. Trigger a sync (manual or wait for cron). LIVE OPS drawer
+   activity feed for THEMERRDB SYNC reads "Fetched 2026-MM-DD
+   HH:MM UTC → 2026-MM-DD HH:MM UTC" instead of two SHAs.
+3. Settings → PLACEMENT MODE. Toggle AUTO-PLACE AFTER DOWNLOAD
+   off, click // SAVE PLACEMENT. Banner should read "saved" (or
+   similar) — no 400 error.
+4. With auto-place off, trigger a download (RE-DL on a row).
+   The download completes; row shows DL=green, PL=amber !,
+   title gets the amber ! glyph. PLACE menu now offers // PUSH
+   TO PLEX.
+5. Click // PUSH TO PLEX. Place job runs; row goes to all-
+   green DL=green, PL=green.
+
+### Open threads
+- Queue depth indicator (1 of N) on the topbar mini-bar — user
+  picked the inline-counter option. Will land in v1.13.27.
+- Coverage charts: user picked "cross-library comparison off"
+  meaning the absolute counts make small libraries
+  (e.g. 28-item 4K Movies) hard to compare with big ones
+  (10K Movies). Will switch to percentage view in v1.13.27.
+- Cross-library lock from per-library click reported as still
+  reproducing. v1.13.25's per-section cascade fix may have
+  resolved it; user to retest. If still buggy, ask for steps
+  to reproduce.
