@@ -1053,3 +1053,97 @@ acknowledged the Plex Pass possibility.
   deeplink narrows to e.g. video_removed only (today the &fk=
   param is parsed but not applied — library filters to all
   dead-pill rows).
+
+---
+
+## 2026-05-07 — v1.13.35: holistic-audit triage (section-scope, off-page bulk, sparkline degenerate, doc cleanup)
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.35`
+
+### Context
+Subagent ran a holistic audit across the v1.13.29 → v1.13.34
+window. **No P0/P1 crash or corruption bugs** — the recent
+sweeps had genuinely consolidated state. A handful of edge-case
+findings worth shipping:
+
+### Changes (P1)
+- `app/web/api.py` `/api/items/{mt}/{id}/recovery-options`:
+  - Now accepts an optional `?section_id=` query param. The
+    locally-resolved detection's `local_files` lookup pins to
+    that section when provided. Pre-fix a 4K-only adopt on a
+    multi-section title incorrectly flipped the **standard**
+    section's info card to RESOLVED VIA ADOPT — same v18-class
+    cross-section bleed the schema redesign was meant to close.
+    Falls back to the title-global lookup when section_id is
+    omitted (legacy callers).
+- `app/web/static/app.js`:
+  - `hydrateRecoveryOptions(root, mt, tmdb, sectionId)` and the
+    re-hydrate call after ACK FAILURE both forward the section
+    so the client uses the scoped path.
+  - **Bulk PUSH TO PLEX off-page warning**: `libraryState.selected`
+    survives across pagination but `libraryState.items` only
+    holds the visible page. The handler silently dropped off-
+    page selections from the bulk operation. Confirm dialog
+    now surfaces an "⚠ N selected rows are not on this page"
+    line so the user knows. (Pre-existing issue with bulk
+    download too; could fold a similar warning there in a
+    future polish pass.)
+  - **renderSyncPerformance**: hide the chart when no row has
+    `wall_clock_seconds > 0`. A series of immediate-cancel
+    runs would otherwise normalize to a flat-baseline render
+    that read as "everything's stuck" when really there's no
+    duration signal.
+
+### Changes (P2)
+- `app/core/db.py` `_migrate_v33_to_v34`: docstring rewritten.
+  The `motif_unplaced_at` column it introduced was deprecated
+  in v1.12.111 (replaced by `plex_theme_verified_ok`); the old
+  docstring still claimed PURGE/UNMANAGE stamp the tombstone
+  and the SRC SQL suppresses 'P' on it — neither is true any
+  more. Future archaeology for phantom-P regressions now
+  points at the right signal.
+- `tests/test_canonical.py`: updated `_` → `-` expectations to
+  match the v1.10.23 sanitize_for_filesystem change (Plex's
+  own folder convention). 4 tests now pass (were silently
+  failing on `pytest tests/test_canonical.py`).
+
+### Audit findings deferred (defensive-only / cosmetic)
+- `/api/sections/coverage` under-counts on fresh DB before
+  resolve_theme_ids runs. Brief window; cosmetic.
+- `daily_downloads` `DATE(created_at)` is forgiving today
+  since `now_iso()` always emits offset; only a regression in
+  the timestamp emitter would surface it.
+- `/api/library/refresh` accepts arbitrary `fourk` truthy
+  values (UI never sends strings).
+- Sequential bulk PUSH triggers `loadLibrary` after the first
+  request for large selections; UX could surprise but
+  functionally correct.
+- Composite-+P regex `srcCell.replace` is fragile on a future
+  non-`link-badge` chip variant; gated by the existing
+  `letter !== '-'` check so safe today.
+- `_QUEUE_BURST_HW` / `_DOWNLOAD_PROGRESS` could grow
+  unboundedly on a host where /api/progress is never polled.
+  Not realistic.
+- Phase B git-mirror failure in `_run_git_differential_upsert`
+  doesn't cascade to remote (skip_upsert path); rare-but-real
+  trade-off, worth a code comment in a future polish pass.
+
+### How to verify
+1. **Section-scoped resolved**: a multi-section title where
+   only the 4K section has been adopted post-failure. Open
+   INFO on the Standard row — should show "TRY THIS NEXT"
+   (failure not resolved at this scope), not "✓ RESOLVED".
+   4K row's INFO still reads "✓ RESOLVED VIA ADOPT" as before.
+2. **Bulk PUSH off-page**: select rows on page 1, navigate
+   to page 2 (selection persists), press PUSH TO PLEX. The
+   confirm dialog now warns "N selected rows are not on
+   this page".
+3. **Sparkline empty-data**: fresh install, no syncs yet OR
+   only 0-second cancels. // SYNC PERFORMANCE block hidden.
+4. **Tests**: `pytest tests/test_canonical.py` passes 13/13
+   (was 9/13 with 4 stale `_`-vs-`-` failures).
+
+### Open threads
+- Concurrent ops topbar visibility (still deferred — comes
+  back if the user surfaces multiple-op visibility complaints).
+- Per-kind library filter for the failure-breakdown deeplink
+  (`&fk=` param parsed but not applied).

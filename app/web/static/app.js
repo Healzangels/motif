@@ -1339,6 +1339,14 @@
     const body = document.getElementById('insight-syncs-body');
     if (!block || !body) return;
     if (rows.length < 2) { block.style.display = 'none'; return; }
+    // v1.13.35: hide when there's no real duration signal — every
+    // row at zero seconds (e.g., a series of immediate-cancel
+    // runs) would normalize to a flat baseline that reads as
+    // "everything's stuck" when really there's just no data.
+    // Server-side filter excludes NULL wall_clock_seconds; this
+    // additionally guards the all-zero edge.
+    const haveRealDuration = rows.some((r) => (r.wall_clock_seconds || 0) > 0);
+    if (!haveRealDuration) { block.style.display = 'none'; return; }
     const key = JSON.stringify(rows.map((r) => [
       r.finished_at, r.wall_clock_seconds, r.transport, r.status, r.no_changes,
     ]));
@@ -6560,10 +6568,22 @@
         alert('Nothing to push — every selected row is already placed, in flight, or has no downloaded canonical.');
         return;
       }
+      // v1.13.35: surface off-page selections in the confirm
+      // dialog. libraryState.selected survives across pagination
+      // but libraryState.items only holds the visible page, so an
+      // off-page selection is silently dropped from the bulk
+      // operation. Tell the user explicitly so they don't think
+      // the action covered every selected row.
+      const offPageCount = libraryState.selected.size
+                        - candidates.length - skipped.length;
       const lines = [`Push ${candidates.length} downloaded theme${candidates.length === 1 ? '' : 's'} into Plex?`];
       if (skipped.length) {
         lines.push('');
         lines.push(`(${skipped.length} skipped — already placed or no downloaded canonical.)`);
+      }
+      if (offPageCount > 0) {
+        lines.push('');
+        lines.push(`⚠ ${offPageCount} selected row${offPageCount === 1 ? '' : 's are'} not on this page — bulk PUSH only operates on the current page's items. Navigate to those pages and run PUSH again, or use a tighter filter to bring everything onto one page.`);
       }
       if (!confirm(lines.join('\n'))) return;
       btn.disabled = true;
@@ -7755,7 +7775,10 @@
     // a failure. Best-effort — endpoint failure leaves the
     // placeholder copy ("loading recovery options…") in place.
     if (recoverySectionId) {
-      hydrateRecoveryOptions(body, t.media_type, t.tmdb_id);
+      // v1.13.35: pass section_id so the resolved-state lookup
+      // is section-scoped — pre-fix a 4K-only adopt could flip
+      // the standard section's info card to RESOLVED VIA ADOPT.
+      hydrateRecoveryOptions(body, t.media_type, t.tmdb_id, sectionId);
     }
     // v1.12.83: wire the CLEAR button rendered into the // HISTORY
     // section by renderRowHistory. The PROVENANCE CLEAR is wired
@@ -7940,15 +7963,23 @@
   // is shared. Disabled options (e.g. RE-DOWNLOAD when cookies
   // aren't present for cookies_expired) render greyed with the
   // disabled_reason as the tooltip.
-  async function hydrateRecoveryOptions(root, mediaType, tmdbId) {
+  async function hydrateRecoveryOptions(root, mediaType, tmdbId, sectionId) {
     if (!root || !mediaType || tmdbId === undefined) return;
     const section = root.querySelector('#recovery-section');
     if (!section) return;
     let data;
     try {
+      // v1.13.35: append section_id so the server's locally-resolved
+      // detection scopes to this row's section. Optional — when
+      // omitted the server falls back to title-global lookup for
+      // backward compatibility with callers that pre-date the
+      // section-scope addition.
+      const sec = sectionId
+        ? `?section_id=${encodeURIComponent(sectionId)}`
+        : '';
       data = await api(
         'GET',
-        `/api/items/${encodeURIComponent(mediaType)}/${encodeURIComponent(tmdbId)}/recovery-options`,
+        `/api/items/${encodeURIComponent(mediaType)}/${encodeURIComponent(tmdbId)}/recovery-options${sec}`,
       );
     } catch (_) {
       section.querySelector('.muted').textContent = 'recovery options unavailable';
@@ -8076,7 +8107,10 @@
             // kick loadLibrary so the row's red ! glyph clears
             // without requiring a refresh / external click.
             await api('POST', `/api/items/${mt}/${id}/clear-failure`);
-            await hydrateRecoveryOptions(root, mt, id);
+            // v1.13.35: forward sectionId on re-hydrate so the
+            // resolved-state lookup stays section-scoped after
+            // ACK FAILURE.
+            await hydrateRecoveryOptions(root, mt, id, sectionId);
             refreshTopbarStatus().catch(() => {});
             loadLibrary().catch(() => {});
           } else if (act === 'manual-url') {

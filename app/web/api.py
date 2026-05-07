@@ -8436,6 +8436,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/items/{media_type}/{tmdb_id}/recovery-options")
     async def api_recovery_options(
         media_type: MediaType, tmdb_id: int,
+        section_id: str | None = None,
         db: Path = Depends(get_db_path),
     ):
         """v1.12.71: structured recovery checklist for a failed row.
@@ -8486,13 +8487,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # need to push more recovery actions, just acknowledge the
             # workaround and note that a future TDB sync that revives
             # the URL will surface a UPDATE pill.
-            local = conn.execute(
-                "SELECT source_kind, file_path FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ? "
-                "  AND file_path IS NOT NULL "
-                "LIMIT 1",
-                (media_type, tmdb_id),
-            ).fetchone()
+            # v1.13.35: when the caller passes section_id (info card
+            # always does for v1.13.34+), pin the local_files lookup
+            # to that section. Pre-fix the lookup was title-global
+            # (just media_type + tmdb_id), so a 4K-only adopt on a
+            # multi-section title incorrectly flipped the standard
+            # section's info card to RESOLVED VIA ADOPT — same v18
+            # cross-section bleed class the schema redesign was meant
+            # to close. Falls back to the title-global lookup when
+            # section_id is omitted (legacy callers / unscoped views)
+            # since refusing to resolve is worse than maybe-cross-
+            # section in that case.
+            if section_id:
+                local = conn.execute(
+                    "SELECT source_kind, file_path FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "  AND section_id = ? "
+                    "  AND file_path IS NOT NULL "
+                    "LIMIT 1",
+                    (media_type, tmdb_id, section_id),
+                ).fetchone()
+            else:
+                local = conn.execute(
+                    "SELECT source_kind, file_path FROM local_files "
+                    "WHERE media_type = ? AND tmdb_id = ? "
+                    "  AND file_path IS NOT NULL "
+                    "LIMIT 1",
+                    (media_type, tmdb_id),
+                ).fetchone()
             local_source = local["source_kind"] if local else None
             locally_resolved = bool(
                 local

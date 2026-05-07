@@ -9,19 +9,21 @@ class TestSanitizeForFilesystem(unittest.TestCase):
         self.assertEqual(sanitize_for_filesystem("Inception"), "Inception")
 
     def test_replaces_colon(self):
+        # v1.10.23 swapped the replacement char from `_` to `-` to
+        # match Plex's own "Title - Year" folder convention.
         self.assertEqual(
             sanitize_for_filesystem("Star Wars: A New Hope"),
-            "Star Wars_ A New Hope",
+            "Star Wars- A New Hope",
         )
 
     def test_replaces_slash(self):
-        self.assertEqual(sanitize_for_filesystem("Face/Off"), "Face_Off")
+        self.assertEqual(sanitize_for_filesystem("Face/Off"), "Face-Off")
 
     def test_replaces_all_bad_chars(self):
         # Cover every char in the bad set.
         self.assertEqual(
             sanitize_for_filesystem('a/b\\c:d*e?f"g<h>i|j'),
-            "a_b_c_d_e_f_g_h_i_j",
+            "a-b-c-d-e-f-g-h-i-j",
         )
 
     def test_collapses_whitespace(self):
@@ -66,7 +68,7 @@ class TestCanonicalThemeSubdir(unittest.TestCase):
     def test_unsafe_chars_replaced(self):
         self.assertEqual(
             canonical_theme_subdir("Mission: Impossible", "1996"),
-            "Mission_ Impossible (1996)",
+            "Mission- Impossible (1996)",
         )
 
     def test_empty_title_falls_back(self):

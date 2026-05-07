@@ -1456,19 +1456,25 @@ def _migrate_v34_to_v35(conn: sqlite3.Connection) -> None:
 
 
 def _migrate_v33_to_v34(conn: sqlite3.Connection) -> None:
-    """v34 adds plex_items.motif_unplaced_at — a tombstone for "motif
-    just removed its theme from this section". Pre-fix a PURGE/UNMANAGE
-    cleared has_theme=0 + local_theme_file=0 locally, but Plex's own
-    metadata cache could legitimately or stalely report theme=true on
-    the next plex_enum. The row would re-classify as P (Plex has cloud
-    theme), surfacing a phantom theme even though motif just unplaced.
+    """v34 adds plex_items.motif_unplaced_at — originally a tombstone
+    for "motif just removed its theme from this section" so the SRC
+    SQL could suppress phantom-P right after PURGE/UNMANAGE.
 
-    Now PURGE/UNMANAGE stamp the tombstone; the SRC SQL suppresses 'P'
-    when it's set; the tombstone clears when motif places again OR
-    when plex_enum detects a real sidecar (local_theme_file=1) — both
-    are independent proofs that the row's state has resolved.
+    DEPRECATED in v1.12.111: the column is no longer read OR written.
+    Phantom-P is now handled by `pi.plex_theme_verified_ok` (HEAD
+    against /library/metadata/{rk}/theme), which is more accurate
+    because it reflects what Plex actually serves rather than what
+    motif last did. The tombstone column stays in the schema for
+    forward-only migration safety; future migrations may drop it.
 
-    Schema change is purely additive (one nullable column).
+    DO NOT add new readers/writers to motif_unplaced_at — every
+    place it was used has been replaced by the verified_ok signal.
+    Future-self tip: if you're debugging a phantom-P regression,
+    grep for `plex_theme_verified_ok`, not `motif_unplaced_at`.
+
+    Schema change here is purely additive (one nullable column);
+    the body kept verbatim so re-running this migration on an
+    older DB is still idempotent.
     """
     log.info("Migrating to schema v34 (plex_items.motif_unplaced_at)")
     conn.executescript(
