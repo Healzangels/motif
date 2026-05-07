@@ -1522,8 +1522,25 @@ class _GitMirror:
         }
 
         def _on_fetch_progress(chunk: bytes) -> None:
+            # v1.13.29: buffer leftover bytes between calls. Pre-fix
+            # dulwich's chunk boundaries could split a sample mid-line
+            # ("Receiving objects: 95% (1000/" + "2380)\r") — neither
+            # piece matched the regex and the sample dropped. The
+            # final cur==total emit landing on a boundary was the
+            # most user-visible miss (bar stuck near 95% until the
+            # next stage took over). Buffer holds the unterminated
+            # tail; on the next chunk we prepend before splitting.
             try:
-                for piece in chunk.split(b"\r"):
+                buf = _on_fetch_progress._buf  # type: ignore[attr-defined]
+            except AttributeError:
+                buf = b""
+            data = buf + chunk
+            pieces = data.split(b"\r")
+            # Last piece is the (possibly empty) trailing fragment
+            # after the last \r — keep it for the next call.
+            _on_fetch_progress._buf = pieces[-1]  # type: ignore[attr-defined]
+            try:
+                for piece in pieces[:-1]:
                     m = _progress_re.search(piece)
                     if not m:
                         continue
@@ -1567,13 +1584,20 @@ class _GitMirror:
         try:
             res = fetch(str(self.repo_path), self.repo_url, depth=1,
                         progress=_on_fetch_progress)
-        except TypeError:
-            # Older dulwich releases without progress= kwarg — fall
-            # back to indeterminate (just no real % during fetch).
+        except TypeError as e:
+            # v1.13.29: only fall back when the TypeError is about the
+            # `progress` kwarg specifically. Older dulwich (pre-0.21)
+            # didn't accept it and raised "unexpected keyword argument".
+            # Catching any TypeError masked dulwich-internal errors
+            # (e.g., bytes/str confusion in fetch) as "old dulwich" and
+            # silently retried, which would just fail again less
+            # informatively.
+            if "progress" not in str(e):
+                raise _GitMirrorError(f"dulwich fetch failed: {e}") from e
             try:
                 res = fetch(str(self.repo_path), self.repo_url, depth=1)
-            except Exception as e:
-                raise _GitMirrorError(f"dulwich fetch failed: {e}") from e
+            except Exception as e2:
+                raise _GitMirrorError(f"dulwich fetch failed: {e2}") from e2
         except Exception as e:
             raise _GitMirrorError(f"dulwich fetch failed: {e}") from e
         if self._cancel_check():

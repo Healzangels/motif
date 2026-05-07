@@ -512,8 +512,21 @@
     // v1.13.19: clear the optimistic placeholder once a real running
     // op arrives — the placeholder has done its job. Also clear if
     // it has expired (worker never picked up the job? rare).
-    if (_optimisticOp && (running.length > 0 || _optimisticOp.expiresAt < Date.now())) {
-      _optimisticOp = null;
+    // v1.13.29: only clear when a SAME-KIND op is running. Pre-fix a
+    // pre-existing tdb_sync would clear a fresh plex_enum placeholder
+    // on the next 1s poll, reverting the topbar to the unrelated
+    // tdb_sync mini-bar — the user's plex_enum click felt like it
+    // didn't take. Match by kind (plex_enum click waits for a
+    // plex_enum running row; tdb_sync click waits for a tdb_sync
+    // row) so the placeholder hands off to the correct successor.
+    if (_optimisticOp) {
+      const sameKindRunning = ops.some((o) =>
+        (o.status === 'running' || o.status === 'pending' || o.status === 'cancelling')
+        && o.kind === _optimisticOp.kind,
+      );
+      if (sameKindRunning || _optimisticOp.expiresAt < Date.now()) {
+        _optimisticOp = null;
+      }
     }
     // v1.12.121 (Phase A): idle pill picks up the most-recent
     // tdb_sync run's fallback flag and stays warn-tinted with a

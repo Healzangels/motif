@@ -576,9 +576,21 @@
       w.__motif_queue = w.__motif_queue || {};
       const plexInFlight = q.plex_enum_in_flight || 0;
       const prevPlex = w.__motif_queue.plex_enum || { current: 0, hw: 0 };
+      // v1.13.29: detect mid-burst growth so the (X of Y) suffix
+      // stays honest when the user queues another scan before the
+      // existing burst drains. Pre-fix the burst's hw was clamped
+      // to its initial peak — once the worker drained from 4→1
+      // (current=1) and the user queued another (current=2),
+      // hw stayed at 4 and the suffix said "(3 of 4)" even though
+      // the real total was 5. Tracking the increase delta
+      // (`grew = max(0, current - prev.current)`) lets hw grow with
+      // late-arriving jobs without losing position progress.
+      const grew = Math.max(0, plexInFlight - prevPlex.current);
       w.__motif_queue.plex_enum = {
         current: plexInFlight,
-        hw: plexInFlight === 0 ? 0 : Math.max(prevPlex.hw, plexInFlight),
+        hw: plexInFlight === 0
+          ? 0
+          : Math.max(prevPlex.hw + grew, plexInFlight),
       };
       const globalEnumPipeline = (themerrdbBusy && autoEnum)
                               || enumTabsActive > 1
@@ -1337,7 +1349,18 @@
       if (initialBusy > 0) {
         setSyncButtonState('running');
         if (syncWatcher) clearInterval(syncWatcher);
-        let primed = true;
+        // v1.13.29: was `primed = true`, which fired ✓ DONE on the
+        // reload path for a sync the user never triggered (cron tail
+        // landing during page load → the FIRST poll saw inFlight=0
+        // and immediately flashed DONE). Click path (~line 1268)
+        // correctly starts primed=false; this reload path now
+        // matches it. Cost: if the cron sync finishes between
+        // setSyncButtonState('running') above and the first poll
+        // tick below, the button just clears silently on the next
+        // refreshTopbarStatus tick (which has its own unlock path
+        // gated on `!syncWatcher && !dashSyncBtnBusy`) instead of
+        // claiming "DONE" for an action the user didn't take.
+        let primed = false;
         syncWatcher = setInterval(async () => {
           try {
             const s2 = await api('GET', '/api/stats');
@@ -1345,11 +1368,19 @@
             const e2 = (s2.queue && s2.queue.plex_enum_in_flight) || 0;
             const ae2 = !(s2.queue && s2.queue.auto_enum_after_sync === false);
             const inFlight2 = ae2 ? (t2 + e2) : t2;
+            if (inFlight2 > 0) primed = true;
             if (primed && inFlight2 === 0) {
               clearInterval(syncWatcher);
               syncWatcher = null;
               setSyncButtonState('done');
               loadDashboard().catch(console.error);
+            } else if (!primed && inFlight2 === 0) {
+              // Sync finished between page-load probe and first
+              // tick — we never saw busy here. Clear the watcher
+              // and let refreshTopbarStatus's poll-driven unlock
+              // handle the button label.
+              clearInterval(syncWatcher);
+              syncWatcher = null;
             }
           } catch (e) { /* ignore */ }
         }, 2000);
@@ -2172,8 +2203,15 @@
     if (!block || !body) return;
     const rows = (sections || []).filter((s) => (s.total || 0) > 0);
     if (rows.length === 0) { block.style.display = 'none'; return; }
+    // v1.13.29: include tab, is_4k, is_anime in the cache key. Pre-fix
+    // a section reclassification from /settings (toggling A/4K flags)
+    // would change the rendered tab + STD/4K subtype label but not
+    // the totals, so the hash matched and the swap was skipped — the
+    // user kept seeing the stale classification on screen until
+    // numbers happened to change.
     const key = JSON.stringify(rows.map((s) => [
       s.section_id, s.title, s.total, s.themed,
+      s.tab, s.is_4k, s.is_anime,
     ]));
     if (key === _lastCoverageComparisonKey) {
       block.style.display = '';

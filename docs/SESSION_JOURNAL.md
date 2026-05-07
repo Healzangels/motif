@@ -560,3 +560,88 @@ punch list. Triaged and addressed in this release.
 ### Open threads
 - Cross-library lock from per-library click — still pending
   user retest.
+
+---
+
+## 2026-05-07 — v1.13.29: wider audit triage (v1.13.19 → v1.13.28 sweep)
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.29`
+
+### Context
+Subagent code review of v1.13.19 → v1.13.28. The user shipped
+v1.13.19 from a different machine and v1.13.20-v1.13.22 were
+pre-audit. Six P2 findings addressed.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.29`.
+- `app/core/sync.py`:
+  - **#1 tighten dulwich progress kwarg fallback**: `except
+    TypeError` previously masked any TypeError as "old dulwich
+    without progress=" and silently retried. Now only falls
+    back when `'progress' in str(e)`; other TypeErrors raise
+    immediately as `_GitMirrorError` with the original message.
+  - **#2 buffer split progress chunks**: dulwich's progress
+    callback delivers bytes split arbitrarily mid-line. Pre-fix
+    `b"Receiving: 95% (1000/" + b"2380)\r"` lost both halves to
+    a non-match; the most user-visible drop was the final
+    cur==total emit landing on a chunk boundary. Added a
+    function-attribute byte buffer that prepends to the next
+    chunk and only parses complete `\r`-terminated samples.
+- `app/web/static/ops.js`:
+  - **#3 optimistic placeholder same-kind clear**: pre-fix any
+    pre-existing op cleared a fresh placeholder on the next 1s
+    poll, so a SYNC PLEX click landing while a tdb_sync was
+    running felt unresponsive on the topbar. Now clears only
+    when a SAME-KIND op arrives (or after the 5s expiry).
+- `app/web/static/app.js`:
+  - **#4/#5 phantom DONE on dashboard reload**: page-load probe
+    set `primed = true` immediately, so a cron sync's tail
+    finishing on the first poll tick after reload triggered a
+    spurious `setSyncButtonState('done')` ✓ DONE flash. Now
+    starts `primed = false` (matches the click path); if the
+    sync actually finishes between page-load probe and first
+    tick, watcher clears silently and the regular polling
+    unlock takes over.
+  - **#7 coverage cache key includes routing fields**:
+    `_lastCoverageComparisonKey` hashed
+    `[section_id, title, total, themed]` only. A section
+    reclassified via /settings (toggling A or 4K flags) wouldn't
+    bump the hash, so the user kept seeing the stale STD/4K
+    subtype label until counts happened to change. Added
+    `tab`, `is_4k`, `is_anime` to the key.
+  - **#9 queue HW for late-arriving jobs**: pre-fix `hw` clamped
+    to the burst's initial peak; once worker drained 4→1 and
+    user fired another (current=2), hw stayed at 4 and the
+    `(X of Y)` suffix said "(3 of 4)" while the actual total was
+    5. Now tracks the increase delta and grows hw with
+    late-arriving jobs without losing completed-position
+    progress.
+
+### Deferred (lower-severity)
+- #6 cancel-button cosmetic flash, #8 defensive title escaping,
+  #10 already guarded.
+
+### How to verify (user testing)
+1. Reload mid-cron: trigger a manual sync, then reload the
+   dashboard. If the sync finishes near the moment the page
+   loads, button reverts silently to its idle label instead of
+   flashing ✓ DONE for a sync the user never triggered.
+2. Mid-burst queue: trigger settings // SYNC PLEX (5 sections),
+   wait until 3 are done ("(4 of 5)"), then click // SYNC PLEX
+   on /movies?fourk=1. Suffix should bump to "(5 of 6)".
+3. Optimistic placeholder hand-off: while a TDB sync is running,
+   click // SYNC PLEX on a library tab. Topbar mini-bar carries
+   the tdb_sync (both ops in flight is normal). When tdb_sync
+   finishes, if plex_enum hasn't started yet, the placeholder
+   surfaces — pre-fix it had been cleared on the very first
+   poll after click and the topbar would briefly show idle.
+4. Section reclassification: toggle a section's 4K or anime flag
+   in /settings → SAVE. Dashboard COVERAGE COMPARISON's STD/4K
+   subtype updates on the next dashboard poll instead of
+   waiting for a count change.
+5. Fetch progress smoothness: kick a TDB sync. The progress bar
+   fills more smoothly through the fetch, especially near the
+   100% finish (no dropped final-sample stuck-at-95%).
+
+### Open threads
+- Cross-library lock from per-library click — still pending
+  user retest after v1.13.29.
