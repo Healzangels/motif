@@ -140,18 +140,18 @@
   </table>
 </section>
 
-<!-- v1.13.22: coverage comparison. Per-tab horizontal stacked bars
-     answer "what fraction of my Plex library has a theme, and of
-     the unthemed remainder, how much could ThemerrDB help with?"
-     Three segments: themed (any source), TDB-available (no theme
-     yet but motif can pull one), and no TDB (motif can't help).
-     Backed by /api/coverage/plex which the dashboard already loads
-     for the missing-themes tables. Hidden when there's no Plex
-     data yet (fresh install) so the block doesn't render at zero. -->
+<!-- v1.13.27: per-section comparison bars. Each managed Plex section
+     gets its own row, normalized to 100% of that section's total —
+     so 4K Movies (28 items, 90% themed) reads as a near-full bar
+     even though it sits right next to Movies (10K items, 30% themed).
+     Pre-fix v1.13.22 collapsed everything into a Movies / TV pair,
+     which masked small-library coverage. Backed by /api/sections/
+     coverage (same payload as the // PER-SECTION COVERAGE table
+     below). Hidden when there are no managed sections. -->
 <section class="block" id="coverage-comparison-block" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// COVERAGE COMPARISON</h2>
-    <span class="muted small">themed · TDB-available · no TDB</span>
+    <span class="muted small">themed vs unthemed · normalized per section</span>
   </header>
   <div class="coverage-comparison-body" id="coverage-comparison-body"></div>
 </section>

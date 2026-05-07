@@ -566,6 +566,20 @@
       // the tail of a multi-section sweep instead of releasing as
       // each section drains and enumTabsActive falls back to 1.
       const pipelineInFlight = (q.plex_enum_pipeline_in_flight || 0) > 0;
+      // v1.13.27: stash a per-kind queue snapshot on a window global
+      // so ops.js renderTopbar can compose "(X of Y)" suffixes on the
+      // mini-bar label. plex_enum_in_flight is the live count
+      // (pending + running). hw (high water) tracks the burst's max
+      // so position can be computed as (hw - current + 1). Reset hw
+      // when the queue drains so the next burst starts fresh.
+      const w = window;
+      w.__motif_queue = w.__motif_queue || {};
+      const plexInFlight = q.plex_enum_in_flight || 0;
+      const prevPlex = w.__motif_queue.plex_enum || { current: 0, hw: 0 };
+      w.__motif_queue.plex_enum = {
+        current: plexInFlight,
+        hw: plexInFlight === 0 ? 0 : Math.max(prevPlex.hw, plexInFlight),
+      };
       const globalEnumPipeline = (themerrdbBusy && autoEnum)
                               || enumTabsActive > 1
                               || pipelineInFlight;
@@ -829,6 +843,10 @@
     try {
       const sec = await api('GET', '/api/sections/coverage');
       renderSectionCoverage(sec.sections || []);
+      // v1.13.27: comparison bars also fed from per-section data so
+      // each library has its own normalized bar instead of being
+      // collapsed into a Movies / TV aggregate.
+      renderCoverageComparison(sec.sections || []);
     } catch (_) { /* non-fatal — dashboard still renders */ }
 
     // v1.13.21: theme-source pie. Buckets every plex_items row by
@@ -2139,74 +2157,87 @@
       (m) => !m.has_theme && m.motif_available).length;
     const tvNoTdb = data.tv.filter(
       (m) => !m.has_theme && !m.motif_available).length;
-    renderCoverageComparison([
-      { tab: 'MOVIES', total, themed: withTheme,
-        available: movAvail, no_tdb: movNoTdb },
-      { tab: 'TV',     total: tvTotal, themed: tvWithTheme,
-        available: tvAvail, no_tdb: tvNoTdb },
-    ]);
+    // v1.13.27: comparison bars are now driven by /api/sections/coverage
+    // (rendered via the section-coverage block fetcher above) instead
+    // of the aggregated movies/tv totals. The aggregated view collapsed
+    // 4K Movies (28 items, ~90% themed) into Movies (10K items, ~30%
+    // themed) so a small library's healthy coverage was masked by a
+    // big library's gaps. Per-section bars let each library stand on
+    // its own — each row's bar is normalized to its section's total,
+    // making cross-library comparison ("which library has the worst
+    // coverage?") instant.
+    //
+    // The actual data source + render lives in renderSectionCoverage's
+    // sibling renderCoverageComparison call, which fires from the
+    // section-coverage fetch path with the same data the table reads.
   }
 
-  // v1.13.22: render the per-tab stacked-bar comparison block.
-  // Hidden when both rows have zero items (fresh install / Plex
-  // disabled). Each bar has three flexible-width segments — themed,
-  // TDB-available, no-TDB — sized as percentages of the row total.
-  // Segments collapse to display:none when their count is zero so
-  // the rendered bar doesn't carry hairline 1px strips for empty
-  // categories. The legend mirrors the segment colors.
+  // v1.13.22: per-row stacked-bar comparison block.
+  // v1.13.27: input is now an array of plex_sections (from
+  // /api/sections/coverage) instead of an aggregated movies / tv
+  // pair. Each section gets its own row with a 2-segment bar
+  // (themed vs unthemed), normalized to that section's total — so
+  // a 28-item 4K Movies library at 90% themed reads as a near-full
+  // bar even though Movies (10K items) at 30% themed reads as a
+  // mostly-empty bar of similar visual width. Pre-fix the user
+  // reported the aggregate view masked small-library coverage.
+  //
+  // The 3-segment "themed / TDB-available / no-TDB" axis from
+  // v1.13.22 is dropped — the section coverage payload doesn't
+  // carry the TDB-availability split (that data lives in
+  // /api/coverage/plex's per-item motif_available flag), and the
+  // 2-segment view is what users actually compare across rows.
   let _lastCoverageComparisonKey = '';
-  function renderCoverageComparison(rows) {
+  function renderCoverageComparison(sections) {
     const block = document.getElementById('coverage-comparison-block');
     const body = document.getElementById('coverage-comparison-body');
     if (!block || !body) return;
-    const totalAll = rows.reduce((acc, r) => acc + r.total, 0);
-    if (totalAll <= 0) { block.style.display = 'none'; return; }
-    const key = JSON.stringify(rows);
+    const rows = (sections || []).filter((s) => (s.total || 0) > 0);
+    if (rows.length === 0) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows.map((s) => [
+      s.section_id, s.title, s.total, s.themed,
+    ]));
     if (key === _lastCoverageComparisonKey) {
       block.style.display = '';
       return;
     }
     _lastCoverageComparisonKey = key;
     block.style.display = '';
-    body.innerHTML = rows.filter((r) => r.total > 0).map((r) => {
-      const pctThemed    = r.total ? (r.themed    / r.total) * 100 : 0;
-      const pctAvailable = r.total ? (r.available / r.total) * 100 : 0;
-      const pctNoTdb     = r.total ? (r.no_tdb    / r.total) * 100 : 0;
+    body.innerHTML = rows.map((s) => {
+      const total = s.total || 0;
+      const themed = s.themed || 0;
+      const unthemed = Math.max(0, total - themed);
+      const pctThemed = total ? (themed / total) * 100 : 0;
+      const pctUnthemed = total ? (unthemed / total) * 100 : 0;
       const pctDisplay = pctThemed >= 10
         ? Math.round(pctThemed)
         : pctThemed.toFixed(1);
-      return `<div class="coverage-row" data-tab="${htmlEscape(r.tab)}">
+      const fourkLabel = s.is_4k ? '4K' : 'STD';
+      const typeLabel = s.tab === 'anime' ? 'ANIME'
+                      : s.tab === 'tv'    ? 'TV'
+                      :                     'MOVIES';
+      const sectionTitle = s.title || `${typeLabel} ${fourkLabel}`;
+      const href = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}`;
+      return `<a class="coverage-row" data-tab="${htmlEscape(s.tab || '')}"
+                  href="${htmlEscape(href)}">
         <div class="coverage-row-head">
-          <span class="coverage-row-tab">${htmlEscape(r.tab)}</span>
+          <span class="coverage-row-tab">
+            ${htmlEscape(sectionTitle)}
+            <span class="muted small">· ${typeLabel} ${fourkLabel}</span>
+          </span>
           <span class="coverage-row-ratio">
-            ${fmt.num(r.themed)} <span class="muted">/ ${fmt.num(r.total)} themed</span>
+            ${fmt.num(themed)} <span class="muted">/ ${fmt.num(total)} themed</span>
             <span class="coverage-row-pct">${pctDisplay}%</span>
           </span>
         </div>
         <div class="coverage-bar"
-             title="${fmt.num(r.themed)} themed · ${fmt.num(r.available)} TDB-available · ${fmt.num(r.no_tdb)} no TDB">
+             title="${fmt.num(themed)} themed · ${fmt.num(unthemed)} unthemed">
           <span class="coverage-bar-seg coverage-bar-seg-themed"
-                style="flex-basis:${pctThemed}%; ${r.themed === 0 ? 'display:none' : ''}"></span>
-          <span class="coverage-bar-seg coverage-bar-seg-available"
-                style="flex-basis:${pctAvailable}%; ${r.available === 0 ? 'display:none' : ''}"></span>
+                style="flex-basis:${pctThemed}%; ${themed === 0 ? 'display:none' : ''}"></span>
           <span class="coverage-bar-seg coverage-bar-seg-no-tdb"
-                style="flex-basis:${pctNoTdb}%; ${r.no_tdb === 0 ? 'display:none' : ''}"></span>
+                style="flex-basis:${pctUnthemed}%; ${unthemed === 0 ? 'display:none' : ''}"></span>
         </div>
-        <div class="coverage-row-legend">
-          <span class="coverage-legend-item">
-            <span class="coverage-legend-swatch coverage-legend-swatch-themed"></span>
-            themed <span class="coverage-legend-count">${fmt.num(r.themed)}</span>
-          </span>
-          <span class="coverage-legend-item">
-            <span class="coverage-legend-swatch coverage-legend-swatch-available"></span>
-            TDB available <span class="coverage-legend-count">${fmt.num(r.available)}</span>
-          </span>
-          <span class="coverage-legend-item">
-            <span class="coverage-legend-swatch coverage-legend-swatch-no-tdb"></span>
-            no TDB <span class="coverage-legend-count">${fmt.num(r.no_tdb)}</span>
-          </span>
-        </div>
-      </div>`;
+      </a>`;
     }).join('');
   }
 

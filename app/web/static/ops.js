@@ -580,8 +580,23 @@
     const indeterminate = !hasRealPct && (op.stage_total || 0) <= 1;
     mini.hidden = false;
     mini.className = `op-mini op-tone-${tone}` + (indeterminate ? ' op-mini-indet' : '');
+    // v1.13.27: append a queue-position suffix when this op is one
+    // of multiple jobs of the same kind in flight. plex_enum is the
+    // common case — user fires // SYNC PLEX on movies + tv + anime
+    // in quick succession, the worker serializes them, and the user
+    // wants to see "I'm on #2 of 4 right now". Position computed
+    // from a window-scoped HW (high water) updated by app.js's
+    // refreshTopbarStatus tick. Suffix only renders when hw > 1.
+    let labelText = op.stage_label || KIND_LABEL[op.kind] || '…';
+    try {
+      const q = (window.__motif_queue || {})[op.kind];
+      if (q && q.hw > 1 && q.current > 0) {
+        const position = Math.min(q.hw, Math.max(1, q.hw - q.current + 1));
+        labelText = `${labelText} (${position} of ${q.hw})`;
+      }
+    } catch (_) { /* fall through with bare label */ }
     mini.innerHTML = `
-      <span class="op-mini-label">${esc(op.stage_label || KIND_LABEL[op.kind] || '…')}</span>
+      <span class="op-mini-label">${esc(labelText)}</span>
       <span class="op-mini-bar"><span class="op-mini-bar-fill"
             style="width:${indeterminate ? 100 : (pct != null ? pct.toFixed(1) : 30)}%"></span></span>
       <span class="op-mini-pct">${indeterminate ? '' : (pct != null ? pct.toFixed(0) + '%' : '')}</span>

@@ -409,3 +409,75 @@ User testing v1.13.25 reported:
   reproducing. v1.13.25's per-section cascade fix may have
   resolved it; user to retest. If still buggy, ask for steps
   to reproduce.
+
+---
+
+## 2026-05-07 — v1.13.27: queue-depth on topbar, per-section coverage bars
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.27`
+
+### Context
+Two follow-up asks from the v1.13.25 testing batch:
+
+1. When the user fires several // SYNC PLEX clicks across libraries,
+   the topbar mini-bar should communicate "X of Y" — i.e. which
+   queued job is currently running and how many remain.
+2. The dashboard COVERAGE COMPARISON bars (added v1.13.22) collapsed
+   every Plex section into Movies vs TV totals. With 4K Movies at 28
+   items and Movies at 10K items, the small library's coverage was
+   masked by the big one. User picked "cross-library comparison off"
+   when asked what was confusing about the chart.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.27`.
+- `app/web/static/app.js`:
+  - `refreshTopbarStatus`: stash a per-kind queue snapshot on
+    `window.__motif_queue.plex_enum = { current, hw }`. `current`
+    is the live in-flight count from /api/stats; `hw` is the
+    burst's high-water (max seen since last drain). Reset to 0
+    when the queue empties so each new burst starts fresh.
+  - `renderCoverageComparison`: rewritten to take per-section
+    rows from `/api/sections/coverage`. One row per section,
+    normalized to 100% of that section's total. Title carries
+    the section name + STD/4K subtype. Each row is now an
+    `<a>` click-through to the matching library tab. Bar drops
+    to 2 segments (themed / unthemed) — the v1.13.22 third
+    "TDB-available" segment is dropped because the section
+    coverage payload doesn't carry that split, and the 2-segment
+    view is what users actually compare across rows.
+  - Hooked the call site: now invoked alongside
+    `renderSectionCoverage` from the same `/api/sections/coverage`
+    fetch, instead of from the aggregated movies/tv path.
+- `app/web/static/ops.js`:
+  - `renderTopbar`: when `op.kind` matches a key in
+    `window.__motif_queue` and `hw > 1`, append `(X of Y)` to the
+    label. Position computed as `hw - current + 1`. plex_enum is
+    the common case (multi-tab // SYNC PLEX clicks, settings
+    SCAN ALL, sync→enum cascade).
+- `app/web/static/app.css`:
+  - `.coverage-row` styled as a click-through anchor (no
+    underline, color inherits, subtle hover).
+- `app/web/templates/dashboard.html`:
+  - // COVERAGE COMPARISON header subtitle updated to "themed
+    vs unthemed · normalized per section". Block comment notes
+    that v1.13.22's three-segment / aggregate-by-tab approach
+    was replaced.
+
+### How to verify (user testing)
+1. With the cron disabled or before the next sync, fire
+   // SYNC PLEX on /movies, then jump to /tv and fire // SYNC PLEX,
+   then /anime. Three plex_enum jobs should be queued. Topbar
+   reads "// SYNCING <section> (1 of 3)" and ticks "(2 of 3)",
+   "(3 of 3)" as the worker drains the queue.
+2. Same flow with the dashboard SYNC button (auto_enum on): the
+   cascade enqueues one job per managed section. Topbar reads
+   "(1 of 5)" through "(5 of 5)".
+3. Dashboard // COVERAGE COMPARISON now shows one bar per
+   managed Plex section. 4K Movies (28 items, X% themed) sits
+   next to Movies (10K, Y% themed) with normalized bars — the
+   small library's coverage is no longer masked by the large
+   one. Clicking a row navigates to the matching library tab.
+
+### Open threads
+- Cross-library lock from per-library click — still pending
+  user retest. v1.13.25's per-section cascade fix may have
+  cleared it.
