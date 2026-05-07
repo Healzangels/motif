@@ -579,20 +579,32 @@
       // 1.5s don't fight the displayed text.
       const libRefreshBtn = document.getElementById('library-refresh-btn');
       if (libRefreshBtn) {
+        // v1.13.24: scope the sawBusy flag to (tab, variant) so a
+        // flip between // STANDARD and // 4K mid-sync doesn't fire
+        // a phantom ✓ DONE flash. Pre-fix: when the standard enum
+        // was running and the user clicked // 4K, libRefreshBusy
+        // recomputed against enumActive[tab][fourk] (false → idle),
+        // dataset.sawBusy === '1' was still set from the standard
+        // observation, the label was still '// SYNCING…', so the
+        // idle branch fired DONE while the topbar was still showing
+        // the standard sync running. Now the flag carries which
+        // scope was observed busy; the DONE flash only fires when
+        // the SAME scope transitions busy → idle.
+        const scopeKey = `${tabKey || ''}:${variantKey}`;
         if (libRefreshBusy) {
           libRefreshBtn.disabled = true;
           if (!libRefreshBtn.dataset.origLabel) {
             libRefreshBtn.dataset.origLabel = libRefreshBtn.textContent;
           }
           libRefreshBtn.textContent = '// SYNCING…';
-          libRefreshBtn.dataset.sawBusy = '1';
-        } else if (libRefreshBtn.dataset.sawBusy === '1'
+          libRefreshBtn.dataset.sawBusyScope = scopeKey;
+        } else if (libRefreshBtn.dataset.sawBusyScope === scopeKey
                    && libRefreshBtn.textContent === '// SYNCING…') {
-          // Just transitioned busy → idle. Brief ✓ DONE flash, then
-          // restore the idle label.
+          // Same scope just went busy → idle. Brief ✓ DONE flash,
+          // then restore the idle label.
           libRefreshBtn.disabled = false;
           libRefreshBtn.textContent = '✓ DONE';
-          delete libRefreshBtn.dataset.sawBusy;
+          delete libRefreshBtn.dataset.sawBusyScope;
           const orig = libRefreshBtn.dataset.origLabel;
           setTimeout(() => {
             // Only revert if no fresh busy state has overwritten us.
@@ -602,7 +614,14 @@
             }
           }, 1500);
         } else {
+          // Either no prior busy observed (fresh page), or scope
+          // changed (user flipped variant/tab mid-sync). Reset the
+          // label silently — no DONE flash, since the operation we
+          // observed was for a different scope and may still be
+          // running there. The user can flip back to that scope to
+          // see // SYNCING… resume.
           libRefreshBtn.disabled = false;
+          delete libRefreshBtn.dataset.sawBusyScope;
           if (libRefreshBtn.dataset.origLabel
               && libRefreshBtn.textContent !== '✓ DONE') {
             libRefreshBtn.textContent = libRefreshBtn.dataset.origLabel;

@@ -147,3 +147,74 @@ re-explaining everything.
   is in CLAUDE.md). When a session ends mid-task, the entry should
   capture the in-flight state under "Open threads" so the next
   session can resume.
+
+---
+
+## 2026-05-07 — v1.13.24: variant-flip DONE flash, drawer label legibility, nudge bar honesty
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.24`
+
+### Context
+Three small polish items the user reported while testing v1.13.23:
+
+1. While `/tv` was syncing on STANDARD, clicking `// 4K` made the
+   library SYNC PLEX button briefly flash `✓ DONE` even though the
+   topbar status pill was still showing "// SYNCING TV SHOWS" — the
+   STANDARD enum was still running, the 4K variant just happened
+   to be idle.
+2. The TDB sync drawer card's stage timeline labels (GIT / DIFF /
+   APPLY / SNAP / EXTR / M·IX / MOV / T·IX / TV / RES / PRUN) felt
+   squashed at 9px + 0.06em letter-spacing. APPLY in particular
+   was on the verge of ellipsis on narrow drawers.
+3. The topbar mini-bar for "NUDGING PLEX TO RE-SCAN — 1 QU…" sat
+   at `0%` until completion, then snapped to `100%` — the bar was
+   tracking a single-job burst (HW=1) which only ticks once at
+   completion, so it was effectively binary not-done/done masquerading
+   as a percentage.
+
+### Root causes
+1. **DONE flash on variant flip** — v1.13.21's `dataset.sawBusy=1`
+   flag was scope-agnostic. When `libRefreshBusy` flipped from
+   `true` to `false` on a variant change (because `enumActive[tab]
+   [fourk]` was false even though `enumActive[tab][standard]` was
+   still true), the idle branch fired the DONE flash. The flag
+   needed to track WHICH (tab, variant) was observed busy.
+2. **Squashed labels** — `font-size: 9px` + `letter-spacing:
+   0.06em` left no slack for 5-char labels (APPLY) at typical
+   drawer widths. Reasonable bump in size + drop letter-spacing
+   buys back the room.
+3. **Nudge bar 0% → 100%** — the topbar mini-bar's `indeterminate`
+   condition was `(stage_total || 0) <= 0`, only treating zero as
+   indeterminate. Single-job ops have `stage_total=1`, so the bar
+   tried to render a real percentage that ticked exactly once.
+   The card-level bar already used `useRealBar = hasRealPct ||
+   stage_total > 1`, so the mini-bar just needed to match.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.24`.
+- `app/web/static/app.js` (~line 580):
+  - Replaced `dataset.sawBusy` with `dataset.sawBusyScope` set to
+    `${tabKey}:${variantKey}`. The DONE-flash branch only fires
+    when the scope on the dataset matches the current scope. The
+    else branch silently resets the label without flashing — so a
+    variant flip mid-sync drops back to the idle label without a
+    spurious DONE.
+- `app/web/static/ops.css`:
+  - `.op-card-timeline-labels` font 9 → 10.5px, dropped
+    letter-spacing, opacity 0.55 → 0.7, margin-top 4 → 7px,
+    gap 4 → 6px. Added `cursor: help` since each label has a
+    `title=` carrying the long form.
+  - `.op-card-timeline` gap 4 → 6px so the bar segments stay
+    column-aligned with the labels.
+- `app/web/static/ops.js` (~line 569):
+  - Topbar mini-bar `indeterminate` now also covers `stage_total
+    <= 1` (unless `detail.bar_pct` is present from yt-dlp's real
+    %). Single-job nudges now show a shimmering bar with no `0%`
+    text instead of misleading 0/100 jumps.
+
+### Open threads
+- Tag `v1.13.24` pushed; user pulling the Docker image once the
+  release workflow finishes.
+- The variant-flip fix only covers the library-page SYNC PLEX
+  button. Settings global SYNC PLEX uses the same single-button
+  pattern but doesn't have the variant-flip ambiguity (its scope
+  is "all sections"), so no change needed there.

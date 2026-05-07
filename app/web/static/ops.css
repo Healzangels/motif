@@ -501,7 +501,9 @@ body[data-ops-running="1"] #topbar-status-text {
 
 .op-card-timeline {
   display: flex;
-  gap: 4px;
+  /* v1.13.24: gap matches op-card-timeline-labels (6px) so the
+     labels stay column-aligned with the bar segments above. */
+  gap: 6px;
   margin: 10px 0;
 }
 
@@ -535,14 +537,20 @@ body[data-ops-running="1"] #topbar-status-text {
    truncation as a safety net for any future label longer than
    the slot width. Pre-fix the row used justify-content:
    space-between with natural-width labels, which let long
-   labels collide and overflow on narrow drawers. */
+   labels collide and overflow on narrow drawers.
+   v1.13.24: bumped font 9 → 10.5px, dropped letter-spacing
+   from 0.06em (which was eating slot width on 4-5 char labels),
+   raised opacity 0.55 → 0.7, and added breathing room above
+   so the labels don't crowd the bar above. Slot width grew
+   the cell gap 4 → 6px to match. Result: APPLY/SNAP/EXTR/PRUN
+   read at a glance instead of being on the verge of ellipsis. */
 .op-card-timeline-labels {
   display: flex;
-  gap: 4px;
-  font-size: 9px;
-  letter-spacing: 0.06em;
-  opacity: 0.55;
-  margin-top: 4px;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  opacity: 0.7;
+  margin-top: 7px;
   text-transform: uppercase;
 }
 .op-card-timeline-labels > span {
@@ -552,6 +560,7 @@ body[data-ops-running="1"] #topbar-status-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: help;
 }
 
 /* ── activity feed ────────────────────────────────────────────── */

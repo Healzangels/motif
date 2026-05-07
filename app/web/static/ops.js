@@ -566,7 +566,18 @@
       String(b.updated_at).localeCompare(String(a.updated_at)))[0];
     const tone = TONE_BY_KIND[op.kind] || 'tdb';
     const pct = pctOf(op);
-    const indeterminate = (op.stage_total || 0) <= 0;
+    // v1.13.24: treat single-job bursts (nudge plex / single place /
+    // single refresh) as indeterminate at the topbar mini-bar too.
+    // Pre-fix: stage_total=1 → bar showed "0%" until the job
+    // completed, then jumped to "100%" — never reflecting actual
+    // work, just a binary not-done/done. The card-level bar already
+    // does this (useRealBar = hasRealPct || stage_total > 1, see
+    // ~line 369); the mini-bar's condition was stricter (≤ 0) so it
+    // still drew a literal 0% bar. Indeterminate covers stage_total
+    // = 1 unless yt-dlp has fed real bar_pct in, in which case the
+    // bar fills smoothly within the single job.
+    const hasRealPct = op.detail && typeof op.detail.bar_pct === 'number';
+    const indeterminate = !hasRealPct && (op.stage_total || 0) <= 1;
     mini.hidden = false;
     mini.className = `op-mini op-tone-${tone}` + (indeterminate ? ' op-mini-indet' : '');
     mini.innerHTML = `
