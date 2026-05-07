@@ -920,3 +920,136 @@ Two follow-up items the user queued earlier:
   returns the regular flow). UPDATE pill (TDB↑) on the row
   surfaces re-evaluation. Already wired via existing logic;
   no v1.13.33 change needed for the restore path.
+
+---
+
+## 2026-05-07 — v1.13.34: dashboard insight charts (failure breakdown, sync sparkline, daily download activity)
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.34`
+
+### Context
+User asked for additional dashboard visualizations to round out
+the "at a glance" picture. After triage I recommended three (and
+explicitly recommended against scatter plots, redundant pies,
+and historical-coverage snapshots that need new schema). User
+greenlit all three for v1.13.34 to test and refine.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.34`.
+- `app/web/api.py`: new `/api/dashboard/insights` endpoint.
+  Single round-trip returning three series:
+  - `failures`: GROUP BY `themes.failure_kind` for unacked
+    failures (mirrors topbar FAIL pill's gate so chart and
+    counter stay synchronized).
+  - `syncs`: last 30 `sync_runs` rows (finished + non-NULL
+    wall_clock), reversed to oldest → newest for sparkline
+    paint order.
+  - `downloads`: per-day `download` job counts for the last 30
+    days. Server returns only days with at least one download;
+    client backfills idle days for a fixed 30-slot axis.
+- `app/web/templates/dashboard.html`: three new blocks
+  (`#insight-failures-block`, `#insight-syncs-block`,
+  `#insight-downloads-block`), each `display:none` until the
+  fetch lands.
+- `app/web/static/app.js`:
+  - `loadDashboard` adds an `/api/dashboard/insights` fetch
+    after the section-coverage call. Three render functions
+    in series: `renderFailureBreakdown`, `renderSyncPerformance`,
+    `renderDownloadActivity`.
+  - **Failure breakdown**: horizontal bars sorted by count desc,
+    each row is an `<a>` deeplink to the library filtered to
+    `tdb_pills=dead&fk=<kind>` (kind hint reserved for future
+    per-kind narrowing).
+  - **Sync sparkline**: SVG line chart of last 30 wall-clock
+    durations. Markers color-coded by status (green=ok,
+    muted=no-op short-circuit, red=failed). Tooltip via
+    `<title>` carries timestamp / transport / counts.
+  - **Daily download bars**: 30-slot vertical bar row. Idle
+    days render at zero height; busy days scale 0–100% of
+    the peak.
+  - All three use cache-key hashing (`_lastInsight*Key`) so the
+    30s dashboard poll skips the DOM swap when nothing changed.
+- `app/web/static/app.css`:
+  - `.insight-row` block frame, shared body padding.
+  - `.insight-fail-row` grid (label / bar / count) with a red
+    fill bar (status: dead).
+  - `.sync-spark-svg` + `.sync-spark-line` + status-tinted
+    markers.
+  - `.dl-activity-bars` flex row with green-bright bars on a
+    shared baseline.
+
+### Style notes
+- No external chart lib. CSS+SVG only. Bundle stays small;
+  motif's CRT/monospace look stays intact.
+- Each chart hides on no-data so a fresh install doesn't
+  render empty axes.
+- Click-through where it makes sense (failure bars → library
+  filter). Sparkline + download bars are tooltip-only — drilling
+  into a specific day or run isn't useful for those charts.
+
+### How to verify
+1. **Fresh install**: dashboard renders without the three new
+   blocks (insights endpoint returns empty arrays → render
+   functions hide their sections).
+2. **With failures**: trigger a few cookies-expired downloads
+   or use a row with a known-dead URL. // FAILURE BREAKDOWN
+   appears with one bar per kind. Clicking a bar navigates to
+   /movies?tdb_pills=dead with the failure-kind hint in the
+   URL.
+3. **Sync sparkline**: kick a few syncs over time. // SYNC
+   PERFORMANCE shows the wall-clock trend. no-op runs (Phase B
+   git tree unchanged) render as muted dots; failed runs as red.
+4. **Download activity**: bulk-download a few rows. Today's
+   bar grows. The 30-slot row stays — idle days render as
+   empty slots so the day cadence is consistent.
+
+### Composite-+P regression fix (also v1.13.34)
+User reported: "every item that has a src is also being shown as
+having +P, which we know that's not accurate." Inspecting
+v1.13.31's gate:
+```js
+const _plexAlso = !!it.plex_has_theme && verifiedOk
+                  && letter !== 'P' && letter !== '-';
+```
+`pi.has_theme` is set by Plex whenever its metadata XML reports a
+theme — including the sidecar motif itself placed. So every T/U/A/M
+row had a phantom +P chip stacked underneath. Visually doubled
+every row's chip column, and the claim ("Plex also has its own
+theme") was usually false.
+
+**Detection fix.** The right discriminator for "Plex serves its
+own theme separately from motif's placement" is the absent-sidecar
+case: `has_theme=1 AND local_theme_file=0`. That covers Plex Pass
+cloud, themerr-plex embeds, and stale Plex agent claims — the
+genuinely-separate-from-motif cases. When motif places a sidecar
+successfully, `local_theme_file=1` and the composite condition
+goes false (no separate theme to surface). New gate:
+```js
+const _plexAlso = !!it.plex_has_theme && !it.plex_local_theme
+                  && verifiedOk && letter !== 'P' && letter !== '-';
+```
+
+**Visual fix.** The stacked-second-chip approach was double-stacked
+in narrow SRC cells anyway. Replaced with a single corner dot on
+the primary chip via CSS `::after` + `link-badge-also-plex` class.
+Same chip, single visual unit, small amber dot in the top-right
+corner signals the composite state. Tooltip on the chip explains.
+
+**PURGE preview softened.** v1.13.31's negative branch said "Plex
+has no fallback — themeless until next sync." That's overconfident
+— motif can't actually tell whether Plex Pass has a cloud theme
+when the sidecar wins. Reworded to "no DETECTED fallback" and
+acknowledged the Plex Pass possibility.
+
+### Files (additional, beyond the dashboard insights)
+- app/web/static/app.js: rewrote composite +P detection,
+  swapped the second-chip injection for a class-tag-on-primary
+  approach, softened purgeTheme's negative-branch copy.
+- app/web/static/app.css: dropped `.src-also-plex` rules,
+  added `.link-badge-also-plex::after` corner-dot.
+
+### Open threads
+- Concurrent ops topbar visibility (still deferred).
+- Future per-kind library filter so the failure-breakdown
+  deeplink narrows to e.g. video_removed only (today the &fk=
+  param is parsed but not applied — library filters to all
+  dead-pill rows).

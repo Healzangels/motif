@@ -879,6 +879,19 @@
       renderCoverageComparison(sec.sections || []);
     } catch (_) { /* non-fatal — dashboard still renders */ }
 
+    // v1.13.34: dashboard insights (failure breakdown, sync
+    // performance sparkline, daily download activity). Single
+    // /api/dashboard/insights round-trip — three chart sections
+    // each render from one slice of the response. Each render
+    // function hides its block on empty data so a fresh install
+    // doesn't render placeholder axes.
+    try {
+      const ins = await api('GET', '/api/dashboard/insights');
+      renderFailureBreakdown(ins.failures || []);
+      renderSyncPerformance(ins.syncs || []);
+      renderDownloadActivity(ins.downloads || []);
+    } catch (_) { /* non-fatal — insights are optional */ }
+
     // v1.13.21: theme-source pie. Buckets every plex_items row by
     // SRC letter. Hidden when the breakdown is empty (fresh install
     // before first plex_enum); legend is click-to-toggle.
@@ -1271,6 +1284,183 @@
         if (href) window.location.href = href;
       });
     });
+  }
+
+  // v1.13.34: failure-kind breakdown — horizontal bars, sorted by
+  // count desc. Each bar links the user into the library filtered
+  // to its failure kind (?status=failures&fk=<kind>). Hidden when
+  // there are no unacked failures so a clean install doesn't
+  // render an empty rail. Cache hash so the 30s dashboard poll
+  // doesn't redraw when nothing changed.
+  let _lastInsightFailuresKey = '';
+  function renderFailureBreakdown(rows) {
+    const block = document.getElementById('insight-failures-block');
+    const body = document.getElementById('insight-failures-body');
+    if (!block || !body) return;
+    if (!rows.length) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows);
+    if (key === _lastInsightFailuresKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastInsightFailuresKey = key;
+    block.style.display = '';
+    const max = rows.reduce((acc, r) => Math.max(acc, r.count), 0) || 1;
+    body.innerHTML = rows.map((r) => {
+      const pct = (r.count / max) * 100;
+      // Library deeplink: any tab works since the failure pill
+      // filter is global; pick movies as a sensible default and
+      // pre-apply the dead TDB pill so the user lands on rows
+      // that actually carry failure_kind. The kind itself isn't
+      // a per-row filter today — we pass it as a hint via &fk=
+      // even though the library doesn't read it yet, so future
+      // narrowing works without a dashboard rev.
+      const href = `/movies?tdb_pills=dead&fk=${encodeURIComponent(r.kind)}`;
+      return `<a class="insight-fail-row"
+                  href="${htmlEscape(href)}"
+                  title="${htmlEscape(r.label)}: ${fmt.num(r.count)} unacked. Click to view in library.">
+        <span class="insight-fail-label">${htmlEscape(r.label)}</span>
+        <span class="insight-fail-bar">
+          <span class="insight-fail-bar-fill" style="width:${pct}%"></span>
+        </span>
+        <span class="insight-fail-count">${fmt.num(r.count)}</span>
+      </a>`;
+    }).join('');
+  }
+
+  // v1.13.34: sync-performance sparkline. SVG line chart of the
+  // last 30 sync runs' wall_clock_seconds. Markers are color-coded
+  // by status (no_changes = muted, failed = red, otherwise green).
+  // Tooltip on hover via title= carries the per-point detail
+  // (timestamp, transport, duration, no_changes/error).
+  let _lastInsightSyncsKey = '';
+  function renderSyncPerformance(rows) {
+    const block = document.getElementById('insight-syncs-block');
+    const body = document.getElementById('insight-syncs-body');
+    if (!block || !body) return;
+    if (rows.length < 2) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows.map((r) => [
+      r.finished_at, r.wall_clock_seconds, r.transport, r.status, r.no_changes,
+    ]));
+    if (key === _lastInsightSyncsKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastInsightSyncsKey = key;
+    block.style.display = '';
+    // Geometry: fixed-aspect SVG (viewBox-driven so the chart
+    // scales with the parent without being pixel-pegged). Padding
+    // gives the markers room to render without clipping at the
+    // chart edges.
+    const W = 600;
+    const H = 80;
+    const PAD_X = 8;
+    const PAD_Y = 6;
+    const innerW = W - PAD_X * 2;
+    const innerH = H - PAD_Y * 2;
+    const seconds = rows.map((r) => r.wall_clock_seconds || 0);
+    const maxSec = Math.max(...seconds, 1);
+    const minSec = 0;
+    const xAt = (i) => PAD_X + (rows.length === 1 ? innerW / 2 : (i / (rows.length - 1)) * innerW);
+    const yAt = (s) => PAD_Y + innerH - ((s - minSec) / (maxSec - minSec)) * innerH;
+    const linePath = rows.map((r, i) => {
+      const x = xAt(i).toFixed(1);
+      const y = yAt(seconds[i]).toFixed(1);
+      return (i === 0 ? 'M' : 'L') + x + ',' + y;
+    }).join(' ');
+    // Markers: a small circle per run. Color = status.
+    const markers = rows.map((r, i) => {
+      const cx = xAt(i).toFixed(1);
+      const cy = yAt(seconds[i]).toFixed(1);
+      let cls = 'sync-mark-ok';
+      if (r.status === 'failed') cls = 'sync-mark-fail';
+      else if (r.no_changes) cls = 'sync-mark-noop';
+      // Tooltip carries the full record so the user can drill
+      // without leaving the page. Local time format keeps it
+      // readable; transport tag is short.
+      const when = (r.finished_at || '').replace('T', ' ').replace(/\..*/, '');
+      const trans = (r.transport || '?').toUpperCase();
+      const noOp = r.no_changes ? ' · no-op' : '';
+      const fail = r.status === 'failed' ? ' · FAILED' : '';
+      const detail = ` · ${seconds[i].toFixed(1)}s · ${r.new_count || 0}n/${r.updated_count || 0}u`;
+      const title = `${when} · ${trans}${detail}${noOp}${fail}`;
+      return `<circle class="${cls}" cx="${cx}" cy="${cy}" r="3">
+        <title>${htmlEscape(title)}</title>
+      </circle>`;
+    }).join('');
+    // Labels for context: max seconds on the right edge, run
+    // count on the left. Keeps the chart self-explanatory without
+    // a full axis system.
+    const maxLabel = `${maxSec.toFixed(1)}s`;
+    body.innerHTML = `
+      <div class="sync-spark-wrap">
+        <svg viewBox="0 0 ${W} ${H}"
+             preserveAspectRatio="none"
+             class="sync-spark-svg"
+             aria-label="Sync wall-clock per run">
+          <path class="sync-spark-line" d="${linePath}"/>
+          ${markers}
+        </svg>
+        <div class="sync-spark-meta muted small">
+          <span>oldest · ${rows.length} runs</span>
+          <span>peak ${htmlEscape(maxLabel)}</span>
+        </div>
+      </div>`;
+  }
+
+  // v1.13.34: daily download activity bars. One bar per day for
+  // the last 30 days (server already trims with the 30-day
+  // window). Days with zero downloads still get a bar slot so
+  // the X-axis cadence stays consistent — empty slots are
+  // sized to a hairline rather than truly zero so the user
+  // sees the day exists but no work happened.
+  let _lastInsightDownloadsKey = '';
+  function renderDownloadActivity(rows) {
+    const block = document.getElementById('insight-downloads-block');
+    const body = document.getElementById('insight-downloads-body');
+    if (!block || !body) return;
+    if (!rows.length) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows);
+    if (key === _lastInsightDownloadsKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastInsightDownloadsKey = key;
+    block.style.display = '';
+    // Backfill missing days so bars cadence cleanly. Server
+    // returns only days WITH at least one download; we want a
+    // fixed 30-slot horizontal axis so the user sees idle days
+    // too. Iterate from 29 days ago → today, fill from the
+    // server map.
+    const have = new Map(rows.map((r) => [r.day, r.count]));
+    const today = new Date();
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0, 10);
+      days.push({ day: iso, count: have.get(iso) || 0 });
+    }
+    const max = days.reduce((acc, r) => Math.max(acc, r.count), 0) || 1;
+    const total = days.reduce((acc, r) => acc + r.count, 0);
+    body.innerHTML = `
+      <div class="dl-activity-wrap">
+        <div class="dl-activity-bars">
+          ${days.map((r) => {
+            const pct = r.count > 0 ? Math.max(2, (r.count / max) * 100) : 0;
+            const tip = r.count > 0
+              ? `${r.day}: ${fmt.num(r.count)} download${r.count === 1 ? '' : 's'}`
+              : `${r.day}: idle`;
+            return `<span class="dl-activity-bar"
+                          style="height:${pct}%"
+                          title="${htmlEscape(tip)}"></span>`;
+          }).join('')}
+        </div>
+        <div class="dl-activity-meta muted small">
+          <span>30 days</span>
+          <span>${fmt.num(total)} total · peak ${fmt.num(max)}/day</span>
+        </div>
+      </div>`;
   }
 
   // Polled by the SYNC button to know when both the sync + plex_enum
@@ -1753,17 +1943,21 @@
     const scopeNote = sectionId
       ? '\n\nScoped to this section only — sibling editions (e.g. 4K vs standard) keep their themes.'
       : '';
-    // v1.13.31: post-PURGE preview. When Plex serves its own theme
-    // for the row (the +P composite in the SRC cell), removing
-    // motif's manage-state leaves Plex's served theme as the active
-    // one. Without that fallback, the title goes themeless until
-    // next sync. Flagging it explicitly so users don't expect "the
-    // title now plays no theme" when really Plex falls back.
+    // v1.13.31: post-PURGE preview.
+    // v1.13.34: softened the no-fallback branch. When the row's
+    // plexAlso flag is true, motif KNOWS Plex serves a separate
+    // (cloud / embed) theme — confident claim is fine. When false,
+    // motif can't actually tell whether Plex has a Pass cloud
+    // theme available, because Plex hides cloud-availability when
+    // a sidecar wins. The previous "Plex has no fallback" copy was
+    // overconfident in those cases. Now the negative branch says
+    // "no detected fallback" — accurate without claiming knowledge
+    // motif doesn't have.
     const fallbackNote = plexAlso
-      ? '\n\nAfter PURGE: Plex serves its own theme for this title — Plex\'s version becomes the active one. (To remove the Plex-side too, do it in Plex itself.)'
+      ? '\n\nAfter PURGE: Plex serves its own theme for this title (cloud / embed) — Plex\'s version becomes the active one. (To remove the Plex-side too, do it in Plex itself.)'
       : (dlOnly && !isOrphan)
         ? ''  // dlOnly already covers the consequence above.
-        : '\n\nAfter PURGE: Plex has no fallback for this title — it will be themeless until the next sync (assuming TDB has a URL).';
+        : '\n\nAfter PURGE: motif has no detected fallback for this title — it will be themeless until the next sync (assuming TDB has a URL). If Plex Pass has a cloud theme for this title, that may surface as the active one instead.';
     const ok = confirm(`Purge ${labelTitle}?${warning}${scopeNote}${fallbackNote}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
@@ -4339,26 +4533,53 @@
     } else {
       srcCell = '<span class="muted" title="no theme">—</span>';
     }
-    // v1.13.31: composite SRC display — if motif's primary letter is
-    // T/U/A/M but Plex ALSO serves its own theme for this row, append
-    // a small +P chip. Pre-fix the SRC axis was mutually exclusive
-    // (motif's placement always won), masking the fact that Plex had
-    // its own fallback theme cached/embedded/cloud-served. Composite
-    // rendering surfaces both signals so the user knows e.g. "M+P:
-    // I have a manual sidecar AND Plex would have a fallback if I
-    // removed it." Pure-P rows (motif owns nothing) keep the single P
-    // chip — no redundant double-render. The plex_present condition
-    // mirrors computeSrcLetter's P branch (verified ok or untested).
+    // v1.13.34: composite-+P detection rewritten. v1.13.31's gate
+    // (`plex_has_theme && verifiedOk`) over-fired massively because
+    // Plex sets `pi.has_theme=1` on EVERY row where its metadata
+    // reports a theme — including the sidecar motif itself placed.
+    // So every T/U/A/M row got a phantom +P. The right discriminator
+    // for "Plex also serves its own theme" is the absent-sidecar
+    // case: `has_theme=1 AND local_theme_file=0`. That covers Plex
+    // Pass cloud themes, themerr-plex embeds, and stale Plex agent
+    // claims — all the cases where Plex's theme isn't backed by a
+    // file at the folder. When motif placed a sidecar successfully,
+    // local_theme_file=1 and the composite condition stays false
+    // (no separate Plex theme to surface). Edge case: sidecar
+    // externally deleted while motif's lf row still claims placement
+    // — `canonical_missing` exclusion below would route that to the
+    // dl-broken state instead.
+    //
+    // Visual change: drop the stacked second chip (it looked
+    // double-stacked when the cell wrapped). Replace with a single
+    // corner-dot indicator on the primary chip — same chip, single
+    // visual unit. Class `link-badge-also-plex` triggers the
+    // `::after` dot in app.css.
     const _verifiedOk = (it.plex_theme_verified_ok === null
                          || it.plex_theme_verified_ok === undefined
                          || it.plex_theme_verified_ok === 1);
     const _primaryLetter = computeSrcLetter(it);
-    const _plexAlso = !!it.plex_has_theme && _verifiedOk
+    const _plexAlso = !!it.plex_has_theme && !it.plex_local_theme
+                      && _verifiedOk
                       && _primaryLetter !== 'P'
                       && _primaryLetter !== '-';
     if (_plexAlso) {
-      srcCell += ' <span class="link-badge link-badge-cloud src-also-plex"'
-        + ' title="Plex also serves its own theme for this row — composite state. Click P in the SRC filter to see every row where Plex has a fallback.">P</span>';
+      // Inject the indicator class onto the existing chip rather
+      // than appending a new chip. The matchAll/replace pattern
+      // touches only the first link-badge in srcCell (the primary
+      // letter chip we just built) and adds an extra class +
+      // tooltip explaining the composite state.
+      srcCell = srcCell.replace(
+        /^(<span class="link-badge[^"]*)("[^>]*title=")([^"]*)/,
+        '$1 link-badge-also-plex$2$3 · Plex also serves its own theme (cloud / embed); the small dot signals the composite state.',
+      );
+      // If the chip didn't have a title= attr (rare path), still
+      // tag the class so the dot renders.
+      if (!srcCell.includes('link-badge-also-plex')) {
+        srcCell = srcCell.replace(
+          /class="link-badge/,
+          'class="link-badge link-badge-also-plex',
+        );
+      }
     }
 
     // v1.11.62: 'broken' DL state — motif's local_files row says we

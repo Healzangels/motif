@@ -3435,6 +3435,108 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             sections.append(d)
         return {"sections": sections}
 
+    @app.get("/api/dashboard/insights")
+    async def api_dashboard_insights(db: Path = Depends(get_db_path)):
+        """v1.13.34: structured trend + breakdown data for the dashboard.
+
+        Three series, each scoped to keep the response small:
+          - failure_kinds: GROUP BY failure_kind on unacked themes
+            failures. Drives the // FAILURE BREAKDOWN bar chart so
+            users see where their broken-URL pain is concentrated
+            (video_removed vs cookies_expired vs etc.).
+          - sync_durations: last 30 sync_runs with the wall clock,
+            transport, status, no_changes flag. Powers the
+            // SYNC PERFORMANCE sparkline so transport degradation
+            or upstream slowness is spottable at a glance.
+          - daily_downloads: last 30 days, count of `download` jobs
+            created per day. Powers the // DOWNLOAD ACTIVITY bar
+            chart — quick check that motif's actually doing work
+            after config changes / bulk operations.
+
+        All three queries are O(small) — failure rollup hits one
+        index, sync_runs is bounded by LIMIT, and the day-level
+        download GROUP BY caps at 30 buckets even for active
+        deployments. Dashboard fetches are infrequent enough that
+        no caching is needed at this layer.
+        """
+        def _query():
+            with get_conn(db) as conn:
+                # Failure-kind rollup. failure_acked_at IS NULL
+                # mirrors the topbar FAIL pill's gate so the chart
+                # stays in sync with the user-visible alarm count.
+                failure_rows = conn.execute("""
+                    SELECT failure_kind, COUNT(*) AS n
+                    FROM themes
+                    WHERE failure_kind IS NOT NULL
+                      AND failure_acked_at IS NULL
+                    GROUP BY failure_kind
+                    ORDER BY n DESC
+                """).fetchall()
+                # Sync duration trend. Reverse so the sparkline
+                # paints oldest→newest left-to-right (matching how
+                # users read time series). Skip rows with NULL
+                # wall_clock_seconds (in-flight runs would 0-out
+                # the chart's tail).
+                sync_rows = conn.execute("""
+                    SELECT finished_at, wall_clock_seconds, transport,
+                           status, no_changes,
+                           movies_seen, tv_seen,
+                           new_count, updated_count
+                    FROM sync_runs
+                    WHERE finished_at IS NOT NULL
+                      AND wall_clock_seconds IS NOT NULL
+                    ORDER BY finished_at DESC
+                    LIMIT 30
+                """).fetchall()
+                # Daily download counts for the last 30 days.
+                # date() truncates the timestamp to YYYY-MM-DD so
+                # the GROUP BY buckets cleanly. Includes only the
+                # `download` job_type (place / refresh / scan are
+                # different signals).
+                dl_rows = conn.execute("""
+                    SELECT DATE(created_at) AS day, COUNT(*) AS n
+                    FROM jobs
+                    WHERE job_type = 'download'
+                      AND created_at >= datetime('now', '-30 days')
+                    GROUP BY DATE(created_at)
+                    ORDER BY DATE(created_at) ASC
+                """).fetchall()
+            return failure_rows, sync_rows, dl_rows
+
+        failure_rows, sync_rows, dl_rows = await run_in_threadpool(_query)
+        # Human labels mirror the recovery-options endpoint's `humans`
+        # map so the failure-kind chart and the recovery section
+        # speak the same language for the same kinds.
+        failure_humans = {
+            "cookies_expired": "Cookies expired",
+            "video_private": "Video private",
+            "video_removed": "Video removed",
+            "video_age_restricted": "Age restricted",
+            "geo_blocked": "Geo blocked",
+            "network_error": "Network error",
+            "unknown": "Unknown",
+        }
+        failures = [
+            {"kind": r["failure_kind"],
+             "label": failure_humans.get(r["failure_kind"], r["failure_kind"]),
+             "count": r["n"]}
+            for r in failure_rows
+        ]
+        # Reverse the sync rows so the array is oldest→newest, which
+        # is what the sparkline renderer wants (left edge = first
+        # run, right edge = most recent). Carry both finished_at
+        # (for tooltips) and the raw values.
+        syncs = [dict(r) for r in reversed(sync_rows)]
+        downloads = [
+            {"day": r["day"], "count": r["n"]}
+            for r in dl_rows
+        ]
+        return {
+            "failures": failures,
+            "syncs": syncs,
+            "downloads": downloads,
+        }
+
     # --- Dry-run toggle ---
 
     @app.get("/api/dry-run")

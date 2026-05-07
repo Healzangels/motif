@@ -156,6 +156,35 @@
   <div class="coverage-comparison-body" id="coverage-comparison-body"></div>
 </section>
 
+<!-- v1.13.34: insight charts. Three small data-viz blocks rendered
+     as CSS+SVG (no external chart lib) so the bundle stays small
+     and the look stays consistent with motif's monospace CRT
+     palette. Each section hides on no-data so a fresh install
+     doesn't render empty axes. -->
+<section class="block insight-row" id="insight-failures-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// FAILURE BREAKDOWN</h2>
+    <span class="muted small">unacked theme failures by kind · click to drill in</span>
+  </header>
+  <div class="insight-body" id="insight-failures-body"></div>
+</section>
+
+<section class="block insight-row" id="insight-syncs-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC PERFORMANCE</h2>
+    <span class="muted small">last 30 runs · wall clock per run · hover for detail</span>
+  </header>
+  <div class="insight-body" id="insight-syncs-body"></div>
+</section>
+
+<section class="block insight-row" id="insight-downloads-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// DOWNLOAD ACTIVITY</h2>
+    <span class="muted small">last 30 days · download jobs queued per day</span>
+  </header>
+  <div class="insight-body" id="insight-downloads-body"></div>
+</section>
+
 <!-- v1.13.21: theme-source pie. Buckets every plex_items row by the
      same SRC letter (T/A/U/M/P/-) the library shows as a row pill;
      the chart agrees with the row glyphs the user already reads.
