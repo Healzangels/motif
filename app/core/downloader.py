@@ -353,6 +353,21 @@ def download_theme(
         kind = classify_yt_dlp_error(str(e))
         raise DownloadError(f"yt-dlp failed: {e}", kind=kind) from e
 
+    # v1.13.30: emit a final 1.0 fraction after yt-dlp returns
+    # successfully. Pre-fix the topbar download bar sometimes stuck
+    # short of 100% — yt-dlp's "downloading" status emits stopped
+    # before downloaded/total ever reached parity (e.g., chunked
+    # transfer where the last few bytes arrive without firing a
+    # progress event), and the "finished" status didn't always
+    # fire on every file in the run. Belt-and-suspenders: once
+    # ydl.download() returns without raising, the file is on disk
+    # and the user-facing % should reflect that.
+    if progress_callback is not None:
+        try:
+            progress_callback(1.0)
+        except Exception:
+            pass
+
     if not expected_mp3.exists():
         # ffmpeg may have produced a different extension if conversion failed.
         for f in output_dir.glob("theme.*"):

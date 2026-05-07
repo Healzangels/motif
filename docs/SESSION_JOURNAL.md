@@ -645,3 +645,83 @@ pre-audit. Six P2 findings addressed.
 ### Open threads
 - Cross-library lock from per-library click — still pending
   user retest after v1.13.29.
+
+---
+
+## 2026-05-07 — v1.13.30: tab-wide SYNC PLEX lock, DONE button non-clickable, queue wording, yt-dlp 100%
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.30`
+
+### Context
+User testing v1.13.29 reported four issues:
+
+1. Toggling STANDARD ↔ 4K mid-scan made the SYNC PLEX button
+   click-eligible again — letting the user pile a 2nd scan on top
+   of the still-running 1st (logs showed jobs 628-637, all rapid-
+   fire plex_enums on section 18). v1.13.23's per-(tab,variant)
+   lock was the regression: the variant chip changed scope, and
+   the OTHER variant's idle state unlocked the shared button.
+2. The ✓ DONE flash on the library SYNC PLEX button was clickable.
+   It's a notification, not an action; double-clicking through it
+   queued a fresh scan.
+3. Topbar mini-bar read "NUDGING PLEX TO RE-SCAN — 1 QUEUED" when
+   a lone nudge was the only thing in flight. User read "queued"
+   as "queued behind something" rather than "this single item is
+   in the queue".
+4. yt-dlp download bar sometimes stopped short of 100% — yt-dlp's
+   "downloading" status emits stopped before downloaded/total ever
+   reached parity (e.g., chunked transfer where the last bytes
+   arrived without a progress event), and "finished" didn't fire
+   reliably on every file.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.30`.
+- `app/web/static/app.js`:
+  - **#1 tab-wide busy**: `myTabBusy` now ORs both variants of the
+    current tab so the shared SYNC PLEX button stays locked while
+    EITHER STANDARD or 4K is enumerating. The DONE-flash scope
+    key (`tab:variant`) is unchanged so visual feedback remains
+    per-variant.
+  - **#2 DONE flash button disabled**: `libRefreshBtn.disabled =
+    true` during the ✓ DONE flash; re-enabled in the setTimeout
+    that restores origLabel. Mirrors how the dashboard SYNC
+    button's setSyncButtonState('done') already worked.
+- `app/core/progress.py`:
+  - **#3 single-op queue label**: when `running_n + pending_n == 1`,
+    drop the misleading count suffix entirely. Singular bursts
+    show just the kind label ("NUDGING PLEX TO RE-SCAN") or the
+    label + "queued" suffix (no count). Multi-op bursts keep the
+    explicit "1 running, 2 queued" form.
+- `app/core/downloader.py`:
+  - **#4 yt-dlp final 1.0 emit**: after `ydl.download(...)` returns
+    successfully, emit `progress_callback(1.0)` unconditionally.
+    Belt-and-suspenders for the cases where yt-dlp's own
+    "finished" hook didn't fire on the last file in a run.
+
+### Deferred
+- Concurrent download + sync visibility on the topbar (user's
+  request from this session) — needs design work; not blocking.
+- M-can-mask-P discussion — substantial UI/data-model question,
+  user explicitly asked to discuss before action.
+- REPLACE-WITH-TDB place skip on `plex_has_theme` — small
+  hotfix, will land separately once the M+P direction is decided.
+
+### How to verify
+1. /movies?fourk=0, click SYNC PLEX (standard scan starts).
+   Toggle to 4K mid-scan: button stays disabled and labeled
+   `// SYNCING…`. Toggle back: same. Standard finishes:
+   ✓ DONE flash for ~1.5s, button stays disabled during the
+   flash, then reverts to `// SYNC PLEX` enabled.
+2. Trigger a single Plex nudge (e.g., RE-PUSH on one row).
+   Topbar reads "NUDGING PLEX TO RE-SCAN" without a misleading
+   "1 QUEUED" suffix. Multi-row bulk push reads
+   "NUDGING PLEX TO RE-SCAN — 3 queued" / "1 running, 2 queued"
+   correctly.
+3. Trigger a download (RE-DL on a row). The topbar percentage
+   bar fills smoothly through completion (100% on success)
+   instead of stopping short.
+
+### Open threads
+- M-vs-P coexistence design (B option recommended: separate PLX
+  pill alongside SRC). Awaiting user direction.
+- REPLACE-WITH-TDB place-skip hotfix (small, related to above).
+- Concurrent ops topbar visibility (defer until needed).

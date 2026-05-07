@@ -411,7 +411,16 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None) -> list[dict]:
         # Detail label encodes counts so the mini-bar's stage_label
         # carries the info the legacy "QUEUED · NR / MP" text used
         # to. Bar itself runs indeterminate (stage_total=0).
-        if running_n and pending_n:
+        # v1.13.30: drop the count suffix when the burst is a single
+        # op. Pre-fix the topbar read "NUDGING PLEX TO RE-SCAN — 1
+        # QUEUED" while a lone nudge was the only thing in flight —
+        # the user read "queued" as "queued behind something else"
+        # rather than "this lone item is in the queue". Singular
+        # bursts drop the count; the bar/percent carries the
+        # running-vs-pending state on its own.
+        if running_n + pending_n == 1:
+            stage = stage_label if running_n else f"{stage_label} — queued"
+        elif running_n and pending_n:
             stage = f"{stage_label} — {running_n} running, {pending_n} queued"
         elif running_n:
             stage = f"{stage_label} — {running_n} running"

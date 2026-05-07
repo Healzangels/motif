@@ -550,8 +550,20 @@
       const autoEnum = (q.auto_enum_after_sync !== false);
       const tabKey = libraryState.tab;
       const variantKey = libraryState.fourk ? 'fourk' : 'standard';
+      // v1.13.30: page-level busy. The library page has ONE
+      // SYNC PLEX button; toggling STANDARD ↔ 4K shouldn't release
+      // the lock just because the OTHER variant happens to be idle.
+      // User-visible regression in v1.13.23 (per-variant lock):
+      // click SYNC PLEX on STANDARD, scan starts, toggle to 4K, the
+      // shared button became clickable for 4K — letting the user
+      // pile a 2nd scan on top of the still-running 1st. The button
+      // now stays locked while ANY variant of the current tab has a
+      // plex_enum in flight; the DONE flash still fires per
+      // (tab, variant) so the visual feedback is for the variant
+      // the user is currently viewing.
       const myTabBusy = !!(tabKey && enumActive[tabKey]
-                           && enumActive[tabKey][variantKey]);
+                           && (enumActive[tabKey].standard
+                               || enumActive[tabKey].fourk));
       // "Global pipeline" = SCAN ALL from settings (every section
       // queued, naturally lights up multiple tabs as it sweeps) OR
       // dashboard sync→enum cascade (tdb sync running with auto_enum
@@ -645,7 +657,12 @@
                    && libRefreshBtn.textContent === '// SYNCING…') {
           // Same scope just went busy → idle. Brief ✓ DONE flash,
           // then restore the idle label.
-          libRefreshBtn.disabled = false;
+          // v1.13.30: stay disabled during the DONE flash. The flash
+          // is a notification, not an action — clicking ✓ DONE used
+          // to fire a fresh refresh which the user perceived as a
+          // double-click hazard. Re-enable in the setTimeout that
+          // restores origLabel.
+          libRefreshBtn.disabled = true;
           libRefreshBtn.textContent = '✓ DONE';
           delete libRefreshBtn.dataset.sawBusyScope;
           const orig = libRefreshBtn.dataset.origLabel;
@@ -653,6 +670,7 @@
             // Only revert if no fresh busy state has overwritten us.
             if (libRefreshBtn.textContent === '✓ DONE' && orig) {
               libRefreshBtn.textContent = orig;
+              libRefreshBtn.disabled = false;
               delete libRefreshBtn.dataset.origLabel;
             }
           }, 1500);
