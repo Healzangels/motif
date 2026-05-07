@@ -2073,6 +2073,91 @@
     $('#plex-tv-total').textContent = fmt.num(tvTotal);
     $('#plex-tv-with-theme').textContent = fmt.num(tvWithTheme);
     $('#plex-tv-motif').textContent = fmt.num(tvMotif);
+
+    // v1.13.22: comparative coverage bars on the dashboard. Same
+    // /api/coverage/plex payload — re-derived counts so the bars
+    // agree with the cards above. "available" = motif_available
+    // AND not has_theme (the cohort motif could help with);
+    // "no_tdb" = !motif_available AND !has_theme (motif can't
+    // help). The themed segment doesn't distinguish source —
+    // SOURCE BREAKDOWN below the bar covers that axis.
+    const movAvail = data.movies.filter(
+      (m) => !m.has_theme && m.motif_available).length;
+    const movNoTdb = data.movies.filter(
+      (m) => !m.has_theme && !m.motif_available).length;
+    const tvAvail = data.tv.filter(
+      (m) => !m.has_theme && m.motif_available).length;
+    const tvNoTdb = data.tv.filter(
+      (m) => !m.has_theme && !m.motif_available).length;
+    renderCoverageComparison([
+      { tab: 'MOVIES', total, themed: withTheme,
+        available: movAvail, no_tdb: movNoTdb },
+      { tab: 'TV',     total: tvTotal, themed: tvWithTheme,
+        available: tvAvail, no_tdb: tvNoTdb },
+    ]);
+  }
+
+  // v1.13.22: render the per-tab stacked-bar comparison block.
+  // Hidden when both rows have zero items (fresh install / Plex
+  // disabled). Each bar has three flexible-width segments — themed,
+  // TDB-available, no-TDB — sized as percentages of the row total.
+  // Segments collapse to display:none when their count is zero so
+  // the rendered bar doesn't carry hairline 1px strips for empty
+  // categories. The legend mirrors the segment colors.
+  let _lastCoverageComparisonKey = '';
+  function renderCoverageComparison(rows) {
+    const block = document.getElementById('coverage-comparison-block');
+    const body = document.getElementById('coverage-comparison-body');
+    if (!block || !body) return;
+    const totalAll = rows.reduce((acc, r) => acc + r.total, 0);
+    if (totalAll <= 0) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows);
+    if (key === _lastCoverageComparisonKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastCoverageComparisonKey = key;
+    block.style.display = '';
+    body.innerHTML = rows.filter((r) => r.total > 0).map((r) => {
+      const pctThemed    = r.total ? (r.themed    / r.total) * 100 : 0;
+      const pctAvailable = r.total ? (r.available / r.total) * 100 : 0;
+      const pctNoTdb     = r.total ? (r.no_tdb    / r.total) * 100 : 0;
+      const pctDisplay = pctThemed >= 10
+        ? Math.round(pctThemed)
+        : pctThemed.toFixed(1);
+      return `<div class="coverage-row" data-tab="${htmlEscape(r.tab)}">
+        <div class="coverage-row-head">
+          <span class="coverage-row-tab">${htmlEscape(r.tab)}</span>
+          <span class="coverage-row-ratio">
+            ${fmt.num(r.themed)} <span class="muted">/ ${fmt.num(r.total)} themed</span>
+            <span class="coverage-row-pct">${pctDisplay}%</span>
+          </span>
+        </div>
+        <div class="coverage-bar"
+             title="${fmt.num(r.themed)} themed · ${fmt.num(r.available)} TDB-available · ${fmt.num(r.no_tdb)} no TDB">
+          <span class="coverage-bar-seg coverage-bar-seg-themed"
+                style="flex-basis:${pctThemed}%; ${r.themed === 0 ? 'display:none' : ''}"></span>
+          <span class="coverage-bar-seg coverage-bar-seg-available"
+                style="flex-basis:${pctAvailable}%; ${r.available === 0 ? 'display:none' : ''}"></span>
+          <span class="coverage-bar-seg coverage-bar-seg-no-tdb"
+                style="flex-basis:${pctNoTdb}%; ${r.no_tdb === 0 ? 'display:none' : ''}"></span>
+        </div>
+        <div class="coverage-row-legend">
+          <span class="coverage-legend-item">
+            <span class="coverage-legend-swatch coverage-legend-swatch-themed"></span>
+            themed <span class="coverage-legend-count">${fmt.num(r.themed)}</span>
+          </span>
+          <span class="coverage-legend-item">
+            <span class="coverage-legend-swatch coverage-legend-swatch-available"></span>
+            TDB available <span class="coverage-legend-count">${fmt.num(r.available)}</span>
+          </span>
+          <span class="coverage-legend-item">
+            <span class="coverage-legend-swatch coverage-legend-swatch-no-tdb"></span>
+            no TDB <span class="coverage-legend-count">${fmt.num(r.no_tdb)}</span>
+          </span>
+        </div>
+      </div>`;
+    }).join('');
   }
 
   function bindCoverage() {

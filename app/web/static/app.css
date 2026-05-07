@@ -2614,6 +2614,64 @@ pre code, .codeblock {
 .sync-history-sum-database .sync-history-sum-label { color: var(--magenta); }
 .sync-history-sum-remote   .sync-history-sum-label { color: var(--fg-mute); }
 
+/* v1.13.22: COVERAGE COMPARISON — per-tab horizontal stacked bars
+   showing themed (any source) / TDB-available-but-unthemed / no-TDB.
+   Each row reads top-to-bottom: tab label + headline ratio, then
+   the segmented bar, then a comma-separated legend strip with
+   exact counts. Color encoding mirrors the existing palette: green
+   for themed (the "covered" cohort), amber for "motif can help",
+   muted gray for "motif can't help". */
+.coverage-comparison-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+}
+.coverage-row { display: flex; flex-direction: column; gap: 6px; }
+.coverage-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.14em;
+}
+.coverage-row-tab { color: var(--fg-dim); font-weight: 600; }
+.coverage-row-ratio {
+  color: var(--fg);
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.coverage-row-pct { color: var(--green-bright); margin-left: 4px; }
+.coverage-bar {
+  display: flex;
+  height: 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.coverage-bar-seg { height: 100%; transition: flex-basis 0.4s ease; }
+.coverage-bar-seg-themed    { background: var(--green-bright); }
+.coverage-bar-seg-available { background: var(--amber); }
+.coverage-bar-seg-no-tdb    { background: var(--fg-mute); opacity: 0.5; }
+.coverage-row-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: var(--t-tiny);
+  color: var(--fg-dim);
+}
+.coverage-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.coverage-legend-swatch {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 2px;
+}
+.coverage-legend-swatch-themed    { background: var(--green-bright); }
+.coverage-legend-swatch-available { background: var(--amber); }
+.coverage-legend-swatch-no-tdb    { background: var(--fg-mute); opacity: 0.5; }
+.coverage-legend-count { color: var(--fg); font-variant-numeric: tabular-nums; }
+
 /* v1.13.21: SOURCE BREAKDOWN — donut chart + click-to-filter
    legend. Slices are SVG circles with stroke-dasharray sliced
    into percentages of the 100-unit-circumference (r=15.915).

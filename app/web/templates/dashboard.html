@@ -140,6 +140,22 @@
   </table>
 </section>
 
+<!-- v1.13.22: coverage comparison. Per-tab horizontal stacked bars
+     answer "what fraction of my Plex library has a theme, and of
+     the unthemed remainder, how much could ThemerrDB help with?"
+     Three segments: themed (any source), TDB-available (no theme
+     yet but motif can pull one), and no TDB (motif can't help).
+     Backed by /api/coverage/plex which the dashboard already loads
+     for the missing-themes tables. Hidden when there's no Plex
+     data yet (fresh install) so the block doesn't render at zero. -->
+<section class="block" id="coverage-comparison-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// COVERAGE COMPARISON</h2>
+    <span class="muted small">themed · TDB-available · no TDB</span>
+  </header>
+  <div class="coverage-comparison-body" id="coverage-comparison-body"></div>
+</section>
+
 <!-- v1.13.21: theme-source pie. Buckets every plex_items row by the
      same SRC letter (T/A/U/M/P/-) the library shows as a row pill;
      the chart agrees with the row glyphs the user already reads.
