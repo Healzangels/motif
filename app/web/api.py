@@ -5872,9 +5872,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not row["included"]:
                 raise HTTPException(status_code=409,
                                     detail="section is not managed (toggle MGD first)")
+            # v1.13.23: scope dedupe to THIS section only. Pre-fix any
+            # pending/running plex_enum (a /tv refresh, a sync cascade)
+            # would silently no-op a /movies per-section refresh —
+            # confusing now that the UI lets the user fire concurrent
+            # per-tab scans (lock-scope split in app.js refreshTopbarStatus).
             existing = conn.execute(
                 "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
-                "AND status IN ('pending','running')"
+                "AND status IN ('pending','running') "
+                "AND json_extract(payload, '$.section_id') = ?",
+                (section_id,),
             ).fetchone()
             if existing:
                 return {"ok": True, "job_id": existing["id"], "already_queued": True}
@@ -5905,12 +5912,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         fourk = bool(body.get("fourk"))
 
         with get_conn(db) as conn:
-            existing = conn.execute(
-                "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
-                "AND status IN ('pending','running')"
-            ).fetchone()
-            if existing:
-                return {"ok": True, "job_id": existing["id"], "already_queued": True}
+            # v1.13.23: scope dedupe per-section. Pre-fix any
+            # pending/running plex_enum globally short-circuited THIS
+            # endpoint, so a /movies SYNC PLEX click during a /tv
+            # enum silently returned already_queued and the user's
+            # action did nothing. Now we let the per-tab branch below
+            # filter out only the sections that already have an
+            # in-flight job, mirroring /api/libraries/refresh.
+            # Legacy global-refresh (no tab) keeps the old global
+            # short-circuit since its purpose IS "scan everything".
+            if tab not in ("movies", "tv", "anime"):
+                existing = conn.execute(
+                    "SELECT id FROM jobs WHERE job_type = 'plex_enum' "
+                    "AND status IN ('pending','running')"
+                ).fetchone()
+                if existing:
+                    return {"ok": True, "job_id": existing["id"], "already_queued": True}
 
             if tab in ("movies", "tv", "anime"):
                 # Map tab → section predicate, mirroring the /api/library
@@ -5948,12 +5965,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return {"ok": True, "enqueued": 0,
                             "note": f"no managed Plex sections match the {tab} tab"}
                 effective_fourk = (fallback_4k == 1) if used_fallback else fourk
+                # v1.13.23: skip sections that already have a
+                # pending/running plex_enum so a click during another
+                # tab's scan only queues the new sections, mirroring
+                # /api/libraries/refresh's per-section dedupe.
+                pending_section_ids = {
+                    r["section_id"] for r in conn.execute(
+                        "SELECT json_extract(payload, '$.section_id') AS section_id "
+                        "FROM jobs WHERE job_type = 'plex_enum' "
+                        "AND status IN ('pending','running')"
+                    ).fetchall() if r["section_id"] is not None
+                }
                 ids: list[int] = []
                 for s in sections:
+                    sid = s["section_id"]
+                    if sid in pending_section_ids:
+                        continue
                     cur = conn.execute(
                         "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                         "VALUES ('plex_enum', ?, 'pending', ?, ?)",
-                        (json.dumps({"section_id": s["section_id"],
+                        (json.dumps({"section_id": sid,
                                      "scope": f"{tab}{'-4k' if effective_fourk else ''}"}),
                          now_iso(), now_iso()),
                     )

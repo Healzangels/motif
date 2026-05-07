@@ -530,33 +530,42 @@
         if (!btn) return;
         btn.disabled = !!locked;
       };
-      // v1.12.125: SYNC + REFRESH, per-tab REFRESH, and settings
-      // REFRESH FROM PLEX share one mutual-exclusion gate.
-      //
-      // v1.12.127: gate is now CONDITIONAL on auto_enum_after_sync.
-      // When the user has disabled the post-sync auto-enqueue:
-      //   - Dashboard button label drops to // SYNC (no refresh
-      //     phase will follow on this click).
-      //   - Per-tab + settings REFRESH stay UNLOCKED during a tdb
-      //     sync — no plex_enum cascade is coming, so there's no
-      //     conflict to guard against.
-      // When auto_enum is on, behavior matches v1.12.125: any active
-      // sync-or-enum disables every other button until the whole
-      // pipeline drains.
+      // v1.13.23: split the lock scope so per-library SYNC PLEX
+      // doesn't gate-lock other library tabs or the dashboard SYNC.
+      // Pre-fix any plex_enum in flight locked every // SYNC PLEX
+      // button on every library tab AND the dashboard SYNC THEMERRDB
+      // button — the v1.11.27 intent ("library page REFRESH: gated
+      // on q.plex_enum_active[tab][variant]", lines 449-459 above)
+      // existed in the comments but the implementation collapsed
+      // back to the unified v1.11.5 gate. This block restores the
+      // granular lock:
+      //   - dashboard SYNC: themerrdbBusy only; per-library plex_enum
+      //     is an independent job and shouldn't block another sync.
+      //   - library SYNC PLEX: only when MY tab+variant has an
+      //     enum in flight, OR a global pipeline (sync→enum cascade
+      //     with auto_enum on, or multi-tab SCAN ALL from settings)
+      //     is sweeping every section.
+      //   - settings SYNC PLEX: any plex_enum in flight (it'd dedupe
+      //     poorly per-section), or sync→enum cascade incoming.
       const autoEnum = (q.auto_enum_after_sync !== false);
-      // Bus for the dashboard SYNC button: locked when the action
-      // it represents is in progress. With auto_enum=ON that's the
-      // full sync→enum pipeline; with auto_enum=OFF it's just sync.
-      const dashSyncBtnBusy = autoEnum
-        ? (themerrdbBusy || plexEnumBusy)
-        : themerrdbBusy;
-      // Bus for the refresh buttons (per-tab + settings global):
-      // locked while either an enum is running OR a sync is running
-      // that will cascade into one. With auto_enum=OFF and only sync
-      // running, refresh stays available.
-      const refreshBtnBusy = autoEnum
-        ? (themerrdbBusy || plexEnumBusy)
-        : plexEnumBusy;
+      const tabKey = libraryState.tab;
+      const variantKey = libraryState.fourk ? 'fourk' : 'standard';
+      const myTabBusy = !!(tabKey && enumActive[tabKey]
+                           && enumActive[tabKey][variantKey]);
+      // "Global pipeline" = SCAN ALL from settings (every section
+      // queued, naturally lights up multiple tabs as it sweeps) OR
+      // dashboard sync→enum cascade (tdb sync running with auto_enum
+      // on guarantees a global plex_enum follows). Both warrant
+      // locking every library tab's button until the sweep ends.
+      const enumTabsActive = ['movies', 'tv', 'anime'].filter((t) =>
+        enumActive[t] && (enumActive[t].standard || enumActive[t].fourk),
+      ).length;
+      const globalEnumPipeline = (themerrdbBusy && autoEnum)
+                              || enumTabsActive > 1;
+      const dashSyncBtnBusy = themerrdbBusy;
+      const libRefreshBusy = myTabBusy || globalEnumPipeline;
+      const settingsRefreshBusy = plexEnumBusy
+                              || (themerrdbBusy && autoEnum);
       // Library page SYNC PLEX. v1.13.19: one-word busy label —
       // "// SYNCING…" stays put for the whole run instead of
       // changing mid-stream like the v1.13.16 multi-stage swap.
@@ -570,7 +579,7 @@
       // 1.5s don't fight the displayed text.
       const libRefreshBtn = document.getElementById('library-refresh-btn');
       if (libRefreshBtn) {
-        if (refreshBtnBusy) {
+        if (libRefreshBusy) {
           libRefreshBtn.disabled = true;
           if (!libRefreshBtn.dataset.origLabel) {
             libRefreshBtn.dataset.origLabel = libRefreshBtn.textContent;
@@ -609,7 +618,7 @@
       // same string.
       const settingsRefreshBtn = document.getElementById('refresh-libraries-btn');
       if (settingsRefreshBtn) {
-        if (refreshBtnBusy) {
+        if (settingsRefreshBusy) {
           settingsRefreshBtn.disabled = true;
           if (!settingsRefreshBtn.dataset.origLabel) {
             settingsRefreshBtn.dataset.origLabel = settingsRefreshBtn.textContent;
@@ -3626,7 +3635,20 @@
       params.set('sort_dir', libraryState.sortDir);
     }
     const tbody = document.getElementById('library-body');
-    tbody.innerHTML = `<tr><td colspan="9" class="muted center">loading…</td></tr>`;
+    // v1.13.23: don't clobber tbody to "loading…" when prior rows are
+    // already rendered. The v1.13.21 hash-skip (~3697) compares the
+    // new HTML against tbody.dataset.lastHash — when the new render
+    // matches (unchanged poll, same items), the populated-branch
+    // write is skipped, so a fresh "loading…" placeholder painted
+    // here would persist on screen until the user navigated away.
+    // Visible during sync plex (slow API under DB lock contention)
+    // AND during ordinary 5s rapid-poll ticks. Only paint the
+    // placeholder on the empty-state case (no prior render); during
+    // a re-fetch, leave existing rows in place until the new render
+    // either matches (skip) or differs (overwrite).
+    if (tbody.dataset.lastHash == null) {
+      tbody.innerHTML = `<tr><td colspan="9" class="muted center">loading…</td></tr>`;
+    }
     let data;
     try {
       data = await api('GET', '/api/library?' + params.toString());
