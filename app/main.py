@@ -75,18 +75,18 @@ def main() -> int:
     # Seed motif.yaml on first run if missing (also handles v1.3.x migration)
     _bootstrap_config_file(settings)
 
-    # Create themes subdirs ONLY if the user has configured a path. On a
-    # fresh install with no env-var-driven themes_dir, the user must visit
-    # /settings to set the path before any download work happens. The
-    # web UI loads regardless.
+    # v1.11.0: only the themes_dir root is created here. Per-section
+    # subdirs (themes_dir/<themes_subdir>) are created on demand by the
+    # download / adopt / upload paths, after Plex section discovery has
+    # populated plex_sections.themes_subdir. Pre-creating them at boot
+    # would require enumerating Plex first, and we want the web UI up
+    # even on a totally fresh install.
     if settings.is_paths_ready():
         td = settings.themes_dir
         try:
             td.mkdir(parents=True, exist_ok=True)
-            settings.movies_themes_dir.mkdir(parents=True, exist_ok=True)
-            settings.tv_themes_dir.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            log.error("Failed to create themes subdirs at %s: %s", td, e)
+            log.error("Failed to create themes_dir %s: %s", td, e)
 
     log.info("motif starting")
     log.info("  config_dir   = %s", settings.config_dir)
@@ -106,25 +106,117 @@ def main() -> int:
         for path, var in overrides.items():
             log.debug("    %s ← %s", path, var)
 
+    # v1.13.8: log non-themes_dir validation errors at startup so a
+    # hand-edited motif.yaml with an out-of-range value (e.g.,
+    # sync.source="garbage") surfaces immediately instead of failing
+    # opaquely on the next sync. themes_dir is intentionally
+    # excluded — first-run setup hasn't asked the user for a path
+    # yet, so missing is expected.
+    config_errors = settings.validate_current(require_themes_dir=False)
+    config_errors = [e for e in config_errors if "themes_dir" not in e]
+    if config_errors:
+        log.warning("config validation surfaced %d issue(s):",
+                    len(config_errors))
+        for e in config_errors:
+            log.warning("  · %s", e)
+
     init_db(settings.db_path)
     init_auth_schema(settings.db_path)
     purged = cleanup_expired_sessions(settings.db_path)
     if purged:
         log.info("Purged %d expired session(s)", purged)
 
-    # One-shot data migration: relocate flat <vid>.mp3 files into the new
-    # per-item subfolder layout (mirrors Plex's "Title (Year)" convention).
-    # Idempotent: rows already in the new layout are skipped.
+    # v1.12.81: one-shot cleanup of place jobs that pre-date the
+    # scheduler / plex_enum section_id fix. Worker rejects them as
+    # `_JobPermanentFailure("place job missing section_id (v1.11.0
+    # requires per-section routing)")`, leaving them stuck in
+    # status='failed' which the topbar's q.failed counter renders
+    # as a perma-red FAIL dot. Cancel them on startup so the dot
+    # clears once the bad enqueue paths are no longer creating
+    # new ones. Pure cleanup — no side effects beyond the jobs
+    # row and matches the worker's normal _mark_cancelled
+    # behavior. Safe to keep in perpetuity (idempotent — only
+    # touches jobs with NULL section_id, which the new enqueue
+    # paths never produce).
+    try:
+        from .core.db import get_conn
+        from .core.events import now_iso
+        with get_conn(settings.db_path) as conn:
+            cur = conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type IN ('place', 'download')
+                     AND section_id IS NULL
+                     AND status IN ('pending', 'failed')""",
+                (now_iso(),),
+            )
+            if cur.rowcount:
+                log.info(
+                    "Cancelled %d stuck section_id-less job(s) "
+                    "(pre-v1.12.81 scheduler/plex_enum bug)",
+                    cur.rowcount,
+                )
+    except Exception as e:
+        log.warning("Section_id-less job cleanup skipped: %s", e)
+
+    # v1.12.113: zombie running-job sweep. If a previous motif process
+    # died mid-job (SIGKILL, OOM, container crash), jobs.status='running'
+    # rows survive — but the worker thread that owned them is gone. Pre-fix
+    # those rows lingered indefinitely; the v1.12.109 ops mini-bar would
+    # render "1 running, N queued" forever even though nothing was actually
+    # running. Worker can't be holding any 'running' row at this point in
+    # startup (it hasn't started yet), so flipping every running row to
+    # 'failed' is safe and clears the ghost.
+    try:
+        from .core.events import now_iso  # noqa: F811 — defensive re-import
+        with get_conn(settings.db_path) as conn:
+            cur = conn.execute(
+                # v1.12.123: SQL fix — adjacent string literals don't
+                # concatenate inside a triple-quoted Python string, so
+                # the prior 'session_expired: motif process restarted '
+                # 'while this job was running' became two consecutive
+                # SQL string literals (invalid syntax). The zombie sweep
+                # silently skipped on every startup since v1.12.113,
+                # leaving 'running' jobs stuck in the table — which kept
+                # themerrdb_sync_in_flight non-zero and stuck the
+                # dashboard SYNC button on // SYNCING THEMERRDB… until
+                # a manual DB poke. Single-line literal here.
+                "UPDATE jobs SET status = 'failed', "
+                "                finished_at = ?, "
+                "                last_error = COALESCE(last_error, "
+                "  'session_expired: motif process restarted while this job was running') "
+                "WHERE status = 'running'",
+                (now_iso(),),
+            )
+            if cur.rowcount:
+                log.info(
+                    "Reset %d zombie running job(s) to failed "
+                    "(prior motif process died mid-job)",
+                    cur.rowcount,
+                )
+    except Exception as e:
+        log.warning("Zombie running-job sweep skipped: %s", e)
+
+    # v1.11.0: legacy startup data migrations (relocate_legacy_canonical_files,
+    # backfill_hash_match_provenance) are gone — the per-section themes layout
+    # is a fresh-start release; the DB is repopulated from upstream sources by
+    # sync + plex_enum + scan after the v17 → v18 migration's hard-stop fires.
+
+    # v1.11.58: bring existing sections forward to the location-path-
+    # derived themes_subdir naming. Idempotent — sections already on
+    # the new naming are no-ops; rename failures (target exists, etc.)
+    # are logged and skipped so a partial migration never half-updates
+    # local_files.file_path. Only runs when themes_dir is configured.
     if settings.is_paths_ready():
-        from .core.canonical import (
-            relocate_legacy_canonical_files,
-            backfill_hash_match_provenance,
-        )
-        relocate_legacy_canonical_files(settings.db_path, settings.themes_dir)
-        # v1.8.6: pre-fix adopt rows hardcoded provenance='manual' for every
-        # finding kind, so hash_match adoptions showed M badges instead of
-        # T. Backfill any historical rows so the badge matches the data.
-        backfill_hash_match_provenance(settings.db_path)
+        try:
+            from .core.sections import migrate_themes_subdirs_inplace
+            migrated = migrate_themes_subdirs_inplace(
+                settings.db_path, settings.themes_dir,
+            )
+            if migrated:
+                log.info("Themes subdir migration: %d section(s) updated",
+                         migrated)
+        except Exception as e:
+            log.warning("Themes subdir migration failed at startup: %s", e)
 
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).
@@ -154,9 +246,9 @@ def main() -> int:
     # Force the session key to be created/loaded so it's ready for the web layer
     settings.resolve_session_key()
 
-    # Start worker
+    # Start workers (long + general — see start_worker docstring).
     stop_event = threading.Event()
-    worker_thread = start_worker(settings, stop_event)
+    worker_threads = start_worker(settings, stop_event)
 
     # Start scheduler
     scheduler = start_scheduler(settings)
@@ -195,7 +287,8 @@ def main() -> int:
         server.run()
     finally:
         stop_event.set()
-        worker_thread.join(timeout=10.0)
+        for _t in worker_threads:
+            _t.join(timeout=10.0)
         log.info("motif stopped")
     return 0
 

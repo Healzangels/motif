@@ -38,11 +38,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MOTIF_WEB_PORT=5309
 
 # ffmpeg for yt-dlp's audio extraction; tini for clean PID 1 signal handling;
-# curl for the healthcheck.
+# curl for the healthcheck. v1.12.89: nodejs as a JS runtime for yt-dlp's
+# YouTube extractor — the 2025-era yt-dlp deprecated extraction without a
+# JS runtime (https://github.com/yt-dlp/yt-dlp/wiki/EJS), and the
+# JS-less fallback (android_vr player client) returns "This video is
+# not available" for many otherwise-playable videos. nodejs from the
+# debian repo is sufficient — yt-dlp picks it up via the `js_runtimes`
+# opt set in app/core/downloader.py.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         tini \
         curl \
+        nodejs \
     && rm -rf /var/lib/apt/lists/*
 
 # Non-root user, default UID/GID matches Unraid's "nobody" so hardlinks across

@@ -3,7 +3,7 @@
 {% block content %}
 <section class="hero">
   <h1 class="title">SETTINGS</h1>
-  <p class="muted">all configuration · saved to /config/motif.yaml · live across restarts</p>
+  <p class="muted">configuration · persisted to <code>/config/motif.yaml</code> · ENV vars win where present</p>
 </section>
 
 <nav class="tabs" role="tablist" id="settings-tabs">
@@ -35,10 +35,13 @@
                placeholder="/data/media/themes" autocomplete="off" />
         <p class="form-hint">
           Container-relative path where motif stores downloaded theme files.
-          Subdirectories <code>movies/</code> and <code>tv/</code> are auto-created.
-          Must be on the same filesystem as your Plex media folders for hardlinks
-          to work — typically <code>/data/media/themes</code> when /data is mounted
-          to <code>/mnt/user/data</code>.
+          One subdirectory per Plex section is auto-created (e.g.
+          <code>themes/movies/</code>, <code>themes/movies-4k/</code>,
+          <code>themes/tv-shows/</code>, <code>themes/anime/</code>) so each
+          library's staging tree mirrors the Plex section it belongs to.
+          Must be on the same filesystem as your Plex media folders for
+          hardlinks to work — typically <code>/data/media/themes</code> when
+          /data is mounted to <code>/mnt/user/data</code>.
         </p>
       </label>
 
@@ -50,8 +53,33 @@
         <input class="input" type="text" data-cfg-field="paths.cookies_file"
                placeholder="/config/cookies.txt" autocomplete="off" />
         <p class="form-hint">
-          Path to your YouTube cookies.txt (Netscape format). Drop the file
-          into <code>/mnt/user/appdata/motif/cookies.txt</code> on the host.
+          Required for many YouTube downloads to succeed — used by yt-dlp to
+          authenticate as a logged-in user, which bypasses bot-detection rate
+          limits and unlocks age-restricted videos. Path is to a Netscape-
+          format <code>cookies.txt</code> exported from your browser. Drop
+          the file at <code>/mnt/user/appdata/motif/cookies.txt</code> on the
+          host (the default <code>/config/cookies.txt</code> mount maps there).
+          Without this, ThemerrDB syncs may fail with cookies_expired or
+          age_restricted errors.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">MIN FREE DISK (MB)</span>
+          <span class="form-env-badge" data-env-badge="paths.min_free_disk_mb" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="number" min="0" step="50"
+               data-cfg-field="paths.min_free_disk_mb"
+               placeholder="500" autocomplete="off" />
+        <p class="form-hint">
+          Pre-download free-space guard. If the filesystem hosting
+          <code>themes_dir</code> has less than this many MB free, downloads
+          fail transiently with a clear "low disk" reason and the topbar
+          shows an amber DISK warning pill — instead of yt-dlp/ffmpeg silently
+          spamming I/O errors and racking up retries. The job stays in the
+          queue and resumes once you free space. Set to <code>0</code> to
+          disable the guard entirely.
         </p>
       </label>
     </div>
@@ -119,11 +147,12 @@
 
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="plex.analyze_after_placement" />
-        <span class="form-label-text">REFRESH PLEX AFTER PLACING</span>
+        <span class="form-label-text">SYNC PLEX AFTER PLACING</span>
         <p class="form-hint">
           When checked, motif tells Plex to re-scan an item's metadata after
-          dropping its theme.mp3, so the theme appears immediately.
-          Recommended.
+          dropping its theme.mp3 (immediate refresh + retries at +10s,
+          +30s, +90s) so Plex's local-media-assets agent picks up the
+          new theme without a manual click. Recommended.
         </p>
       </label>
 
@@ -160,18 +189,21 @@
 <section class="block tab-panel" data-panel="plex" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// LIBRARY SECTIONS</h2>
-    <div style="display:flex;gap:8px;align-items:center">
-      <span class="form-status muted small" id="libraries-save-status"></span>
-      <button class="btn btn-tiny btn-warn" id="libraries-save-btn" type="button" disabled>// SAVE</button>
-      <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// REFRESH FROM PLEX</button>
-    </div>
+    <button class="btn btn-tiny" id="refresh-libraries-btn" type="button">// SYNC PLEX</button>
   </header>
   <div class="block-body" style="padding:0">
-    <p class="muted small" style="padding:10px 18px">
+    <p class="muted small" style="padding:10px 18px 4px">
       Plex sections motif knows about. Toggle MGD to enable/disable management
       per section. Disabled sections are excluded from sync, scans, and the
       Coverage tab's Plex catalog.
     </p>
+    <div class="lib-legend" style="padding:0 18px 12px">
+      <span class="muted small">ROLE KEY:</span>
+      <span class="lib-legend-item"><span class="lib-flag-pill is-active lib-flag-pill-anime" aria-hidden="true">A</span> anime — feeds the ANIME tab</span>
+      <span class="lib-legend-item"><span class="lib-flag-pill is-active lib-flag-pill-4k" aria-hidden="true">4K</span> 4K library — feeds the 4K toggle on its tab</span>
+      <span class="lib-legend-item"><span class="muted small">neither = standard</span></span>
+      <span class="lib-legend-item"><span class="muted small">both selected = anime 4K</span></span>
+    </div>
     <table class="table libraries-table">
       <thead>
         <tr>
@@ -204,6 +236,14 @@
         <tr><td colspan="7" class="muted center">loading…</td></tr>
       </tbody>
     </table>
+    <!-- v1.10.36: SAVE moved here from the block-head so it lines up with
+         every other settings section (PATHS, PLEX, DOWNLOADS, etc. all
+         have a bottom-left form-actions). REFRESH FROM PLEX stays in the
+         header — it's a read action, not a save. -->
+    <div class="form-actions" style="margin:0 18px 18px">
+      <button class="btn btn-warn" id="libraries-save-btn" type="button" disabled>// SAVE</button>
+      <span class="form-status muted small" id="libraries-save-status"></span>
+    </div>
   </div>
 </section>
 
@@ -285,8 +325,11 @@
           <option value="literal">literal — treat + as part of word</option>
         </select>
         <p class="form-hint">
-          How <code>+</code> in titles is handled. The default <code>separator</code>
-          mirrors the legacy merge-themes.sh behavior.
+          How <code>+</code> in titles is handled. <code>separator</code>
+          treats it as a word break (matches "X+Y" against folders named
+          "X Y"); <code>literal</code> requires the <code>+</code> in the
+          folder name. <code>separator</code> is the safer default for
+          most Plex layouts.
         </p>
       </label>
     </div>
@@ -329,10 +372,147 @@
           unless you know why you'd want to change it.
         </p>
       </label>
+
+      <!-- v1.12.121 (Phase A): snapshot tarball path. EXPERIMENTAL until
+           A.1 burn-in clears; default is "remote" (battle-tested HTTP-
+           per-item). Selecting "database" pulls a single tarball of
+           the LizardByte/ThemerrDB database branch from codeload —
+           ~1000× fewer HTTP requests, finishes in seconds instead of
+           minutes. Falls back to remote automatically if codeload is
+           unreachable; the topbar idle pill goes amber to flag it. -->
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">
+            SYNC SOURCE
+            <span class="form-env-badge" style="background:rgba(255,184,108,0.15);border-color:rgba(255,184,108,0.4);color:var(--orange,#ffb86c)">// EXPERIMENTAL</span>
+          </span>
+          <span class="form-env-badge" data-env-badge="sync.source" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <select class="input" data-cfg-field="sync.source">
+          <option value="remote">REMOTE — per-item HTTP (default, battle-tested)</option>
+          <option value="database">DATABASE — single-tarball snapshot (faster, opt-in)</option>
+          <option value="git">GIT — incremental fetch + diff (fastest, opt-in)</option>
+        </select>
+        <p class="form-hint">
+          <strong>REMOTE</strong> walks gh-pages and fetches one JSON per item
+          (~10k+ requests, several minutes on a fresh sync).<br>
+          <strong>DATABASE</strong> pulls one tarball of the
+          <code>database</code> branch from codeload.github.com and reads every
+          item locally (~1 request, seconds). An ETag short-circuit (304)
+          skips the upsert pipeline entirely when the tree hasn't changed.<br>
+          <strong>GIT</strong> maintains a bare git mirror of the
+          <code>database</code> branch via dulwich. First run shallow-clones
+          (~30 MB pack); subsequent runs fetch the delta (typically &lt;100 KB)
+          and walk only the changed paths. Lowest bandwidth on busy days; a
+          no-change day finishes in seconds. On failure motif cascades to
+          DATABASE, then REMOTE.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">DATABASE SNAPSHOT URL</span>
+          <span class="form-env-badge" data-env-badge="sync.database_url" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.database_url"
+               placeholder="https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+               autocomplete="off" />
+        <p class="form-hint">
+          Tarball endpoint used when SYNC SOURCE is DATABASE. Override only
+          if you're mirroring the <code>database</code> branch privately.
+        </p>
+      </label>
+
+      <!-- v1.13.0 (Phase B): git mirror URL + branch. Default is the
+           public LizardByte repo on github.com. Override only if you
+           run a private mirror. -->
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">GIT MIRROR URL</span>
+          <span class="form-env-badge" data-env-badge="sync.git_url" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.git_url"
+               placeholder="https://github.com/LizardByte/ThemerrDB.git"
+               autocomplete="off" />
+        <p class="form-hint">
+          Git URL used when SYNC SOURCE is GIT. Standard HTTPS — no auth
+          required for public repos.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">GIT BRANCH</span>
+          <span class="form-env-badge" data-env-badge="sync.git_branch" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.git_branch"
+               placeholder="database" autocomplete="off" />
+        <p class="form-hint">
+          Branch motif tracks. LizardByte publishes daily exports to
+          <code>database</code>. Leave default unless you're tracking a
+          self-hosted branch.
+        </p>
+      </label>
+
+      <!-- v1.12.126: post-sync plex_enum is now opt-in. Default ON
+           because daily cron syncs rely on it to pick up Plex-side
+           changes (new titles, folder moves, sidecar adds/removes).
+           Toggling OFF means manual control: TDB sync runs alone;
+           click SYNC PLEX on the library tab when you want
+           the Plex side reconciled. -->
+      <label class="form-label form-label-checkbox">
+        <div class="form-label-row">
+          <span class="form-label-text">AUTO-SYNC PLEX AFTER SYNC</span>
+          <span class="form-env-badge" data-env-badge="sync.auto_enum_after_sync" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <label class="checkbox-row">
+          <input type="checkbox" data-cfg-field="sync.auto_enum_after_sync" />
+          <span>After every ThemerrDB sync, run a full Plex enumeration to pick up Plex-side changes</span>
+        </label>
+        <p class="form-hint">
+          The TDB sync's own resolve step already links new TDB rows to
+          existing Plex items, so this auto-scan is for catching
+          changes on the <em>Plex</em> side: new titles, folder moves, manual
+          sidecar adds/removes, and Plex theme-claim re-verification.<br>
+          <strong>Recommended ON</strong> if you depend on the daily cron
+          sync (no human is around to manually click SYNC PLEX afterward).
+          <strong>Toggle OFF</strong> if you want manual control over when
+          the slower Plex enumeration runs — the dashboard SYNC + SYNC PLEX
+          button will then only do the TDB sync.
+        </p>
+      </label>
+    </div>
+    <!-- v1.13.8 (Phase D): operational cache observability. Reports
+         the total + per-artifact size of <db_dir>/cache/ so the
+         user can see Phase A's tarball, Phase B's git mirror,
+         Phase A.5's ETag cache, and #8's release JSON adding up.
+         Hidden when no cache exists yet (fresh install). Currently
+         informational only — auto-prune (Phase D actual GC) defers
+         until growth proves to be real in observed installs. -->
+    <div class="cache-gauge" id="cache-gauge" hidden>
+      <header class="cache-gauge-head">
+        <span class="cache-gauge-label">// CACHE</span>
+        <span class="cache-gauge-total muted small" id="cache-gauge-total">—</span>
+      </header>
+      <ul class="cache-gauge-list" id="cache-gauge-list"></ul>
+      <p class="form-hint" style="margin-top:6px">
+        Operational cache for the snapshot/git transports plus motif
+        bookkeeping. Grows ~tens of KB per sync on the git path.
+        Safe to delete (motif rebuilds from scratch on the next sync).
+      </p>
     </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>
       <span class="form-status" data-save-status="sync"></span>
+      <!-- v1.13.2 (#3): pre-flight transport probe. Uses the
+           CURRENTLY-SAVED sync.source/url/branch (so click after
+           save, not before). Status renders inline next to the
+           button — green check + latency on success, red text on
+           failure. Auto-fires once on page load so the user sees
+           today's reachability without clicking. -->
+      <button class="btn btn-tiny" id="sync-probe-btn" type="button"
+              title="Test that the configured SYNC SOURCE can reach upstream right now.">// PROBE TRANSPORT</button>
+      <span class="form-status" id="sync-probe-status"></span>
     </div>
   </div>
 </section>
@@ -353,11 +533,12 @@
         <input type="checkbox" data-cfg-field="placement.auto_place" />
         <p class="form-hint">
           When checked (default), every successful download immediately places
-          the theme into Plex's media folder. When unchecked, downloads land
-          in <a href="/pending">/pending</a> for manual approval — useful when
-          you want to review what motif found before publishing.
-          The dashboard <code>// DOWNLOAD ONLY</code> button overrides this
-          setting per-sync regardless of the default.
+          the theme into Plex's media folder. When unchecked, themes still
+          download in the background — the row's DL pill goes solid green —
+          but the file stays in motif's staging tree. The PL pill stays empty,
+          and the row's // SOURCE ▾ menu picks up a // PUSH TO PLEX entry so
+          you can place it manually whenever you're ready, the same way you'd
+          push a downloaded-but-missing-from-Plex item.
         </p>
       </label>
     </div>
@@ -463,13 +644,17 @@
   </header>
   <div class="block-body">
     <p class="muted" style="margin-bottom:12px">
-      For Homepage's Custom API widget, use the public stats endpoint (no auth required):
+      Create a <strong>read</strong>-scope token in the TOKENS tab, then point
+      Homepage's Custom API widget at the stats endpoint with the token in the
+      <code>Authorization</code> header (or <code>?api_key=</code> query string):
     </p>
     <pre class="codeblock">widget:
   type: customapi
   url: https://motif.example.com/api/public/stats
   refreshInterval: 30000
   display: list
+  headers:
+    Authorization: Bearer thmr_YOUR_READ_TOKEN_HERE
   mappings:
     - field: movies_downloaded
       label: Movies w/ themes

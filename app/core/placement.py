@@ -52,7 +52,6 @@ class FolderEntry:
 
 
 @dataclass
-@dataclass
 class FolderIndex:
     """Indexes Plex media folders by various keys for fast matching.
     Can be built from a single root or from multiple roots (when a media
@@ -242,6 +241,9 @@ def place_theme(
     source_file: Path,
     index: FolderIndex,
     plex: PlexClient | None,
+    cached_rk: str | None = None,
+    cached_has_theme: bool = False,
+    cached_folder_path: str | None = None,
     strict_edition: bool = True,
     plus_mode: PlusMode = "separator",
     skip_if_plex_has_theme: bool = True,
@@ -256,28 +258,56 @@ def place_theme(
     `force_overwrite=True` bypasses BOTH skip conditions — used when the
     user explicitly approves placement from /pending knowing it will
     overwrite an existing sidecar.
+
+    v1.11.68: when `cached_folder_path` is supplied (the worker pulls
+    plex_items.folder_path alongside rating_key), use it as the
+    target folder directly — skip FolderIndex title+year+edition
+    matching entirely. This dodges the strict_edition false-negative
+    where a Plex folder carries a {edition-4K} or {edition-Theatrical}
+    tag but the theme row has no edition recorded (typical for
+    SET URL / UPLOAD MP3 on orphan rows). The pre-fix path made
+    placement reach for FolderIndex with edition_raw="" and reject
+    every {edition-X} folder, leaving the download stuck in /pending
+    forever with reason='no_match'.
     """
     # 1. Find target folder
-    find = find_target_folder(
-        index, title=title, year=year, edition_raw=edition_raw,
-        strict_edition=strict_edition, plus_mode=plus_mode,
-    )
+    find: FindResult | None = None
+    if cached_folder_path:
+        # Path translation already happens for stat/iterdir via
+        # plex_enum._candidate_local_paths; mirror it here so the
+        # placement target resolves whether Plex reports
+        # /data/media/... (container view) or /mnt/user/data/...
+        # (Unraid host view).
+        from .plex_enum import _candidate_local_paths
+        for cand in _candidate_local_paths(cached_folder_path):
+            if cand.is_dir():
+                find = FindResult(MatchResult.EXACT, cand,
+                                  reason="cached_folder_path")
+                break
+    if find is None:
+        find = find_target_folder(
+            index, title=title, year=year, edition_raw=edition_raw,
+            strict_edition=strict_edition, plus_mode=plus_mode,
+        )
     if find.folder is None:
-        return PlacementOutcome(False, None, find.reason or "no_match")
+        # v1.11.68: emit the enum-key reason ('no_match') so /pending's
+        # last_place_attempt_reason switch matches. The human-readable
+        # 'no matching folder' string used pre-fix made the /pending
+        # render fall through to its generic 'No place job queued —
+        # click APPROVE' message instead of the specific 'No Plex
+        # folder matched this title' branch.
+        return PlacementOutcome(False, None, "no_match")
 
     target = find.folder
 
-    # 2. Skip if Plex already has a theme (unless force_overwrite)
-    rk: str | None = None
-    if plex and plex.cfg.enabled and skip_if_plex_has_theme and not force_overwrite:
-        rk = plex.resolve_rating_key(
-            media_type=media_type, title=title, year=year, edition_raw=edition_raw,
+    # 2. Skip if Plex already has a theme (unless force_overwrite).
+    # Reads from cached_has_theme — set by the caller from plex_items.
+    rk: str | None = cached_rk
+    if skip_if_plex_has_theme and not force_overwrite and cached_has_theme:
+        return PlacementOutcome(
+            False, None, "plex_has_theme",
+            target_folder=target, plex_rating_key=rk,
         )
-        if rk and plex.item_has_theme(rk):
-            return PlacementOutcome(
-                False, None, "plex_has_theme",
-                target_folder=target, plex_rating_key=rk,
-            )
 
     # 3. Skip if a theme file is already in the folder (unless force_overwrite,
     # in which case we unlink it before linking the new one)
@@ -304,14 +334,12 @@ def place_theme(
         return PlacementOutcome(False, None, f"placement_error:{e}", target_folder=target)
 
     refreshed = False
-    if plex and plex.cfg.enabled and analyze_after:
-        # Re-resolve in case we didn't earlier
-        if rk is None:
-            rk = plex.resolve_rating_key(
-                media_type=media_type, title=title, year=year, edition_raw=edition_raw,
-            )
-        if rk:
-            refreshed = plex.refresh(rk)
+    if plex and plex.cfg.enabled and analyze_after and rk:
+        # The ONE remaining Plex call: tell the agent to re-scan so the
+        # newly-placed theme.mp3 gets picked up. v1.11.24 schedules
+        # additional retries at +10s/+30s/+90s from worker._do_place
+        # so we get multiple chances without hammering the API.
+        refreshed = plex.refresh(rk)
 
     return PlacementOutcome(
         True, kind, "placed",

@@ -78,6 +78,21 @@ def classify_yt_dlp_error(msg: str) -> FailureKind:
         return FailureKind.VIDEO_REMOVED
     if "this video has been removed" in m or "account associated" in m:
         return FailureKind.VIDEO_REMOVED
+    # v1.12.85 added a broad "is not available" / "not available" catch
+    # here that classified yt-dlp's generic "This video is not available"
+    # message as VIDEO_REMOVED (permanent). v1.12.88 reverted: the
+    # message is too ambiguous — yt-dlp prints it for actually-removed
+    # videos AND for transient situations (anti-bot, cookies needed,
+    # IP throttling, parser quirks) where the URL still works in a
+    # browser. The other patterns above catch yt-dlp's specific
+    # known-removed phrasings ("video unavailable", "no longer
+    # available", "removed by the user", "this video has been
+    # removed"). The bare "is not available" case falls through to
+    # UNKNOWN, which is transient → retry with backoff up to
+    # max_attempts → eventual permanent failure if it never recovers.
+    # The topbar dot still reads themes failure_kind/failure_acked_at
+    # so users see the problem immediately and can ACK / fix it,
+    # regardless of how the worker classifies it.
     if "age" in m and ("restrict" in m or "confirm your age" in m):
         return FailureKind.VIDEO_AGE_RESTRICTED
     if ("inappropriate" in m and "audience" in m):
@@ -112,6 +127,59 @@ class DownloadResult:
     video_id: str
 
 
+def probe_youtube_url(
+    youtube_url: str,
+    *,
+    cookies_file: Path | None = None,
+    timeout_seconds: float = 15.0,
+) -> FailureKind | None:
+    """v1.10.43: cheap availability check — extract metadata without
+    downloading. Returns None when the URL is reachable + playable;
+    a FailureKind otherwise. Used by sync to flag dead / cookied /
+    restricted ThemerrDB URLs before the user tries to download.
+
+    yt-dlp's extract_info(download=False) does an HTTP fetch of the
+    /watch page + cipher decode (~0.5–1.5 s per URL on a warm DNS
+    cache). Caller is responsible for batching / rate-limiting; the
+    sync flow only probes new + url_changed entries to keep the
+    cost bounded.
+
+    `cookies_file` is honored when provided so cookies-required
+    videos resolve correctly when the user has cookies.txt set up
+    (otherwise we'd flag every age-restricted item as cookies_expired
+    even though the user has the file).
+    """
+    if yt_dlp is None:
+        return FailureKind.UNKNOWN
+    if not youtube_url:
+        return FailureKind.UNKNOWN
+    opts: dict[str, Any] = {
+        "quiet": True,
+        "noprogress": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "socket_timeout": timeout_seconds,
+        # Cheap probe — don't fetch playlist metadata or comments.
+        "extract_flat": False,
+        "playlistend": 1,
+    }
+    if cookies_file and cookies_file.is_file():
+        opts["cookiefile"] = str(cookies_file)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(youtube_url, download=False)
+    except yt_dlp.utils.DownloadError as e:
+        return classify_yt_dlp_error(str(e))
+    except Exception as e:  # network blip, redirect loop, etc.
+        return classify_yt_dlp_error(str(e))
+    # extract_info returned a dict — playable. (Age-restricted videos
+    # without cookies typically raise DownloadError; if we get here
+    # the metadata fetch succeeded.)
+    if info is None:
+        return FailureKind.UNKNOWN
+    return None
+
+
 def _opts(
     *,
     output_path: Path,
@@ -144,6 +212,46 @@ def _opts(
         "continuedl": True,
         # Speed limits help avoid getting flagged
         "ratelimit": 5_000_000,  # 5 MB/s ceiling
+        # v1.12.89: declare nodejs as the JS runtime so yt-dlp can use
+        # the full `web` player client. Without a JS runtime yt-dlp
+        # falls back to `android_vr` (the only client that doesn't
+        # need JS to derive cipher signatures), which returns "This
+        # video is not available" for many otherwise-playable videos.
+        # Format is `{runtime_name: {config}}` per yt-dlp's source —
+        # empty config dict picks up the binary from PATH. The
+        # Dockerfile installs nodejs alongside ffmpeg; native installs
+        # can pre-install deno or node and yt-dlp will find either.
+        "js_runtimes": {"node": {}},
+        # v1.12.91: enable yt-dlp's remote-component fetcher (ejs from
+        # the official yt-dlp GitHub repo) so node can solve YouTube's
+        # signature + n challenges. Without this, even with node as a
+        # JS runtime, yt-dlp falls back to clients that don't need
+        # signature solving (web_embedded, android_vr) which on many
+        # videos return only the low-quality 360p MP4 fallback (format
+        # 18 — 22 kHz mono audio). Enabling EJS unlocks formats 140
+        # (128k AAC, 44.1 kHz stereo) and 251 (160k Opus, 48 kHz
+        # stereo) — far better source material for the MP3 transcode.
+        # Adds a remote-fetch dependency at extraction time; helpers
+        # come from yt-dlp's first-party releases.
+        "remote_components": ["ejs:github"],
+        # v1.12.89: tell yt-dlp to try multiple YouTube player clients
+        # in order. If `web` (JS-required) trips anti-bot or fails to
+        # extract, the fallback list keeps trying — `android` and
+        # `mweb` work for many videos that `web` rejects, and don't
+        # need a JS runtime. Belt-and-suspenders alongside the nodejs
+        # install above.
+        # v1.12.91: dropped 'tv_embedded' from the list — yt-dlp 2025+
+        # logs "Skipping unsupported client" for it (no-op).
+        "extractor_args": {
+            "youtube": {
+                "player_client": [
+                    "default",
+                    "android",
+                    "ios",
+                    "mweb",
+                ],
+            },
+        },
     }
     if cookies_file and cookies_file.exists():
         opts["cookiefile"] = str(cookies_file)
@@ -165,12 +273,18 @@ def download_theme(
     output_dir: Path,
     cookies_file: Path | None,
     audio_quality: str = "0",
+    progress_callback: "callable | None" = None,
 ) -> DownloadResult:
     """
     Download a single YouTube theme to {output_dir}/theme.mp3.
 
     output_dir is item-specific (themes_dir/<movies|tv>/<sanitized title (year)>),
     so a flat filename "theme.mp3" mirrors what motif places into Plex.
+
+    v1.13.18 (6C): progress_callback is invoked with a fraction (0.0-1.0)
+    on each yt-dlp progress event. None disables the per-job
+    progress feed; the worker passes a callback that updates a shared
+    dict so /api/progress can render real download % in the topbar.
 
     If theme.mp3 already exists at the target, this is a no-op — callers that
     need to force a fresh download (e.g. video_id changed) must unlink it first.
@@ -202,6 +316,29 @@ def download_theme(
         cookies_file=cookies_file,
         audio_quality=audio_quality,
     )
+
+    # v1.13.18 (6C): wire yt-dlp's progress_hooks to the optional
+    # callback. The hook fires every ~250ms during a download with
+    # downloaded_bytes / total_bytes (or total_bytes_estimate) so we
+    # can compute a fraction and feed it through to op_progress.
+    # We swallow callback exceptions so a buggy/disconnected progress
+    # consumer can't fail the actual download.
+    if progress_callback is not None:
+        def _yt_progress_hook(d):
+            try:
+                status = d.get("status")
+                if status == "downloading":
+                    downloaded = d.get("downloaded_bytes") or 0
+                    total = (d.get("total_bytes")
+                             or d.get("total_bytes_estimate") or 0)
+                    if total > 0:
+                        progress_callback(min(1.0, downloaded / total))
+                elif status == "finished":
+                    progress_callback(1.0)
+            except Exception:
+                pass
+        opts = dict(opts)
+        opts["progress_hooks"] = [_yt_progress_hook]
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:

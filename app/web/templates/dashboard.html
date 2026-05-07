@@ -4,9 +4,25 @@
 <section class="hero">
   <div class="hero-row">
     <h1 class="title">DASH</h1>
-    <button class="btn" id="sync-now-btn" title="pull latest ThemerrDB metadata; downloads + placement happen from /movies, /tv, /anime">// SYNC</button>
+    <!-- v1.13.19: button name is now stable — "// SYNC THEMERRDB"
+         regardless of auto_enum_after_sync (the post-sync Plex scan
+         is a side-effect surfaced via the LIVE OPS drawer, not a
+         renaming concern). Inline label means no flicker on first
+         paint. The busy state swaps to // SYNCING… (single-word,
+         doesn't change mid-run). -->
+    <button class="btn" id="sync-now-btn"
+            title="Sync ThemerrDB metadata.">// SYNC THEMERRDB</button>
   </div>
-  <p class="muted">themerrdb pull daily at 13:00 utc · download/place from movies / tv / anime tabs</p>
+  <p class="muted">theme coverage at a glance · sync schedule in <a href="/settings#schedule">/settings</a></p>
+  <!-- v1.13.1 (#2): live last-sync + next-sync line so the daily
+       rhythm is visible without /settings + /queue detours. JS
+       populates from /api/stats; hidden until that lands so we
+       don't render an empty bar on first paint. -->
+  <p class="muted small dash-sync-line" id="dash-sync-line" style="display:none">
+    <span id="dash-sync-next"></span>
+    <span class="dash-sync-sep"> · </span>
+    <span id="dash-sync-last"></span>
+  </p>
 </section>
 
 <section class="grid grid-stats" id="stats-grid">
@@ -57,9 +73,10 @@
 </section>
 
 <!-- ============================ PLEX COVERAGE ============================ -->
-<!-- Moved here in v1.8.0 from /coverage. The graph stats cross-reference what
-     Plex sees against motif's themes catalog. Click-through to Movies/TV for
-     actionable rows. -->
+<!-- Moved here in v1.8.0 from /coverage. v1.13.21 dashboard refresh: dropped
+     the standalone WASTED ON COPIES tile (now a foot-line on COPIES) and
+     pulled ORPHANS into the same 5-column grid as the row above so nothing
+     hangs alone on a half-empty row. -->
 <section class="grid grid-stats">
   <article class="stat">
     <header class="stat-head"><span class="stat-label">PLEX MOVIES</span></header>
@@ -84,15 +101,101 @@
   <article class="stat stat-mini">
     <header class="stat-head"><span class="stat-label">COPIES</span></header>
     <div class="stat-num accent" id="storage-copies">—</div>
-  </article>
-  <article class="stat stat-mini">
-    <header class="stat-head"><span class="stat-label">WASTED ON COPIES</span></header>
-    <div class="stat-num accent-red" id="storage-wasted">—</div>
+    <footer class="stat-foot">
+      <span class="muted"><b id="storage-wasted">—</b> wasted</span>
+    </footer>
   </article>
   <article class="stat stat-mini">
     <header class="stat-head"><span class="stat-label">ORPHANS</span></header>
     <div class="stat-num accent" id="orphan-count">—</div>
   </article>
+</section>
+
+<!-- v1.12.67: per-section coverage table. Multi-section libraries
+     (4K + standard, anime, etc.) used to aggregate everything into
+     the two top cards above; you couldn't tell which library had
+     the gaps. This block surfaces total / themed / unthemed /
+     failures / pending-updates per managed Plex section, with a
+     click-through that lands the user on the matching library tab
+     + 4K toggle. Hidden when only one section exists (single-section
+     installs don't gain anything from this view). -->
+<section class="block" id="section-coverage-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PER-SECTION COVERAGE</h2>
+    <span class="muted small">click a row to drill into its library tab</span>
+  </header>
+  <table class="table table-compact" id="section-coverage-table">
+    <thead>
+      <tr>
+        <th>SECTION</th>
+        <th class="col-year">TYPE</th>
+        <th class="col-num">TOTAL</th>
+        <th class="col-num">THEMED</th>
+        <th class="col-num">UNTHEMED</th>
+        <th class="col-num">FAILURES</th>
+        <th class="col-num">PENDING</th>
+      </tr>
+    </thead>
+    <tbody id="section-coverage-body"></tbody>
+  </table>
+</section>
+
+<!-- v1.13.27: per-section comparison bars. Each managed Plex section
+     gets its own row, normalized to 100% of that section's total —
+     so 4K Movies (28 items, 90% themed) reads as a near-full bar
+     even though it sits right next to Movies (10K items, 30% themed).
+     Pre-fix v1.13.22 collapsed everything into a Movies / TV pair,
+     which masked small-library coverage. Backed by /api/sections/
+     coverage (same payload as the // PER-SECTION COVERAGE table
+     below). Hidden when there are no managed sections. -->
+<section class="block" id="coverage-comparison-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// COVERAGE COMPARISON</h2>
+    <span class="muted small">themed vs unthemed · normalized per section</span>
+  </header>
+  <div class="coverage-comparison-body" id="coverage-comparison-body"></div>
+</section>
+
+<!-- v1.13.21: theme-source pie. Buckets every plex_items row by the
+     same SRC letter (T/A/U/M/P/-) the library shows as a row pill;
+     the chart agrees with the row glyphs the user already reads.
+     Legend pills are click-to-toggle (filter slices in/out) and
+     "no theme" can be hidden when the user wants to focus on the
+     covered portion. Hidden until the first /api/stats response
+     lands so the donut doesn't render at zero on first paint. -->
+<section class="block" id="source-breakdown-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SOURCE BREAKDOWN</h2>
+    <span class="muted small" id="source-breakdown-summary">—</span>
+  </header>
+  <div class="source-breakdown-body">
+    <div class="source-breakdown-chart">
+      <svg viewBox="0 0 42 42" id="source-pie-svg" aria-label="theme source distribution">
+        <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
+        <g id="source-pie-slices"></g>
+        <text x="21" y="20" class="source-pie-center-num" text-anchor="middle"
+              id="source-pie-center-num">—</text>
+        <text x="21" y="25" class="source-pie-center-label" text-anchor="middle">items</text>
+      </svg>
+    </div>
+    <div class="source-breakdown-legend" id="source-breakdown-legend"></div>
+  </div>
+</section>
+
+<!-- v1.13.2 (#1): sync history block. Originally rendered as a
+     sparkline; v1.13.16 (B1) swapped it for a 5-row table with
+     timestamp / transport / duration / changes / status columns.
+     Below the table: per-transport summary (avg + count + fallback
+     note) so the user can see GIT vs DATABASE empirically. -->
+<section class="block" id="sync-history-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC HISTORY</h2>
+    <span class="muted small">last 5 runs · per-transport averages below</span>
+  </header>
+  <div class="block-body" style="padding:12px 18px">
+    <div class="sync-history-bars" id="sync-history-bars"></div>
+    <div class="sync-history-summary" id="sync-history-summary"></div>
+  </div>
 </section>
 
 <!-- Copies-block: only renders when there are placements that fell back to
@@ -119,12 +222,10 @@
   </table>
 </section>
 
-<section class="block">
-  <header class="block-head">
-    <h2 class="block-title">// LAST SYNC</h2>
-  </header>
-  <pre class="block-body" id="last-sync"></pre>
-</section>
+<!-- v1.13.21: LAST SYNC pre-block removed. The hero has the
+     `Last run …` relative-time line, and the LIVE OPS drawer
+     surfaces a richer per-stage report. The wall-of-text block
+     was duplicating both surfaces with no extra signal. -->
 
 <section class="block">
   <header class="block-head">

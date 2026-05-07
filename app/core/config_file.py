@@ -57,6 +57,12 @@ class PathsConfig:
     # mount.
     themes_dir: str = ""
     cookies_file: str = "/config/cookies.txt"
+    # v1.13.11: pre-download free-space guard. If themes_dir's filesystem
+    # has less than this many MB free, downloads fail transiently with a
+    # "low disk" error and the topbar shows a warning pill. Set to 0 to
+    # disable the guard entirely. Default of 500MB is comfortably above
+    # any single theme.mp3 (~5MB) plus yt-dlp's working space.
+    min_free_disk_mb: int = 500
 
 
 @dataclass
@@ -101,6 +107,56 @@ class PlacementConfig:
 class SyncConfig:
     db_url: str = "https://app.lizardbyte.dev/ThemerrDB"
     cron: str = "0 13 * * *"
+    # Pick the transport for the daily ThemerrDB pull.
+    #   "remote"   — original behavior (v1.x). Walk pages.json +
+    #                per-item JSON over HTTP against `db_url`
+    #                (gh-pages CDN). Battle-tested; ~10k+ HTTP
+    #                calls per sync.
+    #   "database" — Phase A (v1.12.121). Pull a single tarball
+    #                of the LizardByte ThemerrDB `database` branch
+    #                from codeload.github.com, extract to a temp
+    #                dir, then resolve every item from local
+    #                files. Same JSON shape, ~1000× fewer HTTP
+    #                calls. Phase A.5 (v1.12.126) added an ETag
+    #                short-circuit so an unchanged tree skips the
+    #                upsert pipeline entirely.
+    #   "git"      — Phase B (v1.13.0). Maintain a bare git mirror
+    #                of the database branch via dulwich. First run
+    #                shallow-clones (~30 MB pack); subsequent runs
+    #                fetch the delta (typically <100 KB) and walk
+    #                only the changed paths. Fastest and lowest-
+    #                bandwidth on busy days; subsumes A's ETag
+    #                short-circuit (a no-op fetch returns no new
+    #                objects).
+    # Default is "remote" until each phase clears burn-in. On
+    # snapshot/git-path failure motif falls through to the next-
+    # tier transport so a single sync cycle still completes.
+    source: str = "remote"
+    # codeload tarball URL for the snapshot path. Overridable for
+    # self-hosted mirrors of the database branch (e.g. a corporate
+    # proxy of the same content).
+    database_url: str = "https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+    # v1.13.0 (Phase B): git URL for the dulwich mirror. Standard
+    # GitHub HTTPS — no auth required for public repos.
+    git_url: str = "https://github.com/LizardByte/ThemerrDB.git"
+    # The branch motif tracks. LizardByte publishes daily exports
+    # to `database`. Overridable so a self-hosted mirror can use
+    # a different branch name.
+    git_branch: str = "database"
+    # v1.12.126: auto-enqueue a plex_enum job after every successful
+    # ThemerrDB sync. The TDB sync's own resolve_theme_ids step
+    # already links new TDB rows to existing plex_items, so the
+    # post-sync enum is for catching PLEX-side changes (new titles
+    # added, folders moved, sidecars added/removed) and re-verifying
+    # plex_theme_uri claims via the TTL HEAD probe.
+    #
+    # Default True for safety — daily cron syncs need the auto-enum
+    # since no human is around to manually click REFRESH afterward.
+    # Users who want manual control on dashboard-button clicks can
+    # disable this; the daily cron + manual click both honor the
+    # setting (set up a separate plex_enum cron if you want different
+    # behavior).
+    auto_enum_after_sync: bool = True
 
 
 @dataclass
@@ -149,6 +205,7 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     # paths
     ("MOTIF_THEMES_DIR",          "paths.themes_dir",                str),
     ("MOTIF_COOKIES_FILE",        "paths.cookies_file",              str),
+    ("MOTIF_MIN_FREE_DISK_MB",    "paths.min_free_disk_mb",          int),
     # plex
     ("MOTIF_PLEX_ENABLED",        "plex.enabled",                    _to_bool),
     ("MOTIF_PLEX_URL",            "plex.url",                        str),
@@ -173,6 +230,11 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     # sync
     ("MOTIF_DB_URL",              "sync.db_url",                     str),
     ("MOTIF_SYNC_CRON",           "sync.cron",                       str),
+    ("MOTIF_SYNC_SOURCE",         "sync.source",                     str),
+    ("MOTIF_DB_TAR_URL",          "sync.database_url",               str),
+    ("MOTIF_DB_GIT_URL",          "sync.git_url",                    str),
+    ("MOTIF_DB_GIT_BRANCH",       "sync.git_branch",                 str),
+    ("MOTIF_AUTO_ENUM_AFTER_SYNC","sync.auto_enum_after_sync",       _to_bool),
     # web
     ("MOTIF_WEB_HOST",            "web.host",                        str),
     ("MOTIF_WEB_PORT",            "web.port",                        int),
@@ -231,6 +293,12 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
         elif not os.path.isabs(cfg.paths.themes_dir):
             errors.append(f"paths.themes_dir must be an absolute path, got {cfg.paths.themes_dir!r}")
 
+    if cfg.paths.min_free_disk_mb < 0:
+        errors.append(
+            f"paths.min_free_disk_mb must be >= 0 (0 disables the guard), "
+            f"got {cfg.paths.min_free_disk_mb}"
+        )
+
     if cfg.web.port < 1 or cfg.web.port > 65535:
         errors.append(f"web.port {cfg.web.port} is out of range (1-65535)")
 
@@ -251,6 +319,12 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
     parts = cfg.sync.cron.split()
     if len(parts) != 5:
         errors.append(f"sync.cron must be 5-field cron (got {len(parts)} fields)")
+
+    if cfg.sync.source not in ("remote", "database", "git"):
+        errors.append(
+            f"sync.source must be 'remote', 'database', or 'git' "
+            f"(got {cfg.sync.source!r})"
+        )
 
     if cfg.runtime.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
         errors.append(f"runtime.log_level must be DEBUG, INFO, WARNING, or ERROR")

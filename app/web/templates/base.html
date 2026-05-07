@@ -5,14 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="referrer" content="no-referrer" />
   <title>{% block title %}Motif{% endblock %} · motif</title>
+  <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/healzangels/motif/main/unraid/icon.png" />
+  <link rel="apple-touch-icon" type="image/png" href="https://raw.githubusercontent.com/healzangels/motif/main/unraid/icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/app.css?v={{ motif_version }}" />
+  <link rel="stylesheet" href="/static/ops.css?v={{ motif_version }}" />
   <script defer src="/static/app.js?v={{ motif_version }}"></script>
+  <script defer src="/static/ops.js?v={{ motif_version }}"></script>
 </head>
 <body>
   <div class="scanlines" aria-hidden="true"></div>
+  {% if request.state.principal is defined and request.state.principal.is_authenticated %}
   <div id="dry-run-banner" class="dry-run-banner" style="display:none">
     <span class="dry-run-mark">⚠</span>
     <span class="dry-run-text">DRY-RUN ACTIVE — no themes downloaded, no files placed, no Plex calls. Sync still runs.</span>
@@ -27,33 +32,95 @@
       <span class="brand-mark">▰▰▰</span>
       <span class="brand-name">motif</span>
       <span class="brand-version">v{{ motif_version }}</span>
+      <!-- v1.13.8 (#8): self-update suffix populated by app.js on
+           load from /api/release/latest. Hidden by default; reveals
+           with → vX.Y.Z when the latest GitHub stable release is
+           newer than what's currently running. Click opens the
+           release page in a new tab. -->
+      <a class="brand-update" id="brand-update-suffix"
+         href="https://github.com/Healzangels/motif/releases/latest"
+         target="_blank" rel="noopener" hidden
+         title="A newer motif release is available. Click to view release notes."></a>
     </a>
     <nav class="nav">
       <a href="/" data-nav="dashboard">DASH</a>
-      <a href="/movies" data-nav="movies">MOVIES</a>
-      <a href="/tv" data-nav="tv">TV</a>
-      <a href="/anime" data-nav="anime">ANIME</a>
-      <a href="/pending" data-nav="pending">PENDING<span class="nav-attn" id="nav-attn-pending" style="display:none">●</span></a>
-      <a href="/scans" data-nav="scans">SCANS</a>
+      <a href="/movies" data-nav="movies" style="display:none">MOVIES</a>
+      <a href="/tv" data-nav="tv" style="display:none">TV SHOWS</a>
+      <a href="/anime" data-nav="anime" style="display:none">ANIME</a>
       <a href="/queue" data-nav="queue">LOGS</a>
       <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
     </nav>
     <div class="topbar-status" id="topbar-status">
-      <a href="/movies?status=updates" class="topbar-badge" id="topbar-updates-badge"
-         style="display:none" title="upstream updates available">
-        <span id="topbar-updates-count">0</span>
-        <span class="topbar-badge-label">UPD</span>
+      <!-- v1.12.106: unified op-pill vocabulary (cf. ops.css).
+           UPD / FAIL / OPS now read consistently — same shape,
+           tone-keyed colors, same hover/click behavior. Mini-bar
+           shows live progress when a sync is running and replaces
+           the old spinning dot for that state. -->
+      <a href="/movies?tdb_pills=update" class="op-pill op-tone-upd" id="topbar-updates-badge"
+         hidden
+         title="Upstream URL changed for one or more themes.">
+        <span class="op-pill-count" id="topbar-updates-count">0</span>
+        <span class="op-pill-label">UPD</span>
       </a>
-      <a href="/movies?status=failures" class="topbar-badge topbar-badge-warn" id="topbar-failures-badge"
-         style="display:none" title="downloads failed">
-        <span id="topbar-failures-count">0</span>
-        <span class="topbar-badge-label">!</span>
+      <a href="/movies?tdb_pills=dead" class="op-pill op-tone-fail" id="topbar-failures-badge"
+         hidden
+         title="Upstream URL broken for one or more themes.">
+        <span class="op-pill-count" id="topbar-failures-count">0</span>
+        <span class="op-pill-label">FAIL</span>
       </a>
-      <span class="dot dot-pulse"></span>
-      <span class="muted" id="topbar-status-text">…</span>
-      <a href="/logout" class="topbar-logout" title="sign out">⏻</a>
+      <!-- v1.13.1 (Phase C): DROP badge — count of themes ThemerrDB
+           stopped publishing. Click filters the library to the gray
+           TDB◌ pill so the user can ACK DROP / CONVERT TO MANUAL
+           through them in bulk. -->
+      <a href="/movies?tdb_pills=dropped" class="op-pill op-tone-drop" id="topbar-drops-badge"
+         hidden
+         title="TDB stopped tracking one or more themes.">
+        <span class="op-pill-count" id="topbar-drops-count">0</span>
+        <span class="op-pill-label">DROP</span>
+      </a>
+      <!-- v1.13.11: DISK warning pill — surfaced when free space on
+           themes_dir's filesystem dips below paths.min_free_disk_mb.
+           Downloads are being blocked transiently while this is
+           visible. Click jumps to /settings#paths so the operator
+           can review the threshold or free space. -->
+      <a href="/settings#paths" class="op-pill op-tone-warn" id="topbar-disk-badge"
+         hidden
+         title="Low disk — downloads paused until space frees up.">
+        <span class="op-pill-count" id="topbar-disk-free">0</span>
+        <span class="op-pill-label">DISK</span>
+      </a>
+      <a href="#" class="op-mini" id="op-mini" hidden data-ops-trigger
+         title="Click to expand live ops"></a>
+      <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden
+         data-ops-trigger title="Multiple ops running — click to expand all"></a>
+      <!-- v1.12.118: idle pill replaces the legacy green dot + IDLE
+           text. Same visual family as the active op-mini bar; no
+           dot-to-bar flip when an op finishes. Click opens the ops
+           drawer so users can see "last 5 ops" history. -->
+      <a href="#" class="op-pill op-pill-idle" id="op-status-idle"
+         data-ops-trigger title="No active ops — click to view recent history">
+        <span class="op-pill-label">IDLE</span>
+      </a>
+      <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
     </div>
   </header>
+
+  <!-- v1.12.106: ops side-drawer. Hidden by default; opens on click
+       of the topbar mini-bar or any element with [data-ops-trigger].
+       Renders one card per running op + a tail of recent finishes. -->
+  <div id="ops-drawer" class="ops-drawer" hidden aria-hidden="true">
+    <div class="ops-drawer-scrim"></div>
+    <aside class="ops-drawer-panel" role="dialog" aria-label="Live ops">
+      <header class="ops-drawer-head">
+        <h2>// LIVE OPS</h2>
+        <button class="ops-drawer-close" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="ops-drawer-body" id="ops-drawer-body">
+        <div class="ops-drawer-empty">// loading…</div>
+      </div>
+    </aside>
+  </div>
+  {% endif %}
 
   <main class="content">
     {% block content %}{% endblock %}

@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
 import sqlite3
 import threading
 import time
@@ -35,6 +37,77 @@ from .runtime import is_dry_run
 from .sync import run_sync
 
 log = logging.getLogger(__name__)
+
+
+def _safe_link(src: Path, dst: Path) -> None:
+    """v1.11.0: hardlink src → dst; fall back to copy if hardlink isn't
+    supported (e.g. cross-filesystem). Caller has already ensured
+    dst.parent exists and dst doesn't (or has been removed)."""
+    try:
+        os.link(src, dst)
+    except OSError as e:
+        log.info("Hardlink failed (%s); copying %s → %s", e, src, dst)
+        shutil.copy2(src, dst)
+
+
+def _disk_free_mb(path: Path) -> int | None:
+    """v1.13.11: return free space (MB) on the filesystem hosting `path`,
+    or None if the lookup fails (path missing, permission denied, etc).
+    Walks up the parent chain so a not-yet-created subdir still resolves
+    to its parent's filesystem.
+
+    v1.13.15: emit a DEBUG log when we walk past the original path so
+    a misconfigured themes_dir (typo, broken mount) is diagnosable. The
+    walk-up itself is still the right behavior for the legitimate
+    "themes_dir parent exists, target subdir created on first write"
+    case — we just want operators to see when the answer comes from a
+    different filesystem than they think.
+    """
+    p = path
+    for i in range(10):
+        try:
+            usage = shutil.disk_usage(p)
+            if i > 0:
+                log.debug(
+                    "_disk_free_mb: %s unreachable, reporting free space "
+                    "from %s (walked %d level(s))", path, p, i,
+                )
+            return int(usage.free // (1024 * 1024))
+        except (OSError, FileNotFoundError):
+            if p.parent == p:
+                return None
+            p = p.parent
+    return None
+
+
+class _JobPermanentFailure(Exception):
+    """v1.10.40: raised by job handlers when retry won't fix it
+    (e.g. yt-dlp says the video is removed). The worker treats
+    this as terminal — status='failed' immediately, no backoff
+    schedule, no further attempts. The user is expected to
+    provide a manual override or accept the failure."""
+
+
+class _JobCancelled(Exception):
+    """v1.11.36: raised by handlers (or check_cancel) when the user
+    requested cancellation via POST /api/jobs/{id}/cancel. The
+    dispatch loop catches this and marks the job 'cancelled' with
+    last_error='cancelled by user', no retry."""
+
+
+def _is_cancelled(db_path: Path, job_id: int) -> bool:
+    """Cheap point-check the cooperative cancel flag. Long-running
+    job handlers (sync, plex_enum, scan) call this between safe yield
+    points and raise _JobCancelled when it returns True."""
+    try:
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT cancel_requested FROM jobs WHERE id = ?",
+                (job_id,),
+            ).fetchone()
+        return bool(row and row["cancel_requested"])
+    except Exception:
+        return False  # never let cancel-check itself break a job
 
 
 # -------- Token bucket --------
@@ -73,48 +146,64 @@ class Worker:
     settings: Settings
     stop_event: threading.Event
     bucket: TokenBucket
-    _folder_index_movies: FolderIndex | None = None
-    _folder_index_tv: FolderIndex | None = None
+    # v1.11.36: optional job_type filter. When set, _claim_next_job
+    # only picks jobs whose job_type is in this set. Used to split
+    # the worker pool into a "long" worker (sync / plex_enum / scan)
+    # and a "general" worker (download / place / refresh / relink /
+    # adopt) so a long-running sync no longer blocks per-item work.
+    # When None the worker claims any job (single-worker mode).
+    job_type_filter: tuple[str, ...] | None = None
+    name: str = "motif-worker"
+    # v1.11.0: per-section FolderIndex cache. Keyed by section_id so
+    # placement only ever sees folders from the section that owns the
+    # current download/place job — no more cross-section confusion.
+    _folder_index_by_section: dict[str, FolderIndex] | None = None
     _index_built_at: float = 0.0
+    # v1.11.94: settings revision the cache was built against. Any
+    # divergence from settings.revision means a settings save/reload
+    # happened — bust the cache so the next placement uses the new
+    # plex_sections / plus_equiv_mode / etc. Without this, the user
+    # could enable a section, kick a placement, and have it use the
+    # pre-enable section list for up to the 5-min TTL.
+    _index_settings_revision: int = -1
 
     def __post_init__(self):
         # Stale after 5 minutes — rebuilt on demand
         self._index_ttl = 300.0
+        self._folder_index_by_section = {}
 
     # -- Index management --
 
-    def _index_for(self, media_type: str) -> FolderIndex:
-        """Build (or reuse) a FolderIndex for the given media type by
-        unioning all managed Plex sections of the matching type.
-
-        Movie sections (Plex type='movie') feed the movie index; show
-        sections feed the TV index. The user's "Anime" section, being type
-        'show', falls into TV — so an anime show's theme lands in the
-        anime section's path, not in the regular TV root."""
+    def _index_for_section(self, section_id: str) -> FolderIndex:
+        """v1.11.0: build (or reuse) a FolderIndex scoped to one Plex
+        section's location_paths. Lazy + TTL-cached per section_id so a
+        thousand back-to-back place jobs in the same section reuse one
+        index, but the next section starts clean."""
         now = time.monotonic()
-        if now - self._index_built_at > self._index_ttl:
-            from .sections import list_sections  # avoid import cycle at top
-            sections = list_sections(self.settings.db_path)
-            movie_roots: list[Path] = []
-            show_roots: list[Path] = []
-            for s in sections:
-                if not s.get("included"):
-                    continue
-                paths = s.get("location_paths") or []
-                for p in paths:
-                    pp = Path(p)
-                    if s["type"] == "movie":
-                        movie_roots.append(pp)
-                    elif s["type"] == "show":
-                        show_roots.append(pp)
-            self._folder_index_movies = FolderIndex.build_multi(
-                movie_roots, plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
-            )
-            self._folder_index_tv = FolderIndex.build_multi(
-                show_roots, plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
-            )
+        cur_rev = self.settings.revision
+        if (now - self._index_built_at > self._index_ttl
+                or cur_rev != self._index_settings_revision):
+            self._folder_index_by_section = {}
             self._index_built_at = now
-        return self._folder_index_movies if media_type == "movie" else self._folder_index_tv  # type: ignore[return-value]
+            self._index_settings_revision = cur_rev
+        cached = self._folder_index_by_section.get(section_id) if self._folder_index_by_section else None
+        if cached is not None:
+            return cached
+        from .sections import list_sections
+        roots: list[Path] = []
+        for s in list_sections(self.settings.db_path):
+            if s["section_id"] != section_id:
+                continue
+            for p in (s.get("location_paths") or []):
+                roots.append(Path(p))
+            break
+        idx = FolderIndex.build_multi(
+            roots, plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
+        )
+        if self._folder_index_by_section is None:
+            self._folder_index_by_section = {}
+        self._folder_index_by_section[section_id] = idx
+        return idx
 
     def _plex_client(self) -> PlexClient | None:
         if not self.settings.plex_enabled or not self.settings.plex_url or not self.settings.plex_token:
@@ -132,37 +221,159 @@ class Worker:
 
     def run(self) -> None:
         log.info("Worker loop starting")
+        # v1.11.6: zombie-job recovery. If a worker crashed (or the
+        # container was kill-9'd) mid-job, the row is left as
+        # status='running' and never gets reclaimed by claim_next_job
+        # (which only looks at status='pending'). Reset every running
+        # job to pending on startup so they re-enter the queue. Probes
+        # in particular were observed stuck in 'running' for 40+ min
+        # after a sandbox restart with no progress.
+        try:
+            with get_conn(self.settings.db_path) as conn:
+                cur = conn.execute(
+                    "UPDATE jobs SET status = 'pending', started_at = NULL "
+                    "WHERE status = 'running'"
+                )
+                if cur.rowcount:
+                    log.info("Reclaimed %d orphan 'running' job(s) at startup",
+                             cur.rowcount)
+                # v1.11.50: also reset orphan sync_runs rows. The jobs
+                # table is reclaimed above so the worker re-runs the
+                # sync, but sync_runs has its own status field that
+                # only run_sync flips. If the worker died mid-sync,
+                # the row stayed 'running' forever — /api/stats's
+                # last_sync_at lookup ignores it (it filters on
+                # status='success'), but the /queue / sync history
+                # view shows the zombie row indefinitely. Mark these
+                # as failed so the UI is honest about what happened.
+                cur2 = conn.execute(
+                    "UPDATE sync_runs SET status = 'failed', "
+                    "  finished_at = COALESCE(finished_at, ?), "
+                    "  error = COALESCE(error, 'worker restarted mid-sync') "
+                    "WHERE status = 'running'",
+                    (now_iso(),),
+                )
+                if cur2.rowcount:
+                    log.info("Marked %d orphan sync_runs row(s) failed at startup",
+                             cur2.rowcount)
+        except Exception as e:
+            log.warning("Orphan-job recovery failed at startup: %s", e)
         while not self.stop_event.is_set():
-            job = self._claim_next_job()
+            # v1.11.51: catch *every* exception around the claim +
+            # bookkeeping path so a transient sqlite3.OperationalError
+            # ('database is locked') doesn't kill the worker thread.
+            # Pre-fix the long sync's batch flushes contended with the
+            # general worker's BEGIN IMMEDIATE long enough for one
+            # claim attempt to time out at busy_timeout=30s; the
+            # OperationalError propagated out of run() and the thread
+            # died for the rest of the process lifetime, leaving every
+            # download / place / adopt job queue-stuck until the next
+            # container restart.
+            try:
+                job = self._claim_next_job()
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower():
+                    log.warning("Claim hit DB-lock contention; backing off 5s")
+                    self.stop_event.wait(5.0)
+                    continue
+                raise
+            except Exception as e:
+                log.exception("Claim crashed: %s — backing off 5s", e)
+                self.stop_event.wait(5.0)
+                continue
             if job is None:
                 # No work — back off briefly
                 self.stop_event.wait(2.0)
                 continue
             try:
+                # v1.11.36: pending jobs that were cancel_requested
+                # before they ever ran flip straight to 'cancelled'.
+                if _is_cancelled(self.settings.db_path, job["id"]):
+                    raise _JobCancelled()
                 self._dispatch(job)
+            except _JobCancelled:
+                log.info("Job %s cancelled by user", job["id"])
+                self._safe_mark(self._mark_cancelled, job["id"])
+            except _JobPermanentFailure as e:
+                log.info("Job %s permanently failed: %s", job["id"], e)
+                self._safe_mark(self._mark_failed_terminal, job["id"], str(e))
+                self._run_rollback_safe(job, str(e))
             except Exception as e:
                 log.exception("Job %s crashed: %s", job["id"], e)
-                self._mark_failed(job["id"], str(e))
+                # v1.12.114: only run rollback on FINAL retry exhaustion.
+                # _mark_failed checks attempts vs max_attempts; if attempts
+                # haven't been used up the job goes back to 'pending' for
+                # retry, and rolling back prematurely would discard a
+                # download that's about to succeed on next attempt.
+                with get_conn(self.settings.db_path) as conn:
+                    row = conn.execute(
+                        "SELECT attempts, max_attempts, status "
+                        "FROM jobs WHERE id = ?",
+                        (job["id"],),
+                    ).fetchone()
+                self._safe_mark(self._mark_failed, job["id"], str(e))
+                if row and row["attempts"] >= row["max_attempts"]:
+                    self._run_rollback_safe(job, str(e))
+            finally:
+                # v1.13.18 (6C): always clear the download-progress
+                # dict entry for this job. Only download jobs ever
+                # populate it, but pop-with-default is a no-op for
+                # other job types.
+                try:
+                    from . import progress as _progress_cleanup
+                    _progress_cleanup.clear_download_progress(job["id"])
+                except Exception:
+                    pass
         log.info("Worker loop stopped")
 
+    def _safe_mark(self, fn, *args) -> None:
+        """v1.11.51: book-keeping helpers (_mark_done / _mark_failed /
+        _mark_cancelled) all open their own get_conn → BEGIN IMMEDIATE.
+        If the writer lock is contended the BEGIN raises 'database is
+        locked' and the exception propagates up to run(), killing the
+        worker thread. Retry with a short backoff so transient
+        contention doesn't take the worker down between jobs.
+        """
+        delays = (0.25, 1.0, 4.0, 10.0)
+        for d in delays:
+            try:
+                fn(*args)
+                return
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                log.warning("Bookkeeping (%s) DB-locked; retrying in %.1fs",
+                            fn.__name__, d)
+                self.stop_event.wait(d)
+        # Last attempt — let the exception propagate this time, and
+        # the run() loop's OperationalError catch above will absorb it.
+        fn(*args)
+
     def _claim_next_job(self) -> sqlite3.Row | None:
+        # v1.11.36: optional job_type_filter scopes claim to the worker's
+        # responsibilities. SQLite serializes the BEGIN IMMEDIATE so two
+        # workers can claim from the same queue without double-claiming
+        # — they just race for the lock and the loser sees the row's
+        # status flipped to 'running' before its own SELECT runs.
+        sql = (
+            "SELECT * FROM jobs "
+            "WHERE status = 'pending' "
+            "  AND (next_run_at IS NULL OR next_run_at <= ?)"
+        )
+        params: list = [now_iso()]
+        if self.job_type_filter:
+            placeholders = ",".join("?" for _ in self.job_type_filter)
+            sql += f" AND job_type IN ({placeholders})"
+            params.extend(self.job_type_filter)
+        sql += " ORDER BY id ASC LIMIT 1"
         with get_conn(self.settings.db_path) as conn, transaction(conn):
-            row = conn.execute(
-                """
-                SELECT * FROM jobs
-                WHERE status = 'pending'
-                  AND (next_run_at IS NULL OR next_run_at <= ?)
-                ORDER BY id ASC LIMIT 1
-                """,
-                (now_iso(),),
-            ).fetchone()
+            row = conn.execute(sql, params).fetchone()
             if row is None:
                 return None
             conn.execute(
-                """
-                UPDATE jobs SET status = 'running', started_at = ?, attempts = attempts + 1
-                WHERE id = ?
-                """,
+                "UPDATE jobs SET status = 'running', started_at = ?, "
+                "                attempts = attempts + 1 "
+                "WHERE id = ?",
                 (now_iso(), row["id"]),
             )
             return row
@@ -171,6 +382,36 @@ class Worker:
         with get_conn(self.settings.db_path) as conn:
             conn.execute(
                 "UPDATE jobs SET status = 'done', finished_at = ?, last_error = NULL WHERE id = ?",
+                (now_iso(), job_id),
+            )
+
+    def _mark_failed_terminal(self, job_id: int, err: str) -> None:
+        """v1.10.40: mark a job 'failed' immediately, bypassing the
+        attempts-vs-max_attempts retry logic. Used for permanent
+        failures where retrying is pointless (video removed/private/
+        geo-blocked/age-restricted) — the user has to provide a
+        manual override URL or accept the failure.
+        """
+        with get_conn(self.settings.db_path) as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'failed', finished_at = ?, "
+                "                last_error = ? "
+                "WHERE id = ?",
+                (now_iso(), err, job_id),
+            )
+
+    def _mark_cancelled(self, job_id: int) -> None:
+        """v1.11.36: terminal cancellation — sets status='cancelled'
+        with a recognizable last_error message and clears the
+        cancel_requested flag so a future re-run doesn't immediately
+        cancel again."""
+        with get_conn(self.settings.db_path) as conn:
+            conn.execute(
+                "UPDATE jobs SET status = 'cancelled', "
+                "                finished_at = ?, "
+                "                last_error = 'cancelled by user', "
+                "                cancel_requested = 0 "
+                "WHERE id = ?",
                 (now_iso(), job_id),
             )
 
@@ -198,6 +439,145 @@ class Worker:
                     """,
                     (err, next_run, job_id),
                 )
+
+    def _run_rollback_safe(self, job: sqlite3.Row, err_text: str) -> None:
+        """v1.12.114: post-failure recovery for actions that destroyed
+        prior state before queueing the download. ACCEPT UPDATE deletes
+        the user_overrides row before the new TDB download runs; REVERT
+        swaps the previous_urls chain. If those downloads fail terminally,
+        the user is stranded in a half-applied state — their old
+        URL/override is gone, the new one didn't materialize.
+
+        The action site stamps `payload['rollback']` with the recovery
+        recipe at enqueue time. This method reads it on terminal failure
+        and undoes the destructive prep so the row goes back to its
+        pre-action state. Wrapped in a try/except so a buggy rollback
+        can't crash the worker — the original failure already surfaces
+        via failure_kind, the user just keeps the half-applied state if
+        rollback can't run.
+        """
+        try:
+            payload_raw = job["payload"]
+            if not payload_raw:
+                return
+            payload = json.loads(payload_raw)
+            rb = payload.get("rollback")
+            if not isinstance(rb, dict):
+                return
+            kind = rb.get("kind")
+            mt = job["media_type"]
+            tmdb = job["tmdb_id"]
+            section_id = rb.get("section_id") or job["section_id"] or ""
+            if kind == "accept_update":
+                # Restore the user_overrides row that ACCEPT UPDATE
+                # deleted, AND flip pending_updates.decision back to
+                # 'pending' so the row's blue ! glyph returns and the
+                # user can choose again.
+                # v1.12.116: wrap both writes in transaction() so a
+                # crash between them can't leave the row half-rolled-
+                # back (override restored, pending_updates still
+                # 'accepted' — no blue glyph, no actionable signal).
+                replaced = rb.get("replaced_user_url")
+                if replaced:
+                    with get_conn(self.settings.db_path) as conn, \
+                            transaction(conn):
+                        conn.execute(
+                            """INSERT INTO user_overrides
+                                 (media_type, tmdb_id, youtube_url, set_at,
+                                  set_by, note, section_id)
+                               VALUES (?, ?, ?, ?, 'system', ?, ?)
+                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                                   youtube_url = excluded.youtube_url,
+                                   set_at = excluded.set_at,
+                                   set_by = excluded.set_by,
+                                   note = excluded.note""",
+                            (mt, tmdb, replaced, now_iso(),
+                             "rollback after ACCEPT UPDATE download "
+                             f"failed: {err_text[:120]}", section_id),
+                        )
+                        conn.execute(
+                            """UPDATE pending_updates SET
+                                  decision = 'pending',
+                                  decision_at = NULL,
+                                  decision_by = NULL,
+                                  replaced_user_url = NULL
+                               WHERE media_type = ? AND tmdb_id = ?
+                                 AND section_id = ?
+                                 AND decision = 'accepted'""",
+                            (mt, tmdb, section_id),
+                        )
+                    log.info(
+                        "rollback: restored override for accept-update "
+                        "failure on %s/%s/%s", mt, tmdb, section_id)
+            elif kind == "revert":
+                # Restore the previous_urls row that REVERT consumed,
+                # AND restore the prior override (or clear if there
+                # wasn't one). Together this puts the row back where
+                # it was before the user clicked REVERT.
+                # v1.12.116: transaction() wraps all writes so a partial
+                # rollback (override restored but previous_urls chain
+                # not yet) can't leave the row in a half-state.
+                prior_override = rb.get("prior_override_url")
+                prior_prev = rb.get("prior_previous_url_row")  # dict or None
+                with get_conn(self.settings.db_path) as conn, \
+                        transaction(conn):
+                    if prior_override:
+                        conn.execute(
+                            """INSERT INTO user_overrides
+                                 (media_type, tmdb_id, youtube_url, set_at,
+                                  set_by, note, section_id)
+                               VALUES (?, ?, ?, ?, 'system', ?, ?)
+                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                                   youtube_url = excluded.youtube_url,
+                                   set_at = excluded.set_at,
+                                   set_by = excluded.set_by,
+                                   note = excluded.note""",
+                            (mt, tmdb, prior_override, now_iso(),
+                             "rollback after REVERT download failed: "
+                             f"{err_text[:120]}", section_id),
+                        )
+                    else:
+                        conn.execute(
+                            "DELETE FROM user_overrides "
+                            "WHERE media_type = ? AND tmdb_id = ? "
+                            "  AND section_id = ?",
+                            (mt, tmdb, section_id),
+                        )
+                    if prior_prev:
+                        conn.execute(
+                            """INSERT INTO previous_urls
+                                 (media_type, tmdb_id, section_id,
+                                  youtube_url, kind, captured_at,
+                                  hidden_url, hidden_kind, hidden_captured_at)
+                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                                   youtube_url = excluded.youtube_url,
+                                   kind = excluded.kind,
+                                   captured_at = excluded.captured_at,
+                                   hidden_url = excluded.hidden_url,
+                                   hidden_kind = excluded.hidden_kind,
+                                   hidden_captured_at = excluded.hidden_captured_at""",
+                            (mt, tmdb, section_id,
+                             prior_prev.get("youtube_url"),
+                             prior_prev.get("kind"),
+                             prior_prev.get("captured_at"),
+                             prior_prev.get("hidden_url"),
+                             prior_prev.get("hidden_kind"),
+                             prior_prev.get("hidden_captured_at")),
+                        )
+                    else:
+                        conn.execute(
+                            "DELETE FROM previous_urls "
+                            "WHERE media_type = ? AND tmdb_id = ? "
+                            "  AND section_id = ?",
+                            (mt, tmdb, section_id),
+                        )
+                log.info(
+                    "rollback: restored revert state on %s/%s/%s",
+                    mt, tmdb, section_id)
+        except Exception as e:
+            log.warning("rollback runner failed for job %s: %s",
+                        job["id"], e)
 
     def _dispatch(self, job: sqlite3.Row) -> None:
         jt = job["job_type"]
@@ -252,7 +632,10 @@ class Worker:
             movie_section=self.settings.plex_movie_section,
             tv_section=self.settings.plex_tv_section,
         )
-        run_plex_enum(self.settings.db_path, cfg, only_section_id=only_section)
+        run_plex_enum(
+            self.settings.db_path, cfg, only_section_id=only_section,
+            cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
+        )
 
     def _do_sync(self, job: sqlite3.Row) -> None:
         # Optional payload overrides:
@@ -275,20 +658,61 @@ class Worker:
             self.settings.db_path, self.settings.motifdb_base_url,
             auto_place_override=auto_place_override,
             enqueue_downloads=enqueue_downloads,
+            cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
+            source=self.settings.sync_source,
+            database_url=self.settings.sync_database_url,
+            git_url=self.settings.sync_git_url,
+            git_branch=self.settings.sync_git_branch,
         )
-        # Auto-enqueue a plex_enum after every sync so the unified browse view
-        # stays current. Dedupe so concurrent syncs don't pile up.
-        with get_conn(self.settings.db_path) as conn:
-            existing = conn.execute(
-                "SELECT 1 FROM jobs WHERE job_type = 'plex_enum' "
-                "AND status IN ('pending','running')"
-            ).fetchone()
-            if not existing:
-                conn.execute(
-                    "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
-                    "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
-                    (now_iso(), now_iso()),
-                )
+        # v1.12.126: post-sync plex_enum is now opt-in via
+        # sync.auto_enum_after_sync (default True). The TDB sync's own
+        # resolve_theme_ids step already links new TDB rows to existing
+        # plex_items; the auto-enum is for picking up PLEX-side changes
+        # (new titles, moved folders, manual sidecar adds/removes) and
+        # re-verifying plex_theme_uri claims via the TTL HEAD probe.
+        # Daily cron syncs need it (no human around to manually click
+        # REFRESH); users who want manual control on the dashboard
+        # button can disable.
+        # v1.13.25: enqueue ONE plex_enum job per included section
+        # instead of a single global empty-payload job. Pre-fix the
+        # cascade ran as one job whose payload had no section_id, so
+        # /api/stats's `plex_enum_active[tab][variant]` map (built by
+        # joining jobs.payload→section_id with plex_sections) was
+        # all-false during the cascade — every UI signal that depends
+        # on per-tab activity (library button locks, dash SYNC lock
+        # via globalEnumPipeline) failed to fire mid-cascade. Per-
+        # section jobs match the manual SCAN ALL flow exactly, light
+        # up enumTabsActive correctly, and let the dash SYNC lock
+        # hold through the entire sync→enum pipeline.
+        if self.settings.sync_auto_enum_after_sync:
+            # v1.13.28: read+write inside BEGIN IMMEDIATE so a cron
+            # tick and a manual click landing within the same
+            # millisecond can't both observe the pre-insert
+            # pending_section_ids snapshot and double-queue the
+            # cascade. SQLite's autocommit (isolation_level=None on
+            # get_conn) doesn't serialize the reads otherwise.
+            with get_conn(self.settings.db_path) as conn:
+                with transaction(conn):
+                    included = conn.execute(
+                        "SELECT section_id FROM plex_sections WHERE included = 1"
+                    ).fetchall()
+                    pending_section_ids = {
+                        r["section_id"] for r in conn.execute(
+                            "SELECT json_extract(payload, '$.section_id') AS section_id "
+                            "FROM jobs WHERE job_type = 'plex_enum' "
+                            "AND status IN ('pending','running')"
+                        ).fetchall() if r["section_id"] is not None
+                    }
+                    for s in included:
+                        sid = s["section_id"]
+                        if sid in pending_section_ids:
+                            continue
+                        conn.execute(
+                            "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
+                            "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                            (json.dumps({"section_id": sid, "scope": "cascade"}),
+                             now_iso(), now_iso()),
+                        )
 
     def _do_scan(self, job: sqlite3.Row) -> None:
         """Run a Plex folder scan. Payload optionally carries
@@ -307,10 +731,16 @@ class Worker:
             except Exception:
                 pass
         initiated_by = payload.get("initiated_by", "system")
+        # v1.11.36: cancel-check now ORs the per-job cancel_requested
+        # flag with the worker's stop_event so user-cancellation works
+        # alongside the existing shutdown semantics.
+        jid = job["id"]
+        db_path = self.settings.db_path
+        stop = self.stop_event
         run_scan(
-            self.settings.db_path, self.settings,
+            db_path, self.settings,
             initiated_by=initiated_by,
-            cancel_check=self.stop_event.is_set,
+            cancel_check=lambda: stop.is_set() or _is_cancelled(db_path, jid),
         )
 
     def _do_adopt(self, job: sqlite3.Row) -> None:
@@ -337,6 +767,14 @@ class Worker:
     def _do_download(self, job: sqlite3.Row) -> None:
         media_type = job["media_type"]
         tmdb_id = job["tmdb_id"]
+        section_id = job["section_id"]
+
+        # v1.11.0: download jobs are per-section. A section_id is required
+        # so we know which staging subdir to write into.
+        if not section_id:
+            raise _JobPermanentFailure(
+                "download job missing section_id (v1.11.0 requires per-section routing)"
+            )
 
         # Bail early if themes_dir hasn't been configured yet (first-run
         # state). The job stays pending and gets retried; once the user
@@ -349,70 +787,221 @@ class Worker:
             )
             raise RuntimeError("themes_dir not configured")
 
-        # Look up theme + any user override
+        # v1.13.11: pre-download free-space guard. yt-dlp + ffmpeg can
+        # eat several hundred MB of working space mid-extract; on a full
+        # filesystem motif used to silently spam yt-dlp errors and rack
+        # up retries. Now we fail transiently with a clear "low disk"
+        # reason — exponential backoff (1m → 5m → 25m → ...) gives the
+        # user a window to free space before the job exhausts attempts.
+        # 0 = guard disabled (operator opts out).
+        min_mb = self.settings.min_free_disk_mb
+        if min_mb > 0:
+            td = self.settings.themes_dir
+            free_mb = _disk_free_mb(td) if td is not None else None
+            if free_mb is not None and free_mb < min_mb:
+                msg = (
+                    f"low disk: {free_mb}MB free on {td} "
+                    f"(min {min_mb}MB) — free space and the download will retry"
+                )
+                log_event(
+                    self.settings.db_path, level="WARNING",
+                    component="download", media_type=media_type,
+                    tmdb_id=tmdb_id, section_id=section_id, message=msg,
+                )
+                raise RuntimeError(msg)
+
+        # Look up theme + any user override + the section's themes_subdir.
         with get_conn(self.settings.db_path) as conn:
             theme = conn.execute(
                 "SELECT * FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
             ).fetchone()
+            # v1.12.72: per-section override fetch. Try the row's
+            # specific section first; if none, fall back to the
+            # legacy global ('') row that applies to any section
+            # without a more-specific override. Lets users with
+            # multi-section libraries pin different YouTube URLs
+            # per edition while keeping pre-migration overrides
+            # working as global defaults.
             override = conn.execute(
-                "SELECT * FROM user_overrides WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "SELECT * FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, section_id),
             ).fetchone()
+            if override is None:
+                override = conn.execute(
+                    "SELECT * FROM user_overrides "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                    (media_type, tmdb_id),
+                ).fetchone()
+            section_row = conn.execute(
+                "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
+            if section_row is None or not section_row["themes_subdir"]:
+                raise _JobPermanentFailure(
+                    f"section {section_id} has no themes_subdir"
+                )
+            section_subdir = section_row["themes_subdir"]
 
         if theme is None:
             raise RuntimeError(f"theme not in DB: {media_type}/{tmdb_id}")
 
         yt_url = override["youtube_url"] if override else theme["youtube_url"]
         if not yt_url:
-            raise RuntimeError("no YouTube URL")
+            # v1.10.56: missing URL = nothing to retry. Pre-1.10.56 this
+            # raised RuntimeError which went through the retry-with-
+            # backoff path (5 → 25 → 125 minutes) — leaving the row's
+            # spinner stuck and other actions disabled for ~2 hours
+            # before the job finally settled to 'failed'. Permanent-
+            # failure short-circuits to status='failed' immediately.
+            raise _JobPermanentFailure(
+                "no YouTube URL configured for this theme — "
+                "SET URL or UPLOAD MP3 to provide a source"
+            )
 
         # Re-extract video ID in case override URL is in a different format
         from .sync import extract_video_id
         vid = extract_video_id(yt_url)
         if not vid:
-            raise RuntimeError(f"could not extract video ID from {yt_url}")
+            raise _JobPermanentFailure(
+                f"could not extract YouTube video ID from {yt_url}"
+            )
+
+        media_root = self.settings.section_themes_dir_by_subdir(section_subdir)
+        if media_root is None:
+            raise _JobPermanentFailure(
+                f"section_themes_dir_by_subdir returned None for {section_subdir!r}"
+            )
+        out_dir = media_root / canonical_theme_subdir(theme["title"], theme["year"])
 
         # Dry-run: log what we would do and stop here (no YouTube hit, no rate-limit token consumed)
         if is_dry_run(self.settings.db_path, default=self.settings.dry_run_default):
-            preview_dir = ((self.settings.movies_themes_dir if media_type == "movie"
-                            else self.settings.tv_themes_dir)
-                           / canonical_theme_subdir(theme["title"], theme["year"]))
             log_event(
                 self.settings.db_path, level="INFO", component="dryrun",
                 media_type=media_type, tmdb_id=tmdb_id,
                 message=f"DRY-RUN: would download '{theme['title']}' from {yt_url}",
                 detail={"video_id": vid, "url": yt_url,
-                        "would_save_to": str(preview_dir / "theme.mp3")},
+                        "section_id": section_id,
+                        "would_save_to": str(out_dir / "theme.mp3")},
             )
             return  # job marked done by caller
 
-        # Apply rate limit
+        # v1.11.0: before paying for a YouTube fetch + transcode, look for a
+        # sibling local_files row for the same (media_type, tmdb_id, vid) in
+        # any other section. If found, hardlink the existing file into this
+        # section's staging dir — one physical download per item, N inode-
+        # shared copies across the sections that own it.
+        sibling = None
+        with get_conn(self.settings.db_path) as conn:
+            sibling = conn.execute(
+                "SELECT file_path, file_sha256, file_size, source_video_id, "
+                "       provenance, source_kind, downloaded_at "
+                "FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id != ? "
+                "  AND source_video_id = ? LIMIT 1",
+                (media_type, tmdb_id, section_id, vid),
+            ).fetchone()
+        if sibling is not None:
+            sibling_abs = self.settings.themes_dir / sibling["file_path"]
+            if sibling_abs.is_file():
+                target_mp3 = out_dir / "theme.mp3"
+                try:
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    if target_mp3.exists():
+                        # Already linked? if so we're idempotent. Otherwise
+                        # replace the stale local file.
+                        try:
+                            if target_mp3.stat().st_ino == sibling_abs.stat().st_ino:
+                                pass  # already the same inode
+                            else:
+                                target_mp3.unlink()
+                                _safe_link(sibling_abs, target_mp3)
+                        except OSError:
+                            target_mp3.unlink()
+                            _safe_link(sibling_abs, target_mp3)
+                    else:
+                        _safe_link(sibling_abs, target_mp3)
+                    rel_path = str(target_mp3.relative_to(self.settings.themes_dir))
+                    self._record_local_file(
+                        media_type=media_type, tmdb_id=tmdb_id,
+                        section_id=section_id, rel_path=rel_path,
+                        sha256=sibling["file_sha256"],
+                        size=sibling["file_size"],
+                        video_id=vid,
+                        # v1.12.37: derive provenance + source_kind
+                        # from the CURRENT presence of a user override,
+                        # not from the sibling row's stale values. The
+                        # pre-fix code inherited the sibling's values
+                        # which was wrong whenever the row's source had
+                        # changed since the sibling was recorded — most
+                        # visibly after ACCEPT UPDATE deleted
+                        # user_overrides on a U row, where the sibling
+                        # still carried 'manual'/'url' and the new
+                        # canonical inherited that even though it was
+                        # downloaded with no override active. The row
+                        # classified as U forever despite the canonical
+                        # actually coming from the TDB URL.
+                        provenance=("manual" if override else "auto"),
+                        source_kind=("url" if override else "themerrdb"),
+                        job_payload=job["payload"],
+                    )
+                    log_event(
+                        self.settings.db_path, level="INFO", component="download",
+                        media_type=media_type, tmdb_id=tmdb_id,
+                        message=f"Hardlinked sibling theme for '{theme['title']}' into section {section_id}",
+                        detail={"section_id": section_id, "video_id": vid,
+                                "sibling_path": sibling["file_path"]},
+                    )
+                    return
+                except OSError as e:
+                    log.warning(
+                        "Sibling-hardlink failed for %s/%s into %s, falling back to download: %s",
+                        media_type, tmdb_id, section_id, e,
+                    )
+                    # fall through to the actual download
+
+        # Apply rate limit (only when we'll really hit YouTube)
         self.bucket.acquire()
 
-        media_root = (self.settings.movies_themes_dir if media_type == "movie"
-                      else self.settings.tv_themes_dir)
-        out_dir = media_root / canonical_theme_subdir(theme["title"], theme["year"])
-
-        # If a previously downloaded theme.mp3 was for a different video (e.g.
-        # ThemerrDB URL changed since last sync), unlink the stale one so the
-        # downloader's "already exists" short-circuit doesn't keep us pinned
-        # to the old audio.
-        existing_local = None
+        # If a previously downloaded theme.mp3 in THIS section was for a
+        # different video (e.g. ThemerrDB URL changed since last sync), unlink
+        # the stale one so the downloader's "already exists" short-circuit
+        # doesn't keep us pinned to the old audio.
+        # v1.11.99: also unlink (always) when the job carries
+        # user_initiated_mismatch=true. Mismatch-flow downloads must
+        # write to a fresh inode so the placement file's hardlink is
+        # broken and the placement keeps its original content. Without
+        # the explicit unlink, write_bytes via yt-dlp's postproc into
+        # a still-hardlinked file would silently mutate the placement.
+        try:
+            payload = json.loads(job["payload"] or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        is_mismatch_job = bool(payload.get("user_initiated_mismatch"))
         with get_conn(self.settings.db_path) as conn:
             existing_local = conn.execute(
                 "SELECT source_video_id FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, section_id),
             ).fetchone()
         target_mp3 = out_dir / "theme.mp3"
-        if (target_mp3.exists() and existing_local
-                and existing_local["source_video_id"] != vid):
+        should_unlink = target_mp3.exists() and (
+            is_mismatch_job
+            or (existing_local and existing_local["source_video_id"] != vid)
+        )
+        if should_unlink:
             try:
                 target_mp3.unlink()
             except OSError as e:
                 log.warning("Could not invalidate stale theme.mp3 %s: %s", target_mp3, e)
 
+        # v1.13.18 (6C): yt-dlp progress hook → shared dict so
+        # /api/progress can render real % during a single-job
+        # download. Cleared in finally so a failed/cancelled job
+        # doesn't leave stale fractions visible across the next run.
+        from . import progress as _progress
+        job_id = job["id"]
         try:
             result = download_theme(
                 youtube_url=yt_url,
@@ -420,16 +1009,36 @@ class Worker:
                 output_dir=out_dir,
                 cookies_file=self.settings.cookies_file,
                 audio_quality=self.settings.download_audio_quality,
+                progress_callback=lambda f: _progress.set_download_progress(job_id, f),
             )
         except DownloadError as e:
             kind = e.kind if hasattr(e, "kind") else FailureKind.UNKNOWN
-            # Persist the failure on the theme row so the UI can show a badge
+            # Persist the failure on the theme row so the UI can show a badge.
+            # v1.10.50: when the new failure_kind differs from what was
+            # previously acked, clear failure_acked_at so the user gets
+            # alerted on the new condition. Same kind as before keeps
+            # the existing ack (no spam).
             with get_conn(self.settings.db_path) as conn:
                 conn.execute(
                     """UPDATE themes SET failure_kind = ?, failure_message = ?,
-                                          failure_at = ?
+                                          failure_at = ?,
+                                          failure_acked_at = CASE
+                                              WHEN failure_kind = ? THEN failure_acked_at
+                                              ELSE NULL
+                                          END
                        WHERE media_type = ? AND tmdb_id = ?""",
-                    (kind.value, str(e)[:500], now_iso(), media_type, tmdb_id),
+                    (kind.value, str(e)[:500], now_iso(),
+                     kind.value, media_type, tmdb_id),
+                )
+                # v1.10.40: also cancel any pending follow-up place job
+                # for THIS section — without the file, place can't do
+                # anything useful. Sibling-section places can still run
+                # if their own download succeeded.
+                conn.execute(
+                    """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                       WHERE job_type = 'place' AND media_type = ? AND tmdb_id = ?
+                         AND section_id = ? AND status IN ('pending','running')""",
+                    (now_iso(), media_type, tmdb_id, section_id),
                 )
             level = "ERROR" if kind == FailureKind.COOKIES_EXPIRED else "WARNING"
             log_event(
@@ -440,69 +1049,131 @@ class Worker:
                         "needs_manual_override": kind.needs_manual_override,
                         "raw": str(e)[:300]},
             )
+            # v1.10.40: video-side permanent failures (removed/private/
+            # age-restricted/geo-blocked) — retry won't help. Bypass
+            # the worker's backoff schedule and mark the job 'failed'
+            # immediately by raising _JobPermanentFailure. Transient
+            # kinds (network/cookies/unknown) keep the original
+            # retry-with-backoff behavior via plain `raise`.
+            if kind.needs_manual_override:
+                raise _JobPermanentFailure(str(e)) from e
             raise
 
-        # Success — clear any previous failure on this theme
-        with get_conn(self.settings.db_path) as conn:
+        # Record the local file (per-section). source_kind drives the
+        # T/U/A badge (v1.10.12): 'url' when the download was driven by
+        # a user_overrides row; 'themerrdb' otherwise.
+        rel_path = str(result.file_path.relative_to(self.settings.themes_dir))
+        self._record_local_file(
+            media_type=media_type, tmdb_id=tmdb_id, section_id=section_id,
+            rel_path=rel_path, sha256=result.file_sha256, size=result.file_size,
+            video_id=vid,
+            provenance=("manual" if override else "auto"),
+            source_kind=("url" if override else "themerrdb"),
+            job_payload=job["payload"],
+        )
+
+        log_event(
+            self.settings.db_path, level="INFO", component="download",
+            media_type=media_type, tmdb_id=tmdb_id, section_id=section_id,
+            message=f"Downloaded theme for {theme['title']}",
+            detail={"size": result.file_size, "video_id": vid,
+                    "section_id": section_id},
+        )
+
+    def _record_local_file(
+        self, *, media_type: str, tmdb_id: int, section_id: str,
+        rel_path: str, sha256: str | None, size: int | None,
+        video_id: str, provenance: str, source_kind: str,
+        job_payload: str | None,
+    ) -> None:
+        """v1.11.0: shared write path for the post-download bookkeeping.
+
+        Writes a per-section local_files row, clears any failure on the
+        theme (the file exists now, regardless of which section landed it),
+        then enqueues a place job for THIS section if auto_place is on.
+        Used by both the real download path and the sibling-hardlink
+        short-circuit so they stay in lockstep.
+        """
+        # v1.11.99: parse payload once up front so we can branch on
+        # user_initiated_mismatch (set by api_manual_url when a
+        # placement already exists for this row).
+        try:
+            payload = json.loads(job_payload or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        is_mismatch_job = bool(payload.get("user_initiated_mismatch"))
+
+        with get_conn(self.settings.db_path) as conn, transaction(conn):
             conn.execute(
                 """UPDATE themes SET failure_kind = NULL, failure_message = NULL,
-                                      failure_at = NULL
+                                      failure_at = NULL, failure_acked_at = NULL
                    WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL""",
                 (media_type, tmdb_id),
             )
-
-        # Record the local file
-        rel_path = str(result.file_path.relative_to(self.settings.themes_dir))
-        provenance = "manual" if override else "auto"
-        with get_conn(self.settings.db_path) as conn, transaction(conn):
+            mismatch_value = "pending" if is_mismatch_job else None
             conn.execute(
                 """
                 INSERT INTO local_files
-                    (media_type, tmdb_id, file_path, file_sha256, file_size,
-                     downloaded_at, source_video_id, provenance)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(media_type, tmdb_id) DO UPDATE SET
+                    (media_type, tmdb_id, section_id, file_path, file_sha256, file_size,
+                     downloaded_at, source_video_id, provenance, source_kind,
+                     mismatch_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
                     file_path = excluded.file_path,
                     file_sha256 = excluded.file_sha256,
                     file_size = excluded.file_size,
                     downloaded_at = excluded.downloaded_at,
                     source_video_id = excluded.source_video_id,
-                    provenance = excluded.provenance
+                    provenance = excluded.provenance,
+                    source_kind = excluded.source_kind,
+                    mismatch_state = excluded.mismatch_state
                 """,
-                (media_type, tmdb_id, rel_path, result.file_sha256,
-                 result.file_size, now_iso(), vid, provenance),
+                (media_type, tmdb_id, section_id, rel_path, sha256, size,
+                 now_iso(), video_id, provenance, source_kind, mismatch_value),
             )
+            # v1.11.99: skip auto-place on mismatch jobs. The new
+            # canonical sits in /themes; the placement file in the Plex
+            # folder is intentionally untouched. User resolves via the
+            # row's PLACE menu (PUSH TO PLEX / ADOPT FROM PLEX /
+            # KEEP MISMATCH) or /pending.
+            if is_mismatch_job:
+                return
+
             # Decide whether to auto-place. Per-job payload override wins;
             # otherwise fall back to the global placement.auto_place setting.
-            # When auto_place is False, the staged file lands in /pending and
-            # the user approves placement manually.
             auto_place = self.settings.auto_place_default
-            try:
-                payload = json.loads(job["payload"] or "{}")
-                if "auto_place" in payload:
-                    auto_place = bool(payload["auto_place"])
-            except (TypeError, ValueError):
-                pass
+            force_place = False
+            if "auto_place" in payload:
+                auto_place = bool(payload["auto_place"])
+            if payload.get("force_place"):
+                force_place = True
+                auto_place = True  # force implies auto
             if auto_place:
+                place_payload = (
+                    '{"force":true,"reason":"replace_with_themerrdb"}'
+                    if force_place else "{}"
+                )
                 conn.execute(
                     """
-                    INSERT INTO jobs (job_type, media_type, tmdb_id, payload, status,
-                                      created_at, next_run_at)
-                    VALUES ('place', ?, ?, ?, 'pending', ?, ?)
+                    INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                      payload, status, created_at, next_run_at)
+                    VALUES ('place', ?, ?, ?, ?, 'pending', ?, ?)
                     """,
-                    (media_type, tmdb_id, "{}", now_iso(), now_iso()),
+                    (media_type, tmdb_id, section_id, place_payload,
+                     now_iso(), now_iso()),
                 )
-
-        log_event(
-            self.settings.db_path, level="INFO", component="download",
-            media_type=media_type, tmdb_id=tmdb_id,
-            message=f"Downloaded theme for {theme['title']}",
-            detail={"size": result.file_size, "video_id": vid},
-        )
 
     def _do_place(self, job: sqlite3.Row) -> None:
         media_type = job["media_type"]
         tmdb_id = job["tmdb_id"]
+        section_id = job["section_id"]
+
+        # v1.11.0: place jobs are per-section. The job's section_id picks
+        # both which staging file to read AND which folder index to walk.
+        if not section_id:
+            raise _JobPermanentFailure(
+                "place job missing section_id (v1.11.0 requires per-section routing)"
+            )
 
         if not self.settings.is_paths_ready():
             log_event(
@@ -518,8 +1189,9 @@ class Worker:
                 (media_type, tmdb_id),
             ).fetchone()
             local = conn.execute(
-                "SELECT * FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                (media_type, tmdb_id),
+                "SELECT * FROM local_files "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, section_id),
             ).fetchone()
 
         # In dry-run, the local file may not exist yet (download was skipped).
@@ -533,24 +1205,24 @@ class Worker:
         if dry:
             # Just resolve the target folder and Plex theme presence, log it
             from .placement import find_target_folder
-            index = self._index_for(media_type)
+            index = self._index_for_section(section_id)
             find = find_target_folder(
                 index, title=theme["title"], year=theme["year"] or "",
                 edition_raw="",
                 strict_edition=self.settings.strict_edition_match,
                 plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
             )
-            plex_has = False
-            if self.settings.plex_enabled and self.settings.plex_token:
-                plex_client = self._plex_client()
-                if plex_client:
-                    try:
-                        plex_has = plex_client.has_theme(
-                            media_type=media_type, title=theme["title"],
-                            year=theme["year"] or "", edition_raw="",
-                        )
-                    finally:
-                        plex_client.close()
+            # v1.11.39: read has_theme from plex_items instead of
+            # firing live Plex API calls during a dry-run preview.
+            plex_mt = "show" if media_type == "tv" else "movie"
+            with get_conn(self.settings.db_path) as conn:
+                pi_row = conn.execute(
+                    "SELECT has_theme FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? "
+                    "  AND section_id = ? LIMIT 1",
+                    (tmdb_id, plex_mt, section_id),
+                ).fetchone()
+            plex_has = bool(pi_row and pi_row["has_theme"])
 
             if plex_has:
                 msg = f"DRY-RUN: would skip '{theme['title']}' — Plex already has theme"
@@ -565,13 +1237,17 @@ class Worker:
                 detail={
                     "target_folder": str(find.folder) if find.folder else None,
                     "match_kind": find.kind,
+                    "section_id": section_id,
                     "plex_already_has_theme": plex_has,
                 },
             )
             return
 
         if local is None:
-            raise RuntimeError("local file missing (download not yet complete)")
+            raise RuntimeError(
+                f"local file missing for section {section_id} "
+                "(download not yet complete?)"
+            )
 
         source_file = self.settings.themes_dir / local["file_path"]
         if not source_file.exists():
@@ -588,8 +1264,48 @@ class Worker:
         except (TypeError, ValueError):
             pass
 
-        index = self._index_for(media_type)
+        index = self._index_for_section(section_id)
         plex_client = self._plex_client()
+        # v1.11.39: pre-resolve rating_key + has_theme from plex_items
+        # so place_theme doesn't have to hit Plex for them.
+        # v1.11.68: also resolve through pi.theme_id (the v1.11.43 /
+        # v1.11.64 stamp) so orphan-backed rows (SET URL / UPLOAD MP3
+        # / adopt without a TDB match — synthetic-negative tmdb_id)
+        # correctly find their plex_items row. Pre-fix the SELECT was
+        # WHERE guid_tmdb=? which only worked for non-orphan rows;
+        # orphans matched nothing, cached_rk stayed None, and
+        # placement fell back to FolderIndex title+year matching that
+        # ignored the {edition-4K} suffix on the actual Plex folder.
+        # Also pull folder_path so place_theme can target that folder
+        # directly when available — skips the strict_edition mismatch
+        # entirely for known-rk placements.
+        plex_mt = "show" if media_type == "tv" else "movie"
+        with get_conn(self.settings.db_path) as conn:
+            pi = conn.execute(
+                """SELECT pi.rating_key, pi.has_theme, pi.folder_path
+                   FROM plex_items pi
+                   INNER JOIN themes t
+                     ON t.id = pi.theme_id
+                    AND t.media_type = ?
+                    AND t.tmdb_id = ?
+                   WHERE pi.section_id = ?
+                   LIMIT 1""",
+                (media_type, tmdb_id, section_id),
+            ).fetchone()
+            if pi is None:
+                # Fall back to the v1.11.39 path (covers freshly-
+                # downloaded T rows whose pi.theme_id may not have
+                # caught up yet via resolve_theme_ids).
+                pi = conn.execute(
+                    "SELECT rating_key, has_theme, folder_path "
+                    "FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? "
+                    "  AND section_id = ? LIMIT 1",
+                    (tmdb_id, plex_mt, section_id),
+                ).fetchone()
+        cached_rk = pi["rating_key"] if pi else None
+        cached_has_theme = bool(pi and pi["has_theme"])
+        cached_folder_path = (pi["folder_path"] if pi else None) or None
         try:
             outcome = place_theme(
                 media_type=media_type,
@@ -599,6 +1315,9 @@ class Worker:
                 source_file=source_file,
                 index=index,
                 plex=plex_client,
+                cached_rk=cached_rk,
+                cached_has_theme=cached_has_theme,
+                cached_folder_path=cached_folder_path,
                 strict_edition=self.settings.strict_edition_match,
                 plus_mode=self.settings.plus_equiv_mode,  # type: ignore[arg-type]
                 skip_if_plex_has_theme=not force_overwrite,
@@ -610,40 +1329,142 @@ class Worker:
                 plex_client.close()
 
         if outcome.placed:
-            # Read provenance from the local_files row that was the source
             with get_conn(self.settings.db_path) as conn:
-                lf_row = conn.execute(
-                    "SELECT provenance FROM local_files WHERE media_type = ? AND tmdb_id = ?",
-                    (media_type, tmdb_id),
-                ).fetchone()
-                placement_provenance = lf_row["provenance"] if lf_row else "auto"
+                placement_provenance = local["provenance"] or "auto"
                 conn.execute(
                     """
                     INSERT INTO placements
-                        (media_type, tmdb_id, media_folder, placed_at,
+                        (media_type, tmdb_id, section_id, media_folder, placed_at,
                          placement_kind, plex_rating_key, plex_refreshed, provenance)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(media_type, tmdb_id, media_folder) DO UPDATE SET
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(media_type, tmdb_id, section_id, media_folder) DO UPDATE SET
                         placed_at = excluded.placed_at,
                         placement_kind = excluded.placement_kind,
                         plex_rating_key = excluded.plex_rating_key,
                         plex_refreshed = excluded.plex_refreshed,
                         provenance = excluded.provenance
                     """,
-                    (media_type, tmdb_id, str(outcome.target_folder), now_iso(),
-                     outcome.kind, outcome.plex_rating_key,
+                    (media_type, tmdb_id, section_id, str(outcome.target_folder),
+                     now_iso(), outcome.kind, outcome.plex_rating_key,
                      1 if outcome.plex_refreshed else 0, placement_provenance),
                 )
+                # v1.11.99: a successful place pushes canonical → placement,
+                # so by definition canonical now matches placement and any
+                # prior mismatch ('pending' or 'acked') is resolved. Clear
+                # the flag so the row's DL goes back to green and the LINK
+                # column flips from ≠ back to = / C.
+                conn.execute(
+                    """UPDATE local_files SET mismatch_state = NULL
+                       WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+                    (media_type, tmdb_id, section_id),
+                )
+                # v1.10.46: Plex's first refresh sometimes lands before
+                # the filesystem watcher / local-media-assets agent has
+                # re-stat'd the folder, so the new theme.mp3 isn't
+                # picked up. The user then has to manually click
+                # 'Refresh Metadata' in Plex to force the pickup.
+                # v1.11.24: schedule THREE follow-up refreshes (10s,
+                # 30s, 90s) in addition to the immediate refresh in
+                # place_theme. A single +10s delay wasn't always
+                # enough on TV-show sections — Plex's local-media-
+                # assets agent occasionally took 30-60s to notice the
+                # new theme.mp3, so the user had to manually click
+                # 'Refresh Metadata' to force pickup. Three retries
+                # at increasing intervals give every reasonable
+                # filesystem-cache + agent-debounce timing a chance
+                # to land before the user has to do anything.
+                # v1.11.59: single follow-up refresh at +30s. The
+                # inline plex.refresh() inside placement.place_theme
+                # already nudges Plex at place time; the +30s job is
+                # the safety net for Plex's local-media-assets agent
+                # debounce. Pre-fix v1.11.57 enqueued two (15s + 60s)
+                # which the user still saw stacked in /queue, and the
+                # has_theme dedup that tried to make the second one
+                # cheap had a false-positive on REPLACE-w/-TDB
+                # against P-source rows. One job per place keeps the
+                # queue clean; we trade the 60s safety net for a
+                # cleaner UX. If a Plex agent really debounces past
+                # 30s the user can hit 'Refresh Metadata' manually
+                # — same fallback as before for any post-place edge
+                # cases.
+                if outcome.plex_rating_key and self.settings.plex_analyze_after:
+                    existing = conn.execute(
+                        """SELECT 1 FROM jobs
+                           WHERE job_type = 'refresh'
+                             AND media_type = ? AND tmdb_id = ?
+                             AND section_id = ?
+                             AND status IN ('pending','running')
+                           LIMIT 1""",
+                        (media_type, tmdb_id, section_id),
+                    ).fetchone()
+                    if not existing:
+                        delayed_iso = (
+                            datetime.now(timezone.utc) + timedelta(seconds=30)
+                        ).isoformat(timespec="seconds")
+                        conn.execute(
+                            """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                                  payload, status, created_at, next_run_at)
+                               VALUES ('refresh', ?, ?, ?, ?, 'pending', ?, ?)""",
+                            (media_type, tmdb_id, section_id,
+                             json.dumps({"rating_key": outcome.plex_rating_key,
+                                         "reason": "post_place_refresh_+30s"}),
+                             now_iso(), delayed_iso),
+                        )
+        # v1.11.24: stamp the place outcome on the local_files row so
+        # /pending can render the actual reason ('existing_theme:',
+        # 'plex_has_theme', 'no_match', 'placement_error:') instead of
+        # falling through to the generic 'Awaiting placement — the
+        # worker should pick it up shortly'. Also propagate hints to
+        # plex_items where applicable so the existing reason logic
+        # (which reads pi.local_theme_file / pi.has_theme) gets a
+        # nudge.
+        try:
+            with get_conn(self.settings.db_path) as conn:
+                conn.execute(
+                    "UPDATE local_files SET last_place_attempt_at = ?, "
+                    "                       last_place_attempt_reason = ? "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (now_iso(),
+                     ("placed" if outcome.placed else (outcome.reason or "unknown")),
+                     media_type, tmdb_id, section_id),
+                )
+                if not outcome.placed and outcome.target_folder:
+                    plex_type = "show" if media_type == "tv" else "movie"
+                    folder_str = str(outcome.target_folder)
+                    if (outcome.reason or "").startswith("existing_theme:"):
+                        conn.execute(
+                            "UPDATE plex_items SET local_theme_file = 1 "
+                            "WHERE folder_path = ? AND media_type = ?",
+                            (folder_str, plex_type),
+                        )
+                    elif outcome.reason == "plex_has_theme":
+                        conn.execute(
+                            "UPDATE plex_items SET has_theme = 1, "
+                            "                     local_theme_file = 0 "
+                            "WHERE folder_path = ? AND media_type = ?",
+                            (folder_str, plex_type),
+                        )
+        except Exception as e:
+            log.debug("place outcome stamp failed: %s", e)
         log_event(
             self.settings.db_path,
             level="INFO" if outcome.placed else "DEBUG",
             component="place", media_type=media_type, tmdb_id=tmdb_id,
+            section_id=section_id,
             message=(f"Placed in {outcome.target_folder}" if outcome.placed
                      else f"Skipped placement: {outcome.reason}"),
             detail={"reason": outcome.reason, "kind": outcome.kind},
         )
 
     def _do_refresh(self, job: sqlite3.Row) -> None:
+        # v1.11.59: dropped the has_theme dedup that v1.11.57 added.
+        # has_theme=1 just means 'Plex has SOME theme', not 'Plex
+        # picked up motif's new theme', so on a REPLACE w/ TDB
+        # against a P-source row the dedup short-circuited the
+        # follow-up nudge even when Plex still hadn't ingested our
+        # file. The schedule below also drops to a single follow-up,
+        # which removes the queue-stacking the dedup was trying to
+        # paper over. See _do_place for the new schedule.
         plex = self._plex_client()
         if not plex:
             return
@@ -652,6 +1473,8 @@ class Worker:
             rk = payload.get("rating_key")
             if rk:
                 plex.refresh(rk)
+        except (json.JSONDecodeError, TypeError):
+            pass
         finally:
             plex.close()
 
@@ -683,7 +1506,9 @@ class Worker:
                     """SELECT p.*, lf.file_path
                        FROM placements p
                        JOIN local_files lf
-                         ON lf.media_type = p.media_type AND lf.tmdb_id = p.tmdb_id
+                         ON lf.media_type = p.media_type
+                        AND lf.tmdb_id = p.tmdb_id
+                        AND lf.section_id = p.section_id
                        WHERE p.media_type = ? AND p.tmdb_id = ?
                          AND p.placement_kind = 'copy'""",
                     (media_type, tmdb_id),
@@ -693,7 +1518,9 @@ class Worker:
                     """SELECT p.*, lf.file_path
                        FROM placements p
                        JOIN local_files lf
-                         ON lf.media_type = p.media_type AND lf.tmdb_id = p.tmdb_id
+                         ON lf.media_type = p.media_type
+                        AND lf.tmdb_id = p.tmdb_id
+                        AND lf.section_id = p.section_id
                        WHERE p.placement_kind = 'copy'"""
                 ).fetchall()
 
@@ -711,8 +1538,10 @@ class Worker:
                 with get_conn(self.settings.db_path) as conn:
                     conn.execute(
                         """DELETE FROM placements
-                           WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
-                        (r["media_type"], r["tmdb_id"], r["media_folder"]),
+                           WHERE media_type = ? AND tmdb_id = ?
+                             AND section_id = ? AND media_folder = ?""",
+                        (r["media_type"], r["tmdb_id"], r["section_id"],
+                         r["media_folder"]),
                     )
                 continue
 
@@ -744,8 +1573,10 @@ class Worker:
             with get_conn(self.settings.db_path) as conn:
                 conn.execute(
                     """UPDATE placements SET placement_kind = 'hardlink', placed_at = ?
-                       WHERE media_type = ? AND tmdb_id = ? AND media_folder = ?""",
-                    (now_iso(), r["media_type"], r["tmdb_id"], r["media_folder"]),
+                       WHERE media_type = ? AND tmdb_id = ?
+                         AND section_id = ? AND media_folder = ?""",
+                    (now_iso(), r["media_type"], r["tmdb_id"],
+                     r["section_id"], r["media_folder"]),
                 )
             relinked += 1
 
@@ -759,13 +1590,58 @@ class Worker:
 
 # -------- Entry point --------
 
-def start_worker(settings: Settings, stop_event: threading.Event) -> threading.Thread:
-    bucket = TokenBucket(
-        rate=float(settings.download_rate_per_hour),
-        capacity=max(1, settings.download_rate_per_hour),
-        period=3600.0,
-    )
-    w = Worker(settings=settings, stop_event=stop_event, bucket=bucket)
-    t = threading.Thread(target=w.run, name="motif-worker", daemon=True)
-    t.start()
-    return t
+_LONG_JOB_TYPES = ("sync", "plex_enum", "scan")
+_GENERAL_JOB_TYPES = ("download", "place", "refresh", "relink", "adopt")
+
+
+def start_worker(settings: Settings, stop_event: threading.Event) -> list[threading.Thread]:
+    """v1.11.36: spawn TWO worker threads instead of one.
+
+    - 'long' worker handles sync / plex_enum / scan. These each run for
+      tens of seconds to minutes; pre-fix they blocked every download
+      / place behind them.
+    - 'general' worker handles download / place / refresh / relink /
+      adopt — short, frequent jobs that benefit from running in
+      parallel with the long jobs.
+
+    SQLite WAL handles write serialization; sync writes themes,
+    plex_enum writes plex_items, downloads / places write local_files
+    / placements — all disjoint. Each worker has its own TokenBucket
+    + FolderIndex cache so they don't share mutable state.
+    """
+    threads: list[threading.Thread] = []
+
+    def _supervised(worker: "Worker", label: str) -> None:
+        """v1.11.51: outer-most supervisor. The run() loop catches
+        OperationalError + Exception around claim/dispatch (no thread
+        death from DB lock contention), but if anything ever DOES
+        escape — e.g. an OSError on the events queue, an error inside
+        a bookkeeping path that the inner catch missed — we don't
+        want the worker to silently disappear for the rest of the
+        process lifetime. Loop the run() call until the stop_event
+        fires, with a short backoff between failures so a persistent
+        bug doesn't busy-spin.
+        """
+        while not stop_event.is_set():
+            try:
+                worker.run()
+                return  # clean exit (stop_event set)
+            except Exception as e:
+                log.exception("Worker %s crashed at top level: %s — "
+                              "restarting in 10s", label, e)
+                stop_event.wait(10.0)
+
+    for label, types in (("long", _LONG_JOB_TYPES),
+                         ("general", _GENERAL_JOB_TYPES)):
+        bucket = TokenBucket(
+            rate=float(settings.download_rate_per_hour),
+            capacity=max(1, settings.download_rate_per_hour),
+            period=3600.0,
+        )
+        w = Worker(settings=settings, stop_event=stop_event, bucket=bucket,
+                   job_type_filter=types, name=f"motif-worker-{label}")
+        t = threading.Thread(target=_supervised, args=(w, label),
+                             name=f"motif-worker-{label}", daemon=True)
+        t.start()
+        threads.append(t)
+    return threads

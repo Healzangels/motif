@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -46,11 +47,14 @@ log = logging.getLogger(__name__)
 SESSION_COOKIE = "motif_sess"
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
 
-# Routes that bypass auth entirely. Healthcheck for Docker, public stats for
-# Homepage, static assets, and the auth pages themselves.
+# Routes that bypass auth entirely. Healthcheck for Docker, static assets, and
+# the auth pages themselves. v1.11.41: /api/public/stats was demoted from this
+# list — Homepage / external dashboards must now present a read-scope API
+# token (Authorization: Bearer or ?api_key=). Exposing aggregate counters
+# unauth'd was a leak of library size, queue health, and sync-status hints
+# to anyone who could probe the URL.
 PUBLIC_PATHS: set[str] = {
     "/healthz",
-    "/api/public/stats",
     "/login",
     "/logout",
     "/setup",
@@ -238,14 +242,15 @@ def lookup_session(db_path: Path, session_id: str) -> str | None:
                WHERE id = ? AND expires_at > ?""",
             (session_id, now_iso),
         ).fetchone()
-        if row is None:
-            return None
-        # Touch last_seen_at — but only every minute or so to avoid write churn.
-        # Cheap: just always update; sqlite is fast enough for this.
-        conn.execute(
-            "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
-            (now_iso, session_id),
-        )
+    if row is None:
+        return None
+    # v1.11.37: dropped the per-request UPDATE sessions SET last_seen_at
+    # touch. Even with the v1.11.35 try/except, the UPDATE still
+    # WAITED on the writer lock during a long sync — every
+    # authenticated request blocked up to busy_timeout, making the
+    # whole UI feel softlocked. last_seen_at is diagnostic-only
+    # (no security or expiry logic depends on it); the SELECT above
+    # is authoritative for authentication.
     return row["username"]
 
 

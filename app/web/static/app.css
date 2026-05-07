@@ -15,7 +15,17 @@
   --green-deep: #2d8c5c;
   --amber: #ffb84a;
   --amber-bright: #ffd47a;
+  /* v1.12.21: distinct orange for the HL link-pill so it doesn't
+     read as amber/yellow next to the SRC P pill. Saturated and
+     warm, sits between amber and red in hue space. */
+  --orange: #ff7a3a;
   --cyan: #6dd3ff;
+  --blue: #6d8fff;
+  /* v1.10.19: U badge moved to violet — pre-1.10.19 used --blue which
+     was visually too close to --cyan (the A badge) and made T/U/A all
+     read as similar 'blue-ish' to the eye. Violet sits between magenta
+     and blue in hue space and is distinct from every other badge. */
+  --violet: #c46dff;
   --red: #ff6b6b;
   --magenta: #ff7ad6;
 
@@ -90,6 +100,28 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .brand-mark { font-size: 10px; letter-spacing: 0.3em; color: var(--amber); animation: blink 2.4s steps(2) infinite; }
 .brand-name { color: var(--green-bright); }
 .brand-version { color: var(--fg-mute); font-size: var(--t-tiny); letter-spacing: 0.2em; }
+/* v1.13.8 (#8): self-update suffix next to the version pill.
+   Hidden by default; revealed by app.js checkSelfUpdate() when the
+   cached GitHub latest tag is greater than __version__. Cyan tint
+   distinguishes from the muted current-version pill so the eye
+   tracks "you have v1.13.7 → v1.14.0 is out". */
+.brand-update[hidden] { display: none; }
+.brand-update {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid rgba(109,211,255,0.45);
+  border-radius: 3px;
+  color: var(--cyan);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  text-decoration: none;
+  font-weight: 600;
+  transition: background 0.12s, box-shadow 0.12s;
+}
+.brand-update:hover {
+  background: rgba(109,211,255,0.08);
+  box-shadow: 0 0 8px rgba(109,211,255,0.25);
+}
 
 .nav { display: flex; gap: 0; }
 .nav a {
@@ -119,6 +151,54 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .dot-pulse { animation: pulse 1.6s ease-in-out infinite; }
 .dot-amber { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .dot-red { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+/* v1.12.69: per-tab busy dot — added by JS as .nav-busy when the
+   tab's plex_enum is in flight. Pulsing cyan ::after pseudo lets
+   the user see which tabs are mid-refresh without parsing topbar
+   text. Position absolute so it doesn't shift the tab's text.
+   v1.12.98: moved from `right: -10px` (which placed the dot 10px
+   PAST the anchor's right edge — but tabs share a 1px border with
+   no gap, so the dot landed inside the *next* tab's area; users
+   saw e.g. MOVIES being refreshed but the dot appeared next to TV
+   SHOWS). New position sits inside the anchor's 16px right
+   padding so the dot reads as part of the busy tab. */
+.nav a.nav-busy {
+  position: relative;
+}
+.nav a.nav-busy::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--cyan);
+  box-shadow: 0 0 5px var(--cyan);
+  animation: pulse 1.4s ease-in-out infinite;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+/* v1.12.69: section-count badge next to the topbar dot when
+   multiple plex_enum jobs are in flight. Tiny mono digit so the
+   user can tell at a glance how many sections are mid-refresh
+   without expanding the topbar text label. */
+.topbar-dot-badge {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  color: var(--cyan);
+  font-weight: 700;
+  margin-left: 4px;
+  margin-right: 2px;
+  letter-spacing: 0.05em;
+}
+
+/* v1.11.73: when q.failed>0 the topbar status is clickable as a
+   shortcut to the failed-jobs filter on /queue. */
+.topbar-status-clickable { cursor: pointer; }
+.topbar-status-clickable:hover .dot-red { filter: brightness(1.3); }
+.topbar-status-clickable:hover #topbar-status-text { color: var(--fg); }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; transform: scale(1); }
@@ -158,6 +238,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 
 .hero { margin-bottom: 36px; }
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+/* v1.13.1 (#2): live last/next sync line under the hero. Subtle —
+   doesn't compete with the title or stat cards. The middot
+   separator is dim so the two halves read as one cohesive line. */
+.dash-sync-line {
+  margin-top: 4px;
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+  opacity: 0.7;
+}
+.dash-sync-line .dash-sync-sep {
+  opacity: 0.5;
+  margin: 0 4px;
+}
 .title {
   font-family: var(--font-display);
   font-size: var(--t-huge);
@@ -199,8 +292,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   min-width: 72px;
   text-align: center;
 }
+/* v1.13.18: width-stability via CSS retired. The v1.13.16 min-width
+   workaround is no longer needed — button text no longer changes
+   on idle ↔ busy (just disabled state), so the rendered label
+   is constant and the natural content-width is stable too. */
 .btn-warn { color: var(--amber); border-color: var(--amber); }
 .btn-warn:hover { background: rgba(255,184,74,0.08); box-shadow: 0 0 10px rgba(255,184,74,0.15); }
+/* v1.11.96: btn-info = blue button variant for "informational
+   actions" (ACCEPT UPDATE). Same family as .chip-info /
+   .tdb-pill-update / .title-glyph-update. */
+.btn-info { color: var(--blue); border-color: var(--blue); }
+.btn-info:hover { background: rgba(109,143,255,0.08); box-shadow: 0 0 10px rgba(109,143,255,0.15); }
 .btn:disabled, .btn[disabled] {
   opacity: 0.4;
   cursor: not-allowed;
@@ -209,6 +311,39 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .btn-danger { color: var(--red); border-color: var(--red); }
 .btn-danger:hover { background: rgba(255,107,107,0.08); box-shadow: 0 0 10px rgba(255,107,107,0.15); }
+
+/* v1.12.1: suppress the persistent focus ring on mouse clicks while
+   keeping a visible one for keyboard navigation. Default browser
+   button :focus painted a cyan ring that survived dialog close
+   (e.g. clicking ⓘ → opening info dialog → closing it left the
+   ⓘ glowing; same on the dialog's × close). :focus-visible only
+   matches when the focus came from the keyboard, so mouse-driven
+   focus stops painting and keyboard accessibility stays intact. */
+/* v1.11.92 / v1.11.98: strip the default focus outline + box-shadow
+   on all interactive primitives, EXCEPT when the element is also
+   .src-key-btn-active. SRC legend buttons carry both .link-badge
+   and .src-key-btn — v1.11.92 only excepted the .src-key-btn rule
+   and missed .link-badge, so the latter still stripped box-shadow
+   on focus and the cyan active glow only appeared once focus
+   moved away (next click anywhere). The :not() now applies to
+   every selector that might match a SRC button. */
+.btn:focus,
+.dlg-close:focus,
+.title-glyph:focus,
+.chip:focus,
+.link-badge:focus:not(.src-key-btn-active),
+.src-key-btn:focus:not(.src-key-btn-active),
+.src-key-clear:focus { outline: none; box-shadow: none; }
+.btn:focus-visible,
+.dlg-close:focus-visible,
+.title-glyph:focus-visible,
+.chip:focus-visible,
+.link-badge:focus-visible,
+.src-key-btn:focus-visible,
+.src-key-clear:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
 
 .link-tiny { font-size: var(--t-tiny); letter-spacing: 0.15em; text-transform: uppercase; color: var(--fg-dim); }
 .link-tiny:hover { color: var(--green); }
@@ -309,6 +444,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-bottom: 1px solid var(--line);
   background: var(--bg-elev-2);
 }
+/* v1.12.74: right-aligned action group inside the block-head.
+   Lets the // NEEDS WORK sort chip sit inline with the pager
+   instead of floating in the middle of the row. */
+.block-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
 .block-title {
   font-family: var(--font-display);
   font-size: var(--t-small);
@@ -329,12 +472,186 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 /* ---- Filterbar ---- */
 
 .filterbar {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 12px;
   flex-wrap: wrap;
-  margin-bottom: 18px;
-  padding: 14px 16px;
+  /* v1.12.48: tighter outer padding + shorter bottom margin to
+     claw back vertical real-estate. The hero and table sit
+     closer to the filters now, so the user reaches more rows
+     without scrolling on a typical laptop viewport. */
+  margin-bottom: 12px;
+  padding: 8px 12px;
   background: var(--bg-elev);
   border: 1px solid var(--line);
+}
+
+/* v1.13.12: search field gets an inline ✕ clear control. Wrapper is
+   inline-block so the input keeps its flex-grow behavior in
+   .filterbar; the button is absolutely positioned over the right
+   edge of the input and only renders when there's text to clear. */
+.library-search-wrap {
+  position: relative;
+  flex: 1 1 320px;
+  min-width: 240px;
+  display: inline-block;
+}
+.library-search-wrap > .input { width: 100%; padding-right: 30px; }
+.library-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-mute);
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.library-search-clear:hover {
+  color: var(--fg);
+  border-color: var(--line);
+  background: var(--bg);
+}
+
+/* v1.13.18 (A2): saved filter presets collapsed to a single
+   bookmark glyph + popover, anchored next to the status chips
+   inside the filterbar. The bookmark fills (★) when a preset is
+   applied so users get a glanceable "active preset" indicator
+   without giving up real estate. */
+.library-presets-menu {
+  position: relative;
+  display: inline-block;
+  margin-left: auto;          /* pin to right of the search/chips row */
+}
+.library-presets-bookmark {
+  list-style: none;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 8px;
+  border: 1px solid var(--line-bright);
+  border-radius: 2px;
+  color: var(--fg-mute);
+  user-select: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.library-presets-bookmark::-webkit-details-marker { display: none; }
+.library-presets-bookmark::marker { content: ''; }
+.library-presets-bookmark:hover { color: var(--cyan); border-color: var(--cyan); }
+.library-presets-menu.has-active .library-presets-bookmark {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+.library-presets-menu[open] .library-presets-bookmark {
+  color: var(--cyan);
+  border-color: var(--cyan);
+  background: rgba(109,211,255,0.06);
+}
+
+.library-presets-popup {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 240px;
+  max-width: 320px;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-bright);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  overflow: hidden;
+}
+.library-presets-popup-head {
+  padding: 8px 12px 4px;
+  letter-spacing: 0.14em;
+}
+.library-presets-popup-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.library-presets-popup-list li {
+  display: flex;
+  align-items: center;
+  border-top: 1px solid var(--line);
+}
+.library-presets-popup-list li:first-child { border-top: none; }
+.library-presets-popup-empty {
+  padding: 6px 12px;
+  border-top: 1px solid var(--line);
+}
+.library-presets-popup-list .library-presets-popup-apply {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  color: var(--fg);
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  padding: 6px 8px 6px 12px;
+  cursor: pointer;
+  letter-spacing: 0.06em;
+}
+.library-presets-popup-list .library-presets-popup-apply:hover {
+  background: rgba(109,211,255,0.08);
+  color: var(--cyan);
+}
+.library-presets-popup-list .library-presets-popup-apply.is-active {
+  color: var(--cyan);
+}
+.library-presets-popup-list .library-presets-popup-del {
+  background: transparent;
+  border: 0;
+  color: var(--fg-mute);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 6px 10px;
+}
+.library-presets-popup-list .library-presets-popup-del:hover { color: var(--red); }
+.library-presets-popup-foot {
+  border-top: 1px solid var(--line);
+  padding: 4px 0;
+}
+.library-presets-popup-save {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--fg-mute);
+  text-align: left;
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.08em;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+.library-presets-popup-save:hover {
+  background: rgba(109,211,255,0.08);
+  color: var(--cyan);
+}
+
+/* CLEAR ALL stays a small text-button. v1.13.18 lives next to the
+   bookmark in the search/chips row instead of the hero toolbar. */
+.library-clear-all-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-mute);
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.library-clear-all-btn:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
 }
 .input {
   flex: 1; min-width: 240px;
@@ -352,7 +669,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .input::placeholder { color: var(--fg-mute); }
 
-.chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chips { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+/* v1.11.86: chip-group keeps a logical chip cluster on one line so
+   wrapping happens between groups (cleaner read) instead of stranding
+   one chip on its own row when the chip count just barely exceeds
+   the available width. */
+.chip-group { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .chips-inline { font-size: var(--t-tiny); }
 .chip {
   background: transparent;
@@ -366,10 +688,62 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   text-transform: uppercase;
   transition: all 0.12s;
 }
+/* v1.13.18: when the resolution toggle (STANDARD / 4K) sits in the
+   library hero alongside the SCAN PLEX button, bump the chips to
+   match the button's visual weight. Pre-fix the chips read as a
+   tighter cluster next to a chunky button — three controls in the
+   same row at three different sizes. */
+.chips[aria-label="resolution"] .chip {
+  padding: 10px 18px;
+  font-size: var(--t-small);
+}
 .chip:hover { color: var(--fg); border-color: var(--green-deep); }
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(109,255,181,0.06); }
 .chip-warn { border-color: rgba(255,107,107,0.35); }
 .chip-warn.chip-active { color: var(--red); border-color: var(--red); background: rgba(255,107,107,0.08); }
+/* v1.11.96: chip-info = blue-tinted variant for "needs attention but
+   not an error" chips (UPDATES). Pairs with .title-glyph-update,
+   .tdb-pill-update, and .btn-info — all blue — so the row's ↑ arrow,
+   blue TDB pill, ACCEPT UPDATE button, and the UPDATES filter chip
+   reinforce one another visually. Kept distinct from chip-warn (red)
+   which marks actual failures / breakage. */
+.chip-info { border-color: rgba(109,143,255,0.35); }
+.chip-info.chip-active { color: var(--blue); border-color: var(--blue); background: rgba(109,143,255,0.08); }
+
+/* v1.11.34: when a chip is the sole variant for its toggle group it
+   becomes a label, not a button. Disabled cursor + suppressed hover
+   make it clear the user can't click it to switch — the page is
+   already showing the only variant available. */
+.chip-label {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.95;
+}
+.chip-label:hover { color: inherit; border-color: inherit; }
+.chip-sep {
+  color: var(--bg-ridge);
+  align-self: center;
+  margin: 0 4px;
+  user-select: none;
+}
+/* v1.10.20: secondary chip row (TDB MATCH filter). Smaller chips,
+   subtle label, sits below the primary status row. */
+.chips-secondary {
+  margin-top: 6px;
+  align-items: center;
+  font-size: var(--t-tiny);
+}
+.chips-secondary .chips-label {
+  color: var(--fg-mute);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-right: 6px;
+}
+.chip-tiny {
+  padding: 2px 8px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
 
 /* ---- Tables ---- */
 
@@ -378,6 +752,16 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-collapse: collapse;
   font-size: var(--t-small);
 }
+/* v1.12.25: table-layout: fixed scoped to the library results
+   table only — locks column widths to the widths declared on
+   the <th>s so sort / page refreshes don't re-measure body
+   cells and trigger the brief flicker the user reported on
+   first sort-press. The col-title column has no explicit width
+   and absorbs the remaining space; other columns have explicit
+   pixel widths from .col-state / .col-year / .col-imdb /
+   .col-actions. Other admin tables (dashboard, settings,
+   libraries) keep table-layout: auto. */
+#library-table { table-layout: fixed; }
 .table th {
   text-align: left;
   padding: 10px 14px;
@@ -389,6 +773,41 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-bottom: 1px solid var(--line);
   text-transform: uppercase;
 }
+/* v1.10.15: clickable sort headers. Hover gives a subtle highlight,
+   active column lights green to match the chip-active palette. */
+.table th.col-sort {
+  cursor: pointer;
+  user-select: none;
+}
+.table th.col-sort:hover { color: var(--fg); }
+.table th.col-sort-active { color: var(--green-bright); }
+/* v1.12.32: header label + sort carat stack inside an
+   inline-block wrapper sized to the label width, so the carat
+   centers UNDER the label rather than at the column's
+   geometric center. v1.12.29 used display: block + width: 100%
+   on the indicator — that pinned the carat to the column's
+   vertical centerline regardless of where the label was
+   positioned. Wrapping label + indicator in .th-stack means
+   the wrapper itself absorbs the th's text-align (center for
+   most columns, left for col-title) and the carat always sits
+   directly beneath the label letters. */
+.table thead th .th-stack {
+  display: inline-block;
+  vertical-align: middle;
+}
+.table thead th .th-label {
+  display: block;
+  text-align: center;
+}
+.table th .sort-indicator {
+  display: block;
+  height: 12px;
+  margin: 2px 0 0 0;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+  font-family: var(--font-mono);
+}
 .table td {
   padding: 10px 14px;
   border-bottom: 1px solid var(--line);
@@ -397,21 +816,168 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .table tr:hover td { background: rgba(109,255,181,0.02); }
 .table-tight th, .table-tight td { padding: 6px 10px; font-size: var(--t-tiny); }
 
-.col-state { width: 40px; text-align: center; }
+.col-state { width: 64px; text-align: center; }
+/* v1.12.25: narrow-column td padding override. With table-layout:
+   fixed, the SRC / DL / PL / LINK columns (all .col-state, 56px)
+   need lighter horizontal padding so their pills (HL, link-badge,
+   state dot) fit within the locked column width without clipping.
+   The default .table td padding (10px 14px) consumes 28px of the
+   56px column, leaving only 28px for content. */
+#library-table td.col-state { padding-left: 6px; padding-right: 6px; }
+/* v1.12.27: matching th padding for the narrow .col-state header
+   so "SRC ▲" / "LINK ▲" / etc fit without overflowing into the
+   neighboring column. Shares the 6px horizontal padding the td
+   already uses. */
+#library-table th.col-state { padding-left: 6px; padding-right: 6px; }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
-.col-actions { width: 260px; text-align: right; }
+.col-actions { width: 320px; text-align: right; }
+/* v1.13.6: bump col-actions left padding so the right-aligned
+   action cluster sits with extra breathing room from the IMDB
+   column. Pre-fix the (i) info button landed ~22px from the
+   col-actions left edge (300px col − 14px*2 padding = 272px
+   content area − ~264px button cluster = ~8px slack), which
+   put it visually adjacent to the centered IMDB ID.
+   v1.13.12: padding bumped to 60px AND col-actions widened by
+   20px — the v1.13.6 fix wasn't enough on rows with all four
+   action buttons present, where the cluster filled the cell
+   and butted up against the IMDB ID. Nudging the IMDB column
+   right edge inward (col-imdb padding-right: 24px on td) and
+   the actions content leftward (padding-left: 60px) opens a
+   visible gap on every row regardless of action density. */
+#library-table td.col-actions { padding-left: 60px; }
+/* v1.13.16: ACTIONS header centers OVER the right-aligned button
+   cluster instead of right-aligning to the cell edge. Pre-fix the
+   v1.13.13 padding bump shifted the cluster left while the header
+   text stayed pinned to the right padding, so "ACTIONS" sat well
+   to the right of where the buttons actually rendered. Centering
+   the th puts the label visually above the cluster on rows with
+   the full 4-button set.
+   v1.13.21 (was v1.13.20): the padding-left:60 shifts the
+   button-cluster cell content rightward but it should NOT shift
+   the header text, since "ACTIONS" centers within the cell —
+   if it inherits the same 60px left pad it ends up offset
+   right of the visual middle. Keep padding on td only and let
+   the th center within the full cell content area. */
+#library-table th.col-actions { text-align: center; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
+#library-table td.col-imdb,
+#library-table th.col-imdb { padding-right: 24px; }
+/* v1.12.28: every header cell centers its label + sort
+   indicator as a single unit. v1.12.27 forced left-align
+   to put all eight headers on one X anchor, but the user
+   wants centered headers in each column with the carat
+   centered alongside its label rather than pinned to the
+   right edge of the cell. With text-align: center on every
+   <th> and an inline-block .sort-indicator, "LINK ▲" /
+   "IMDB ▲" / etc. center as a group within their cells. */
+.table thead th {
+  text-align: center;
+  vertical-align: middle;
+  line-height: 1.4;
+  font-size: var(--t-tiny);
+  white-space: nowrap;
+  font-variant-numeric: normal;
+  color: var(--fg-dim);
+}
+/* v1.12.28: TITLE keeps its left-anchored label since the
+   data cells under it are also left-anchored (movie titles)
+   and a centered TITLE label over a 600px-wide column would
+   float far from its data. Every other column is narrow
+   enough that center-aligning the label reads as obviously
+   "this label belongs to this column". */
+/* v1.12.32: TITLE's <th> is text-align: left so its .th-stack
+   wrapper sits at the left edge of the column. The wrapper is
+   inline-block sized to the "TITLE" label, so the indicator
+   inside (block, text-align: center) centers BENEATH the
+   "TITLE" letters rather than across the entire ~600px-wide
+   col-title cell. v1.12.39: IMDB header reverts to centered
+   (default for .table thead th) AND its td data is also
+   centered so the header label sits directly above the
+   tt-IDs. v1.12.37/.38 had the header left-anchored to match
+   left-anchored data, but the user prefers a centered look
+   where both label and data align on the column's center
+   axis. Other narrow columns (year/src/dl/pl/link) already
+   work this way (centered header over centered data); IMDB
+   now joins them. */
+#library-table th.col-title { text-align: left; }
+#library-table td.col-imdb { text-align: center; }
 
 /* Dashboard hero: row of sync action buttons. Wraps on narrow screens. */
 .sync-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* Library row actions — keep buttons in a single horizontal line, no wrap.
-   Nowrap ensures the row height stays consistent. */
+   v1.12.25: right-aligned with per-button constant widths.
+   Absent buttons render nothing (see menuButtonHtml) so the
+   present buttons collapse to the right edge of the cell. Each
+   button has a fixed min-width so its visible width stays
+   constant across rows — only the SET of buttons changes between
+   rows, never the individual button widths. v1.12.24's fixed-slot
+   spacers reserved horizontal space for absent buttons which
+   scattered the present buttons across the cell — the opposite
+   of the right-anchored layout the user wants. */
 .row-actions {
   display: flex; gap: 6px; flex-wrap: nowrap; align-items: center;
   justify-content: flex-end;
 }
 .row-actions .btn-tiny { white-space: nowrap; }
+.row-info-btn {
+  /* v1.12.25: ⓘ button is the narrow-width outlier. Override
+     .btn-tiny's 72px min-width down to a glyph-sized 30px so
+     the info pill stays compact next to the wider menu buttons. */
+  min-width: 30px !important;
+  padding: 4px 6px;
+  text-align: center;
+}
+/* v1.10.24 Option C: per-row menu buttons (SOURCE / PLACE / REMOVE).
+   Native <details>/<summary> popover; CSS positions the panel and a
+   global click-outside handler closes any open one. */
+.row-menu { position: relative; display: inline-block; }
+.row-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  /* v1.12.25: every menu button (SOURCE / PLACE / REMOVE) has the
+     same constant width regardless of which siblings are present.
+     With .row-actions justify-content: flex-end, present buttons
+     collapse to the right edge of the cell while keeping their
+     individual sizes stable. v1.12.24's per-label slot spacers
+     reserved horizontal space for ABSENT buttons which scattered
+     present buttons across the cell — opposite of intent. */
+  display: inline-block;
+  text-align: center;
+  box-sizing: border-box;
+  min-width: 78px;
+}
+.row-menu > summary::-webkit-details-marker { display: none; }
+.row-menu > summary::marker { content: ''; }
+.row-menu-danger > summary {
+  color: var(--red);
+  border-color: var(--red);
+}
+.row-menu-panel {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px;
+  /* v1.10.26: was var(--bg-deep) (undefined → transparent) which let
+     the panel bleed into the row below. Use --bg-elev-2 (the same
+     opaque tone we use for table headers) so the panel reads as a
+     proper popover. Z-index bumped to 100 so it sits above the
+     adjacent rows' content. */
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line-bright);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.55);
+  min-width: 160px;
+}
+.row-menu-panel .btn-tiny {
+  text-align: left;
+  width: 100%;
+  display: block;
+}
 
 /* Library page banner highlighting "N missing themes" available from ThemerrDB
    for the active tab. */
@@ -434,13 +1000,389 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .lib-col-type     { width: 80px; }
 .lib-col-mgd      { width: 70px; text-align: center; }
 .lib-col-id       { width: 70px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
-.lib-col-role     { width: 110px; }
+.lib-col-role     { width: 200px; }
 .lib-col-num      { width: 90px; text-align: center; font-variant-numeric: tabular-nums; }
-/* Constrain the role <select> so it stops eating horizontal space — the
-   value labels are short. */
-.lib-col-role select {
-  font-size: var(--t-tiny); padding: 4px 8px; width: auto; min-width: 100px;
+/* v1.11.6: A / 4K toggle pills replace the role <select>. Pills sit in a
+   horizontal flex row inside the role cell so adding additional flag
+   pills later (HDR? remux?) is a one-line change. */
+.lib-flag-group {
+  display: inline-flex; gap: 4px; align-items: center;
 }
+.lib-flag-pill {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border: 1px solid var(--fg-mute);
+  background: transparent;
+  color: var(--fg-mute);
+  padding: 3px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  text-transform: uppercase;
+  line-height: 1;
+  transition: background 80ms ease, color 80ms ease, border-color 80ms ease, transform 60ms ease;
+  user-select: none;
+}
+.lib-flag-pill:hover:not(:disabled) {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.lib-flag-pill:disabled {
+  opacity: 0.45; cursor: not-allowed;
+}
+.lib-flag-pill-anime.is-active {
+  background: rgba(255, 92, 168, 0.18);
+  color: #ff7ab8;
+  border-color: #ff7ab8;
+  box-shadow: 0 0 0 1px rgba(255, 122, 184, 0.25), 0 0 8px rgba(255, 122, 184, 0.18);
+}
+.lib-flag-pill-4k.is-active {
+  /* v1.11.9: gold instead of cyan — better separation from the green
+     dashboard accent, and reads as a "premium tier" affordance which
+     is what the 4K library role represents. */
+  background: rgba(255, 184, 74, 0.18);
+  color: #ffce6b;
+  border-color: #ffb84a;
+  box-shadow: 0 0 0 1px rgba(255, 184, 74, 0.30), 0 0 8px rgba(255, 184, 74, 0.22);
+}
+.lib-flag-pill:active:not(:disabled) { transform: translateY(1px); }
+
+/* v1.11.13: inline role label so the saved role (including 'standard' =
+   no pills active) is always visible. Updates live as pills toggle. */
+.lib-flag-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  color: var(--fg-dim);
+  margin-left: 8px;
+  letter-spacing: 0.4px;
+}
+
+/* v1.11.14: tint the SOURCE menu items so the action color matches
+   the SRC column badge for the state the action lands the row in.
+   Visual at-a-glance link between the action and its result. */
+.btn.lib-source-themerrdb {
+  color: var(--green-bright);
+  border-color: var(--green-deep);
+}
+.btn.lib-source-themerrdb:hover:not(:disabled) {
+  background: rgba(109,255,181,0.10);
+  border-color: var(--green-bright);
+}
+.btn.lib-source-user {
+  color: var(--violet);
+  border-color: rgba(196,109,255,0.55);
+}
+.btn.lib-source-user:hover:not(:disabled) {
+  background: rgba(196,109,255,0.10);
+  border-color: var(--violet);
+}
+.btn.lib-source-adopt {
+  color: var(--cyan);
+  border-color: rgba(109,211,255,0.5);
+}
+.btn.lib-source-adopt:hover:not(:disabled) {
+  background: rgba(109,211,255,0.10);
+  border-color: var(--cyan);
+}
+.btn.lib-source-manual {
+  color: var(--magenta);
+  border-color: rgba(255,122,214,0.4);
+}
+.btn.lib-source-cloud {
+  color: var(--amber);
+  border-color: rgba(255,184,74,0.5);
+}
+
+/* v1.11.20: compact single-row SRC legend on the library tabs. Each
+   badge re-uses the actual link-badge class from the SRC column so
+   the swatch is byte-identical to a real row. Long-form descriptions
+   live in the title= tooltip instead of a wall of inline text. */
+.src-key-compact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px 0;
+  padding: 6px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  background: var(--bg-elev);
+}
+/* v1.12.23: unified pill filter row used by TDB / SRC / DL / PL /
+   LINK. Replaces the per-axis `.src-key-compact` / `.tdb-key-compact`
+   variants — same flex layout, label slot, ALL/CLEAR action
+   buttons, and a row of axis-specific pill buttons in between. */
+.pill-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  /* v1.12.48: row gap dropped to 1px so the six rows stack
+     tightly. The divider above DL still provides visual
+     separation between the theme-axis and file-axis groups;
+     adjacent rows within a group don't need much breathing
+     room when each row is its own colored-label scanline. */
+  margin-top: 1px;
+  padding: 0 2px;
+  flex-basis: 100%;
+}
+/* v1.12.25: every direct child of a pill-filter-row is content-
+   sized — pre-fix LINK pills (which inherit from .link-glyph-*
+   classes designed for inline <span> use) stretched to full row
+   width when used as <button> flex items, rendering as bars
+   instead of small pills. */
+.pill-filter-row > * {
+  flex: 0 0 auto;
+}
+/* v1.12.25: every interactive pill across the five filter rows
+   shares the same height + vertical-rhythm so the rows scan as
+   a clean grid. Each pill type keeps its own width / padding
+   (TDB pills naturally wider than DL dots) but the y-axis
+   alignment is uniform. */
+.pill-filter-row .pill-filter-clear,
+.pill-filter-row .tdb-pill-btn,
+.pill-filter-row .src-key-btn,
+.pill-filter-row .state-pill-btn,
+.pill-filter-row .link-glyph,
+.pill-filter-row .ed-pill-btn {
+  /* v1.12.48: 22 -> 20px to recover vertical real-estate
+     across the six rows. Shrinking pill height by 2px ×
+     six rows saves 12px of total height without making
+     the click target uncomfortable (still 20px tall, well
+     above the 16px floor for a glyph chip). */
+  height: 20px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  /* v1.13.0: zero out per-pill margins so the row's flex
+     gap (5px) is the ONLY horizontal spacing. Pre-fix
+     .tdb-pill carried margin-left: 6px (inherited from
+     its row-level pill use), which stacked onto the
+     parent's gap and pushed TDB pills apart by 11px while
+     SRC / DL / PL / LINK / ED rows used the bare 5px gap.
+     Result: misaligned filter rows on /movies, /tv, /anime. */
+  margin: 0;
+}
+.pill-filter-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-right: 2px;
+  /* v1.12.45: bumped 56 -> 64px to account for "LINK:" being
+     the longest label + monospace letter-spacing. Every label
+     now fits in the column without expanding it, so all pill
+     rows have ALL/CLEAR buttons starting at exactly the same X
+     for a clean scannable grid.
+     v1.13.13: bumped 64 -> 72px to fit "PRESET:" (the new row
+     added in v1.13.11) without truncation, so PRESET's select
+     starts at the same X as ALL on every other row. */
+  min-width: 72px;
+  text-align: right;
+  padding-right: 6px;
+  font-weight: 600;
+  font-size: var(--t-tiny);
+  color: var(--fg);
+  opacity: 0.7;
+}
+/* v1.12.25 / v1.12.45: visual separator between the theme-axis
+   filters (TDB / SRC — describing what theme is associated)
+   and the file-axis filters (DL / PL / LINK — describing how
+   the theme file lives on disk). Solid 1px top border (was
+   dashed) for a calmer, more polished look — the dashed line
+   competed visually with the pill-filter-clear button border.
+   Slightly more breathing room above the divider. */
+.pill-filter-row.pill-filter-row-divider {
+  /* v1.12.48: divider tightened to keep the file-axis group
+     visually separated without consuming a full row-height of
+     dead space. 14/12 -> 8/6. */
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.pill-filter-clear {
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: var(--fg-mute);
+  font-size: var(--t-tiny);
+  font-family: var(--font-mono);
+  letter-spacing: 0.1em;
+}
+.pill-filter-clear:hover { color: var(--fg); border-color: var(--cyan); }
+/* DL / PL state pills as filter buttons. Mirrors the row's state
+   dot (.state-pill.on / .state-pill.broken) but rendered as a
+   button so it can be clicked. v1.12.25: explicit box-sizing so
+   the border-box width stays at 18px regardless of border. */
+.state-pill-btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: transparent;
+  border: 1px solid var(--line);
+  font-size: 10px;
+  line-height: 1;
+  padding: 0;
+  color: var(--fg-mute);
+  user-select: none;
+}
+.state-pill-btn-on   { color: var(--green); border-color: rgba(109,255,181,0.4); }
+.state-pill-btn-off  { color: var(--fg-mute); }
+/* v1.13.9: square-silhouette variant for the "no-state" filters on
+   the LINK + ED rows. Round dots already convey on/off/await/broken
+   for DL+PL+LINK+ED's actual states; the no-state pill needs to read
+   as "not a state" — a square distinguishes it from the dots without
+   the em-dash being misread as a separator. The em-dash glyph still
+   sits inside, just inside a square frame instead of a circle. */
+.state-pill-btn-square { border-radius: 2px; }
+.state-pill-btn-broken { color: var(--red); border-color: rgba(255,107,107,0.4); }
+/* v1.12.70: amber 'await' PL filter button — matches the amber
+   .state-pill.await dot in the PL column for rows where the
+   canonical exists but no placement does (post-DEL state). */
+.state-pill-btn-await { color: var(--amber); border-color: rgba(255,184,74,0.4); }
+/* v1.12.41: EDITION filter pill — amber/yellow to match the
+   .edition-pill row glyph the filter is selecting on. Sized
+   wider than .state-pill-btn since the label is text ("ED")
+   not a glyph. */
+.ed-pill-btn {
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 3px;
+  background: transparent;
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  line-height: 1;
+  color: var(--fg-mute);
+  user-select: none;
+}
+.ed-pill-btn-on {
+  color: var(--amber-bright);
+  border-color: rgba(255,184,74,0.45);
+  background: rgba(255,184,74,0.05);
+}
+.ed-pill-btn:hover { filter: brightness(1.25); }
+.ed-pill-btn.state-pill-btn-active {
+  box-shadow: 0 0 0 2px var(--cyan);
+  filter: brightness(1.3);
+}
+.state-pill-btn:hover { filter: brightness(1.25); }
+.state-pill-btn-active {
+  box-shadow: 0 0 0 2px var(--cyan);
+  filter: brightness(1.3);
+}
+/* v1.12.25: LINK pill buttons reuse the row's HL / C / M pill
+   styling but need button-specific overrides. The .link-glyph-*
+   classes were authored for inline <span> use in row cells; as
+   <button> children of a flex row they were stretching to full
+   width. Force inline-block sizing + content-width so each pill
+   stays compact. */
+.pill-filter-row .link-glyph {
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 22px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 0 8px;
+  width: auto;
+}
+.pill-filter-row .link-glyph:hover { filter: brightness(1.25); }
+.pill-filter-row .link-glyph.link-pill-btn-active,
+.pill-filter-row .state-pill-btn.link-pill-btn-active {
+  box-shadow: 0 0 0 2px var(--cyan);
+  filter: brightness(1.3);
+}
+/* v1.11.70: cursor: pointer (was: help) on the SRC legend badges
+   since v1.11.66 turned them all into <button> filters. The help
+   cursor lingered from the v1.11.20 read-only legend and beat the
+   newer .src-key-btn { cursor: pointer } rule on specificity. */
+.src-key-compact .link-badge { cursor: pointer; }
+.src-key-compact .muted { cursor: default; padding: 0 2px; }
+.src-key-label {
+  letter-spacing: 0.6px;
+  margin-right: 2px;
+}
+
+/* v1.11.66: SRC legend buttons toggle a src-letter filter. Visually
+   match the regular link-badge swatches; cursor: pointer + active
+   ring so the user sees their click landed. */
+.src-key-btn {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  padding: 2px 8px;
+  background: transparent;
+  user-select: none;
+}
+.src-key-btn:hover { filter: brightness(1.25); }
+.src-key-btn-active {
+  box-shadow: 0 0 0 2px var(--cyan);
+  filter: brightness(1.3);
+}
+.src-key-btn-none {
+  color: var(--fg-mute);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+}
+/* v1.12.6: faded-T pill for the THEMERRDB-only browse toggle.
+   Lives in the SRC pill row but represents a different axis (mode-
+   switch, not a per-row source filter), so the muted styling
+   distinguishes it from the colored T/U/A/M/P pills. Active state
+   gets the green T color back to match the regular T pill's
+   themerrdb branding when selected. */
+.src-key-btn-tdb-only {
+  color: var(--fg-mute);
+  border: 1px solid rgba(109,255,181,0.25);
+  border-radius: 3px;
+  opacity: 0.55;
+}
+.src-key-btn-tdb-only:hover { opacity: 0.85; }
+.src-key-btn-tdb-only.src-key-btn-active {
+  color: var(--green);
+  border-color: var(--green);
+  opacity: 1;
+  filter: brightness(1.1);
+}
+.src-key-clear {
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 2px 8px;
+  border-radius: 3px;
+  color: var(--fg-mute);
+  font-family: var(--font-mono);
+}
+.src-key-clear:hover { color: var(--fg); border-color: var(--cyan); }
+
+.lib-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
+  font-size: var(--t-tiny);
+  color: var(--fg-dim);
+  border-top: 1px dashed var(--line);
+  border-bottom: 1px dashed var(--line);
+  margin: 0 18px 0 18px;
+  padding: 8px 0;
+}
+.lib-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .lib-col-actions  { width: 120px; text-align: right; }
 .libraries-table td.lib-locations,
 .libraries-table th.lib-locations { overflow: hidden; text-overflow: ellipsis; }
@@ -451,9 +1393,80 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   border-radius: 50%;
   background: var(--fg-mute);
 }
+/* v1.13.13 (Option C): pulse-tint a state pill amber while a download
+   or place job for that row is in flight. Doesn't add a 4th DL state
+   to the legend — it's a transient cue that lifts during bulk
+   operations so the user can see which rows are working at this
+   second. The animation overrides whatever base state the dot is in
+   (gray off → amber pulsing), and clears the moment the job finishes
+   and the next loadLibrary() repaints with job_in_flight=null. */
+.state-pill-pending {
+  background: var(--amber) !important;
+  box-shadow: 0 0 6px var(--amber);
+  animation: state-pill-pulse 1.4s ease-in-out infinite;
+}
+@keyframes state-pill-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.92); }
+  50%      { opacity: 1;    transform: scale(1.08); }
+}
 .state-pill.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .state-pill.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .state-pill.bad { background: var(--red); box-shadow: 0 0 6px var(--red); }
+/* v1.12.65: 'await' PL state — canonical exists in motif's
+   downloads but no placement row is present (typically post-DEL
+   or post-mismatch). Amber so the row visually signals "action
+   required" — the user's next step is PLACE → PUSH TO PLEX (or
+   REMOVE → PURGE to drop the canonical). Matches the amber
+   .title-glyph-await glyph in the title cell so the row's two
+   attention signals agree at a glance. */
+.state-pill.await {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+/* v1.11.62: 'broken' DL state — local_files row exists but the
+   canonical was deleted out from under motif. The placement in the
+   Plex folder is still there; user uses RESTORE FROM PLEX to
+   recover. Visually distinct from .on (green) and .warn (amber)
+   so the row reads at a glance. */
+.state-pill.broken {
+  background: var(--red);
+  box-shadow: 0 0 6px var(--red);
+  position: relative;
+}
+.state-pill.broken::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: -2px; right: -2px;
+  height: 1px;
+  background: var(--bg);
+  transform: rotate(-45deg);
+}
+/* v1.11.99: mismatch DL — canonical exists but doesn't match the
+   placement file (user uploaded / set URL over an existing placement
+   without resolving). Amber so the row visually nags but doesn't
+   read as an actual error like .broken. */
+.state-pill.mismatch {
+  background: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+/* v1.12.17: M pill for the LINK column when canonical and placement
+   diverged. Pill-styled to match the v1.12.16 HL/C pills; red so
+   the user can scan a row and immediately see "this is a problem
+   state" — distinct from HL (amber, healthy) and C (violet,
+   sub-optimal-but-OK). The M letter overlaps with the SRC
+   "Manual sidecar" pill but they're a column apart and the
+   colors (red here vs magenta there) keep them disambiguated. */
+.link-glyph-mismatch {
+  display: inline-block;
+  padding: 1px 4px 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--red);
+  border: 1px solid rgba(255,107,107,0.45);
+  background: rgba(255,107,107,0.08);
+}
 
 .title-cell {
   display: flex; align-items: center; gap: 8px;
@@ -470,13 +1483,33 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .title-glyph:hover { filter: brightness(1.4); }
 .title-glyph-fail    { color: var(--red);    text-shadow: 0 0 6px rgba(255,107,107,0.45); }
-.title-glyph-update  { color: var(--amber);  text-shadow: 0 0 6px rgba(255,184,74,0.45); }
-.title-glyph-pending { color: var(--cyan);   text-shadow: 0 0 6px rgba(109,211,255,0.55);
-                       display: inline-block; animation: spin-glyph 1.4s linear infinite; }
-.title-glyph-await   { color: var(--cyan);   text-shadow: 0 0 6px rgba(109,211,255,0.55);
+/* v1.11.96: ↑ update glyph in blue. Was amber; moved to --blue so
+   "ThemerrDB has a new URL for this row" reads as informational
+   (act if you want, no urgency) and visually distinct from amber's
+   "broken state" connotation (broken hardlinks, etc). */
+.title-glyph-update  { color: var(--blue);   text-shadow: 0 0 6px rgba(109,143,255,0.45); }
+/* v1.12.78: action variant of the update glyph — used for the blue !
+   on rows that need an ACCEPT UPDATE / KEEP CURRENT decision. Pulses
+   like the red fail ! and amber await ! so the three "action
+   required" glyphs share one visual treatment, color-coded by kind. */
+.title-glyph-action  { font-weight: 700;
+                       animation: fail-pulse 2s ease-in-out infinite; }
+/* v1.13.14: .title-glyph-pending removed. The in-flight spinner
+   that used this class was dropped from the title-cell glyph
+   hierarchy — DL/PL .state-pill-pending in the columns now
+   covers transient operational state. */
+/* v1.12.65: await glyph color flipped from cyan → amber to read
+   as "action required" instead of "informational". Matches the
+   new amber .state-pill.await in the PL column so the row's
+   two attention signals tell the same story. */
+.title-glyph-await   { color: var(--amber);  text-shadow: 0 0 6px rgba(255,184,74,0.55);
                        text-decoration: none; font-weight: 700;
                        animation: fail-pulse 2s ease-in-out infinite; }
-@keyframes spin-glyph { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+/* v1.11.62: dlBroken cycle glyph — clicks through to the dl_missing filter. */
+.title-glyph-broken  { color: var(--amber);  text-shadow: 0 0 6px rgba(255,184,74,0.55);
+                       text-decoration: none; font-weight: 700; }
+/* v1.13.14: @keyframes spin-glyph removed — the only consumer
+   (.title-glyph-pending) was retired with the in-flight spinner. */
 
 /* Override dialog: extra polish for the modal body */
 .dlg-head {
@@ -517,6 +1550,19 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   padding: 8px 0;
 }
 .event-stream-tall { max-height: 700px; }
+
+/* v1.10.37: jobs table on /queue scrolls within a fixed-height container
+   so it stays the same size as the event-stream pane next to it. Sticky
+   thead keeps column labels visible while scrolling. */
+.jobs-scroll {
+  max-height: 700px;
+  overflow-y: auto;
+}
+.jobs-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
 .event-stream li {
   padding: 4px 18px;
   display: grid;
@@ -567,6 +1613,61 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 .dlg-grid { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; font-size: var(--t-small); }
 .dlg-grid dt { color: var(--fg-dim); }
 .dlg-grid dd { color: var(--fg); word-break: break-all; }
+/* v1.12.90: in-card audio preview. Width-constrained so the native
+   controls don't blow out the dialog grid; height matches the
+   one-line text rows above so the layout doesn't jump when audio
+   loads metadata. */
+.info-audio { width: 100%; max-width: 480px; height: 32px; }
+/* v1.13.8 (#5): TDB preview button + iframe. The button collapses
+   to a single small chip until clicked; on click it replaces with
+   a 320x180 YouTube embed clipped to 30s. Distinct visual identity
+   from the on-disk .info-audio above so the user reads them as
+   different things ("play what's on disk" vs "preview what TDB
+   suggests"). */
+/* v1.13.8 (Phase D): operational cache gauge on the settings page.
+   Surfaces <db_dir>/cache/ size so the user can spot Phase A's
+   tarball, Phase B's git mirror, etc. growing without surprise.
+   Read-only display; no GC trigger here — that's deferred until
+   real-world growth proves it needs automation. */
+.cache-gauge {
+  margin-top: 18px;
+  padding: 10px 14px;
+  border-left: 2px solid var(--cyan);
+  background: rgba(109,211,255,0.04);
+  border-radius: 0 3px 3px 0;
+}
+.cache-gauge-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.cache-gauge-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.18em;
+  color: var(--cyan);
+  font-weight: 700;
+}
+.cache-gauge-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-size: var(--t-tiny);
+  font-family: var(--font-mono);
+}
+.cache-gauge-list li {
+  display: flex;
+  justify-content: space-between;
+  padding: 2px 0;
+  color: var(--fg-mute);
+}
+.cache-gauge-list .cache-gauge-bytes { font-variant-numeric: tabular-nums; }
+
+/* v1.13.16: .info-tdb-preview-btn / .info-tdb-preview-iframe removed.
+   The TDB preview iframe was killed because YouTube blocks embedding
+   on many videos (Error 153). Users can still play on-disk audio in
+   the INFO card and click the YouTube link to verify TDB's URL. */
 .dlg-actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
 .dlg-form { display: flex; gap: 8px; margin-top: 8px; }
 .dlg-form .input { flex: 1; }
@@ -681,6 +1782,12 @@ pre code, .codeblock {
   padding: 2px 6px;
   border: 1px solid;
   border-radius: 0;
+  /* v1.11.25: explicit default cursor so SRC column badges don't pick
+     up the 'help' cursor from any inherited/UA-stylesheet rule that
+     fires on title= attributes. The legend block (.src-key-compact)
+     overrides this back to cursor:help since hover-for-info is the
+     intent there. */
+  cursor: default;
 }
 .link-badge-hardlink {
   color: var(--green);
@@ -703,11 +1810,49 @@ pre code, .codeblock {
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 700;
-  width: 100%;
   text-align: center;
+  /* v1.12.25: width: 100% removed. With table-layout: fixed on
+     #library-table, the LINK column is locked at .col-state width
+     and the pill's 100% inner width clipped the "HL" label. The
+     pill now sizes to its content; the td is centered so the pill
+     centers in its column. */
 }
-.link-glyph-hardlink { color: var(--green); }
-.link-glyph-copy { color: var(--amber); }
+/* v1.12.16: HL/C link-glyphs styled as boxed pills, matching the
+   SRC and TDB pill rhythm for visual consistency. HL gets amber
+   (orange — efficient, primary state). C gets violet (clearly
+   distinct hue family — fallback state, "still works, less
+   optimal"). The colors don't collide with their column's
+   neighbors: SRC's P is also amber and U is also violet, but
+   they're a column apart and the badge text disambiguates. */
+.link-glyph-hardlink {
+  display: inline-block;
+  /* v1.12.30: padding-right reduced 5 -> 4px to compensate for
+     the trailing letter-spacing after the final character — the
+     0.1em (~0.9px) of empty space added after the last letter
+     pushed the visible "HL" to the left of the pill's geometric
+     center, which the user read as the pill being "too large to
+     the right". Asymmetric padding cancels the trailing space
+     so the visible glyphs sit centered inside the pill border. */
+  padding: 1px 4px 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--orange);
+  border: 1px solid rgba(255,122,58,0.5);
+  background: rgba(255,122,58,0.08);
+}
+.link-glyph-copy {
+  display: inline-block;
+  padding: 1px 4px 1px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--violet);
+  border: 1px solid rgba(196,109,255,0.45);
+  background: rgba(196,109,255,0.08);
+}
 .link-glyph-none { color: var(--fg-mute); }
 
 .link-badge-manual {
@@ -715,23 +1860,163 @@ pre code, .codeblock {
   border-color: rgba(255,122,214,0.4);
   background: rgba(255,122,214,0.06);
 }
-/* U badge: motif-managed user upload/URL — distinguished from the M
-   sidecar (magenta) by using a yellow/gold accent. Same visual weight,
-   different hue so the two states don't blur together at a glance. */
+/* v1.10.14 palette (per user feedback):
+     T = green   (motif manages from ThemerrDB)
+     U = blue    (user-provided: upload or manual YouTube URL)
+     A = cyan    (motif adopted a sidecar; file is source of truth)
+     M = magenta (unmanaged sidecar)
+     P = yellow  (Plex agent / cloud-supplied)
+   The intent is for Plex-supplied themes (P) to look authoritative
+   (yellow stands out vs. motif-managed greens/blues), since v1.10.14
+   shifts to a "Plex-first" default — motif respects what Plex provides
+   unless the user explicitly opts in to override. */
 .link-badge-user {
-  color: #ffd86b;
-  border-color: rgba(255,216,107,0.5);
-  background: rgba(255,216,107,0.08);
+  color: var(--violet);
+  border-color: rgba(196,109,255,0.55);
+  background: rgba(196,109,255,0.10);
+}
+.link-badge-themerrdb {
+  color: var(--green-bright);
+  border-color: var(--green-deep);
+}
+.link-badge-adopt {
+  color: var(--cyan);
+  border-color: rgba(109,211,255,0.5);
+  background: rgba(109,211,255,0.08);
 }
 .link-badge-cloud {
-  color: var(--cyan);
-  border-color: rgba(109,211,255,0.4);
-  background: rgba(109,211,255,0.05);
+  color: var(--amber);
+  border-color: rgba(255,184,74,0.5);
+  background: rgba(255,184,74,0.10);
 }
 .link-badge-orphan {
   color: var(--green);
   border-color: rgba(143,228,150,0.4);
   background: rgba(143,228,150,0.06);
+}
+/* v1.10.17: edition pill on the title cell. Subtle yellow border
+   so the eye can quickly group rows that share title+year by
+   their edition (Director's Cut, Extended, IMAX, etc.). */
+.edition-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--amber-bright);
+  border: 1px solid rgba(255,184,74,0.35);
+  background: rgba(255,184,74,0.05);
+  vertical-align: middle;
+}
+/* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
+   overwrite something the user might care about; info (cyan) for
+   policy-driven holds; muted for transient queued state. */
+.pending-reason-warn  { color: var(--amber); font-size: var(--t-tiny); }
+.pending-reason-info  { color: var(--cyan); font-size: var(--t-tiny); }
+.pending-reason-muted { color: var(--fg-mute); font-size: var(--t-tiny); }
+/* v1.10.33: at-a-glance 'TDB' pill on each library row so users can
+   see whether ThemerrDB has the title without opening the SOURCE
+   menu. Green for tracked, dim grey for not. Slightly smaller than
+   the edition pill so it doesn't compete visually. */
+.tdb-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.tdb-pill-yes {
+  color: var(--green);
+  border: 1px solid rgba(109,255,181,0.35);
+  background: rgba(109,255,181,0.06);
+}
+.tdb-pill-no {
+  color: var(--fg-mute);
+  border: 1px solid var(--line);
+  background: transparent;
+}
+/* v1.10.40: dead-URL state — TDB has the title but YouTube returned
+   a permanent failure (video removed / private / age-restricted /
+   geo-blocked). Red so users notice and reach for SET URL. */
+.tdb-pill-dead {
+  color: var(--red);
+  border: 1px solid rgba(255,107,107,0.45);
+  background: rgba(255,107,107,0.08);
+}
+/* v1.10.42: cookies-required state — TDB URL is fine but YouTube
+   demands a sign-in cookie. User-fixable (drop cookies.txt at the
+   configured path) so amber, not red. */
+.tdb-pill-cookies {
+  color: var(--amber);
+  border: 1px solid rgba(255,184,74,0.45);
+  background: rgba(255,184,74,0.08);
+}
+/* v1.13.1 (Phase C): dropped-from-TDB state — LizardByte used to
+   publish this title and has stopped. The URL still works (else
+   .tdb-pill-dead would have ranked higher); only the upstream
+   metadata went away. Muted gray distinguishes it from
+   .tdb-pill-no (never tracked) and .tdb-pill-dead (broken URL). */
+.tdb-pill-dropped {
+  color: var(--fg-mute);
+  border: 1px solid rgba(180,180,180,0.35);
+  background: rgba(180,180,180,0.06);
+}
+/* v1.11.96: pending-update state — ThemerrDB has a new URL for this
+   theme. Blue ties together with .title-glyph-update, .chip-info,
+   and .btn-info. Distinct from green TDB-yes so the user can scan a
+   library page and immediately see which rows have updates without
+   hunting for the small ↑ glyph. */
+.tdb-pill-update {
+  color: var(--blue);
+  border: 1px solid rgba(109,143,255,0.45);
+  background: rgba(109,143,255,0.08);
+}
+/* v1.12.7: TDB pill multi-select filter row. Mirrors .src-key-compact
+   below — ALL on the left, CLEAR on the right, the colored TDB pills
+   in between act as toggle switches. Active = box-shadow ring
+   matching the pill's color so the active state reads at a glance
+   alongside the muted-but-bordered inactive state. */
+.tdb-key-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 0;
+  padding: 0 2px;
+}
+.tdb-key-label {
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+.tdb-pill-btn {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  user-select: none;
+  /* Native button reset — pills inherit their color/border/bg from
+     the same .tdb-pill-yes / .tdb-pill-update / etc. classes used
+     by the row-level pill render, so visual identity stays
+     consistent. */
+}
+.tdb-pill-btn:hover { filter: brightness(1.25); }
+.tdb-pill-btn-active {
+  filter: brightness(1.3);
+  box-shadow: 0 0 0 2px var(--cyan);
+}
+/* THEMERRDB-only items: title is in ThemerrDB but not in Plex. Same hue
+   as the regular T badge but de-emphasized — informational rows aren't
+   actionable so they shouldn't compete with normal rows. */
+.link-badge-themerrdb-only {
+  color: var(--green-deep);
+  border-color: rgba(109,255,181,0.25);
+  background: transparent;
+  opacity: 0.7;
+}
+.row-not-in-plex td {
+  opacity: 0.85;
 }
 
 /* ---- Failure glyphs ---- */
@@ -885,6 +2170,684 @@ pre code, .codeblock {
 }
 .form-hint a { color: var(--cyan); }
 .form-hint .warn { color: var(--amber); font-weight: 700; letter-spacing: 0.08em; }
+/* v1.12.54: amber-bordered variant for inline warning hints
+   (e.g. SET URL match-detection). Visually distinct from the
+   ambient gray .form-hint so the user can't miss it. */
+.form-hint-warn {
+  color: var(--amber);
+  border-left: 2px solid var(--amber);
+  padding-left: 8px;
+  margin-top: 8px;
+}
+
+/* v1.12.97: live thumbnail preview in the SET URL dialog. Shows the
+   pasted YouTube video's thumbnail + oembed-fetched title so the user
+   can confirm they got the right video before submitting. The block
+   stays [hidden] until a valid YouTube ID is detected in the input. */
+.manual-url-preview {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-top: 10px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+}
+/* v1.12.101: explicit [hidden] override. Pre-fix the .manual-url-preview
+   class set display:flex with the same specificity as the user-agent
+   `[hidden] { display: none }` rule — the class won the cascade
+   (later in stylesheet order) so `preview.hidden = true` left the
+   block visible. Symptoms: preview rendered on dialog open even
+   before the user typed anything; preview survived clearing the
+   input; preview persisted across cancel + reopen. The explicit
+   override pins the hidden semantic to display:none regardless of
+   class specificity. */
+.manual-url-preview[hidden] {
+  display: none;
+}
+.manual-url-preview-link {
+  flex-shrink: 0;
+}
+.manual-url-preview-thumb {
+  width: 120px;
+  height: 68px;
+  object-fit: cover;
+  border-radius: 2px;
+  background: rgba(109, 211, 255, 0.05);
+}
+.manual-url-preview-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.manual-url-preview-title {
+  word-break: break-word;
+}
+.manual-url-preview-vid {
+  font-family: var(--font-mono);
+  opacity: 0.7;
+}
+
+/* v1.12.56: pending-update diff section in the INFO card.
+   Side-by-side tiles (current / proposed) so the user can
+   pre-validate ACCEPT UPDATE — thumbnails are static from
+   img.youtube.com, titles hydrate via the /api/youtube/oembed
+   proxy. */
+.diff-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.diff-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.diff-section-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  color: var(--blue);
+}
+.diff-tiles {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 12px;
+  align-items: stretch;
+}
+.diff-tile {
+  border: 1px solid var(--line);
+  background: var(--bg);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.diff-tile-empty {
+  justify-content: center;
+  align-items: center;
+  color: var(--fg-mute);
+}
+.diff-tile-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.18em;
+  font-weight: 700;
+}
+.diff-tile-thumb-link {
+  display: block;
+  line-height: 0;
+}
+.diff-tile-thumb {
+  width: 100%;
+  display: block;
+  border: 1px solid var(--line);
+  transition: border-color 0.12s;
+}
+.diff-tile-thumb-link:hover .diff-tile-thumb {
+  border-color: var(--cyan);
+}
+.diff-tile-title {
+  font-size: var(--t-tiny);
+  line-height: 1.4;
+  word-break: break-word;
+}
+.diff-arrow {
+  align-self: center;
+  font-family: var(--font-mono);
+  font-size: 1.4em;
+  color: var(--blue);
+  padding: 0 4px;
+  user-select: none;
+}
+@media (max-width: 600px) {
+  .diff-tiles { grid-template-columns: 1fr; }
+  .diff-arrow { transform: rotate(90deg); padding: 8px 0; }
+}
+
+/* v1.12.71: TRY THIS NEXT recovery section in the INFO card.
+   Renders only when the row has an active failure_kind. Lists
+   ranked recovery options (RE-DOWNLOAD / SET URL / UPLOAD MP3 /
+   ACK FAILURE / etc.) tone-coded to motif's source palette.
+   Non-interactive "info" entries (e.g. "DROP cookies.txt") render
+   as styled tiles instead of buttons to avoid implying clickable. */
+.recovery-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.recovery-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.recovery-section-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  color: var(--amber);
+}
+.recovery-section-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: stretch;
+}
+/* v1.12.92: dedicated line for the post-ack note so the header's
+   vertical size doesn't grow when ack happens. Always rendered (an
+   empty <p> with reserved height when not acked) so the section
+   doesn't shift on toggle. */
+.recovery-section-note {
+  margin: 0 0 10px 0;
+  line-height: 1.4;
+  min-height: 1.4em;
+}
+.recovery-section-note-empty {
+  /* Same height as the populated note so toggling on/off doesn't
+     reflow the buttons below. visibility:hidden keeps the element
+     in the layout but hides it from screen readers + visuals. */
+  visibility: hidden;
+}
+.recovery-option-btn {
+  flex: 0 0 auto;
+}
+.recovery-option-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.recovery-option-info {
+  flex: 1 1 100%;
+  border: 1px dashed var(--line-bright);
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.recovery-option-label {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  font-weight: 700;
+  color: var(--cyan);
+}
+.recovery-option-tip {
+  line-height: 1.5;
+}
+
+/* v1.12.66: per-row event timeline in the INFO card. Collapsed by
+   default (native <details>) so the timeline stays out of the way
+   on rows the user isn't debugging; click-to-expand surfaces the
+   full audit trail without leaving the dialog. */
+.history-section {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.history-section > summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 0;
+}
+.history-section > summary::-webkit-details-marker { display: none; }
+.history-section-title {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.15em;
+  color: var(--cyan);
+}
+.history-section[open] .history-section-title { color: var(--green-bright); }
+/* v1.12.83: CLEAR button in the // HISTORY / // PROVENANCE summary
+   right-aligns past the section title + count text. Click on the
+   button is intercepted in JS (preventDefault + stopPropagation
+   would be cleanest but the dispatcher's preventDefault already
+   stops the toggle since the click target is the button, not the
+   summary itself for native details semantics — verified visually). */
+.info-clear-btn {
+  margin-left: auto;
+}
+.history-body {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 480px;
+  overflow-y: auto;
+}
+.history-row {
+  border-left: 2px solid var(--line);
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.history-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+}
+.history-ts { color: var(--fg-dim); }
+.history-level {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: var(--t-tiny);
+}
+.history-level-info  { color: var(--cyan);  border: 1px solid rgba(109,211,255,0.35); }
+.history-level-warn  { color: var(--amber); border: 1px solid rgba(255,184,74,0.4); }
+.history-level-error { color: var(--red);   border: 1px solid rgba(255,107,107,0.4); }
+.history-component { font-family: var(--font-mono); }
+.history-msg {
+  margin-top: 4px;
+  line-height: 1.5;
+  font-size: var(--t-tiny);
+}
+.history-detail {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 0.78em;
+  line-height: 1.4;
+  color: var(--fg-dim);
+  overflow-x: auto;
+  white-space: pre;
+  max-height: 240px;
+}
+
+/* v1.12.67: per-section coverage table on the dashboard.
+   Compact density (smaller padding than the default .table) since
+   it's a summary view, not the primary library grid. Right-aligned
+   numeric columns with tabular-nums so the digits line up. Whole
+   row is clickable with hover highlight so the drill-through is
+   obvious. */
+.table-compact th,
+.table-compact td {
+  padding: 6px 10px;
+}
+.table-compact .col-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  width: 90px;
+}
+.table-compact .col-num b { font-weight: 700; color: var(--fg); }
+.table-compact .accent-green { color: var(--green-bright); }
+.table-compact .accent       { color: var(--blue); }
+.table-compact .accent-red   { color: var(--red); }
+.section-coverage-row {
+  cursor: pointer;
+  transition: background 0.12s;
+}
+/* v1.13.3: TYPE column reads as two stacked tokens (type on top,
+   variant below) so MOVIES/TV/ANIME and STD/4K stack consistently
+   regardless of column width. Pre-fix the inline "TYPE · VARIANT"
+   wrapped after the bullet on narrow rows but stayed inline on
+   wider ones — visually inconsistent across the table. */
+.col-section-type {
+  white-space: nowrap;
+  line-height: 1.15;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+.section-type-main {
+  display: block;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.12em;
+  color: var(--fg-mute);
+}
+.section-type-sub {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  margin-top: 1px;
+  opacity: 0.7;
+}
+.section-coverage-row:hover {
+  background: rgba(109, 211, 255, 0.06);
+}
+.section-coverage-row:hover td:first-child {
+  color: var(--cyan);
+}
+/* v1.12.120: cells with their own click target (FAILURES /
+   PENDING counts that drill into a pre-filtered library view).
+   Underline-on-hover signals the override; the row's default
+   landing still works elsewhere. */
+.section-coverage-row td.col-clickable {
+  cursor: pointer;
+  text-decoration: underline dotted transparent;
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.12s, background 0.12s;
+}
+.section-coverage-row td.col-clickable:hover {
+  text-decoration-color: currentColor;
+  background: rgba(109, 211, 255, 0.10);
+}
+
+/* v1.13.2 (#1): sync history sparkline. Each bar is one sync run;
+   color encodes the transport that ran, modifier classes flag
+   no-op (304/no-new-commits) and fallback runs. The chart reads
+   left-to-right (oldest → newest). */
+/* v1.13.16 (B1): bar chart retired in favor of a sparse 5-row table.
+   The .sync-history-bar* classes are kept for one release in case
+   anyone wants to roll back; renderSyncHistory no longer emits them.
+   Containers stay so the dashboard layout is unchanged. */
+.sync-history-bars { padding: 0; }
+
+.sync-hist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-tiny);
+  font-variant-numeric: tabular-nums;
+}
+.sync-hist-table thead th {
+  text-align: left;
+  padding: 4px 10px;
+  letter-spacing: 0.14em;
+  color: var(--fg-mute);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
+}
+.sync-hist-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.04);
+}
+.sync-hist-table tbody tr:last-child td { border-bottom: none; }
+
+.sync-hist-when     { color: var(--fg-dim); white-space: nowrap; }
+.sync-hist-tx       { white-space: nowrap; }
+.sync-hist-dur      { color: var(--fg); white-space: nowrap; }
+.sync-hist-changes  { color: var(--fg); }
+.sync-hist-status-cell { white-space: nowrap; }
+
+.sync-hist-transport {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+}
+.sync-hist-transport-git      { color: var(--cyan);    background: rgba(109,211,255,0.08); }
+.sync-hist-transport-database { color: var(--magenta); background: rgba(255,92,232,0.08); }
+.sync-hist-transport-remote   { color: var(--fg);      background: rgba(255,255,255,0.04); }
+
+.sync-hist-status {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+}
+.sync-hist-status-ok       { color: var(--green);  background: rgba(109,255,181,0.08); }
+.sync-hist-status-noop     { color: var(--fg-mute);background: rgba(255,255,255,0.04); }
+.sync-hist-status-fallback { color: var(--amber);  background: rgba(255,184,74,0.08); }
+.sync-hist-status-failed   { color: var(--red);    background: rgba(255,107,107,0.08); }
+.sync-history-summary {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  font-size: var(--t-tiny);
+}
+.sync-history-sum {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.sync-history-sum-label {
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+.sync-history-sum-git      .sync-history-sum-label { color: var(--cyan); }
+.sync-history-sum-database .sync-history-sum-label { color: var(--magenta); }
+.sync-history-sum-remote   .sync-history-sum-label { color: var(--fg-mute); }
+
+/* v1.13.22: COVERAGE COMPARISON — per-tab horizontal stacked bars
+   showing themed (any source) / TDB-available-but-unthemed / no-TDB.
+   Each row reads top-to-bottom: tab label + headline ratio, then
+   the segmented bar, then a comma-separated legend strip with
+   exact counts. Color encoding mirrors the existing palette: green
+   for themed (the "covered" cohort), amber for "motif can help",
+   muted gray for "motif can't help". */
+.coverage-comparison-body {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  padding: 18px;
+}
+/* v1.13.27: rows are now <a> click-throughs to the matching library
+   tab. Inherit color so the green-on-black palette stays intact;
+   drop the default underline; show a subtle hover. */
+.coverage-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.coverage-row:hover { opacity: 0.92; }
+.coverage-row:hover .coverage-row-tab { color: var(--fg); }
+.coverage-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.14em;
+}
+.coverage-row-tab { color: var(--fg-dim); font-weight: 600; }
+.coverage-row-ratio {
+  color: var(--fg);
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+.coverage-row-pct { color: var(--green-bright); margin-left: 4px; }
+.coverage-bar {
+  display: flex;
+  height: 14px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.coverage-bar-seg { height: 100%; transition: flex-basis 0.4s ease; }
+.coverage-bar-seg-themed    { background: var(--green-bright); }
+.coverage-bar-seg-available { background: var(--amber); }
+.coverage-bar-seg-no-tdb    { background: var(--fg-mute); opacity: 0.5; }
+.coverage-row-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  font-size: var(--t-tiny);
+  color: var(--fg-dim);
+}
+.coverage-legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.coverage-legend-swatch {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 2px;
+}
+.coverage-legend-swatch-themed    { background: var(--green-bright); }
+.coverage-legend-swatch-available { background: var(--amber); }
+.coverage-legend-swatch-no-tdb    { background: var(--fg-mute); opacity: 0.5; }
+.coverage-legend-count { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+/* v1.13.21: SOURCE BREAKDOWN — donut chart + click-to-filter
+   legend. Slices are SVG circles with stroke-dasharray sliced
+   into percentages of the 100-unit-circumference (r=15.915).
+   Color-coded to match the row SRC pill palette so the chart and
+   the per-row glyphs read as the same axis. The legend entries
+   are buttons; clicking one toggles its slice off (dimmed +
+   excluded from the center total). */
+.source-breakdown-body {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 24px;
+  align-items: center;
+  padding: 18px;
+}
+@media (max-width: 700px) {
+  .source-breakdown-body { grid-template-columns: 1fr; }
+  .source-breakdown-chart { justify-self: center; }
+}
+.source-breakdown-chart { display: flex; justify-content: center; }
+.source-breakdown-chart svg {
+  width: 200px; height: 200px;
+  transform: rotate(-90deg);
+}
+.source-pie-ring {
+  fill: transparent;
+  stroke: var(--bg-elev-2);
+  stroke-width: 3;
+}
+.source-pie-slice {
+  fill: transparent;
+  stroke-width: 3;
+  transition: stroke-dasharray 0.4s ease, opacity 0.2s ease;
+}
+.source-pie-slice.dim { opacity: 0.18; }
+.source-pie-center-num {
+  font-family: var(--font-display);
+  font-size: 5px;
+  fill: var(--green-bright);
+  transform: rotate(90deg);
+  transform-origin: 21px 21px;
+}
+.source-pie-center-label {
+  font-size: 2px;
+  letter-spacing: 0.16em;
+  fill: var(--fg-mute);
+  transform: rotate(90deg);
+  transform-origin: 21px 21px;
+}
+/* Letter palette mirrors the SRC row pills (T green, U violet,
+   A cyan, M magenta, P amber, "-" muted). */
+.source-pie-T { stroke: var(--green-bright); }
+.source-pie-U { stroke: var(--violet); }
+.source-pie-A { stroke: var(--cyan); }
+.source-pie-M { stroke: var(--magenta); }
+.source-pie-P { stroke: var(--amber); }
+.source-pie-X { stroke: var(--fg-mute); } /* "no theme" / dash */
+
+.source-pie-T-text { color: var(--green-bright); }
+.source-pie-U-text { color: var(--violet); }
+.source-pie-A-text { color: var(--cyan); }
+.source-pie-M-text { color: var(--magenta); }
+.source-pie-P-text { color: var(--amber); }
+.source-pie-X-text { color: var(--fg-mute); }
+
+.source-legend-swatch-T { background: var(--green-bright); }
+.source-legend-swatch-U { background: var(--violet); }
+.source-legend-swatch-A { background: var(--cyan); }
+.source-legend-swatch-M { background: var(--magenta); }
+.source-legend-swatch-P { background: var(--amber); }
+.source-legend-swatch-X { background: var(--fg-mute); }
+
+.source-breakdown-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 18px;
+  font-size: var(--t-tiny);
+}
+.source-legend-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  background: transparent;
+  border: 1px solid transparent;
+  padding: 6px 8px;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+}
+.source-legend-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: var(--line);
+}
+.source-legend-item.off {
+  opacity: 0.4;
+  text-decoration: line-through;
+  text-decoration-color: var(--fg-mute);
+}
+.source-legend-swatch {
+  display: inline-block;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+}
+.source-legend-letter {
+  font-weight: 700;
+  width: 14px;
+  text-align: center;
+}
+.source-legend-name { color: var(--fg-dim); flex: 1; }
+.source-legend-count {
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.source-legend-pct {
+  color: var(--fg-mute);
+  font-size: 10px;
+  margin-left: 4px;
+}
+
+/* v1.13.3 (Issue 4): scope chip row on the INFO card. Surfaces
+   4K-vs-Standard, the Plex section title, and the edition tag
+   (parsed out of the placement's {edition-X} folder fragment) so
+   the user can identify which row's INFO they're looking at
+   without inferring from a long folder path. */
+.info-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+  margin-bottom: 14px;
+}
+.info-scope-chip {
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.info-scope-chip-standard {
+  border: 1px solid rgba(109,255,181,0.4);
+  color: var(--green);
+  background: rgba(109,255,181,0.06);
+}
+.info-scope-chip-fourk {
+  border: 1px solid rgba(255,184,74,0.4);
+  color: var(--amber);
+  background: rgba(255,184,74,0.06);
+}
+.info-scope-chip-section {
+  border: 1px solid var(--line);
+  color: var(--fg-mute);
+  background: transparent;
+  font-weight: 400;
+}
+.info-scope-chip-edition {
+  border: 1px solid rgba(255,122,214,0.4);
+  color: var(--magenta);
+  background: rgba(255,122,214,0.06);
+}
 
 .form-env-badge {
   font-size: var(--t-tiny);
@@ -911,6 +2874,10 @@ pre code, .codeblock {
 }
 .form-status.ok { color: var(--green); }
 .form-status.err { color: var(--red); }
+/* v1.13.2 (#3): pre-flight probe result tints. Match the OK/ERR
+   palette so the visual language stays consistent. */
+.form-status.form-status-ok { color: var(--green); }
+.form-status.form-status-fail { color: var(--red); }
 
 /* ---- Disabled inputs (env-overridden) ---- */
 .input:disabled, select.input:disabled {

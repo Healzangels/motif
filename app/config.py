@@ -60,6 +60,12 @@ class Settings:
         self._config_file = ConfigFile(self._config_dir / "motif.yaml")
         self._lock = threading.RLock()
         self._cfg: MotifConfig = self._config_file.load()
+        # v1.11.94: monotonic counter bumped on every save/reload so
+        # consumers caching computed state (e.g. the worker's
+        # FolderIndex) can detect that settings have changed and
+        # invalidate. Cheap to read; no IPC required since worker +
+        # API share this Settings instance in-process.
+        self._revision: int = 0
 
     # ---- Config file passthrough ----
 
@@ -77,6 +83,7 @@ class Settings:
         new = self._config_file.load()
         with self._lock:
             self._cfg = new
+            self._revision += 1
         return new
 
     def save(self, cfg: MotifConfig, *, updated_by: str) -> None:
@@ -84,6 +91,14 @@ class Settings:
         self._config_file.save(cfg, updated_by=updated_by)
         with self._lock:
             self._cfg = self._config_file.load()  # re-read so env overrides re-apply
+            self._revision += 1
+
+    @property
+    def revision(self) -> int:
+        """v1.11.94: monotonic counter bumped on every save/reload.
+        Consumers cache against this value to detect setting changes."""
+        with self._lock:
+            return self._revision
 
     def env_overrides(self) -> dict[str, str]:
         return env_overrides_present()
@@ -115,23 +130,54 @@ class Settings:
     def themes_dir(self) -> Path | None:
         """The configured themes output directory, or None if not yet set
         on first run. Consumers should check `is_paths_ready()` before
-        attempting any download/placement."""
+        attempting any download/placement.
+
+        v1.11.0: this is now the *root* of the per-section staging tree.
+        Actual theme files live at <themes_dir>/<section.themes_subdir>/
+        <Title (Year)>/theme.mp3. Use `section_themes_dir(section_id)`
+        or `section_themes_dir_by_subdir(subdir)` to compute the per-
+        section subdir.
+        """
         v = self._cfg.paths.themes_dir
         return Path(v) if v else None
 
-    @property
-    def movies_themes_dir(self) -> Path | None:
+    def section_themes_dir_by_subdir(self, subdir: str) -> Path | None:
+        """v1.11.0: themes_dir/<subdir>. Used by callers that already
+        have the precomputed plex_sections.themes_subdir slug. Returns
+        None when themes_dir is not configured yet."""
         td = self.themes_dir
-        return (td / "movies") if td else None
+        if td is None or not subdir:
+            return None
+        return td / subdir
 
-    @property
-    def tv_themes_dir(self) -> Path | None:
+    def section_themes_dir(self, db_path: Path, section_id: str) -> Path | None:
+        """v1.11.0: themes_dir for a given Plex section, derived by
+        looking up the section's themes_subdir in plex_sections. Returns
+        None when themes_dir is not configured or the section is unknown.
+        Cheap lookup (PK on section_id) — callers may cache for tight loops.
+        """
+        from .core.db import get_conn
         td = self.themes_dir
-        return (td / "tv") if td else None
+        if td is None:
+            return None
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
+                (section_id,),
+            ).fetchone()
+        if row is None or not row["themes_subdir"]:
+            return None
+        return td / row["themes_subdir"]
 
     @property
     def cookies_file(self) -> Path:
         return Path(self._cfg.paths.cookies_file)
+
+    @property
+    def min_free_disk_mb(self) -> int:
+        """v1.13.11: minimum free space (in MB) required on themes_dir's
+        filesystem before a download will start. 0 = guard disabled."""
+        return int(self._cfg.paths.min_free_disk_mb)
 
     def is_paths_ready(self) -> bool:
         """True iff themes_dir is configured. The worker/scheduler check
@@ -225,6 +271,30 @@ class Settings:
     @property
     def sync_cron(self) -> str:
         return self._cfg.sync.cron
+
+    # v1.12.121 (Phase A): snapshot-tarball path for ThemerrDB sync.
+    # `sync_source` returns "remote" (HTTP-per-item) or "database"
+    # (codeload tarball). `sync_database_url` is the tarball
+    # endpoint, overridable for mirrors.
+    @property
+    def sync_source(self) -> str:
+        return self._cfg.sync.source
+
+    @property
+    def sync_database_url(self) -> str:
+        return self._cfg.sync.database_url
+
+    @property
+    def sync_git_url(self) -> str:
+        return self._cfg.sync.git_url
+
+    @property
+    def sync_git_branch(self) -> str:
+        return self._cfg.sync.git_branch
+
+    @property
+    def sync_auto_enum_after_sync(self) -> bool:
+        return self._cfg.sync.auto_enum_after_sync
 
     # ---- Web section ----
 

@@ -23,9 +23,15 @@ the 'pending' state.
 
 All operations are recorded as completed by stamping the scan_findings row's
 adopt_outcome and adopted_at fields.
+
+v1.10.9: split out `adopt_folder()` — a finding-less primitive that takes
+a folder_path + plex_item context and runs the same adopt logic without
+requiring a scan to have produced a scan_findings row. Used by the inline
+ADOPT button on /movies, /tv, /anime row actions.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from .canonical import canonical_theme_subdir
 from .db import get_conn
 from .events import log_event, now_iso
 
@@ -42,6 +49,460 @@ log = logging.getLogger(__name__)
 
 class AdoptError(Exception):
     """Failures during adoption — caller decides whether to retry or skip."""
+
+
+# ---------------------------------------------------------------------------
+# v1.10.9: finding-less primitives
+#
+# adopt_folder / replace_with_themerrdb let the API call adopt and replace
+# semantics directly from a Plex row, without first running a scan to
+# populate scan_findings. The scan workflow still works as before — these
+# primitives are an additional code path for the inline row buttons.
+# ---------------------------------------------------------------------------
+
+_SHA_BUFSIZE = 1024 * 1024  # 1 MiB
+
+def _hash_file(path: Path) -> tuple[str, int]:
+    """Return (sha256_hex, file_size). Streams to keep memory bounded."""
+    h = hashlib.sha256()
+    size = 0
+    with path.open("rb") as f:
+        while True:
+            chunk = f.read(_SHA_BUFSIZE)
+            if not chunk:
+                break
+            h.update(chunk)
+            size += len(chunk)
+    return h.hexdigest(), size
+
+
+def adopt_folder(
+    db_path: Path, *,
+    settings,
+    folder_path: str,
+    media_type: str,
+    title: str,
+    year: str,
+    section_id: str | None = None,
+    imdb_id: str | None = None,
+    tmdb_id: int | None = None,
+    decided_by: str,
+) -> dict:
+    """Adopt the theme.mp3 sitting at folder_path/theme.mp3 as a motif-managed
+    theme. Builds a synthetic finding-shaped dict and reuses _do_adopt so the
+    file-placement and DB-write logic is shared with the /scans flow.
+
+    v1.11.0: section_id determines which Plex section the adoption belongs
+    to (the staging file lands under that section's themes_subdir, and the
+    local_files / placements rows are keyed by it). When the caller doesn't
+    supply one, we resolve via plex_items.folder_path → section_id; if that
+    lookup fails too, the adopt is rejected so we never write a row keyed
+    to the wrong section.
+    """
+    if media_type not in ("movie", "tv"):
+        raise AdoptError(f"unknown media_type: {media_type}")
+    sidecar = Path(folder_path) / "theme.mp3"
+    if not sidecar.is_file():
+        raise AdoptError(f"no theme.mp3 at {folder_path}")
+    sha256, size = _hash_file(sidecar)
+
+    if not section_id:
+        plex_type = "show" if media_type == "tv" else "movie"
+        with get_conn(db_path) as conn:
+            row = conn.execute(
+                "SELECT section_id FROM plex_items "
+                "WHERE folder_path = ? AND media_type = ? "
+                "ORDER BY last_seen_at DESC LIMIT 1",
+                (str(folder_path), plex_type),
+            ).fetchone()
+        if row is None:
+            raise AdoptError(
+                f"no plex_items row for {folder_path} — cannot infer section_id; "
+                "re-run plex_enum or pass section_id explicitly"
+            )
+        section_id = row["section_id"]
+
+    metadata: dict = {"title": title, "year": year}
+    if imdb_id:
+        metadata["imdb_id"] = imdb_id
+    if tmdb_id is not None:
+        metadata["tmdb_id"] = int(tmdb_id)
+
+    section_type = "movie" if media_type == "movie" else "show"
+    finding_kind = ("orphan_resolvable"
+                    if (imdb_id or tmdb_id is not None)
+                    else "orphan_unresolved")
+
+    finding = {
+        "section_id": section_id,
+        "section_type": section_type,
+        "finding_kind": finding_kind,
+        "theme_id": None,
+        "file_path": str(sidecar),
+        "file_sha256": sha256,
+        "file_size": size,
+        "media_folder": str(folder_path),
+        "resolved_metadata": json.dumps(metadata),
+    }
+    outcome = _do_adopt(db_path, finding, settings, decided_by)
+    # v1.10.57: if a previous unmanage / forget recorded a URL for
+    # this exact file content (sha256 match), restore it. The newly-
+    # adopted row promotes from A → U with the original youtube_url
+    # back in user_overrides + themes, source_kind='url'.
+    restored = _maybe_restore_url_history(
+        db_path,
+        media_type=outcome.get("media_type"),
+        tmdb_id=outcome.get("tmdb_id"),
+        # v1.12.77: pass section_id so the local_files flip is
+        # scoped — pre-fix the UPDATE spanned every section's
+        # local_files row, silently flipping sibling-edition
+        # source_kind based on a single section's adoption.
+        section_id=section_id,
+        sha256=sha256,
+        decided_by=decided_by,
+    )
+    # v1.11.42: read back the just-written rows so the event log records
+    # what's actually in the DB (theme_id, source_kind, provenance,
+    # placement_kind, file_path, media_folder, theme_id_in_pi). The
+    # 'no action was taken' bug report on Matilda 4K showed the success
+    # log but no visible state change — we couldn't tell whether the
+    # rows were missing, the badge logic was wrong, or the UI was
+    # caching. With this log line we can match what's on disk to what
+    # the lib renderer should see.
+    verify = _verify_adopt_state(
+        db_path,
+        media_type=outcome.get("media_type"),
+        tmdb_id=outcome.get("tmdb_id"),
+        section_id=section_id,
+    )
+    log_event(db_path, level="INFO", component="adopt",
+              media_type=outcome.get("media_type"),
+              tmdb_id=outcome.get("tmdb_id"),
+              message=f"Inline adopt of sidecar at {folder_path}",
+              detail={"folder_path": str(folder_path),
+                      "sha256": sha256,
+                      "kind": finding_kind,
+                      "section_id": section_id,
+                      "decided_by": decided_by,
+                      "restored_from_history": restored,
+                      "outcome": outcome,
+                      "verify": verify})
+    if restored:
+        outcome["restored_from_history"] = restored
+    return outcome
+
+
+def _verify_adopt_state(
+    db_path: Path, *,
+    media_type: str | None, tmdb_id: int | None,
+    section_id: str | None,
+) -> dict:
+    """Read back local_files / placements / plex_items.theme_id for the
+    just-adopted (item, section) so the event log captures the actual
+    row state. Lets us debug 'badge didn't change' reports without DB
+    access."""
+    if media_type is None or tmdb_id is None or not section_id:
+        return {"ok": False, "reason": "missing keys"}
+    with get_conn(db_path) as conn:
+        lf = conn.execute(
+            """SELECT theme_id, file_path, source_kind, provenance
+               FROM local_files
+               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+        p = conn.execute(
+            """SELECT theme_id, media_folder, placement_kind, provenance
+               FROM placements
+               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
+            (media_type, tmdb_id, section_id),
+        ).fetchone()
+        pi = conn.execute(
+            """SELECT rating_key, theme_id, has_theme, local_theme_file
+               FROM plex_items
+               WHERE section_id = ? AND guid_tmdb = ?
+                 AND media_type = (CASE ? WHEN 'tv' THEN 'show' ELSE ? END)
+               LIMIT 1""",
+            (section_id, tmdb_id, media_type, media_type),
+        ).fetchone()
+    return {
+        "local_files": dict(lf) if lf else None,
+        "placements": dict(p) if p else None,
+        "plex_items": dict(pi) if pi else None,
+    }
+
+
+def _maybe_restore_url_history(
+    db_path: Path, *,
+    media_type: str | None, tmdb_id: int | None,
+    sha256: str, decided_by: str,
+    section_id: str | None = None,
+) -> dict | None:
+    """v1.10.57: look up local_files_history by sha256 and, if a prior
+    URL-sourced entry matches, restore the youtube_url onto the
+    just-adopted row. Promotes the row from A back to U because the
+    file content is byte-identical to what was previously
+    URL-downloaded.
+
+    Returns a small dict describing what was restored (for logging),
+    or None when there's no usable history match.
+
+    Only acts on history rows whose source_kind was 'url' — for
+    'upload' the URL was empty anyway, and for 'themerrdb'/'adopt'
+    there's no original-URL semantic to preserve. Picks the most
+    recent saved_at when multiple matches exist.
+
+    v1.12.77: section_id scopes the local_files UPDATE so the flip
+    only affects the section being adopted into. Pre-fix the UPDATE
+    spanned every section's local_files row, silently flipping
+    sibling-edition source_kind on a single-section adopt — the
+    user adopted the 4K theme.mp3 and the standard edition's row
+    classified differently as a side effect.
+    """
+    if not sha256 or media_type is None or tmdb_id is None:
+        return None
+    with get_conn(db_path) as conn:
+        hist = conn.execute(
+            """SELECT source_kind, source_video_id, youtube_url, saved_at
+               FROM local_files_history
+               WHERE file_sha256 = ?
+                 AND source_kind = 'url'
+                 AND youtube_url IS NOT NULL
+                 AND youtube_url != ''
+               ORDER BY saved_at DESC
+               LIMIT 1""",
+            (sha256,),
+        ).fetchone()
+        if hist is None:
+            return None
+        url = hist["youtube_url"]
+        # v1.12.73: branch on URL match. If the historical URL is
+        # IDENTICAL to themes.youtube_url, the file is content-
+        # identical to what TDB would download right now, so the
+        # row is conceptually T-managed — flip local_files to
+        # source_kind='themerrdb' and skip writing user_overrides
+        # entirely. Pre-fix the row landed at U with a global
+        # override URL that just shadowed TDB's URL, then the next
+        # sync surfaced a synthetic urls_match prompt asking the
+        # user to "convert U → T" — extra UI for what was already
+        # a T-equivalent state.
+        theme_yt_row = conn.execute(
+            "SELECT youtube_url FROM themes "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        ).fetchone()
+        theme_yt = (theme_yt_row and theme_yt_row["youtube_url"]) or ""
+        url_matches_tdb = bool(theme_yt and url and theme_yt.strip() == url.strip())
+        if url_matches_tdb:
+            # Adopt-as-T path: keep themes.youtube_url, no override,
+            # flip the local_files.source_kind to 'themerrdb' for
+            # this section only (v1.12.77 — was global pre-fix and
+            # silently flipped sibling sections). Row classifies as
+            # T immediately.
+            if section_id:
+                conn.execute(
+                    "UPDATE local_files SET source_kind = 'themerrdb', "
+                    "                       source_video_id = ? "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                    (hist["source_video_id"] or "", media_type, tmdb_id,
+                     section_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE local_files SET source_kind = 'themerrdb', "
+                    "                       source_video_id = ? "
+                    "WHERE media_type = ? AND tmdb_id = ?",
+                    (hist["source_video_id"] or "", media_type, tmdb_id),
+                )
+            return {
+                "youtube_url": url,
+                "source_kind": "themerrdb",
+                "url_matches_tdb": True,
+                "history_saved_at": hist["saved_at"],
+            }
+        # Adopt-as-U path (URL differs from TDB): write user_overrides
+        # + flip local_files to source_kind='url'. The override is
+        # scoped to '' (global) so the restoration applies across
+        # sections by default; per-section SET URL still wins via
+        # the worker fall-back chain (v1.12.72).
+        conn.execute(
+            """INSERT INTO user_overrides
+                 (media_type, tmdb_id, youtube_url, set_at, set_by, note,
+                  section_id)
+               VALUES (?, ?, ?, ?, ?,
+                       'restored from local_files_history on adopt', '')
+               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                   youtube_url = excluded.youtube_url,
+                   set_at = excluded.set_at,
+                   set_by = excluded.set_by,
+                   note = excluded.note""",
+            (media_type, tmdb_id, url, now_iso(), decided_by),
+        )
+        conn.execute(
+            "UPDATE themes SET youtube_url = ? "
+            "WHERE media_type = ? AND tmdb_id = ? "
+            "  AND (youtube_url IS NULL OR youtube_url = '')",
+            (url, media_type, tmdb_id),
+        )
+        # v1.12.77: scope local_files flip to the adopting section.
+        if section_id:
+            conn.execute(
+                "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (hist["source_video_id"] or "", media_type, tmdb_id, section_id),
+            )
+        else:
+            conn.execute(
+                "UPDATE local_files SET source_kind = 'url', source_video_id = ? "
+                "WHERE media_type = ? AND tmdb_id = ?",
+                (hist["source_video_id"] or "", media_type, tmdb_id),
+            )
+    return {
+        "youtube_url": url,
+        "source_kind": "url",
+        "history_saved_at": hist["saved_at"],
+    }
+
+
+def replace_with_themerrdb(
+    db_path: Path, *,
+    media_type: str,
+    tmdb_id: int,
+    decided_by: str,
+    section_id: str | None = None,
+) -> dict:
+    """Sidecar is currently in place but ThemerrDB has the title — fetch
+    motif's authoritative download and overwrite. Cancels any in-flight
+    download/place jobs for this item, enqueues a fresh download with
+    force_place=true so the worker overwrites the sidecar without
+    plex_has_theme guarding it.
+
+    v1.11.0: when section_id is provided the replace targets that one
+    section (via a single per-section download job). When omitted we
+    enqueue per-section jobs for every included section that owns
+    this item — same fan-out semantics as a sync-driven download.
+    """
+    if media_type not in ("movie", "tv"):
+        raise AdoptError(f"unknown media_type: {media_type}")
+    with get_conn(db_path) as conn:
+        theme = conn.execute(
+            "SELECT youtube_url, upstream_source FROM themes "
+            "WHERE media_type = ? AND tmdb_id = ?",
+            (media_type, tmdb_id),
+        ).fetchone()
+        if theme is None:
+            raise AdoptError(f"no theme row for {media_type}/{tmdb_id}")
+        if theme["upstream_source"] == "plex_orphan":
+            raise AdoptError("no ThemerrDB record to replace from")
+        if not theme["youtube_url"]:
+            raise AdoptError("ThemerrDB record has no youtube_url")
+
+        # Cancel any in-flight downloads/places for this item across the
+        # affected sections — about to enqueue replacements with force_place.
+        if section_id:
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type IN ('download','place')
+                     AND media_type = ? AND tmdb_id = ? AND section_id = ?
+                     AND status IN ('pending','running')""",
+                (now_iso(), media_type, tmdb_id, section_id),
+            )
+            target_sections = [section_id]
+        else:
+            conn.execute(
+                """UPDATE jobs SET status = 'cancelled', finished_at = ?
+                   WHERE job_type IN ('download','place')
+                     AND media_type = ? AND tmdb_id = ?
+                     AND status IN ('pending','running')""",
+                (now_iso(), media_type, tmdb_id),
+            )
+            plex_type = "show" if media_type == "tv" else "movie"
+            target_sections = [
+                r["section_id"] for r in conn.execute(
+                    """SELECT DISTINCT pi.section_id FROM plex_items pi
+                       JOIN plex_sections ps ON ps.section_id = pi.section_id
+                       WHERE pi.guid_tmdb = ? AND pi.media_type = ?
+                         AND ps.included = 1""",
+                    (tmdb_id, plex_type),
+                ).fetchall()
+            ]
+        if not target_sections:
+            raise AdoptError(
+                "no managed Plex sections own this item — enable a section in /settings"
+            )
+        # v1.12.62: REPLACE TDB on a U row — delete user_overrides
+        # so the worker doesn't keep using the override URL and
+        # re-classifying the new download as U. Pre-fix the user
+        # would click REPLACE TDB on a U row, the download would
+        # run, and the row would stay U because the worker still
+        # saw user_overrides at line 563 of worker.py and stamped
+        # source_kind='url'. The action's intent ("replace your
+        # current theme with ThemerrDB's") implies dropping the
+        # override too. Capture previous URL before the delete so
+        # REVERT can restore the U state if the user changes their
+        # mind. SQL inlined here (rather than calling
+        # web.api._capture_previous_url) to avoid a core → web
+        # circular import.
+        # v1.12.72: section-aware override fetch + delete. REPLACE TDB
+        # was given a section_id parameter; scope override ops to that
+        # section so sibling sections' per-edition overrides aren't
+        # collateral damage. Falls back to '' global when no
+        # per-section row exists.
+        # v1.12.86: previous-URL snapshot is per-section now via the
+        # previous_urls table (was the title-global
+        # themes.previous_youtube_url column). The capture below
+        # writes to the row's section so RESTORE/REVERT in section A
+        # doesn't disturb section B.
+        ovr_section_for_replace = section_id or ""
+        ovr_row = conn.execute(
+            "SELECT youtube_url, section_id FROM user_overrides "
+            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+            (media_type, tmdb_id, ovr_section_for_replace),
+        ).fetchone()
+        if ovr_row is None and ovr_section_for_replace:
+            ovr_row = conn.execute(
+                "SELECT youtube_url, section_id FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ''",
+                (media_type, tmdb_id),
+            ).fetchone()
+            if ovr_row is not None:
+                ovr_section_for_replace = ""
+        if ovr_row and ovr_row["youtube_url"]:
+            conn.execute(
+                """INSERT INTO previous_urls
+                     (media_type, tmdb_id, section_id, youtube_url, kind, captured_at)
+                   VALUES (?, ?, ?, ?, 'user', ?)
+                   ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                       youtube_url = excluded.youtube_url,
+                       kind = excluded.kind,
+                       captured_at = excluded.captured_at""",
+                (media_type, tmdb_id, ovr_section_for_replace,
+                 ovr_row["youtube_url"], now_iso()),
+            )
+            conn.execute(
+                "DELETE FROM user_overrides "
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
+                (media_type, tmdb_id, ovr_section_for_replace),
+            )
+        job_ids: list[int] = []
+        for sid in target_sections:
+            cur = conn.execute(
+                """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                     payload, status, created_at, next_run_at)
+                   VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)""",
+                (media_type, tmdb_id, sid,
+                 json.dumps({"reason": "replace_with_themerrdb",
+                             "force_place": True}),
+                 now_iso(), now_iso()),
+            )
+            job_ids.append(cur.lastrowid)
+    log_event(db_path, level="INFO", component="adopt",
+              media_type=media_type, tmdb_id=tmdb_id,
+              message="Replace-with-ThemerrDB enqueued",
+              detail={"job_ids": job_ids, "section_ids": target_sections,
+                      "decided_by": decided_by})
+    return {"action": "replace_with_themerrdb", "job_ids": job_ids,
+            "section_ids": target_sections,
+            "media_type": media_type, "tmdb_id": tmdb_id}
 
 
 def adopt_finding(db_path: Path, finding_id: int, decision: str,
@@ -97,17 +558,35 @@ def adopt_finding(db_path: Path, finding_id: int, decision: str,
 
 def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     """Adopt the existing theme.mp3 — hardlink it (or copy if cross-FS) into
-    motif's themes_dir and record DB rows."""
+    motif's per-section staging dir and record DB rows.
+
+    v1.11.0 layout:
+        themes_dir/<plex_sections.themes_subdir>/<Title (Year)>/theme.mp3
+
+    The owning section comes from the scan_findings.section_id (the scanner
+    walked exactly that section's location_paths to find this sidecar).
+    """
+    section_id = finding["section_id"]
+    if not section_id:
+        raise AdoptError("scan finding missing section_id")
     media_type = "movie" if finding["section_type"] == "movie" else "tv"
     finding_kind = finding["finding_kind"]
     theme_id = finding["theme_id"]
 
-    # Resolve target themes_dir for this media type
-    target_dir = (settings.movies_themes_dir if media_type == "movie"
-                  else settings.tv_themes_dir)
-    if not target_dir:
+    if not settings.is_paths_ready():
         raise AdoptError("themes_dir not configured")
-    target_dir.mkdir(parents=True, exist_ok=True)
+    with get_conn(db_path) as conn:
+        sec = conn.execute(
+            "SELECT themes_subdir FROM plex_sections WHERE section_id = ?",
+            (section_id,),
+        ).fetchone()
+    if sec is None or not sec["themes_subdir"]:
+        raise AdoptError(
+            f"section {section_id} has no themes_subdir — re-discover sections in /settings"
+        )
+    media_root = settings.section_themes_dir_by_subdir(sec["themes_subdir"])
+    if not media_root:
+        raise AdoptError("themes_dir not configured")
 
     source_path = Path(finding["file_path"])
     if not source_path.is_file():
@@ -121,7 +600,6 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
         media_type = "movie" if finding["section_type"] == "movie" else "tv"
         tmdb_id = allocated_tmdb_id
     else:
-        # Look up tmdb_id from existing themes row
         with get_conn(db_path) as conn:
             row = conn.execute(
                 "SELECT media_type, tmdb_id FROM themes WHERE id = ?",
@@ -132,11 +610,16 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
             media_type = row["media_type"]
             tmdb_id = row["tmdb_id"]
 
-    # Decide canonical filename. For orphans without a video_id, use a hash-based
-    # name so it's stable. For known themes, use the youtube_video_id if known,
-    # otherwise the file's sha256 prefix.
-    canonical_name = _canonical_filename(db_path, theme_id, finding["file_sha256"])
-    canonical_path = target_dir / canonical_name
+    # Resolve title+year for the canonical subdir from the themes row.
+    with get_conn(db_path) as conn:
+        meta = conn.execute(
+            "SELECT title, year FROM themes WHERE id = ?", (theme_id,),
+        ).fetchone()
+    title = (meta and meta["title"]) or ""
+    year = (meta and meta["year"]) or ""
+    out_dir = media_root / canonical_theme_subdir(title, year)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    canonical_path = out_dir / "theme.mp3"
 
     # Place the canonical file. If canonical_path already exists with the same
     # inode as source, nothing to do. Otherwise hardlink (or copy on EXDEV).
@@ -167,27 +650,75 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     # Provenance: hash/exact matches share content with motif's canonical
     # (same sha as what ThemerrDB would produce), so they earn the 'auto'
     # provenance — T badge in the UI. Everything else (orphans, content
-    # mismatches) is user-curated and gets 'manual' (M badge).
+    # mismatches) is user-curated and gets 'manual'.
     provenance = "auto" if finding_kind in ("hash_match", "exact_match") else "manual"
+    # source_kind drives the T/U/A badge unambiguously (v1.10.12). Hash
+    # and exact matches are byte-identical with what ThemerrDB would
+    # download, so 'themerrdb'. Everything else (orphan_* findings,
+    # content_mismatch) is the user adopting a local file as the source
+    # of truth — 'adopt'.
+    source_kind = ("themerrdb"
+                   if finding_kind in ("hash_match", "exact_match")
+                   else "adopt")
 
-    # Record local_files and placements
+    # source_video_id: keep the previous convention (yt id when known,
+    # else hash-based) for back-compat with row badge heuristics, but
+    # decouple from the on-disk filename which is now always theme.mp3.
+    source_vid = _canonical_filename(
+        db_path, theme_id, finding["file_sha256"],
+    ).replace(".mp3", "")
+    # file_path stored relative to themes_dir, matching the worker
+    # download path. Pre-1.10.13 stored absolute, which broke the
+    # canonical-layout migration on existing installs.
+    rel_path = str(canonical_path.relative_to(settings.themes_dir))
     with get_conn(db_path) as conn:
         conn.execute(
             """INSERT OR REPLACE INTO local_files
-                 (media_type, tmdb_id, theme_id, file_path, file_sha256,
-                  file_size, downloaded_at, source_video_id, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (media_type, tmdb_id, theme_id,
-             str(canonical_path), finding["file_sha256"], finding["file_size"],
-             now_iso(), canonical_name.replace(".mp3", ""), provenance),
+                 (media_type, tmdb_id, section_id, theme_id, file_path,
+                  file_sha256, file_size, downloaded_at, source_video_id,
+                  provenance, source_kind)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (media_type, tmdb_id, section_id, theme_id,
+             rel_path, finding["file_sha256"], finding["file_size"],
+             now_iso(), source_vid, provenance, source_kind),
         )
         conn.execute(
             """INSERT OR REPLACE INTO placements
-                 (media_type, tmdb_id, theme_id, media_folder, placed_at,
-                  placement_kind, plex_refreshed, provenance)
-               VALUES (?, ?, ?, ?, ?, ?, 0, ?)""",
-            (media_type, tmdb_id, theme_id,
+                 (media_type, tmdb_id, section_id, theme_id, media_folder,
+                  placed_at, placement_kind, plex_refreshed, provenance)
+               VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?)""",
+            (media_type, tmdb_id, section_id, theme_id,
              finding["media_folder"], now_iso(), placement_kind, provenance),
+        )
+        # v1.10.50: implicit ack — adopting a sidecar is the user
+        # routing around whatever was broken on the TDB side. Keep
+        # failure_kind so the TDB pill stays red but stop alerting.
+        # No-op when there's no failure to ack.
+        conn.execute(
+            "UPDATE themes SET failure_acked_at = ? "
+            "WHERE media_type = ? AND tmdb_id = ? AND failure_kind IS NOT NULL",
+            (now_iso(), media_type, tmdb_id),
+        )
+        # v1.11.43: keep the denormalized plex_items.theme_id column in
+        # sync with the just-written themes row, so the library renderer
+        # picks up the new state on the very next /api/library refresh
+        # without waiting for plex_enum's resolve_theme_ids to catch up.
+        # Pre-fix the row appeared to "do nothing" after adopt — the
+        # lib query joins themes via pi.theme_id (v1.11.26 cache), so
+        # if it was NULL or pointing at an old plex_orphan row the
+        # adopted lf+p rows weren't visible until the next enum
+        # (~tens of seconds to minutes on large libraries). Scoped to
+        # the section being adopted so a per-section adopt doesn't
+        # touch sibling sections that may legitimately resolve
+        # differently.
+        plex_media_type = "show" if media_type == "tv" else "movie"
+        conn.execute(
+            """UPDATE plex_items SET theme_id = ?
+               WHERE section_id = ?
+                 AND media_type = ?
+                 AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND folder_path = ?))""",
+            (theme_id, section_id, plex_media_type, tmdb_id,
+             finding["media_folder"]),
         )
 
     return {
@@ -217,12 +748,19 @@ def _do_replace(db_path: Path, finding, settings, decided_by: str) -> dict:
         if not theme["youtube_url"]:
             raise AdoptError("theme has no youtube_url to download from")
 
+        # v1.11.0: scoped to the finding's section. Pre-fix this
+        # inserted a section-less download job which the worker rejects
+        # with _JobPermanentFailure.
+        section_id = finding["section_id"]
+        if not section_id:
+            raise AdoptError("scan finding missing section_id")
         conn.execute(
-            """INSERT INTO jobs (job_type, media_type, tmdb_id, status,
-                                 created_at, next_run_at)
-               VALUES ('download', ?, ?, 'pending', datetime('now'),
-                       datetime('now'))""",
-            (theme["media_type"], theme["tmdb_id"]),
+            """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
+                                 payload, status, created_at, next_run_at)
+               VALUES ('download', ?, ?, ?, ?, 'pending', ?, ?)""",
+            (theme["media_type"], theme["tmdb_id"], section_id,
+             json.dumps({"reason": "scan_replace"}),
+             now_iso(), now_iso()),
         )
     return {
         "action": "replace",
@@ -250,10 +788,15 @@ def _do_keep(db_path: Path, finding, decided_by: str) -> dict:
         # An override row keyed on (media_type, tmdb_id) signals manual
         # provenance. We store the existing youtube_url (or empty) so this
         # serves as a "do not auto-replace" marker.
+        # v1.12.72: scan/adopt's "keep existing" lock writes the
+        # global ('') override row since the keep-decision applies
+        # across all sections. Per-section preferences set later
+        # via SET URL still take precedence per worker fall-back.
         conn.execute(
             """INSERT OR REPLACE INTO user_overrides
-                 (media_type, tmdb_id, theme_id, youtube_url, set_at, set_by, note)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                 (media_type, tmdb_id, theme_id, youtube_url, set_at,
+                  set_by, note, section_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, '')""",
             (theme["media_type"], theme["tmdb_id"], theme_id,
              theme["youtube_url"] or "",
              now_iso(), decided_by, "kept existing theme.mp3 from scan"),
