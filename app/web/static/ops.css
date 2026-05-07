@@ -339,6 +339,19 @@ body[data-ops-running="1"] #topbar-status-text {
   transition: border-color 0.2s ease, box-shadow 0.25s ease;
 }
 
+/* v1.13.17: compact variant for finished cards in the // LAST OPS
+   tail. Pre-fix every finished card rendered the full live-op
+   layout (timeline strip, sparkline, frozen activity feed) which
+   ate ~120px each. The compact variant trims padding + margin to
+   match the trimmed-down content, making the LAST OPS pile a
+   scannable summary instead of a wall of stale state. */
+.op-card-compact {
+  padding: 10px 14px 8px;
+  margin-bottom: 8px;
+  opacity: 0.92;
+}
+.op-card-compact .op-card-stage { margin-bottom: 0; }
+
 /* Tone-keyed gradient border highlight. */
 .op-card.op-tone-tdb  { box-shadow: inset 0 0 0 1px rgba(109,211,255,0.18); }
 .op-card.op-tone-plex { box-shadow: inset 0 0 0 1px rgba(109,255,181,0.18); }

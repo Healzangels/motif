@@ -288,15 +288,26 @@
   // read like work was still happening even with the corner
   // status flipped to DONE. Synthesize a completion headline from
   // the op's terminal state instead.
+  //
+  // v1.13.17: tdb_sync rows now carry detail.done_summary with the
+  // full {movies_seen, tv_seen, new, updated, errors} breakdown so
+  // the headline can match the docker log line ("Done — 5177
+  // items · 0 new · 0 updated") instead of the generic
+  // "Done — N items processed".
   function _doneHeadline(op) {
     if (op.status === 'cancelled') return 'Cancelled';
     if (op.status === 'failed') return 'Failed';
-    // 'done' — try to surface what was accomplished. tdb_sync rows
-    // carry no_changes / new_count / updated_count via the sync_runs
-    // payload, but op_progress doesn't have those fields directly;
-    // fall back to a generic line that reads as a clear endpoint.
     const detail = op.detail || {};
     if (detail.no_changes) return 'Done — no upstream changes';
+    const ds = detail.done_summary;
+    if (ds && typeof ds === 'object') {
+      const total = (ds.movies_seen || 0) + (ds.tv_seen || 0);
+      if (total > 0) {
+        const errs = ds.errors > 0 ? ` · ${fmtNum(ds.errors)} err` : '';
+        return `Done — ${fmtNum(total)} item${total === 1 ? '' : 's'} `
+             + `· ${fmtNum(ds.new || 0)} new · ${fmtNum(ds.updated || 0)} upd${errs}`;
+      }
+    }
     if (op.processed_total > 0) {
       return `Done — ${fmtNum(op.processed_total)} item${op.processed_total === 1 ? '' : 's'} processed`;
     }
@@ -317,15 +328,24 @@
       ? (op.stage_label || op.stage || '…')
       : _doneHeadline(op);
 
+    // v1.13.17: finished cards use a compact variant — drop the live-
+    // only sections (timeline strip, sparkline, activity feed) since
+    // they're stale once the op is done. Pre-fix the LAST OPS pile
+    // showed every finished card with an all-green timeline + empty
+    // sparkline + frozen activity feed, eating ~120px each. The
+    // headline + meta-row + (optional) error message + status-specific
+    // badges (no_changes, fallback) carry the useful summary in ~40px.
+    const showLiveSections = isLive;
+
     return `
-      <div class="op-card op-tone-${tone} op-status-${op.status}"
+      <div class="op-card op-tone-${tone} op-status-${op.status}${showLiveSections ? '' : ' op-card-compact'}"
            data-op-id="${esc(op.op_id)}">
         <div class="op-card-head">
           <span class="op-card-kind">// ${esc(KIND_LABEL[op.kind] || op.kind)}</span>
           <span class="op-card-status">${esc(op.status.toUpperCase())}</span>
         </div>
         <div class="op-card-stage">${esc(headline)}</div>
-        ${(op.stage_total > 0) ? `
+        ${(showLiveSections && op.stage_total > 0) ? `
           <div class="op-card-counter">
             <span class="op-card-counter-current"
                   data-op-counter
@@ -349,7 +369,7 @@
           </div>
         ` : '')}
         <div class="op-card-meta">
-          ${(rate > 0) ? `
+          ${(showLiveSections && rate > 0) ? `
             <span class="op-card-meta-item">
               <span class="op-card-meta-label">RATE</span>
               <span>${rate.toFixed(1)}/s</span>
@@ -372,9 +392,9 @@
         </div>
         ${renderNoChangesBadge(op)}
         ${renderFallbackBadge(op)}
-        ${renderTimeline(op)}
-        ${renderSparkline(op)}
-        ${renderActivity(op)}
+        ${showLiveSections ? renderTimeline(op) : ''}
+        ${showLiveSections ? renderSparkline(op) : ''}
+        ${showLiveSections ? renderActivity(op) : ''}
         ${renderError(op)}
         ${isLive && !(op.detail && op.detail.synthetic) ? `
           <button class="op-card-cancel" data-op-cancel="${esc(op.op_id)}"

@@ -2685,6 +2685,21 @@ def run_sync(db_path, base_url: str, *,
             db_path, "tdb_sync",
             activity=done_msg,
         )
+        # v1.13.17: stash the counts in detail_json so the drawer's
+        # done-headline can render the full breakdown ("Done — 5177
+        # items · 0 new · 0 updated") instead of the generic
+        # "Done — N items processed". Mirrors what the docker log
+        # line already shows + what the sync_runs row records.
+        op_progress.set_detail_field(
+            db_path, "tdb_sync", "done_summary",
+            {
+                "movies_seen": stats.movies_seen,
+                "tv_seen": stats.tv_seen,
+                "new": stats.new_count,
+                "updated": stats.updated_count,
+                "errors": stats.errors,
+            },
+        )
         op_progress.finish_progress(db_path, "tdb_sync", status="done")
         return stats
 
