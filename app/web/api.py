@@ -872,12 +872,34 @@ def _library_main_query(
         # each pill had its own provenance-first predicate that
         # diverged from JS computeSrcLetter on rows where source_kind
         # disagreed with placement.provenance.
+        # v1.13.31: 'P' filter expanded to match `plex_present=1`
+        # regardless of the primary SRC letter — composite rows like
+        # M+P (motif sidecar AND Plex serves a theme) should appear
+        # in the P filter so the user can see every row where Plex
+        # has a fallback. Other letters keep their original behavior
+        # (filter by letter, ignore plex_present). Multi-select OR
+        # semantics carry over: P + M selected = letter=M OR
+        # plex_present=1.
         valid_letters = {"T", "U", "A", "M", "P", "-"}
         wanted = sorted(p for p in src_pills if p in valid_letters)
         if wanted:
-            placeholders = ",".join("?" for _ in wanted)
-            where_extra += f" AND ({_SRC_LETTER_SQL}) IN ({placeholders})"
-            params.extend(wanted)
+            non_p = [w for w in wanted if w != "P"]
+            include_p_flag = "P" in wanted
+            clauses: list[str] = []
+            if non_p:
+                placeholders = ",".join("?" for _ in non_p)
+                clauses.append(f"({_SRC_LETTER_SQL}) IN ({placeholders})")
+                params.extend(non_p)
+            if include_p_flag:
+                # Match every row where Plex serves a theme — pure-P
+                # rows already match via the letter check, but the
+                # composite cases (T+P, U+P, A+P, M+P) only land here.
+                clauses.append(
+                    "(pi.has_theme = 1 "
+                    "AND COALESCE(pi.plex_theme_verified_ok, 1) = 1)"
+                )
+            if clauses:
+                where_extra += " AND (" + " OR ".join(clauses) + ")"
     if tdb_pills:
         DEAD_KINDS = "('video_private','video_removed','video_age_restricted','geo_blocked')"
         # Subquery snippet reused below — "this row has an actionable
@@ -5313,9 +5335,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if not theme:
                     skipped += 1
                     continue
-                # _enqueue_download fans out per-section + dedupes per-section
+                # _enqueue_download fans out per-section + dedupes per-section.
+                # v1.13.31: force_place=True so the auto-place job that
+                # follows each download bypasses the plex_has_theme guard.
+                # Pre-fix bulk DOWNLOAD on M-source rows (manual sidecar +
+                # Plex agent has its own theme, the composite M+P state)
+                # would download the TDB theme but the place worker
+                # logged "Skipped placement: plex_has_theme" because the
+                # row had has_theme=1 — so the download succeeded but
+                # nothing landed in Plex's folder. The user's bulk-select
+                # action is an explicit "yes, replace what's there"
+                # intent, just like single-row Replace-with-ThemerrDB.
                 n = _enqueue_download(
                     conn, media_type=mt, tmdb_id=tid, reason="bulk_select",
+                    force_place=True,
                 )
                 if n == 0:
                     skipped += 1

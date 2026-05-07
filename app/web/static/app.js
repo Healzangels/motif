@@ -1716,7 +1716,7 @@
     }
   }
 
-  async function purgeTheme(mediaType, tmdbId, title, isOrphan, dlOnly, sectionId) {
+  async function purgeTheme(mediaType, tmdbId, title, isOrphan, dlOnly, sectionId, plexAlso) {
     const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
     // v1.10.38: PURGE is full destruction — delete both motif's
     // canonical at /data/media/themes AND the placement in the Plex
@@ -1753,7 +1753,18 @@
     const scopeNote = sectionId
       ? '\n\nScoped to this section only — sibling editions (e.g. 4K vs standard) keep their themes.'
       : '';
-    const ok = confirm(`Purge ${labelTitle}?${warning}${scopeNote}\n\nThis cannot be undone.`);
+    // v1.13.31: post-PURGE preview. When Plex serves its own theme
+    // for the row (the +P composite in the SRC cell), removing
+    // motif's manage-state leaves Plex's served theme as the active
+    // one. Without that fallback, the title goes themeless until
+    // next sync. Flagging it explicitly so users don't expect "the
+    // title now plays no theme" when really Plex falls back.
+    const fallbackNote = plexAlso
+      ? '\n\nAfter PURGE: Plex serves its own theme for this title — Plex\'s version becomes the active one. (To remove the Plex-side too, do it in Plex itself.)'
+      : (dlOnly && !isOrphan)
+        ? ''  // dlOnly already covers the consequence above.
+        : '\n\nAfter PURGE: Plex has no fallback for this title — it will be themeless until the next sync (assuming TDB has a URL).';
+    const ok = confirm(`Purge ${labelTitle}?${warning}${scopeNote}${fallbackNote}\n\nThis cannot be undone.`);
     if (!ok) return;
     try {
       const url = sectionId
@@ -4328,6 +4339,27 @@
     } else {
       srcCell = '<span class="muted" title="no theme">—</span>';
     }
+    // v1.13.31: composite SRC display — if motif's primary letter is
+    // T/U/A/M but Plex ALSO serves its own theme for this row, append
+    // a small +P chip. Pre-fix the SRC axis was mutually exclusive
+    // (motif's placement always won), masking the fact that Plex had
+    // its own fallback theme cached/embedded/cloud-served. Composite
+    // rendering surfaces both signals so the user knows e.g. "M+P:
+    // I have a manual sidecar AND Plex would have a fallback if I
+    // removed it." Pure-P rows (motif owns nothing) keep the single P
+    // chip — no redundant double-render. The plex_present condition
+    // mirrors computeSrcLetter's P branch (verified ok or untested).
+    const _verifiedOk = (it.plex_theme_verified_ok === null
+                         || it.plex_theme_verified_ok === undefined
+                         || it.plex_theme_verified_ok === 1);
+    const _primaryLetter = computeSrcLetter(it);
+    const _plexAlso = !!it.plex_has_theme && _verifiedOk
+                      && _primaryLetter !== 'P'
+                      && _primaryLetter !== '-';
+    if (_plexAlso) {
+      srcCell += ' <span class="link-badge link-badge-cloud src-also-plex"'
+        + ' title="Plex also serves its own theme for this row — composite state. Click P in the SRC filter to see every row where Plex has a fallback.">P</span>';
+    }
 
     // v1.11.62: 'broken' DL state — motif's local_files row says we
     // have a canonical, but a stat-check (server-side) found the file
@@ -4666,6 +4698,13 @@
         // the SET URL match-warning copy can branch — for src='-'
         // there's no file to "re-download", just to download.
         extras.srcLetter !== undefined ? `data-src-letter="${htmlEscape(extras.srcLetter)}"` : '',
+        // v1.13.31: data-plex-also flags rows where Plex serves
+        // its own theme regardless of motif's local placement.
+        // PURGE confirm dialog reads it to surface the "Plex has a
+        // fallback" preview so the user knows whether removing
+        // motif's manage state leaves the title themeless or
+        // gracefully falls back to Plex's own served theme.
+        extras.plexAlso !== undefined ? `data-plex-also="${extras.plexAlso ? '1' : '0'}"` : '',
       ].filter(Boolean).join(' ');
       // v1.11.14: extras.tone tints the source menu entries to match
       // the SRC column badge colors so the user can read at a glance
@@ -5174,7 +5213,12 @@
           // canonical sitting there indefinitely. Real in-flight jobs
           // still disable the button (job_in_flight).
           bypassLock: true,
-          dlOnly: !placed && downloaded ? '1' : '0' },
+          dlOnly: !placed && downloaded ? '1' : '0',
+          // v1.13.31: flag whether Plex serves its own theme so the
+          // PURGE confirm can preview the post-action state. Composite
+          // SRC rows (T+P, U+P, A+P, M+P) have a fallback; pure
+          // letter rows (T/U/A/M) without Plex don't.
+          plexAlso: _plexAlso },
       ));
     }
 
@@ -6906,7 +6950,8 @@
                          btn.dataset.title || '',
                          btn.dataset.orphan === '1',
                          btn.dataset.dlOnly === '1',
-                         btn.dataset.sectionId || undefined);
+                         btn.dataset.sectionId || undefined,
+                         btn.dataset.plexAlso === '1');
         await loadLibrary().catch(()=>{});
       } else if (act === 'clear-failure') {
         // v1.10.42: silent acknowledge — no confirm prompt, the

@@ -725,3 +725,82 @@ User testing v1.13.29 reported four issues:
   pill alongside SRC). Awaiting user direction.
 - REPLACE-WITH-TDB place-skip hotfix (small, related to above).
 - Concurrent ops topbar visibility (defer until needed).
+
+---
+
+## 2026-05-07 — v1.13.31: composite SRC (M+P, T+P), PURGE consequence preview, bulk-download force-place
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.31`
+
+### Context
+User's M-can-mask-P design discussion landed on Option A: composite
+letters that show both motif's primary and the Plex-side fallback
+when both are present. Bundled with the bulk-download place-skip
+hotfix that the M+P observation surfaced.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.31`.
+- `app/web/api.py`:
+  - **`/api/library` SRC pill filter**: `P` filter now matches
+    `pi.has_theme = 1 AND COALESCE(plex_theme_verified_ok, 1) = 1`
+    regardless of the primary SRC letter. Composite rows (T+P,
+    U+P, A+P, M+P) appear in the P filter so the user can audit
+    every row where Plex has a fallback. Other letter chips
+    keep their original behavior. Multi-select OR semantics
+    preserved.
+  - **`/api/library/download-batch`**: now passes
+    `force_place=True` to `_enqueue_download`. Pre-fix bulk
+    DOWNLOAD on M-source rows downloaded the TDB theme but the
+    place worker logged `Skipped placement: plex_has_theme`
+    because the row had `has_theme=1`. The user's bulk-select
+    action is an explicit "yes, replace" intent, mirroring
+    single-row Replace-with-ThemerrDB.
+- `app/web/static/app.js`:
+  - **Composite SRC chip rendering**: when motif's primary
+    letter is T/U/A/M and Plex also serves its own theme
+    (verified or untested), the SRC cell renders an additional
+    small `P` chip beside the primary. Pure-P rows unchanged.
+    Two side-by-side mini-pills mirror the existing pill
+    aesthetic.
+  - **PURGE confirm preview**: `purgeTheme()` now takes a
+    `plexAlso` flag (sourced from the row's plex_has_theme +
+    verified state). When `plexAlso=true`, the dialog adds:
+    "After PURGE: Plex serves its own theme — Plex's version
+    becomes the active one." When `plexAlso=false`, dialog
+    adds: "Plex has no fallback — title will be themeless until
+    next sync." Bulk PURGE confirm not affected (different
+    path).
+- `app/web/static/app.css`:
+  - `.src-also-plex` styling — secondary chip slightly muted
+    (opacity 0.78) and smaller (0.92em) so the primary letter
+    reads as the dominant signal.
+
+### How to verify
+1. Find a row where Plex has its own theme AND motif also
+   manages it (e.g., a row that was M before, or any T row
+   where Plex Pass cloud also serves a theme). The SRC cell
+   should render two side-by-side chips: the primary letter
+   (T/U/A/M) and a smaller `P`. Pure-P rows render a single P
+   as before.
+2. Click the `P` chip in the SRC filter. The row count expands
+   to include every row where Plex serves a theme — including
+   composite T+P/U+P/A+P/M+P rows AND pure P. Pre-fix only
+   pure-P rows matched.
+3. Click `× PURGE` on a composite row (e.g., M+P). Confirm
+   dialog includes the "Plex serves its own theme — its
+   version becomes active" preview. Click PURGE on a pure-T
+   row with no Plex fallback: dialog says "Plex has no
+   fallback — themeless until next sync."
+4. Bulk-select a few M+P rows (e.g., 102 Dalmatians, 12 Years
+   a Slave) and click DOWNLOAD. Each row's downloaded theme
+   places successfully (no more "Skipped placement:
+   plex_has_theme" in the logs).
+
+### Open threads
+- **Info-card adapt for dead-TDB rows** (user's last ask): when
+  a row's TDB URL fails (video unavailable / private / age /
+  geo) and the user works around via ADOPT (M→A) or SET URL
+  (→U), the info card should adapt — drop the dead URL preview
+  and shift the "try this next" guidance. On a future TDB sync
+  if the URL becomes available again, restore the preview +
+  guidance. Defer to v1.13.32.
+- Concurrent ops topbar visibility (defer until needed).
