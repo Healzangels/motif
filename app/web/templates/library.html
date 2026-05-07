@@ -17,6 +17,30 @@
     </div>
   </div>
   <p class="muted">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>
+  <!-- v1.13.16 (A1): PRESET / SAVE / CLEAR moved out of the pill-row
+       stack into a hero-area toolbar so the filter axes stay pure
+       and the "page tools" (saved presets, full-state reset) live
+       at a separate visual altitude. The previous v1.13.13 inline
+       row is preserved (commented) below so a one-line revert is
+       possible if this layout doesn't land well. -->
+  <div class="library-toolbar" id="library-toolbar">
+    <span class="library-toolbar-label muted small">PRESET:</span>
+    <select class="library-presets-select" id="library-presets-select"
+            title="Apply a saved filter preset.">
+      <option value="" disabled selected>// none</option>
+    </select>
+    <button type="button" class="library-toolbar-action"
+            id="library-presets-save"
+            title="Save the current filter combo as a preset.">+ SAVE</button>
+    <button type="button" class="library-toolbar-action library-toolbar-action-danger"
+            id="library-presets-delete"
+            title="Delete the active saved filter."
+            style="display:none">× DELETE</button>
+    <span class="library-toolbar-sep" aria-hidden="true">·</span>
+    <button type="button" class="library-toolbar-action"
+            id="library-clear-all"
+            title="Clear all filters, search, and sort.">// CLEAR ALL</button>
+  </div>
 </section>
 
 <input type="hidden" id="library-tab" value="{{ tab }}" />
@@ -228,31 +252,11 @@
             title="Clear all EDITION selections.">CLEAR</button>
   </div>
 
-  <!-- v1.13.11: saved-filter presets row.
-       v1.13.12: restyled to match the pill-row family — bare select
-       (no green frame), text-only SAVE / DELETE buttons that pick up
-       the same muted styling as the per-row CLEAR controls. -->
-  <div class="pill-filter-row library-presets-row" id="library-presets-row"
-       aria-label="saved filter presets">
-    <span class="pill-filter-label muted small">PRESET:</span>
-    <select class="library-presets-select" id="library-presets-select"
-            title="Apply a saved filter preset.">
-      <option value="" disabled selected>// none</option>
-    </select>
-    <button type="button" class="pill-filter-clear library-presets-action"
-            id="library-presets-save"
-            title="Snapshot the current filter combo as a named preset.">+ SAVE</button>
-    <button type="button" class="pill-filter-clear library-presets-action library-presets-action-danger"
-            id="library-presets-delete"
-            title="Delete the active saved filter."
-            style="display:none">× DELETE</button>
-    <!-- v1.13.13: hard reset for every filter axis + search + sort.
-         Leaves the saved-preset selection alone (selecting a preset
-         is the way to re-apply, not lose, a saved combo). -->
-    <button type="button" class="pill-filter-clear library-clear-all"
-            id="library-clear-all"
-            title="Clear all filters, search, and sort.">// CLEAR ALL</button>
-  </div>
+  <!-- v1.13.16 (A1): PRESET / SAVE / DELETE / CLEAR ALL moved up to
+       the hero-area toolbar (see top of file). Pill-row removed for
+       a cleaner filter stack. To revert: paste the v1.13.13 row back
+       here AND remove the .library-toolbar block above. The element
+       IDs are unchanged so all JS bindings work either way. -->
 </section>
 
 <!-- Bulk-action bar — appears when ≥1 row is selected via the per-row

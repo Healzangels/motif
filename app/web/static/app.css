@@ -292,6 +292,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   min-width: 72px;
   text-align: center;
 }
+/* v1.13.16: stable widths for the dashboard SYNC + library SCAN PLEX
+   buttons. Pre-fix the button width tracked the rendered label, so
+   the transition idle → busy ("// SCAN PLEX" → "// SCANNING TV
+   SHOWS…") visibly reflowed and pushed neighboring layout. The
+   widest label in each set determines the min-width:
+     SYNC button   — "// SYNC + SCAN PLEX"   (~190px)
+     SCAN PLEX btn — "// SCANNING TV SHOWS…" (~200px)
+   Keeping them static at the busy-state width means idle ↔ busy
+   transitions only swap text, never reflow neighbors. */
+#sync-now-btn { min-width: 200px; }
+#library-refresh-btn { min-width: 200px; }
 .btn-warn { color: var(--amber); border-color: var(--amber); }
 .btn-warn:hover { background: rgba(255,184,74,0.08); box-shadow: 0 0 10px rgba(255,184,74,0.15); }
 /* v1.11.96: btn-info = blue button variant for "informational
@@ -512,10 +523,53 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   background: var(--bg);
 }
 
-/* v1.13.12: PRESET row styling. Restyles SAVE / DELETE to match
-   the muted text-button family used by the per-row CLEAR controls,
-   and tones the select down so the row doesn't read like a
-   green-frame toolbar that fights the pill rows above. */
+/* v1.13.16 (A1): hero-area filter toolbar. Pulls PRESET / SAVE /
+   DELETE / CLEAR ALL out of the pill-row stack so the filter axes
+   below stay focused on per-axis state. The toolbar reads as a
+   page-level utility row, not a filter axis — small, muted, with
+   accent-on-hover. */
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.library-toolbar-label {
+  color: var(--fg-mute);
+  letter-spacing: 0.12em;
+}
+.library-toolbar-sep {
+  color: var(--fg-mute);
+  opacity: 0.4;
+  user-select: none;
+}
+.library-toolbar-action {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--fg-mute);
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.library-toolbar-action:hover {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+.library-toolbar-action-danger:hover {
+  color: var(--red);
+  border-color: var(--red);
+}
+/* Select keeps its v1.13.13 styling; just sized for the toolbar
+   row instead of the wider pill-row slot. */
 .library-presets-select {
   background: transparent;
   color: var(--fg);
@@ -527,23 +581,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
   letter-spacing: 0.06em;
   text-transform: uppercase;
   cursor: pointer;
-  /* Native dropdown chevron — keep it OS-default so the control
-     looks like a proper select rather than a clickable label. */
   appearance: auto;
-  min-width: 160px;
+  min-width: 140px;
 }
 .library-presets-select:hover { border-color: var(--cyan); }
-.library-presets-action {
-  /* Inherits pill-filter-clear (muted text-button); adds a faint
-     accent so SAVE reads as the primary action without a hard
-     fill. */
-  color: var(--fg);
-}
-.library-presets-action:hover { color: var(--cyan); border-color: var(--cyan); }
-.library-presets-action-danger:hover {
-  color: var(--red);
-  border-color: var(--red);
-}
 .input {
   flex: 1; min-width: 240px;
   background: var(--bg);
@@ -728,6 +769,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
    visible gap on every row regardless of action density. */
 #library-table td.col-actions,
 #library-table th.col-actions { padding-left: 60px; }
+/* v1.13.16: ACTIONS header centers OVER the right-aligned button
+   cluster instead of right-aligning to the cell edge. Pre-fix the
+   v1.13.13 padding bump shifted the cluster left while the header
+   text stayed pinned to the right padding, so "ACTIONS" sat well
+   to the right of where the buttons actually rendered. Centering
+   the th puts the label visually above the cluster on rows with
+   the full 4-button set. */
+#library-table th.col-actions { text-align: center; }
 .col-imdb { width: 120px; font-size: var(--t-tiny); color: var(--fg-mute); font-variant-numeric: tabular-nums; }
 #library-table td.col-imdb,
 #library-table th.col-imdb { padding-right: 24px; }
@@ -1533,14 +1582,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(109,255,181,0.4)
 }
 .cache-gauge-list .cache-gauge-bytes { font-variant-numeric: tabular-nums; }
 
-.info-tdb-preview-btn { font-weight: 600; letter-spacing: 0.1em; }
-.info-tdb-preview-iframe {
-  display: block;
-  border: 1px solid var(--line);
-  border-radius: 3px;
-  background: #000;
-  max-width: 100%;
-}
+/* v1.13.16: .info-tdb-preview-btn / .info-tdb-preview-iframe removed.
+   The TDB preview iframe was killed because YouTube blocks embedding
+   on many videos (Error 153). Users can still play on-disk audio in
+   the INFO card and click the YouTube link to verify TDB's URL. */
 .dlg-actions { display: flex; gap: 8px; margin-top: 20px; flex-wrap: wrap; }
 .dlg-form { display: flex; gap: 8px; margin-top: 8px; }
 .dlg-form .input { flex: 1; }
@@ -2413,35 +2458,60 @@ pre code, .codeblock {
    color encodes the transport that ran, modifier classes flag
    no-op (304/no-new-commits) and fallback runs. The chart reads
    left-to-right (oldest → newest). */
-.sync-history-bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  height: 64px;
-  padding-bottom: 2px;
+/* v1.13.16 (B1): bar chart retired in favor of a sparse 5-row table.
+   The .sync-history-bar* classes are kept for one release in case
+   anyone wants to roll back; renderSyncHistory no longer emits them.
+   Containers stay so the dashboard layout is unchanged. */
+.sync-history-bars { padding: 0; }
+
+.sync-hist-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--t-tiny);
+  font-variant-numeric: tabular-nums;
 }
-.sync-history-bar {
-  flex: 1 0 8px;
-  min-width: 6px;
-  border-radius: 1px;
-  background: var(--fg-mute);
-  cursor: help;
-  transition: filter 0.12s;
+.sync-hist-table thead th {
+  text-align: left;
+  padding: 4px 10px;
+  letter-spacing: 0.14em;
+  color: var(--fg-mute);
+  font-weight: 500;
+  border-bottom: 1px solid var(--line);
 }
-.sync-history-bar:hover { filter: brightness(1.4); }
-.sync-history-bar-git      { background: var(--cyan); }
-.sync-history-bar-database { background: var(--magenta); }
-.sync-history-bar-remote   { background: var(--fg-mute); }
-.sync-history-bar-noop     { background: var(--green); opacity: 0.85; }
-.sync-history-bar-fallback {
-  /* Amber wedge on the right edge so the user can see the
-     cascade at a glance. */
-  border-right: 2px solid var(--amber);
+.sync-hist-table tbody td {
+  padding: 6px 10px;
+  border-bottom: 1px dashed rgba(255, 255, 255, 0.04);
 }
-.sync-history-bar-failed {
-  background: var(--red) !important;
-  opacity: 0.7;
+.sync-hist-table tbody tr:last-child td { border-bottom: none; }
+
+.sync-hist-when     { color: var(--fg-dim); white-space: nowrap; }
+.sync-hist-tx       { white-space: nowrap; }
+.sync-hist-dur      { color: var(--fg); white-space: nowrap; }
+.sync-hist-changes  { color: var(--fg); }
+.sync-hist-status-cell { white-space: nowrap; }
+
+.sync-hist-transport {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 10px;
 }
+.sync-hist-transport-git      { color: var(--cyan);    background: rgba(109,211,255,0.08); }
+.sync-hist-transport-database { color: var(--magenta); background: rgba(255,92,232,0.08); }
+.sync-hist-transport-remote   { color: var(--fg);      background: rgba(255,255,255,0.04); }
+
+.sync-hist-status {
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  padding: 1px 6px;
+  border-radius: 2px;
+  font-size: 10px;
+}
+.sync-hist-status-ok       { color: var(--green);  background: rgba(109,255,181,0.08); }
+.sync-hist-status-noop     { color: var(--fg-mute);background: rgba(255,255,255,0.04); }
+.sync-hist-status-fallback { color: var(--amber);  background: rgba(255,184,74,0.08); }
+.sync-hist-status-failed   { color: var(--red);    background: rgba(255,107,107,0.08); }
 .sync-history-summary {
   margin-top: 12px;
   display: flex;

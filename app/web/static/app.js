@@ -146,7 +146,17 @@
   // refreshTopbarStatus will overwrite if it's newer.
   try {
     const cached = localStorage.getItem('motif:tab_availability');
-    if (cached) applyTabAvailability(JSON.parse(cached));
+    if (cached) {
+      const ta = JSON.parse(cached);
+      applyTabAvailability(ta);
+      // v1.13.16: also pre-paint the STANDARD/4K toggle chips on the
+      // library page from cached availability, so a tab switch
+      // (MOVIES → TV SHOWS) doesn't briefly show the chips at their
+      // hidden default state before /api/stats lands and fills them
+      // in. adaptLibraryFourkToggle no-ops gracefully when the
+      // resolution chips don't exist (non-library pages).
+      try { adaptLibraryFourkToggle(ta); } catch (_) { /* fine */ }
+    }
   } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
 
   // v1.12.50: same trick for the themes-have map. The library row
@@ -561,24 +571,24 @@
         const variant = libraryState.fourk ? 'fourk' : 'standard';
         const tabBusy = !!(tab && enumActive[tab] && enumActive[tab][variant]);
         const lockReason = tabBusy
-          ? `// REFRESHING ${libraryRefreshLabel()}…`
-          : (themerrdbBusy ? '// SYNCING…' : '// REFRESHING PLEX…');
+          ? `// SCANNING ${libraryRefreshLabel()}…`
+          : (themerrdbBusy ? '// SYNCING…' : '// SCANNING PLEX…');
         lockBtn(libRefreshBtn, refreshBtnBusy, lockReason);
       }
-      // Settings global REFRESH FROM PLEX.
+      // Settings global SCAN PLEX.
       lockBtn(
         document.getElementById('refresh-libraries-btn'),
         refreshBtnBusy,
-        themerrdbBusy && !plexEnumBusy ? '// SYNCING…' : '// REFRESHING PLEX…',
+        themerrdbBusy && !plexEnumBusy ? '// SYNCING…' : '// SCANNING PLEX…',
       );
-      // Dashboard SYNC button. Idle label reflects whether a refresh
-      // phase will follow (// SYNC + REFRESH) or not (// SYNC).
+      // Dashboard SYNC button. Idle label reflects whether a Plex scan
+      // phase will follow (// SYNC + SCAN PLEX) or not (// SYNC).
       // Stash on the button itself so setSyncButtonState (called by
       // the watcher) can pick up the right idle text on transition
       // back to idle without re-reading config.
       const syncBtn = document.getElementById('sync-now-btn');
       if (syncBtn) {
-        const idleLabel = autoEnum ? '// SYNC + REFRESH' : '// SYNC';
+        const idleLabel = autoEnum ? '// SYNC + SCAN PLEX' : '// SYNC';
         // Don't clobber the dataset.origLabel mid-busy — lockBtn
         // restores from it. Only update the idle text when the
         // button is currently in idle (not locked).
@@ -597,7 +607,7 @@
       lockBtn(
         document.getElementById('sync-now-btn'),
         dashSyncBtnBusy,
-        themerrdbBusy ? '// SYNCING…' : '// REFRESHING…',
+        themerrdbBusy ? '// SYNCING…' : '// SCANNING PLEX…',
       );
       // Per-section REFRESH — lock only if THIS section is enumerating.
       document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
@@ -809,17 +819,13 @@
     line.style.display = '';
   }
 
-  // v1.13.2 (#1): sync history sparkline + per-transport summary.
-  // Bar height encodes wall-clock seconds; color encodes transport
-  // (git=cyan, database=magenta, remote=fg-mute). A no-changes
-  // run (304 / no-new-commits) renders short with a green-tint
-  // overlay so it's distinguishable from a fast full walk. A
-  // fallback run (cascaded down a tier) gets an amber tint on the
-  // bar's right edge so the user can spot at a glance which days
-  // the fast path failed.
-  // v1.13.12: sync-history render guard. Same flicker-suppression
-  // story as renderSectionCoverage — most dashboard polls hit the
-  // /api/sync/history cache and return identical payloads.
+  // v1.13.16 (B1): sync history bar chart replaced with a sparse
+  // 5-row table. The bars made every run look like decoration; a
+  // tabular view makes each datum legible at a glance: timestamp,
+  // transport, duration, change count, status. Pre-fix runs that
+  // pre-dated the v37 telemetry columns rendered as "UNKNOWN" with
+  // an unhelpful tooltip — those rows now render with a muted
+  // dash where their transport would be, no special-case visual.
   let _lastSyncHistoryKey = '';
 
   function renderSyncHistory(payload) {
@@ -836,49 +842,62 @@
     }
     _lastSyncHistoryKey = key;
     block.style.display = '';
-    // Scale: tallest bar should fit in 60px. Anything over 180s
-    // (a really slow run) clamps to 60px; bars below 1s pin to a
-    // 4px floor so they're still hoverable.
-    const max = Math.max(60, ...runs.map(r => r.wall_clock_seconds || 0));
     const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString());
-    barsEl.innerHTML = runs.map((r) => {
-      const sec = r.wall_clock_seconds == null
-        ? 0 : Math.max(0.5, r.wall_clock_seconds);
-      const pctH = Math.max(4, Math.round((sec / max) * 60));
-      const transport = r.transport || 'unknown';
-      const cls = ['sync-history-bar',
-                   `sync-history-bar-${transport}`,
-                   r.no_changes ? 'sync-history-bar-noop' : '',
-                   r.fallback_reason ? 'sync-history-bar-fallback' : '',
-                   r.status === 'failed' ? 'sync-history-bar-failed' : '',
-                  ].filter(Boolean).join(' ');
+    // Most-recent first so the table reads top-down chronologically.
+    const recent = runs.slice().sort((a, b) =>
+      String(b.started_at || '').localeCompare(String(a.started_at || ''))
+    ).slice(0, 5);
+    const rows = recent.map((r) => {
+      const startedShort = (r.started_at || '')
+        .replace('T', ' ')
+        .replace(/\..*$/, '')
+        .replace(/\+.*$/, '');
+      const transport = r.transport
+        ? `<span class="sync-hist-transport sync-hist-transport-${r.transport}">${htmlEscape(r.transport.toUpperCase())}</span>`
+        : '<span class="muted">—</span>';
       const wcTxt = r.wall_clock_seconds == null
-        ? 'running' : `${r.wall_clock_seconds.toFixed(1)}s`;
-      // v1.13.12: tooltip rewrite — lead with the timestamp + transport
-      // so hover scans like a log line. Pre-fix it led with "#19" which
-      // wasn't useful; the clarifying info (date, transport, changes)
-      // came at the end and was easy to miss in a 30-bar row.
-      const startedShort = (r.started_at || '').replace('T', ' ').replace(/\..*$/, '').replace(/\+.*$/, '');
+        ? '<span class="muted">running…</span>'
+        : `${r.wall_clock_seconds.toFixed(1)}s`;
       const tot = (r.new_count || 0) + (r.updated_count || 0);
-      const changeTxt = r.no_changes ? 'no changes (short-circuit)'
-        : tot > 0 ? `${fmt(r.new_count)} new · ${fmt(r.updated_count)} updated`
-        : 'no changes';
-      const fbTxt = r.fallback_reason ? `\n⚠ fallback: ${r.fallback_reason}` : '';
-      const errTxt = r.error ? `\n✗ error: ${r.error}` : '';
-      const tip = `${startedShort} UTC\n`
-        + `${transport.toUpperCase()} · ${wcTxt}\n`
-        + `${changeTxt}\n`
-        + `${fmt(r.movies_seen)} movies · ${fmt(r.tv_seen)} tv scanned`
-        + fbTxt + errTxt;
-      return `<span class="${cls}" style="height:${pctH}px"
-              title="${htmlEscape(tip)}"></span>`;
+      const changeTxt = r.no_changes
+        ? '<span class="muted">no changes</span>'
+        : tot > 0
+          ? `${fmt(r.new_count)} new · ${fmt(r.updated_count)} upd`
+          : '<span class="muted">no changes</span>';
+      let statusBadge;
+      if (r.status === 'failed') {
+        statusBadge = '<span class="sync-hist-status sync-hist-status-failed">FAIL</span>';
+      } else if (r.fallback_reason) {
+        statusBadge = `<span class="sync-hist-status sync-hist-status-fallback" title="${htmlEscape(r.fallback_reason)}">FALLBACK</span>`;
+      } else if (r.no_changes) {
+        statusBadge = '<span class="sync-hist-status sync-hist-status-noop">NO-OP</span>';
+      } else {
+        statusBadge = '<span class="sync-hist-status sync-hist-status-ok">OK</span>';
+      }
+      return `<tr>
+        <td class="sync-hist-when">${htmlEscape(startedShort)}</td>
+        <td class="sync-hist-tx">${transport}</td>
+        <td class="sync-hist-dur">${wcTxt}</td>
+        <td class="sync-hist-changes">${changeTxt}</td>
+        <td class="sync-hist-status-cell">${statusBadge}</td>
+      </tr>`;
     }).join('');
+    barsEl.innerHTML = `<table class="sync-hist-table">
+      <thead><tr>
+        <th>WHEN (UTC)</th><th>TRANSPORT</th><th>DURATION</th>
+        <th>CHANGES</th><th>STATUS</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    // Per-transport summary row — kept as a one-line footer so the
+    // dashboard glance still answers "which path do I usually take?"
     const summary = (payload && payload.summary) || [];
-    if (!summary.length) {
+    const known = summary.filter((s) => s.transport && s.transport !== 'unknown');
+    if (!known.length) {
       sumEl.innerHTML = '<span class="muted small">// no completed runs yet</span>';
       return;
     }
-    sumEl.innerHTML = summary.map((s) => {
+    sumEl.innerHTML = known.map((s) => {
       const fbNote = s.fallback_count
         ? ` <span class="muted">· ${s.fallback_count} fb</span>` : '';
       const noopNote = s.no_change_count
@@ -991,10 +1010,15 @@
     // auto_enum_after_sync setting from /api/stats (cached on the
     // button via dataset.origLabel by refreshTopbarStatus). When
     // unknown (initial load before the first /api/stats response),
-    // fall back to // SYNC + REFRESH (the default-on case).
+    // fall back to data-orig-default (set inline in the template
+    // to "// SYNC + SCAN PLEX") so the button text is stable from
+    // the very first paint instead of flickering through a JS-set
+    // default.
     const btn = $('#sync-now-btn');
     if (!btn) return;
-    const idleLabel = btn.dataset.origLabel || '// SYNC + REFRESH';
+    const idleLabel = btn.dataset.origLabel
+      || btn.dataset.origDefault
+      || '// SYNC + SCAN PLEX';
     if (state === 'idle') {
       btn.disabled = false;
       btn.textContent = idleLabel;
@@ -6763,17 +6787,10 @@
     // click.
     const tdbVidId = t.youtube_video_id || null;
     const onDiskVidId = (lf && lf.source_video_id) || null;
-    const tdbPreviewRelevant = !!(
-      tdbVidId
-      && (!onDiskVidId || onDiskVidId !== tdbVidId)
-    );
-    const tdbPreviewBlock = tdbPreviewRelevant
-      ? `<dt>tdb preview</dt><dd>
-          <button type="button" class="btn btn-tiny info-tdb-preview-btn"
-                  data-yt-id="${htmlEscape(tdbVidId)}"
-                  title="Preview the first 30s of ThemerrDB's recommended URL — the on-disk play above streams the canonical motif has saved.">▸ preview tdb (30s)</button>
-        </dd>`
-      : '';
+    // v1.13.16: TDB preview removed (YouTube embed blocked for many
+    // videos). Variable kept as empty string so the template
+    // interpolation site stays unchanged; one less render branch.
+    const tdbPreviewBlock = '';
     // v1.12.56: pending-update diff section. When an actionable
     // upstream-changed update is queued, show side-by-side tiles
     // (current vs proposed) so the user can pre-validate ACCEPT
@@ -7401,30 +7418,12 @@
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
     document.getElementById('info-dlg-close')?.addEventListener('click', closeInfoDialog);
-    // v1.13.8 (#5): TDB-preview click handler. Delegated off the
-    // dialog so each render of openInfoDialog reuses the binding
-    // without re-registering. On click, the button replaces itself
-    // with a YouTube iframe that auto-plays the first 30 seconds.
-    // The iframe gets torn down when the dialog closes (closeInfoDialog
-    // re-renders the body to '<p class="muted">loading…</p>' on next
-    // open, dropping the iframe + stopping playback).
-    dlg.addEventListener('click', (ev) => {
-      const btn = ev.target.closest('.info-tdb-preview-btn');
-      if (!btn) return;
-      const ytId = btn.dataset.ytId;
-      if (!ytId) return;
-      const iframe = document.createElement('iframe');
-      iframe.className = 'info-tdb-preview-iframe';
-      iframe.width = '320';
-      iframe.height = '180';
-      iframe.allow = 'autoplay; encrypted-media';
-      iframe.title = 'ThemerrDB preview';
-      // start=0 + end=30 clips to 30s; modestbranding=1 hides the
-      // YouTube logo overlay; rel=0 suppresses related-videos at end.
-      iframe.src = `https://www.youtube.com/embed/${encodeURIComponent(ytId)}`
-        + `?start=0&end=30&autoplay=1&modestbranding=1&rel=0`;
-      btn.replaceWith(iframe);
-    });
+    // v1.13.16: TDB preview removed. YouTube blocks the embed for
+    // many videos (Error 153 / video player configuration error)
+    // and there's no clean alternative without violating ToS. The
+    // INFO card's on-disk play already gives the user audio
+    // verification of motif's canonical; the TDB URL is one click
+    // away in any browser if they want to listen before accepting.
   }
 
 

@@ -388,12 +388,18 @@ def _synthesize_queue_ops(counts) -> list[dict]:
             # is the burst's HW (max remaining we've seen since the
             # queue last drained); stage_current is what's completed
             # so far in this burst. A 5-job burst with 1 done shows
-            # 1/5 = 20%, ticks to 5/5 as the worker drains. Bursts
-            # that grow mid-flight (new jobs queued while others
-            # finish) push HW higher so the bar resets relative to
-            # the new ceiling — never goes backwards visually.
+            # 1/5 = 20%, ticks to 5/5 as the worker drains.
+            #
+            # v1.13.16 (D1): single-job bursts render as indeterminate
+            # (stage_total=0 → bar shimmers, no percentage) because
+            # a 0%→100% jump is meaningless for a single yt-dlp call
+            # that doesn't expose its own progress. Multi-job bursts
+            # (HW >= 2) keep the real proportional fill — those tell
+            # a useful story over many seconds. Counts are still
+            # available via stage_label so the operator can see
+            # "1 running" without a misleading bar.
             "stage_current": completed_in_burst,
-            "stage_total": hw,
+            "stage_total": hw if hw >= 2 else 0,
             "processed_total": completed_in_burst,
             "processed_est": hw,
             "error_count": 0,
