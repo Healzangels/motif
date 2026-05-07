@@ -804,3 +804,38 @@ hotfix that the M+P observation surfaced.
   if the URL becomes available again, restore the preview +
   guidance. Defer to v1.13.32.
 - Concurrent ops topbar visibility (defer until needed).
+
+---
+
+## 2026-05-07 — v1.13.32: P0 filter-count fix (PL=await + only-PL filter combos 500'd)
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.32`
+
+### Context
+User testing v1.13.29-v1.13.31 hit a filter-induced 500:
+"sqlite3.OperationalError: no such column: lf.file_path".
+Reproduces when `pl_pills` is set with no other axis-filter that
+triggers `needs_themes_for_count` (no tdb_pills, src_pills, status,
+or tdb!=any). The slim count path's `needs_lf_for_count` check
+omitted `bool(pl_pills)`, but the `pl_pills="await"` SQL branch
+references `lf.file_path` ("p.media_folder IS NULL AND
+lf.file_path IS NOT NULL"). Slim count → no lf join → 500.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.32`.
+- `app/web/api.py`: added `bool(pl_pills)` to
+  `needs_lf_for_count` so the slim count path joins `local_files`
+  whenever PL is filtering. Comment captures the regression
+  signature for future debugging.
+
+### How to verify
+1. With no other filters, click PL=`await` (the awaiting-placement
+   state filter). The library count + rows render correctly
+   instead of 500'ing.
+2. PL=`off` alone (no other filters): no regression — `off`
+   doesn't reference lf, but the join is harmless.
+
+### Open threads (deferred to v1.13.33+)
+- Info-card adapt for dead-TDB rows (M→A adopt path, replace
+  failure with success guidance).
+- Bulk PUSH TO PLEX for downloaded-but-not-placed rows.
+- Concurrent ops topbar visibility.

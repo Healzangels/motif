@@ -1539,7 +1539,17 @@ def _library_main_query(
             "manual", "plex_agent", "untracked", "has_theme",
             "downloaded", "unplaced",
         )
+        # v1.13.32: pl_pills "await" branch references lf.file_path
+        # ("p.media_folder IS NULL AND lf.file_path IS NOT NULL", see
+        # ~line 1098). The slim count path was missing this trigger,
+        # so a filter combo that landed only on PL=await (no
+        # tdb_pills, no src_pills, etc. → not needs_themes_for_count)
+        # produced sql_count without lf joined and 500'd with
+        # "no such column: lf.file_path". Added bool(pl_pills) so
+        # the count joins lf whenever PL is filtering. The rows
+        # query already uses the full sql_from with lf joined.
         or bool(src_pills) or bool(dl_pills) or bool(link_pills)
+        or bool(pl_pills)
     )
     needs_p_for_count = (
         status in (
