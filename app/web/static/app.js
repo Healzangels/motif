@@ -560,9 +560,26 @@
       const enumTabsActive = ['movies', 'tv', 'anime'].filter((t) =>
         enumActive[t] && (enumActive[t].standard || enumActive[t].fourk),
       ).length;
+      // v1.13.25: pipelineInFlight = ANY in-flight plex_enum job
+      // tagged scope=cascade (post-sync auto-enum) or scope=scan_all
+      // (settings global SYNC PLEX). Keeps the lock stable through
+      // the tail of a multi-section sweep instead of releasing as
+      // each section drains and enumTabsActive falls back to 1.
+      const pipelineInFlight = (q.plex_enum_pipeline_in_flight || 0) > 0;
       const globalEnumPipeline = (themerrdbBusy && autoEnum)
-                              || enumTabsActive > 1;
-      const dashSyncBtnBusy = themerrdbBusy;
+                              || enumTabsActive > 1
+                              || pipelineInFlight;
+      // v1.13.25: dash SYNC stays locked through the WHOLE pipeline,
+      // not just the tdb-sync phase. Pre-fix (v1.13.24) the bus was
+      // `themerrdbBusy` only, which unlocked the button mid-pipeline
+      // once the tdb sync flipped success → the cascade plex_enum
+      // phase still had work to do but the button became clickable
+      // and a second sync could be kicked off concurrently. Gating
+      // on globalEnumPipeline keeps the lock through the cascade
+      // without re-locking on per-library plex_enum (those don't
+      // light up globalEnumPipeline since enumTabsActive ≤ 1 and
+      // there's no concurrent tdb sync).
+      const dashSyncBtnBusy = themerrdbBusy || globalEnumPipeline;
       const libRefreshBusy = myTabBusy || globalEnumPipeline;
       const settingsRefreshBusy = plexEnumBusy
                               || (themerrdbBusy && autoEnum);
@@ -651,15 +668,20 @@
           }
         }
       }
-      // Dashboard SYNC button. v1.13.19: the label is now stable
-      // ("// SYNC THEMERRDB") regardless of auto_enum — the post-sync
-      // Plex scan, when enabled, surfaces in the LIVE OPS drawer as
-      // its own card instead of being baked into the button name.
-      // We still cache origLabel so setSyncButtonState's idle-restore
-      // path lands on the same string.
+      // Dashboard SYNC button. v1.13.25: label adapts to
+      // auto_enum_after_sync — `// SYNC THEMERRDB + PLEX` when the
+      // cascade is on (the click runs both phases) and `// SYNC
+      // THEMERRDB` when off (sync-only). v1.13.19's note about
+      // "stable label regardless of auto_enum" was reverted because
+      // the user couldn't tell what their click would actually do
+      // when the schedule setting was on. setSyncButtonState's
+      // idle-restore reads dataset.origLabel so the label stays in
+      // sync with the current setting after the run completes.
       const syncBtn = document.getElementById('sync-now-btn');
       if (syncBtn) {
-        syncBtn.dataset.origLabel = '// SYNC THEMERRDB';
+        syncBtn.dataset.origLabel = autoEnum
+          ? '// SYNC THEMERRDB + PLEX'
+          : '// SYNC THEMERRDB';
         // v1.13.19: dash sync button busy state is owned by
         // setSyncButtonState (idle/running/done with stable
         // // SYNCING… label). Refresh-poll just toggles the

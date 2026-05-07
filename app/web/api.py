@@ -2299,6 +2299,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   (SELECT COUNT(*) FROM jobs
                    WHERE job_type = 'plex_enum'
                      AND status IN ('pending','running')) AS plex_enum_in_flight,
+                  -- v1.13.25: count of in-flight plex_enum jobs flagged
+                  -- as a multi-section pipeline (auto-enum cascade after
+                  -- a tdb sync, OR settings-page SCAN ALL). The UI uses
+                  -- this to keep dash + library button locks stable
+                  -- through the entire pipeline — pre-fix the locks
+                  -- released as soon as enumTabsActive dropped to 1
+                  -- (one section left), even though more work was
+                  -- still queued behind it.
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'plex_enum'
+                     AND status IN ('pending','running')
+                     AND json_extract(payload, '$.scope') IN ('cascade','scan_all')
+                   ) AS plex_enum_pipeline_in_flight,
                   -- v1.11.35: 'running' alone (no pending) so the topbar
                   -- banner only claims activity that's actually
                   -- happening right now. Pre-fix the banner said
@@ -2675,6 +2688,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "sync_in_flight": row["sync_in_flight"],
                 "themerrdb_sync_in_flight": row["themerrdb_sync_in_flight"],
                 "plex_enum_in_flight": row["plex_enum_in_flight"],
+                "plex_enum_pipeline_in_flight": row["plex_enum_pipeline_in_flight"],
                 "themerrdb_sync_running": row["themerrdb_sync_running"],
                 "plex_enum_running": row["plex_enum_running"],
                 "download_in_flight": row["download_in_flight"],
@@ -4119,10 +4133,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     sid = s["section_id"]
                     if sid in pending_section_ids:
                         continue
+                    # v1.13.25: tag jobs with scope="scan_all" so /api/stats
+                    # can surface plex_enum_pipeline_in_flight — keeps the
+                    # dash + library button locks stable through the tail
+                    # of a multi-section sweep instead of releasing once
+                    # enumTabsActive drops to 1 with just one section left.
                     conn.execute(
                         "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                         "VALUES ('plex_enum', ?, 'pending', ?, ?)",
-                        (json.dumps({"section_id": sid}), now_iso(), now_iso()),
+                        (json.dumps({"section_id": sid, "scope": "scan_all"}),
+                         now_iso(), now_iso()),
                     )
                     enqueued += 1
             log_event(db, level="INFO", component="api",

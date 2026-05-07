@@ -218,3 +218,103 @@ Three small polish items the user reported while testing v1.13.23:
   button. Settings global SYNC PLEX uses the same single-button
   pattern but doesn't have the variant-flip ambiguity (its scope
   is "all sections"), so no change needed there.
+
+---
+
+## 2026-05-07 — v1.13.25: cascade as per-section jobs, pipeline-stable button locks, autoEnum-aware dash label
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.25`
+
+### Context
+User testing v1.13.24 reported:
+
+1. Dash SYNC button became clickable mid-pipeline when SYNC THEMERRDB
+   + auto_enum_after_sync was on — the click could be re-fired during
+   the plex_enum cascade phase, allowing concurrent syncs.
+2. Dash button label said `// SYNC THEMERRDB` even when auto_enum was
+   on (the click ran both phases). User couldn't tell from the label
+   what their click would do.
+3. Per-library SYNC PLEX on /movies?fourk=1 reported as locking
+   /tv?fourk=1 button (scope-mismatch reading; could be reproducer
+   confusion or a state we can't trigger from code reading).
+
+### Root causes
+1. **Cascade is one job, not many.** worker._do_sync's auto-enum
+   block enqueued a single empty-payload plex_enum job that the
+   worker iterated section-by-section internally. Externally,
+   /api/stats's enum_running_rows query couldn't link the job to
+   any section (`json_extract(payload, '$.section_id')` returns
+   NULL) so plex_enum_active[tab][variant] stayed all-false through
+   the entire cascade — every UI signal that depended on per-tab
+   activity (library button locks, dash SYNC lock via
+   globalEnumPipeline) was blind to the cascade. Also broke the
+   "scanning section X" topbar pill labeling for cascade runs.
+2. **dashSyncBtnBusy = themerrdbBusy** (v1.13.24) released the lock
+   the moment tdb-sync finished, before plex_enum cascade had any
+   chance to start counting. With (1) above making the cascade
+   invisible to globalEnumPipeline, the button stayed clickable
+   for the entire plex phase. v1.13.24 had explicitly traded this
+   away to fix a different per-library issue from v1.13.23.
+3. **Dash button label hardcoded.** v1.13.19 stabilized the label
+   to `// SYNC THEMERRDB` regardless of auto_enum, on the theory
+   that the topbar would carry the live state. But the label also
+   serves as a "what does this button do" affordance — if the
+   click runs both phases, the label should say so.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.25`.
+- `app/core/worker.py`:
+  - `_do_sync`'s post-sync auto-enum block now enqueues one
+    `plex_enum` job per included section (each with
+    `{"section_id": "...", "scope": "cascade"}`) instead of one
+    empty-payload global. Mirrors `/api/libraries/refresh` (SCAN
+    ALL), which was already per-section. Per-section dedupe via
+    pending_section_ids check matches `/api/libraries/refresh`'s
+    pattern.
+- `app/web/api.py`:
+  - `/api/libraries/refresh` (SCAN ALL): jobs now carry
+    `"scope": "scan_all"`.
+  - `/api/stats`: new `plex_enum_pipeline_in_flight` count —
+    plex_enum jobs whose payload scope ∈ ('cascade','scan_all')
+    that are pending or running. UI uses this to keep
+    globalEnumPipeline true through the entire pipeline (incl.
+    the tail when only one section is left and enumTabsActive
+    has dropped back to 1).
+- `app/web/static/app.js`:
+  - `globalEnumPipeline` now ORs in `pipelineInFlight` from the
+    new stat field. Stable lock through cascade + SCAN ALL tail.
+  - `dashSyncBtnBusy = themerrdbBusy || globalEnumPipeline`
+    (was: `themerrdbBusy` only). Dash SYNC stays locked through
+    the whole pipeline.
+  - Dash button `dataset.origLabel` adapts to `autoEnum`:
+    `// SYNC THEMERRDB + PLEX` when on, `// SYNC THEMERRDB`
+    when off. setSyncButtonState's idle-restore reads the
+    dataset, so the label stays in sync with the current
+    setting after each run.
+
+### How to verify (user testing)
+1. Toggle "Sync ThemerrDB and Plex" on in Settings → Schedule.
+   Dashboard SYNC button label reads `// SYNC THEMERRDB + PLEX`.
+2. Click it. Button stays disabled + "// SYNCING…" through
+   tdb sync AND through the entire cascade plex_enum phase
+   (across all included sections). Reloading mid-flight keeps
+   the button locked too — the page-load check in bindDashboard
+   sees `plex_enum_pipeline_in_flight > 0` and re-establishes
+   the local watcher.
+3. While the cascade is running, navigate to /movies, /tv,
+   /anime. All `// SYNC PLEX` buttons should be locked
+   (globalEnumPipeline=true via pipelineInFlight).
+4. Per-library // SYNC PLEX on /movies?fourk=1 (NOT the dashboard
+   sync). Other library tabs' SYNC PLEX buttons + dash SYNC
+   should stay clickable (per-library scan doesn't tag jobs as
+   pipeline; only its own scope is busy).
+5. Toggle "Sync ThemerrDB and Plex" off in Settings. Dashboard
+   button label drops back to `// SYNC THEMERRDB`. Click runs
+   sync only (no cascade); dash button releases as soon as the
+   tdb sync finishes.
+
+### Open threads
+- User reported (a) "queue depth indicator" ask and (b) "coverage
+  chart confusion" ask, plus a possible cross-library lock case
+  that I couldn't trigger from reading code. Holding on those
+  three pending clarification — see chat for the question batch.
+- Tag `v1.13.25` pushed; image build in progress.

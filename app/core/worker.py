@@ -673,18 +673,38 @@ class Worker:
         # Daily cron syncs need it (no human around to manually click
         # REFRESH); users who want manual control on the dashboard
         # button can disable.
+        # v1.13.25: enqueue ONE plex_enum job per included section
+        # instead of a single global empty-payload job. Pre-fix the
+        # cascade ran as one job whose payload had no section_id, so
+        # /api/stats's `plex_enum_active[tab][variant]` map (built by
+        # joining jobs.payload→section_id with plex_sections) was
+        # all-false during the cascade — every UI signal that depends
+        # on per-tab activity (library button locks, dash SYNC lock
+        # via globalEnumPipeline) failed to fire mid-cascade. Per-
+        # section jobs match the manual SCAN ALL flow exactly, light
+        # up enumTabsActive correctly, and let the dash SYNC lock
+        # hold through the entire sync→enum pipeline.
         if self.settings.sync_auto_enum_after_sync:
-            # Dedupe so concurrent syncs don't pile up.
             with get_conn(self.settings.db_path) as conn:
-                existing = conn.execute(
-                    "SELECT 1 FROM jobs WHERE job_type = 'plex_enum' "
-                    "AND status IN ('pending','running')"
-                ).fetchone()
-                if not existing:
+                included = conn.execute(
+                    "SELECT section_id FROM plex_sections WHERE included = 1"
+                ).fetchall()
+                pending_section_ids = {
+                    r["section_id"] for r in conn.execute(
+                        "SELECT json_extract(payload, '$.section_id') AS section_id "
+                        "FROM jobs WHERE job_type = 'plex_enum' "
+                        "AND status IN ('pending','running')"
+                    ).fetchall() if r["section_id"] is not None
+                }
+                for s in included:
+                    sid = s["section_id"]
+                    if sid in pending_section_ids:
+                        continue
                     conn.execute(
                         "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
-                        "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
-                        (now_iso(), now_iso()),
+                        "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                        (json.dumps({"section_id": sid, "scope": "cascade"}),
+                         now_iso(), now_iso()),
                     )
 
     def _do_scan(self, job: sqlite3.Row) -> None:
