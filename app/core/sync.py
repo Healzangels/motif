@@ -1492,6 +1492,8 @@ class _GitMirror:
 
     def _fetch(self) -> None:
         from dulwich.porcelain import fetch
+        import re as _re
+        import time as _t
         op_progress.update_progress(
             self.db_path, self.op_id,
             stage="git_fetch",
@@ -1500,6 +1502,54 @@ class _GitMirror:
             activity=f"git fetch {self.repo_url}",
         )
         self._open_repo()
+        # v1.13.19: parse dulwich's sideband progress so the topbar
+        # mini-bar fills with a real % during the fetch instead of
+        # sitting at indeterminate-shimmer for ~10s of "is this even
+        # working?". Dulwich's progress callback receives byte chunks
+        # like b"Receiving objects: 42% (1000/2380)\r"; we extract
+        # the (current, total) pair from the "(N/M)" suffix and
+        # rate-limit emits to ~5/sec so we don't hammer op_progress.
+        _last_emit = [0.0]
+        _progress_re = _re.compile(
+            rb"(Receiving objects|Resolving deltas|Counting objects|"
+            rb"Compressing objects):\s*\d+%?\s*\((\d+)/(\d+)\)"
+        )
+        _phase_label = {
+            b"Counting objects":   "counting",
+            b"Compressing objects": "compressing",
+            b"Receiving objects":  "receiving",
+            b"Resolving deltas":   "resolving",
+        }
+
+        def _on_fetch_progress(chunk: bytes) -> None:
+            try:
+                for piece in chunk.split(b"\r"):
+                    m = _progress_re.search(piece)
+                    if not m:
+                        continue
+                    phase_b = m.group(1)
+                    cur = int(m.group(2))
+                    total = int(m.group(3))
+                    if total <= 0:
+                        continue
+                    now = _t.monotonic()
+                    # Always emit on the final 100% sample; otherwise
+                    # rate-limit to ~5 emits/sec.
+                    if cur < total and (now - _last_emit[0]) < 0.2:
+                        continue
+                    _last_emit[0] = now
+                    op_progress.update_progress(
+                        self.db_path, self.op_id,
+                        stage="git_fetch",
+                        stage_label=(f"Fetching ThemerrDB delta "
+                                     f"({_phase_label.get(phase_b, '…')})"),
+                        stage_current=cur,
+                        stage_total=total,
+                    )
+            except Exception:
+                # A parse hiccup must never fail the fetch.
+                pass
+
         # Read prior HEAD from MOTIF_LAST_SYNC. Missing or out-of-store
         # → treat as first run (old_head=None) so list_changes returns
         # the full tree as 'added'. This is also the crash-recovery
@@ -1515,7 +1565,15 @@ class _GitMirror:
         self._old_head = old_head
         # The actual fetch.
         try:
-            res = fetch(str(self.repo_path), self.repo_url, depth=1)
+            res = fetch(str(self.repo_path), self.repo_url, depth=1,
+                        progress=_on_fetch_progress)
+        except TypeError:
+            # Older dulwich releases without progress= kwarg — fall
+            # back to indeterminate (just no real % during fetch).
+            try:
+                res = fetch(str(self.repo_path), self.repo_url, depth=1)
+            except Exception as e:
+                raise _GitMirrorError(f"dulwich fetch failed: {e}") from e
         except Exception as e:
             raise _GitMirrorError(f"dulwich fetch failed: {e}") from e
         if self._cancel_check():

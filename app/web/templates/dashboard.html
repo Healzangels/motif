@@ -4,14 +4,14 @@
 <section class="hero">
   <div class="hero-row">
     <h1 class="title">DASH</h1>
-    <!-- v1.13.18: button text is set entirely by refreshTopbarStatus
-         once /api/stats lands (the label depends on auto_enum). We
-         render with NO inline text so the user sees a brief blank
-         button instead of a stale label that flickers to the
-         correct one. ~200ms invisible vs ~600ms visibly wrong was
-         the right trade. -->
+    <!-- v1.13.19: button name is now stable — "// SYNC THEMERRDB"
+         regardless of auto_enum_after_sync (the post-sync Plex scan
+         is a side-effect surfaced via the LIVE OPS drawer, not a
+         renaming concern). Inline label means no flicker on first
+         paint. The busy state swaps to // SYNCING… (single-word,
+         doesn't change mid-run). -->
     <button class="btn" id="sync-now-btn"
-            title="Sync ThemerrDB and re-enumerate Plex sections."></button>
+            title="Sync ThemerrDB metadata.">// SYNC THEMERRDB</button>
   </div>
   <p class="muted">theme coverage at a glance · sync schedule in <a href="/settings#schedule">/settings</a></p>
   <!-- v1.13.1 (#2): live last-sync + next-sync line so the daily

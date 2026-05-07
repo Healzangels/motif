@@ -67,6 +67,19 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
     def _cancel_check():
         return cancel_check() or op_progress.is_cancelled(db_path, "plex_enum")
 
+    # v1.13.19: section-progress label helper. When the user is only
+    # scanning one section (the typical "// SCAN PLEX" click on a
+    # single-tab library), the "1/1" prefix is redundant noise — drop
+    # it and let the section title carry the context. With multiple
+    # sections in flight (the daily cron / dashboard SYNC + auto-enum)
+    # the prefix tells the user where in the pipeline they are.
+    def _section_label(idx: int, total: int, title: str, suffix: str = "") -> str:
+        if total <= 1:
+            base = title
+        else:
+            base = f"Section {idx}/{total}: {title}"
+        return f"{base} ({suffix})" if suffix else base
+
     try:
         with PlexClient(plex_cfg) as client:
             for s in managed:
@@ -82,7 +95,7 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 # encodes section index for context.
                 op_progress.update_progress(
                     db_path, "plex_enum",
-                    stage_label=f"Section {stats['sections']}/{len(managed)}: {s['title']}",
+                    stage_label=_section_label(stats['sections'], len(managed), s['title']),
                     stage_current=0,
                     stage_total=0,
                     activity=f"Fetching '{s['title']}' from Plex",
@@ -101,8 +114,8 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                     _last_fetch_emit[0] = _t.monotonic()
                     op_progress.update_progress(
                         db_path, "plex_enum",
-                        stage_label=(f"Section {stats['sections']}/{len(managed)}: "
-                                     f"{s['title']} (fetch)"),
+                        stage_label=_section_label(
+                            stats['sections'], len(managed), s['title'], "fetch"),
                         stage_current=received,
                         stage_total=total or 0,
                     )
@@ -129,8 +142,8 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                     activity=f"Upserting {len(items)} items from '{s['title']}'",
                 )
                 stats["items_seen"] += len(items)
-                _scope_label = (f"Section {stats['sections']}/{len(managed)}: "
-                                f"{s['title']}")
+                _scope_label = _section_label(
+                    stats['sections'], len(managed), s['title'])
                 ins, upd = _upsert_items(
                     db_path, items, cancel_check=_cancel_check,
                     # v1.12.18: pass section_id so the resolve pass that

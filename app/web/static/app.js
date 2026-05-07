@@ -557,48 +557,68 @@
       const refreshBtnBusy = autoEnum
         ? (themerrdbBusy || plexEnumBusy)
         : plexEnumBusy;
-      // Library page REFRESH FROM PLEX. Busy text reflects scope:
-      // tab+variant if THIS tab is the one enumerating, else the
-      // generic phase label.
+      // Library page SCAN PLEX. v1.13.19: one-word busy label —
+      // "// SCANNING…" stays put for the whole run instead of
+      // changing mid-stream like the v1.13.16 multi-stage swap.
+      // Idle label restored from dataset.origLabel set on click.
       const libRefreshBtn = document.getElementById('library-refresh-btn');
       if (libRefreshBtn) {
-        const tabEl = document.getElementById('library-tab');
-        const tab = tabEl ? tabEl.value : null;
-        const variant = libraryState.fourk ? 'fourk' : 'standard';
-        const tabBusy = !!(tab && enumActive[tab] && enumActive[tab][variant]);
-        const lockReason = tabBusy
-          ? `// SCANNING ${libraryRefreshLabel()}…`
-          : (themerrdbBusy ? '// SYNCING…' : '// SCANNING PLEX…');
-        lockBtn(libRefreshBtn, refreshBtnBusy, lockReason);
+        if (refreshBtnBusy) {
+          libRefreshBtn.disabled = true;
+          if (!libRefreshBtn.dataset.origLabel) {
+            libRefreshBtn.dataset.origLabel = libRefreshBtn.textContent;
+          }
+          libRefreshBtn.textContent = '// SCANNING…';
+        } else {
+          libRefreshBtn.disabled = false;
+          if (libRefreshBtn.dataset.origLabel) {
+            libRefreshBtn.textContent = libRefreshBtn.dataset.origLabel;
+            delete libRefreshBtn.dataset.origLabel;
+          }
+        }
       }
-      // Settings global SCAN PLEX.
-      lockBtn(
-        document.getElementById('refresh-libraries-btn'),
-        refreshBtnBusy,
-        themerrdbBusy && !plexEnumBusy ? '// SYNCING…' : '// SCANNING PLEX…',
-      );
-      // Dashboard SYNC button. Idle label reflects whether a Plex scan
-      // phase will follow (// SYNC + SCAN PLEX) or not (// SYNC).
-      // v1.13.18: button text no longer changes on busy (silent
-      // lockBtn), so the only writes to textContent are setting the
-      // idle label here. Always write so the first poll after page
-      // load fills the empty inline text.
+      // Settings global SCAN PLEX. v1.13.19: same busy treatment as
+      // the library page button — one-word label, idle restore from
+      // dataset.origLabel.
+      const settingsRefreshBtn = document.getElementById('refresh-libraries-btn');
+      if (settingsRefreshBtn) {
+        if (refreshBtnBusy) {
+          settingsRefreshBtn.disabled = true;
+          if (!settingsRefreshBtn.dataset.origLabel) {
+            settingsRefreshBtn.dataset.origLabel = settingsRefreshBtn.textContent;
+          }
+          settingsRefreshBtn.textContent = themerrdbBusy && !plexEnumBusy
+            ? '// SYNCING…' : '// SCANNING…';
+        } else {
+          settingsRefreshBtn.disabled = false;
+          if (settingsRefreshBtn.dataset.origLabel) {
+            settingsRefreshBtn.textContent = settingsRefreshBtn.dataset.origLabel;
+            delete settingsRefreshBtn.dataset.origLabel;
+          }
+        }
+      }
+      // Dashboard SYNC button. v1.13.19: the label is now stable
+      // ("// SYNC THEMERRDB") regardless of auto_enum — the post-sync
+      // Plex scan, when enabled, surfaces in the LIVE OPS drawer as
+      // its own card instead of being baked into the button name.
+      // We still cache origLabel so setSyncButtonState's idle-restore
+      // path lands on the same string.
       const syncBtn = document.getElementById('sync-now-btn');
       if (syncBtn) {
-        const idleLabel = autoEnum ? '// SYNC + SCAN PLEX' : '// SYNC';
-        if (syncBtn.textContent !== idleLabel
-            && syncBtn.textContent !== '✓ DONE') {
-          syncBtn.textContent = idleLabel;
+        syncBtn.dataset.origLabel = '// SYNC THEMERRDB';
+        // v1.13.19: dash sync button busy state is owned by
+        // setSyncButtonState (idle/running/done with stable
+        // // SYNCING… label). Refresh-poll just toggles the
+        // disabled flag so a sync triggered from another tab /
+        // the daily cron also locks the button here.
+        if (dashSyncBtnBusy && syncBtn.textContent === syncBtn.dataset.origLabel) {
+          syncBtn.disabled = true;
+          syncBtn.textContent = '// SYNCING…';
+        } else if (!dashSyncBtnBusy && syncBtn.textContent === '// SYNCING…') {
+          syncBtn.disabled = false;
+          syncBtn.textContent = syncBtn.dataset.origLabel;
         }
-        // Cache for setSyncButtonState's idle-restore on the next
-        // tick after a 'done' flash.
-        syncBtn.dataset.origLabel = idleLabel;
       }
-      lockBtn(
-        document.getElementById('sync-now-btn'),
-        dashSyncBtnBusy,
-        themerrdbBusy ? '// SYNCING…' : '// SCANNING PLEX…',
-      );
       // Per-section REFRESH — lock only if THIS section is enumerating.
       document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
         const sid = b.dataset.sectionRefresh;
@@ -996,24 +1016,21 @@
   let syncWatcher = null;
 
   function setSyncButtonState(state) {
-    // v1.13.18: button label NEVER changes on busy/done — the topbar
-    // status pill carries the live state, so swapping the button text
-    // was redundant and actually outlasted the topbar pill (the user
-    // saw the button in '// SYNCING…' state after the pill was
-    // already gone). Now we just toggle disabled and let the label
-    // stay put. The 'done' state still flashes ✓ DONE briefly because
-    // that's a useful confirmation that survives the click-away.
+    // v1.13.19: re-introduce a one-word busy label so the user gets
+    // immediate confirmation their click landed (without waiting on
+    // the topbar status pill's poll round-trip). The bad pattern in
+    // v1.13.18 was multi-stage swaps ("SCANNING TV SHOWS…" → next
+    // section) — those still don't happen because we use a single
+    // generic // SYNCING… that's stable for the whole run.
     const btn = $('#sync-now-btn');
     if (!btn) return;
-    const idleLabel = btn.dataset.origLabel || '';
+    const idleLabel = btn.dataset.origLabel || '// SYNC THEMERRDB';
     if (state === 'idle') {
       btn.disabled = false;
-      if (idleLabel && btn.textContent !== idleLabel) {
-        btn.textContent = idleLabel;
-      }
+      btn.textContent = idleLabel;
     } else if (state === 'running') {
       btn.disabled = true;
-      // No text change — topbar pill shows the state.
+      btn.textContent = '// SYNCING…';
     } else if (state === 'done') {
       btn.disabled = true;
       btn.textContent = '✓ DONE';
@@ -1026,11 +1043,18 @@
     if (!syncBtn) return;
     syncBtn.addEventListener('click', async (ev) => {
       setSyncButtonState('running');
-      // v1.13.18: kick the ops drawer poll to 1s mode immediately
-      // so a short no-op sync (~3s) actually catches a poll and
-      // surfaces the topbar status pill. Pre-fix the drawer was
-      // idling at 10s and a fast sync finished invisibly.
-      try { window.motifOps && window.motifOps.boostPoll && window.motifOps.boostPoll(); } catch (_) {}
+      // v1.13.19: paint the topbar mini-bar optimistically so the
+      // user sees a SYNCING pill immediately on click instead of
+      // waiting for the worker's idle-wait + first poll round-trip
+      // (1-2s of stale IDLE state pre-fix). The placeholder gets
+      // replaced by the real op-progress row as soon as it lands.
+      // boostPoll is called inside setOptimisticPlaceholder so we
+      // don't need to call it again here.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder('tdb_sync', '// SYNCING THEMERRDB');
+        }
+      } catch (_) {}
       try {
         // metadata_only: don't auto-enqueue downloads. Downloads happen
         // explicitly from /movies, /tv, /anime via the missing-themes
@@ -5570,10 +5594,16 @@
     document.getElementById('library-refresh-btn')?.addEventListener('click', async (e) => {
       const btn = e.currentTarget;
       btn.disabled = true;
-      // v1.13.18: button label stays put; topbar pill carries state.
-      // Boost the ops drawer poll so the user sees the status pill
-      // appear within ~50ms instead of waiting for the next 10s tick.
-      try { window.motifOps && window.motifOps.boostPoll && window.motifOps.boostPoll(); } catch (_) {}
+      if (!btn.dataset.origLabel) btn.dataset.origLabel = btn.textContent;
+      btn.textContent = '// SCANNING…';
+      // v1.13.19: optimistic topbar pill so the click → busy
+      // transition is instant. Tone 'plex' tints the placeholder
+      // green to match the real plex_enum op when it lands.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder('plex_enum', '// SCANNING PLEX');
+        }
+      } catch (_) {}
       try {
         await api('POST', '/api/library/refresh', {
           tab: libraryState.tab,

@@ -335,14 +335,16 @@
       ? (op.stage_label || op.stage || '…')
       : _doneHeadline(op);
 
-    // v1.13.17: finished cards use a compact variant — drop the live-
-    // only sections (timeline strip, sparkline, activity feed) since
-    // they're stale once the op is done. Pre-fix the LAST OPS pile
-    // showed every finished card with an all-green timeline + empty
-    // sparkline + frozen activity feed, eating ~120px each. The
-    // headline + meta-row + (optional) error message + status-specific
-    // badges (no_changes, fallback) carry the useful summary in ~40px.
+    // v1.13.17: finished cards use a compact variant — drop the
+    // live-only sections to keep the LAST OPS pile readable.
+    //
+    // v1.13.19: bring back the timeline strip and the activity feed
+    // even on finished cards — those carry the breadcrumb of WHAT
+    // happened that the user wants in the archive. Sparkline stays
+    // live-only (a frozen rate chart isn't useful post-completion)
+    // and the cancel button stays live-only too.
     const showLiveSections = isLive;
+    const showHistorySections = true;  // timeline + activity, always
 
     return `
       <div class="op-card op-tone-${tone} op-status-${op.status}${showLiveSections ? '' : ' op-card-compact'}"
@@ -409,9 +411,9 @@
         </div>
         ${renderNoChangesBadge(op)}
         ${renderFallbackBadge(op)}
-        ${showLiveSections ? renderTimeline(op) : ''}
+        ${showHistorySections ? renderTimeline(op) : ''}
         ${showLiveSections ? renderSparkline(op) : ''}
-        ${showLiveSections ? renderActivity(op) : ''}
+        ${showHistorySections ? renderActivity(op) : ''}
         ${renderError(op)}
         ${isLive && !(op.detail && op.detail.synthetic) ? `
           <button class="op-card-cancel" data-op-cancel="${esc(op.op_id)}"
@@ -480,6 +482,26 @@
     body.innerHTML = html;
   }
 
+  // v1.13.19: optimistic placeholder for the topbar mini-bar. When
+  // the user clicks SYNC / SCAN PLEX, we want the IDLE pill to flip
+  // to a SYNCING/SCANNING state immediately — but the worker has up
+  // to a 2s idle wait before it picks up the job, so /api/progress
+  // doesn't see a 'running' row for 1-2s after the click. Pre-fix
+  // the IDLE pill sat there during that gap, making the click feel
+  // unresponsive. Now setOptimisticPlaceholder paints a tone-tinted
+  // pill that holds for up to 5s OR until the real running op
+  // arrives (whichever comes first).
+  let _optimisticOp = null;
+  function setOptimisticPlaceholder(kind, label) {
+    _optimisticOp = {
+      kind,
+      label,
+      expiresAt: Date.now() + 5000,
+    };
+    renderTopbar(state.ops || []);
+    boostPoll();
+  }
+
   function renderTopbar(ops) {
     const running = ops.filter((o) =>
       o.status === 'running' || o.status === 'pending' || o.status === 'cancelling');
@@ -487,6 +509,12 @@
     const overflow = document.getElementById('op-mini-overflow');
     const idle = document.getElementById('op-status-idle');
     if (!mini) return;
+    // v1.13.19: clear the optimistic placeholder once a real running
+    // op arrives — the placeholder has done its job. Also clear if
+    // it has expired (worker never picked up the job? rare).
+    if (_optimisticOp && (running.length > 0 || _optimisticOp.expiresAt < Date.now())) {
+      _optimisticOp = null;
+    }
     // v1.12.121 (Phase A): idle pill picks up the most-recent
     // tdb_sync run's fallback flag and stays warn-tinted with a
     // descriptive tooltip until the next successful sync clears it.
@@ -503,13 +531,29 @@
         if (lbl) lbl.textContent = 'IDLE';
       }
     }
-    if (!running.length) {
+    if (!running.length && !_optimisticOp) {
       // v1.12.118: idle pill replaces the legacy green dot + "IDLE"
       // text. Same visual family as the FAIL/UPD/active op-pills, no
       // dot-to-bar flip when an op finishes.
       mini.hidden = true;
       if (overflow) overflow.hidden = true;
       if (idle) idle.hidden = false;
+      return;
+    }
+    // v1.13.19: paint the optimistic placeholder as a fake op until
+    // the real running row lands. Indeterminate shimmer carries the
+    // "we're working" cue without claiming progress we haven't made.
+    if (!running.length && _optimisticOp) {
+      if (idle) idle.hidden = true;
+      mini.hidden = false;
+      if (overflow) overflow.hidden = true;
+      const tone = TONE_BY_KIND[_optimisticOp.kind] || 'tdb';
+      mini.className = `op-mini op-tone-${tone} op-mini-indet`;
+      mini.innerHTML = `
+        <span class="op-mini-label">${esc(_optimisticOp.label)}</span>
+        <span class="op-mini-bar"><span class="op-mini-bar-fill" style="width:100%"></span></span>
+        <span class="op-mini-pct"></span>
+      `;
       return;
     }
     if (idle) idle.hidden = true;
@@ -691,6 +735,7 @@
     close: closeDrawer,
     refresh: poll,
     boostPoll,
+    setOptimisticPlaceholder,
     state: () => state,
   };
 
