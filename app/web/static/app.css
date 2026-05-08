@@ -2148,6 +2148,12 @@ pre code, .codeblock {
   gap: 24px;
   max-width: 720px;
 }
+/* v1.13.39: tighter row gap on the SCHEDULE tab where the panel is
+   long and the default 24px gap stretches it past two screenfuls.
+   Hint paragraphs inside each label still carry their own line
+   spacing so legibility doesn't suffer. */
+.form-grid-tight { gap: 14px; }
+.form-grid-tight .form-hint { margin-top: 4px; line-height: 1.5; }
 .form-label {
   display: block;
   font-family: var(--font-mono);

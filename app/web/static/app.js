@@ -1235,28 +1235,42 @@
       // click-through skips them (handler checks the closest <td>).
       const failureHref = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}&tdb_pills=dead`;
       const pendingHref = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}&tdb_pills=update`;
+      // v1.13.39: tooltips on every per-section coverage cell. The
+      // row-level cursor: pointer signals "click to drill in" but
+      // hover gave no per-cell context — user reported "the ? over
+      // the section doesn't show any information". Add hover hints
+      // so each column tells the user what the number represents
+      // without leaving the dashboard.
+      const sectionTip =
+        `Section ID: ${s.section_id || '(unknown)'} · `
+        + `${typeLabel} ${fourkLabel} · click to open this library tab`;
+      const totalTip = `Plex items in this section`;
+      const themedTip = `Items with a theme (motif placement, sidecar, or Plex agent)`;
+      const unthemedTip = (s.unthemed > 0)
+        ? `${fmt.num(s.unthemed)} item${s.unthemed === 1 ? '' : 's'} without any theme`
+        : `Every item in this section has a theme`;
       const failureCell = s.failures > 0
-        ? `<td class="col-num accent-red col-clickable" data-href="${htmlEscape(failureHref)}" title="Click to filter library to broken upstream URLs">${fmt.num(s.failures)}</td>`
-        : `<td class="col-num muted">0</td>`;
+        ? `<td class="col-num accent-red col-clickable" data-href="${htmlEscape(failureHref)}" title="${fmt.num(s.failures)} unacked theme failures · click to filter the library tab">${fmt.num(s.failures)}</td>`
+        : `<td class="col-num muted" title="No unacked theme failures in this section">0</td>`;
       const pendingCell = s.pending_updates > 0
-        ? `<td class="col-num accent col-clickable" data-href="${htmlEscape(pendingHref)}" title="Click to filter library to pending TDB updates">${fmt.num(s.pending_updates)}</td>`
-        : `<td class="col-num muted">0</td>`;
-      const unthemedCell = s.unthemed > 0
-        ? `<td class="col-num">${fmt.num(s.unthemed)}</td>`
-        : `<td class="col-num muted">0</td>`;
+        ? `<td class="col-num accent col-clickable" data-href="${htmlEscape(pendingHref)}" title="${fmt.num(s.pending_updates)} TDB updates awaiting decision · click to filter the library tab">${fmt.num(s.pending_updates)}</td>`
+        : `<td class="col-num muted" title="No pending ThemerrDB updates in this section">0</td>`;
+      const unthemedCellTipped = s.unthemed > 0
+        ? `<td class="col-num" title="${htmlEscape(unthemedTip)}">${fmt.num(s.unthemed)}</td>`
+        : `<td class="col-num muted" title="${htmlEscape(unthemedTip)}">0</td>`;
       // Drill-through: clicking a row navigates to the library
       // tab. Whole-row clickability via data-href + cursor:pointer
       // styling so the click target isn't just a tiny link.
       return `
-        <tr class="section-coverage-row" data-href="${htmlEscape(href)}">
-          <td>${htmlEscape(s.title || '')}</td>
-          <td class="col-year col-section-type">
+        <tr class="section-coverage-row" data-href="${htmlEscape(href)}" title="${htmlEscape(sectionTip)}">
+          <td title="${htmlEscape(sectionTip)}">${htmlEscape(s.title || '')}</td>
+          <td class="col-year col-section-type" title="${htmlEscape(sectionTip)}">
             <span class="section-type-main">${typeLabel}</span>
             <span class="section-type-sub muted small">${fourkLabel}</span>
           </td>
-          <td class="col-num"><b>${fmt.num(s.total || 0)}</b></td>
-          <td class="col-num accent-green">${fmt.num(s.themed || 0)}</td>
-          ${unthemedCell}
+          <td class="col-num" title="${htmlEscape(totalTip)}"><b>${fmt.num(s.total || 0)}</b></td>
+          <td class="col-num accent-green" title="${htmlEscape(themedTip)}">${fmt.num(s.themed || 0)}</td>
+          ${unthemedCellTipped}
           ${failureCell}
           ${pendingCell}
         </tr>

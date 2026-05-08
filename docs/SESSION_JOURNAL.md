@@ -1386,3 +1386,66 @@ was the only source). Capture the answer at every moment we can:
    `+P` dot on their primary SRC chip; pure sidecar-only
    rows render the chip without the dot. Behaviour persists
    across plex_enum + post-PURGE without flicker.
+
+---
+
+## 2026-05-08 — v1.13.39: per-section coverage tooltips + Schedule reorganization
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.39`
+
+### Context
+User feedback after v1.13.38 ship:
+1. "the ? over the section doesn't show any information" —
+   hovering a row in the dashboard's // PER-SECTION COVERAGE
+   table produced no per-cell hint. Cursor went to pointer but
+   no `title=` tooltip explained what each number meant.
+2. "Settings → Schedule has a lot of different settings in
+   mixed order" — the single // SYNC SCHEDULE block stacked
+   CRON, then THEMERRDB URL (rarely-changed), then SYNC SOURCE
+   (the field that decides which URL even matters), then more
+   URLs, then AUTO-SYNC PLEX. Reading top-to-bottom didn't
+   make sense; vertical spacing was also generous.
+
+### Changes
+- **`app/web/static/app.js` `renderSectionCoverage`**: every
+  cell in the per-section coverage row now carries a `title=`
+  hint. Section + type cells share a consistent `sectionTip`
+  ("Section ID: X · MOVIES STD · click to open this library
+  tab"); TOTAL / THEMED / UNTHEMED / FAILURES / PENDING each
+  carry their own context-appropriate tooltip including the
+  zero-state ("No unacked theme failures in this section",
+  "Every item has a theme", etc.). Whole row gets the section
+  tip too as a fallback hover target.
+- **`app/web/templates/settings.html`**: SCHEDULE tab split
+  from one block into three blocks ordered by question being
+  answered:
+  1. **// SYNC TIMING** — CRON expression and AUTO-SYNC PLEX
+     AFTER SYNC. The two timing-related controls live
+     together; SAVE TIMING button.
+  2. **// SYNC TRANSPORT** — SYNC SOURCE selector first
+     (since it determines which URL matters), then the four
+     transport URLs/branch each labeled with which source
+     uses them ("used by REMOTE", "used by GIT"). Cache
+     gauge stays under TRANSPORT. SAVE TRANSPORT + PROBE
+     TRANSPORT buttons.
+  3. **// PLACEMENT MODE** — unchanged content but tightened
+     hint copy.
+  Hint paragraphs trimmed (the original copy explained the
+  same point twice in places); each block uses
+  `form-grid-tight` for shorter vertical rhythm.
+- **`app/web/static/app.css`**: `.form-grid-tight` modifier
+  with `gap: 14px` (vs default 24px) and a tightened
+  `.form-hint` line-height. Scoped via the modifier class so
+  only the SCHEDULE blocks pick it up; PATHS / PLEX / DOWNLOADS
+  panels keep their existing breathing room.
+- **`app/__init__.py`**: `__version__` → `1.13.39`.
+
+### How to verify
+1. Pull, restart container.
+2. Dashboard → hover any row in // PER-SECTION COVERAGE.
+   Each cell shows a tooltip: section id + type on the
+   text columns, an explanatory line on each numeric cell.
+3. Settings → SCHEDULE tab. Three blocks render in order:
+   // SYNC TIMING, // SYNC TRANSPORT, // PLACEMENT MODE.
+   Vertical density visibly tighter than before; no fields
+   lost from the prior layout. SAVE TIMING / SAVE TRANSPORT
+   / SAVE PLACEMENT each persist their respective slice.

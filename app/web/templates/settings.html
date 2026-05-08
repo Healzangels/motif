@@ -374,13 +374,21 @@
 </section>
 
 <!-- ============================ SCHEDULE ============================ -->
+<!-- v1.13.39: SCHEDULE tab reorganized into three blocks ordered by
+     question being answered: (1) WHEN does sync run, (2) WHICH
+     transport + URLs power the sync, (3) WHAT happens after a
+     download. Pre-fix the cron sat next to the THEMERRDB URL
+     (rarely-changed advanced override) which sat above SYNC SOURCE,
+     so the user couldn't read the panel top-to-bottom and have it
+     make sense. Vertical spacing also tightened — the form-grid
+     gap was visually generous on this dense panel. -->
 <section class="block tab-panel" data-panel="schedule" style="display:none">
   <header class="block-head">
-    <h2 class="block-title">// SYNC SCHEDULE</h2>
+    <h2 class="block-title">// SYNC TIMING</h2>
     <span class="muted small">when motif pulls ThemerrDB updates</span>
   </header>
   <div class="block-body">
-    <div class="form-grid" data-config-form="sync">
+    <div class="form-grid form-grid-tight" data-config-form="sync">
       <label class="form-label">
         <span class="form-label-text">CRON EXPRESSION (UTC)</span>
         <input class="input" type="text" data-cfg-field="sync.cron"
@@ -390,100 +398,6 @@
           <code>0 13 * * *</code> runs daily at 13:00 UTC, 1 hour after
           ThemerrDB's daily push. <strong class="warn">// RESTART REQUIRED</strong>
           to take effect (the scheduler reads this once at startup).
-        </p>
-      </label>
-
-      <label class="form-label">
-        <div class="form-label-row">
-          <span class="form-label-text">THEMERRDB URL</span>
-          <span class="form-env-badge" data-env-badge="sync.db_url" style="display:none">// ENV OVERRIDE</span>
-        </div>
-        <input class="input" type="text" data-cfg-field="sync.db_url"
-               placeholder="https://app.lizardbyte.dev/ThemerrDB" autocomplete="off" />
-        <p class="form-hint">
-          Override only if you're mirroring ThemerrDB elsewhere. Leave the default
-          unless you know why you'd want to change it.
-        </p>
-      </label>
-
-      <!-- v1.12.121 (Phase A): snapshot tarball path. EXPERIMENTAL until
-           A.1 burn-in clears; default is "remote" (battle-tested HTTP-
-           per-item). Selecting "database" pulls a single tarball of
-           the LizardByte/ThemerrDB database branch from codeload —
-           ~1000× fewer HTTP requests, finishes in seconds instead of
-           minutes. Falls back to remote automatically if codeload is
-           unreachable; the topbar idle pill goes amber to flag it. -->
-      <label class="form-label">
-        <div class="form-label-row">
-          <span class="form-label-text">
-            SYNC SOURCE
-            <span class="form-env-badge" style="background:rgba(255,184,108,0.15);border-color:rgba(255,184,108,0.4);color:var(--orange,#ffb86c)">// EXPERIMENTAL</span>
-          </span>
-          <span class="form-env-badge" data-env-badge="sync.source" style="display:none">// ENV OVERRIDE</span>
-        </div>
-        <select class="input" data-cfg-field="sync.source">
-          <option value="remote">REMOTE — per-item HTTP (default, battle-tested)</option>
-          <option value="database">DATABASE — single-tarball snapshot (faster, opt-in)</option>
-          <option value="git">GIT — incremental fetch + diff (fastest, opt-in)</option>
-        </select>
-        <p class="form-hint">
-          <strong>REMOTE</strong> walks gh-pages and fetches one JSON per item
-          (~10k+ requests, several minutes on a fresh sync).<br>
-          <strong>DATABASE</strong> pulls one tarball of the
-          <code>database</code> branch from codeload.github.com and reads every
-          item locally (~1 request, seconds). An ETag short-circuit (304)
-          skips the upsert pipeline entirely when the tree hasn't changed.<br>
-          <strong>GIT</strong> maintains a bare git mirror of the
-          <code>database</code> branch via dulwich. First run shallow-clones
-          (~30 MB pack); subsequent runs fetch the delta (typically &lt;100 KB)
-          and walk only the changed paths. Lowest bandwidth on busy days; a
-          no-change day finishes in seconds. On failure motif cascades to
-          DATABASE, then REMOTE.
-        </p>
-      </label>
-
-      <label class="form-label">
-        <div class="form-label-row">
-          <span class="form-label-text">DATABASE SNAPSHOT URL</span>
-          <span class="form-env-badge" data-env-badge="sync.database_url" style="display:none">// ENV OVERRIDE</span>
-        </div>
-        <input class="input" type="text" data-cfg-field="sync.database_url"
-               placeholder="https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
-               autocomplete="off" />
-        <p class="form-hint">
-          Tarball endpoint used when SYNC SOURCE is DATABASE. Override only
-          if you're mirroring the <code>database</code> branch privately.
-        </p>
-      </label>
-
-      <!-- v1.13.0 (Phase B): git mirror URL + branch. Default is the
-           public LizardByte repo on github.com. Override only if you
-           run a private mirror. -->
-      <label class="form-label">
-        <div class="form-label-row">
-          <span class="form-label-text">GIT MIRROR URL</span>
-          <span class="form-env-badge" data-env-badge="sync.git_url" style="display:none">// ENV OVERRIDE</span>
-        </div>
-        <input class="input" type="text" data-cfg-field="sync.git_url"
-               placeholder="https://github.com/LizardByte/ThemerrDB.git"
-               autocomplete="off" />
-        <p class="form-hint">
-          Git URL used when SYNC SOURCE is GIT. Standard HTTPS — no auth
-          required for public repos.
-        </p>
-      </label>
-
-      <label class="form-label">
-        <div class="form-label-row">
-          <span class="form-label-text">GIT BRANCH</span>
-          <span class="form-env-badge" data-env-badge="sync.git_branch" style="display:none">// ENV OVERRIDE</span>
-        </div>
-        <input class="input" type="text" data-cfg-field="sync.git_branch"
-               placeholder="database" autocomplete="off" />
-        <p class="form-hint">
-          Branch motif tracks. LizardByte publishes daily exports to
-          <code>database</code>. Leave default unless you're tracking a
-          self-hosted branch.
         </p>
       </label>
 
@@ -504,14 +418,117 @@
         </label>
         <p class="form-hint">
           The TDB sync's own resolve step already links new TDB rows to
-          existing Plex items, so this auto-scan is for catching
-          changes on the <em>Plex</em> side: new titles, folder moves, manual
-          sidecar adds/removes, and Plex theme-claim re-verification.<br>
-          <strong>Recommended ON</strong> if you depend on the daily cron
-          sync (no human is around to manually click SYNC PLEX afterward).
-          <strong>Toggle OFF</strong> if you want manual control over when
-          the slower Plex enumeration runs — the dashboard SYNC + SYNC PLEX
-          button will then only do the TDB sync.
+          existing Plex items, so this auto-scan is for catching changes
+          on the <em>Plex</em> side: new titles, folder moves, manual
+          sidecar adds/removes, and Plex theme-claim re-verification.
+          <strong>Recommended ON</strong> for daily cron syncs;
+          <strong>OFF</strong> if you prefer manual SYNC PLEX clicks.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="sync">// SAVE TIMING</button>
+      <span class="form-status" data-save-status="sync"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ TRANSPORT (within SCHEDULE tab) ============================ -->
+<section class="block tab-panel" data-panel="schedule" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC TRANSPORT</h2>
+    <span class="muted small">how motif fetches the ThemerrDB tree</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid form-grid-tight" data-config-form="sync">
+      <!-- v1.12.121 (Phase A): snapshot tarball path. EXPERIMENTAL until
+           A.1 burn-in clears; default is "remote" (battle-tested HTTP-
+           per-item). Selecting "database" pulls a single tarball of
+           the LizardByte/ThemerrDB database branch from codeload —
+           ~1000× fewer HTTP requests, finishes in seconds instead of
+           minutes. Falls back to remote automatically if codeload is
+           unreachable; the topbar idle pill goes amber to flag it.
+           v1.13.39: moved to the top of TRANSPORT block since it
+           determines which URL field actually matters below. -->
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">
+            SYNC SOURCE
+            <span class="form-env-badge" style="background:rgba(255,184,108,0.15);border-color:rgba(255,184,108,0.4);color:var(--orange,#ffb86c)">// EXPERIMENTAL</span>
+          </span>
+          <span class="form-env-badge" data-env-badge="sync.source" style="display:none">// ENV OVERRIDE</span>
+        </div>
+        <select class="input" data-cfg-field="sync.source">
+          <option value="remote">REMOTE — per-item HTTP (default, battle-tested)</option>
+          <option value="database">DATABASE — single-tarball snapshot (faster, opt-in)</option>
+          <option value="git">GIT — incremental fetch + diff (fastest, opt-in)</option>
+        </select>
+        <p class="form-hint">
+          <strong>REMOTE</strong> walks gh-pages and fetches one JSON per item
+          (~10k+ requests, minutes on a fresh sync).
+          <strong>DATABASE</strong> pulls a single tarball (~1 request, seconds);
+          ETag-304s when unchanged.
+          <strong>GIT</strong> maintains a bare mirror via dulwich and fetches
+          deltas only — lowest bandwidth on busy days. On failure motif
+          cascades GIT → DATABASE → REMOTE.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">THEMERRDB URL</span>
+          <span class="form-env-badge" data-env-badge="sync.db_url" style="display:none">// ENV OVERRIDE</span>
+          <span class="muted small">used by REMOTE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.db_url"
+               placeholder="https://app.lizardbyte.dev/ThemerrDB" autocomplete="off" />
+        <p class="form-hint">
+          Override only if you're mirroring ThemerrDB elsewhere.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">DATABASE SNAPSHOT URL</span>
+          <span class="form-env-badge" data-env-badge="sync.database_url" style="display:none">// ENV OVERRIDE</span>
+          <span class="muted small">used by DATABASE</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.database_url"
+               placeholder="https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+               autocomplete="off" />
+        <p class="form-hint">
+          Tarball endpoint. Override only for a private mirror.
+        </p>
+      </label>
+
+      <!-- v1.13.0 (Phase B): git mirror URL + branch. Default is the
+           public LizardByte repo on github.com. Override only if you
+           run a private mirror. -->
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">GIT MIRROR URL</span>
+          <span class="form-env-badge" data-env-badge="sync.git_url" style="display:none">// ENV OVERRIDE</span>
+          <span class="muted small">used by GIT</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.git_url"
+               placeholder="https://github.com/LizardByte/ThemerrDB.git"
+               autocomplete="off" />
+        <p class="form-hint">
+          Standard HTTPS — no auth required for public repos.
+        </p>
+      </label>
+
+      <label class="form-label">
+        <div class="form-label-row">
+          <span class="form-label-text">GIT BRANCH</span>
+          <span class="form-env-badge" data-env-badge="sync.git_branch" style="display:none">// ENV OVERRIDE</span>
+          <span class="muted small">used by GIT</span>
+        </div>
+        <input class="input" type="text" data-cfg-field="sync.git_branch"
+               placeholder="database" autocomplete="off" />
+        <p class="form-hint">
+          Branch motif tracks. LizardByte publishes daily exports to
+          <code>database</code>.
         </p>
       </label>
     </div>
@@ -529,13 +546,12 @@
       </header>
       <ul class="cache-gauge-list" id="cache-gauge-list"></ul>
       <p class="form-hint" style="margin-top:6px">
-        Operational cache for the snapshot/git transports plus motif
-        bookkeeping. Grows ~tens of KB per sync on the git path.
-        Safe to delete (motif rebuilds from scratch on the next sync).
+        Operational cache for the snapshot/git transports. Safe to
+        delete; motif rebuilds from scratch on the next sync.
       </p>
     </div>
     <div class="form-actions">
-      <button class="btn btn-warn" data-save="sync">// SAVE SCHEDULE</button>
+      <button class="btn btn-warn" data-save="sync">// SAVE TRANSPORT</button>
       <span class="form-status" data-save-status="sync"></span>
       <!-- v1.13.2 (#3): pre-flight transport probe. Uses the
            CURRENTLY-SAVED sync.source/url/branch (so click after
@@ -557,7 +573,7 @@
     <span class="muted small">what happens after a download finishes</span>
   </header>
   <div class="block-body">
-    <div class="form-grid" data-config-form="placement">
+    <div class="form-grid form-grid-tight" data-config-form="placement">
       <label class="form-label form-checkbox">
         <div class="form-label-row">
           <span class="form-label-text">AUTO-PLACE AFTER DOWNLOAD</span>
@@ -565,13 +581,10 @@
         </div>
         <input type="checkbox" data-cfg-field="placement.auto_place" />
         <p class="form-hint">
-          When checked (default), every successful download immediately places
-          the theme into Plex's media folder. When unchecked, themes still
-          download in the background — the row's DL pill goes solid green —
-          but the file stays in motif's staging tree. The PL pill stays empty,
-          and the row's // SOURCE ▾ menu picks up a // PUSH TO PLEX entry so
-          you can place it manually whenever you're ready, the same way you'd
-          push a downloaded-but-missing-from-Plex item.
+          When checked (default), every successful download immediately
+          places the theme into Plex's media folder. When unchecked, themes
+          still download but stay in motif's staging tree until you click
+          // PUSH TO PLEX from the row's // SOURCE ▾ menu.
         </p>
       </label>
     </div>
