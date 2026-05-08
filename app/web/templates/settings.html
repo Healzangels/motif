@@ -266,12 +266,15 @@
       the theme entirely.
     </p>
     <p class="muted" style="font-size:var(--t-tiny);line-height:1.6;margin:0 0 12px">
-      <strong class="warn">// HOW IT WORKS:</strong> each <code>theme.mp3</code>
-      is briefly renamed to <code>theme.mp3.motif-probing</code>, Plex is
-      asked to refresh, then probed; if Plex still serves a theme the row
-      gets <code>+P</code>. The sidecar is restored before moving to the
-      next row. Slow (Plex's metadata cache lag dominates) — expect ~5–15s
-      per row. Safe to cancel; safe to re-run.
+      <strong>// HOW IT WORKS:</strong> for each row, motif fetches the
+      first 2&nbsp;KB of the theme Plex is currently serving (a Range
+      request — no transcoding, no full download) and compares it to
+      the same prefix of the local <code>theme.mp3</code>. Matching bytes
+      → Plex serves the sidecar. Differing bytes → Plex is serving an
+      independent theme (cloud / themerr-plex embed) and the row gets
+      the <code>+P</code> dot. <strong>Read-only</strong> — no files
+      are renamed or modified. Fast (~100&nbsp;ms per row, 6 in parallel)
+      and safe to cancel mid-run.
     </p>
     <div class="form-actions">
       <button class="btn btn-warn" id="reprobe-plex-themes-btn" type="button">// REPROBE PLEX THEMES</button>

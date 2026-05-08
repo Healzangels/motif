@@ -1449,3 +1449,70 @@ User feedback after v1.13.38 ship:
    Vertical density visibly tighter than before; no fields
    lost from the prior layout. SAVE TIMING / SAVE TRANSPORT
    / SAVE PLACEMENT each persist their respective slice.
+
+---
+
+## 2026-05-08 — v1.13.40: REPROBE PLEX THEMES → non-destructive prefix-byte probe
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.40`
+
+### Context
+v1.13.38 shipped REPROBE with a rename loop:
+`theme.mp3 → theme.mp3.motif-probing → ask Plex to refresh → HEAD
+probe → restore`. User after testing on the prod box (10,296-item
+Movies section): "any other solution the rename makes me very
+nervous." Reasonable — touching every user-visible asset to
+backfill a UI hint is risky even with a finally-block restore.
+
+### Investigation
+- Looked for a non-destructive multi-source theme list endpoint
+  (`/library/metadata/{rk}/themes` plural, analogous to
+  `/posters` and `/arts`). Confirmed via python-plexapi source:
+  Plex exposes a single `Theme` resource per item, no collection
+  class, no plural endpoint. Dead end.
+- Settled on a prefix-byte comparison: GET the first 2 KB of
+  `/library/metadata/{rk}/theme` via HTTP Range, read 2 KB from
+  the local sidecar, compare bytes. Plex serves themes as-is
+  (no transcoding), so byte-equality is exact and 2 KB of MP3
+  header + ID3 is more than enough to distinguish two different
+  audio files.
+
+### Changes
+- `app/core/plex.py` `PlexClient.fetch_theme_prefix(rk, n_bytes=2048)`:
+  Range-GET helper that returns bytes on 200/206 and None on any
+  error.
+- `app/web/api.py` `_reprobe_plex_themes_run`: rewritten to use
+  `concurrent.futures.ThreadPoolExecutor(max_workers=6)`. Each
+  worker holds its own `PlexClient` (httpx isn't thread-safe for
+  concurrent reuse). Per-row: read 2 KB from
+  `<media_folder>/theme.mp3`, fetch 2 KB from Plex, compare. Match
+  → set `plex_independent_theme=0`. Mismatch → set 1. Drops the
+  rename, the .motif-probing suffix, the per-row Plex refresh
+  calls, and the 12-attempt poll loop entirely. Removes the
+  `import time` that was only there for `time.sleep`.
+- `app/web/templates/settings.html` warning copy: replaces "this
+  will briefly rename your theme.mp3 files" with the read-only
+  description of the Range probe.
+- `app/web/static/app.js` confirm dialog: same.
+
+### Properties (rename → prefix-byte)
+| | rename | prefix-byte |
+|---|---|---|
+| Touches user files | yes | no |
+| Plex cache lag dominates | yes | no |
+| Catastrophic failure mode | sidecar stranded | none |
+| Bandwidth | nil | ~6 MB / 3,000 rows |
+| Wall time | hours | ~5 minutes |
+| Parallelism | 1 | 6 |
+
+### How to verify
+1. Upgrade. Settings → PLEX → // REPROBE PLEX THEMES.
+2. Confirm dialog now says "Read-only — no files are renamed".
+3. Live-ops drawer shows the probe completing in minutes,
+   not hours.
+4. Rows with cloud / themerr-plex themes start showing the
+   amber +P dot on their primary SRC chip.
+
+### Open threads (still pending)
+- "?" tooltip on dashboard section header shows no info.
+- Settings → SCHEDULE reorganization (partial in v1.13.39 but
+  user feedback may want more).

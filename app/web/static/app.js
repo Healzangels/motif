@@ -3575,11 +3575,12 @@
     btn.addEventListener('click', async () => {
       const ok = confirm(
         'Reprobe Plex themes for every motif-placed row?\n\n'
-        + 'For each row this will briefly rename theme.mp3 to '
-        + 'theme.mp3.motif-probing, ask Plex to refresh, HEAD probe, '
-        + 'then restore the file. Expect ~5-15 seconds per row, so '
-        + 'thousands of rows will take a while.\n\n'
-        + 'Safe to cancel from the live-ops drawer; safe to re-run.'
+        + 'For each row, motif fetches the first 2 KB of what Plex '
+        + 'is currently serving (a Range request, no full download) '
+        + 'and compares it byte-for-byte to the local theme.mp3. '
+        + 'Differing prefix means Plex has its own theme.\n\n'
+        + 'Read-only — no files are renamed or modified. Runs ~6 '
+        + 'rows in parallel; expect ~100 ms per row. Cancellable.'
       );
       if (!ok) return;
       btn.disabled = true;

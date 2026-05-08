@@ -380,6 +380,32 @@ class PlexClient:
             return False
         return None
 
+    def fetch_theme_prefix(self, rating_key: str, n_bytes: int = 2048) -> bytes | None:
+        """v1.13.40: Range-GET the first n_bytes of the theme stream.
+
+        Used by the REPROBE PLEX THEMES backfill to disambiguate
+        "Plex serves motif's sidecar" from "Plex serves an independent
+        theme (cloud / themerr-plex embed)" without touching files.
+        Compare the returned bytes to the same prefix of the local
+        sidecar at local_files.file_path: matching → sidecar is
+        what Plex serves; differing → +P composite.
+
+        Returns the bytes on 200/206, None on any error. Plex serves
+        themes as-is (no transcoding) so byte-equality is exact.
+        """
+        try:
+            r = self._client.get(
+                self._rk_path(rating_key, "/theme"),
+                headers={"Range": f"bytes=0-{n_bytes - 1}"},
+                timeout=15.0,
+            )
+            if r.status_code in (200, 206):
+                return r.content[:n_bytes]
+            return None
+        except httpx.HTTPError as e:
+            log.debug("Plex theme range-GET rk=%s failed: %s", rating_key, e)
+            return None
+
     # ---- Resolve ratingKey ----
 
     def resolve_rating_key(

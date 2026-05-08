@@ -27,7 +27,6 @@ from typing import Annotated, Literal, Optional
 
 import json
 import sqlite3
-import time
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
@@ -1881,31 +1880,28 @@ def _library_not_in_plex(
             "last_sync_at": last_sync_at}
 
 
-# v1.13.38: REPROBE PLEX THEMES worker. Runs in a daemon thread
-# spawned by /api/admin/reprobe-plex-themes. The data-model question
-# motif can't answer from the section enum alone is "does Plex have
-# its own theme (cloud / themerr-plex embed) BEHIND motif's sidecar?"
-# — once a sidecar exists, Plex's metadata XML reports has_theme=1
-# regardless of which source wins, so the +P composite signal goes
-# blind. The reprobe loop pulls each sidecar out of view, asks Plex
-# to refresh, HEAD probes /library/metadata/{rk}/theme, and the
-# answer disambiguates: 200 → Plex has its own theme behind the
-# sidecar (set plex_independent_theme=1), 404 → sidecar was the
-# only source (set 0). Slow because Plex's metadata cache lag is
-# unbounded — we sleep+poll up to ~12s per row before giving up.
-# Always restores the sidecar in a finally block; on the (very
-# unlikely) event of a thread death mid-rename, restart restores
-# from the .motif-probing suffix on next plex_enum.
+# v1.13.40: REPROBE PLEX THEMES worker — non-destructive prefix-byte
+# probe. Earlier versions (v1.13.38–.39) renamed each sidecar to
+# theme.mp3.motif-probing, asked Plex to refresh, HEAD-probed, then
+# restored. That worked but was slow (Plex's metadata cache lag
+# dominated, ~10s/row) and carried a small but real catastrophic
+# failure mode (mid-loop crash → sidecar stranded under the .motif-
+# probing suffix). The replacement reads only what Plex already
+# serves: a 2 KB Range-GET against /library/metadata/{rk}/theme,
+# compared byte-for-byte to the same prefix of motif's local
+# sidecar at local_files.file_path. Match → Plex serves the
+# sidecar (plex_independent_theme=0). Mismatch → Plex serves an
+# independent theme (=1). No file touches, no Plex refresh wait,
+# parallelizable across worker threads.
+PROBE_PREFIX_BYTES = 2048
+PROBE_MAX_WORKERS = 6
+
+
 def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     from ..core import progress as op_progress
     from ..core.plex import PlexClient, PlexConfig
     OP_ID = "reprobe-plex-themes"
-    SUFFIX = ".motif-probing"
-    # Plex's metadata cache lag varies wildly. 2s is too short on a
-    # busy server, 30s is unbearable on a quiet one. 1s sleep then
-    # poll up to 12 attempts (~13s wall) catches both ends.
-    POLL_INTERVAL_S = 1.0
-    POLL_ATTEMPTS = 12
     op_progress.start_progress(
         db_path, op_id=OP_ID, kind="reprobe_plex_themes",
         stage="probe", stage_label="Reprobing Plex themes",
@@ -1921,21 +1917,17 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
         tv_section=settings.plex_tv_section, enabled=True,
     )
 
-    set_indep = 0  # rows we resolved to plex_independent_theme=1
-    set_clean = 0  # rows we resolved to plex_independent_theme=0
-    skipped = 0   # rows we couldn't probe (missing path, transient err)
+    set_indep = 0
+    set_clean = 0
+    skipped = 0
     error_count = 0
     try:
         with get_conn(db_path) as conn:
+            # Pull the placement's media_folder so we can read the
+            # actual theme.mp3 Plex scans. Hardlink and canonical
+            # share bytes so either would work, but the placement
+            # is the source-of-truth for "what Plex sees".
             rows = conn.execute(
-                # Only probe rows where:
-                #   - plex_independent_theme is unknown (NULL) — known
-                #     rows already carry the truth from plex_enum or
-                #     from a prior PURGE inline-verify
-                #   - has_theme=1 AND local_theme_file=1 — both must be
-                #     true for the question to even be ambiguous
-                #   - we have a placement (need media_folder to find
-                #     the sidecar to rename)
                 "SELECT pi.rating_key, pi.section_id, "
                 "       p.media_folder "
                 "  FROM plex_items pi "
@@ -1945,6 +1937,7 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
                 " WHERE pi.plex_independent_theme IS NULL "
                 "   AND COALESCE(pi.has_theme, 0) = 1 "
                 "   AND COALESCE(pi.local_theme_file, 0) = 1 "
+                "   AND p.media_folder IS NOT NULL "
                 " ORDER BY pi.section_id, pi.rating_key"
             ).fetchall()
         total = len(rows)
@@ -1958,90 +1951,64 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
             op_progress.finish_progress(db_path, OP_ID, status="done")
             return
 
-        with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-            for idx, r in enumerate(rows, 1):
+        # One PlexClient per worker thread (httpx clients aren't
+        # thread-safe for concurrent reuse). Build n=PROBE_MAX_WORKERS
+        # ahead and round-robin through them inside the executor.
+        clients = [
+            PlexClient(cfg, plus_mode=settings.plus_equiv_mode)
+            for _ in range(PROBE_MAX_WORKERS)
+        ]
+
+        def _probe_one(idx_row):
+            idx, r = idx_row
+            rk = r["rating_key"]
+            media_folder = r["media_folder"]
+            client = clients[idx % PROBE_MAX_WORKERS]
+            try:
+                p = Path(media_folder) / "theme.mp3"
+                if not p.is_file():
+                    return rk, None, "sidecar missing"
+                with p.open("rb") as f:
+                    local_prefix = f.read(PROBE_PREFIX_BYTES)
+                if not local_prefix:
+                    return rk, None, "sidecar empty"
+                plex_prefix = client.fetch_theme_prefix(
+                    rk, n_bytes=PROBE_PREFIX_BYTES,
+                )
+                if plex_prefix is None:
+                    return rk, None, "plex range-GET failed"
+                # Equal length compare: trailing bytes Plex didn't
+                # serve (smaller theme than 2 KB) shouldn't false-
+                # positive. Truncate both to the shorter length.
+                n = min(len(local_prefix), len(plex_prefix))
+                if n == 0:
+                    return rk, None, "empty response"
+                if local_prefix[:n] == plex_prefix[:n]:
+                    return rk, 0, None  # Plex serves the sidecar
+                return rk, 1, None  # Plex serves something else
+            except Exception as e:
+                return rk, None, f"probe error: {e}"
+
+        with ThreadPoolExecutor(max_workers=PROBE_MAX_WORKERS) as pool:
+            futures = {
+                pool.submit(_probe_one, (i, r)): i
+                for i, r in enumerate(rows)
+            }
+            done = 0
+            for fut in as_completed(futures):
                 if _cancel():
+                    pool.shutdown(wait=False, cancel_futures=True)
                     op_progress.finish_progress(
                         db_path, OP_ID, status="cancelled")
+                    for c in clients:
+                        try:
+                            c.close()
+                        except Exception:
+                            pass
                     return
-                rk = r["rating_key"]
-                media_folder = r["media_folder"]
-                if not media_folder:
-                    skipped += 1
-                    continue
-                sidecar = Path(media_folder) / "theme.mp3"
-                renamed = Path(media_folder) / f"theme.mp3{SUFFIX}"
-                if not sidecar.is_file():
-                    # Placement row exists but the file's gone — leave
-                    # the column NULL so the next plex_enum picks it up
-                    # in the absent-sidecar branch (which CAN observe
-                    # the truth unambiguously).
-                    skipped += 1
-                    op_progress.update_progress(
-                        db_path, OP_ID,
-                        stage_current=idx, processed_total=idx,
-                        activity=f"rk={rk}: sidecar missing — skipped",
-                    )
-                    continue
-                # The probe window. Always restore the sidecar in
-                # finally so a mid-loop crash doesn't strand a theme
-                # under the .motif-probing suffix.
-                result: bool | None = None
-                try:
-                    sidecar.rename(renamed)
-                    try:
-                        plex.refresh(rk)
-                    except Exception as e:
-                        log.debug("reprobe: plex.refresh(%s) failed: %s", rk, e)
-                    # Poll until status flips. Initial state is 200
-                    # (theme exists); we're waiting to see if it
-                    # stays 200 (cloud/embed survives without sidecar)
-                    # or goes 404 (sidecar was the only theme).
-                    for _ in range(POLL_ATTEMPTS):
-                        if _cancel():
-                            break
-                        time.sleep(POLL_INTERVAL_S)
-                        probe = plex.verify_theme_claim(rk)
-                        if probe is True:
-                            # Plex still serves a theme without the
-                            # sidecar — confirmed independent theme.
-                            result = True
-                            break
-                        if probe is False:
-                            # Sidecar was the only source.
-                            result = False
-                            break
-                    # If result is still None after all attempts, Plex
-                    # never reconciled within the budget — leave NULL.
-                except Exception as e:
-                    log.warning("reprobe rk=%s probe failed: %s", rk, e)
-                    error_count += 1
-                finally:
-                    # Best-effort restore. If the original rename
-                    # failed, sidecar is still in place so this is
-                    # a no-op. If both fail (genuinely catastrophic),
-                    # log loud — manual fix needed.
-                    try:
-                        if renamed.is_file() and not sidecar.exists():
-                            renamed.rename(sidecar)
-                    except Exception as e:
-                        log.error(
-                            "reprobe: FAILED to restore sidecar at %s: %s",
-                            sidecar, e)
-                        log_event(
-                            db_path, level="ERROR", component="reprobe",
-                            message=f"sidecar stranded at {renamed}: {e}",
-                        )
-                    # Ask Plex to pick the sidecar back up so the
-                    # user's theme stays visible.
-                    try:
-                        plex.refresh(rk)
-                    except Exception as e:
-                        log.debug("reprobe: post-restore refresh(%s) failed: %s",
-                                  rk, e)
-
-                # Persist the verdict if we got one.
-                if result is True:
+                rk, verdict, err = fut.result()
+                done += 1
+                if verdict == 1:
                     with get_conn(db_path) as conn:
                         conn.execute(
                             "UPDATE plex_items SET "
@@ -2050,7 +2017,7 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
                             (rk,),
                         )
                     set_indep += 1
-                elif result is False:
+                elif verdict == 0:
                     with get_conn(db_path) as conn:
                         conn.execute(
                             "UPDATE plex_items SET "
@@ -2061,19 +2028,26 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
                     set_clean += 1
                 else:
                     skipped += 1
-
-                if idx % 5 == 0 or idx == total:
+                    if err and "error" in err:
+                        error_count += 1
+                if done % 25 == 0 or done == total:
                     op_progress.update_progress(
                         db_path, OP_ID,
-                        stage_current=idx, processed_total=idx,
+                        stage_current=done, processed_total=done,
                         error_count=error_count,
                         activity=(
-                            f"{idx}/{total} probed — "
+                            f"{done}/{total} probed — "
                             f"+P found: {set_indep}, "
                             f"sidecar-only: {set_clean}, "
                             f"skipped: {skipped}"
                         ),
                     )
+
+        for c in clients:
+            try:
+                c.close()
+            except Exception:
+                pass
         op_progress.finish_progress(db_path, OP_ID, status="done")
         log_event(
             db_path, level="INFO", component="reprobe",
