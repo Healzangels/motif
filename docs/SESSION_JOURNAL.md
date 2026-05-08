@@ -1516,3 +1516,44 @@ backfill a UI hint is risky even with a finally-block restore.
 - "?" tooltip on dashboard section header shows no info.
 - Settings → SCHEDULE reorganization (partial in v1.13.39 but
   user feedback may want more).
+
+---
+
+## 2026-05-08 — v1.13.41: P0 fix — op_progress.kind CHECK widening
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.41`
+
+### Context
+v1.13.38 added the REPROBE PLEX THEMES daemon-thread worker that
+calls `op_progress.start_progress(kind="reprobe_plex_themes")`,
+but the schema's `op_progress.kind` CHECK was still
+`('tdb_sync', 'plex_enum')`. Result: every REPROBE click died
+in the worker thread with `sqlite3.IntegrityError: CHECK
+constraint failed: kind IN ('tdb_sync', 'plex_enum')` before
+the first row was probed. Live-ops drawer stayed empty because
+no row was ever inserted. User: "I don't see any progress or
+status in the Live Ops drawer after clicking."
+
+I missed this in v1.13.38 — added the new kind without checking
+the CHECK; my own pattern of "every meaningful behaviour change
+ships a tag" should have included a schema-version bump
+alongside the new kind.
+
+### Changes
+- **Schema v39 → v40** (`app/core/db.py`):
+  `_migrate_v39_to_v40` rebuilds `op_progress` with the widened
+  CHECK `kind IN ('tdb_sync', 'plex_enum', 'reprobe_plex_themes')`.
+  SQLite can't ALTER a CHECK in place, so the migration creates
+  a new table, copies rows, drops the old one, renames, and
+  recreates the indexes. Idempotent — schema_version table
+  records v40 once applied.
+- `CURRENT_SCHEMA_VERSION = 40`; CREATE TABLE in the SCHEMA
+  literal also widened so fresh installs land at v40 directly.
+- `app/__init__.py`: `__version__` → `1.13.41`.
+
+### How to verify
+1. Pull, restart container — log shows
+   `Migrating to schema v40 (op_progress.kind widened)`.
+2. Settings → PLEX → // REPROBE PLEX THEMES → Confirm.
+3. Live-ops drawer immediately shows
+   `// REPROBE_PLEX_THEMES running` with the per-row counter
+   advancing (~6/sec on the prefix-byte path).

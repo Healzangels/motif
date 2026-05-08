@@ -278,7 +278,8 @@ CREATE TABLE IF NOT EXISTS sync_runs (
 CREATE TABLE IF NOT EXISTS op_progress (
     op_id           TEXT PRIMARY KEY,
     kind            TEXT NOT NULL
-                       CHECK (kind IN ('tdb_sync', 'plex_enum')),
+                       CHECK (kind IN ('tdb_sync', 'plex_enum',
+                                       'reprobe_plex_themes')),
     status          TEXT NOT NULL DEFAULT 'running'
                        CHECK (status IN ('running', 'cancelling',
                                          'done', 'failed', 'cancelled')),
@@ -631,7 +632,7 @@ CREATE INDEX IF NOT EXISTS idx_saved_filters_scope
     ON saved_filters (scope, name);
 """
 
-CURRENT_SCHEMA_VERSION = 39
+CURRENT_SCHEMA_VERSION = 40
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1358,6 +1359,47 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
             CHECK (hidden_kind IN ('user', 'themerrdb')
                    OR hidden_kind IS NULL);
         ALTER TABLE previous_urls ADD COLUMN hidden_captured_at TEXT;
+        """
+    )
+
+
+def _migrate_v39_to_v40(conn: sqlite3.Connection) -> None:
+    """v40 (v1.13.41): widen op_progress.kind CHECK to include
+    'reprobe_plex_themes'. v1.13.38 added the worker but didn't
+    touch the CHECK, so the very first call to start_progress
+    raised IntegrityError on a clean install. SQLite can't ALTER
+    a CHECK in place, so rebuild the table preserving rows.
+    """
+    log.info("Migrating to schema v40 (op_progress.kind widened)")
+    conn.executescript(
+        """
+        CREATE TABLE op_progress_new (
+            op_id           TEXT PRIMARY KEY,
+            kind            TEXT NOT NULL
+                               CHECK (kind IN ('tdb_sync', 'plex_enum',
+                                               'reprobe_plex_themes')),
+            status          TEXT NOT NULL DEFAULT 'running'
+                               CHECK (status IN ('running', 'cancelling',
+                                                 'done', 'failed', 'cancelled')),
+            started_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            stage           TEXT,
+            stage_label     TEXT,
+            stage_current   INTEGER NOT NULL DEFAULT 0,
+            stage_total     INTEGER NOT NULL DEFAULT 0,
+            processed_total INTEGER NOT NULL DEFAULT 0,
+            processed_est   INTEGER NOT NULL DEFAULT 0,
+            error_count     INTEGER NOT NULL DEFAULT 0,
+            detail_json     TEXT
+        );
+        INSERT INTO op_progress_new SELECT * FROM op_progress;
+        DROP TABLE op_progress;
+        ALTER TABLE op_progress_new RENAME TO op_progress;
+        CREATE INDEX IF NOT EXISTS idx_op_progress_status
+            ON op_progress (status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_op_progress_finished
+            ON op_progress (finished_at);
         """
     )
 
@@ -2152,6 +2194,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 38:
                     _migrate_v38_to_v39(conn)
                     current = 39
+                elif current == 39:
+                    _migrate_v39_to_v40(conn)
+                    current = 40
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
