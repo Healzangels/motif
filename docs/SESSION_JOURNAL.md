@@ -1853,3 +1853,67 @@ Leaving as-is unless the user asks again.
 4. While a place_queue or refresh_queue sits in pending state
    (worker hasn't picked it up), its drawer card shows the
    queue's actual stage_label, not "Done".
+
+---
+
+## 2026-05-08 — v1.13.46: bulk DOWNLOAD eligibility + "unchanged" breakdown
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.46`
+
+### Context
+User screenshot shows the Movies page filtered to TDB ✗ (red,
+dead URL) with two rows selected. The bulk action bar still
+displays `// DOWNLOAD FROM TDB` even though re-downloading
+either row is guaranteed to fail (URL is broken). The user
+also wants the same gate for amber TDB ⚠ (cookies-blocked)
+rows, and for mixed bulk selections wants the confirm dialog
+to surface the failed rows as "unchanged" so they understand
+the bulk action carves them out.
+
+### Changes (`app/web/static/app.js`)
+
+**1. Eligibility gate excludes dead + cookies states.**
+The `hasTdbEligible` calc now requires
+`computeTdbPill(it) ∉ {'dead', 'cookies'}`. Pure-failure
+selections hide `// DOWNLOAD FROM TDB` and `// DOWNLOAD &
+REPLACE FROM TDB` entirely. Mixed selections still show the
+button — the failure rows are filtered out at click time.
+
+**2. Click handler routes failure rows to skip counters.**
+In the bulk-download click handler, before pushing to
+`items[]` we check the row's TDB state. Dead → `skippedDead++`,
+cookies → `skippedCookies++`. Both kinds are counted
+separately so the dialog can call out the correct fix path.
+
+**3. Confirm dialog "Unchanged:" section.**
+After the existing `Breakdown:` and warn lines, the dialog
+now appends:
+```
+Unchanged:
+  X dead-TDB rows (URL broken — fix per-row via SET URL /
+                   UPLOAD MP3 / ADOPT EXISTING THEME)
+  Y cookies-blocked rows (drop a fresh cookies.txt then retry)
+```
+Only renders when at least one row in the selection was
+filtered out for TDB-failure reasons.
+
+**4. Refined empty-selection alert.**
+When the entire selection is filtered out for TDB-failure
+reasons (no `themed`-but-not-failed rows, no sidecars, no
+no-TDB rows), the empty-selection alert now spells out the
+specific failure mix instead of saying "every selected row
+is a sidecar". Routes the user to the same per-row fixes.
+
+**5. Version**: 1.13.45 → 1.13.46.
+
+### How to verify
+1. Filter Movies to `TDB ✗` only, select 2 rows. The bulk
+   action bar shows `// SELECT ALL FILTERED`, `// CLEAR`,
+   `// ACK SELECTED`, `// EXPORT CSV` — no `// DOWNLOAD FROM
+   TDB`.
+2. Filter Movies to `ALL`, select a mix of T rows + dead
+   rows + cookies rows. Click `// DOWNLOAD FROM TDB`. The
+   confirm dialog still shows the per-letter breakdown for
+   the actionable rows AND a new `Unchanged:` block listing
+   the failure rows with the appropriate fix path.
+3. Click OK; the bulk POST only carries the actionable rows
+   (the failure ones aren't enqueued).

@@ -5858,7 +5858,18 @@
                         && it.theme_tmdb !== undefined
                         && it.upstream_source !== 'plex_orphan');
         if (sidecarOnly) hasSidecarOnly = true;
-        if (themed) hasTdbEligible = true;
+        // v1.13.46: TDB-eligible only when the row has a usable
+        // upstream URL. Rows with a 'dead' (red TDB ✗) or 'cookies'
+        // (amber TDB ⚠) pill have a broken / blocked URL —
+        // re-downloading guarantees the same failure. Excluding
+        // them from the eligible set hides // DOWNLOAD FROM TDB
+        // (and // DOWNLOAD & REPLACE FROM TDB) when the entire
+        // selection is in a failure state. Mixed selections still
+        // show the button, but the click handler filters these
+        // out and surfaces "X unchanged" in the confirm dialog.
+        const tdbState = computeTdbPill(it);
+        const tdbActionable = tdbState !== 'dead' && tdbState !== 'cookies';
+        if (themed && tdbActionable) hasTdbEligible = true;
         // v1.12.60: any T row is "already TDB-sourced" so the
         // download is a refresh, not a replace — same for '-'
         // (no theme to replace). Anything else (U/A/M/P) IS a
@@ -6528,6 +6539,16 @@
       // a plex_orphan (which has no upstream URL to fetch from).
       const items = [];
       const skipped = [];
+      // v1.13.46: separately track rows skipped because their TDB
+      // is in a failure state (dead URL or cookies-blocked) so the
+      // confirm dialog can call them out as "unchanged" instead of
+      // bundling them with the generic skipped count. Pure-failure
+      // selections never reach this code path — the button is
+      // hidden by the v1.13.46 hasTdbEligible gate — but mixed
+      // selections do, and the user wants to see explicitly that
+      // the failed rows aren't being touched by this bulk action.
+      let skippedDead = 0;
+      let skippedCookies = 0;
       // v1.12.66: per-source-letter breakdown so the confirm dialog
       // can show "3 will be downloaded fresh, 2 will replace U content,
       // 1 will replace P-agent" instead of a faceless "12 rows" count.
@@ -6547,6 +6568,21 @@
           skipped.push(it.plex_title || key);
           continue;
         }
+        // v1.13.46: route dead / cookies-blocked rows away from the
+        // download set BEFORE adding to items[]. Re-downloading
+        // a row whose URL is permanently broken (dead) or whose
+        // cookies are missing (cookies) is guaranteed to fail
+        // again — including these in the bulk POST would just
+        // burn worker time + add fresh failure log noise.
+        const tdbState = computeTdbPill(it);
+        if (tdbState === 'dead') {
+          skippedDead++;
+          continue;
+        }
+        if (tdbState === 'cookies') {
+          skippedCookies++;
+          continue;
+        }
         const srcLetter = computeSrcLetter(it);
         if (srcLetter in breakdown) breakdown[srcLetter]++;
         items.push({
@@ -6555,6 +6591,18 @@
         });
       }
       if (items.length === 0) {
+        // v1.13.46: refine the empty-selection alert when the
+        // reason is dead/cookies rather than M sidecars / no-TDB.
+        if (skippedDead + skippedCookies > 0 && skipped.length === 0) {
+          alert(
+            `Nothing downloadable in selection — `
+            + `${skippedDead ? `${skippedDead} row${skippedDead === 1 ? ' has' : 's have'} a dead TDB URL` : ''}`
+            + `${(skippedDead && skippedCookies) ? ', ' : ''}`
+            + `${skippedCookies ? `${skippedCookies} row${skippedCookies === 1 ? ' is' : 's are'} cookies-blocked` : ''}`
+            + `. Use SET URL / UPLOAD MP3 / ADOPT EXISTING THEME on each row, or drop a fresh cookies.txt then retry.`,
+          );
+          return;
+        }
         alert('Nothing downloadable in selection — every selected row is a sidecar (use ADOPT SELECTED) or has no ThemerrDB record.');
         return;
       }
@@ -6583,6 +6631,22 @@
       if (skipped.length) {
         lines.push('');
         lines.push(`(${skipped.length} skipped — sidecars use ADOPT, no-TDB rows have no upstream to fetch.)`);
+      }
+      // v1.13.46: surface dead/cookies skip reasons in the confirm
+      // dialog so the user reading "Download 50 themes" sees that
+      // the 5 red-TDB rows in their 55-row selection were carved
+      // out as "unchanged" and won't be re-attempted. Matches the
+      // user's explicit ask: "if selected in a large bulk grouping
+      // just state in state change warning the failed unchanged."
+      if (skippedDead + skippedCookies > 0) {
+        lines.push('');
+        lines.push('Unchanged:');
+        if (skippedDead) {
+          lines.push(`  ${skippedDead} dead-TDB row${skippedDead === 1 ? '' : 's'} (URL broken — fix per-row via SET URL / UPLOAD MP3 / ADOPT EXISTING THEME)`);
+        }
+        if (skippedCookies) {
+          lines.push(`  ${skippedCookies} cookies-blocked row${skippedCookies === 1 ? '' : 's'} (drop a fresh cookies.txt then retry)`);
+        }
       }
       if (!confirm(lines.join('\n'))) return;
       const btn = e.currentTarget;
