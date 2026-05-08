@@ -1917,3 +1917,137 @@ is a sidecar". Routes the user to the same per-row fixes.
    the failure rows with the appropriate fix path.
 3. Click OK; the bulk POST only carries the actionable rows
    (the failure ones aren't enqueued).
+
+---
+
+## 2026-05-08 — v1.13.47: P0 ADOPT EXISTING THEME 409 fix + poll-cadence on pending + LET PLEX SERVE for +P
+**Branch**: `claude/fix-large-image-handling-R2lmf`  **Tag**: `v1.13.47`
+
+### Context
+Live-test feedback while running v1.13.46 against the homelab
+deploy:
+
+1. **ADOPT EXISTING THEME 409**: clicking ADOPT EXISTING THEME
+   from the info card on a row with `failure_kind=video_removed`
+   + manual sidecar at the Plex folder produced
+   `Recovery action failed: 409: {"detail":"no mismatch state to
+   resolve"}`. The SOURCE-menu ADOPT button on the same row
+   worked.
+2. **Amber DL pill without status bar**: clicking DOWNLOAD on a
+   row would show the row's amber DL pill but no topbar
+   mini-bar. Often the topbar jumped straight from "Theme
+   download queued" to "Plex refresh queued" without showing the
+   running "Downloading: <title>" stage with a %.
+3. **Plex refresh card showing DONE and PENDING simultaneously**:
+   visible in the drawer while the topbar status bar was lit.
+4. **ADOPT EXISTING THEME button color**: rendered purple
+   (`tone: 'user'`); user wanted it cyan to match the SOURCE-menu
+   ADOPT button (`tone: 'adopt'`).
+5. **No PURGE TRY THIS NEXT for non-failed +P rows**: the smart
+   TRY NEXT actions only surfaced when the row had a
+   `failure_kind`. User wanted the PURGE/LET PLEX SERVE option
+   on any T/U/A/M row that has the +P yellow dot, regardless of
+   failure status, so they can revert to Plex's theme without
+   first having to fail something.
+
+### Changes
+
+**1. P0 — ADOPT EXISTING THEME 409 fix** (`app/web/static/app.js`):
+The `adopt-and-ack` dispatcher was POSTing to
+`/api/items/{mt}/{tmdb}/adopt-from-plex`. That endpoint requires
+`local_files.mismatch_state IS NOT NULL` — i.e. there must be an
+existing motif canonical that diverged from the placement. For
+the smart-TRY-NEXT case the row HAS NO local_files entry (the
+download failed), so the endpoint correctly 409'd. The
+SOURCE-menu ADOPT button uses
+`/api/plex_items/{rk}/adopt-sidecar` via `adopt_folder()` which
+ingests the sidecar at the Plex folder into motif's themes_dir
+even with no local_files row — the right path. Rewired
+`adopt-and-ack` to use the same endpoint (rating_key was already
+returned in the recovery-options response).
+
+**2. Topbar poll cadence fix** (`app/web/static/ops.js`):
+The poll loop computed `running = ops.some(o => running ||
+cancelling)` and used that to decide between 1s active and 10s
+idle cadence. Click → optimistic placeholder → `boostPoll()` set
+1s, but the very next poll observed only `pending` synth rows
+(worker hadn't picked the job up yet), saw `running=false`, and
+downshifted to 10s. The next poll didn't fire for 10 seconds —
+by which time the worker had run the download AND queued the
+refresh, so the mini-bar jumped straight from "Theme download
+queued" to "Plex refresh queued" with no visible "Downloading:
+<title>" step or %, and the row's amber DL pill kept flashing
+alone. Now `pending` ops also keep the cadence at 1s. Body
+attribute `data-ops-running` stays tied to actual running state
+so the legacy refresh-UI suppression CSS hooks don't react to
+queued-but-not-running work.
+
+**3. ADOPT EXISTING THEME tone** (`app/web/api.py`):
+Changed `adopt-and-ack`'s `tone` from `"user"` (purple) to
+`"adopt"` (cyan) so the smart-TRY-NEXT button reads identically
+to the SOURCE-menu ADOPT button. Same logical action, same
+visual signal.
+
+**4. LET PLEX SERVE on non-failed +P composite rows**
+(`app/web/api.py` `api_recovery_options` + `app/web/static/app.js`):
+- Server: when `failure_kind` is null but `p_available` (i.e.
+  `plex_independent_theme=1`), return a single
+  `purge-revert-to-plex` option in the recovery list. Action
+  key differs from `purge-and-ack` because there's no failure
+  to acknowledge — just the PURGE.
+- Client: drop the `t.failure_kind` gate on rendering the
+  recovery-section placeholder. Always render (hidden) and let
+  hydrate decide. `hydrateRecoveryOptions` reveals the section
+  when options come back, removes it when empty. Added
+  `purge-revert-to-plex` dispatcher — calls `/forget` only,
+  closes + reloads. The `data.human` fallback was relaxed so
+  the section header doesn't render the literal string "null"
+  on rows without a failure.
+
+**5. Synthesized queue-op `started_at` stability**
+(`app/core/progress.py`): the synth row's `started_at` was
+being emitted as the current poll's `now_iso()`, so every poll
+the drawer card's ELAPSED counter reset to ~0. Added
+`_QUEUE_BURST_START: dict[str, str]` parallel to
+`_QUEUE_BURST_HW`, stamping first-seen-this-burst per kind and
+clearing in lockstep when the queue drains. The drawer card's
+ELAPSED line now climbs through the burst.
+
+**6. Version**: 1.13.46 → 1.13.47.
+
+### Files touched
+- `app/__init__.py` — version bump
+- `app/web/api.py` — adopt-and-ack tone, no-failure +P recovery branch
+- `app/web/static/app.js` — adopt endpoint fix, recovery placeholder always rendered, purge-revert-to-plex dispatcher, human-fallback
+- `app/web/static/ops.js` — pending ops keep 1s cadence
+- `app/core/progress.py` — _QUEUE_BURST_START + stable synth started_at
+
+### How to verify
+1. Open the info card on a TV/movie row whose TDB URL is dead
+   (`failure_kind=video_removed`) AND with a manual sidecar at
+   the Plex folder. Click ADOPT EXISTING THEME. The button is
+   cyan (matching SOURCE-menu ADOPT). The action succeeds; row
+   flips to A and the failure clears.
+2. Click DOWNLOAD on a row. Topbar mini-bar paints "Theme
+   download queued" within the same frame (optimistic
+   placeholder), transitions to "Downloading: <title>" within
+   ~1s when the worker picks up, shows the yt-dlp % filling
+   the bar, then transitions to "Plex refresh queued" only
+   after the download completes. No more 10-second blackout
+   window.
+3. Open the info card on a T/U/A/M row that has the +P yellow
+   dot (Plex serves its own theme alongside motif's sidecar).
+   The // TRY THIS NEXT section now appears with one option:
+   LET PLEX SERVE. Clicking it PURGEs motif's tracking and
+   the row flips to P.
+4. Open the drawer during a multi-job download burst. The
+   ELAPSED line on the DOWNLOAD QUEUE card climbs through the
+   burst (5s → 10s → 15s …) instead of resetting every second.
+
+### Notes
+- This branch (`claude/fix-large-image-handling-R2lmf`) was
+  created off v1.13.46 to triage the homelab regression report
+  and re-derive v1.13.47 work from the parallel session. The
+  queue-burst-start dict + version bump may collide with the
+  other machine's staged v1.13.47 — resolution will need
+  attention on the next merge.

@@ -681,6 +681,20 @@
       state.ops = data.ops;
       const running = state.ops.some((o) =>
         o.status === 'running' || o.status === 'cancelling');
+      // v1.13.47: cadence-bump must include 'pending' too. Pre-fix
+      // a click → optimistic placeholder → boostPoll() set the
+      // interval to 1s, but the very next poll observed only a
+      // 'pending' synth row (worker hadn't picked the job up yet),
+      // saw running=false, and downshifted to 10s. The next poll
+      // didn't fire for 10 seconds — by which time the worker had
+      // run the download AND queued the refresh, so the mini-bar
+      // jumped straight from "Theme download queued" to
+      // "Plex refresh queued" with no visible "Downloading: <title>"
+      // step or % and the row's amber DL pill kept flashing alone.
+      // Keep the body attribute tied to actual running state (its
+      // CSS hooks the legacy refresh UI suppression on real work);
+      // only the cadence decision widens.
+      const pending = state.ops.some((o) => o.status === 'pending');
       // v1.12.108: body attribute drives the CSS suppression of
       // the legacy refresh UI (yellow dot + REFRESHING text +
       // per-tab nav-busy). Switch immediately on transitions so
@@ -699,7 +713,7 @@
           }));
         } catch (_) { /* old browsers */ }
       }
-      const newInterval = running ? 1000 : 10000;
+      const newInterval = (running || pending) ? 1000 : 10000;
       if (newInterval !== state.pollInterval) {
         state.pollInterval = newInterval;
         if (state.pollTimer) clearTimeout(state.pollTimer);

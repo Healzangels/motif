@@ -8831,9 +8831,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     p_available = (state["plex_independent_theme"] == 1)
         kind = row["failure_kind"]
         if not kind:
-            return {"failure_kind": None, "options": [],
+            # v1.13.47: even on rows with no failure, surface a
+            # "LET PLEX SERVE" recovery option when Plex serves its
+            # own theme alongside motif's sidecar (the +P composite
+            # / yellow-dot state). Lets the user revert to Plex's
+            # theme on any T/U/A/M row that has the dot, mirroring
+            # the smart-TRY-NEXT path that already exists for failed
+            # rows. Action key differs from `purge-and-ack` because
+            # there's no failure to acknowledge — just the PURGE.
+            no_fail_options: list[dict] = []
+            if p_available:
+                no_fail_options.append({
+                    "action": "purge-revert-to-plex",
+                    "label": "LET PLEX SERVE",
+                    "tooltip": (
+                        "Plex already has its own theme for this title (cloud "
+                        "or themerr-plex embed). Drop motif's tracking — "
+                        "Plex's theme keeps playing. Equivalent to // PURGE."
+                    ),
+                    "priority": 0,
+                    "tone": "user",
+                    "interactive": True,
+                })
+            return {"failure_kind": None,
+                    "options": no_fail_options,
                     "human": None, "needs_manual_override": False,
-                    "resolved": False, "resolved_via": None}
+                    "resolved": False, "resolved_via": None,
+                    "rating_key": rating_key,
+                    "acked": False}
         # Static recipe per FailureKind. Each entry is (action,
         # label, tooltip, priority, tone). Frontend renders these
         # as buttons that call into the existing per-action
@@ -8990,7 +9015,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "/themes) and acknowledge the TDB failure in one click."
                     ),
                     "priority": 0,
-                    "tone": "user",
+                    # v1.13.47: tone='adopt' matches the SOURCE-menu
+                    # ADOPT button (cyan) so the same logical action
+                    # reads identically across surfaces. Pre-fix
+                    # tone='user' rendered purple and made it look
+                    # like a different operation from the row-menu
+                    # ADOPT.
+                    "tone": "adopt",
                     "interactive": True,
                 })
             if p_available:

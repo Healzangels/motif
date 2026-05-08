@@ -7805,17 +7805,20 @@
     // are identical, no diff to display) and for non-pending
     // decisions (already accepted/declined).
     const diffSection = renderPendingUpdateDiff(pu, lf, t);
-    // v1.12.71: TRY THIS NEXT recovery section. Renders only when
-    // the row has an active failure_kind. Each suggested action is
-    // a button that hooks into the existing data-act dispatch — no
-    // new click plumbing. The list is fetched async; placeholder
-    // rendered now and replaced once the fetch lands.
-    const recoverySectionId = (t.failure_kind && t.media_type
-                               && t.tmdb_id !== undefined)
+    // v1.12.71: TRY THIS NEXT recovery section. Always rendered when
+    // we have media_type + tmdb_id; hydrateRecoveryOptions removes
+    // the section if the server returns no actions. Pre-v1.13.47
+    // this was gated on t.failure_kind, but we now also surface
+    // recovery options on non-failed rows when Plex serves an
+    // independent theme (+P composite / yellow dot) — letting the
+    // user revert to Plex's theme via PURGE without first having
+    // to fail anything. Each suggested action is a button that
+    // hooks into the existing data-act dispatch.
+    const recoverySectionId = (t.media_type && t.tmdb_id !== undefined)
       ? 'recovery-section'
       : null;
     const recoveryPlaceholder = recoverySectionId
-      ? `<section id="${recoverySectionId}" class="recovery-section">
+      ? `<section id="${recoverySectionId}" class="recovery-section" hidden>
            <header class="recovery-section-head">
              <span class="recovery-section-title">// TRY THIS NEXT</span>
              <span class="muted small">loading recovery options…</span>
@@ -7907,9 +7910,10 @@
     // await — failures fall back to bare video IDs already in the
     // markup. Runs after innerHTML so the DOM nodes exist.
     hydrateDiffTitles(body);
-    // v1.12.71: hydrate the TRY THIS NEXT section if the row has
-    // a failure. Best-effort — endpoint failure leaves the
-    // placeholder copy ("loading recovery options…") in place.
+    // v1.12.71: hydrate the TRY THIS NEXT section. Best-effort —
+    // endpoint failure leaves the placeholder copy in place. The
+    // section starts hidden; hydrateRecoveryOptions reveals it
+    // when options exist OR removes it entirely when empty.
     if (recoverySectionId) {
       // v1.13.35: pass section_id so the resolved-state lookup
       // is section-scoped — pre-fix a 4K-only adopt could flip
@@ -8121,11 +8125,19 @@
       section.querySelector('.muted').textContent = 'recovery options unavailable';
       return;
     }
-    if (!data || !data.failure_kind || !(data.options || []).length) {
+    if (!data || !(data.options || []).length) {
       section.remove();
       return;
     }
-    const human = data.human || data.failure_kind;
+    section.hidden = false;
+    // v1.13.47: human text falls back to a generic note for non-
+    // failed rows that surface recovery options (e.g. +P composite
+    // rows where Plex serves its own theme alongside motif's
+    // sidecar). data.failure_kind is null in that path so the old
+    // `data.human || data.failure_kind` chain produced the literal
+    // string "null" in the header.
+    const human = data.human
+      || (data.failure_kind ? data.failure_kind : '');
     // v1.13.33: locally-resolved rows annotate the dead TDB URL row
     // at the top of the dialog so the user sees the axis state at a
     // glance — the title swap on the section header below carries
@@ -8272,16 +8284,21 @@
             closeInfoDialog();
             openUploadDialog({ ratingKey, title: '', year: '' });
           } else if (act === 'adopt-and-ack') {
-            // v1.13.44: smart TRY NEXT — adopt the existing
+            // v1.13.47: smart TRY NEXT — adopt the existing
             // theme.mp3 at the Plex folder + ack the failure in one
-            // click. /adopt-from-plex does the placement→canonical
-            // ingest; /clear-failure dismisses the topbar FAIL
-            // counter. Section-scoped if the info card has the
-            // section context (the v1.13.35 invariant).
-            const adoptUrl = sectionId
-              ? `/api/items/${mt}/${id}/adopt-from-plex?section_id=${encodeURIComponent(sectionId)}`
-              : `/api/items/${mt}/${id}/adopt-from-plex`;
-            await api('POST', adoptUrl);
+            // click. Pre-fix called /adopt-from-plex which 409s with
+            // "no mismatch state to resolve" when the row has no
+            // local_files entry (the failed-download case is the
+            // common one — there's no canonical to mismatch). The
+            // SOURCE-menu ADOPT button uses /adopt-sidecar via
+            // adopt_folder() which is the right path: it ingests the
+            // sidecar at the Plex folder into motif's themes_dir
+            // even when no local_files row exists yet. Mirror that.
+            if (!ratingKey) {
+              alert('No rating_key available for this row — open ADOPT from the row\'s SOURCE menu.');
+              return;
+            }
+            await api('POST', `/api/plex_items/${encodeURIComponent(ratingKey)}/adopt-sidecar`);
             await api('POST', `/api/items/${mt}/${id}/clear-failure`);
             closeAndReload();
           } else if (act === 'purge-and-ack') {
@@ -8296,6 +8313,18 @@
               : `/api/items/${mt}/${id}/forget`;
             await api('POST', purgeUrl);
             await api('POST', `/api/items/${mt}/${id}/clear-failure`);
+            closeAndReload();
+          } else if (act === 'purge-revert-to-plex') {
+            // v1.13.47: PURGE on a non-failed +P composite row.
+            // Same /forget endpoint as purge-and-ack, but skip
+            // the clear-failure step — there's no failure to ack.
+            // Drops motif's sidecar so Plex's own theme (the one
+            // signalled by the +P yellow dot) becomes the only
+            // theme served.
+            const purgeUrl = sectionId
+              ? `/api/items/${mt}/${id}/forget?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/forget`;
+            await api('POST', purgeUrl);
             closeAndReload();
           }
         } catch (err) {

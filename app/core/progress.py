@@ -339,6 +339,15 @@ def load_active(db_path: Path) -> list[dict]:
 
 _QUEUE_BURST_HW: dict[str, int] = {}
 
+# v1.13.47: per-kind first-seen timestamp for the active burst.
+# Synthesized queue ops were emitting `started_at = now_iso()` on
+# every poll — so the drawer card's ELAPSED counter reset to 0
+# every second instead of climbing through the burst. Track when
+# the kind first showed up in this drain cycle and reuse that
+# value across subsequent synth rounds; cleared alongside
+# _QUEUE_BURST_HW when the queue fully drains.
+_QUEUE_BURST_START: dict[str, str] = {}
+
 # v1.13.18 (6C): per-job download fraction (0.0-1.0). Updated by
 # yt-dlp's progress_hooks (wired in worker.py); read by
 # _synthesize_queue_ops to enrich the download_queue card with real
@@ -410,6 +419,11 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
     for jt in list(_QUEUE_BURST_HW.keys()):
         if jt not in seen_active:
             del _QUEUE_BURST_HW[jt]
+    # v1.13.47: clear per-kind first-seen timestamps in lockstep
+    # with the HW dict so a fresh burst gets a fresh start_at.
+    for jt in list(_QUEUE_BURST_START.keys()):
+        if jt not in seen_active:
+            del _QUEUE_BURST_START[jt]
     for row in counts:
         jt = row["job_type"]
         running_n = row["running_n"] or 0
@@ -422,6 +436,14 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
         prior_hw = _QUEUE_BURST_HW.get(jt, 0)
         hw = max(prior_hw, remaining)
         _QUEUE_BURST_HW[jt] = hw
+        # v1.13.47: stamp first-seen timestamp on first observation
+        # of this kind in the current drain cycle. Subsequent polls
+        # re-use the value so the drawer card's ELAPSED meta climbs
+        # through the burst instead of resetting every second.
+        burst_start = _QUEUE_BURST_START.get(jt)
+        if burst_start is None:
+            burst_start = now
+            _QUEUE_BURST_START[jt] = burst_start
         completed_in_burst = max(0, hw - remaining)
         kind_label, stage_label = label_map.get(jt, (jt.upper(), jt))
         # Detail label encodes counts so the mini-bar's stage_label
@@ -477,7 +499,7 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
             "op_id": f"queue:{jt}",
             "kind": f"{jt}_queue",
             "status": "running" if running_n else "pending",
-            "started_at": now,
+            "started_at": burst_start,
             "updated_at": now,
             "finished_at": None,
             "stage": jt,
