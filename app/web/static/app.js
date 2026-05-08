@@ -550,20 +550,17 @@
       const autoEnum = (q.auto_enum_after_sync !== false);
       const tabKey = libraryState.tab;
       const variantKey = libraryState.fourk ? 'fourk' : 'standard';
-      // v1.13.30: page-level busy. The library page has ONE
-      // SYNC PLEX button; toggling STANDARD ↔ 4K shouldn't release
-      // the lock just because the OTHER variant happens to be idle.
-      // User-visible regression in v1.13.23 (per-variant lock):
-      // click SYNC PLEX on STANDARD, scan starts, toggle to 4K, the
-      // shared button became clickable for 4K — letting the user
-      // pile a 2nd scan on top of the still-running 1st. The button
-      // now stays locked while ANY variant of the current tab has a
-      // plex_enum in flight; the DONE flash still fires per
-      // (tab, variant) so the visual feedback is for the variant
-      // the user is currently viewing.
+      // v1.13.36: per-variant busy (reverts v1.13.30's tab-wide
+      // gate). User feedback: "when syncing the standard version
+      // of a library the 4k version also becomes unclickable and
+      // says syncing when only the actual library [variant] syncing
+      // should." STANDARD and 4K target different Plex sections
+      // (different jobs, can run independently); the lock should
+      // mirror that. v1.13.30 widened the gate to address a
+      // separate issue (mid-flip DONE flash) which is now handled
+      // entirely by the scope-aware sawBusyScope flag below.
       const myTabBusy = !!(tabKey && enumActive[tabKey]
-                           && (enumActive[tabKey].standard
-                               || enumActive[tabKey].fourk));
+                           && enumActive[tabKey][variantKey]);
       // "Global pipeline" = SCAN ALL from settings (every section
       // queued, naturally lights up multiple tabs as it sweeps) OR
       // dashboard sync→enum cascade (tdb sync running with auto_enum

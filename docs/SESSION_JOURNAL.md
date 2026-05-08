@@ -1147,3 +1147,90 @@ findings worth shipping:
   back if the user surfaces multiple-op visibility complaints).
 - Per-kind library filter for the failure-breakdown deeplink
   (`&fk=` param parsed but not applied).
+
+---
+
+## 2026-05-07 — v1.13.36: P0 dashboard-insights SQL + per-variant lock + P filter tightening + post-PURGE optimistic P
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.36`
+
+### Context
+User testing v1.13.35 surfaced a P0 + several user-visible
+correctness regressions:
+
+### P0 — `/api/dashboard/insights` 500
+**`sqlite3.OperationalError: no such column: wall_clock_seconds`**.
+The `sync_runs` table has `started_at` + `finished_at` only —
+v1.13.34's insights query referenced a column that doesn't exist.
+Every dashboard load 500'd.
+
+**Fix:** derive the wall clock via `(julianday(finished_at) -
+julianday(started_at)) * 86400.0` aliased as `wall_clock_seconds`
+so the response shape is unchanged.
+
+### P1 — variant lock too aggressive (revert v1.13.30 tab-wide)
+v1.13.30 widened `myTabBusy` to lock the SYNC PLEX button while
+EITHER STANDARD or 4K of the current tab was enumerating. User
+asked for the inverse: per-variant independence, since the two
+target different Plex sections and their jobs are independent.
+
+**Fix:** revert to `myTabBusy = enumActive[tab][variant]` (the
+v1.13.23 behavior). The mid-flip DONE-flash issue v1.13.30 was
+addressing is now handled entirely by the scope-aware
+`sawBusyScope` flag (v1.13.24+), so the wider gate is no longer
+needed.
+
+### P1 — P filter expanded to nearly every themed row
+v1.13.31's P-filter SQL was `pi.has_theme = 1 AND verified_ok` —
+matched almost every motif-placed row because Plex sets
+`has_theme=1` whenever its metadata reports any theme (including
+the sidecar motif itself placed). v1.13.34 tightened the
+**render** gate to `!plex_local_theme` but the filter SQL kept
+the loose condition.
+
+**Fix:** P filter SQL now adds `pi.local_theme_file = 0`,
+matching the render gate. Pure-P rows match via the letter
+check; composite T+P/U+P/A+P/M+P (rare, true cloud/embed) match
+via this clause.
+
+### P1 — post-PURGE bounces to '-' when Plex has a Pass cloud theme
+PURGE handler stamps `has_theme=0, local_theme_file=0,
+verified_ok=0` for every cleared rk to avoid phantom-P. Inline
+HEAD probe re-elevates to has_theme=1 if Plex serves a separate
+theme — but the v1.13.21 gate skips the verify entirely for
+`rk_from_placement` rows (motif owned the file, Plex's cache is
+unreliable right after delete). So a T row with a real Plex
+Pass cloud theme would bounce to SRC='-' until the next
+plex_enum reconciled. User: "show P right away if Plex has a
+fallback."
+
+**Fix:** snapshot pre-purge `(has_theme, local_theme_file)`
+per rk. Rows that pre-PURGE were in the +P composite state
+(`has_theme=1 AND local_theme_file=0` — Plex serves a theme
+not backed by a local sidecar) now keep `has_theme=1` +
+`verified_ok=NULL` (optimistic). SRC SQL's COALESCE renders P
+immediately. plex_enum confirms or corrects within seconds.
+Rows that were motif-only (the rest) get the pessimistic stamp
+as before.
+
+### Files
+- `app/__init__.py`: `__version__` → `1.13.36`.
+- `app/web/api.py`:
+  - `/api/dashboard/insights`: `sync_rows` SQL derives
+    `wall_clock_seconds` via julianday.
+  - `/api/library` SRC pill `P` filter: adds
+    `pi.local_theme_file = 0` clause.
+  - `api_forget_item`: PURGE clear-stamp split between
+    `rk_keep_p` (composite +P pre-state, optimistic P-keep)
+    and `rk_zero` (motif-only, pessimistic stamp).
+- `app/web/static/app.js`:
+  - `myTabBusy` reverts to per-variant
+    `enumActive[tab][variant]`.
+
+### Open threads
+- "Yellow dot DL appearing before status bar appears" — needs
+  more info to reproduce (which dot, which row state, which
+  topbar pill).
+- T-row briefly shows yellow-dot then clears after plex_enum:
+  this is the post-place transient before plex_enum stamps
+  `local_theme_file=1`. Acceptable; an aggressive fix would
+  require an inline HEAD verify per place which is too costly.

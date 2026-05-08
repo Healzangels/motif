@@ -891,11 +891,19 @@ def _library_main_query(
                 clauses.append(f"({_SRC_LETTER_SQL}) IN ({placeholders})")
                 params.extend(non_p)
             if include_p_flag:
-                # Match every row where Plex serves a theme — pure-P
-                # rows already match via the letter check, but the
-                # composite cases (T+P, U+P, A+P, M+P) only land here.
+                # v1.13.36: match the v1.13.34 composite-+P render gate
+                # exactly. Real "Plex serves its own theme" requires
+                # the absent-sidecar case (`local_theme_file=0`) —
+                # otherwise the gate fires on every motif-placed row
+                # whose sidecar Plex has scanned (every T/U/A row).
+                # Pre-fix the P filter expanded to ~all themed rows
+                # which made the chip useless. Pure-P rows match via
+                # the letter check above; the composite cases T+P,
+                # U+P, A+P (rare; cloud / embed / stale agent claim
+                # alongside motif's placement) land here.
                 clauses.append(
                     "(pi.has_theme = 1 "
+                    "AND pi.local_theme_file = 0 "
                     "AND COALESCE(pi.plex_theme_verified_ok, 1) = 1)"
                 )
             if clauses:
@@ -3474,17 +3482,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """).fetchall()
                 # Sync duration trend. Reverse so the sparkline
                 # paints oldest→newest left-to-right (matching how
-                # users read time series). Skip rows with NULL
-                # wall_clock_seconds (in-flight runs would 0-out
-                # the chart's tail).
+                # users read time series). Skip rows still in flight
+                # (NULL finished_at) — they'd 0-out the chart's tail.
+                # v1.13.36: sync_runs has no `wall_clock_seconds`
+                # column (it has started_at + finished_at). Derive
+                # the wall clock via julianday diff in seconds.
+                # Pre-fix the endpoint 500'd with "no such column"
+                # on every dashboard load.
                 sync_rows = conn.execute("""
-                    SELECT finished_at, wall_clock_seconds, transport,
-                           status, no_changes,
-                           movies_seen, tv_seen,
-                           new_count, updated_count
+                    SELECT
+                        finished_at,
+                        (julianday(finished_at) - julianday(started_at)) * 86400.0
+                            AS wall_clock_seconds,
+                        transport, status, no_changes,
+                        movies_seen, tv_seen,
+                        new_count, updated_count
                     FROM sync_runs
                     WHERE finished_at IS NOT NULL
-                      AND wall_clock_seconds IS NOT NULL
                     ORDER BY finished_at DESC
                     LIMIT 30
                 """).fetchall()
@@ -7627,27 +7641,76 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # facing XML already correctly shows as gone. Result:
                 # SRC reverts to 'P' incorrectly, and the user sees a
                 # ghost theme until the next plex_enum reconciles.
-                pre_has_theme: dict[str, int] = {
-                    r["rating_key"]: int(r["has_theme"] or 0)
+                # v1.13.36: ALSO snapshot the +P composite state
+                # (has_theme=1 AND local_theme_file=0). Rows in that
+                # state have a known-separate Plex theme (cloud / embed)
+                # alongside motif's placement; PURGE'ing them shouldn't
+                # bounce SRC to '-' — Plex's separate theme survives
+                # the file deletion and SRC should snap to P right
+                # away. We split the UPDATE so those rks keep
+                # has_theme=1 + verified_ok=NULL (optimistic), while
+                # the rest of rk_clear goes to the pessimistic stamp
+                # below. plex_enum reconciles either way on its next
+                # pass.
+                pre_state: dict[str, dict] = {
+                    r["rating_key"]: {
+                        "has_theme": int(r["has_theme"] or 0),
+                        "local_theme_file": int(r["local_theme_file"] or 0),
+                        "verified_ok": r["plex_theme_verified_ok"],
+                    }
                     for r in conn.execute(
-                        f"SELECT rating_key, has_theme FROM plex_items "
-                        f"WHERE rating_key IN ({qmarks})",
+                        f"SELECT rating_key, has_theme, local_theme_file, "
+                        f"       plex_theme_verified_ok "
+                        f"FROM plex_items WHERE rating_key IN ({qmarks})",
                         tuple(rk_clear),
                     ).fetchall()
                 }
-                conn.execute(
-                    f"UPDATE plex_items SET local_theme_file = 0, "
-                    f"                      has_theme = 0, "
-                    # v1.13.4: also stamp verified_ok=0 so the optimistic
-                    # COALESCE in _SRC_LETTER_SQL (which treats NULL as
-                    # "trust the claim") doesn't trip on a stale NULL
-                    # in the brief window before inline-verify runs (or
-                    # at all when verify is skipped per the snapshot
-                    # logic).
-                    f"                      plex_theme_verified_ok = 0 "
-                    f"WHERE rating_key IN ({qmarks})",
-                    tuple(rk_clear),
-                )
+                pre_has_theme = {
+                    rk: s["has_theme"] for rk, s in pre_state.items()
+                }
+                # v1.13.36: split rk_clear into "had Plex's own theme
+                # (cloud / embed) alongside motif" vs "motif was the
+                # sole source". The +P composite signal pre-PURGE is
+                # has_theme=1 AND local_theme_file=0 (Plex serves a
+                # theme not backed by a local sidecar). Those rows
+                # keep has_theme=1 + verified_ok=NULL (optimistic) so
+                # SRC snaps to P right after PURGE; everyone else
+                # gets the pessimistic stamp. plex_enum reconciles
+                # both paths on its next run.
+                rk_keep_p = [
+                    rk for rk in rk_clear
+                    if pre_state.get(rk, {}).get("has_theme") == 1
+                    and pre_state.get(rk, {}).get("local_theme_file") == 0
+                ]
+                rk_zero = [rk for rk in rk_clear if rk not in rk_keep_p]
+                if rk_keep_p:
+                    qm_keep = ",".join("?" for _ in rk_keep_p)
+                    # Sidecar gone (we just deleted it) but Plex's
+                    # separate theme stays. has_theme stays 1;
+                    # verified_ok back to NULL (untested) — SRC SQL's
+                    # COALESCE renders P. plex_enum's HEAD verify
+                    # confirms within seconds.
+                    conn.execute(
+                        f"UPDATE plex_items SET local_theme_file = 0, "
+                        f"                      plex_theme_verified_ok = NULL "
+                        f"WHERE rating_key IN ({qm_keep})",
+                        tuple(rk_keep_p),
+                    )
+                if rk_zero:
+                    qm_zero = ",".join("?" for _ in rk_zero)
+                    conn.execute(
+                        f"UPDATE plex_items SET local_theme_file = 0, "
+                        f"                      has_theme = 0, "
+                        # v1.13.4: also stamp verified_ok=0 so the optimistic
+                        # COALESCE in _SRC_LETTER_SQL (which treats NULL as
+                        # "trust the claim") doesn't trip on a stale NULL
+                        # in the brief window before inline-verify runs (or
+                        # at all when verify is skipped per the snapshot
+                        # logic).
+                        f"                      plex_theme_verified_ok = 0 "
+                        f"WHERE rating_key IN ({qm_zero})",
+                        tuple(rk_zero),
+                    )
             else:
                 pre_has_theme = {}
         # v1.10.28: skip the section enum (it would re-fetch has_theme
