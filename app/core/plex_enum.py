@@ -693,6 +693,21 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                     tn = normalize_title(it.title or "")
                 except Exception:
                     tn = (it.title or "").lower()
+                # v1.13.38: observe the +P composite signal. When
+                # there's no sidecar at the folder yet (sidecar=0),
+                # has_theme tells us definitively whether Plex has
+                # an independent theme: 1=cloud/embed/Pass, 0=nothing.
+                # When sidecar=1 the value is unobservable (Plex
+                # always reports has_theme=1 because it sees the
+                # sidecar) so we leave the existing column untouched
+                # — past observations stick. Pass NULL to the
+                # COALESCE so the SQL keeps the prior value.
+                if sidecar == 1:
+                    indep_observation = None
+                elif it.has_theme:
+                    indep_observation = 1
+                else:
+                    indep_observation = 0
                 existing = conn.execute(
                     "SELECT plex_theme_uri FROM plex_items "
                     "WHERE rating_key = ?",
@@ -709,6 +724,9 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                     new_uri = it.plex_theme_uri or None
                     old_uri = existing["plex_theme_uri"] or None
                     if new_uri != old_uri:
+                        # v1.13.38: COALESCE on plex_independent_theme keeps
+                        # the prior value when the observation is unavailable
+                        # (sidecar=1), updates when observable.
                         conn.execute(
                             """UPDATE plex_items SET
                                   section_id = ?, media_type = ?, title = ?, year = ?,
@@ -717,12 +735,13 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                   title_norm = ?, last_seen_at = ?,
                                   plex_theme_uri = ?,
                                   plex_theme_verified_at = NULL,
-                                  plex_theme_verified_ok = NULL
+                                  plex_theme_verified_ok = NULL,
+                                  plex_independent_theme = COALESCE(?, plex_independent_theme)
                                WHERE rating_key = ?""",
                             (it.section_id, it.media_type, it.title, it.year,
                              it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
                              it.folder_path, 1 if it.has_theme else 0, sidecar,
-                             tn, now, new_uri, it.rating_key),
+                             tn, now, new_uri, indep_observation, it.rating_key),
                         )
                     else:
                         # URI unchanged — keep prior verification.
@@ -731,12 +750,13 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                   section_id = ?, media_type = ?, title = ?, year = ?,
                                   guid_imdb = ?, guid_tmdb = ?, guid_tvdb = ?,
                                   folder_path = ?, has_theme = ?, local_theme_file = ?,
-                                  title_norm = ?, last_seen_at = ?
+                                  title_norm = ?, last_seen_at = ?,
+                                  plex_independent_theme = COALESCE(?, plex_independent_theme)
                                WHERE rating_key = ?""",
                             (it.section_id, it.media_type, it.title, it.year,
                              it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
                              it.folder_path, 1 if it.has_theme else 0, sidecar,
-                             tn, now, it.rating_key),
+                             tn, now, indep_observation, it.rating_key),
                         )
                     updated += 1
                 else:
@@ -745,13 +765,14 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                            (rating_key, section_id, media_type, title, year,
                             guid_imdb, guid_tmdb, guid_tvdb, folder_path,
                             has_theme, local_theme_file, title_norm,
-                            plex_theme_uri,
+                            plex_theme_uri, plex_independent_theme,
                             first_seen_at, last_seen_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (it.rating_key, it.section_id, it.media_type, it.title,
                          it.year, it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
                          it.folder_path, 1 if it.has_theme else 0, sidecar,
-                         tn, it.plex_theme_uri or None, now, now),
+                         tn, it.plex_theme_uri or None, indep_observation,
+                         now, now),
                     )
                     inserted += 1
     # v1.11.26: stamp theme_id once per enum so /api/library's row

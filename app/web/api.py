@@ -27,6 +27,7 @@ from typing import Annotated, Literal, Optional
 
 import json
 import sqlite3
+import time
 from urllib.parse import quote
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
@@ -891,21 +892,17 @@ def _library_main_query(
                 clauses.append(f"({_SRC_LETTER_SQL}) IN ({placeholders})")
                 params.extend(non_p)
             if include_p_flag:
-                # v1.13.36: match the v1.13.34 composite-+P render gate
-                # exactly. Real "Plex serves its own theme" requires
-                # the absent-sidecar case (`local_theme_file=0`) —
-                # otherwise the gate fires on every motif-placed row
-                # whose sidecar Plex has scanned (every T/U/A row).
-                # Pre-fix the P filter expanded to ~all themed rows
-                # which made the chip useless. Pure-P rows match via
-                # the letter check above; the composite cases T+P,
-                # U+P, A+P (rare; cloud / embed / stale agent claim
-                # alongside motif's placement) land here.
-                clauses.append(
-                    "(pi.has_theme = 1 "
-                    "AND pi.local_theme_file = 0 "
-                    "AND COALESCE(pi.plex_theme_verified_ok, 1) = 1)"
-                )
+                # v1.13.38: read the persisted plex_independent_theme
+                # flag (schema v39) instead of recomputing from
+                # has_theme + local_theme_file. The captured signal is
+                # set exactly once during enumeration (pre-place) when
+                # the answer can be observed unambiguously — once a
+                # sidecar exists Plex's API stops distinguishing local
+                # vs cloud, so the v1.13.36 heuristic fired on every
+                # motif-placed row. PURGE / REPROBE refresh the column
+                # via inline HEAD probe; the JS render gate reads the
+                # same column, so chip + filter agree row-for-row.
+                clauses.append("pi.plex_independent_theme = 1")
             if clauses:
                 where_extra += " AND (" + " OR ".join(clauses) + ")"
     if tdb_pills:
@@ -1882,6 +1879,214 @@ def _library_not_in_plex(
             "plex_scan_stale": False,
             "last_plex_enum_at": last_plex_enum_at,
             "last_sync_at": last_sync_at}
+
+
+# v1.13.38: REPROBE PLEX THEMES worker. Runs in a daemon thread
+# spawned by /api/admin/reprobe-plex-themes. The data-model question
+# motif can't answer from the section enum alone is "does Plex have
+# its own theme (cloud / themerr-plex embed) BEHIND motif's sidecar?"
+# — once a sidecar exists, Plex's metadata XML reports has_theme=1
+# regardless of which source wins, so the +P composite signal goes
+# blind. The reprobe loop pulls each sidecar out of view, asks Plex
+# to refresh, HEAD probes /library/metadata/{rk}/theme, and the
+# answer disambiguates: 200 → Plex has its own theme behind the
+# sidecar (set plex_independent_theme=1), 404 → sidecar was the
+# only source (set 0). Slow because Plex's metadata cache lag is
+# unbounded — we sleep+poll up to ~12s per row before giving up.
+# Always restores the sidecar in a finally block; on the (very
+# unlikely) event of a thread death mid-rename, restart restores
+# from the .motif-probing suffix on next plex_enum.
+def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
+    from ..core import progress as op_progress
+    from ..core.plex import PlexClient, PlexConfig
+    OP_ID = "reprobe-plex-themes"
+    SUFFIX = ".motif-probing"
+    # Plex's metadata cache lag varies wildly. 2s is too short on a
+    # busy server, 30s is unbearable on a quiet one. 1s sleep then
+    # poll up to 12 attempts (~13s wall) catches both ends.
+    POLL_INTERVAL_S = 1.0
+    POLL_ATTEMPTS = 12
+    op_progress.start_progress(
+        db_path, op_id=OP_ID, kind="reprobe_plex_themes",
+        stage="probe", stage_label="Reprobing Plex themes",
+        stage_total=0, processed_est=0,
+    )
+
+    def _cancel() -> bool:
+        return op_progress.is_cancelled(db_path, OP_ID)
+
+    cfg = PlexConfig(
+        url=settings.plex_url, token=settings.plex_token,
+        movie_section=settings.plex_movie_section,
+        tv_section=settings.plex_tv_section, enabled=True,
+    )
+
+    set_indep = 0  # rows we resolved to plex_independent_theme=1
+    set_clean = 0  # rows we resolved to plex_independent_theme=0
+    skipped = 0   # rows we couldn't probe (missing path, transient err)
+    error_count = 0
+    try:
+        with get_conn(db_path) as conn:
+            rows = conn.execute(
+                # Only probe rows where:
+                #   - plex_independent_theme is unknown (NULL) — known
+                #     rows already carry the truth from plex_enum or
+                #     from a prior PURGE inline-verify
+                #   - has_theme=1 AND local_theme_file=1 — both must be
+                #     true for the question to even be ambiguous
+                #   - we have a placement (need media_folder to find
+                #     the sidecar to rename)
+                "SELECT pi.rating_key, pi.section_id, "
+                "       p.media_folder "
+                "  FROM plex_items pi "
+                "  JOIN placements p "
+                "    ON p.plex_rating_key = pi.rating_key "
+                "   AND p.section_id = pi.section_id "
+                " WHERE pi.plex_independent_theme IS NULL "
+                "   AND COALESCE(pi.has_theme, 0) = 1 "
+                "   AND COALESCE(pi.local_theme_file, 0) = 1 "
+                " ORDER BY pi.section_id, pi.rating_key"
+            ).fetchall()
+        total = len(rows)
+        op_progress.update_progress(
+            db_path, OP_ID,
+            stage_total=total,
+            processed_est=total,
+            activity=f"Found {total} sidecar-bearing rows to probe",
+        )
+        if total == 0:
+            op_progress.finish_progress(db_path, OP_ID, status="done")
+            return
+
+        with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+            for idx, r in enumerate(rows, 1):
+                if _cancel():
+                    op_progress.finish_progress(
+                        db_path, OP_ID, status="cancelled")
+                    return
+                rk = r["rating_key"]
+                media_folder = r["media_folder"]
+                if not media_folder:
+                    skipped += 1
+                    continue
+                sidecar = Path(media_folder) / "theme.mp3"
+                renamed = Path(media_folder) / f"theme.mp3{SUFFIX}"
+                if not sidecar.is_file():
+                    # Placement row exists but the file's gone — leave
+                    # the column NULL so the next plex_enum picks it up
+                    # in the absent-sidecar branch (which CAN observe
+                    # the truth unambiguously).
+                    skipped += 1
+                    op_progress.update_progress(
+                        db_path, OP_ID,
+                        stage_current=idx, processed_total=idx,
+                        activity=f"rk={rk}: sidecar missing — skipped",
+                    )
+                    continue
+                # The probe window. Always restore the sidecar in
+                # finally so a mid-loop crash doesn't strand a theme
+                # under the .motif-probing suffix.
+                result: bool | None = None
+                try:
+                    sidecar.rename(renamed)
+                    try:
+                        plex.refresh(rk)
+                    except Exception as e:
+                        log.debug("reprobe: plex.refresh(%s) failed: %s", rk, e)
+                    # Poll until status flips. Initial state is 200
+                    # (theme exists); we're waiting to see if it
+                    # stays 200 (cloud/embed survives without sidecar)
+                    # or goes 404 (sidecar was the only theme).
+                    for _ in range(POLL_ATTEMPTS):
+                        if _cancel():
+                            break
+                        time.sleep(POLL_INTERVAL_S)
+                        probe = plex.verify_theme_claim(rk)
+                        if probe is True:
+                            # Plex still serves a theme without the
+                            # sidecar — confirmed independent theme.
+                            result = True
+                            break
+                        if probe is False:
+                            # Sidecar was the only source.
+                            result = False
+                            break
+                    # If result is still None after all attempts, Plex
+                    # never reconciled within the budget — leave NULL.
+                except Exception as e:
+                    log.warning("reprobe rk=%s probe failed: %s", rk, e)
+                    error_count += 1
+                finally:
+                    # Best-effort restore. If the original rename
+                    # failed, sidecar is still in place so this is
+                    # a no-op. If both fail (genuinely catastrophic),
+                    # log loud — manual fix needed.
+                    try:
+                        if renamed.is_file() and not sidecar.exists():
+                            renamed.rename(sidecar)
+                    except Exception as e:
+                        log.error(
+                            "reprobe: FAILED to restore sidecar at %s: %s",
+                            sidecar, e)
+                        log_event(
+                            db_path, level="ERROR", component="reprobe",
+                            message=f"sidecar stranded at {renamed}: {e}",
+                        )
+                    # Ask Plex to pick the sidecar back up so the
+                    # user's theme stays visible.
+                    try:
+                        plex.refresh(rk)
+                    except Exception as e:
+                        log.debug("reprobe: post-restore refresh(%s) failed: %s",
+                                  rk, e)
+
+                # Persist the verdict if we got one.
+                if result is True:
+                    with get_conn(db_path) as conn:
+                        conn.execute(
+                            "UPDATE plex_items SET "
+                            "  plex_independent_theme = 1 "
+                            "WHERE rating_key = ?",
+                            (rk,),
+                        )
+                    set_indep += 1
+                elif result is False:
+                    with get_conn(db_path) as conn:
+                        conn.execute(
+                            "UPDATE plex_items SET "
+                            "  plex_independent_theme = 0 "
+                            "WHERE rating_key = ?",
+                            (rk,),
+                        )
+                    set_clean += 1
+                else:
+                    skipped += 1
+
+                if idx % 5 == 0 or idx == total:
+                    op_progress.update_progress(
+                        db_path, OP_ID,
+                        stage_current=idx, processed_total=idx,
+                        error_count=error_count,
+                        activity=(
+                            f"{idx}/{total} probed — "
+                            f"+P found: {set_indep}, "
+                            f"sidecar-only: {set_clean}, "
+                            f"skipped: {skipped}"
+                        ),
+                    )
+        op_progress.finish_progress(db_path, OP_ID, status="done")
+        log_event(
+            db_path, level="INFO", component="reprobe",
+            message=(
+                f"REPROBE done: {total} probed, +P={set_indep}, "
+                f"sidecar-only={set_clean}, skipped={skipped}, "
+                f"errors={error_count}"
+            ),
+        )
+    except Exception as e:
+        log.exception("REPROBE PLEX THEMES failed")
+        op_progress.finish_progress(
+            db_path, OP_ID, status="failed", error_message=str(e))
 
 
 # -------- App factory --------
@@ -7657,10 +7862,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "has_theme": int(r["has_theme"] or 0),
                         "local_theme_file": int(r["local_theme_file"] or 0),
                         "verified_ok": r["plex_theme_verified_ok"],
+                        "plex_independent_theme": r["plex_independent_theme"],
                     }
                     for r in conn.execute(
                         f"SELECT rating_key, has_theme, local_theme_file, "
-                        f"       plex_theme_verified_ok "
+                        f"       plex_theme_verified_ok, "
+                        f"       plex_independent_theme "
                         f"FROM plex_items WHERE rating_key IN ({qmarks})",
                         tuple(rk_clear),
                     ).fetchall()
@@ -7670,18 +7877,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 }
                 # v1.13.36: split rk_clear into "had Plex's own theme
                 # (cloud / embed) alongside motif" vs "motif was the
-                # sole source". The +P composite signal pre-PURGE is
-                # has_theme=1 AND local_theme_file=0 (Plex serves a
-                # theme not backed by a local sidecar). Those rows
-                # keep has_theme=1 + verified_ok=NULL (optimistic) so
-                # SRC snaps to P right after PURGE; everyone else
-                # gets the pessimistic stamp. plex_enum reconciles
-                # both paths on its next run.
-                rk_keep_p = [
-                    rk for rk in rk_clear
-                    if pre_state.get(rk, {}).get("has_theme") == 1
-                    and pre_state.get(rk, {}).get("local_theme_file") == 0
-                ]
+                # sole source". v1.13.38: the persisted
+                # plex_independent_theme flag is now the authoritative
+                # signal — when set to 1 motif KNOWS Plex serves a
+                # separate theme (observed pre-place by plex_enum or
+                # confirmed by a previous HEAD probe). Fall back to
+                # the v1.13.36 heuristic (has_theme=1 AND
+                # local_theme_file=0) when the flag is NULL/unknown
+                # so older rows still get the optimistic-keep before
+                # plex_enum runs once.
+                def _had_plex_independent(rk: str) -> bool:
+                    s = pre_state.get(rk, {})
+                    if s.get("plex_independent_theme") == 1:
+                        return True
+                    if s.get("plex_independent_theme") == 0:
+                        return False
+                    # Unknown — heuristic fallback.
+                    return (s.get("has_theme") == 1
+                            and s.get("local_theme_file") == 0)
+                rk_keep_p = [rk for rk in rk_clear if _had_plex_independent(rk)]
                 rk_zero = [rk for rk in rk_clear if rk not in rk_keep_p]
                 if rk_keep_p:
                     qm_keep = ",".join("?" for _ in rk_keep_p)
@@ -7787,13 +8001,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             result = plex.verify_theme_claim(rk)
                             if result is None:
                                 continue
+                            # v1.13.38: also update the persisted
+                            # +P composite signal. After PURGE the
+                            # sidecar is gone, so HEAD's verdict is
+                            # the definitive answer for "Plex serves
+                            # an independent theme" — write it to
+                            # plex_independent_theme so the next
+                            # render reads the truth instead of
+                            # a stale observation.
                             conn.execute(
                                 "UPDATE plex_items SET "
                                 "  has_theme = ?, "
                                 "  plex_theme_verified_at = ?, "
-                                "  plex_theme_verified_ok = ? "
+                                "  plex_theme_verified_ok = ?, "
+                                "  plex_independent_theme = ? "
                                 "WHERE rating_key = ?",
                                 (1 if result else 0, now_iso(),
+                                 1 if result else 0,
                                  1 if result else 0, rk),
                             )
                         except Exception as e:
@@ -9540,6 +9764,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log_event(db, level="INFO", component="api",
                   message=f"Cancel requested for op {op_id} by {request.state.user}")
         return {"ok": True}
+
+    # v1.13.38: REPROBE PLEX THEMES — backfill plex_independent_theme
+    # for sidecar-bearing rows where the flag was never observed.
+    # Plex's API can't distinguish "sees motif's sidecar" from "has
+    # its own cloud / themerr-plex theme" once a sidecar exists, so
+    # the only way to learn the truth is to temporarily move the
+    # sidecar out of view, refresh Plex, HEAD probe, and restore.
+    # Risky and slow (Plex's metadata cache lag is the bottleneck) —
+    # gated behind admin auth and a confirm dialog. Spawned as a
+    # daemon thread so it survives across HTTP requests; surfaced via
+    # op_progress for the live-ops drawer.
+    @app.post("/api/admin/reprobe-plex-themes")
+    async def api_admin_reprobe_plex_themes(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        _require_admin(request)
+        if not (settings.plex_enabled and settings.plex_url
+                and settings.plex_token):
+            raise HTTPException(status_code=400,
+                                detail="Plex is not configured")
+        from ..core import progress as op_progress
+        # Refuse to start a second reprobe while one is already running.
+        active = await run_in_threadpool(op_progress.load_active, db)
+        if any(r.get("op_id") == "reprobe-plex-themes"
+               and r.get("status") in ("running", "pending", "cancelling")
+               for r in active):
+            raise HTTPException(
+                status_code=409,
+                detail="reprobe already running",
+            )
+        log_event(db, level="INFO", component="api",
+                  message=f"REPROBE PLEX THEMES started by {request.state.user}")
+        import threading
+        t = threading.Thread(
+            target=_reprobe_plex_themes_run,
+            args=(db, settings),
+            name="reprobe-plex-themes",
+            daemon=True,
+        )
+        t.start()
+        return {"ok": True, "op_id": "reprobe-plex-themes"}
 
     @app.get("/healthz")
     async def healthz():

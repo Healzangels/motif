@@ -406,6 +406,18 @@ CREATE TABLE IF NOT EXISTS plex_items (
     plex_theme_uri          TEXT,
     plex_theme_verified_at  TEXT,
     plex_theme_verified_ok  INTEGER,
+    -- v1.13.38 (v39): persisted +P composite signal. NULL=unknown,
+    -- 0=Plex serves no separate theme, 1=Plex serves a theme not
+    -- backed by a local sidecar (cloud / Plex Pass / themerr-plex
+    -- embed). Set by plex_enum when local_theme_file=0 (the only
+    -- window we can observe Plex's independent state); never
+    -- overwritten when local_theme_file=1 (sidecar wins, can't
+    -- distinguish). Cleared by PURGE handler after HEAD probe
+    -- confirms 404. The +P composite UI dot reads this column
+    -- directly instead of recomputing from has_theme +
+    -- local_theme_file (which produces transient false positives
+    -- post-place).
+    plex_independent_theme  INTEGER,
     first_seen_at    TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
@@ -619,7 +631,7 @@ CREATE INDEX IF NOT EXISTS idx_saved_filters_scope
     ON saved_filters (scope, name);
 """
 
-CURRENT_SCHEMA_VERSION = 38
+CURRENT_SCHEMA_VERSION = 39
 
 
 def _migrate_v1_to_v2(conn: sqlite3.Connection) -> None:
@@ -1346,6 +1358,34 @@ def _migrate_v31_to_v32(conn: sqlite3.Connection) -> None:
             CHECK (hidden_kind IN ('user', 'themerrdb')
                    OR hidden_kind IS NULL);
         ALTER TABLE previous_urls ADD COLUMN hidden_captured_at TEXT;
+        """
+    )
+
+
+def _migrate_v38_to_v39(conn: sqlite3.Connection) -> None:
+    """v39 (v1.13.38): persist the +P composite signal. Adds
+    plex_items.plex_independent_theme — NULL = unknown,
+    0 = Plex serves no separate theme, 1 = Plex serves a theme
+    not backed by motif's sidecar (cloud / Plex Pass / themerr-
+    plex embed). Pre-fix the +P composite condition was recomputed
+    on every render from `has_theme=1 AND local_theme_file=0`,
+    which only holds in the brief window before plex_enum stamps
+    `local_theme_file=1` after a placement — every steady-state
+    +P render was a transient false positive. With the persisted
+    flag, plex_enum captures the observation when it CAN be made
+    (no sidecar at the folder yet) and the value sticks through
+    subsequent placements; the user-facing dot reads the column
+    directly.
+
+    Schema change is purely additive (one nullable column). Set
+    rules in plex_enum (only when local_theme_file=0 we can
+    observe), clear rules in PURGE handler after HEAD probe
+    confirms 404.
+    """
+    log.info("Migrating to schema v39 (plex_items.plex_independent_theme)")
+    conn.executescript(
+        """
+        ALTER TABLE plex_items ADD COLUMN plex_independent_theme INTEGER;
         """
     )
 
@@ -2109,6 +2149,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 37:
                     _migrate_v37_to_v38(conn)
                     current = 38
+                elif current == 38:
+                    _migrate_v38_to_v39(conn)
+                    current = 39
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

@@ -1277,3 +1277,112 @@ runs at PURGE time on a real signal (pre-PURGE state snapshot).
 2. Once the worker picks up the download, the placeholder
    gets replaced by the real download_queue card with the
    per-section label and progress (yt-dlp's real %).
+
+---
+
+## 2026-05-08 — v1.13.38: persisted +P composite signal + REPROBE PLEX THEMES
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.38`
+
+### Context
+v1.13.37 left the +P composite SRC dot broken in steady state.
+User push-back on dropping the dot: "I really like the T U A
+with the yellow dot as it's useful to know when you could be
+saving space by ditching the side car and letting plex take
+over...this isn't a good thing since then say you see a T
+yellow dot and sync plex and it goes away how do you know it
+has a P available any more?"
+
+The fundamental problem: once a sidecar exists at
+`<media_folder>/theme.mp3`, Plex's section enum reports
+`has_theme=1` regardless of whether the source is the sidecar
+OR a Plex-side cloud / themerr-plex embed. The v1.13.34
+heuristic `has_theme=1 AND local_theme_file=0` only fires when
+the sidecar is absent — which is a transient pre-place state,
+not the steady state the user wants to inspect.
+
+### Design
+The "are there ALSO independent Plex themes here?" question
+**can** be answered, but only at two moments:
+1. During plex_enum, *before* a sidecar is placed: `has_theme`
+   is the truth.
+2. By temporarily moving the sidecar out of the way and HEAD-
+   probing `/library/metadata/{rk}/theme`.
+
+Solution: add a persisted column `plex_items.plex_independent_theme`
+(NULL = unknown, 1 = Plex serves a separate theme, 0 = sidecar
+was the only source). Capture the answer at every moment we can:
+- `plex_enum.py` upserts the COALESCE-preserve flag during the
+  section walk (set when `local_theme_file=0`, preserve otherwise
+  so we don't blow away a known-good observation when a sidecar
+  hides the truth on the next pass).
+- PURGE inline-verify writes the column from the HEAD probe
+  (sidecar is definitively gone post-PURGE so `verify_theme_claim`
+  is the source of truth).
+- New admin action **REPROBE PLEX THEMES** backfills historical
+  rows: temporarily renames each sidecar to
+  `theme.mp3.motif-probing`, asks Plex to refresh, polls
+  `verify_theme_claim` up to ~13s, restores the file. Exposed
+  via `/api/admin/reprobe-plex-themes` and a button in
+  Settings → PLEX panel.
+
+### Changes
+- **Schema v38 → v39** (`app/core/db.py`): adds
+  `plex_independent_theme INTEGER` to `plex_items`. Idempotent
+  ALTER TABLE migration; column also added to fresh-install
+  DDL. Header comment documents the set/clear/preserve rules.
+- **`app/core/plex_enum.py`**: computes
+  `indep_observation = None if sidecar else has_theme` and
+  `COALESCE(?, plex_independent_theme)`-merges into both UPSERT
+  branches (URI-changed and URI-unchanged) plus the INSERT
+  path. Preserve-when-unknown semantics so re-enumeration
+  doesn't clobber a previously-observed truth.
+- **`app/web/api.py` PURGE**: now snapshots
+  `plex_independent_theme` into the pre-state, prefers the
+  persisted flag in the optimistic-keep heuristic
+  (`_had_plex_independent`, falls back to v1.13.36's
+  `has_theme=1 AND local_theme_file=0`), and the inline HEAD
+  verify branch updates the column to match its 200/404
+  verdict.
+- **`app/web/api.py` library SQL**: P-filter now reads
+  `pi.plex_independent_theme = 1` instead of recomputing
+  from `has_theme + local_theme_file`. Chip + filter agree
+  row-for-row off a single source of truth.
+- **`app/web/api.py` `_reprobe_plex_themes_run`** + endpoint
+  `POST /api/admin/reprobe-plex-themes`: daemon-thread worker
+  that walks
+  `plex_independent_theme IS NULL AND has_theme=1 AND local_theme_file=1`,
+  rate-limited (1s sleep between polls, ~13s timeout per row).
+  Always restores the sidecar in `finally`; logs ERROR if a
+  restore fails so a stranded `theme.mp3.motif-probing` is
+  surfaced. Surfaces in the live-ops drawer via op_progress;
+  cancellable via the existing
+  `/api/progress/{op_id}/cancel`.
+- **`app/web/static/app.js`**: render gate reads
+  `it.plex_independent_theme === 1` instead of the v1.13.34
+  `plex_has_theme && !plex_local_theme && verifiedOk` triplet.
+  Drops the runtime composite computation entirely. New
+  `bindReprobePlexThemes()` wires the Settings button with a
+  confirm dialog explaining the file-rename behaviour.
+- **`app/web/templates/settings.html`**: new "// REPROBE PLEX
+  THEMES" block in the PLEX panel below LIBRARY SECTIONS,
+  with the warning text inline.
+
+### Open threads
+- "?" tooltip on the dashboard section header reportedly shows
+  no info — needs investigation.
+- Settings → SCHEDULE tab has the cron / source / urls / auto-
+  enum settings in mixed order with extra vertical space —
+  user wants a reorganization. Both pending; will land in
+  v1.13.39 to keep this ship focused on the +P data-model fix.
+
+### How to verify
+1. Pull, restart container — schema migrates to v39 (check
+   logs for "schema v38→v39").
+2. Settings → PLEX → click `// REPROBE PLEX THEMES`. Confirm
+   dialog appears; live-ops drawer shows
+   "// REPROBE_PLEX_THEMES" running with row counts.
+3. After completion, motif-placed rows whose Plex section
+   *also* has a cloud / embed theme show the small amber
+   `+P` dot on their primary SRC chip; pure sidecar-only
+   rows render the chip without the dot. Behaviour persists
+   across plex_enum + post-PURGE without flicker.

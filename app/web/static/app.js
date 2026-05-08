@@ -3549,6 +3549,44 @@
     }
   }
 
+  // v1.13.38: REPROBE PLEX THEMES wiring. Background admin action
+  // that backfills the +P composite indicator for sidecar-bearing
+  // rows by temporarily renaming each theme.mp3 and HEAD-probing
+  // Plex. Confirms before kicking off (it's slow and touches files
+  // in /data); status drives the live-ops drawer via op_progress.
+  function bindReprobePlexThemes() {
+    const btn = document.getElementById('reprobe-plex-themes-btn');
+    const status = document.getElementById('reprobe-plex-themes-status');
+    if (!btn || !status) return;
+    btn.addEventListener('click', async () => {
+      const ok = confirm(
+        'Reprobe Plex themes for every motif-placed row?\n\n'
+        + 'For each row this will briefly rename theme.mp3 to '
+        + 'theme.mp3.motif-probing, ask Plex to refresh, HEAD probe, '
+        + 'then restore the file. Expect ~5-15 seconds per row, so '
+        + 'thousands of rows will take a while.\n\n'
+        + 'Safe to cancel from the live-ops drawer; safe to re-run.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        await api('POST', '/api/admin/reprobe-plex-themes');
+        status.textContent = '✓ started — see // LIVE OPS for progress';
+        status.classList.add('form-status-ok');
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  }
+
   // v1.13.2 (#3): pre-flight transport probe wiring. Auto-fires
   // once on settings load so the user sees today's reachability
   // without clicking; click-to-rerun for manual re-test (handy
@@ -4572,12 +4610,19 @@
     // corner-dot indicator on the primary chip — same chip, single
     // visual unit. Class `link-badge-also-plex` triggers the
     // `::after` dot in app.css.
-    const _verifiedOk = (it.plex_theme_verified_ok === null
-                         || it.plex_theme_verified_ok === undefined
-                         || it.plex_theme_verified_ok === 1);
+    // v1.13.38: read the persisted plex_independent_theme flag
+    // (schema v39) instead of recomputing from has_theme +
+    // local_theme_file. plex_enum captures the observation when
+    // it CAN be made (no sidecar at the folder yet); the value
+    // sticks through subsequent placements. PURGE clears it on
+    // HEAD-404. Result: the dot only fires on rows where motif
+    // KNOWS Plex serves a separate theme — no transient false
+    // positives, no transient disappearances. Pre-fix the gate
+    // was a runtime recomputation that only held in the brief
+    // window before plex_enum stamped local_theme_file=1 after
+    // a placement.
     const _primaryLetter = computeSrcLetter(it);
-    const _plexAlso = !!it.plex_has_theme && !it.plex_local_theme
-                      && _verifiedOk
+    const _plexAlso = it.plex_independent_theme === 1
                       && _primaryLetter !== 'P'
                       && _primaryLetter !== '-';
     if (_plexAlso) {
@@ -8765,6 +8810,7 @@
     loadLibraries().catch(console.error);
     loadConfigIntoForms().catch(console.error);
     bindSyncProbe();
+    bindReprobePlexThemes();
     loadCacheGauge().catch(()=>{});
     loadPending().catch(console.error);
     loadLibrary().catch(console.error);

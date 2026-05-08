@@ -247,6 +247,39 @@
   </div>
 </section>
 
+<!-- v1.13.38: REPROBE PLEX THEMES — admin tool to backfill the
+     plex_independent_theme column for sidecar-bearing rows. Surfaced
+     in its own block so the destructive-ish "this will rename your
+     theme.mp3 files briefly" warning sits next to the trigger button
+     instead of buried in a tooltip. -->
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// REPROBE PLEX THEMES</h2>
+    <span class="muted small">backfill +P composite indicator</span>
+  </header>
+  <div class="block-body">
+    <p class="muted" style="font-size:var(--t-tiny);line-height:1.6;margin:0 0 12px">
+      For every motif-placed row, this checks whether Plex <em>also</em> has
+      its own theme (Plex Pass cloud, themerr-plex embed) hiding behind the
+      sidecar. The result drives the small <code>+P</code> dot on the SRC
+      pill so you can see which placements could be removed without losing
+      the theme entirely.
+    </p>
+    <p class="muted" style="font-size:var(--t-tiny);line-height:1.6;margin:0 0 12px">
+      <strong class="warn">// HOW IT WORKS:</strong> each <code>theme.mp3</code>
+      is briefly renamed to <code>theme.mp3.motif-probing</code>, Plex is
+      asked to refresh, then probed; if Plex still serves a theme the row
+      gets <code>+P</code>. The sidecar is restored before moving to the
+      next row. Slow (Plex's metadata cache lag dominates) — expect ~5–15s
+      per row. Safe to cancel; safe to re-run.
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="reprobe-plex-themes-btn" type="button">// REPROBE PLEX THEMES</button>
+      <span class="form-status" id="reprobe-plex-themes-status"></span>
+    </div>
+  </div>
+</section>
+
 <!-- ============================ DOWNLOADS ============================ -->
 <section class="block tab-panel" data-panel="downloads" style="display:none">
   <header class="block-head">
