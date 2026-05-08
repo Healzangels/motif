@@ -1234,3 +1234,46 @@ as before.
   this is the post-place transient before plex_enum stamps
   `local_theme_file=1`. Acceptable; an aggressive fix would
   require an inline HEAD verify per place which is too costly.
+
+---
+
+## 2026-05-07 — v1.13.37: optimistic topbar placeholder on row DOWNLOAD click
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.37`
+
+### Context
+User: "the yellow dot DL is appearing before the dl status bar
+appears." The row's amber DL pill (awaiting-placement) updates
+within ~0.5s of the click via libraryRapidPoll, but the topbar
+mini-bar lags 2-5s waiting for the worker's idle-wait + first
+op_progress write. Result: row signals "something happening"
+instantly, topbar still says IDLE.
+
+### Changes
+- `app/__init__.py`: `__version__` → `1.13.37`.
+- `app/web/static/app.js` `redownload()`: now fires
+  `motifOps.setOptimisticPlaceholder('download_queue',
+  '// QUEUING DOWNLOAD')` right after the API call returns.
+  Same mechanism the dash SYNC + library SYNC PLEX clicks
+  already use — paints an indeterminate-shimmer mini-bar
+  immediately, gets replaced by the real download_queue card
+  when the worker's first op_progress write lands.
+
+### Open thread (deferred for user direction)
+The +P composite SRC dot is fundamentally broken: motif's data
+model can't detect "Plex serves a cloud theme alongside motif's
+sidecar" because Plex hides cloud-availability when a sidecar
+wins (`has_theme=1 AND local_theme_file=1` regardless). Every
+v1.13.34 +P render is either a transient stale-state false
+positive (post-place before plex_enum) or undetectable in steady
+state. Three options proposed (drop entirely / definitive flag /
+softer tooltip); awaiting user choice. The post-PURGE
+optimistic-P fix from v1.13.36 stays useful regardless since it
+runs at PURGE time on a real signal (pre-PURGE state snapshot).
+
+### How to verify
+1. Click DOWNLOAD on a row. Topbar mini-bar appears
+   immediately ("// QUEUING DOWNLOAD" indeterminate shimmer)
+   instead of waiting for the worker to start the job.
+2. Once the worker picks up the download, the placeholder
+   gets replaced by the real download_queue card with the
+   per-section label and progress (yt-dlp's real %).

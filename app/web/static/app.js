@@ -2088,6 +2088,19 @@
         : `/api/items/${mediaType}/${tmdbId}/redownload`;
       await api('POST', url);
       if (btn) btn.textContent = 'QUEUED';
+      // v1.13.37: paint an optimistic topbar placeholder so the
+      // mini-bar lights up at click time instead of lagging the
+      // row's own amber DL pill by 2-5s (worker idle wait + first
+      // op_progress write). Same mechanism the dash SYNC + library
+      // SYNC PLEX clicks use; tone "tdb" gets replaced by the
+      // download_queue card's tone when the real op lands.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'download_queue', '// QUEUING DOWNLOAD',
+          );
+        }
+      } catch (_) { /* swallow — placeholder is cosmetic */ }
       // If we're on /movies, /tv, /anime, light up rapid-poll so the row
       // updates as the download/place transitions land.
       if (typeof libraryRapidPoll === 'function'
