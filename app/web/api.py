@@ -1144,6 +1144,13 @@ def _library_main_query(
                -- computeSrcLetter mirrors the SRC SQL's gate so the
                -- row badge agrees with the server-side classification.
                pi.plex_theme_verified_ok,
+               -- v1.13.42: persisted +P composite signal (schema v39).
+               -- JS render gate reads `it.plex_independent_theme === 1`
+               -- to draw the amber +P dot on T/U/A/M chips. Without
+               -- this select the field is undefined client-side and
+               -- the gate never fires, so REPROBE updates never
+               -- surface — exactly what happened in v1.13.38–.41.
+               pi.plex_independent_theme,
                ps.title AS section_title,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
@@ -1833,6 +1840,7 @@ def _library_not_in_plex(
             NULL AS plex_has_theme,
             NULL AS plex_local_theme,
             NULL AS plex_theme_verified_ok,
+            NULL AS plex_independent_theme,
             NULL AS section_title,
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,

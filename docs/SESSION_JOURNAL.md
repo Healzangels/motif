@@ -1557,3 +1557,49 @@ alongside the new kind.
 3. Live-ops drawer immediately shows
    `// REPROBE_PLEX_THEMES running` with the per-row counter
    advancing (~6/sec on the prefix-byte path).
+
+---
+
+## 2026-05-08 — v1.13.42: P0 fix — expose plex_independent_theme to /api/library
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.42`
+
+### Context
+v1.13.40 + v1.13.41 fixed the REPROBE worker so it actually runs
+to completion (`+P=7, sidecar-only=61` on the user's 4K Movies
+section). But the amber +P dot still didn't render in the row
+list. Cause: the `/api/library` SELECT exposed
+`plex_has_theme` and `plex_local_theme` (the v1.13.34 fields) but
+never added `plex_independent_theme` (the v1.13.38 field). JS
+reads `it.plex_independent_theme === 1` — which is always
+`undefined === 1 → false` if the field isn't selected. So the
+column was correctly populated by REPROBE but never reached the
+client.
+
+A miss in v1.13.38: I added the column + capture logic + render
+gate but forgot the read-path SELECT. Coverage gap between
+`_SRC_LETTER_SQL` (used by P-filter, doesn't need to expose the
+column to JS — it's pure server-side filtering) and the row
+SELECT (which DOES need to expose every field JS reads).
+
+### Changes
+- `app/web/api.py` `_library_main_query` SELECT: added
+  `pi.plex_independent_theme` next to the existing
+  `plex_theme_verified_ok` selection. dict(row) propagation
+  carries it through to the JSON response without further
+  changes.
+- `app/web/api.py` synthetic-themerrdb fallback SELECT (the
+  "TDB row not in Plex" branch): added
+  `NULL AS plex_independent_theme` so the column is present
+  on every row shape JS receives. Synthetic rows can't have
+  +P (no plex_items row exists yet) but the field needs to
+  exist so the shape is uniform.
+- `app/__init__.py`: 1.13.42.
+
+### How to verify
+1. Pull, restart container.
+2. Reload Movies tab. Rows REPROBE confirmed as +P
+   (the `+P=7` from the v1.13.41 user log) now show the
+   small amber dot in the corner of their primary SRC chip.
+3. P filter (already selected in the user's screenshot) now
+   matches both pure-P rows AND composite-+P rows (motif-
+   placed rows where Plex also has its own theme).
