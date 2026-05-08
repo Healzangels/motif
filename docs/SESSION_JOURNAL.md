@@ -1603,3 +1603,80 @@ SELECT (which DOES need to expose every field JS reads).
 3. P filter (already selected in the user's screenshot) now
    matches both pure-P rows AND composite-+P rows (motif-
    placed rows where Plex also has its own theme).
+
+---
+
+## 2026-05-08 — v1.13.43: P-filter + REPROBE coverage + ops drawer label
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.43`
+
+### Context
+After v1.13.42 surfaced the +P dot on Movies (REPROBE found +P=7
+on the user's 4K library), the user tested TV/Anime and reported:
+1. P-filter on TV STANDARD shows 0 matches (and Anime same).
+   4,113 unfiltered TV rows, none match P-filter.
+2. REPROBE ran on only 68 rows total — much smaller than
+   expected for a library of ~3,000 sidecar-bearing items
+   across all sections.
+3. Live-ops drawer renders the new op as `// reprobe_plex_themes`
+   (raw kind key) instead of the `// REPROBE PLEX THEMES`
+   convention used by `// PLEX SCAN`, `// THEMERRDB SYNC`.
+4. Hover tooltips on `ENUMERATE` / `RECONCILE` (and on TDB sync
+   timeline abbrevs) "don't show anything" — meaning the tooltip
+   text duplicates the visible label so hovering doesn't reveal
+   anything new.
+
+### Changes
+
+**1. P-filter regression** (`app/web/api.py`):
+v1.13.42 reduced the P-filter clause to just
+`pi.plex_independent_theme = 1`. That broke libraries where the
+column was still NULL for many P-eligible rows — TV/Anime hadn't
+been REPROBE'd, and even pure-P rows hadn't all been
+re-enumerated since the v1.13.38 schema landed. Reverts to OR
+semantics: match BOTH pure-P (primary letter='P' per
+`_SRC_LETTER_SQL`) AND composite-+P
+(`plex_independent_theme=1`). Pure-P rows match through the
+letter check the way they always did pre-v1.13.42; the +P
+addition lets composite rows show up in the same filter.
+
+**2. REPROBE coverage** (`app/web/api.py`):
+The REPROBE SQL joined to `placements` for the sidecar path —
+silently restricting probes to motif-placed rows (T/U/A primary
+SRC). Manual sidecars (M letter — files Plex sees that motif
+didn't place) and any TV/Anime row whose placements row was
+absent or stale never made it into the work set. That's why the
+user saw 68 rows on a library where ~3,000+ sidecars exist.
+Switched to `pi.folder_path` from the section enum — every
+sidecar-bearing row Plex sees is reachable. The probe code reads
+from `<folder_path>/theme.mp3` directly (Plex's view of the
+filesystem matches motif's `/data` mount, so the path resolves).
+
+**3. Live-ops drawer label** (`app/web/static/ops.js`):
+Added `reprobe_plex_themes` entries to:
+- `STAGE_TIMELINE`: single `probe` stage with descriptive
+  `long:` text.
+- `TONE_BY_KIND`: 'plex' tone (sits visually next to PLEX SCAN).
+- `KIND_LABEL`: `'REPROBE PLEX THEMES'`.
+
+**4. Tooltips on stage labels** (`app/web/static/ops.js`):
+Added `long:` descriptions to `plex_enum` stages
+(`enumerate` → "Walk every managed Plex section…",
+`reconcile` → "Re-link motif rows to plex_items, HEAD-verify
+ambiguous theme claims…"). Pre-fix the `title=` attribute on
+the timeline-step DIV and the label SPAN fell back to
+`s.long || s.label = s.label`, so hovering on `Enumerate`
+showed `Enumerate` — looking like the tooltip wasn't working.
+
+**5. Version**: 1.13.42 → 1.13.43.
+
+### How to verify
+1. P-filter: Movies/TV/Anime/4K all show non-zero P matches
+   when there are P-eligible rows; the count includes both
+   pure-P (no sidecar, Plex serves) and composite-+P
+   (sidecar present, Plex also has its own).
+2. REPROBE: total probed count grows substantially (covers
+   manual sidecars + all sections, not just motif placements).
+3. Live-ops drawer: REPROBE shows as `// REPROBE PLEX THEMES`
+   matching `// PLEX SCAN` / `// THEMERRDB SYNC`.
+4. Hovering on PLEX SCAN's `Enumerate`/`Reconcile` labels now
+   reveals the long-form description.

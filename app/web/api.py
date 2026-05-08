@@ -891,17 +891,22 @@ def _library_main_query(
                 clauses.append(f"({_SRC_LETTER_SQL}) IN ({placeholders})")
                 params.extend(non_p)
             if include_p_flag:
-                # v1.13.38: read the persisted plex_independent_theme
-                # flag (schema v39) instead of recomputing from
-                # has_theme + local_theme_file. The captured signal is
-                # set exactly once during enumeration (pre-place) when
-                # the answer can be observed unambiguously — once a
-                # sidecar exists Plex's API stops distinguishing local
-                # vs cloud, so the v1.13.36 heuristic fired on every
-                # motif-placed row. PURGE / REPROBE refresh the column
-                # via inline HEAD probe; the JS render gate reads the
-                # same column, so chip + filter agree row-for-row.
-                clauses.append("pi.plex_independent_theme = 1")
+                # v1.13.43: include BOTH pure-P rows (primary SRC
+                # letter is 'P') AND composite-+P rows (any other
+                # letter, plex_independent_theme=1). v1.13.42's
+                # tightening dropped the letter check entirely,
+                # which broke the P filter for libraries where
+                # most P-eligible rows hadn't yet been observed
+                # by plex_enum (or where the column was still
+                # NULL post-migration). Pure-P rows are
+                # `letter='P'` per `_SRC_LETTER_SQL` (no placement
+                # AND has_theme=1 AND optimistic verify); composite
+                # rows have a real placement but +P known via
+                # plex_independent_theme.
+                clauses.append(
+                    "((" + _SRC_LETTER_SQL + ") = 'P' "
+                    "OR pi.plex_independent_theme = 1)"
+                )
             if clauses:
                 where_extra += " AND (" + " OR ".join(clauses) + ")"
     if tdb_pills:
@@ -1931,21 +1936,24 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
     error_count = 0
     try:
         with get_conn(db_path) as conn:
-            # Pull the placement's media_folder so we can read the
-            # actual theme.mp3 Plex scans. Hardlink and canonical
-            # share bytes so either would work, but the placement
-            # is the source-of-truth for "what Plex sees".
+            # v1.13.43: source the sidecar path from `pi.folder_path`
+            # (Plex's reported folder for the item) instead of joining
+            # to motif's `placements` table. The placements join was a
+            # silent gap: it only matched motif-placed rows (T/U/A
+            # primary SRC), missing manual sidecars (M letter — files
+            # someone else dropped at the Plex folder that Plex sees
+            # but motif didn't place) and any row in TV/Anime libraries
+            # whose placements row hadn't been backfilled. Using
+            # folder_path covers every sidecar-bearing row Plex enum
+            # can see, regardless of who put the file there.
             rows = conn.execute(
                 "SELECT pi.rating_key, pi.section_id, "
-                "       p.media_folder "
+                "       pi.folder_path "
                 "  FROM plex_items pi "
-                "  JOIN placements p "
-                "    ON p.plex_rating_key = pi.rating_key "
-                "   AND p.section_id = pi.section_id "
                 " WHERE pi.plex_independent_theme IS NULL "
                 "   AND COALESCE(pi.has_theme, 0) = 1 "
                 "   AND COALESCE(pi.local_theme_file, 0) = 1 "
-                "   AND p.media_folder IS NOT NULL "
+                "   AND pi.folder_path != '' "
                 " ORDER BY pi.section_id, pi.rating_key"
             ).fetchall()
         total = len(rows)
@@ -1970,10 +1978,10 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
         def _probe_one(idx_row):
             idx, r = idx_row
             rk = r["rating_key"]
-            media_folder = r["media_folder"]
+            folder_path = r["folder_path"]
             client = clients[idx % PROBE_MAX_WORKERS]
             try:
-                p = Path(media_folder) / "theme.mp3"
+                p = Path(folder_path) / "theme.mp3"
                 if not p.is_file():
                     return rk, None, "sidecar missing"
                 with p.open("rb") as f:

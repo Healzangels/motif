@@ -44,9 +44,24 @@
       { key: 'resolve',      label: 'RES',  long: 'Resolve theme ids' },
       { key: 'prune',        label: 'PRUN', long: 'Prune stale state' },
     ],
+    // v1.13.43: long: descriptions added so the timeline-step and
+    // label hover tooltip carries an explanation, not a duplicate
+    // of the visible text. Pre-fix the title= attribute fell back
+    // to s.label for stages without a `long` field — `Enumerate`
+    // hovered to `Enumerate`, looking like the tooltip wasn't
+    // working at all.
     plex_enum: [
-      { key: 'enumerate',    label: 'Enumerate' },
-      { key: 'reconcile',    label: 'Reconcile' },
+      { key: 'enumerate', label: 'Enumerate',
+        long: 'Walk every managed Plex section and upsert one plex_items row per item (ratingKey, has_theme, local_theme_file, folder_path).' },
+      { key: 'reconcile', label: 'Reconcile',
+        long: 'Re-link motif rows to plex_items, HEAD-verify ambiguous theme claims, refresh theme_id, sweep stale state.' },
+    ],
+    // v1.13.43: REPROBE PLEX THEMES. Single read-only stage that
+    // walks every sidecar-bearing row and prefix-byte compares
+    // Plex's served theme bytes against the local sidecar.
+    reprobe_plex_themes: [
+      { key: 'probe', label: 'Probe',
+        long: 'Read 2 KB from each local theme.mp3 and compare against a Range-GET of Plex\'s /library/metadata/{rk}/theme — match=sidecar, differ=Plex serves an independent theme.' },
     ],
     // Queue ops have no fixed stage timeline — just a single
     // indeterminate stage that pulses for as long as work remains.
@@ -59,8 +74,9 @@
   };
 
   const TONE_BY_KIND = {
-    tdb_sync:       'tdb',
-    plex_enum:      'plex',
+    tdb_sync:            'tdb',
+    plex_enum:           'plex',
+    reprobe_plex_themes: 'plex',
     download_queue: 'warn',
     place_queue:    'warn',
     scan_queue:     'warn',
@@ -71,8 +87,9 @@
     adopt_queue:    'warn',
   };
   const KIND_LABEL = {
-    tdb_sync:       'THEMERRDB SYNC',
-    plex_enum:      'PLEX SCAN',
+    tdb_sync:            'THEMERRDB SYNC',
+    plex_enum:           'PLEX SCAN',
+    reprobe_plex_themes: 'REPROBE PLEX THEMES',
     download_queue: 'DOWNLOAD QUEUE',
     place_queue:    'PLACE QUEUE',
     scan_queue:     'DISK SCAN',
