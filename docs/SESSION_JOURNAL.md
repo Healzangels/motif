@@ -1776,3 +1776,80 @@ call fails.
 ### Open thread
 Plex client-side theme cache invalidation: not addressable
 from motif. Mentioned in the response so the user knows.
+
+---
+
+## 2026-05-08 — v1.13.45: topbar clarity (drop +N OPS, show download title, fix pending headline)
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.45`
+
+### Context
+Live-test feedback on v1.13.42 topbar/drawer screenshots:
+- "+1 OPS" pill is confusing — clicking it opens the drawer
+  but only shows the same downloading card (queue synthetics
+  duplicate what's already visible).
+- User wants to see the currently-downloading title in the
+  topbar without clicking into the drawer.
+- (Also surfaced while looking: pending queue ops render
+  with headline "Done" because renderCard's isLive only
+  considered running/cancelling.)
+
+### Changes
+
+**1. Drop the "+N OPS" overflow pill** (`app/web/static/ops.js`):
+The pill counted concurrent ops (download_queue + place_queue
++ refresh_queue all in flight = "+2 OPS") but every extra was
+already a card the drawer surfaces. Net: pill duplicated the
+drawer without adding navigation. Hidden unconditionally;
+keeping the DOM element so it can be repurposed later (e.g.,
+flash counter for newly-started ops) without a template
+change.
+
+**2. Show currently-downloading title** (`app/core/progress.py`):
+- `_get_progress_rows`: query running download jobs alongside
+  `themes.title` so we can surface what's actually running.
+  Sorted DESC by job id so the most-recently-started job is
+  index 0 (typical single-worker case puts one item in the
+  list).
+- `_synthesize_queue_ops`: new `running_dl_titles` kwarg.
+  When `jt == 'download'` and there's at least one running
+  job + a title, the running-state stage_label becomes
+  "Downloading: <title>" (single) or
+  "Downloading: <title> +N more" (multi-running, rare).
+  When there are also pending jobs the suffix becomes
+  "(N queued)" appended to the title-bearing label.
+- The queued-only and other-kind paths are unchanged
+  ("Theme download queued", "Placing themes into Plex", etc).
+
+**3. Pending queue ops headline fix** (`app/web/static/ops.js`):
+`renderCard` treated only `running` / `cancelling` as live,
+so a queue op in `pending` status (no running job yet, queue
+not drained) rendered with `_doneHeadline()` → "Done".
+Widened the live-status set to include `pending` so the
+stage_label shows through. Bar/cancel button gating was
+already pending-aware via the active-set filter; only the
+headline branch needed the widening.
+
+**4. Version**: 1.13.44 → 1.13.45.
+
+### Punted
+
+User mentioned step-style timeline for downloads (à la
+plex_enum's ENUMERATE/RECONCILE). Downloads don't have natural
+stages — yt-dlp's per-job progress fraction already feeds the
+mini-bar's smooth fill via `detail.bar_pct`, and the next
+queue position is conveyed by the "(N queued)" suffix. Adding
+synthetic stages (e.g., "fetching | encoding | placing")
+would just be decoration that obscures the real signal.
+Leaving as-is unless the user asks again.
+
+### How to verify
+1. Click DOWNLOAD on a single row. Topbar mini-bar reads
+   "Downloading: <Title of theme>" once the worker picks it up,
+   not "Downloading themes — 1 running".
+2. Multi-row burst with one running + N queued: topbar reads
+   "Downloading: <head title> (N queued)".
+3. The "+N OPS" pill at the right of the topbar no longer
+   appears even when multiple queue synthetics are active.
+4. While a place_queue or refresh_queue sits in pending state
+   (worker hasn't picked it up), its drawer card shows the
+   queue's actual stage_label, not "Done".

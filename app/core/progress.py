@@ -304,12 +304,24 @@ def load_active(db_path: Path) -> list[dict]:
         # blend yt-dlp's per-job progress fraction into the synthesized
         # download_queue card. Only active 'running' download jobs
         # contribute — pending jobs haven't started, can't have progress.
-        running_dl_jobs = [
-            row["id"] for row in conn.execute(
-                "SELECT id FROM jobs "
-                "WHERE job_type = 'download' AND status = 'running'"
-            ).fetchall()
-        ]
+        # v1.13.45: also pull the active title so the topbar mini-bar
+        # can read "Downloading: <title>" instead of the generic
+        # "Downloading themes — 1 running, 7 queued". Single-active is
+        # the typical case (one worker thread); on multi-worker setups
+        # we surface the most-recently-started for now.
+        dl_rows = conn.execute(
+            "SELECT j.id, t.title "
+            "  FROM jobs j "
+            "  LEFT JOIN themes t "
+            "    ON t.media_type = j.media_type "
+            "   AND t.tmdb_id = j.tmdb_id "
+            " WHERE j.job_type = 'download' "
+            "   AND j.status = 'running' "
+            " ORDER BY j.id DESC"
+        ).fetchall()
+        running_dl_jobs = [row["id"] for row in dl_rows]
+        running_dl_titles = [row["title"] for row in dl_rows
+                             if row["title"]]
     out: list[dict] = []
     for row in list(active) + list(finished):
         d = dict(row)
@@ -318,7 +330,10 @@ def load_active(db_path: Path) -> list[dict]:
         except (TypeError, ValueError):
             d["detail"] = {}
         out.append(d)
-    out.extend(_synthesize_queue_ops(queue_counts, running_dl_jobs))
+    out.extend(_synthesize_queue_ops(
+        queue_counts, running_dl_jobs,
+        running_dl_titles=running_dl_titles,
+    ))
     return out
 
 
@@ -344,7 +359,8 @@ def clear_download_progress(job_id: int) -> None:
     _DOWNLOAD_PROGRESS.pop(job_id, None)
 
 
-def _synthesize_queue_ops(counts, running_dl_jobs=None) -> list[dict]:
+def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
+                          running_dl_titles=None) -> list[dict]:
     """Build virtual op rows from jobs counts. Mirrors the shape of
     a real op_progress row so the UI doesn't need a separate render
     path. Status='running' whenever any job is running; 'pending'
@@ -433,12 +449,28 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None) -> list[dict]:
             "ADOPT QUEUE":    "Adopt queued",
         }
         queued_label = queued_label_map.get(kind_label, f"{stage_label} queued")
+        # v1.13.45: for downloads, surface the currently-running
+        # theme's title in the running-state stage_label so the
+        # topbar mini-bar reads
+        # "Downloading: <title>"  (single-active)
+        # or "Downloading: <title> + N more"  (multi-running, rare)
+        # without forcing the user to click into the drawer.
+        # running_dl_titles is sorted newest-first so [0] is the
+        # most-recently-started job.
+        running_label = stage_label
+        if jt == "download" and running_n and running_dl_titles:
+            head = running_dl_titles[0]
+            extras = running_n - 1
+            if extras > 0:
+                running_label = f"Downloading: {head} +{extras} more"
+            else:
+                running_label = f"Downloading: {head}"
         if running_n + pending_n == 1:
-            stage = stage_label if running_n else queued_label
+            stage = running_label if running_n else queued_label
         elif running_n and pending_n:
-            stage = f"{stage_label} — {running_n} running, {pending_n} queued"
+            stage = f"{running_label} ({pending_n} queued)"
         elif running_n:
-            stage = f"{stage_label} — {running_n} running"
+            stage = running_label if jt == "download" else f"{stage_label} — {running_n} running"
         else:
             stage = f"{queued_label} ({pending_n})"
         out.append({

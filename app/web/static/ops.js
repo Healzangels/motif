@@ -340,7 +340,8 @@
 
   function renderCard(op) {
     const tone = TONE_BY_KIND[op.kind] || 'tdb';
-    const isLive = (op.status === 'running' || op.status === 'cancelling');
+    const isLive = (op.status === 'running' || op.status === 'cancelling'
+                    || op.status === 'pending');
     const pct = pctOf(op);
     const rate = smoothedRate(op.detail && op.detail.throughput);
     const etaSec = eta(op);
@@ -632,13 +633,19 @@
       <span class="op-mini-pct">${indeterminate ? '' : (pct != null ? pct.toFixed(0) + '%' : '')}</span>
     `;
     if (overflow) {
-      const extra = running.length - 1;
-      if (extra > 0) {
-        overflow.hidden = false;
-        overflow.innerHTML = `<span class="op-pill-count">+${extra}</span><span class="op-pill-label">OPS</span>`;
-      } else {
-        overflow.hidden = true;
-      }
+      // v1.13.45: hide the overflow pill entirely. Pre-fix the
+      // "+N OPS" pill counted every concurrent op (download_queue +
+      // place_queue + refresh_queue all in flight = "+2 OPS") but
+      // the drawer click revealed only the same active cards the
+      // user could already see by opening the drawer normally —
+      // the pill duplicated the drawer's content without adding
+      // navigation. The real signal the user wants ("how much is
+      // happening?") is conveyed by the main mini-bar's stage_label
+      // ("Downloading themes — 7/8") and the drawer carries the
+      // detail for users who want it. Keeping the element so we
+      // can repurpose later (e.g., as a flash-counter for newly
+      // -started ops) — just hidden.
+      overflow.hidden = true;
     }
   }
 
