@@ -418,14 +418,29 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None) -> list[dict]:
         # rather than "this lone item is in the queue". Singular
         # bursts drop the count; the bar/percent carries the
         # running-vs-pending state on its own.
+        # v1.13.44: clearer wording when nothing is running yet —
+        # "Downloading themes — queued" reads as a contradiction
+        # (downloading AND queued at once). Swap to a queue-leading
+        # phrasing so the action label matches the actual state.
+        # Once the worker picks up a job, the running phrasing
+        # ("Downloading themes …") takes over.
+        queued_label_map = {
+            "DOWNLOAD QUEUE": "Theme download queued",
+            "PLACE QUEUE":    "Place into Plex queued",
+            "DISK SCAN":      "Disk scan queued",
+            "REFRESH QUEUE":  "Plex refresh queued",
+            "RELINK QUEUE":   "Re-link queued",
+            "ADOPT QUEUE":    "Adopt queued",
+        }
+        queued_label = queued_label_map.get(kind_label, f"{stage_label} queued")
         if running_n + pending_n == 1:
-            stage = stage_label if running_n else f"{stage_label} — queued"
+            stage = stage_label if running_n else queued_label
         elif running_n and pending_n:
             stage = f"{stage_label} — {running_n} running, {pending_n} queued"
         elif running_n:
             stage = f"{stage_label} — {running_n} running"
         else:
-            stage = f"{stage_label} — {pending_n} queued"
+            stage = f"{queued_label} ({pending_n})"
         out.append({
             "op_id": f"queue:{jt}",
             "kind": f"{jt}_queue",

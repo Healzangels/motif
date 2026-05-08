@@ -1680,3 +1680,99 @@ showed `Enumerate` — looking like the tooltip wasn't working.
    matching `// PLEX SCAN` / `// THEMERRDB SYNC`.
 4. Hovering on PLEX SCAN's `Enumerate`/`Reconcile` labels now
    reveals the long-form description.
+
+---
+
+## 2026-05-08 — v1.13.44: clearer queued label + earlier topbar + smart TRY NEXT
+**Branch**: `claude/migrate-to-code-H70WJ`  **Tag**: `v1.13.44`
+
+### Context
+Live-test feedback after v1.13.43 surfaced four issues:
+1. Topbar text "DOWNLOADING THEMES — QUEUED" reads as a
+   contradiction (downloading AND queued at once) for the brief
+   moment the worker hasn't picked up the job yet.
+2. Row-level amber DL pill could appear before the topbar
+   status bar — v1.13.37's optimistic placeholder fired
+   *after* the POST awaited, so on a slow round-trip
+   libraryRapidPoll could beat it to the screen.
+3. Hot-reload of theme.mp3 in Plex without a page refresh —
+   user wants to be playing on Plex, motif drops a new theme,
+   and hear it without reloading. **Punted**: Plex client
+   audio cache is opaque from motif's side; no API to push
+   "your cache is stale" to a connected client. Plex's own
+   `/refresh` invalidates server-side metadata cache (motif
+   already calls this post-place via the refresh queue) but
+   the client still has to re-fetch on its own cadence. Best
+   we can do is ensure motif's refresh fires immediately;
+   the cross-process invalidation is a Plex limitation.
+4. Failed-download info card should offer ADOPT (when a
+   manual sidecar is at the Plex folder) or PURGE (when Plex
+   has its own theme) as TRY NEXT options that also ack the
+   failure in one click.
+
+### Changes
+
+**1. Status bar wording** (`app/core/progress.py`):
+Replaced the queue-state suffix `f"{stage_label} — queued"`
+with a queue-leading label per kind. download_queue now reads
+"Theme download queued" instead of "Downloading themes —
+queued"; place_queue → "Place into Plex queued"; etc. The
+running-state phrasing ("Downloading themes …") is unchanged
+so the moment the worker picks up a job, the action verb
+returns. Plural-pending still appends "(N)" so a 5-row burst
+reads "Theme download queued (5)".
+
+**2. Optimistic placeholder fires before await**
+(`app/web/static/app.js` redownload dispatcher):
+Moved `motifOps.setOptimisticPlaceholder('download_queue',
+'// QUEUING DOWNLOAD')` to fire BEFORE `await api('POST',
+url)`. The topbar mini-bar now lights up in the same frame
+the user clicks, regardless of round-trip latency. Best-
+effort: the placeholder ages out via its 5s TTL if the API
+call fails.
+
+**3. Smart TRY NEXT — ADOPT / LET PLEX SERVE**
+(`app/web/api.py` `recovery-options` + `app/web/static/app.js`):
+- Server-side: in `api_recovery_options`, after locally_resolved
+  detection, check the row's plex_items state for two new
+  signals:
+    `m_available` = `local_theme_file=1 AND placements row
+    absent` (a sidecar exists at Plex but motif didn't put
+    it there — adoptable).
+    `p_available` = `plex_independent_theme=1` (Plex serves
+    its own theme, per the v1.13.38 column).
+  When the failure_kind is in
+  `{video_removed, video_private, video_age_restricted,
+  geo_blocked, unknown}` and the row isn't already acked,
+  prepend two extra options at priority=0:
+  - `ADOPT EXISTING THEME` (action `adopt-and-ack`, tone user)
+    when m_available.
+  - `LET PLEX SERVE` (action `purge-and-ack`, tone user)
+    when p_available.
+- Client-side: `bindInfoDialog`'s recovery-button dispatcher
+  now handles the two new acts. `adopt-and-ack` → POST
+  `/adopt-from-plex` (section-scoped) then POST
+  `/clear-failure` then close + reload. `purge-and-ack` →
+  POST `/forget` (section-scoped — the PURGE endpoint) then
+  POST `/clear-failure` then close + reload.
+
+**4. Version**: 1.13.43 → 1.13.44.
+
+### How to verify
+1. Click DOWNLOAD on a row with a slow Plex round-trip.
+   Topbar mini-bar appears the same frame as the click,
+   never lagging the row's amber DL pill.
+2. While a download is queued (worker hasn't picked it up
+   yet), the topbar reads "Theme download queued" — no
+   "DOWNLOADING THEMES — QUEUED" contradiction.
+3. Open the info card on a row with `failure_kind=video_removed`
+   AND a manual sidecar at the Plex folder. The TRY THIS NEXT
+   list now shows "ADOPT EXISTING THEME" at the top —
+   clicking adopts + acks in one shot, dialog closes, row
+   flips to A primary letter.
+4. Same pattern on a row with `plex_independent_theme=1` —
+   "LET PLEX SERVE" appears, clicking purges + acks.
+
+### Open thread
+Plex client-side theme cache invalidation: not addressable
+from motif. Mentioned in the response so the user knows.

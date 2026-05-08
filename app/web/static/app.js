@@ -2100,14 +2100,14 @@
       const url = sectionId
         ? `/api/items/${mediaType}/${tmdbId}/redownload?section_id=${encodeURIComponent(sectionId)}`
         : `/api/items/${mediaType}/${tmdbId}/redownload`;
-      await api('POST', url);
-      if (btn) btn.textContent = 'QUEUED';
-      // v1.13.37: paint an optimistic topbar placeholder so the
-      // mini-bar lights up at click time instead of lagging the
-      // row's own amber DL pill by 2-5s (worker idle wait + first
-      // op_progress write). Same mechanism the dash SYNC + library
-      // SYNC PLEX clicks use; tone "tdb" gets replaced by the
-      // download_queue card's tone when the real op lands.
+      // v1.13.44: paint the optimistic topbar placeholder BEFORE the
+      // POST awaits, so the topbar lights up the same frame the user
+      // clicks. Pre-fix (v1.13.37) the placeholder fired post-await,
+      // so on a slow round-trip (~50-200ms) the row's amber DL pill
+      // — driven by libraryRapidPoll's separate poll cycle — could
+      // beat the topbar to the screen. Now the topbar is first and
+      // the row state catches up. Best-effort: if the API call fails,
+      // the placeholder ages out via its 5s TTL.
       try {
         if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
           window.motifOps.setOptimisticPlaceholder(
@@ -2115,6 +2115,8 @@
           );
         }
       } catch (_) { /* swallow — placeholder is cosmetic */ }
+      await api('POST', url);
+      if (btn) btn.textContent = 'QUEUED';
       // If we're on /movies, /tv, /anime, light up rapid-poll so the row
       // updates as the download/place transitions land.
       if (typeof libraryRapidPoll === 'function'
@@ -8205,6 +8207,32 @@
             }
             closeInfoDialog();
             openUploadDialog({ ratingKey, title: '', year: '' });
+          } else if (act === 'adopt-and-ack') {
+            // v1.13.44: smart TRY NEXT — adopt the existing
+            // theme.mp3 at the Plex folder + ack the failure in one
+            // click. /adopt-from-plex does the placement→canonical
+            // ingest; /clear-failure dismisses the topbar FAIL
+            // counter. Section-scoped if the info card has the
+            // section context (the v1.13.35 invariant).
+            const adoptUrl = sectionId
+              ? `/api/items/${mt}/${id}/adopt-from-plex?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/adopt-from-plex`;
+            await api('POST', adoptUrl);
+            await api('POST', `/api/items/${mt}/${id}/clear-failure`);
+            closeAndReload();
+          } else if (act === 'purge-and-ack') {
+            // v1.13.44: smart TRY NEXT — drop motif's tracking
+            // entirely + ack the failure. Plex's own theme keeps
+            // playing because plex_independent_theme=1 was the
+            // detection that surfaced this option in the first
+            // place. /forget is the PURGE endpoint; section-scoped
+            // when context exists.
+            const purgeUrl = sectionId
+              ? `/api/items/${mt}/${id}/forget?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/forget`;
+            await api('POST', purgeUrl);
+            await api('POST', `/api/items/${mt}/${id}/clear-failure`);
+            closeAndReload();
           }
         } catch (err) {
           alert('Recovery action failed: ' + err.message);

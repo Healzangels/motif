@@ -8797,6 +8797,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 local
                 and local_source in ("adopt", "url", "upload")
             )
+            # v1.13.44: detect smart TRY NEXT options for failed-
+            # download rows where motif has no canonical but Plex
+            # has something we can lean on. Two cases:
+            #   M-available: a theme.mp3 sits at the Plex folder
+            #     that motif didn't place — adoptable in one click.
+            #   P-available: Plex serves an independent theme
+            #     (cloud / themerr-plex embed) per the v1.13.38
+            #     plex_independent_theme column — purging motif's
+            #     tracking lets Plex's theme keep playing.
+            # Both options ack the failure as part of the action so
+            # the user doesn't have to chase a separate ACK button.
+            m_available = False
+            p_available = False
+            if rating_key:
+                state = conn.execute(
+                    "SELECT pi.local_theme_file, pi.plex_independent_theme "
+                    "FROM plex_items pi WHERE pi.rating_key = ?",
+                    (rating_key,),
+                ).fetchone()
+                if state:
+                    if state["local_theme_file"] == 1:
+                        # Sidecar exists at the Plex folder. M is
+                        # only meaningful when motif DIDN'T place it
+                        # — otherwise this is just our own file and
+                        # there's nothing to adopt. Check placements.
+                        placement = conn.execute(
+                            "SELECT 1 FROM placements "
+                            "WHERE plex_rating_key = ?",
+                            (rating_key,),
+                        ).fetchone()
+                        m_available = placement is None
+                    p_available = (state["plex_independent_theme"] == 1)
         kind = row["failure_kind"]
         if not kind:
             return {"failure_kind": None, "options": [],
@@ -8934,6 +8966,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "network_error": "Network error reaching YouTube",
             "unknown": "Unknown error",
         }
+        # v1.13.44: inject smart TRY NEXT actions for non-transient
+        # failures where motif has a viable workaround on the Plex
+        # side. We only add them for failures where the original
+        # download isn't going to recover (network_error stays the
+        # retry path — adopt/purge would mask a transient blip);
+        # adopting an existing sidecar or letting Plex's own theme
+        # serve are real fixes for video_removed / video_private /
+        # video_age_restricted / geo_blocked. Both actions ack the
+        # failure server-side as part of the dispatch so the user
+        # gets a single-click resolution.
+        SMART_KINDS = {"video_removed", "video_private",
+                       "video_age_restricted", "geo_blocked", "unknown"}
+        if kind in SMART_KINDS and not row["failure_acked_at"]:
+            extra: list[dict] = []
+            if m_available:
+                extra.append({
+                    "action": "adopt-and-ack",
+                    "label": "ADOPT EXISTING THEME",
+                    "tooltip": (
+                        "A theme.mp3 already sits at this title's Plex folder. "
+                        "Adopt it (motif takes ownership, hardlinked into "
+                        "/themes) and acknowledge the TDB failure in one click."
+                    ),
+                    "priority": 0,
+                    "tone": "user",
+                    "interactive": True,
+                })
+            if p_available:
+                extra.append({
+                    "action": "purge-and-ack",
+                    "label": "LET PLEX SERVE",
+                    "tooltip": (
+                        "Plex already has its own theme for this title (cloud "
+                        "or themerr-plex embed). Drop motif's tracking + "
+                        "acknowledge the TDB failure — Plex's theme keeps "
+                        "playing. Equivalent to // PURGE + // ACK FAILURE."
+                    ),
+                    "priority": 0,
+                    "tone": "user",
+                    "interactive": True,
+                })
+            recipes[kind] = extra + recipes.get(kind, recipes["unknown"])
         options = sorted(recipes.get(kind, recipes["unknown"]),
                          key=lambda o: o["priority"])
         # Orphans don't have a TDB record so RE-DOWNLOAD against
