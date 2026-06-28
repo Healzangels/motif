@@ -1881,4 +1881,10 @@
 #   bar back (the bare title threw off inter-section spacing) while the section
 #   stays borderless so the 3 donuts remain their own cards (the user chose "header
 #   bar only"). base.html + dashboard.html + app.css.
-__version__ = "0.50.24"
+# 0.50.25: cross-tab content-top alignment (the user: the search bar / RECENTLY
+#   ADDED should start at the same Y on every tab). .hero gets min-height:150px so
+#   every page's header reserves the same height (title + up to 2 subtitle lines)
+#   and the first content block lines up tabbing between dash/movies/collections/
+#   logs/settings. min-height (not height) so a hero that grows (backfill banner)
+#   still expands. The exact px is eyeballed — may want a small nudge. app.css.
+__version__ = "0.50.25"
