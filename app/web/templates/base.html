@@ -78,6 +78,22 @@
      scopes the auth-card vertical-centering + footer-pin in app.css so the
      standard topbar pages are untouched. #}
   <div class="scanlines" aria-hidden="true"></div>
+  {# v0.50.7: CRT power-on flicker — a quick "screen turns on" sweep the FIRST
+     time motif loads in a tab session (sessionStorage-gated so it doesn't re-
+     fire on every full-page nav). The inline script adds .playing only when
+     unseen; reduced-motion users get the global clamp → near-instant, no flash.
+     Decorative + aria-hidden + pointer-events:none. #}
+  <div class="crt-power-on" id="crt-power-on" aria-hidden="true"></div>
+  <script>
+    (function () {
+      try {
+        if (sessionStorage.getItem('motif:crt-power-on')) return;
+        sessionStorage.setItem('motif:crt-power-on', '1');
+        var el = document.getElementById('crt-power-on');
+        if (el) el.classList.add('playing');
+      } catch (e) { /* no sessionStorage → just skip the one-shot */ }
+    })();
+  </script>
   {% if request.state.principal is defined and request.state.principal.is_authenticated %}
   {# v1.15.22: SSR topbar + banner state. Same flash-bug class as
      v1.15.21 nav availability — pre-fix the banners + topbar

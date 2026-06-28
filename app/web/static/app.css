@@ -285,6 +285,28 @@ input[type="checkbox"] {
   opacity: 0.4;
 }
 
+/* v0.50.7: CRT power-on flicker — a quick, gentle "screen turns on" sweep
+   played ONCE per tab session (base.html adds .playing on the first load via
+   sessionStorage). A full-viewport overlay that rests invisible (opacity:0)
+   and never blocks input. The global prefers-reduced-motion clamp shortens it
+   to near-instant, so motion-sensitive users get no flash. */
+.crt-power-on {
+  position: fixed; inset: 0; z-index: 9999;
+  pointer-events: none;
+  background: rgba(var(--green-rgb), 0.85);
+  opacity: 0;
+}
+.crt-power-on.playing {
+  transform-origin: center;
+  animation: crt-power-on 0.55s ease-out;
+}
+@keyframes crt-power-on {
+  0%   { opacity: 0.8;  transform: scaleY(0.03); filter: brightness(1.6); }
+  30%  { opacity: 0.65; transform: scaleY(1); }
+  60%  { opacity: 0.4; }
+  100% { opacity: 0;    transform: scaleY(1); filter: brightness(1); }
+}
+
 a { color: var(--green); text-decoration: none; }
 a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb), 0.4); }
 

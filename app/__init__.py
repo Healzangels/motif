@@ -1728,4 +1728,11 @@
 #   while data-countup is pending so the 1s coverage poll can't clobber the
 #   climb. reduced-motion users skip the inline reset (keep the static SSR value
 #   — nothing animates). data-countup presence is the once-gate. app.js + template.
-__version__ = "0.50.6"
+# 0.50.7: CRT power-on flicker (the user — flavor pass 4/4, CRT half). A quick,
+#   gentle "screen turns on" sweep (~0.55s, softened from the preview — no
+#   strobe) played ONCE per tab session. base.html renders a full-viewport
+#   .crt-power-on overlay (pointer-events:none, rests opacity:0) + a tiny inline
+#   script that adds .playing only when sessionStorage hasn't seen it — so it
+#   fires on the first load, NOT on every full-page nav. The prefers-reduced-
+#   motion clamp shortens it to near-instant (no flash). CSS + base.html.
+__version__ = "0.50.7"
