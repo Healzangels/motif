@@ -520,7 +520,35 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
    (dashboard has the extra sync line), so a floor that covers the 2-line case
    aligns them all. min-height (not height) so a hero that legitimately grows
    (e.g. the one-time backfill banner) still expands. TUNABLE — eyeball value. */
-.hero { margin-bottom: 36px; min-height: 150px; }
+.hero { margin-bottom: 36px; min-height: 150px; position: relative; isolation: isolate; }
+/* v0.50.28: a flowing soundwave across the hero's lower band (the user — fills the
+   empty space the v0.50.25 min-height opened up). The wave SHAPE is an SVG sine
+   path used as a CSS mask; the COLOUR is var(--green) (token — no hardcoded hex),
+   masked through it. It scrolls via mask-position for a music-wave flow. z-index:-1
+   (the .hero is its own stacking context) keeps it BEHIND the title/subtitle. The
+   v6173 prefers-reduced-motion clamp stops the scroll → it rests as a static wave.
+   Decorative pseudo-element (no DOM, inert to a11y); pointer-events:none. */
+.hero::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -20px;
+  height: 48px;
+  z-index: -1;
+  background: var(--green);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='48'%3E%3Cpath d='M0 24 Q30 6 60 24 T120 24 T180 24 T240 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='48'%3E%3Cpath d='M0 24 Q30 6 60 24 T120 24 T180 24 T240 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center;
+  -webkit-mask-size: 240px 100%;
+  mask-size: 240px 100%;
+  opacity: 0.18;
+  pointer-events: none;
+  animation: hero-wave 9s linear infinite;
+}
+@keyframes hero-wave {
+  from { -webkit-mask-position: 0 center; mask-position: 0 center; }
+  to { -webkit-mask-position: -240px center; mask-position: -240px center; }
+}
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--gap-6); flex-wrap: wrap; }
 /* v0.50.19: keep the subtitle off the hero-row's action chips. On /collections
    the section selectors (MOVIES/4K/TV/ANIME + REFRESH) make .sync-actions wrap

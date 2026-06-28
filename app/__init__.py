@@ -1893,4 +1893,9 @@
 #   drift-detection setInterval(_updatePresetActiveState) re-toggled .is-active on
 #   the list rows every tick; now it early-returns while the <details> menu is
 #   open (drift detection only needs the CLOSED bookmark icon). app.js only.
-__version__ = "0.50.27"
+# 0.50.28: flowing soundwave across the hero's lower band (the user: "cool to add
+#   a wave style music animation across the width" in the v0.50.25 empty space). A
+#   .hero::after sine wave — SVG sine path as a CSS mask, var(--green) as the masked
+#   colour (token, no hardcoded hex), scrolling via mask-position. z-index:-1 keeps
+#   it behind the title/subtitle; reduced-motion freezes it static. app.css only.
+__version__ = "0.50.28"
