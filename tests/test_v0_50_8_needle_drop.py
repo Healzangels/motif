@@ -19,7 +19,10 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 def test_helper_is_floating_self_cleaning_and_motion_safe():
     assert "function needleDropAt(" in APP_JS
     i = APP_JS.index("function needleDropAt(")
-    body = APP_JS[i:i + 1400]
+    # v0.50.15: 1400 → 1900 — needleDropAt gained a 'row' align mode (the
+    # placement-transition fire anchors to a <tr>, not a button), pushing the
+    # body.appendChild past the old window. Growth, not a regression.
+    body = APP_JS[i:i + 1900]
     # reduced-motion: bail before creating anything.
     assert "prefers-reduced-motion: reduce" in body
     # anchored to the button's viewport rect, appended to <body> (not the row).

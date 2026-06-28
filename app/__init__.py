@@ -1794,4 +1794,17 @@
 #   collections tab, lock on plexEnumBusy (any plex_enum in flight) — true through
 #   reconcile + queue — at both myTabBusy sites (refreshTopbarStatus +
 #   updateLibraryRefreshBtnLabel, the latter via a stashed flag). app.js only.
-__version__ = "0.50.14"
+# 0.50.15: needle-drop flourish now fires on a placement TRANSITION, not only
+#   PUSH TO PLEX. the user: "not seeing the animation when placing a new row" —
+#   the v0.50.8 fire was wired solely to replaceTheme (PUSH/re-push of an
+#   already-placed row, so no first-time transition). New flashPlacedTransitions()
+#   runs after each library render: any row that went not-placed → placed (the
+#   v1.18.0 PL predicate: media_folder set OR plex_upload) drops a needle on the
+#   row. Fires when the theme actually LANDS (the poll sees the placement), not
+#   on enqueue — correct for DOWNLOAD, whose job can fail after the click. Covers
+#   DOWNLOAD / UPLOAD MP3 / ADOPT / RESTORE / worker-initiated places uniformly.
+#   Seeds silently on first sight (no flash-storm on load/tab-switch); viewport
+#   check + per-render cap (5) keep a bulk place from flooding the screen. Adds
+#   data-rk to each library <tr> as the anchor; needleDropAt gains a 'row' align
+#   mode. PUSH keeps its own immediate fire. app.js only.
+__version__ = "0.50.15"

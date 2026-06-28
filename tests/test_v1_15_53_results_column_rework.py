@@ -132,7 +132,7 @@ def test_js_row_template_uses_new_td_order():
     # Find the <tr> template literal block specifically (avoids
     # matching markers elsewhere in the function body — there's
     # ~1200 lines of helper code before the return statement).
-    tr_anchor = fn_body.rindex("<tr${rowExtra}>")
+    tr_anchor = fn_body.rindex("<tr${rowExtra}")
     tr_end = fn_body.index("</tr>", tr_anchor)
     tr_block = fn_body[tr_anchor:tr_end]
     # Unique markers in expected order (one per TD).
@@ -195,7 +195,7 @@ def test_js_edition_cell_carries_edition_label():
     fn_body = js[fn_anchor:fn_end]
     # Anchor on the actual <tr> template, not the rationale comment
     # block above it (which also references col-edition by name).
-    tr_anchor = fn_body.rindex("<tr${rowExtra}>")
+    tr_anchor = fn_body.rindex("<tr${rowExtra}")
     tr_end = fn_body.index("</tr>", tr_anchor)
     tr_block = fn_body[tr_anchor:tr_end]
     edition_td_anchor = tr_block.index('<td class="col-edition">')

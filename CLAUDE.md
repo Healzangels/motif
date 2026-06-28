@@ -83,12 +83,12 @@ this list grows, audit every existing site.
 
 | Site | File:line | Purpose |
 |---|---|---|
-| `computeSrcLetter` | `app.js:~8780` | SRC pill T/U/A vs P/– classification |
-| `renderLibraryRow` inline-SRC | `app.js:~8830` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
-| `updateLibrarySelectionUi` selection bucket | `app.js:~11010` | themed-vs-not counts for bulk-bar (v1.18.24) |
-| `isPlexAgentRow` | `app.js:~14630` | "Plex already supplying" confirm prompt gate (v1.18.75) |
-| Bulk PUSH predicates (3 sites) | `app.js:~11140` / `~11290` / `~13355` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
-| Bulk LPS M-sidecar gate | `app.js:~13545` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
+| `computeSrcLetter` | `app.js:~9036` | SRC pill T/U/A vs P/– classification |
+| `renderLibraryRow` inline-SRC | `app.js:~9045` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
+| `updateLibrarySelectionUi` selection bucket | `app.js:~11294` | themed-vs-not counts for bulk-bar (v1.18.24) |
+| `isPlexAgentRow` | `app.js:~14913` | "Plex already supplying" confirm prompt gate (v1.18.75) |
+| Bulk PUSH predicates (3 sites) | `app.js:~11496` / `~11653` / `~13410` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
+| Bulk LPS M-sidecar gate | `app.js:~13878` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
 | SRC SQL | `api.py:_SRC_LETTER_SQL` | DB-side equivalent — must agree with JS |
 
 The forgetting cost is **silent UX wrong-classification**:
