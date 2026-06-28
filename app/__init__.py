@@ -1742,4 +1742,11 @@
 #   the row DOM, which re-renders on the next poll) and removes it after the
 #   animation via one timeout. Fired from replaceTheme's success branch. Skipped
 #   entirely under reduced-motion (the overlay is never created). CSS + app.js.
-__version__ = "0.50.8"
+# 0.50.9: ORPHAN SCAN drift labels show without underscores (the user —
+#   MOTIF_ENTRY_MISSING → "MOTIF ENTRY MISSING", PLEX_FETCH_FAILED → "PLEX FETCH
+#   FAILED"). New driftLabel() display helper in orphans.html applied at the
+#   chip, DRIFT-cell, filter-status, and empty-state render sites. Display-only —
+#   the raw drift_type still drives filtering, the DRIFT_TONE map, and the
+#   per-type action set. (The underlying re-push false-flag + LotR dead-rk are
+#   separate fixes, planned next.) Template-only.
+__version__ = "0.50.9"

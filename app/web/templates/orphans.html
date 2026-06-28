@@ -90,6 +90,11 @@
       'orphan_sidecar_on_disk': 'btn-warn',
     };
 
+    // v0.50.9: show drift types without underscores (MOTIF_ENTRY_MISSING →
+    // "MOTIF ENTRY MISSING"). Display-only — the raw drift_type still drives
+    // filtering, tone, and the per-type action set.
+    const driftLabel = (dt) => String(dt == null ? '' : dt).replace(/_/g, ' ');
+
     function htmlEscape(s) {
       return String(s == null ? '' : s)
         .replace(/&/g, '&amp;').replace(/</g, '&lt;')
@@ -145,7 +150,7 @@
         if (toneClass) classes.push(toneClass);
         if (isActive) classes.push('chip-active');
         btn.className = classes.join(' ');
-        btn.textContent = `${dt} (${summary[dt]})`;
+        btn.textContent = `${driftLabel(dt)} (${summary[dt]})`;
         btn.addEventListener('click', () => {
           activeDriftFilter = isActive ? null : dt;
           renderChips(summary);
@@ -215,12 +220,12 @@
       // when row count is identical to unfiltered.
       const totalRows = lastFindings.length;
       const filterLabel = activeDriftFilter
-        ? `drift_type = <strong>${htmlEscape(activeDriftFilter)}</strong>`
+        ? `drift_type = <strong>${htmlEscape(driftLabel(activeDriftFilter))}</strong>`
         : `<strong>all</strong> drift types`;
       filterStatusEl.innerHTML =
         `Showing <strong>${rows.length}</strong> of <strong>${totalRows}</strong> rows · filter: ${filterLabel}`;
       if (!rows.length) {
-        tbodyEl.innerHTML = `<tr><td colspan="7" class="muted">No findings${activeDriftFilter ? ' for filter ' + activeDriftFilter : ''}.</td></tr>`;
+        tbodyEl.innerHTML = `<tr><td colspan="7" class="muted">No findings${activeDriftFilter ? ' for filter ' + driftLabel(activeDriftFilter) : ''}.</td></tr>`;
         return;
       }
       tbodyEl.innerHTML = rows.map(f => {
@@ -233,7 +238,7 @@
             <td><strong>${htmlEscape(titleStr)}</strong></td>
             <td class="muted small">${htmlEscape(idStr)}${sectionStr}</td>
             <td class="muted small">${htmlEscape(f.rk || '—')}</td>
-            <td><span class="chip ${toneCls}">${htmlEscape(f.drift_type)}</span></td>
+            <td><span class="chip ${toneCls}">${htmlEscape(driftLabel(f.drift_type))}</span></td>
             <td class="small">${htmlEscape(f.details)}</td>
             <td class="muted small">${f.entries_count}</td>
             <td>${actionButtons(f)}</td>
