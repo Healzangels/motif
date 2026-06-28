@@ -1964,4 +1964,8 @@
 #   can't set a colour at all — so the colour lives in the body where it renders on
 #   every transport: red YouTube, blue Facebook, orange SoundCloud, purple Instagram.
 #   notify_content.py _format_provenance_line.
-__version__ = "0.50.37"
+# 0.50.38: the dashboard ANIME stat-card glyph now matches the TV glyph (the user:
+#   "make the Anime icon the same as the TV icon in both sections" — the // ANIME
+#   THEMED coverage card + the // PLEX ANIME card). Folded anime into the tv branch
+#   of the media_glyph() macro; the old 4-point sparkle is retired. dashboard.html.
+__version__ = "0.50.38"

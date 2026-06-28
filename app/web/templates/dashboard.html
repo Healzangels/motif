@@ -2,13 +2,13 @@
 {% block title %}Dashboard{% endblock %}
 {% block content %}
 {# v1.24.66: media-type stat-card glyph → Feather-style SVG line icons (film /
-   tv / sparkle / stacked-cards), replacing ▶/▭/✦/▦ to match the carousel's new
-   icons (the user). currentColor → inherits .stat-glyph's --green-deep. The film /
-   tv / collections paths mirror app.js _recentTypeIcon; anime is a 4-point
-   sparkle (the carousel has no anime type). Keep the two in sync if either
-   changes. #}
+   tv / stacked-cards), replacing ▶/▭/✦/▦ to match the carousel's new icons (the
+   user). currentColor → inherits .stat-glyph's --green-deep. The film / tv /
+   collections paths mirror app.js _recentTypeIcon.
+   v0.50.38: anime now shares the TV glyph (the user: make the anime icon the same
+   as the TV icon in both the THEMED + PLEX cards) — was a 4-point sparkle. #}
 {% macro media_glyph(kind) -%}
-<span class="stat-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{% if kind == 'movies' %}<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/>{% elif kind == 'tv' %}<rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/>{% elif kind == 'anime' %}<path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z"/>{% elif kind == 'collections' %}<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>{% endif %}</svg></span>
+<span class="stat-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{% if kind == 'movies' %}<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/>{% elif kind == 'tv' or kind == 'anime' %}<rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/>{% elif kind == 'collections' %}<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>{% endif %}</svg></span>
 {%- endmacro %}
 {# v1.15.45 / v1.15.50: SSR-bake every dashboard stat-num value
    so first paint shows real numbers instead of "—". JS poll

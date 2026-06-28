@@ -23,8 +23,9 @@ def test_media_glyph_macro_defined_with_four_kinds():
     assert 'stroke="currentColor"' in macro  # inherits .stat-glyph colour
     for kind in ("movies", "tv", "anime", "collections"):
         assert f"kind == '{kind}'" in macro, kind
-    # anime is the sparkle (the carousel has no anime icon).
+    # v0.50.38: anime shares the TV glyph (the user) — the sparkle path is gone.
     assert "<polyline points=\"17 2 12 7 7 2\"/>" in macro  # tv antenna
+    assert "M12 3l2.2 6.8" not in macro  # old sparkle path retired
 
 
 def test_no_unicode_stat_glyphs_remain():
