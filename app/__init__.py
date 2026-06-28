@@ -1710,4 +1710,13 @@
 #   only; brand-eq-1..5 keyframes + infinite iteration inherit, so reduced-motion
 #   still rests full bars); app.js refreshTopbarStatus toggles .is-active off the
 #   existing anyMutatingOpActive signal (no-op on the chrome-less login page).
-__version__ = "0.50.4"
+# 0.50.5: dashboard SOURCE BREAKDOWN donut draw-in (the user — flavor pass 3/4,
+#   donut half). On a pie's FIRST render the slices sweep + scale + fade into
+#   place; app.js _renderSourcePie adds .pie-drawin to the persistent slices <g>
+#   exactly once (gated on _pieState[lastKeyKey] still being its initial ''), so
+#   poll re-renders + legend toggles don't restart it. No fill-mode → the
+#   reduced-motion clamp rests it at the natural state. The count-up half was
+#   split out: the stat numbers are SSR-baked, so an on-load count-up reads as a
+#   brief value-then-reset flash unless handled specially — deferred pending the
+#   user's call on the tradeoff. CSS + app.js.
+__version__ = "0.50.5"

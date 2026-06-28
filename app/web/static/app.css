@@ -5459,6 +5459,21 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   transition: stroke-dasharray var(--motion-slow) ease, opacity 0.2s ease;
 }
 .source-pie-slice.dim { opacity: 0.18; }
+/* v0.50.5: donut draw-in — the SOURCE BREAKDOWN slices sweep + scale + fade in
+   on the pie's FIRST render only (app.js adds .pie-drawin to the persistent
+   slices <g> once; later poll/legend re-renders rebuild the inner circles but
+   don't restart this one-shot animation on the group). transform-box/origin
+   center so it pivots on the donut hub, not the SVG corner. No fill-mode, so
+   the v1.15.134 reduced-motion clamp rests it at the natural final state. */
+.pie-drawin {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: pie-draw-in 0.7s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes pie-draw-in {
+  from { transform: rotate(-110deg) scale(0.86); opacity: 0; }
+  to   { transform: none; opacity: 1; }
+}
 .source-pie-center-num {
   font-family: var(--font-display);
   font-size: 5px;

@@ -2392,6 +2392,11 @@
 
     const key = JSON.stringify({ totals, hidden: Array.from(hiddenSet) });
     if (key === _pieState[lastKeyKey]) { block.style.display = ''; return; }
+    // v0.50.5: draw the donut in on its FIRST render only — _pieState was the
+    // initial '' before this. Added to the persistent slices <g>, so later
+    // poll/legend re-renders (which rebuild the slice circles inside) don't
+    // restart the one-shot CSS animation.
+    if (_pieState[lastKeyKey] === '') slicesEl.classList.add('pie-drawin');
     _pieState[lastKeyKey] = key;
     block.style.display = '';
 
