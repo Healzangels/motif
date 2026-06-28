@@ -3481,6 +3481,12 @@ body.auth-page .content {
   flex: 1 0 auto;
   display: flex; align-items: center; justify-content: center;
   padding-top: var(--gap-6); padding-bottom: var(--gap-6);
+  /* v0.50.20: positioning context for .login-bg so the spinning record centres
+     on the SAME box the card centres in (the content area, viewport minus the
+     footer). Pre-fix .login-bg was fixed-to-viewport, so the record's centre sat
+     below the card by ~half the footer height (the user: "the center isn't
+     center on the spinning background"). */
+  position: relative;
 }
 body.auth-page .auth-card { margin: 0; }
 
@@ -3489,10 +3495,13 @@ body.auth-page .auth-card { margin: 0; }
    the record"). A full-viewport layer BEHIND the auth-card. Base opacity:0 so
    the prefers-reduced-motion clamp (kills the infinite animation) leaves them
    invisible rather than frozen as solid rings. */
-.login-bg { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+/* v0.50.20: absolute (was fixed) so it fills the content area, not the whole
+   viewport — its centre then coincides with the auth-card's centre. */
+.login-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
 .login-ripple {
   position: absolute; left: 50%; top: 50%;
-  width: 42vmin; height: 42vmin; margin: -21vmin 0 0 -21vmin;
+  /* v0.50.20: scaled up with the larger record so the pulses radiate across it. */
+  width: 64vmin; height: 64vmin; margin: -32vmin 0 0 -32vmin;
   border: 1px solid rgba(var(--green-rgb), 0.45);
   border-radius: 50%;
   opacity: 0;
@@ -3531,7 +3540,10 @@ body.auth-page .auth-card { margin: 0; }
    the spin → it rests as a static record. */
 .login-record {
   position: absolute; left: 50%; top: 50%;
-  width: 78vmin; height: 78vmin; margin: -39vmin 0 0 -39vmin;
+  /* v0.50.20: 78vmin → 118vmin so the ~460px card reads as a record's small
+     centre LABEL (≈1/3 the record diameter), not a giant hub. Overflows the
+     content box; .login-bg overflow:hidden clips it to a centred record face. */
+  width: 118vmin; height: 118vmin; margin: -59vmin 0 0 -59vmin;
   opacity: 0.13;
 }
 .login-record .rec-grooves { animation-duration: 16s; }

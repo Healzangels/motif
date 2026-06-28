@@ -1844,4 +1844,11 @@
 #   shadow like .row-menu-panel. (4) #library-subtitle gets margin-top so the
 #   /collections section selectors (which wrap to a 2nd line) no longer almost-
 #   touch the subtitle. library.html + base.html + app.js + app.css.
-__version__ = "0.50.19"
+# 0.50.20: login backdrop centring + scale (the user: "the center isn't center on
+#   the spinning background … make the spinning logo and pulses larger"). .login-bg
+#   is now position:absolute inside a position:relative body.auth-page .content, so
+#   the record centres on the SAME box the card centres in (content area = viewport
+#   minus footer) instead of the full viewport — fixes the record sitting low.
+#   .login-record 78vmin → 118vmin (the ~460px card now reads as a record's ~1/3
+#   centre label) + .login-ripple 42vmin → 64vmin to match. app.css only.
+__version__ = "0.50.20"
