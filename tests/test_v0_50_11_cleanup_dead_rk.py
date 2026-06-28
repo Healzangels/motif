@@ -27,11 +27,13 @@ def test_endpoint_exists_and_admin_gated():
 
 def test_reverifies_rk_is_dead_before_delete():
     b = _endpoint()
-    # (a) refuse if the rk is still a live plex_items row.
-    assert "FROM plex_items WHERE rating_key = ?" in b
-    # (b) refuse if Plex's /themes now serves it (came back).
+    # The gate is a LIVE /themes re-check — refuse only if Plex now serves it
+    # (came back). v0.50.13: the plex_items-liveness refusal was removed (a
+    # stale-but-unpruned plex_items row must NOT block cleanup of a row whose
+    # /themes genuinely 404s — the user's LotR rk 579643).
     assert "plex.get_themes(rating_key=str(rating_key))" in b
     assert 'resp.get("ok")' in b
+    assert "FROM plex_items WHERE rating_key" not in b
     # a failed re-verification surfaces as 409 (not a silent no-op).
     assert "status_code=409" in b
 

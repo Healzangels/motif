@@ -1776,4 +1776,12 @@
 #   REFRESH button label from the fetched page but never the visible
 #   `.hero h1.title`, so it kept the originally-loaded tab's name. One-line swap
 #   mirroring the adjacent subtitle swap. app.js only.
-__version__ = "0.50.12"
+# 0.50.13: ORPHAN SCAN // CLEAN UP no longer refuses a dead-rk row that still has
+#   a stale plex_items sibling (the user's LotR Collection rk 579643 → HTTP 409
+#   "still a live Plex item"). The v0.50.11 guard had TWO refusals — (a) any live
+#   plex_items row, (b) /themes still serving. But rk 579643's plex_items row is
+#   STALE (enumerated once, never reaped) while its /themes genuinely 404s, so (a)
+#   blocked the exact row it should clean. Dropped (a): the live /themes re-check
+#   (b) is the authoritative + sufficient gate (refuses only if Plex now serves
+#   the theme). cleanup-dead-rk endpoint only.
+__version__ = "0.50.13"

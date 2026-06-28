@@ -24986,16 +24986,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         def _cleanup():
             from ..core.plex import PlexClient, PlexConfig
-            # (a) Still a live Plex item in motif's tracking? Then it's not dead.
-            with get_conn(db) as conn:
-                live = conn.execute(
-                    "SELECT 1 FROM plex_items WHERE rating_key = ?",
-                    (str(rating_key),)).fetchone()
-            if live is not None:
-                return {"ok": False, "detail": (
-                    "that rating_key is still a live Plex item — re-probe "
-                    "instead of cleaning up")}
-            # (b) Re-verify Plex's /themes for the rk genuinely fails.
+            # The authoritative "this placement's theme is dead" signal is a
+            # FAILED /themes — NOT plex_items presence. v0.50.13: dropped the
+            # plex_items-liveness refusal. the user's LotR Collection (rk 579643)
+            # still has a STALE plex_items row (enumerated once, the reaper never
+            # pruned the collection) yet its /themes genuinely 404s — and the
+            # v0.50.11 guard refused cleanup with HTTP 409 for exactly that row.
+            # A placement claiming an uploaded theme that Plex's /themes 404s is
+            # stale regardless of a lingering plex_items row; the live /themes
+            # re-check below is the real gate (refuses only if it now serves).
             cfg = PlexConfig(
                 url=settings.plex_url, token=settings.plex_token,
                 movie_section=settings.plex_movie_section,
