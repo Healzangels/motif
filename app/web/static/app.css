@@ -2588,9 +2588,11 @@ body.help-mode .settings-help-about { display: block; }
   border-color: var(--green-deep);
 }
 .library-filter-toggle.is-open .library-filter-caret {
-  transform: rotate(180deg);
+  transform: rotate(90deg);
 }
-.library-filter-caret { font-size: 9px; line-height: 1; }
+/* v0.50.30: caret rests ► (closed) and rotates 90°→▾ (open), matching the
+   LEGEND/GLOSSARY carets — was ▾→▴ (180°), which read as the wrong direction. */
+.library-filter-caret { font-size: 9px; line-height: 1; transition: transform var(--motion-fast) ease; }
 .library-filter-count {
   color: var(--green-bright);
   background: rgba(var(--green-rgb), 0.12);

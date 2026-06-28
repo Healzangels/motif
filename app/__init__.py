@@ -1905,4 +1905,9 @@
 #   page) and on a manual refresh (Navigation Timing type==reload). New power-OFF
 #   tube-collapse flicker plays on the logout ⏻ click, then navigates (skipped +
 #   instant under reduced-motion). base.html + login.html + app.css.
-__version__ = "0.50.29"
+# 0.50.30: // FILTERS dropdown caret now rests ► (closed) and rotates 90°→▾ (open),
+#   matching the LEGEND/GLOSSARY carets (the user: closed-state caret "is still
+#   downward instead of >"). Was a ▾ base rotating 180°→▴ — wrong direction +
+#   wrong glyph. Swapped the glyph to ► and the open rotation 180°→90°, added a
+#   transition so it eases like the legend caret. library.html + app.css.
+__version__ = "0.50.30"
