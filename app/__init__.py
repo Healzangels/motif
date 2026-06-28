@@ -1919,4 +1919,12 @@
 #   an active saved filter. Kept :hover, added :active for the click-moment
 #   "selected" flash. JS still toggles .is-active (drives _activePresetId + the
 #   star), it just no longer paints the row. app.css only.
-__version__ = "0.50.31"
+# 0.50.32: hero descriptions line up on Y across every tab + the dashboard (the
+#   user: "descriptions on the tabs are not lined up on Y"). The subtitle's Y
+#   diverged two ways: only #library-subtitle had an explicit margin-top, and the
+#   title's margin-bottom ADDED inside the flex .hero-row (dashboard/library) but
+#   COLLAPSED in the plain-block heroes (logs/settings/orphans). Fix: .title
+#   margin-bottom→0 + a single shared .hero-sub class (margin-top gap-5, == the old
+#   library look gap-2+gap-3) on every page's description, so the title→subtitle
+#   gap is one value everywhere. app.css + the 5 hero templates.
+__version__ = "0.50.32"

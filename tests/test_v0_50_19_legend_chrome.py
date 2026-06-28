@@ -63,4 +63,7 @@ def test_carets_share_one_consistent_gap():
 
 
 def test_subtitle_has_top_gap_from_section_selectors():
-    assert "#library-subtitle { margin-top: var(--gap-3); }" in APP_CSS
+    # v0.50.32: the per-page #library-subtitle gap was generalized to the shared
+    # .hero-sub class (gap-3 → gap-5) so every tab's description lines up on Y. The
+    # collections section-selector clearance is preserved (gap-5 is more, not less).
+    assert ".hero-sub { margin-top: var(--gap-5); }" in APP_CSS

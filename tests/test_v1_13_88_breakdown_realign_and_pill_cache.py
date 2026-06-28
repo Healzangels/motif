@@ -342,8 +342,9 @@ def test_dashboard_customize_button_at_bottom_not_hero():
     paragraph must NOT contain dash-customize-btn anymore; the
     bottom paragraph must."""
     html = (REPO / "app" / "web" / "templates" / "dashboard.html").read_text()
-    # Find the hero <p class="muted"> block (not the small one).
-    hero_anchor = html.index('<p class="muted">')
+    # Find the hero description block (not the small sync line). v0.50.32 added the
+    # shared .hero-sub class to every page's hero description.
+    hero_anchor = html.index('<p class="muted hero-sub">')
     hero_end = html.index("</p>", hero_anchor)
     hero_block = html[hero_anchor:hero_end]
     assert 'id="dash-customize-btn"' not in hero_block, (

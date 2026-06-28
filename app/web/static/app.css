@@ -584,8 +584,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 /* v0.50.19: keep the subtitle off the hero-row's action chips. On /collections
    the section selectors (MOVIES/4K/TV/ANIME + REFRESH) make .sync-actions wrap
    to a second line, leaving the subtitle almost touching it (the user). A fixed
-   gap separates them consistently across tabs. */
-#library-subtitle { margin-top: var(--gap-3); }
+   gap separates them consistently across tabs.
+   v0.50.32: generalized #library-subtitle → .hero-sub, the shared class on every
+   page's hero description (dashboard/library/logs/settings/orphans). Paired with
+   the title's zeroed bottom margin above, the title→subtitle gap is now ONE value
+   everywhere (gap-2+gap-3 ≈ the old library look = gap-5) so the descriptions
+   land on the same Y across all tabs. */
+.hero-sub { margin-top: var(--gap-5); }
 /* v1.13.64: keep both hero buttons (// SYNC THEMERRDB + // SYNC PLEX)
    docked together at the right edge of .hero-row. Without this wrapper
    they were direct flex children, and space-between scattered the
@@ -616,7 +621,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   letter-spacing: 0.05em;
   color: var(--green-bright);
   text-shadow: 0 0 20px rgba(var(--green-rgb), 0.3);
-  margin-bottom: var(--gap-2);
+  /* v0.50.32: no bottom margin — the title→subtitle gap lives ENTIRELY on
+     .hero-sub so it's the same value whether the title sits inside a flex
+     .hero-row (dashboard/library, where a margin would ADD to the row height)
+     or as a plain block child (logs/settings/orphans, where it would COLLAPSE
+     with the subtitle's margin-top). Equal gap → the description lines up on the
+     same Y across every tab + the dashboard (the user). */
+  margin-bottom: 0;
   line-height: 0.9;
 }
 .title::before { content: '▰ '; color: var(--amber); font-size: 0.6em; letter-spacing: 0.4em; vertical-align: middle; }
