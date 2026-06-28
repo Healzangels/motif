@@ -1688,7 +1688,7 @@ body.help-mode .settings-help-about { display: block; }
   padding: 10px 18px;
   font-size: var(--t-small);
 }
-.chip:hover { color: var(--fg); border-color: var(--green-deep); }
+.chip:hover { color: var(--fg); border-color: var(--green-deep); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(var(--green-rgb), 0.12); }
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(var(--green-rgb), 0.06); }
 /* v1.14.56: removed `.chip-warn` + `.chip-warn.chip-active` —
    no element ever carries `chip-warn` (no JS/template ref).
@@ -3138,10 +3138,26 @@ body.help-mode .settings-help-about { display: block; }
   width: calc(100vw - 40px);
   padding: 0;
   box-shadow: 0 0 40px rgba(var(--green-rgb), 0.15), 0 20px 60px rgba(var(--black-rgb), 0.6);
+  /* v0.50.3: ease the modal in (fade + slight rise/scale) instead of popping.
+     @starting-style supplies the entry frame the moment showModal() adds
+     [open]; browsers without it just render the final state instantly (no
+     breakage). A brief user-initiated transition, so the v1.15.134 reduced-
+     motion policy (which deliberately keeps transitions) leaves it intact. */
+  opacity: 1;
+  transform: none;
+  transition: opacity var(--motion-normal) ease, transform var(--motion-normal) ease;
+}
+@starting-style {
+  .dlg[open] { opacity: 0; transform: translateY(8px) scale(0.985); }
 }
 .dlg::backdrop {
   background: rgba(var(--bg-rgb), 0.85);
   backdrop-filter: blur(2px);
+  opacity: 1;
+  transition: opacity var(--motion-normal) ease;
+}
+@starting-style {
+  .dlg[open]::backdrop { opacity: 0; }
 }
 .dlg-body { padding: 28px; position: relative; }
 /* v1.19.89: was `.dlg h3` (descendant selector). The info card is

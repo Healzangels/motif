@@ -1695,4 +1695,11 @@
 #   up — the lively independent bounce of a graphic-EQ. Amber kept (brand
 #   accent); bases stay full-height so the reduced-motion clamp rests them as
 #   full bars. CSS + base.html template only.
-__version__ = "0.50.2"
+# 0.50.3: tactile micro-interactions (the user — design-flavor pass 1/4). Modal
+#   <dialog>s now EASE IN (fade + slight rise/scale via @starting-style; degrades
+#   to instant on older engines) instead of popping; filter/toggle .chip:hover
+#   gains a 1px lift + faint glow. The .btn:active press already existed
+#   (translateY(1px), kept). All brief user-initiated TRANSITIONS, so the
+#   v1.15.134 reduced-motion policy (keeps transitions, kills only infinite
+#   animations) leaves them intact by design. CSS-only.
+__version__ = "0.50.3"
