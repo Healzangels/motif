@@ -3562,7 +3562,7 @@ body.auth-page .auth-card { margin: 0; }
      the content height (≈viewport − footer) so the record was clipped top/bottom
      (the user: "can't see the whole record"). 88vmin keeps the WHOLE circle in
      frame in any window orientation while staying clearly larger than the old 78. */
-  width: 88vmin; height: 88vmin; margin: -44vmin 0 0 -44vmin;
+  width: 94vmin; height: 94vmin; margin: -47vmin 0 0 -47vmin;
   opacity: 0.13;
 }
 .login-record .rec-grooves { animation-duration: 16s; }

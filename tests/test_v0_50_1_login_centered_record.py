@@ -70,7 +70,7 @@ def test_login_record_is_large_faint_and_slow():
     """.login-record only rescales / dims / slows the reused icon."""
     i = APP_CSS.index(".login-record {")
     block = APP_CSS[i:APP_CSS.index("}", i)]
-    assert "88vmin" in block          # v0.50.22: enlarged vs the old 78 but fits the frame whole
+    assert "94vmin" in block          # v0.50.26: a touch larger again, still whole in frame
     assert "opacity: 0.13" in block   # faint backdrop, not foreground
     # spin slowed to a turntable idle (overrides the loader's 1.8s).
     j = APP_CSS.index(".login-record .rec-grooves {")

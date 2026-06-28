@@ -1887,4 +1887,6 @@
 #   and the first content block lines up tabbing between dash/movies/collections/
 #   logs/settings. min-height (not height) so a hero that grows (backfill banner)
 #   still expands. The exact px is eyeballed — may want a small nudge. app.css.
-__version__ = "0.50.25"
+# 0.50.26: login record a touch larger again (the user) — 88 → 94vmin
+#   (margin -47vmin). Still keeps the whole circle in frame with a thin margin.
+__version__ = "0.50.26"
