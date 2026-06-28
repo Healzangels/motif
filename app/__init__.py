@@ -1687,4 +1687,12 @@
 #   icon; .login-record only rescales/dims/slows it to a 16s turntable idle)
 #   behind the kept v1.24.95 groove-ripples — "since we don't see [the record]
 #   very much". prefers-reduced-motion rests it static; CSS + template only.
-__version__ = "0.50.1"
+# 0.50.2: topbar brand-mark → 5-band synth spectrum analyzer (the user — "make
+#   the bars look more like a synth and move in a more synth like manner"). The
+#   v1.24.95 mark was 3 bars all tracing ONE sine wave (brand-eq), phase-shifted
+#   — too uniform/VU-meter. Now five bands, each its own irregular multi-peak
+#   keyframe (brand-eq-1..5) at its own duration (0.7–1.5s), so they never sync
+#   up — the lively independent bounce of a graphic-EQ. Amber kept (brand
+#   accent); bases stay full-height so the reduced-motion clamp rests them as
+#   full bars. CSS + base.html template only.
+__version__ = "0.50.2"

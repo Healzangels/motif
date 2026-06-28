@@ -49,7 +49,10 @@ def test_login_ripple_background_present():
 
 
 def test_brand_mark_is_equalizer_bars():
-    assert BASE.count('class="brand-bar"') == 3
+    # v0.50.2: widened 3 → 5 bars (synth spectrum analyzer). The count guard
+    # lives in test_v0_50_2_synth_eq.py now; here we just assert the glyph was
+    # replaced by >1 animated bar.
+    assert BASE.count('class="brand-bar"') >= 3
     assert "▰▰▰" not in BASE, "the static ▰▰▰ glyph was replaced by animated bars"
     # the old blink animation is gone from the brand-mark rule.
     i = APP_CSS.index(".brand-mark {")

@@ -310,11 +310,18 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   color: var(--green);
   text-transform: uppercase;
 }
-/* v1.24.95: the brand-mark is a 3-bar VU-meter equalizer (was a blinking ▰▰▰
-   glyph) — ambient "now playing" motion that ties the record loader + login
-   ripples into one music-themed language. Amber kept (the brand accent). The
-   global prefers-reduced-motion rule kills the infinite pulse; fill-mode:none
-   means the bars then rest at the un-transformed base = full height. */
+/* v1.24.95: the brand-mark is an equalizer (was a blinking ▰▰▰ glyph) —
+   ambient "now playing" motion that ties the record loader + login ripples
+   into one music-themed language. Amber kept (the brand accent). The global
+   prefers-reduced-motion rule kills the infinite pulse; fill-mode:none means
+   the bars then rest at the un-transformed base = full height.
+   v0.50.2: 5-band synth spectrum analyzer (the user — "look more like a synth +
+   move in a more synth like manner"). The v1.24.95 single brand-eq made all
+   bars trace ONE sine wave, phase-shifted — too uniform. Now five bands, each
+   its own irregular multi-peak keyframe at its own duration, so they never
+   sync up — the lively, independent bounce of a graphic-EQ / spectrum
+   analyzer. Each keyframe keeps the un-transformed base = full height so the
+   reduced-motion clamp still rests them as full bars (no fill-mode:forwards). */
 .brand-mark {
   display: inline-flex;
   align-items: flex-end;
@@ -328,11 +335,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   background: var(--amber);
   border-radius: 1px;
   transform-origin: bottom;
-  animation: brand-eq 1.2s ease-in-out infinite;
+  animation: brand-eq-1 0.85s ease-in-out infinite;
 }
-.brand-mark .brand-bar:nth-child(2) { animation-delay: 0.25s; }
-.brand-mark .brand-bar:nth-child(3) { animation-delay: 0.5s; }
-@keyframes brand-eq { 0%, 100% { transform: scaleY(0.4); } 50% { transform: scaleY(1); } }
+.brand-mark .brand-bar:nth-child(2) { animation: brand-eq-2 1.3s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(3) { animation: brand-eq-3 0.7s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(4) { animation: brand-eq-4 1.5s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(5) { animation: brand-eq-5 1.05s ease-in-out infinite; }
+@keyframes brand-eq-1 { 0%, 100% { transform: scaleY(0.30); } 25% { transform: scaleY(0.85); } 55% { transform: scaleY(0.45); } 80% { transform: scaleY(1); } }
+@keyframes brand-eq-2 { 0%, 100% { transform: scaleY(0.70); } 30% { transform: scaleY(0.25); } 60% { transform: scaleY(0.95); } }
+@keyframes brand-eq-3 { 0%, 100% { transform: scaleY(0.50); } 20% { transform: scaleY(1); } 50% { transform: scaleY(0.30); } 75% { transform: scaleY(0.72); } }
+@keyframes brand-eq-4 { 0%, 100% { transform: scaleY(0.90); } 35% { transform: scaleY(0.40); } 70% { transform: scaleY(0.60); } }
+@keyframes brand-eq-5 { 0%, 100% { transform: scaleY(0.35); } 25% { transform: scaleY(0.78); } 60% { transform: scaleY(0.25); } 85% { transform: scaleY(0.92); } }
 .brand-name { color: var(--green-bright); }
 .brand-version { color: var(--fg-mute); font-size: var(--t-tiny); letter-spacing: 0.2em; }
 /* v1.13.8 (#8): self-update suffix next to the version pill.

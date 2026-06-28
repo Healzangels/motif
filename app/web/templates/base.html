@@ -98,10 +98,11 @@
   </div>
   <header class="topbar">
     <a href="/" class="brand">
-      {# v1.24.95: brand-mark is a 3-bar VU-meter equalizer (was a static bar
-         glyph) — ambient "now playing" motion; decorative, the brand-name
-         carries the accessible label. #}
-      <span class="brand-mark" aria-hidden="true"><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i></span>
+      {# v1.24.95: brand-mark is an equalizer (was a static bar glyph) —
+         ambient "now playing" motion; decorative, the brand-name carries the
+         accessible label. v0.50.2: 5-band synth spectrum analyzer (was a 3-bar
+         uniform wave) — each band bounces independently. #}
+      <span class="brand-mark" aria-hidden="true"><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i></span>
       <span class="brand-name">motif</span>
       <span class="brand-version">v{{ motif_version }}</span>
       <!-- v1.13.8 (#8): self-update suffix populated by app.js on
