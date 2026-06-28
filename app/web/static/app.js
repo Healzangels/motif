@@ -3603,89 +3603,6 @@
     }
   }
 
-  // v0.50.8: needle-drop flourish — a tonearm drops onto a spinning record when
-  // a theme is PLACED (PUSH TO PLEX). A floating, self-cleaning overlay anchored
-  // to the clicked button's viewport position — NOT the row DOM, which
-  // re-renders on the next poll. Decorative + aria-hidden; skipped under
-  // reduced-motion; removed after the animation by a single timeout (no
-  // animationend bubbling to reason about).
-  function needleDropAt(anchorEl, opts) {
-    if (!anchorEl || typeof anchorEl.getBoundingClientRect !== 'function') return;
-    try {
-      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    } catch (e) { /* no matchMedia — proceed */ }
-    const rect = anchorEl.getBoundingClientRect();
-    if (!rect.width && !rect.height) return;
-    // v0.50.15: 'row' mode anchors the 60×48 host near a row's left edge and
-    // vertically centers it ON the row — a full-width <tr> has no meaningful
-    // center-top to hover over. Button mode keeps the v0.50.8 above-center spot.
-    const rowMode = !!(opts && opts.align === 'row');
-    const left = rowMode ? rect.left + 18 : rect.left + rect.width / 2 - 30;
-    const top = rowMode ? rect.top + rect.height / 2 - 24 : rect.top - 34;
-    const host = document.createElement('div');
-    host.className = 'needle-drop';
-    host.setAttribute('aria-hidden', 'true');
-    host.style.left = `${Math.round(left)}px`;
-    host.style.top = `${Math.round(top)}px`;
-    host.innerHTML = '<svg viewBox="0 0 60 48">'
-      + '<g class="nd-rec"><circle class="nd-rim" cx="20" cy="30" r="14"/>'
-      + '<circle class="nd-grv" cx="20" cy="30" r="9"/>'
-      + '<circle class="nd-hub" cx="20" cy="30" r="2.6"/></g>'
-      + '<g class="nd-arm"><line x1="52" y1="7" x2="27" y2="23"/>'
-      + '<circle cx="52" cy="7" r="3"/></g></svg>';
-    document.body.appendChild(host);
-    setTimeout(() => { host.remove(); }, 1300);
-  }
-
-  // v0.50.15: needle-drop on a placement TRANSITION — fires when a row goes
-  // not-placed → placed (DOWNLOAD lands, UPLOAD MP3, ADOPT, RESTORE-canonical,
-  // or a worker-initiated place during a sync). the user: "not seeing the
-  // animation when placing a new row" — the v0.50.8 fire is wired only to
-  // PUSH TO PLEX (replaceTheme), which re-pushes an ALREADY-placed row (no
-  // transition), so first-time theming never flashed. This fires when the
-  // theme actually LANDS (the poll observes the placement), not on enqueue —
-  // correct for DOWNLOAD, whose job could still fail after the click.
-  // Seeds silently on first sight (existing placed rows don't all flash on
-  // load / tab-switch); a viewport check + a per-render cap keep a bulk place
-  // or a full-library sync from flooding the screen with needles. PUSH keeps
-  // its own immediate fire — re-pushing a placed row produces no transition.
-  function flashPlacedTransitions(items) {
-    const seen = flashPlacedTransitions._seen
-      || (flashPlacedTransitions._seen = new Set());
-    const placedKnown = flashPlacedTransitions._placed
-      || (flashPlacedTransitions._placed = new Set());
-    const toFlash = [];
-    for (const it of (items || [])) {
-      const rk = it && it.rating_key;
-      if (!rk) continue;  // TDB-only / not-in-Plex rows are never placeable
-      // The v1.18.0 PL predicate: media_folder set OR a plex_upload sentinel.
-      const isPlaced = !!it.media_folder || it.placement_kind === 'plex_upload';
-      const wasPlaced = placedKnown.has(rk);
-      const everSeen = seen.has(rk);
-      seen.add(rk);
-      if (isPlaced) placedKnown.add(rk); else placedKnown.delete(rk);
-      // Only a row we previously observed UNPLACED that is now placed flashes.
-      if (isPlaced && everSeen && !wasPlaced) toFlash.push(String(rk));
-    }
-    const tbody = document.getElementById('library-body');
-    if (!tbody || !toFlash.length) return;
-    const rowEls = {};
-    tbody.querySelectorAll('tr[data-rk]').forEach((el) => {
-      rowEls[el.dataset.rk] = el;
-    });
-    const vh = window.innerHeight || document.documentElement.clientHeight || 0;
-    let fired = 0;
-    for (const rk of toFlash) {
-      if (fired >= 5) break;  // cap per render — a 50-row place stays sane
-      const tr = rowEls[rk];
-      if (!tr) continue;
-      const r = tr.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > vh) continue;  // off-screen: recorded, not flashed
-      needleDropAt(tr, { align: 'row' });
-      fired++;
-    }
-  }
-
   async function replaceTheme(mediaType, tmdbId, btn, kind) {
     // Push motif's existing canonical back into the Plex folder. Force
     // overwrite so any sidecar that reappeared since unplace is replaced.
@@ -3712,7 +3629,6 @@
         throw new Error(`${resp.status}: ${text || resp.statusText}`);
       }
       if (btn) btn.textContent = 'QUEUED';
-      needleDropAt(btn);  // v0.50.8: needle-drop flourish on a successful place
       if (typeof libraryRapidPoll === 'function'
           && document.getElementById('library-body')) {
         libraryRapidPoll();
@@ -8446,10 +8362,6 @@
         tbody.dataset.lastHash = newHtml;
       }
     }
-    // v0.50.15: after the rows are in the DOM, drop a needle on any row that
-    // just transitioned not-placed → placed (theme landed via DOWNLOAD /
-    // UPLOAD MP3 / ADOPT / RESTORE / worker place). Seeds silently first sight.
-    flashPlacedTransitions(libraryState.items);
     updateLibrarySelectionUi();
     const cntEl = document.getElementById('library-count');
     if (cntEl) {
@@ -11017,7 +10929,7 @@
     // nav already names the active library; the cell now carries
     // just the pill.
     return `
-      <tr${rowExtra} data-rk="${htmlEscape(it.rating_key || '')}">
+      <tr${rowExtra}>
         <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
           <div class="title-cell" title="${htmlEscape(titleTooltip)}">

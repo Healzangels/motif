@@ -1807,4 +1807,11 @@
 #   check + per-render cap (5) keep a bulk place from flooding the screen. Adds
 #   data-rk to each library <tr> as the anchor; needleDropAt gains a 'row' align
 #   mode. PUSH keeps its own immediate fire. app.js only.
-__version__ = "0.50.15"
+# 0.50.16: removed the needle-drop entirely (the user, after seeing it live:
+#   "I don't know about the animation now seeing it live" → chose remove). Pulls
+#   BOTH fires — the v0.50.8 PUSH-button drop and the v0.50.15 placement-
+#   transition drop — plus needleDropAt + flashPlacedTransitions, the .needle-drop
+#   CSS + nd-* keyframes, the <tr> data-rk anchor, and the two needle test files.
+#   The other v0.50.x flavor animations (synth EQ, donut draw-in, count-up, CRT
+#   power-on, tactile) all stay. app.js + app.css.
+__version__ = "0.50.16"
