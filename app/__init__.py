@@ -1865,4 +1865,11 @@
 #   64→52vmin to match. (2) SAVED FILTERS dropdown rows: hover is now JUST the
 #   cyan text colour (dropped the rgba bg tint that the user saw "flashing" as the
 #   cursor crossed rows). app.css only.
-__version__ = "0.50.22"
+# 0.50.23: sticky footer (the user: the healthz bar "jumps way up in page" on
+#   short sections like ORPHAN SCAN — want it locked to the screen bottom like on
+#   movies). body is now a flex column (it already had min-height:100vh) and
+#   .content is flex:1 0 auto, so content grows to fill and .footer pins to the
+#   viewport bottom on short pages while still sitting below the content on long
+#   ones. The login page already proved the pattern (body.auth-page); the sticky
+#   topbar still works inside the flex column. app.css only.
+__version__ = "0.50.23"

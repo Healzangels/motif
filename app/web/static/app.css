@@ -236,6 +236,14 @@ body {
   -webkit-font-smoothing: antialiased;
   letter-spacing: 0.01em;
   overflow-x: hidden;
+  /* v0.50.23: sticky footer — body is a flex column (min-height:100vh already)
+     so .content (flex:1) grows to fill, pinning .footer to the viewport bottom
+     on short pages (e.g. ORPHAN SCAN) instead of letting it ride up mid-page.
+     On long pages (movies) the content overflows and the footer sits below it as
+     before. The login page already proves this pattern (body.auth-page). The
+     sticky topbar still works inside the flex column. */
+  display: flex;
+  flex-direction: column;
 }
 
 /* v1.15.127: tint native checkboxes to the brand green. Pre-fix
@@ -478,8 +486,12 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 
 .content {
   max-width: 1480px;
+  /* v0.50.23: width: 100% so the centred max-width box fills the flex column;
+     flex:1 0 auto grows it to push the footer to the viewport bottom. */
+  width: 100%;
   margin: 0 auto;
   padding: 32px 28px 80px;
+  flex: 1 0 auto;
   position: relative; z-index: 2;
 }
 
