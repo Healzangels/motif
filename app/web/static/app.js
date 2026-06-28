@@ -8117,6 +8117,13 @@
     const newTitle = doc.querySelector('title');
     if (newTitle) document.title = newTitle.textContent;
     bindLibraryToolbarChips();  // re-bind the chips we just swapped in
+    // v0.50.12: swap the big hero <h1> title too — switchLibraryTab updated
+    // document.title + the subtitle + the REFRESH label but left the visible
+    // header on the originally-loaded tab's name until a hard refresh (the user:
+    // title read ANIME while on the TV tab).
+    const newH1 = doc.querySelector('.hero h1.title');
+    const curH1 = document.querySelector('.hero h1.title');
+    if (newH1 && curH1) curH1.textContent = newH1.textContent;
     if (push) history.pushState({ libTab: tab }, '', url.pathname + url.search);
     highlightNav();
     hydrateLibraryStateForTab(tab, url.searchParams);

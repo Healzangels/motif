@@ -1770,4 +1770,10 @@
 #   write, no canonical deletion, so re-placing fresh later works. orphans.html
 #   adds the // CLEAN UP button + handler on plex_fetch_failed rows. the user
 #   chose "just clean it up". api.py + orphans.html.
-__version__ = "0.50.11"
+# 0.50.12: library hero <h1> title now updates on client-side tab switch (the
+#   user: the title read ANIME while on the TV tab, only correcting on a hard
+#   refresh). switchLibraryTab swapped document.title + the subtitle + the
+#   REFRESH button label from the fetched page but never the visible
+#   `.hero h1.title`, so it kept the originally-loaded tab's name. One-line swap
+#   mirroring the adjacent subtitle swap. app.js only.
+__version__ = "0.50.12"
