@@ -1761,4 +1761,13 @@
 #   ceiling AND Plex has a SELECTED upload:// entry (Plex serves the re-encode).
 #   No schema / worker / verify change; no AWAIT/RE-PUSH SQL touch (the co-display
 #   source is the dead-rk LotR, handled by Fix B next). orphan_scan.py only.
-__version__ = "0.50.10"
+# 0.50.11: Fix B — ORPHAN SCAN // CLEAN UP for dead-rk plex_fetch_failed rows
+#   (the user's LotR Collection, rk 579643: Plex removed + re-added the collection
+#   under a new rk, so /themes 404s and PROBE can only re-404). New admin endpoint
+#   POST /api/admin/orphan-scan/cleanup-dead-rk re-verifies the rk is GENUINELY
+#   gone (no live plex_items row AND /themes still fails — refuses 409 if it came
+#   back, off the event loop) then drops ONLY motif's stale placement row: no Plex
+#   write, no canonical deletion, so re-placing fresh later works. orphans.html
+#   adds the // CLEAN UP button + handler on plex_fetch_failed rows. the user
+#   chose "just clean it up". api.py + orphans.html.
+__version__ = "0.50.11"

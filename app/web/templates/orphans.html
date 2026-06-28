@@ -192,6 +192,17 @@
         out.push(`<button type="button" class="btn btn-tiny btn-danger"
                     data-act="purge" data-mt="${mt}" data-id="${id}" data-sec="${htmlEscape(sec)}" ${ekAttr}>× PURGE</button>`);
       }
+      // v0.50.11: CLEAN UP — a plex_fetch_failed row whose rk is DEAD (Plex
+      // removed + re-added the item under a new rk, so /themes 404s) can only
+      // ever re-404 on PROBE. CLEAN UP drops the stale placement (motif tracking
+      // only — no Plex change, no canonical deleted), after the server
+      // re-verifies the rk is genuinely gone. Re-place fresh later if wanted.
+      if (f.drift_type === 'plex_fetch_failed') {
+        out.push(`<button type="button" class="btn btn-tiny btn-danger"
+                    data-act="cleanup" data-mt="${mt}" data-id="${id}"
+                    data-sec="${htmlEscape(sec)}" ${ekAttr}
+                    data-rk="${htmlEscape(f.rk || '')}">// CLEAN UP</button>`);
+      }
       // v1.18.43: DELETE SIDECAR — for orphan_sidecar_on_disk
       // rows. Removes the leftover theme.<ext> at the Plex
       // media folder without touching Plex's API state. Path
@@ -423,6 +434,21 @@
           const url = sec
             ? `/api/items/${mt}/${id}/forget?section_id=${encodeURIComponent(sec)}`
             : `/api/items/${mt}/${id}/forget`;
+          r = await fetch(url, { method: 'POST' });
+        } else if (act === 'cleanup') {
+          // v0.50.11: drop a stale dead-rk placement (motif tracking only). The
+          // server re-verifies the rk is genuinely gone before deleting.
+          if (!confirm('CLEAN UP drops motif\'s stale placement for this dead Plex rating_key. No Plex change, no file deleted — re-place fresh later if you want a theme. Continue?')) {
+            btn.disabled = false;
+            btn.textContent = origText;
+            return;
+          }
+          const url = `/api/admin/orphan-scan/cleanup-dead-rk`
+            + `?media_type=${encodeURIComponent(mt)}`
+            + `&tmdb_id=${encodeURIComponent(id)}`
+            + `&section_id=${encodeURIComponent(sec)}`
+            + `&rating_key=${encodeURIComponent(rk)}`
+            + (ek ? `&edition_key=${encodeURIComponent(ek)}` : '');
           r = await fetch(url, { method: 'POST' });
         } else if (act === 'delete-sidecar') {
           // v1.18.43: unlink orphan theme.<ext> at the Plex

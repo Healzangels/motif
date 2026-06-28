@@ -24958,6 +24958,82 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with _ORPHAN_SCAN_LOCK:
             return dict(_ORPHAN_SCAN_STATE)
 
+    @app.post("/api/admin/orphan-scan/cleanup-dead-rk")
+    async def api_admin_orphan_cleanup_dead_rk(
+        request: Request,
+        media_type: str = Query(...),
+        tmdb_id: int = Query(...),
+        section_id: str = Query(...),
+        rating_key: str = Query(...),
+        edition_key: str | None = Query(None),
+        db: Path = Depends(get_db_path),
+    ):
+        """v0.50.11: drop a STALE plex_upload placement whose rating_key is dead
+        — Plex removed + re-added the item under a new rk, so its /themes 404s
+        and there's no live plex_items row for it (the user's LotR Collection,
+        rk 579643: PLEX_FETCH_FAILED / HTTP 404, where PROBE can only ever
+        re-404). Wired to the orphan dashboard's // CLEAN UP button.
+
+        Conservative + Plex-non-mutating: re-verifies the rk is GENUINELY dead
+        (no live plex_items row AND Plex's /themes still fails) before deleting,
+        refusing with 409 if it came back. Touches ONLY motif's placement row —
+        no Plex write, no canonical deletion — so re-placing fresh later (to the
+        new rk) works. Off the event loop (class 12: the get_themes re-check)."""
+        _require_admin(request)
+        if not settings.plex_enabled or not settings.plex_token:
+            raise HTTPException(
+                status_code=503, detail="Plex disabled or token missing")
+
+        def _cleanup():
+            from ..core.plex import PlexClient, PlexConfig
+            # (a) Still a live Plex item in motif's tracking? Then it's not dead.
+            with get_conn(db) as conn:
+                live = conn.execute(
+                    "SELECT 1 FROM plex_items WHERE rating_key = ?",
+                    (str(rating_key),)).fetchone()
+            if live is not None:
+                return {"ok": False, "detail": (
+                    "that rating_key is still a live Plex item — re-probe "
+                    "instead of cleaning up")}
+            # (b) Re-verify Plex's /themes for the rk genuinely fails.
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True)
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                resp = plex.get_themes(rating_key=str(rating_key))
+            if resp.get("ok"):
+                return {"ok": False, "detail": (
+                    "Plex now serves that rating_key — re-probe instead of "
+                    "cleaning up")}
+            # (c) Genuinely dead — drop ONLY the stale placement row(s).
+            ek_sql = " AND COALESCE(edition_key, '') = ?" if edition_key is not None else ""
+            params: list = [media_type, tmdb_id, section_id, str(rating_key)]
+            if edition_key is not None:
+                params.append(edition_key)
+            with get_conn(db) as conn:
+                cur = conn.execute(
+                    "DELETE FROM placements WHERE media_type = ? AND tmdb_id = ? "
+                    "AND section_id = ? AND plex_rating_key = ?" + ek_sql,
+                    params)
+                dropped = cur.rowcount
+                conn.commit()
+            return {"ok": True, "dropped": dropped}
+
+        result = await run_in_threadpool(_cleanup)
+        if not result.get("ok"):
+            raise HTTPException(status_code=409, detail=result.get("detail"))
+        try:
+            log_event(
+                db, level="info", component="orphan_scan",
+                message=f"Dead-rk placement cleaned up (rk={rating_key})",
+                detail={"media_type": media_type, "tmdb_id": tmdb_id,
+                        "section_id": section_id, "rating_key": str(rating_key),
+                        "dropped": result.get("dropped")})
+        except Exception:
+            pass
+        return result
+
     @app.post("/api/admin/orphan-scan/item")
     async def api_admin_orphan_scan_item(
         request: Request,
