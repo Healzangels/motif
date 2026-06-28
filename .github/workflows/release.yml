@@ -74,20 +74,13 @@ jobs:
             echo "::error::Tag '$VERSION' is not semver-compatible (expected MAJOR.MINOR.PATCH)"
             exit 1
           fi
-          MAJOR="${VERSION%%.*}"
-          MINOR_PATCH="${VERSION#*.}"
-          MINOR="${MINOR_PATCH%%.*}"
-
-          {
-            echo "version=${VERSION}"
-            echo "major=${MAJOR}"
-            echo "minor=${MAJOR}.${MINOR}"
-          } >> "$GITHUB_OUTPUT"
+          # 0.50.0: only the exact version + latest are published; the
+          # rolling major/minor image tags were dropped, so we no longer
+          # compute them here.
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           echo "Will tag image as:"
           echo "  ${IMAGE_NAME}:${VERSION}"
-          echo "  ${IMAGE_NAME}:${MAJOR}.${MINOR}"
-          echo "  ${IMAGE_NAME}:${MAJOR}"
           # 'latest' only for non-prerelease versions
           if [[ ! "$VERSION" =~ - ]]; then
             echo "  ${IMAGE_NAME}:latest"
@@ -103,10 +96,11 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          # 0.50.0: push ONLY the exact version + latest — no rolling
+          # minor (0.50) / major (0) tags. Keeps Docker Hub minimal at
+          # {version, latest} so the namespace can't re-accrete 0 / 0.50.
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}
-            ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.minor }}
-            ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.major }}
             ${{ steps.tags.outputs.is_stable == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
           # Cache layers between runs. ignore-error on the export:
           # GHA's cache backend intermittently 404s blob writes
