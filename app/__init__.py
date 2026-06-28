@@ -1825,4 +1825,12 @@
 #   NOT folded into edition_key, so the v1.21.x folder-based per-edition theme
 #   scoping (placements/local_files PK) is untouched and a metadata-only edition
 #   never drives placement. db.py + plex.py + plex_enum.py + api.py + app.js/css.
-__version__ = "0.50.17"
+# 0.50.18: round the login AUTHENTICATE window into a vinyl record LABEL (the
+#   user: "make it round or look like the center dot of the record"). .auth-card
+#   becomes a circle (border-radius:50%, aspect-ratio:1, width min(460px,92vw))
+#   centred over the spinning-record backdrop; the old rectangular border-left:3px
+#   green accent → a circular ::after ring; ::before sheen recentred; new
+#   .auth-card-inner clamps the form to the circle's safe centre zone so the round
+#   edge never clips it. login.html + app.css only; the v0.50.1 centring + record
+#   backdrop are untouched.
+__version__ = "0.50.18"
