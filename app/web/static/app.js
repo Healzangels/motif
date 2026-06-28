@@ -8885,7 +8885,14 @@
     // Drift detection — refresh the bookmark active-state every 600ms
     // so applying a preset, then editing pills, flips the icon back
     // to ☆ without a polling-heavy approach.
-    setInterval(_updatePresetActiveState, 600);
+    // v0.50.27: skip the per-tick repaint while the popover is OPEN — the
+    // every-600ms DOM touch (re-toggling .is-active on the list rows) made the
+    // saved-filters list blink (the user). Drift detection only needs to flip the
+    // CLOSED bookmark icon, so pausing it while open is harmless.
+    setInterval(() => {
+      if (menu.hasAttribute('open')) return;
+      _updatePresetActiveState();
+    }, 600);
     loadLibraryPresets().catch((e) => console.error(e));
   }
 

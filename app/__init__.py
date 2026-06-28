@@ -1889,4 +1889,8 @@
 #   still expands. The exact px is eyeballed — may want a small nudge. app.css.
 # 0.50.26: login record a touch larger again (the user) — 88 → 94vmin
 #   (margin -47vmin). Still keeps the whole circle in frame with a thin margin.
-__version__ = "0.50.26"
+# 0.50.27: the SAVED FILTERS popover blinked while open (the user). The 600ms
+#   drift-detection setInterval(_updatePresetActiveState) re-toggled .is-active on
+#   the list rows every tick; now it early-returns while the <details> menu is
+#   open (drift detection only needs the CLOSED bookmark icon). app.js only.
+__version__ = "0.50.27"
