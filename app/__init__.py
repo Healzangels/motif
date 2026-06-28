@@ -1814,4 +1814,15 @@
 #   CSS + nd-* keyframes, the <tr> data-rk anchor, and the two needle test files.
 #   The other v0.50.x flavor animations (synth EQ, donut draw-in, count-up, CRT
 #   power-on, tactile) all stay. app.js + app.css.
-__version__ = "0.50.16"
+# 0.50.17: surface Plex's METADATA edition (editionTitle) in the library ED column
+#   (the user: Alien (1979) shows "Directors Cut" in Plex but motif's ED was blank).
+#   motif's ED/edition_key derive only from the {edition-X} FOLDER tag; Alien's
+#   edition is a Plex metadata field on an untagged folder, so nothing showed.
+#   Now schema v69 adds plex_items.plex_edition_title; plex_enum captures
+#   editionTitle from enumerate_section_items (INSERT + both UPDATE paths);
+#   /api/library selects it; the ED column falls back to it (dashed "meta" pill +
+#   tooltip) when the folder has no {edition-X} tag. DISPLAY-ONLY — deliberately
+#   NOT folded into edition_key, so the v1.21.x folder-based per-edition theme
+#   scoping (placements/local_files PK) is untouched and a metadata-only edition
+#   never drives placement. db.py + plex.py + plex_enum.py + api.py + app.js/css.
+__version__ = "0.50.17"

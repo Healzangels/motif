@@ -3909,6 +3909,13 @@ body.auth-page .auth-card { margin: 0; }
   background: rgba(var(--grey-rgb),0.04);
   vertical-align: middle;
 }
+/* v0.50.17: Plex METADATA edition (editionTitle) — a folder with no {edition-X}
+   tag whose edition is set in Plex's metadata field. Dashed border distinguishes
+   it from a real folder edition (solid) since motif doesn't scope theming on it. */
+.edition-pill-meta {
+  border-style: dashed;
+  border-color: var(--line);
+}
 /* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
    overwrite something the user might care about; info (cyan) for
    policy-driven holds; muted for transient queued state. */

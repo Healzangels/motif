@@ -115,6 +115,11 @@ class PlexLibraryItem:
     # /library/metadata/{rating_key}/theme to verify Plex actually
     # serves content. The HEAD primitive lives in PlexClient.item_has_theme.
     plex_theme_uri: str = ""
+    # v0.50.17: Plex's editionTitle metadata field verbatim ('' when unset).
+    # DISPLAY-ONLY — plex_enum persists it for the library ED column when the
+    # folder has no {edition-X} tag. Never folded into edition_key (scoping
+    # stays folder-based), so a metadata-only edition can't drive placement.
+    plex_edition_title: str = ""
 
 
 @dataclass
@@ -790,6 +795,7 @@ class PlexClient:
                     folder_path=folder,
                     has_theme=theme_val is not None,
                     plex_theme_uri=str(theme_val) if theme_val else "",
+                    plex_edition_title=str(el.get("editionTitle", "") or ""),
                 ))
             # v1.12.128: emit per-page progress so the ops drawer's
             # bar can tick during the fetch instead of sitting at the

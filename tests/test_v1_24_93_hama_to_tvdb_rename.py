@@ -52,7 +52,9 @@ def test_routes_and_kind_are_tvdb():
 
 def test_schema_version_and_check_renamed():
     db = (REPO / "app" / "core" / "db.py").read_text()
-    assert "CURRENT_SCHEMA_VERSION = 68" in db
+    # v0.50.17: schema bumped to v69 (plex_items.plex_edition_title). The
+    # v68 hama→tvdb rename migration + its renamed CHECK still stand.
+    assert "CURRENT_SCHEMA_VERSION = 69" in db
     assert "def _migrate_v67_to_v68" in db
     # the CURRENT (live) op_progress CHECK clause lists tvdb_bridge, not
     # hama_bridge (the surrounding comment keeps a rename breadcrumb that

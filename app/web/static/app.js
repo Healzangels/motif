@@ -9553,9 +9553,19 @@
     // Extended, IMAX, etc.). Renders as a yellow chip after the title.
     const editionLabel = (() => {
       const ed = parseEditionFromFolderPath(it.folder_path);
-      return ed
-        ? ` <span class="edition-pill" title="Plex edition tag">${htmlEscape(ed)}</span>`
-        : '';
+      if (ed) {
+        return ` <span class="edition-pill" title="Plex edition tag (folder)">${htmlEscape(ed)}</span>`;
+      }
+      // v0.50.17: fall back to Plex's editionTitle METADATA field when the folder
+      // carries no {edition-X} tag (the user's Alien: Plex shows "Directors Cut"
+      // as metadata, not a folder edition). DISPLAY-ONLY — motif's edition_key
+      // scoping stays folder-based, so this label never drives theme placement;
+      // the distinct pill + tooltip make that explicit.
+      const pe = it.plex_edition_title;
+      if (pe) {
+        return ` <span class="edition-pill edition-pill-meta" title="Plex metadata edition — not a folder {edition-} tag, so motif theming is one-per-item for this title">${htmlEscape(pe)}</span>`;
+      }
+      return '';
     })();
     // v1.10.33: at-a-glance ThemerrDB-tracked indicator. v1.10.40
     // added the red TDB ✗ state for permanent-failure rows;

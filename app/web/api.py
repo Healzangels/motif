@@ -3105,7 +3105,8 @@ def _library_main_query(
     sql_select = f"""
         SELECT pi.rating_key, pi.section_id, pi.media_type AS plex_media_type,
                pi.title AS plex_title, pi.year, pi.guid_imdb, pi.guid_tmdb,
-               pi.folder_path, pi.edition_key, pi.has_theme AS plex_has_theme,
+               pi.folder_path, pi.edition_key, pi.plex_edition_title,
+               pi.has_theme AS plex_has_theme,
                pi.local_theme_file AS plex_local_theme,
                -- v1.12.112: HEAD-verified Plex theme claim. JS
                -- computeSrcLetter mirrors the SRC SQL's gate so the
@@ -4069,6 +4070,7 @@ def _library_not_in_plex(
             t.title AS plex_title,
             t.year, t.imdb_id AS guid_imdb, t.tmdb_id AS guid_tmdb,
             NULL AS folder_path,
+            '' AS plex_edition_title,
             NULL AS plex_has_theme,
             NULL AS plex_local_theme,
             NULL AS plex_theme_verified_ok,

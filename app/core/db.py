@@ -558,6 +558,14 @@ CREATE TABLE IF NOT EXISTS plex_items (
     -- by plex_enum. Lets Phase C's library JOIN match placements/local_files
     -- per edition (both also edition_key'd) without a fragile SQL mirror.
     edition_key      TEXT NOT NULL DEFAULT '',
+    -- v0.50.17 (schema v69): Plex's editionTitle metadata field, verbatim
+    -- ('' when unset). DISPLAY-ONLY — surfaced in the library ED column when the
+    -- folder carries NO {edition-X} tag (the user's Alien (1979) case: Plex shows
+    -- a metadata "Directors Cut" edition with no folder tag). Captured by
+    -- plex_enum from enumerate_section_items. Deliberately NOT folded into
+    -- edition_key: per-edition theme scoping (placements/local_files PK) stays
+    -- folder-based, so a metadata-only edition never drives placement.
+    plex_edition_title TEXT NOT NULL DEFAULT '',
     has_theme        INTEGER NOT NULL DEFAULT 0,
     -- v1.11.26: denormalized themes-row id, populated by plex_enum when
     -- the item is first discovered and refreshed when sync upserts a new
@@ -911,7 +919,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 68
+CURRENT_SCHEMA_VERSION = 69
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2523,6 +2531,18 @@ def _migrate_v67_to_v68(conn: sqlite3.Connection) -> None:
             WHERE key = 'last_hama_bridge_at';
         COMMIT;
     """)
+
+
+def _migrate_v68_to_v69(conn: sqlite3.Connection) -> None:
+    """v69 (v0.50.17): add plex_items.plex_edition_title — Plex's editionTitle
+    metadata field, captured by plex_enum for DISPLAY in the library ED column
+    when the folder carries no {edition-X} tag (the user's Alien (1979) showed a
+    metadata "Directors Cut" edition with no folder tag, so the ED column was
+    blank). Display-only; NOT folded into edition_key, so folder-based per-edition
+    theme scoping is untouched. Idempotent via _add_column; backfills to '' until
+    the next enum repopulates each row's editionTitle."""
+    log.info("Migrating to schema v69 (plex_items.plex_edition_title — v0.50.17)")
+    _add_column(conn, "plex_items", "plex_edition_title", "TEXT NOT NULL DEFAULT ''")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4392,6 +4412,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 67:
                     _migrate_v67_to_v68(conn)
                     current = 68
+                elif current == 68:
+                    _migrate_v68_to_v69(conn)
+                    current = 69
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
