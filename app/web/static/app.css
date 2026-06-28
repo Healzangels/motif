@@ -503,6 +503,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 
 .hero { margin-bottom: 36px; }
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--gap-6); flex-wrap: wrap; }
+/* v0.50.19: keep the subtitle off the hero-row's action chips. On /collections
+   the section selectors (MOVIES/4K/TV/ANIME + REFRESH) make .sync-actions wrap
+   to a second line, leaving the subtitle almost touching it (the user). A fixed
+   gap separates them consistently across tabs. */
+#library-subtitle { margin-top: var(--gap-3); }
 /* v1.13.64: keep both hero buttons (// SYNC THEMERRDB + // SYNC PLEX)
    docked together at the right edge of .hero-row. Without this wrapper
    they were direct flex children, and space-between scattered the
@@ -1227,8 +1232,28 @@ body.help-mode .help-mode-bar { display: flex; }
   transition: transform var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 .library-legend-pill.open .library-legend-caret { transform: rotate(90deg); color: var(--green); }
+/* v0.50.19: the GLOSSARY help-bar button reuses the same caret; app.js toggles
+   .open on it while the modal is open so it rotates ►→▾ in step. */
+#help-glossary-open .library-legend-caret { margin-left: 2px; }
+#help-glossary-open.open .library-legend-caret { transform: rotate(90deg); color: var(--green); }
 .library-legend-panel { display: none; }
+/* v0.50.19: the open LEGEND panel OVERLAYS the table rather than pushing it down
+   (the user: "make it not shift everything down"). position:absolute with auto
+   top keeps its static spot right below the header but removes it from flow, so
+   the table no longer reflows; bg + border + shadow + z-index float it over the
+   top rows like the .row-menu-panel dropdown. Scoped to .library-block (a
+   positioning context) so the shared .block stays unaffected. */
 .library-legend-panel.open { display: block; }
+.library-block { position: relative; }
+.library-block .library-legend-panel.open {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  background: var(--bg-elev);
+  border: 1px solid var(--line-bright);
+  box-shadow: 0 10px 28px rgba(var(--black-rgb), 0.55);
+}
 .library-legend-body {
   margin: 0 0 var(--gap-3);
   padding: var(--gap-3);

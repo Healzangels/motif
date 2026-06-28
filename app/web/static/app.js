@@ -270,7 +270,16 @@
     if (off) off.addEventListener('click', () => setHelpMode(false));
     const dlg = document.getElementById('help-glossary');
     const open = document.getElementById('help-glossary-open');
-    if (dlg && open) open.addEventListener('click', () => showModalNoFocusRing(dlg));
+    if (dlg && open) {
+      // v0.50.19: rotate the GLOSSARY caret ►→▾ while the modal is open, and
+      // back on any close (ESC / backdrop / data-close) via the <dialog> close
+      // event — mirrors the LEGEND pill + status-bar caret.
+      open.addEventListener('click', () => {
+        open.classList.add('open');
+        showModalNoFocusRing(dlg);
+      });
+      dlg.addEventListener('close', () => open.classList.remove('open'));
+    }
     if (dlg) {
       dlg.querySelectorAll('[data-close]').forEach((b) =>
         b.addEventListener('click', () => dlg.close()));

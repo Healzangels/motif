@@ -1833,4 +1833,15 @@
 #   .auth-card-inner clamps the form to the circle's safe centre zone so the round
 #   edge never clips it. login.html + app.css only; the v0.50.1 centring + record
 #   backdrop are untouched.
-__version__ = "0.50.18"
+# 0.50.19: library-chrome polish (3 the-user asks). (1) LEGEND caret moved to the
+#   END of the label (was at the front) — it's ► collapsed / ▾ open (the existing
+#   .open rotate), matching the status-bar op-card-caret. (2) GLOSSARY help-bar
+#   button gets the same trailing caret; app.js toggles .open on it on the
+#   <dialog> open/close so it rotates ►→▾ in step. (3) the open LEGEND panel now
+#   OVERLAYS the table instead of pushing it down — .library-block is a
+#   positioning context + .library-legend-panel.open is position:absolute (auto
+#   top keeps its static spot, removed from flow → no reflow) with bg/border/
+#   shadow like .row-menu-panel. (4) #library-subtitle gets margin-top so the
+#   /collections section selectors (which wrap to a 2nd line) no longer almost-
+#   touch the subtitle. library.html + base.html + app.js + app.css.
+__version__ = "0.50.19"

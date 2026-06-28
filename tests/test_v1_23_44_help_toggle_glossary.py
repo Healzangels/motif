@@ -100,7 +100,9 @@ def test_apply_help_mode_toggles_body_class_and_aria():
 
 def test_glossary_dialog_closes_via_data_close_and_backdrop():
     i = APP_JS.index("function initHelpMode()")
-    body = APP_JS[i:i + 1200]
+    # v0.50.19: 1200 → 1600 — the GLOSSARY caret open/close wiring added a few
+    # lines before the backdrop handler. Same three close mechanisms, further apart.
+    body = APP_JS[i:i + 1600]
     assert "showModalNoFocusRing(dlg)" in body, "// GLOSSARY opens the dialog"
     assert "[data-close]" in body
     assert "e.target === dlg" in body, "backdrop click closes"
