@@ -1784,4 +1784,14 @@
 #   blocked the exact row it should clean. Dropped (a): the live /themes re-check
 #   (b) is the authoritative + sufficient gate (refuses only if Plex now serves
 #   the theme). cleanup-dead-rk endpoint only.
-__version__ = "0.50.13"
+# 0.50.14: the COLLECTIONS // REFRESH button no longer re-enables mid-scan (the
+#   user: it became clickable while RECONCILING PLACEMENT PATHS + queued jobs were
+#   still running). plex_enum_active only has movies/tv/anime keys — a collections
+#   refresh enumerates the underlying movie/tv sections (mapped to THOSE tabs), so
+#   the collections tab's myTabBusy was ALWAYS false and the lock fell back to
+#   globalEnumPipeline, which drops once the per-section enums finish but the
+#   GLOBAL reconcile_placement_paths post-phase (+ queued) still runs. Fix: on the
+#   collections tab, lock on plexEnumBusy (any plex_enum in flight) — true through
+#   reconcile + queue — at both myTabBusy sites (refreshTopbarStatus +
+#   updateLibraryRefreshBtnLabel, the latter via a stashed flag). app.js only.
+__version__ = "0.50.14"

@@ -121,7 +121,10 @@ def test_refresh_topbar_status_offline_recovery_outside_hash_skip():
     # added the row-refresh transition logic. Function is large
     # but well-bounded by the next async function declaration,
     # so a generous window is fine.
-    body = js[fn_anchor:fn_anchor + 60000]
+    # v0.50.14: 60000 → 64000 — the collections-aware myTabBusy
+    # ternary + the plex_enum_busy stash pushed the OFFLINE catch a
+    # few hundred chars further down. Same growth-not-regression case.
+    body = js[fn_anchor:fn_anchor + 64000]
     # The catch{} block sets the OFFLINE class — must be present.
     catch_anchor = body.index("} catch (e) {")
     catch_block = body[catch_anchor:catch_anchor + 1000]

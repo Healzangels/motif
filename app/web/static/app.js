@@ -559,11 +559,14 @@
     const enumPending = window.__motif_enum_pending || {};
     const pipelineBusy = !!window.__motif_global_enum_pipeline;
     const myTabBusy = !!(
-      tabKey
-      && (
-        (enumActive[tabKey] && enumActive[tabKey][variantKey])
-        || (enumPending[tabKey] && enumPending[tabKey][variantKey])
-      )
+      tabKey === 'collections'
+        // v0.50.14: collections lock on ANY enum in flight (stashed) — see the
+        // refreshTopbarStatus block; they have no per-tab plex_enum_active key.
+        ? window.__motif_plex_enum_busy
+        : (tabKey && (
+            (enumActive[tabKey] && enumActive[tabKey][variantKey])
+            || (enumPending[tabKey] && enumPending[tabKey][variantKey])
+          ))
     );
     // Mirror the v1.13.65 grace-window check from the main
     // refreshTopbarStatus block — the helper runs at chip-
@@ -1111,6 +1114,13 @@
       // without re-fetching /api/stats. globalEnumPipeline is
       // stashed separately further down (after it's computed).
       window.__motif_enum_pending = enumPending;
+      // v0.50.14: stash the any-plex_enum-in-flight flag so the collections
+      // REFRESH lock can read it at chip-toggle time too. Collections have no
+      // per-tab plex_enum_active key (their refresh enumerates the underlying
+      // movie/tv sections), and reconcile_placement_paths runs as a GLOBAL
+      // post-phase — so the per-tab signal drops before the job ends. plexEnumBusy
+      // stays true through reconcile + queued jobs.
+      window.__motif_plex_enum_busy = plexEnumBusy;
       // v1.12.69: per-tab busy indicator. Toggle .nav-busy on each
       // managed-tab anchor whenever any of that tab's variants
       // (standard / fourk) is currently enumerating. CSS adds a
@@ -1179,11 +1189,16 @@
       // (queued tab stays locked) while leaving enumTabsActive
       // running-only (no cross-tab false-cascade).
       const myTabBusy = !!(
-        tabKey
-        && (
-          (enumActive[tabKey] && enumActive[tabKey][variantKey])
-          || (enumPending[tabKey] && enumPending[tabKey][variantKey])
-        )
+        tabKey === 'collections'
+          // v0.50.14: collections have no plex_enum_active key (their refresh
+          // enums the underlying movie/tv sections), so lock on ANY enum in
+          // flight — the button must stay REFRESHING… through the global
+          // reconcile phase + queued jobs (the user: it re-enabled mid-scan).
+          ? plexEnumBusy
+          : (tabKey && (
+              (enumActive[tabKey] && enumActive[tabKey][variantKey])
+              || (enumPending[tabKey] && enumPending[tabKey][variantKey])
+            ))
       );
       // "Global pipeline" = SCAN ALL from settings (every section
       // queued, naturally lights up multiple tabs as it sweeps) OR
