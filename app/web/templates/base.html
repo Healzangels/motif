@@ -73,7 +73,10 @@
   <script defer src="/static/ops.js?v={{ motif_version }}"></script>
   <script defer src="/static/dashboard-customize.js?v={{ motif_version }}"></script>
 </head>
-<body>
+<body{% if not (request.state.principal is defined and request.state.principal.is_authenticated) %} class="auth-page"{% endif %}>
+  {# v0.50.1: body.auth-page on the chrome-less (unauthenticated) login view —
+     scopes the auth-card vertical-centering + footer-pin in app.css so the
+     standard topbar pages are untouched. #}
   <div class="scanlines" aria-hidden="true"></div>
   {% if request.state.principal is defined and request.state.principal.is_authenticated %}
   {# v1.15.22: SSR topbar + banner state. Same flash-bug class as

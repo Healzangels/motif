@@ -3357,6 +3357,20 @@ code {
 .auth-card-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: var(--gap-3); }
 .auth-glyph { color: var(--amber); font-size: 18px; letter-spacing: 0.4em; }
 
+/* v0.50.1: the login view is chrome-less (no topbar), so centre the auth-card
+   in the viewport instead of top-pinning it at margin:60px — it read top-heavy
+   against the centre-radiating record backdrop. body.auth-page (set in
+   base.html when unauthenticated) makes the page a flex column: .content grows
+   to fill + centres the card, the footer stays pinned at the bottom. Scoped to
+   auth-page so the standard topbar pages are untouched. */
+body.auth-page { display: flex; flex-direction: column; }
+body.auth-page .content {
+  flex: 1 0 auto;
+  display: flex; align-items: center; justify-content: center;
+  padding-top: var(--gap-6); padding-bottom: var(--gap-6);
+}
+body.auth-page .auth-card { margin: 0; }
+
 /* v1.24.95: login groove-ripple background — concentric rings radiate slowly
    from screen centre, echoing the record icon's grooves (the "sound coming off
    the record"). A full-viewport layer BEHIND the auth-card. Base opacity:0 so
@@ -3394,6 +3408,21 @@ code {
 .record-spinner .rec-spindle { fill: var(--green-bright); }
 .record-spinner .rec-hole { fill: var(--bg); }
 @keyframes record-spin { to { transform: rotate(360deg); } }
+
+/* v0.50.1: the motif record icon AS the login backdrop — a large, faint,
+   slowly-spinning vinyl centred behind the auth-card (it's rarely seen
+   elsewhere). Reuses .record-spinner's .rec-* strokes (login.html carries both
+   classes); this only rescales it to fill the viewport, dims it to a backdrop,
+   and slows the spin to a 16s turntable idle. Lives inside .login-bg (fixed,
+   z-index:0) so it sits behind the card. reduced-motion: the v6173 clamp stops
+   the spin → it rests as a static record. */
+.login-record {
+  position: absolute; left: 50%; top: 50%;
+  width: 78vmin; height: 78vmin; margin: -39vmin 0 0 -39vmin;
+  opacity: 0.13;
+}
+.login-record .rec-grooves { animation-duration: 16s; }
+
 .auth-title {
   font-family: var(--font-display);
   font-size: 26px;

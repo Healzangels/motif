@@ -1677,4 +1677,14 @@
 #   commit and the operator's name/email scrubbed from the public repo (prior
 #   internal version was 1.24.95). Versioning restarts at 0.50.0; the entries
 #   above are kept as in-code archaeology (also in docs/PROJECT_HISTORY.md).
-__version__ = "0.50.0"
+# 0.50.1: login screen — centre the auth-card + spinning-record backdrop (the
+#   user). The card was top-pinned (margin:60px) against a record graphic that
+#   radiates from screen-centre — top-heavy + unbalanced. base.html now stamps
+#   body.auth-page when unauthenticated; that scope makes .content a full-height
+#   flex centre (card dead-centre, footer pinned bottom) — standard pages
+#   untouched. The login backdrop gains the motif record icon itself: a large,
+#   faint, slowly-spinning vinyl (reuses the v1.24.95 .record-spinner .rec-*
+#   icon; .login-record only rescales/dims/slows it to a 16s turntable idle)
+#   behind the kept v1.24.95 groove-ripples — "since we don't see [the record]
+#   very much". prefers-reduced-motion rests it static; CSS + template only.
+__version__ = "0.50.1"

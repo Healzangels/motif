@@ -1,10 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Login{% endblock %}
 {% block content %}
-{# v1.24.95: groove-ripple background — slow concentric rings radiate from
-   centre behind the card (echoes the record icon's grooves). Decorative +
-   aria-hidden; reduced-motion leaves them invisible (base opacity:0). #}
+{# v0.50.1: login backdrop — the motif record icon itself (a vinyl: rim +
+   grooves + spindle) spins slowly behind the card, since it's rarely seen
+   elsewhere. Reuses the v1.24.95 .record-spinner .rec-* icon (same markup as
+   recordLoaderHtml); .login-record only rescales/dims/slows it. The v1.24.95
+   groove-ripples still radiate from the same centre as "sound off the record".
+   Decorative + aria-hidden; reduced-motion rests the record static + leaves the
+   ripples invisible (base opacity:0). #}
 <div class="login-bg" aria-hidden="true">
+  <svg class="record-spinner login-record" viewBox="0 0 100 100" aria-hidden="true">
+    <circle class="rec-rim" cx="50" cy="50" r="47" stroke-width="1"/>
+    <g class="rec-grooves">
+      <circle class="rec-groove rec-groove-outer" cx="50" cy="50" r="40" stroke-width="3" stroke-dasharray="170 80"/>
+      <circle class="rec-groove" cx="50" cy="50" r="31" stroke-width="2.6" stroke-dasharray="120 70"/>
+      <circle class="rec-groove" cx="50" cy="50" r="22" stroke-width="2.2" stroke-dasharray="70 140"/>
+      <circle class="rec-tick" cx="50" cy="14" r="2.4"/>
+    </g>
+    <circle class="rec-spindle" cx="50" cy="50" r="6.5"/>
+    <circle class="rec-hole" cx="50" cy="50" r="1.6"/>
+  </svg>
   <span class="login-ripple"></span>
   <span class="login-ripple"></span>
   <span class="login-ripple"></span>
