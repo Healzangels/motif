@@ -1,11 +1,11 @@
-"""v1.24.43 — AWAIT topbar badge surfaces `!P` rows without filtering.
+"""v0.50.34 — the topbar AWAIT badge is removed; the await FILTER + state stay.
 
-the user: the downloaded-but-not-placed (`!P`) rows — e.g. the v1.24.34 edition-
-coverage backups — could only be found by manually filtering to ATTN=!P. This
-adds a topbar AWAIT badge (mirroring RE-PUSH / FAIL): a count + tab_hint that
-routes to the owning tab, hidden at 0. The count (_AWAIT_COUNT_SQL) and the
-attn_pills=await FILTER share one predicate (_LIB_AWAIT_SQL), so the badge can't
-drift from the page it links to (the v1.24.41 count-vs-render lesson).
+The v1.24.43 topbar AWAIT badge flickered in during the download→place handoff (a
+row is transiently downloaded-but-not-placed mid-place) and duplicated RE-PUSH, so
+the user asked to drop it. The surviving surfaces — the attn_pills=await FILTER
+(library.html ATTN chip) + the PL=await row state, both off the shared
+_LIB_AWAIT_SQL predicate — are kept and guarded here, plus a pin that the badge +
+its count machinery (_AWAIT_COUNT_SQL / stats.awaiting) are gone.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from app.core.db import get_conn, init_db
 
 NOW = datetime.now(timezone.utc).isoformat(timespec="seconds")
 AUTH = {"X-Authentik-Username": "testadmin"}
+REPO = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture
@@ -73,12 +74,6 @@ def _placement(c, *, tid, tmdb, media_folder):
               (tid, tmdb, media_folder, NOW))
 
 
-def _count(db):
-    from app.web.api import _AWAIT_COUNT_SQL
-    with get_conn(db) as c:
-        return c.execute(_AWAIT_COUNT_SQL).fetchone()[0]
-
-
 def _filter_rks(client):
     c, _ = client
     r = c.get("/api/library?tab=movies&attn_pills=await", headers=AUTH)
@@ -86,9 +81,9 @@ def _filter_rks(client):
     return {it["rating_key"] for it in r.json()["items"]}
 
 
-# ── the badge counts the same rows the !P filter renders ─────────────────
+# ── the surviving attn_pills=await FILTER renders exactly the !P rows ─────────
 
-def test_count_matches_the_await_filter(client):
+def test_await_filter_renders_only_unplaced(client):
     c, db = client
     with get_conn(db) as conn:
         # await: canonical + no placement + not LPS
@@ -102,41 +97,32 @@ def test_count_matches_the_await_filter(client):
         _theme(conn, 12, -3, "LPS"); _canonical(conn, 12, -3)
         _plex_item(conn, tid=12, tmdb=-3, rk="rk-lps", title="LPS", lps=1)
         conn.commit()
-    assert _count(db) == 1, "only the genuine await row counts"
-    assert _filter_rks(client) == {"rk-await"}, "filter renders exactly that row"
+    assert _filter_rks(client) == {"rk-await"}, "filter renders exactly the !P row"
 
 
-def test_badge_total_and_tab_hint_in_stats(client):
-    c, db = client
-    with get_conn(db) as conn:
-        _theme(conn, 20, -7, "Solo Await"); _canonical(conn, 20, -7)
-        _plex_item(conn, tid=20, tmdb=-7, rk="rk-solo", title="Solo Await")
-        conn.commit()
-    r = c.get("/api/stats", headers=AUTH)
-    assert r.status_code == 200
-    awaiting = r.json()["awaiting"]
-    assert awaiting["total"] == 1
-    assert awaiting["tab_hint"] == "movies"
+def test_await_filter_empty_when_nothing_unplaced(client):
+    assert _filter_rks(client) == set()
 
 
-def test_zero_when_nothing_unplaced(client):
-    c, db = client
-    r = c.get("/api/stats", headers=AUTH)
-    assert r.json()["awaiting"]["total"] == 0  # badge hides at 0
+# ── surface pins: filter kept, badge + count machinery gone ──────────────────
 
-
-# ── source / surface pins ────────────────────────────────────────────────
-
-def test_filter_and_count_share_one_predicate():
-    src = (Path(__file__).resolve().parent.parent / "app" / "web" / "api.py").read_text()
+def test_filter_uses_shared_predicate():
+    src = (REPO / "app" / "web" / "api.py").read_text()
     assert "_LIB_AWAIT_SQL" in src
-    # the attn_pills=await branch appends the shared constant (no inline copy)
     assert "attn_branches.append(_LIB_AWAIT_SQL)" in src
-    assert "_AWAIT_COUNT_SQL = f\"SELECT COUNT(*) {_AWAIT_COUNT_FROM} WHERE {_LIB_AWAIT_SQL}\"" in src
 
 
-def test_badge_wired_in_template_and_js():
-    base = (Path(__file__).resolve().parent.parent / "app" / "web" / "templates" / "base.html").read_text()
-    js = (Path(__file__).resolve().parent.parent / "app" / "web" / "static" / "app.js").read_text()
-    assert 'id="topbar-await-badge"' in base and "attn_pills=await" in base
-    assert "topbar-await-badge" in js and "stats.awaiting" in js
+def test_badge_and_count_machinery_removed():
+    base = (REPO / "app" / "web" / "templates" / "base.html").read_text()
+    js = (REPO / "app" / "web" / "static" / "app.js").read_text()
+    src = (REPO / "app" / "web" / "api.py").read_text()
+    # the topbar badge + its glossary chip are gone
+    assert "topbar-await-badge" not in base and "topbar-await-badge" not in js
+    assert "gc-await" not in base
+    # the badge-only count machinery is gone (the row predicate stays)
+    assert "_AWAIT_COUNT_SQL" not in src
+    assert "_AWAIT_TAB_BREAKDOWN_SQL" not in src
+    assert "stats.awaiting" not in js
+    # the row-level ATTN chip that drives the filter survives
+    lib = (REPO / "app" / "web" / "templates" / "library.html").read_text()
+    assert 'data-attn-pill="await"' in lib

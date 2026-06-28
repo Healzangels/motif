@@ -184,9 +184,11 @@ def test_all_read_sites_gate_the_fallback():
     # main browse + slim filter-count + 3 stats blocks, each gating p_g AND lf_g.
     # v1.24.41: +1 — the RE-PUSH count mini-render (_REPUSH_COUNT_FROM) gates its
     # own p_g '' fallback the same way, so the count matches the rendered RP rows.
-    # v1.24.43: +1 — the AWAIT count mini-render (_AWAIT_COUNT_FROM) gates its lf_g
-    # '' fallback the same way (matches the rendered !P rows).
-    assert src.count(gate) == 12, f"expected 12 '' fallback gates, got {src.count(gate)}"
+    # v1.24.43: +1 — the AWAIT count mini-render (_AWAIT_COUNT_FROM) gated its lf_g
+    # '' fallback the same way. v0.50.34: −1 — the AWAIT badge + its count machinery
+    # were removed (the attn_pills=await FILTER, which rides the main browse gate,
+    # stays), so that dedicated gate is gone.
+    assert src.count(gate) == 11, f"expected 11 '' fallback gates, got {src.count(gate)}"
 
 
 def test_v1_23_87_version_pin():

@@ -79,12 +79,6 @@ def _plex_item(c, *, tid, tmdb, rk, title, lps=0):
               (rk, tid, tmdb, title, lps, NOW, NOW))
 
 
-def _count(db):
-    from app.web.api import _AWAIT_COUNT_SQL
-    with get_conn(db) as c:
-        return c.execute(_AWAIT_COUNT_SQL).fetchone()[0]
-
-
 def _filter_rks(client):
     c, _ = client
     r = c.get("/api/library?tab=movies&attn_pills=await", headers=AUTH)
@@ -94,7 +88,7 @@ def _filter_rks(client):
 
 # ── #1: over_ceiling is excluded from AWAIT, transient rejections stay ────────
 
-def test_over_ceiling_row_excluded_from_count_and_filter(client):
+def test_over_ceiling_row_excluded_from_filter(client):
     c, db = client
     with get_conn(db) as conn:
         # genuine await: canonical + no placement + no rejection
@@ -106,9 +100,8 @@ def test_over_ceiling_row_excluded_from_count_and_filter(client):
         _canonical(conn, 11, -2, reason="plex_rejected:over_ceiling")
         _plex_item(conn, tid=11, tmdb=-2, rk="rk-toobig", title="TooBig")
         conn.commit()
-    assert _count(db) == 1, "over_ceiling row must not inflate the AWAIT count"
     assert _filter_rks(client) == {"rk-await"}, (
-        "attn_pills=await must not render the over_ceiling row (count==filter)")
+        "attn_pills=await must not render the over_ceiling row")
 
 
 def test_transient_rejection_stays_in_await(client):
@@ -121,20 +114,19 @@ def test_transient_rejection_stays_in_await(client):
         _canonical(conn, 20, -7, reason="plex_rejected:HTTP_500")
         _plex_item(conn, tid=20, tmdb=-7, rk="rk-transient", title="Transient")
         conn.commit()
-    assert _count(db) == 1, "a transient rejection is still awaiting placement"
-    assert _filter_rks(client) == {"rk-transient"}
+    assert _filter_rks(client) == {"rk-transient"}, (
+        "a transient rejection is still awaiting placement")
 
 
-def test_badge_total_drops_when_only_over_ceiling(client):
+def test_filter_empty_when_only_over_ceiling(client):
     c, db = client
     with get_conn(db) as conn:
         _theme(conn, 30, -9, "OnlyTooBig")
         _canonical(conn, 30, -9, reason="plex_rejected:over_ceiling")
         _plex_item(conn, tid=30, tmdb=-9, rk="rk-only", title="OnlyTooBig")
         conn.commit()
-    r = c.get("/api/stats", headers=AUTH)
-    assert r.status_code == 200
-    assert r.json()["awaiting"]["total"] == 0, "badge hides — nothing actionable"
+    assert _filter_rks(client) == set(), (
+        "nothing actionable — the over_ceiling row is excluded from the filter")
 
 
 def test_predicate_excludes_over_ceiling_clause():

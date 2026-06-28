@@ -140,11 +140,6 @@
    topbar badge, the ⟳ ATTN chip, and the RP LINK badge read as one color. */
 .op-pill.op-tone-repush   { border-color: rgba(var(--orange-rgb),0.5); color: var(--orange); }
 .op-pill.op-tone-repush:hover   { box-shadow: 0 0 10px rgba(var(--orange-rgb),0.35); }
-/* v1.24.43: AWAIT badge — amber, sharing the !P await glyph/chip tone so the
-   topbar badge and the !P ATTN chip read as one color. */
-.op-pill.op-tone-await    { border-color: rgba(var(--amber-rgb),0.5); color: var(--amber); }
-.op-pill.op-tone-await:hover    { box-shadow: 0 0 10px rgba(var(--amber-rgb),0.35); }
-
 /* v1.12.118: the always-visible "// IDLE" pill that anchors the
  * topbar status slot when no ops are running. Same visual family as
  * the FAIL/UPD/active op-pills — no dot-to-bar flip when an op

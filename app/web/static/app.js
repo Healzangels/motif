@@ -826,7 +826,6 @@
           fail: (stats.failures && stats.failures.total) || 0,
           drop: (stats.drops && stats.drops.total) || 0,
           repush: (stats.repush && stats.repush.total) || 0,  // v1.24.40
-          awaiting: (stats.awaiting && stats.awaiting.total) || 0,  // v1.24.43
         };
         localStorage.setItem('motif:topbar_counts', JSON.stringify(cached));
       } catch (_) { /* private mode quota — fine, just lose the cache */ }
@@ -973,27 +972,9 @@
           repushBadge.hidden = true;
         }
       }
-      // v1.24.43: AWAIT badge — downloaded-but-not-placed (!P) rows, surfaced
-      // proactively like FAIL/RE-PUSH. v1.24.44: cycles through every impacted
-      // tab (incl. collections — the bug the user caught with the single hint).
-      const awaitBadge = $('#topbar-await-badge');
-      if (awaitBadge) {
-        const n = (stats.awaiting && stats.awaiting.total) || 0;
-        const cnt = $('#topbar-await-count');
-        if (n > 0) {
-          if (cnt) cnt.textContent = n;
-          awaitBadge.hidden = false;
-          const breakdown = (stats.awaiting && Array.isArray(stats.awaiting.tabs))
-            ? stats.awaiting.tabs : [];
-          awaitBadge.dataset.awaitTabs = JSON.stringify(breakdown);
-          const firstTab = breakdown[0]?.tab
-            || (stats.awaiting && stats.awaiting.tab_hint) || 'movies';
-          const firstFourk = breakdown[0]?.fourk ? '1' : '0';
-          awaitBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=await`;
-        } else {
-          awaitBadge.hidden = true;
-        }
-      }
+      // v0.50.34: the topbar AWAIT badge was removed — it flickered in during the
+      // download→place handoff + duplicated RE-PUSH. The attn_pills=await filter +
+      // PL=await row state stay; staged-but-not-placed themes are still findable.
       // v1.19.68: COOKIES topbar badge removed. Cookies-needed
       // rows (failure_kind='cookies_expired') count toward the
       // FAIL pulse above (its SQL is `failure_kind IS NOT NULL
@@ -18589,7 +18570,6 @@
     setBadge('topbar-failures-badge', 'topbar-failures-count', cached.fail);
     setBadge('topbar-drops-badge',    'topbar-drops-count',    cached.drop);
     setBadge('topbar-repush-badge',   'topbar-repush-count',   cached.repush);  // v1.24.40
-    setBadge('topbar-await-badge',    'topbar-await-count',    cached.awaiting);  // v1.24.43
   }
 
   document.addEventListener('DOMContentLoaded', () => {
@@ -18688,7 +18668,6 @@
     bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update');
     bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped');
     bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush');
-    bindBadgeCycle('topbar-await-badge', 'awaitTabs', 'attn_pills=await');
     bindSettingsTabs();
     bindImportPanel();
     bindConfigSaves();

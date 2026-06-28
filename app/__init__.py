@@ -1934,4 +1934,13 @@
 #   on open; restored here but made DISTINCT — static bg tint + left accent bar vs
 #   hover's text-only cyan. JS already toggled .is-active off the live filter match
 #   (only the genuinely-applied preset), so just the CSS came back. app.css.
-__version__ = "0.50.33"
+# 0.50.34: remove the topbar AWAIT badge (the user: it "appears briefly while they
+#   place" + is "redundant to re-push"). It flickered in during the download→place
+#   handoff — a row is transiently downloaded-but-not-placed mid-place — and
+#   duplicated the adjacent RE-PUSH badge. Removed the badge + glossary chip
+#   (base.html), its JS render/cache/cycle (app.js), its tone/chip CSS (ops.css +
+#   app.css), and the badge-only count machinery (_AWAIT_COUNT_SQL / _AWAIT_COUNT_
+#   FROM / _AWAIT_TAB_BREAKDOWN_SQL / SSR awaiting_count / stats.awaiting). KEPT:
+#   the attn_pills=await FILTER + the PL=await row state (both off _LIB_AWAIT_SQL),
+#   so staged-but-not-placed themes are still findable + filterable.
+__version__ = "0.50.34"

@@ -252,17 +252,11 @@
         <span class="op-pill-count" id="topbar-repush-count">{{ _ssr_top.repush_count }}</span>
         <span class="op-pill-label">RE-PUSH</span>
       </a>
-      {# v1.24.43: AWAIT badge — proactive surfacing of !P rows (a theme is
-         downloaded but not deployed to Plex: canonical present, no placement,
-         Plex not self-serving). Mirrors the RE-PUSH badge: hidden at 0, click →
-         ?attn_pills=await (same row set as the !P ATTN chip). the user wanted these
-         surfaced like FAIL instead of having to filter to find them. #}
-      <a href="/movies?attn_pills=await" class="op-pill op-tone-await" id="topbar-await-badge"
-         {% if not _ssr_top.awaiting_count %}hidden{% endif %}
-         title="One or more themes are downloaded but not deployed to Plex — // PLACE to deploy, or leave staged as a backup while Plex serves its own.">
-        <span class="op-pill-count" id="topbar-await-count">{{ _ssr_top.awaiting_count }}</span>
-        <span class="op-pill-label">AWAIT</span>
-      </a>
+      {# v0.50.34: the topbar AWAIT badge was removed — it flickered in during the
+         download→place handoff (a row is transiently downloaded-but-not-placed
+         mid-place) and duplicated RE-PUSH. The attn_pills=await FILTER + the
+         PL=await row state stay, so staged-but-not-placed themes are still
+         findable; they're just no longer proactively surfaced in the topbar. #}
       <!-- v1.13.11: DISK warning pill — surfaced when free space on
            themes_dir's filesystem dips below paths.min_free_disk_mb.
            Downloads are being blocked transiently while this is
@@ -428,8 +422,6 @@
           <div class="help-gloss-row"><span class="help-gloss-chip gc-none">DROP</span><span class="help-gloss-def">Themes ThemerrDB stopped tracking.</span></div>
           {# v1.24.40: RE-PUSH topbar badge. #}
           <div class="help-gloss-row"><span class="help-gloss-chip gc-repush">RE-PUSH</span><span class="help-gloss-def">Uploaded themes Plex dropped (re-add destroyed the rating_key) — click to PLACE them again.</span></div>
-          {# v1.24.43: AWAIT topbar badge. #}
-          <div class="help-gloss-row"><span class="help-gloss-chip gc-await">AWAIT</span><span class="help-gloss-def">Themes downloaded but not deployed to Plex — click to PLACE them, or leave staged as a backup.</span></div>
           <div class="help-gloss-row"><span class="help-gloss-chip gc-disk">DISK</span><span class="help-gloss-def">Low free disk — downloads are paused until space frees up.</span></div>
         </div>
       </section>

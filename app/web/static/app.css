@@ -1272,7 +1272,6 @@ body.help-mode .help-mode-bar { display: flex; }
 .gc-fail { color: var(--red);   border-color: rgba(var(--red-rgb), 0.45); }
 .gc-disk { color: var(--amber); border-color: rgba(var(--amber-rgb), 0.45); }
 .gc-repush { color: var(--orange); border-color: rgba(var(--orange-rgb), 0.45); } /* v1.24.40 */
-.gc-await { color: var(--amber); border-color: rgba(var(--amber-rgb), 0.45); } /* v1.24.43 */
 .help-gloss-dot {
   flex: 0 0 auto;
   width: 9px;

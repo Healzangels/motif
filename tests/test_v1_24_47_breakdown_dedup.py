@@ -69,6 +69,6 @@ def test_redundant_tab_hint_queries_removed():
     assert "_REPUSH_TAB_HINT_SQL" not in src, "folded into breakdown[0] (review #5)"
     assert "_AWAIT_TAB_HINT_SQL" not in src
     # the cycle badges route their tab_hint + tabs through the shared helpers
+    # (v0.50.34: the AWAIT badge + its awaiting_tab_breakdown_rows were removed).
     assert "_breakdown_tab_hint(repush_tab_breakdown_rows)" in src
-    assert "_breakdown_tabs(awaiting_tab_breakdown_rows)" in src
     assert "_breakdown_tabs(drops_tab_breakdown_rows)" in src

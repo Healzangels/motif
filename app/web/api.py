@@ -1319,17 +1319,19 @@ _REPUSH_COUNT_SQL = f"SELECT COUNT(*) {_REPUSH_COUNT_FROM} WHERE {_LIB_STALE_PU_
 # v1.24.43: AWAIT topbar badge — a count of `!P` rows (a theme is DOWNLOADED but
 # not deployed: canonical present, no placement, Plex not self-serving). the user
 # wanted these surfaced like FAIL instead of having to filter to ATTN=!P.
-# _LIB_AWAIT_SQL is the SINGLE predicate shared by the attn_pills=await FILTER and
-# this COUNT, so the badge can't drift from the filter it links to (the v1.24.41
-# count-vs-render lesson). _AWAIT_COUNT_FROM extends _REPUSH_COUNT_FROM with the
-# lf_e/lf_g local_files joins the predicate reads (same edition-fallback gates as
-# the render), so the count == the rendered !P rows.
+# _LIB_AWAIT_SQL is the predicate behind the attn_pills=await FILTER and the
+# PL=await row state — "downloaded but not placed" (canonical present, no
+# placement, Plex not self-serving).
+# v0.50.34: the topbar AWAIT badge that also consumed this (via a COUNT) was
+# removed — it flickered in during the download→place handoff and duplicated
+# RE-PUSH (the user). The filter + the PL=await row state stay; the badge's count
+# + per-tab-breakdown SQL went with it.
 # v1.24.46: exclude rows terminal-failed with plex_rejected:over_ceiling. Those
 # are over-Plex-ceiling collection themes with no sidecar fallback — they show the
 # red ⊘ "too large, can't place" row glyph (v1.24.45), so counting them as AWAIT
 # ("downloaded, click to PLACE") double-surfaced one doomed row + re-enqueued the
 # doomed upload on click. They're not actionable until the user shortens the theme,
-# so they don't belong in the AWAIT count/filter. NULL-safe `IS NOT` keeps NULL +
+# so they don't belong in the AWAIT filter. NULL-safe `IS NOT` keeps NULL +
 # every other reason (incl. genuinely-retriable rows) in AWAIT.
 _LIB_AWAIT_SQL = (
     "(COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
@@ -1337,32 +1339,12 @@ _LIB_AWAIT_SQL = (
     " AND COALESCE(pi.plex_independent_theme, 0) = 0 "
     " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
     "     IS NOT 'plex_rejected:over_ceiling')")
-_AWAIT_COUNT_FROM = (
-    _REPUSH_COUNT_FROM +
-    " LEFT JOIN local_files lf_e "
-    "  ON lf_e.media_type = t.media_type AND lf_e.tmdb_id = t.tmdb_id "
-    " AND lf_e.section_id = pi.section_id AND lf_e.edition_key = pi.edition_key "
-    " LEFT JOIN local_files lf_g "
-    "  ON lf_g.media_type = t.media_type AND lf_g.tmdb_id = t.tmdb_id "
-    " AND lf_g.section_id = pi.section_id AND lf_g.edition_key = '' "
-    " AND (p_e.media_folder IS NOT NULL "
-    "      OR (SELECT COUNT(DISTINCT _ec.edition_key) FROM plex_items _ec "
-    "          WHERE _ec.theme_id = pi.theme_id AND _ec.section_id = pi.section_id) <= 1)")
-_AWAIT_COUNT_SQL = f"SELECT COUNT(*) {_AWAIT_COUNT_FROM} WHERE {_LIB_AWAIT_SQL}"
-# v1.24.44: per-(tab, fourk) breakdown for the RE-PUSH / AWAIT badges so the
-# topbar pill CYCLES through every impacted section on successive clicks
-# (incl. collections) — like FAIL/UPD. the user: a collection-only AWAIT row was
-# unreachable because the single tab_hint only ever routed to /movies. Same
-# plex_items-anchored shape + shared predicate as the count, so the breakdown
-# can't surface a tab the filter wouldn't render.
+# v1.24.44: per-(tab, fourk) breakdown for the RE-PUSH badge so the topbar pill
+# CYCLES through every impacted section on successive clicks (incl. collections) —
+# like FAIL/UPD. Same plex_items-anchored shape as the count.
 _REPUSH_TAB_BREAKDOWN_SQL = (
     f"SELECT ps.type, ps.is_anime, ps.is_4k, pi.media_type AS item_media_type, "
     f"COUNT(*) AS n {_REPUSH_COUNT_FROM} WHERE {_LIB_STALE_PU_SQL} "
-    f"GROUP BY ps.type, ps.is_anime, ps.is_4k, pi.media_type "
-    f"ORDER BY ps.is_anime, ps.type, ps.is_4k")
-_AWAIT_TAB_BREAKDOWN_SQL = (
-    f"SELECT ps.type, ps.is_anime, ps.is_4k, pi.media_type AS item_media_type, "
-    f"COUNT(*) AS n {_AWAIT_COUNT_FROM} WHERE {_LIB_AWAIT_SQL} "
     f"GROUP BY ps.type, ps.is_anime, ps.is_4k, pi.media_type "
     f"ORDER BY ps.is_anime, ps.type, ps.is_4k")
 
@@ -2826,8 +2808,9 @@ def _library_main_query(
                 # "intentional, recoverable" from "actually awaiting
                 # placement". the user's repro: post-v1.14.27 LET PLEX
                 # SERVE rows polluted the // NEEDS WORK count.
-                # v1.24.43: shared with the AWAIT badge count (_LIB_AWAIT_SQL) so
-                # the badge can't drift from this filter.
+                # v1.24.43: the attn_pills=await filter — "downloaded but not
+                # placed" (_LIB_AWAIT_SQL). v0.50.34: the topbar AWAIT badge that
+                # shared this predicate was removed; the filter + PL=await stay.
                 attn_branches.append(_LIB_AWAIT_SQL)
             elif p == "restore":
                 # v1.23.7: restorable previous-URL snapshot — the
@@ -6225,7 +6208,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "cookies_count": 0,
             "drops_count": 0,
             "repush_count": 0,  # v1.24.40: topbar RE-PUSH badge
-            "awaiting_count": 0,  # v1.24.43: topbar AWAIT badge
             "disk_low": False,
             "disk_free_mb": None,
             "dry_run": False,
@@ -6271,16 +6253,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           AND t.upstream_source != 'plex_orphan') AS drops_count,
                       -- v1.24.40: genuinely-dead re-push count for the topbar
                       -- RE-PUSH badge (proactive RP discovery, like FAIL/UPD).
-                      ({_REPUSH_COUNT_SQL}) AS repush_count,
-                      -- v1.24.43: downloaded-but-not-placed (!P) count for the
-                      -- topbar AWAIT badge — shares _LIB_AWAIT_SQL with the filter.
-                      ({_AWAIT_COUNT_SQL}) AS awaiting_count
+                      ({_REPUSH_COUNT_SQL}) AS repush_count
                 """).fetchone()
             state["failures_count"] = int(row["failures_count"] or 0)
             state["cookies_count"] = int(row["cookies_count"] or 0)
             state["drops_count"] = int(row["drops_count"] or 0)
             state["repush_count"] = int(row["repush_count"] or 0)
-            state["awaiting_count"] = int(row["awaiting_count"] or 0)
             # v1.15.55: op-mini SSR — pick the most-recently-
             # updated running/cancelling op_progress row + map
             # kind → tone (mirrors TONE_BY_KIND in ops.js).
@@ -7916,9 +7894,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   -- v1.24.40: genuinely-dead re-push count for the topbar
                   -- RE-PUSH badge (shares _REPUSH_COUNT_SQL with the SSR frame).
                   ({_REPUSH_COUNT_SQL}) AS repush_total,
-                  -- v1.24.43: downloaded-but-not-placed (!P) count for the topbar
-                  -- AWAIT badge (shares _AWAIT_COUNT_SQL with the SSR + filter).
-                  ({_AWAIT_COUNT_SQL}) AS awaiting_total,
                   -- v1.15.27: themes-added activity stats. Pre-fix
                   -- the dashboard had no surface for "X new themes
                   -- added today/this week" — the user: "would be
@@ -8250,8 +8225,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # breakdown's ordering already subsumes was dropped (review #5).
             repush_tab_breakdown_rows = conn.execute(
                 _REPUSH_TAB_BREAKDOWN_SQL).fetchall()
-            awaiting_tab_breakdown_rows = conn.execute(
-                _AWAIT_TAB_BREAKDOWN_SQL).fetchall()
             # v1.13.78: per-(tab, fourk) breakdown for the topbar UPD
             # pill so successive clicks rotate through every variant
             # that has pending updates (Movies → 4K Movies → TV → 4K
@@ -8480,7 +8453,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 update_tab_breakdown_rows,
                 drops_tab_breakdown_rows,
                 repush_tab_breakdown_rows,  # v1.24.44: RE-PUSH cycle tabs
-                awaiting_tab_breakdown_rows,  # v1.24.44: AWAIT cycle tabs
                 # v1.14.73: pending sections piped through alongside
                 # the running set so the per-tab/per-section button
                 # locks can include them. enumTabsActive (driving
@@ -8602,7 +8574,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
          update_tab_breakdown_rows,
          drops_tab_breakdown_rows,
          repush_tab_breakdown_rows,  # v1.24.44
-         awaiting_tab_breakdown_rows,  # v1.24.44
          enum_pending_rows) = await run_in_threadpool(_stats_sync, db)
         # v1.11.27: aggregate the per-section enum_running rows into a
         # tab-variant map and a section_id list so the UI can lock
@@ -8855,21 +8826,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # v1.24.44: per-(tab, fourk) breakdown — the JS cycles the badge
                 # through each on successive clicks (incl. collections).
                 "tabs": _breakdown_tabs(repush_tab_breakdown_rows),
-            },
-            # v1.24.43: AWAIT surface = the topbar AWAIT badge + the
-            # attn_pills=await filter. A theme is downloaded but not deployed
-            # (canonical present, no placement, Plex not self-serving) — // PLACE
-            # to deploy, or leave it as a backup. Counts via _AWAIT_COUNT_SQL so
-            # the badge tracks the rendered !P rows.
-            "awaiting": {
-                "total": row["awaiting_total"],
-                # v1.24.47: derived from breakdown[0] via the shared
-                # _breakdown_tab_hint (was a separate LIMIT-1 query, review #5).
-                "tab_hint": _breakdown_tab_hint(awaiting_tab_breakdown_rows),
-                # v1.24.44: per-(tab, fourk) breakdown for the cycle (collections
-                # included — the bug the user caught: a collection-only AWAIT was
-                # unreachable via the single tab_hint).
-                "tabs": _breakdown_tabs(awaiting_tab_breakdown_rows),
             },
             # v1.15.27: themes-added activity surface. Powers the
             # new dashboard ACTIVITY section's "ADDED TODAY" /
