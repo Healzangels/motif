@@ -4143,7 +4143,9 @@
     // that include the coverage report but not these cards no-op.
     const setCov = (key, themed, totalN, ready) => {
       const pctEl = document.getElementById(`cov-${key}-pct`);
-      if (pctEl) pctEl.textContent = totalN ? `${Math.round(themed / totalN * 100)}%` : '—';
+      // v0.50.6: defer to the count-up while data-countup is pending (set by the
+      // dashboard.html pre-paint reset) so the live poll doesn't clobber the climb.
+      if (pctEl && !pctEl.dataset.countup) pctEl.textContent = totalN ? `${Math.round(themed / totalN * 100)}%` : '—';
       const bar = $(`[data-bar-fill="${key}"]`);
       if (bar) bar.style.width = `${totalN ? (themed / totalN * 100) : 0}%`;
       const themedEl = document.getElementById(`cov-${key}-themed`);
@@ -18750,6 +18752,33 @@
         });
     }
 
+    // v0.50.6: glitch-free count-up. dashboard.html's pre-paint inline script
+    // reset each coverage % to 0 + stashed its value in data-countup; climb
+    // 0→value here. setCov defers its pct write while data-countup is present
+    // (see renderPlexCoverage), so the live poll doesn't clobber the climb. The
+    // data-countup presence IS the once-gate — after the climb clears it, this
+    // is a no-op. reduced-motion users never got data-countup (the inline script
+    // skipped), so nothing animates for them.
+    function dashCountUp() {
+      document.querySelectorAll('[data-countup]').forEach((el) => {
+        const raw = el.dataset.countup;
+        const target = parseInt(raw, 10);
+        const suffix = /%$/.test(raw) ? '%' : '';
+        if (!isFinite(target)) { el.textContent = raw; el.removeAttribute('data-countup'); return; }
+        let start = null;
+        const dur = 1100;
+        const step = (ts) => {
+          if (start === null) start = ts;
+          const p = Math.min(1, (ts - start) / dur);
+          const eased = 1 - Math.pow(1 - p, 3);
+          el.textContent = Math.round(target * eased) + suffix;
+          if (p < 1) { requestAnimationFrame(step); }
+          else { el.textContent = raw; el.removeAttribute('data-countup'); }
+        };
+        requestAnimationFrame(step);
+      });
+    }
+    dashCountUp();
     loadDashboard().catch(console.error);
     // v1.13.75: one-time backfill banner. Fires only on the dashboard
     // page (the element only exists there); cheap GET that returns

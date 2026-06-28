@@ -269,6 +269,25 @@
     </footer>
   </article>
 </section>
+{# v0.50.6: glitch-free count-up. This inline script is parser-blocking, so it
+   runs BEFORE the coverage %s paint — it stashes each SSR value in data-countup
+   and resets the text to 0%, then app.js dashCountUp() climbs 0→value with no
+   value-then-reset flash. reduced-motion users keep the static SSR value (we
+   skip the reset, so there's nothing to animate). #}
+<script>
+  (function () {
+    try {
+      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      ['movies', 'tv', 'anime', 'collections'].forEach(function (k) {
+        var el = document.getElementById('cov-' + k + '-pct');
+        if (el && /\d/.test(el.textContent)) {
+          el.dataset.countup = el.textContent;
+          el.textContent = '0%';
+        }
+      });
+    } catch (e) { /* leave the SSR values untouched on any error */ }
+  })();
+</script>
 
 {# v1.18.50: PLEX LIBRARY section relocated up to immediately
    follow COVERAGE so both COLLECTIONS cards (TDB COLLECTIONS

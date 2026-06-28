@@ -1719,4 +1719,13 @@
 #   split out: the stat numbers are SSR-baked, so an on-load count-up reads as a
 #   brief value-then-reset flash unless handled specially — deferred pending the
 #   user's call on the tradeoff. CSS + app.js.
-__version__ = "0.50.5"
+# 0.50.6: dashboard count-up (the user — flavor pass 3/4, count-up half;
+#   GLITCH-FREE variant the user chose). The 4 coverage % numbers are SSR-baked,
+#   so a naive count-up flashes the real value then resets to 0. Fix: a parser-
+#   blocking inline script in dashboard.html stashes each % in data-countup +
+#   resets it to 0% BEFORE first paint; app.js dashCountUp() then climbs 0→value
+#   (easeOutCubic, 1.1s) and clears data-countup. setCov defers its pct write
+#   while data-countup is pending so the 1s coverage poll can't clobber the
+#   climb. reduced-motion users skip the inline reset (keep the static SSR value
+#   — nothing animates). data-countup presence is the once-gate. app.js + template.
+__version__ = "0.50.6"
