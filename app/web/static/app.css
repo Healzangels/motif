@@ -335,12 +335,27 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   background: var(--amber);
   border-radius: 1px;
   transform-origin: bottom;
-  animation: brand-eq-1 0.85s ease-in-out infinite;
+  /* v0.50.4: SLOW ambient idle drift by default (the user — the v0.50.2 rate
+     "feels way too fast" at rest). The lively 0.7-1.5s rate is now the SYNCING
+     speed, applied via .brand-mark.is-active below (toggled by app.js's
+     anyMutatingOpActive). Same brand-eq-1..5 keyframes; only the tempo changes,
+     so the reduced-motion clamp still rests every band at full height. */
+  animation: brand-eq-1 2.8s ease-in-out infinite;
 }
-.brand-mark .brand-bar:nth-child(2) { animation: brand-eq-2 1.3s ease-in-out infinite; }
-.brand-mark .brand-bar:nth-child(3) { animation: brand-eq-3 0.7s ease-in-out infinite; }
-.brand-mark .brand-bar:nth-child(4) { animation: brand-eq-4 1.5s ease-in-out infinite; }
-.brand-mark .brand-bar:nth-child(5) { animation: brand-eq-5 1.05s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(2) { animation: brand-eq-2 4s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(3) { animation: brand-eq-3 2.4s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(4) { animation: brand-eq-4 4.4s ease-in-out infinite; }
+.brand-mark .brand-bar:nth-child(5) { animation: brand-eq-5 3.2s ease-in-out infinite; }
+/* v0.50.4: SYNCING — motif is working. The bands snap to the lively rate +
+   brighter amber: an ambient "now playing" activity indicator. Override only
+   the tempo/color (keyframe names + infinite iteration inherit from the base),
+   and .is-active outranks the base by specificity. */
+.brand-mark.is-active .brand-bar { background: var(--amber-bright); }
+.brand-mark.is-active .brand-bar:nth-child(1) { animation-duration: 0.85s; }
+.brand-mark.is-active .brand-bar:nth-child(2) { animation-duration: 1.3s; }
+.brand-mark.is-active .brand-bar:nth-child(3) { animation-duration: 0.7s; }
+.brand-mark.is-active .brand-bar:nth-child(4) { animation-duration: 1.5s; }
+.brand-mark.is-active .brand-bar:nth-child(5) { animation-duration: 1.05s; }
 @keyframes brand-eq-1 { 0%, 100% { transform: scaleY(0.30); } 25% { transform: scaleY(0.85); } 55% { transform: scaleY(0.45); } 80% { transform: scaleY(1); } }
 @keyframes brand-eq-2 { 0%, 100% { transform: scaleY(0.70); } 30% { transform: scaleY(0.25); } 60% { transform: scaleY(0.95); } }
 @keyframes brand-eq-3 { 0%, 100% { transform: scaleY(0.50); } 20% { transform: scaleY(1); } 50% { transform: scaleY(0.30); } 75% { transform: scaleY(0.72); } }

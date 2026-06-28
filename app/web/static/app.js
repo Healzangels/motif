@@ -1337,6 +1337,12 @@
         // cycle on the next tick anyway.
         setTimeout(() => loadLibrary().catch(() => {}), 200);
       }
+      // v0.50.4: reactive brand-mark EQ — slow idle drift normally, lively
+      // "sync bars" (brighter + faster, via .brand-mark.is-active in app.css)
+      // while any op runs. Ambient "now playing while motif works" indicator.
+      // No-op on chrome-less pages where .brand-mark is absent (login).
+      const _brandMark = document.querySelector('.brand-mark');
+      if (_brandMark) _brandMark.classList.toggle('is-active', anyMutatingOpActive);
       // v1.13.77: cascade-only signal for the dash SYNC THEMERRDB
       // lock. Pre-fix the lock used globalEnumPipeline, which
       // includes scan_all (manual REFRESH PLEX) — so clicking

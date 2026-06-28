@@ -1702,4 +1702,12 @@
 #   (translateY(1px), kept). All brief user-initiated TRANSITIONS, so the
 #   v1.15.134 reduced-motion policy (keeps transitions, kills only infinite
 #   animations) leaves them intact by design. CSS-only.
-__version__ = "0.50.3"
+# 0.50.4: reactive brand-mark EQ (the user — flavor pass 2/4). The v0.50.2 synth
+#   bars ran at one lively rate always, which "feels way too fast" at rest. Now
+#   the bands drift SLOWLY when idle (2.4-4.4s) and snap to the lively rate
+#   (0.7-1.5s) + brighter amber while motif is working — an ambient "now playing"
+#   activity indicator. CSS adds .brand-mark.is-active overrides (tempo + color
+#   only; brand-eq-1..5 keyframes + infinite iteration inherit, so reduced-motion
+#   still rests full bars); app.js refreshTopbarStatus toggles .is-active off the
+#   existing anyMutatingOpActive signal (no-op on the chrome-less login page).
+__version__ = "0.50.4"
