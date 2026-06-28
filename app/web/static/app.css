@@ -1542,7 +1542,15 @@ body.help-mode .settings-help-about { display: block; }
 .library-presets-popup-list .library-presets-popup-apply:hover {
   color: var(--cyan);
 }
-.library-presets-popup-list .library-presets-popup-apply.is-active {
+/* v0.50.31: blue is a hover/press affordance only — NOT a persistent "this
+   preset is applied" highlight. The user found the applied row showing cyan the
+   moment the popover opens confusing ("only be blue when selected or on hover
+   but they are when you first open"). The bookmark star (.has-active) already
+   signals that the current view is a saved filter, so the row paint was
+   redundant. :active gives the click-moment "selected" flash they wanted. JS
+   still toggles .is-active (drives _activePresetId + the star) — it just no
+   longer paints the row. */
+.library-presets-popup-list .library-presets-popup-apply:active {
   color: var(--cyan);
 }
 .library-presets-popup-list .library-presets-popup-del {

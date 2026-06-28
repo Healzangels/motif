@@ -1910,4 +1910,13 @@
 #   downward instead of >"). Was a ▾ base rotating 180°→▴ — wrong direction +
 #   wrong glyph. Swapped the glyph to ► and the open rotation 180°→90°, added a
 #   transition so it eases like the legend caret. library.html + app.css.
-__version__ = "0.50.30"
+# 0.50.31: SAVED FILTERS rows go blue on hover/press only — dropped the persistent
+#   ".is-active" cyan that painted the currently-applied preset the instant the
+#   popover opened (the user: "only be blue when selected or on hover but they are
+#   when you first open"). The match was honest — the applied filter is restored
+#   from the cross-tab snapshot on load, so its row was correctly cyan — but the
+#   auto-paint read as a confusing pre-selection; the bookmark star already signals
+#   an active saved filter. Kept :hover, added :active for the click-moment
+#   "selected" flash. JS still toggles .is-active (drives _activePresetId + the
+#   star), it just no longer paints the row. app.css only.
+__version__ = "0.50.31"
