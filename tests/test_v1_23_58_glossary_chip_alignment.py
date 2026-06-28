@@ -38,10 +38,11 @@ def test_help_gloss_row_uses_display_contents():
     assert "display: contents" in row, "chip + def join the grid for column alignment"
 
 
-def test_flag_glyphs_left_align_with_the_rail():
-    """v1.23.86: the FLAGS glyphs (⚠ / ! / ↺) must left-align in the 26px rail
-    like the SRC badges + DL dots above — they were centered, sitting ~13px
-    right of the column (the user's screenshot)."""
+def test_chips_centre_in_the_rail():
+    """v0.50.24: the user reversed v1.23.86 — every chip/dot/glyph now CENTRES in
+    the 26px rail (justify-self:center on the col-1 indicator) while the defs keep
+    lining up (justify-items:start). The grid vertically centres them too."""
+    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: center; }" in APP_CSS
     glyph = _rule(".help-gloss-glyph")
-    assert "text-align: left" in glyph
-    assert "text-align: center" not in glyph
+    assert "text-align: center" in glyph
+    assert "align-items: center" in _rule(".help-gloss-grid")

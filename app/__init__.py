@@ -1872,4 +1872,13 @@
 #   viewport bottom on short pages while still sitting below the content on long
 #   ones. The login page already proved the pattern (body.auth-page); the sticky
 #   topbar still works inside the flex column. app.css only.
-__version__ = "0.50.23"
+# 0.50.24: dashboard + glossary polish (the user). (1) DASH → DASHBOARD (nav
+#   link + page <h1>). (2) glossary/legend chips: every SRC/LINK/DL/PL/FLAGS
+#   indicator now CENTRES in its 26px rail (justify-self:center on the col-1 item;
+#   defs keep justify-items:start so they still line up) + the grid vertically
+#   centres them (align-items baseline→center); reverses v1.23.86's left-aligned
+#   FLAGS glyphs. (3) // SOURCE BREAKDOWN header gets the standard framed .block-head
+#   bar back (the bare title threw off inter-section spacing) while the section
+#   stays borderless so the 3 donuts remain their own cards (the user chose "header
+#   bar only"). base.html + dashboard.html + app.css.
+__version__ = "0.50.24"

@@ -33,12 +33,16 @@ def test_source_pie_col_is_a_card_with_donut_beside_legend():
     assert '"chart legend"' in col
 
 
-def test_outer_section_is_borderless():
+def test_outer_section_is_borderless_but_header_keeps_the_bar():
+    # v1.24.68: the section stays borderless (3 donuts read as their own cards).
     block = _rule("#source-breakdown-block {")
     assert "border: 0" in block
     assert "background: transparent" in block
-    head = _rule("#source-breakdown-block > .block-head {")
-    assert "border-bottom: 0" in head
+    # v0.50.24: the // SOURCE BREAKDOWN header now keeps the STANDARD framed bar
+    # (the user) — the .block-head override that stripped it is gone.
+    assert "#source-breakdown-block > .block-head {" not in APP_CSS
+    # the donut row gets top spacing off the restored bar.
+    assert "#source-breakdown-block > .source-pie-row { margin-top:" in APP_CSS
 
 
 def test_cards_wrap_responsively():

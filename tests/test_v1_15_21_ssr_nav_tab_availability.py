@@ -128,8 +128,8 @@ def test_dash_logs_settings_nav_links_unchanged():
     repro specifically noted LOGS didn't flash; that invariant
     must hold post-fix."""
     src = BASE_HTML.read_text()
-    # DASH always visible (no conditional).
-    assert '<a href="/" data-nav="dashboard">DASH</a>' in src
+    # DASHBOARD always visible (no conditional). v0.50.24: label DASH → DASHBOARD.
+    assert '<a href="/" data-nav="dashboard">DASHBOARD</a>' in src
     # LOGS always visible.
     assert '<a href="/queue" data-nav="queue">LOGS</a>' in src
     # SETTINGS always visible (the nav-attn dot inside has its own

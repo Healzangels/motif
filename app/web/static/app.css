@@ -1145,11 +1145,18 @@ body.help-mode .help-mode-bar { display: flex; }
      the single-letter SRC badges, the 2-char LINK glyphs, the dots, and the
      flag glyphs; the wider text-pill sections opt into .help-gloss-grid-wide. */
   grid-template-columns: 26px 1fr;
-  align-items: baseline;
+  /* v0.50.24: vertically centre the chip/dot/glyph against its definition (was
+     baseline, which sat the small dots low). justify-items stays `start` so the
+     DEFS keep lining up at the rail edge; the chips themselves get
+     justify-self:center below so they centre within the rail (the user). */
+  align-items: center;
   justify-items: start;
   column-gap: var(--gap-3);
   row-gap: var(--gap-2);
 }
+/* v0.50.24: centre the chip/pill/dot/glyph horizontally in the 26px rail (the
+   user). :not(.help-gloss-def) is the col-1 indicator; the def keeps start. */
+.help-gloss-row > :not(.help-gloss-def) { justify-self: center; }
 /* v1.23.68: TDB pills + the topbar // UPD/FAIL/DROP/DISK pills are multi-char
    text chips that overflow the tight rail — give them an auto rail (they still
    align within their own section). */
@@ -1203,10 +1210,10 @@ body.help-mode .help-mode-bar { display: flex; }
 .help-gloss-glyph {
   flex: 0 0 auto;
   min-width: 26px;
-  /* v1.23.86: left-align in the 26px rail (was center) so the FLAGS glyphs
-     (⚠ / ! / ↺) sit at the same x as the left-aligned SRC badges + DL dots
-     above — centering pushed them ~13px right of the column (the user). */
-  text-align: left;
+  /* v0.50.24: centre the FLAGS glyphs in the rail (reverses v1.23.86's left) —
+     the user now wants every chip/dot/glyph centred in its column. They line up
+     with the SRC badges + DL dots, which justify-self:center centres too. */
+  text-align: center;
   font-size: var(--t-base);
 }
 /* v1.23.50: mirror the real .title-glyph-* row flags exactly —
@@ -6629,13 +6636,13 @@ body.dash-customize-mode .dash-customize-link:hover {
 /* v1.24.68: the SOURCE BREAKDOWN section is now just a plain label + the 3 cards
    (the cards carry the borders) — drop the outer .block box + header bar so it
    reads like the reference (label, then cards), not a box-in-a-box. */
+/* v1.24.68: the section itself stays borderless so the 3 donuts read as their
+   own cards (not one big bar). v0.50.24: but the // SOURCE BREAKDOWN header now
+   keeps the standard framed .block-head bar (bg-elev-2 + bottom rule) like every
+   other section — the bare title was throwing off the inter-section spacing
+   (the user). Only the row below it needs top spacing off the bar. */
 #source-breakdown-block {
   background: transparent;
   border: 0;
 }
-#source-breakdown-block > .block-head {
-  background: transparent;
-  border-bottom: 0;
-  padding: 0 0 var(--gap-3) 0;
-  min-height: 0;
-}
+#source-breakdown-block > .source-pie-row { margin-top: var(--gap-5); }
