@@ -23,8 +23,9 @@ BASE_HTML = (REPO / "app" / "web" / "templates" / "base.html").read_text()
 def test_legend_caret_is_at_the_end():
     i = LIB_HTML.index('id="library-legend-toggle"')
     btn = LIB_HTML[i:LIB_HTML.index("</button>", i)]
-    # the label comes BEFORE the caret span now (caret at the end).
-    assert "// LEGEND <span class=\"library-legend-caret\"" in btn
+    # the label comes BEFORE the caret span now (caret at the end). v0.50.21:
+    # no literal space — the gap is the caret's margin-left (consistent w/ glossary).
+    assert "// LEGEND<span class=\"library-legend-caret\"" in btn
     # and NOT the old front-caret order.
     assert ">&#9656;</span>// LEGEND" not in btn
 
@@ -32,7 +33,7 @@ def test_legend_caret_is_at_the_end():
 def test_glossary_button_has_trailing_caret():
     i = BASE_HTML.index('id="help-glossary-open"')
     btn = BASE_HTML[i:BASE_HTML.index("</button>", i)]
-    assert "// GLOSSARY <span class=\"library-legend-caret\"" in btn
+    assert "// GLOSSARY<span class=\"library-legend-caret\"" in btn
 
 
 def test_glossary_caret_rotates_with_modal():
@@ -43,15 +44,22 @@ def test_glossary_caret_rotates_with_modal():
     assert "dlg.addEventListener('close', () => open.classList.remove('open'));" in APP_JS
 
 
-def test_legend_panel_overlays_instead_of_shifting():
-    # .library-block is the positioning context; the open panel is absolute so
-    # the table no longer reflows when it opens.
-    assert "<section class=\"block library-block\">" in LIB_HTML
-    assert ".library-block { position: relative; }" in APP_CSS
-    block = APP_CSS[APP_CSS.index(".library-block .library-legend-panel.open {"):]
+def test_legend_panel_is_inflow_dropdown():
+    # v0.50.21: the v0.50.19 absolute overlay was reverted — the open panel is an
+    # in-flow dropdown again (the user: the overlay hid the top rows).
+    assert "<section class=\"block library-block\">" not in LIB_HTML
+    assert ".library-block { position: relative; }" not in APP_CSS
+    assert ".library-block .library-legend-panel.open {" not in APP_CSS
+    assert ".library-legend-panel.open { display: block; }" in APP_CSS
+
+
+def test_carets_share_one_consistent_gap():
+    # v0.50.21: the gap is a single margin-left on the shared caret class (no
+    # literal HTML space, no glossary-only extra margin → even on both).
+    block = APP_CSS[APP_CSS.index(".library-legend-caret {"):]
     block = block[:block.index("}")]
-    assert "position: absolute" in block
-    assert "z-index: 40" in block
+    assert "margin-left:" in block
+    assert "#help-glossary-open .library-legend-caret { margin-left:" not in APP_CSS
 
 
 def test_subtitle_has_top_gap_from_section_selectors():

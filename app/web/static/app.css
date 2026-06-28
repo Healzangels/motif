@@ -1228,32 +1228,22 @@ body.help-mode .help-mode-bar { display: flex; }
 .library-legend-pill.open:hover { color: var(--green); border-color: var(--green-deep); }
 .library-legend-caret {
   font-size: 9px;
+  /* v0.50.21: the gap lives here (one consistent margin) instead of a literal
+     HTML space on LEGEND + an extra 2px on GLOSSARY, which read as uneven. */
+  margin-left: 5px;
   color: var(--fg-mute);
   transition: transform var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 .library-legend-pill.open .library-legend-caret { transform: rotate(90deg); color: var(--green); }
 /* v0.50.19: the GLOSSARY help-bar button reuses the same caret; app.js toggles
-   .open on it while the modal is open so it rotates ►→▾ in step. */
-#help-glossary-open .library-legend-caret { margin-left: 2px; }
+   .open on it while the modal is open so it rotates ►→▾ in step — identical to
+   the LEGEND pill so both read the same direction in the same state. */
 #help-glossary-open.open .library-legend-caret { transform: rotate(90deg); color: var(--green); }
 .library-legend-panel { display: none; }
-/* v0.50.19: the open LEGEND panel OVERLAYS the table rather than pushing it down
-   (the user: "make it not shift everything down"). position:absolute with auto
-   top keeps its static spot right below the header but removes it from flow, so
-   the table no longer reflows; bg + border + shadow + z-index float it over the
-   top rows like the .row-menu-panel dropdown. Scoped to .library-block (a
-   positioning context) so the shared .block stays unaffected. */
+/* v0.50.21: reverted the v0.50.19 absolute overlay — the open LEGEND panel is an
+   in-flow dropdown again (it pushes the table down). the user: the overlay hid
+   the top rows; the old drop-down behaviour was preferred. */
 .library-legend-panel.open { display: block; }
-.library-block { position: relative; }
-.library-block .library-legend-panel.open {
-  position: absolute;
-  left: 0;
-  right: 0;
-  z-index: 40;
-  background: var(--bg-elev);
-  border: 1px solid var(--line-bright);
-  box-shadow: 0 10px 28px rgba(var(--black-rgb), 0.55);
-}
 .library-legend-body {
   margin: 0 0 var(--gap-3);
   padding: var(--gap-3);

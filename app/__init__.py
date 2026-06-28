@@ -1851,4 +1851,12 @@
 #   minus footer) instead of the full viewport — fixes the record sitting low.
 #   .login-record 78vmin → 118vmin (the ~460px card now reads as a record's ~1/3
 #   centre label) + .login-ripple 42vmin → 64vmin to match. app.css only.
-__version__ = "0.50.20"
+# 0.50.21: legend/caret corrections to v0.50.19 (the user). (1) Reverted the
+#   absolute LEGEND-panel overlay back to the in-flow dropdown — the overlay hid
+#   the top rows; the old push-down behaviour was preferred (dropped .library-block
+#   + the absolute rule; restored <section class="block">). (2) Unified the caret
+#   gap: it's now one margin-left on the shared .library-legend-caret class (no
+#   literal HTML space on LEGEND, no glossary-only +2px) so LEGEND + GLOSSARY sit
+#   the same distance from their labels. Both still ► closed / ▾ open. library.html
+#   + base.html + app.css.
+__version__ = "0.50.21"

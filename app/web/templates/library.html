@@ -753,10 +753,7 @@
   </details>
 </div>
 
-{# v0.50.19: .library-block makes this section the positioning context so the
-   open LEGEND panel can overlay the table (position:absolute) instead of pushing
-   it down — scoped here to avoid making the shared .block a containing block. #}
-<section class="block library-block">
+<section class="block">
   <header class="block-head">
     <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span></h2>
     <!-- v1.12.74: chip + pager grouped right so // NEEDS WORK
@@ -776,7 +773,7 @@
       {# v0.50.19: caret moved to the END of the label (was at the front) + it's
          ► collapsed / ▾ open (the .open rotate), matching the status-bar caret. #}
       <button type="button" class="chip library-legend-pill" id="library-legend-toggle"
-              aria-expanded="false" title="Show what the row chips mean">// LEGEND <span class="library-legend-caret" aria-hidden="true">&#9656;</span></button>
+              aria-expanded="false" title="Show what the row chips mean">// LEGEND<span class="library-legend-caret" aria-hidden="true">&#9656;</span></button>
       <button class="chip" id="library-sort-attention-btn" type="button"
               title="Sort by attention priority. Click again to undo.">NEEDS WORK</button>
       <div class="pager" id="library-pager"></div>
