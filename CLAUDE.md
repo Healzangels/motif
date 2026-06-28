@@ -569,7 +569,9 @@ rows where cloud-backup is the only viable recovery path.
   validated. `release` should always equal a `vX.Y.Z` tag.
 - Tags (`vX.Y.Z`) are the unit of ship. GitHub Actions builds +
   pushes the Docker image to Docker Hub on `v*.*.*`.
-- Image: `healzangels/motif:latest` and `:vX.Y.Z`.
+- Image tags: `healzangels/motif:vX.Y.Z` (exact) + a rolling
+  `:nightly` pointer to the newest build. **No `:latest`** — it was
+  removed at 0.50.0; deployments track `:nightly`.
 - Production deployment: Unraid box, behind NPM + Authentik forward-auth.
 
 ## Things to NEVER do

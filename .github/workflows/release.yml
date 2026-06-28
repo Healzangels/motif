@@ -10,11 +10,11 @@ name: release
 # Tag conventions:
 #   git tag -a v1.3.0 -m "release 1.3.0" && git push origin v1.3.0
 # This produces image tags:
-#   healzangels/motif:1.3.0
-#   healzangels/motif:1.3
-#   healzangels/motif:1
-#   healzangels/motif:latest
-# (semver-major-only floats, plus latest, are best-practice for end users.)
+#   healzangels/motif:1.3.0   (exact, immutable version)
+#   healzangels/motif:nightly (rolling pointer to the newest build)
+# 0.50.0: dropped the rolling major/minor floats and renamed the moving
+# tag latest → nightly. nightly is the active channel deployments track;
+# there is no `latest`.
 
 on:
   push:
@@ -74,20 +74,15 @@ jobs:
             echo "::error::Tag '$VERSION' is not semver-compatible (expected MAJOR.MINOR.PATCH)"
             exit 1
           fi
-          # 0.50.0: only the exact version + latest are published; the
-          # rolling major/minor image tags were dropped, so we no longer
-          # compute them here.
+          # 0.50.0: publish the exact version + a rolling `nightly` pointer
+          # (renamed from `latest`); the major/minor floats were dropped.
+          # nightly moves on every build — it's the active channel, so it's
+          # pushed unconditionally (no is_stable gate).
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
           echo "Will tag image as:"
           echo "  ${IMAGE_NAME}:${VERSION}"
-          # 'latest' only for non-prerelease versions
-          if [[ ! "$VERSION" =~ - ]]; then
-            echo "  ${IMAGE_NAME}:latest"
-            echo "is_stable=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "is_stable=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "  ${IMAGE_NAME}:nightly"
 
       - name: Build and push (multi-arch)
         uses: docker/build-push-action@v5
@@ -96,12 +91,13 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          # 0.50.0: push ONLY the exact version + latest — no rolling
-          # minor (0.50) / major (0) tags. Keeps Docker Hub minimal at
-          # {version, latest} so the namespace can't re-accrete 0 / 0.50.
+          # 0.50.0: push the exact version + a rolling `nightly` tag
+          # (renamed from `latest`). No major/minor floats, no `latest`.
+          # nightly is the active channel — it always moves to the newest
+          # build, so deployments track `:nightly` instead of `:latest`.
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}
-            ${{ steps.tags.outputs.is_stable == 'true' && format('{0}:latest', env.IMAGE_NAME) || '' }}
+            ${{ env.IMAGE_NAME }}:nightly
           # Cache layers between runs. ignore-error on the export:
           # GHA's cache backend intermittently 404s blob writes
           # ("error writing layer blob: not_found"), and buildx fails

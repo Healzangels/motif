@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>motif</Name>
-  <Repository>healzangels/motif:latest</Repository>
+  <Repository>healzangels/motif:nightly</Repository>
   <Registry>https://hub.docker.com/r/healzangels/motif</Registry>
   <Network>bridge</Network>
   <MyIP/>

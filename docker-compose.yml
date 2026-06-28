@@ -23,7 +23,7 @@ services:
   motif:
     # Default: pull from Docker Hub. To build locally, comment this and
     # uncomment the build: block below.
-    image: healzangels/motif:latest
+    image: healzangels/motif:nightly
     # build:
     #   context: .
     #   dockerfile: Dockerfile

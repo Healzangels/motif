@@ -80,7 +80,7 @@ docker compose up -d
 docker compose logs -f motif
 ```
 
-The compose file pulls `healzangels/motif:latest` from Docker Hub by default. To build locally (for development), edit `docker-compose.yml` and uncomment the `build:` block.
+The compose file pulls `healzangels/motif:nightly` from Docker Hub by default. To build locally (for development), edit `docker-compose.yml` and uncomment the `build:` block.
 
 ### Option 2 — Unraid Community Apps template
 
@@ -111,7 +111,7 @@ docker run -d \
   -e MOTIF_PLEX_URL=http://192.168.1.10:32400 \
   -e MOTIF_PLEX_TOKEN=YOUR_TOKEN_HERE \
   -e PUID=99 -e PGID=100 \
-  healzangels/motif:latest
+  healzangels/motif:nightly
 ```
 
 > **Set `PUID`/`PGID` to whatever owns your `/data` media share** (see [Permissions](#permissions--puidpgid) below). The defaults `99:100` are the Unraid `nobody:users` standard; if your Sonarr/Radarr stack runs as `1000`, use `1000` here too — otherwise motif can't write themes or placements into the share.

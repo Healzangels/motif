@@ -24,7 +24,7 @@ After first boot you choose where motif writes themes from the `/settings` page 
 ```yaml
 services:
   motif:
-    image: healzangels/motif:latest
+    image: healzangels/motif:nightly
     container_name: motif
     restart: unless-stopped
     ports:
@@ -60,7 +60,7 @@ docker run -d \
   -e MOTIF_PLEX_URL=http://192.168.1.10:32400 \
   -e MOTIF_PLEX_TOKEN=YOUR_TOKEN_HERE \
   --user 99:100 \
-  healzangels/motif:latest
+  healzangels/motif:nightly
 ```
 
 ### Option 3 — Unraid Community Apps
