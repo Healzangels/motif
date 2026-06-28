@@ -1735,4 +1735,11 @@
 #   script that adds .playing only when sessionStorage hasn't seen it — so it
 #   fires on the first load, NOT on every full-page nav. The prefers-reduced-
 #   motion clamp shortens it to near-instant (no flash). CSS + base.html.
-__version__ = "0.50.7"
+# 0.50.8: needle-drop on PLACE (the user — flavor pass 4/4, vinyl half; FINAL of
+#   the flavor sequence). A tonearm drops onto a spinning record over the clicked
+#   PUSH TO PLEX button when a place succeeds. app.js needleDropAt(btn) spawns a
+#   floating, self-cleaning overlay anchored to the button's viewport rect (NOT
+#   the row DOM, which re-renders on the next poll) and removes it after the
+#   animation via one timeout. Fired from replaceTheme's success branch. Skipped
+#   entirely under reduced-motion (the overlay is never created). CSS + app.js.
+__version__ = "0.50.8"

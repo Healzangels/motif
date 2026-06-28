@@ -3588,6 +3588,34 @@
     }
   }
 
+  // v0.50.8: needle-drop flourish — a tonearm drops onto a spinning record when
+  // a theme is PLACED (PUSH TO PLEX). A floating, self-cleaning overlay anchored
+  // to the clicked button's viewport position — NOT the row DOM, which
+  // re-renders on the next poll. Decorative + aria-hidden; skipped under
+  // reduced-motion; removed after the animation by a single timeout (no
+  // animationend bubbling to reason about).
+  function needleDropAt(anchorEl) {
+    if (!anchorEl || typeof anchorEl.getBoundingClientRect !== 'function') return;
+    try {
+      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    } catch (e) { /* no matchMedia — proceed */ }
+    const rect = anchorEl.getBoundingClientRect();
+    if (!rect.width && !rect.height) return;
+    const host = document.createElement('div');
+    host.className = 'needle-drop';
+    host.setAttribute('aria-hidden', 'true');
+    host.style.left = `${Math.round(rect.left + rect.width / 2 - 30)}px`;
+    host.style.top = `${Math.round(rect.top - 34)}px`;
+    host.innerHTML = '<svg viewBox="0 0 60 48">'
+      + '<g class="nd-rec"><circle class="nd-rim" cx="20" cy="30" r="14"/>'
+      + '<circle class="nd-grv" cx="20" cy="30" r="9"/>'
+      + '<circle class="nd-hub" cx="20" cy="30" r="2.6"/></g>'
+      + '<g class="nd-arm"><line x1="52" y1="7" x2="27" y2="23"/>'
+      + '<circle cx="52" cy="7" r="3"/></g></svg>';
+    document.body.appendChild(host);
+    setTimeout(() => { host.remove(); }, 1300);
+  }
+
   async function replaceTheme(mediaType, tmdbId, btn, kind) {
     // Push motif's existing canonical back into the Plex folder. Force
     // overwrite so any sidecar that reappeared since unplace is replaced.
@@ -3614,6 +3642,7 @@
         throw new Error(`${resp.status}: ${text || resp.statusText}`);
       }
       if (btn) btn.textContent = 'QUEUED';
+      needleDropAt(btn);  // v0.50.8: needle-drop flourish on a successful place
       if (typeof libraryRapidPoll === 'function'
           && document.getElementById('library-body')) {
         libraryRapidPoll();
