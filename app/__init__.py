@@ -1950,4 +1950,11 @@
 #   backup line on every row that has a local file but isn't already a backup-only
 #   row (which relabels applied→backup) — so a recoverable backup is visible on HL/
 #   placed/dead-url rows too, with the YouTube source URL. app.js only.
-__version__ = "0.50.35"
+# 0.50.36: Live Ops RUN INSIGHT shows sane peak/s + avg/s (the user: "400000 peak/s
+#   · 207301 avg/s" on a 10,514-item/77s run — really ~136/s). progress.py samples
+#   throughput as delta/dt with a 0.001s dt floor, so a fast upsert burst divides by
+#   ~0 + the rate explodes; the old STATS took max(rate)+mean(rate), both inflated.
+#   New _throughputStats(op): avg/s = processed / wall-clock elapsed; peak/s = the
+#   busiest whole-second window (items/sample = rate×dt, bucketed by second). Both
+#   the STATS readout + the THROUGHPUT chart header use it. ops.js only.
+__version__ = "0.50.36"
