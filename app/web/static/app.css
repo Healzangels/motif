@@ -315,6 +315,37 @@ input[type="checkbox"] {
   100% { opacity: 0;    transform: scaleY(1); filter: brightness(1); }
 }
 
+/* v0.50.29: CRT power-OFF — the classic "tube collapses" flicker on logout (the
+   user). The overlay fades the screen to black while a bright scanline flashes,
+   thins, and collapses to the centre. app.js plays it then navigates to /logout;
+   under reduced-motion app.js skips it and navigates immediately, so this never
+   needs the global clamp. Rests display:none so it's fully inert. */
+.crt-power-off {
+  position: fixed; inset: 0; z-index: 99999;
+  pointer-events: none;
+  background: var(--bg);
+  opacity: 0;
+  display: none;
+}
+.crt-power-off.playing { display: block; animation: crt-power-off-bg 0.42s ease-in forwards; }
+.crt-power-off::before {
+  content: '';
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  background: var(--fg);
+  box-shadow: 0 0 14px var(--fg), 0 0 5px var(--green-bright);
+  opacity: 0;
+}
+.crt-power-off.playing::before { animation: crt-power-off-line 0.42s ease-in forwards; }
+@keyframes crt-power-off-bg { 0% { opacity: 0; } 45% { opacity: 1; } 100% { opacity: 1; } }
+@keyframes crt-power-off-line {
+  0%   { opacity: 0;    transform: translateY(-50%) scaleY(1.2); }
+  40%  { opacity: 0.95; transform: translateY(-50%) scaleY(2.6); }
+  78%  { opacity: 1;    transform: translateY(-50%) scaleY(0.6); }
+  100% { opacity: 0;    transform: translateY(-50%) scaleX(0) scaleY(0.6); }
+}
+
 a { color: var(--green); text-decoration: none; }
 a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb), 0.4); }
 

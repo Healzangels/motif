@@ -1898,4 +1898,11 @@
 #   .hero::after sine wave — SVG sine path as a CSS mask, var(--green) as the masked
 #   colour (token, no hardcoded hex), scrolling via mask-position. z-index:-1 keeps
 #   it behind the title/subtitle; reduced-motion freezes it static. app.css only.
-__version__ = "0.50.28"
+# 0.50.29: make the CRT power-on actually visible + add a power-OFF (the user
+#   never saw it — the v0.50.7 once-per-session sessionStorage gate fired once then
+#   never again). Now: power-ON fires right after a login (login.html stamps
+#   motif:just-logged-in on submit; base.html plays it on the authenticated landing
+#   page) and on a manual refresh (Navigation Timing type==reload). New power-OFF
+#   tube-collapse flicker plays on the logout ⏻ click, then navigates (skipped +
+#   instant under reduced-motion). base.html + login.html + app.css.
+__version__ = "0.50.29"

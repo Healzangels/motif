@@ -51,4 +51,15 @@
     </form>
   </div>
 </section>
+{# v0.50.29: stamp a one-shot flag on submit so the destination page can play the
+   CRT power-on right after a successful login (base.html reads + clears it; a
+   bounced-back failed login is on auth-page, so it won't fire). #}
+<script>
+  (function () {
+    var f = document.querySelector('form.auth-form');
+    if (f) f.addEventListener('submit', function () {
+      try { sessionStorage.setItem('motif:just-logged-in', '1'); } catch (e) { /* skip */ }
+    });
+  })();
+</script>
 {% endblock %}

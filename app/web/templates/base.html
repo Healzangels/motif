@@ -78,21 +78,48 @@
      scopes the auth-card vertical-centering + footer-pin in app.css so the
      standard topbar pages are untouched. #}
   <div class="scanlines" aria-hidden="true"></div>
-  {# v0.50.7: CRT power-on flicker — a quick "screen turns on" sweep the FIRST
-     time motif loads in a tab session (sessionStorage-gated so it doesn't re-
-     fire on every full-page nav). The inline script adds .playing only when
-     unseen; reduced-motion users get the global clamp → near-instant, no flash.
-     Decorative + aria-hidden + pointer-events:none. #}
+  {# v0.50.7 / v0.50.29: CRT power-ON flicker — a quick "screen turns on" sweep.
+     v0.50.29 (the user): fire it right AFTER a login + on a manual page refresh,
+     NOT once-per-session — the old sessionStorage gate fired once then never
+     again, so it was effectively never seen. login.html stamps
+     motif:just-logged-in on submit; a refresh is detected via the Navigation
+     Timing type. Decorative + aria-hidden + pointer-events:none; reduced-motion
+     clamp makes it near-instant. #}
   <div class="crt-power-on" id="crt-power-on" aria-hidden="true"></div>
+  {# v0.50.29: CRT power-OFF — the tube-collapse flicker, played on logout before
+     the nav (the script below wires the ⏻ link). #}
+  <div class="crt-power-off" id="crt-power-off" aria-hidden="true"></div>
   <script>
     (function () {
       try {
-        if (sessionStorage.getItem('motif:crt-power-on')) return;
-        sessionStorage.setItem('motif:crt-power-on', '1');
         var el = document.getElementById('crt-power-on');
-        if (el) el.classList.add('playing');
-      } catch (e) { /* no sessionStorage → just skip the one-shot */ }
+        if (!el) return;
+        var play = false;
+        if (sessionStorage.getItem('motif:just-logged-in')) {
+          sessionStorage.removeItem('motif:just-logged-in');
+          // only on the real (authenticated) landing page, not a bounced-back login
+          if (!document.body.classList.contains('auth-page')) play = true;
+        } else {
+          var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
+          if (nav && nav.type === 'reload') play = true;
+        }
+        if (play) el.classList.add('playing');
+      } catch (e) { /* no sessionStorage / perf API → skip */ }
     })();
+    // v0.50.29: play the power-OFF flicker on logout, then navigate.
+    document.addEventListener('DOMContentLoaded', function () {
+      var off = document.getElementById('crt-power-off');
+      var link = document.querySelector('a.topbar-logout');
+      if (!off || !link) return;
+      link.addEventListener('click', function (ev) {
+        try {
+          if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+        } catch (e) { /* proceed */ }
+        ev.preventDefault();
+        off.classList.add('playing');
+        setTimeout(function () { window.location.href = link.getAttribute('href'); }, 420);
+      });
+    });
   </script>
   {% if request.state.principal is defined and request.state.principal.is_authenticated %}
   {# v1.15.22: SSR topbar + banner state. Same flash-bug class as

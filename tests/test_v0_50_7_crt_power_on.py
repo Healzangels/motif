@@ -15,11 +15,13 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 BASE = (REPO / "app" / "web" / "templates" / "base.html").read_text()
 
 
-def test_overlay_and_session_gate_in_base():
+def test_overlay_and_trigger_in_base():
     assert 'id="crt-power-on"' in BASE
-    # session-gated so it doesn't re-fire on every full-page nav.
-    assert "sessionStorage.getItem('motif:crt-power-on')" in BASE
-    assert "sessionStorage.setItem('motif:crt-power-on'" in BASE
+    # v0.50.29: the once-per-session gate was replaced — it now fires after a
+    # login (motif:just-logged-in) or on a manual refresh (Navigation Timing).
+    assert "sessionStorage.getItem('motif:crt-power-on')" not in BASE
+    assert "motif:just-logged-in" in BASE
+    assert "navigation')[0]" in BASE
     assert "classList.add('playing')" in BASE
 
 
