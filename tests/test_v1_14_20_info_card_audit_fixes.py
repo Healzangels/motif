@@ -208,7 +208,8 @@ def test_themerrdb_label_uses_parens_format():
     # the file (v1.18.63 fused this with _pendingSuffix).
     assert '(${urlSource(tdbUrl)})</span>' in js
     # The render site uses the helper.
-    assert "<dt>themerrdb url${tdbSrcTag}</dt>" in js
+    # v0.50.35: a dead-url "dead" tag is concatenated after tdbSrcTag.
+    assert "<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt>" in js
 
 
 def test_previous_url_label_uses_parens_format():

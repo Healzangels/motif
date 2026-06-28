@@ -15914,7 +15914,16 @@
         ? `<a href="${htmlEscape(href)}" target="_blank" rel="noopener"${style}>${htmlEscape(url)}</a>`
         : `<span${style}>${htmlEscape(url)}</span>`;
     };
-    const tdbUrlLink = linkOrDash(tdbUrl, 'var(--green-bright)');
+    // v0.50.35: a dead ThemerrDB URL (removed / private / restricted / geo-blocked)
+    // renders RED so it reads as dead at a glance (the user). A pending NEW TDB URL
+    // means upstream already fixed it, so that's never "dead". Reverts to green
+    // automatically when a reprobe clears t.failure_kind (PROBE TDB URL / mark live).
+    const tdbUrlDead = !_pendingTdbUrl
+      && !!(t.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(t.failure_kind));
+    const tdbUrlLink = linkOrDash(tdbUrl, tdbUrlDead ? 'var(--red)' : 'var(--green-bright)');
+    const tdbDeadTag = tdbUrlDead
+      ? ' <span class="muted small" style="color:var(--red)" title="ThemerrDB&#39;s YouTube URL is dead (removed / private / restricted / geo-blocked). Turns green again when a reprobe finds it live.">dead</span>'
+      : '';
     // v1.12.81: append a kind label after "currently applied" so it
     // mirrors the "previous url" treatment and the user can read
     // the source at a glance instead of inferring from color alone.
@@ -16088,6 +16097,19 @@
       : '';
     const dlBlock = lf
       ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="how motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP)">${htmlEscape(lf.provenance)}</span>${sourceKindHint}${sourceVidHint}</dd>`
+      : '';
+    // v0.50.35: compact "a recoverable backup exists" line — the user wants to
+    // know a backup is on disk for EVERY row (HL, placed, dead-url …), not just
+    // the backup-only rows that already relabel "applied url" → "backup url". One
+    // compact line, NOT a second full url field. Backup-only rows already surface
+    // it, so skip them here to avoid a duplicate.
+    const hasBackupFile = !!(lf && lf.file_path);
+    const backupSourceUrl = (hasBackupFile && lf.source_video_id
+      && !/^(fb-|ig-|sc-)/.test(lf.source_video_id))
+        ? `https://www.youtube.com/watch?v=${lf.source_video_id}`
+        : '';
+    const backupBlock = (hasBackupFile && !lfIsBackupOnly)
+      ? `<dt>backup</dt><dd class="muted small" title="A recoverable theme.mp3 is staged in the themes directory — // PROMOTE TO ACTIVE (or re-place) can redeploy it.">✓ theme.mp3 on disk${backupSourceUrl ? ' · ' + linkOrDash(backupSourceUrl) : ''}</dd>`
       : '';
     // v1.12.90: in-card audio player. The INFO dialog now serves
     // the canonical theme.mp3 via /api/items/{mt}/{tmdb}/theme.mp3
@@ -16353,7 +16375,7 @@
         <dt>upstream</dt><dd>${t.upstream_source === 'plex_orphan'
           ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
           : htmlEscape(t.upstream_source || '')}</dd>
-        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
+        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
         <dt>${appliedUrlLabel} ${currentUrl ? `<span class="muted small">(${urlSource(currentUrl)})</span>` : ''}</dt><dd>${currentUrlLink}</dd>
         <dt>previous url${prevSrcTag}</dt><dd>${previousUrlLink}</dd>
         <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
@@ -16367,6 +16389,7 @@
         ${ovrBlock}
         ${puBlock}
         ${dlBlock}
+        ${backupBlock}
         ${placedBlock}
         ${audioBlock}
       </dl>

@@ -1943,4 +1943,11 @@
 #   FROM / _AWAIT_TAB_BREAKDOWN_SQL / SSR awaiting_count / stats.awaiting). KEPT:
 #   the attn_pills=await FILTER + the PL=await row state (both off _LIB_AWAIT_SQL),
 #   so staged-but-not-placed themes are still findable + filterable.
-__version__ = "0.50.34"
+# 0.50.35: INFO card — (1) a dead ThemerrDB URL (failure_kind ∈ video_removed/
+#   private/age_restricted/geo_blocked) renders RED + a "dead" tag so it reads as
+#   dead at a glance (the user); reverts to green when a reprobe clears the failure;
+#   a pending NEW TDB URL is never "dead". (2) a compact "✓ theme.mp3 on disk"
+#   backup line on every row that has a local file but isn't already a backup-only
+#   row (which relabels applied→backup) — so a recoverable backup is visible on HL/
+#   placed/dead-url rows too, with the YouTube source URL. app.js only.
+__version__ = "0.50.35"

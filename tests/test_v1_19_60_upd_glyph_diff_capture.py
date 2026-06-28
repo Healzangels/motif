@@ -639,7 +639,7 @@ def test_info_card_renders_pending_old_url_diff_suffix():
         "'(was: OLD)' suffix"
     )
     # The themerrdb url <dd> must include the tdbWasTag template.
-    idx = js.index("`<dt>themerrdb url${tdbSrcTag}</dt>")
+    idx = js.index("`<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt>")
     line_end = js.index("`}", idx) + 1
     line = js[idx:line_end]
     assert "${tdbWasTag}" in line, (
