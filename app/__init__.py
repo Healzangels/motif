@@ -1927,4 +1927,11 @@
 #   margin-bottom→0 + a single shared .hero-sub class (margin-top gap-5, == the old
 #   library look gap-2+gap-3) on every page's description, so the title→subtitle
 #   gap is one value everywhere. app.css + the 5 hero templates.
-__version__ = "0.50.32"
+# 0.50.33: the APPLIED saved-filter row stays highlighted as "selected" (the user:
+#   "when a filter is selected it should remain highlighted to indicate it's
+#   selected"). v0.50.31 had stripped the persistent row paint because its
+#   cyan-text-only form was indistinguishable from :hover and read as a stray hover
+#   on open; restored here but made DISTINCT — static bg tint + left accent bar vs
+#   hover's text-only cyan. JS already toggled .is-active off the live filter match
+#   (only the genuinely-applied preset), so just the CSS came back. app.css.
+__version__ = "0.50.33"
