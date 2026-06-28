@@ -224,7 +224,7 @@ def test_format_theme_added_body_full_context():
     body = format_theme_added_body(ctx)
     # v1.17.16: the bold title is GONE — the subject line already
     # has it. Body starts with the source line.
-    assert body.startswith("Source: ThemerrDB · YouTube\n"), (
+    assert body.startswith("Source: ThemerrDB · 🔴 YouTube\n"), (
         "v1.17.16: body must start with the Source line — the "
         "bold title was dropped because the notification subject "
         "already includes the title."
@@ -235,7 +235,7 @@ def test_format_theme_added_body_full_context():
         "it duplicates the subject line."
     )
     # Source line with provenance + platform classification.
-    assert "Source: ThemerrDB · YouTube" in body
+    assert "Source: ThemerrDB · 🔴 YouTube" in body
     # Plain URL on its own line (Discord auto-embeds).
     assert "https://www.youtube.com/watch?v=abcdefghijk" in body
     # v1.17.14: markdown image syntax must NOT appear.
@@ -266,7 +266,7 @@ def test_format_theme_added_body_no_thumb_still_includes_url():
     # v1.17.14: plain URL, not markdown link wrap.
     assert "https://soundcloud.com/foo/bar" in body
     assert "[Watch theme]" not in body
-    assert "Source: User URL · SoundCloud" in body
+    assert "Source: User URL · 🟠 SoundCloud" in body
 
 
 def test_format_theme_added_body_bare_id_fallback():
@@ -320,7 +320,7 @@ def test_format_theme_deleted_body_includes_actor_and_action():
     assert "By user · 3 placement(s) unlinked" in body
     # v1.17.14: URL wrapped in `<...>` to suppress Discord embed.
     assert "Previous theme: <https://youtu.be/abcdefghijk>" in body
-    assert "Source: ThemerrDB · YouTube" in body
+    assert "Source: ThemerrDB · 🔴 YouTube" in body
 
 
 def test_format_titles_use_display_title():

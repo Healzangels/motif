@@ -1957,4 +1957,11 @@
 #   New _throughputStats(op): avg/s = processed / wall-clock elapsed; peak/s = the
 #   busiest whole-second window (items/sample = rate×dt, bucketed by second). Both
 #   the STATS readout + the THROUGHPUT chart header use it. ops.js only.
-__version__ = "0.50.36"
+# 0.50.37: notification Source line carries a per-platform colour dot (the user:
+#   "make the color on all youtube added videos red as blue is supposed to be
+#   facebook"). Apprise's Discord embed bar is severity-coloured (INFO=blue for
+#   every theme-add) + not a per-source knob, and the external apprise-api path
+#   can't set a colour at all — so the colour lives in the body where it renders on
+#   every transport: red YouTube, blue Facebook, orange SoundCloud, purple Instagram.
+#   notify_content.py _format_provenance_line.
+__version__ = "0.50.37"

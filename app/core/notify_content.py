@@ -444,16 +444,22 @@ def _format_provenance_line(ctx: ItemContext) -> str:
         return f"Source: {prov}"
     # Cheap platform classification — no need to re-import
     # url_source for this one shape.
+    # v0.50.37: a leading colour DOT per platform (the user wanted YouTube red /
+    # Facebook blue). Apprise's Discord embed bar is severity-coloured (INFO=blue
+    # for every theme-add) and not a per-source knob — and the external apprise-api
+    # path can't set a colour at all — so the colour lives in the body, where it
+    # renders identically on every transport.
     plat = "URL"
+    dot = ""
     if "youtube.com" in url or "youtu.be" in url:
-        plat = "YouTube"
+        plat, dot = "YouTube", "🔴 "
     elif "soundcloud.com" in url:
-        plat = "SoundCloud"
+        plat, dot = "SoundCloud", "🟠 "
     elif "instagram.com" in url:  # v1.20.26
-        plat = "Instagram"
+        plat, dot = "Instagram", "🟣 "
     elif "facebook.com" in url or "fb.watch" in url:  # v1.22.90
-        plat = "Facebook"
-    return f"Source: {prov} · {plat}"
+        plat, dot = "Facebook", "🔵 "
+    return f"Source: {prov} · {dot}{plat}"
 
 
 def format_theme_added_body(ctx: ItemContext) -> str:
