@@ -1,0 +1,762 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+{# v1.24.66: media-type stat-card glyph → Feather-style SVG line icons (film /
+   tv / sparkle / stacked-cards), replacing ▶/▭/✦/▦ to match the carousel's new
+   icons (the user). currentColor → inherits .stat-glyph's --green-deep. The film /
+   tv / collections paths mirror app.js _recentTypeIcon; anime is a 4-point
+   sparkle (the carousel has no anime type). Keep the two in sync if either
+   changes. #}
+{% macro media_glyph(kind) -%}
+<span class="stat-glyph" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">{% if kind == 'movies' %}<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/>{% elif kind == 'tv' %}<rect x="2" y="7" width="20" height="15" rx="2" ry="2"/><polyline points="17 2 12 7 7 2"/>{% elif kind == 'anime' %}<path d="M12 3l2.2 6.8L21 12l-6.8 2.2L12 21l-2.2-6.8L3 12l6.8-2.2z"/>{% elif kind == 'collections' %}<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>{% endif %}</svg></span>
+{%- endmacro %}
+{# v1.15.45 / v1.15.50: SSR-bake every dashboard stat-num value
+   so first paint shows real numbers instead of "—". JS poll
+   still runs and overwrites on the next /api/stats tick (1s TTL
+   cache), idempotent when SSR matched. Predicates inside
+   _dashboard_ssr_state() mirror _stats_sync + /api/coverage/plex
+   exactly — divergence = visible flicker. Mirrors the v1.15.22
+   _ssr_top pattern in base.html. v1.15.50 phase 2 added PLEX
+   MOVIES/TV/ANIME card totals + foots + TDB card foots.
+
+   `ssr_num` macro is the single formatter — comma-grouping for
+   non-None ints, "—" fallback for SSR errors (None). Defining
+   it once at the top kept the body readable across 24 call
+   sites (per the user's "standardize across similar sets" rule). #}
+{% set _ssr_dash = dashboard_ssr_state() %}
+{%- macro ssr_num(v) -%}
+{%- if v is not none -%}{{ "{:,}".format(v) }}{%- else -%}—{%- endif -%}
+{%- endmacro -%}
+{# v1.23.34: percent formatter for the reworked COVERAGE cards.
+   Renders round(num/denom*100)% or "—" when either operand is
+   missing/zero (SSR error or an empty library). #}
+{%- macro ssr_pct(num, denom) -%}
+{%- if num is not none and denom -%}{{ (num / denom * 100) | round | int }}%{%- else -%}—{%- endif -%}
+{%- endmacro -%}
+<section class="hero">
+  <div class="hero-row">
+    <h1 class="title">DASH</h1>
+    <!-- v1.13.19: button name is now stable — "// SYNC THEMERRDB"
+         regardless of auto_enum_after_sync (the post-sync Plex scan
+         is a side-effect surfaced via the LIVE OPS drawer, not a
+         renaming concern). Inline label means no flicker on first
+         paint. The busy state swaps to // SYNCING… (single-word,
+         doesn't change mid-run).
+         v1.13.64: wrap both sync buttons in .hero-actions so they
+         line up together at the right edge — without the wrapper,
+         hero-row's space-between strands // SYNC THEMERRDB in the
+         middle of the row when // REFRESH PLEX is present. -->
+    <div class="hero-actions">
+      <button class="btn" id="sync-now-btn"
+              title="Sync ThemerrDB metadata.">// SYNC THEMERRDB</button>
+      {# v1.13.63: when auto_enum_after_sync is OFF, // SYNC THEMERRDB
+         runs the TDB pull alone — Plex side reconciliation needs a
+         separate kick. Surface a sibling button that enums every
+         managed section in one click. While it's running, per-library
+         // REFRESH <NAME> buttons lock automatically because
+         /api/libraries/refresh tags its plex_enum jobs scope=scan_all
+         which lights up the existing globalEnumPipeline lock.
+         v1.13.70: button verb renamed `// SYNC PLEX` → `// REFRESH PLEX`
+         to match the per-library REFRESH buttons. Element id stays
+         `sync-plex-btn` to avoid breaking external selectors. #}
+      {% if not auto_enum_after_sync %}
+      <button class="btn" id="sync-plex-btn"
+              title="Re-enumerate every managed Plex section.">// REFRESH PLEX</button>
+      {% endif %}
+    </div>
+  </div>
+  {# v1.13.88: customize layout link moved from the hero
+     description line to the bottom of the dashboard (see end of
+     this template). The hero header is high-attention real
+     estate; layout-customization is a low-frequency power-user
+     action and shouldn't compete for the user's eye on every
+     dash visit. The anchor at the bottom keeps the same
+     id (dash-customize-btn) so dashboard-customize.js wires up
+     unchanged. #}
+  <p class="muted">
+    theme coverage at a glance · sync schedule in
+    <a href="/settings#schedule">/settings</a>
+  </p>
+  <!-- v1.13.1 (#2): live last-sync + next-sync line so the daily
+       rhythm is visible without /settings + /queue detours. JS
+       populates from /api/stats.
+       v1.24.94: visibility:hidden (NOT display:none) + min-height:1lh in CSS so
+       the row is reserved from first paint — populating it no longer shifts the
+       whole dashboard down. JS flips visibility:visible once filled. -->
+  <p class="muted small dash-sync-line" id="dash-sync-line" style="visibility:hidden">
+    <span id="dash-sync-next"></span>
+    <span class="dash-sync-sep"> · </span>
+    <span id="dash-sync-last"></span>
+  </p>
+  {# v1.13.75: one-time backfill banner. The v43 migration restores
+     failure_kind on rows whose TDB-failure flag was wiped by the
+     pre-v1.13.74 bug. The FAIL counter will jump after upgrade —
+     this banner explains why and links to the LOGS view so the
+     user can audit. Dismissable; clicking // DISMISS clears the
+     runtime_settings marker so the banner doesn't reappear. JS
+     fetches /api/dashboard/backfill-banner on load. #}
+  {# v1.17.8: cleaned up inline overrides — `.missing-banner` base
+     rule already provides amber border + bg-tint + amber glyph
+     color (those inline values were redundant). Kept `display:none`
+     (JS-toggled visibility) + `margin-top:var(--gap-2)` (one-off
+     context spacing above this section).
+     v1.17.8: glyph `▲` → `⚠`. `▲` is used as the sort-asc
+     indicator in column headers (`app.js:6115`) — same-glyph-
+     different-semantic violates DESIGN_SYSTEM § 7. `⚠` matches
+     the warning-banner glyph used by `.dry-run-banner`
+     (base.html:65), so banners now read uniformly as `▸` info
+     (cyan/green) vs `⚠` warning (amber). #}
+  <div id="dash-backfill-banner" class="missing-banner"
+       style="display:none;margin-top:var(--gap-2)">
+    <span class="missing-banner-glyph">⚠</span>
+    <span class="missing-banner-text">
+      <strong>// BACKFILLED <span id="dash-backfill-count">0</span> FAILURES</strong>
+      &nbsp;<span class="muted small">v1.13.75 reconstructed TDB-failure state on rows wiped by a pre-v1.13.74 bug. Red <code>TDB ✗</code> pills appearing now were never actually fixed — these rows have always been broken.</span>
+    </span>
+    {# v1.13.79: route to /queue (the actual URL for the LOGS nav
+       tab — label was renamed in v1.13.66 but the path stayed for
+       deep-link stability). Pre-fix the v1.13.75 banner pointed
+       at /logs which 404s. /queue accepts level + component query
+       params and lights up the matching filter chips on landing. #}
+    <a href="/queue?level=WARNING&amp;component=download" class="btn btn-tiny btn-info">// SHOW IN LOGS</a>
+    <button class="btn btn-tiny" id="dash-backfill-dismiss" type="button"
+            title="Hide this banner. The restored failures stay; only the banner clears.">// DISMISS</button>
+  </div>
+</section>
+
+{# v1.24.52: RECENTLY ADDED carousel — a poster strip of the titles motif most
+   recently placed a theme on; click a poster to open its INFO card. Pinned above
+   #dash-sections (a fixed top strip). Hidden until JS confirms there are
+   placements, so an empty/fresh install shows nothing. Posters come from the
+   same-origin Plex art proxy (/api/plex/art/{rk}).
+   v1.24.62: data-dash-pinned makes it hideable via // customize layout (a
+   hide-only toggle, no reorder — it keeps its pinned top position). #}
+<section class="block" id="recently-added-block" style="display:none"
+         data-dash-section="recently-added" data-dash-label="RECENTLY ADDED"
+         data-dash-pinned>
+  <header class="block-head">
+    <h2 class="block-title">// RECENTLY ADDED</h2>
+    {# v1.24.54: auto-scroll toggle (persisted in localStorage; pauses on hover).
+       v1.24.57: checked by default — JS reconciles against localStorage on load
+       (an explicit uncheck persists '0'); the attribute just avoids a first-paint
+       flash from unchecked → checked. #}
+    <label class="recent-autoscroll muted small"
+           title="Slowly scroll the strip. Pauses on hover; click a poster any time.">
+      <input type="checkbox" id="recent-autoscroll" checked> // auto-scroll
+    </label>
+  </header>
+  <div class="recent-strip" id="recently-added-strip"></div>
+</section>
+
+<div id="dash-sections">
+<!-- v1.13.48: each direct child of #dash-sections carries
+     data-dash-section (stable id used as the layout key) and
+     data-dash-label (human label shown in the customize toolbar).
+     v1.14.70 dashboard rework: the original two-row mixed-size
+     layout collapsed two unrelated concepts (theme coverage +
+     queue operations) into the top row. the user flagged that
+     QUEUE PENDING / RUNNING NOW / FAILURES "lack context" sat
+     beside MOVIES TRACKED + TV SERIES TRACKED. The new
+     structure splits each concept into its own labeled section:
+       1. COVERAGE  (TDB-side theme tracking, large cards)
+       2. OPERATIONS (queue/running/failures, mini cards)
+       3. PLEX LIBRARY (Plex-side coverage, with PLEX ANIME
+          added — the user wanted "all the plex libraries", not
+          just movies + TV)
+       4. STORAGE (hardlinks/copies/user-provided, mini cards;
+          ORPHANS renamed to USER PROVIDED — see card comment).
+     Each row is now uniform-size; the visual hierarchy comes
+     from the row split instead of mixed-fr-column tricks. The
+     grid-stats CSS was updated to auto-fit columns so each row
+     flows N cards naturally. -->
+{# v1.15.31 dashboard layout reset. the user: "Let's go to the
+   pre 1.15.27 dashboard but include the added today/this week.
+   I like that one better so we'll edit from that point."
+   Restores the pre-v1.15.27 (v1.15.19) layout exactly:
+     • COVERAGE row = THEMERRDB MOVIES + THEMERRDB TV SERIES,
+       big number = TDB catalogue size, bar = themed/total
+       (driven by [data-bar-fill]), foot = "X in your library ·
+       Y themed".
+     • PLEX LIBRARY row = PLEX MOVIES + PLEX TV + PLEX ANIME,
+       big number = library total, NO bar on the card itself,
+       foot = "X with theme · Y ThemerrDB available".
+   v1.15.29's PLEX TV → blue tone change is preserved (separate
+   ask the user explicitly wanted). v1.15.27's ACTIVITY row
+   (ADDED TODAY / ADDED THIS WEEK) is preserved — the user
+   explicitly wants to keep it — and slotted between
+   OPERATIONS and PLEX LIBRARY so the operational flow reads
+   "what's queued (OPERATIONS) → what was placed recently
+   (ACTIVITY) → per-library coverage detail (PLEX LIBRARY)".
+   The v1.15.27 // THEMERRDB CATALOG mini-card stays gone
+   (the user: "I'm not sure what the therrdb catalog card is
+   and why its a different color"). #}
+<section class="grid grid-stats" id="stats-grid"
+         data-dash-section="top-stats"
+         data-dash-label="COVERAGE">
+  {# v1.23.34: the top COVERAGE row was reworked from "ThemerrDB
+     catalogue size + a downloaded/catalogue bar that filled but
+     meant nothing" (the user) into a real library-coverage tracker:
+     big number + bar = % of YOUR library themed (with_theme/total),
+     foot = "X of Y themed · Z ready to add". "ready to add" = TDB-
+     available rows not yet themed — the work motif's next run can
+     close. JS writers (setCov) live in renderPlexCoverage; SSR
+     bakes the first paint via plex_* aggregates. #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-movies">
+    <header class="stat-head">
+      <span class="stat-label">// MOVIES THEMED</span>
+      {{ media_glyph('movies') }}
+    </header>
+    <div class="stat-num" id="cov-movies-pct">{{ ssr_pct(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="movies"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-movies-themed">{{ ssr_num(_ssr_dash.plex_movies_with_theme) }}</b> of <b id="cov-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</b> themed</span>
+      <span><b id="cov-movies-ready">{{ ssr_num(_ssr_dash.plex_movies_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+
+  {# v1.23.40: TV is tv-only now (was tv+anime combined) so its count
+     matches the TV SHOWS library tab; anime is its own card below,
+     matching the ANIME tab + the bottom PLEX ANIME card (the user: the
+     combined 5,444 didn't line up with the 4,200 TV tab). #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-tv-series">
+    <header class="stat-head">
+      <span class="stat-label">// TV THEMED</span>
+      {{ media_glyph('tv') }}
+    </header>
+    <div class="stat-num" id="cov-tv-pct">{{ ssr_pct(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="tv"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-tv-themed">{{ ssr_num(_ssr_dash.plex_tv_with_theme) }}</b> of <b id="cov-tv-total">{{ ssr_num(_ssr_dash.plex_tv_total) }}</b> themed</span>
+      <span><b id="cov-tv-ready">{{ ssr_num(_ssr_dash.plex_tv_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+
+  {# v1.23.40: ANIME coverage card — own card so it matches the ANIME
+     library tab + the bottom PLEX ANIME card (was folded into TV). #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-anime">
+    <header class="stat-head">
+      <span class="stat-label">// ANIME THEMED</span>
+      {{ media_glyph('anime') }}
+    </header>
+    <div class="stat-num" id="cov-anime-pct">{{ ssr_pct(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="anime"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-anime-themed">{{ ssr_num(_ssr_dash.plex_anime_with_theme) }}</b> of <b id="cov-anime-total">{{ ssr_num(_ssr_dash.plex_anime_total) }}</b> themed</span>
+      <span><b id="cov-anime-ready">{{ ssr_num(_ssr_dash.plex_anime_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+
+  {# v1.18.20: Collections coverage card (mirrors movies/tv).
+     v1.23.34: reworked to library coverage like its siblings. #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-collections">
+    <header class="stat-head">
+      <span class="stat-label">// COLLECTIONS THEMED</span>
+      {{ media_glyph('collections') }}
+    </header>
+    <div class="stat-num" id="cov-collections-pct">{{ ssr_pct(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="collections"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-collections-themed">{{ ssr_num(_ssr_dash.plex_collections_with_theme) }}</b> of <b id="cov-collections-total">{{ ssr_num(_ssr_dash.plex_collections_total) }}</b> themed</span>
+      <span><b id="cov-collections-ready">{{ ssr_num(_ssr_dash.plex_collections_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+</section>
+
+{# v1.18.50: PLEX LIBRARY section relocated up to immediately
+   follow COVERAGE so both COLLECTIONS cards (TDB COLLECTIONS
+   end-of-row 1, PLEX COLLECTIONS end-of-row 2) land in the
+   top-two-rows fold. Per the user: "can we on the dashboard put
+   collections on the top two rows at the end of row." Previous
+   order was COVERAGE → OPERATIONS → ACTIVITY → PLEX LIBRARY
+   which buried PLEX COLLECTIONS in row 4. Definition of the
+   section body is unchanged — only the position moved. The
+   v1.15.31 narrative "operational flow reads what's queued →
+   what was placed → per-library coverage detail" is preserved
+   conceptually below this block (OPERATIONS still precedes
+   ACTIVITY) but the per-library detail now reads alongside
+   the catalogue stats, which is the more natural pairing
+   (TDB count next to its Plex count). #}
+<!-- ============================ PLEX LIBRARY ============================ -->
+<section class="grid grid-stats"
+         data-dash-section="plex-coverage"
+         data-dash-label="PLEX LIBRARY">
+  {# v1.15.31 reset: pre-v1.15.27 PLEX-card shape restored.
+     Big number = library total (e.g. 10,358). No bar on the card
+     itself — the v1.13.27 per-section comparison block below
+     is where the visual coverage bars live (the user: "I did like
+     the graphs below that"). v1.15.29's PLEX TV blue tone stays.
+     v1.23.41: foot reframed to ThemerrDB REACH — "W in ThemerrDB ·
+     N not in ThemerrDB" (W = motif_avail, N = total − W). Pre-tag
+     the foot was "X with theme · W ThemerrDB available", which just
+     restated the top COVERAGE card's "themed" number (the user: the
+     two card rows were too similar). Reach is the distinct cut —
+     how much of each library ThemerrDB's catalogue even covers,
+     vs the top row's how-much-is-themed. #}
+  <article class="stat stat-plex-primary" data-dash-card="plex-movies">
+    <header class="stat-head"><span class="stat-label">// PLEX MOVIES</span>{{ media_glyph('movies') }}</header>
+    <div class="stat-num" id="plex-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-movies-motif">{{ ssr_num(_ssr_dash.plex_movies_motif_avail) }}</b> in ThemerrDB</span>
+      <span class="muted"><b id="plex-movies-not-tdb">{{ ssr_num(_ssr_dash.plex_movies_not_in_tdb) }}</b> not in ThemerrDB</span>
+    </footer>
+  </article>
+  <article class="stat stat-plex-tv" data-dash-card="plex-tv">
+    <header class="stat-head"><span class="stat-label">// PLEX TV</span>{{ media_glyph('tv') }}</header>
+    <div class="stat-num" id="plex-tv-total">{{ ssr_num(_ssr_dash.plex_tv_total) }}</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-tv-motif">{{ ssr_num(_ssr_dash.plex_tv_motif_avail) }}</b> in ThemerrDB</span>
+      <span class="muted"><b id="plex-tv-not-tdb">{{ ssr_num(_ssr_dash.plex_tv_not_in_tdb) }}</b> not in ThemerrDB</span>
+    </footer>
+  </article>
+  {# v1.14.70: PLEX ANIME card. Hidden until /api/sections/
+     coverage confirms at least one anime section exists.
+     v1.15.19: .stat-plex-anime tone class (magenta left bar)
+     — the user's pick to give anime its own visual family.
+     v1.15.31 reset: pre-v1.15.27 shape (no bar, total as big
+     number, "with theme / ThemerrDB available" foot).
+     v1.15.50: SSR-bake the foot values. Card stays display:none
+     by default; renderPlexAnimeCard reveals it iff
+     plex_anime_total > 0. SSR fills the numbers so when JS
+     reveals the card they're already correct (no "—" flash
+     post-reveal). #}
+  {# v1.15.50: card stays display:none only when SSR confirms no
+     anime sections present. With ≥1 anime item, render visible on
+     first paint so JS reveal doesn't cause a hidden→visible flash. #}
+  <article class="stat stat-plex-anime" id="plex-anime-card" data-dash-card="plex-anime"
+           {% if not _ssr_dash.plex_anime_total %}style="display:none"{% endif %}>
+    <header class="stat-head"><span class="stat-label">// PLEX ANIME</span>{{ media_glyph('anime') }}</header>
+    <div class="stat-num" id="plex-anime-total">{{ ssr_num(_ssr_dash.plex_anime_total) }}</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-anime-motif">{{ ssr_num(_ssr_dash.plex_anime_motif_avail) }}</b> in ThemerrDB</span>
+      <span class="muted"><b id="plex-anime-not-tdb">{{ ssr_num(_ssr_dash.plex_anime_not_in_tdb) }}</b> not in ThemerrDB</span>
+    </footer>
+  </article>
+  {# v1.18.20: PLEX COLLECTIONS card. Mirrors PLEX MOVIES / TV /
+     ANIME shape but tone class .stat-plex-collections (red)
+     per the user's design call. Hidden until SSR confirms
+     plex_collections_total > 0 — installs that haven't run a
+     plex_enum collections pass yet stay hidden so the row
+     doesn't render with a zero placeholder. JS reveal in
+     renderPlexCollectionsCard once the card has data. #}
+  <article class="stat stat-plex-collections" id="plex-collections-card" data-dash-card="plex-collections"
+           {% if not _ssr_dash.plex_collections_total %}style="display:none"{% endif %}>
+    <header class="stat-head"><span class="stat-label">// PLEX COLLECTIONS</span>{{ media_glyph('collections') }}</header>
+    <div class="stat-num" id="plex-collections-total">{{ ssr_num(_ssr_dash.plex_collections_total) }}</div>
+    <footer class="stat-foot">
+      <span class="ok"><b id="plex-collections-motif">{{ ssr_num(_ssr_dash.plex_collections_motif_avail) }}</b> in ThemerrDB</span>
+      <span class="muted"><b id="plex-collections-not-tdb">{{ ssr_num(_ssr_dash.plex_collections_not_in_tdb) }}</b> not in ThemerrDB</span>
+    </footer>
+  </article>
+</section>
+
+<!-- v1.14.70: dedicated OPERATIONS section. Pre-fix these
+     three mini stats sat at the end of the COVERAGE row,
+     visually adjacent to MOVIES TRACKED + TV SERIES TRACKED
+     even though they describe queue state, not coverage.
+     the user's repro: "Queue Pending, Running Now, Failures
+     don't really make sense in the row where they are as they
+     lack context." Pulling them into a labeled OPERATIONS row
+     gives the user a clear "this is queue state" anchor. -->
+<section class="grid grid-stats"
+         data-dash-section="operations"
+         data-dash-label="OPERATIONS">
+  <!-- v1.15.44: OPERATIONS row cards link to /queue?status=N
+       (mirrors v1.15.42's ACTIVITY-row click-through pattern).
+       The JOBS chip on /queue has honored ?status= since v1.11.73,
+       so the chip auto-activates on land. Anchor lives INSIDE the
+       card element so the per-card customize controls (◀ ▶ //
+       HIDE injected at firstChild by dashboard-customize.js
+       v1.15.32) stay outside the link's click target. -->
+  <article class="stat stat-mini" data-dash-card="queue-pending">
+    <a href="/queue?status=pending" class="stat-card-link"
+       title="Open LOGS filtered to pending jobs.">
+      <header class="stat-head"><span class="stat-label">// QUEUE PENDING</span></header>
+      <div class="stat-num accent" data-stat="queue.pending">{{ ssr_num(_ssr_dash.queue_pending) }}</div>
+    </a>
+  </article>
+
+  <article class="stat stat-mini" data-dash-card="queue-running">
+    <a href="/queue?status=running" class="stat-card-link"
+       title="Open LOGS filtered to currently-running jobs.">
+      <header class="stat-head"><span class="stat-label">// RUNNING NOW</span></header>
+      <div class="stat-num accent-cyan" data-stat="queue.running">{{ ssr_num(_ssr_dash.queue_running) }}</div>
+    </a>
+  </article>
+
+  <article class="stat stat-mini" data-dash-card="queue-failed">
+    <a href="/queue?status=failed" class="stat-card-link"
+       title="Open LOGS filtered to failed jobs.">
+      <header class="stat-head"><span class="stat-label">// FAILURES</span></header>
+      <div class="stat-num accent-red" data-stat="queue.failed">{{ ssr_num(_ssr_dash.queue_failed) }}</div>
+    </a>
+  </article>
+</section>
+
+<!-- v1.15.27 (kept by v1.15.31): ACTIVITY row — themes-added
+     stats. Slotted between OPERATIONS and PLEX LIBRARY so the
+     operational flow reads "what's queued → what was placed
+     recently → per-library coverage detail". Backed by the
+     /api/stats activity.placements_today / placements_week
+     SELECTs (counts placements rows by placed_at relative to
+     now). v1.15.29 dropped the v1.15.27 // THEMERRDB CATALOG
+     mini-card from this row; v1.15.31 keeps just the two
+     placements stats. -->
+<section class="grid grid-stats"
+         data-dash-section="activity"
+         data-dash-label="ACTIVITY">
+  <!-- v1.15.42: ADDED TODAY/WEEK cards link to /queue?since=N
+       so the count→rows drill-down is one click. v1.15.41 added
+       the SINCE chip backbone; this tag wires the dashboard end
+       per the user: "I do like the clicking to link to the logs
+       though that is nice." Anchor wraps inner card content (NOT
+       the surrounding card element) so the per-card customize
+       controls — injected at firstChild by dashboard-customize.js
+       v1.15.32 — remain siblings of the link, not children, and
+       their click handlers don't compete with link navigation. -->
+  <article class="stat stat-mini" data-dash-card="added-today">
+    <a href="/queue?since=86400" class="stat-card-link"
+       title="Open LOGS filtered to events from the last 24 h.">
+      <header class="stat-head"><span class="stat-label">// ADDED TODAY</span></header>
+      <div class="stat-num ok" id="activity-placements-today">{{ ssr_num(_ssr_dash.placements_today) }}</div>
+      <footer class="stat-foot">
+        <span class="muted">themes placed in the last 24 h</span>
+      </footer>
+    </a>
+  </article>
+
+  <article class="stat stat-mini" data-dash-card="added-this-week">
+    <a href="/queue?since=604800" class="stat-card-link"
+       title="Open LOGS filtered to events from the last 7 d.">
+      <header class="stat-head"><span class="stat-label">// ADDED THIS WEEK</span></header>
+      <div class="stat-num ok" id="activity-placements-week">{{ ssr_num(_ssr_dash.placements_week) }}</div>
+      <footer class="stat-foot">
+        <span class="muted">themes placed in the last 7 d</span>
+      </footer>
+    </a>
+  </article>
+</section>
+
+{# v1.18.50: original PLEX LIBRARY section position was here; the
+   block was relocated up to immediately follow COVERAGE so both
+   COLLECTIONS cards land in the top-two-rows fold. STORAGE
+   follows OPERATIONS + ACTIVITY directly now. #}
+
+<!-- v1.14.70: dedicated STORAGE section. Pre-fix HARDLINKS,
+     COPIES, ORPHANS shared the PLEX COVERAGE row. They're
+     filesystem-realization stats — separate concept from
+     Plex's view of the library. ORPHANS card relabelled
+     USER PROVIDED — the user's repro: "Orphans...sounds weird
+     in the context...would make more sense if it was
+     something like user provided since once they have a theme
+     [adopted, user provided] it is themed." Same underlying
+     count (themes.upstream_source = 'plex_orphan'); the new
+     label conveys "themes you provided that aren't in TDB"
+     instead of the alarming "orphan" framing. Element id
+     stays `orphan-count` so the existing JS write path
+     (renderOrphans / loadDashboard) doesn't change. -->
+<section class="grid grid-stats"
+         data-dash-section="storage"
+         data-dash-label="STORAGE">
+  <article class="stat stat-mini" data-dash-card="hardlinks">
+    <header class="stat-head"><span class="stat-label">// HARDLINKS</span></header>
+    <div class="stat-num ok" id="storage-hardlinks">{{ ssr_num(_ssr_dash.storage_hardlinks) }}</div>
+  </article>
+  <article class="stat stat-mini" data-dash-card="copies">
+    <header class="stat-head"><span class="stat-label">// COPIES</span></header>
+    <div class="stat-num accent" id="storage-copies">{{ ssr_num(_ssr_dash.storage_copies) }}</div>
+    <footer class="stat-foot">
+      {# storage-wasted is a pre-formatted string ("1.2 GB") not
+         an int — pass through verbatim, fall back to "—" inline. #}
+      <span class="muted"><b id="storage-wasted">{{ _ssr_dash.storage_wasted_pretty if _ssr_dash.storage_wasted_pretty is not none else "—" }}</b> wasted</span>
+    </footer>
+  </article>
+  <article class="stat stat-mini" data-dash-card="user-provided">
+    <header class="stat-head"><span class="stat-label">// USER PROVIDED</span></header>
+    <div class="stat-num accent" id="orphan-count">{{ ssr_num(_ssr_dash.orphans) }}</div>
+    <footer class="stat-foot">
+      <span class="muted">items themed by you, not in TDB</span>
+    </footer>
+  </article>
+</section>
+
+<!-- v1.12.67: per-section coverage table. Multi-section libraries
+     (4K + standard, anime, etc.) used to aggregate everything into
+     the two top cards above; you couldn't tell which library had
+     the gaps. This block surfaces total / themed / unthemed /
+     failures / pending-updates per managed Plex section, with a
+     click-through that lands the user on the matching library tab
+     + 4K toggle. Hidden when only one section exists (single-section
+     installs don't gain anything from this view). -->
+{# v1.24.66: PER-SECTION COVERAGE + GENERAL STATISTICS sit side by side as a
+   2-up pair (the user: "double wide instead of 1 row each") — two compact tables
+   that each waste horizontal space when full-width alone. The .dash-pair wrapper
+   is the single customize unit (keeps the section-coverage layout key so an
+   existing saved layout positions the pair); each inner .block keeps its own id
+   for JS reveal + flexes to fill the row if its sibling is hidden. #}
+<div class="dash-pair" data-dash-section="section-coverage" data-dash-label="STATISTICS">
+<section class="block dash-pair-col" id="section-coverage-block"
+         style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PER-SECTION COVERAGE</h2>
+    <span class="muted small">click a row to drill into its library tab</span>
+  </header>
+  <table class="table table-compact" id="section-coverage-table">
+    <thead>
+      <tr>
+        <th>SECTION</th>
+        <th class="col-year">TYPE</th>
+        <th class="col-num">TOTAL</th>
+        <th class="col-num">THEMED</th>
+        <th class="col-num">UNTHEMED</th>
+        <th class="col-num">FAILURES</th>
+        <th class="col-num">PENDING</th>
+      </tr>
+    </thead>
+    <tbody id="section-coverage-body"></tbody>
+  </table>
+</section>
+<section class="block dash-pair-col" id="general-stats-block"
+         style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// GENERAL STATISTICS</h2>
+    <span class="muted small">source split per library · local owns the file, plex is Plex-Pass served</span>
+  </header>
+  <table class="table table-compact" id="general-stats-table">
+    <thead>
+      <tr>
+        <th>LIBRARY</th>
+        <th class="col-num">TOTAL</th>
+        <th class="col-num">LOCAL</th>
+        <th class="col-num">PLEX</th>
+        <th class="col-num">MISSING</th>
+        <th class="col-num">COVERAGE</th>
+      </tr>
+    </thead>
+    <tbody id="general-stats-body"></tbody>
+  </table>
+</section>
+</div>{# /.dash-pair (PER-SECTION COVERAGE + GENERAL STATISTICS) #}
+
+<!-- v1.13.27: per-section comparison bars. Each managed Plex section
+     gets its own row, normalized to 100% of that section's total —
+     so 4K Movies (28 items, 90% themed) reads as a near-full bar
+     even though it sits right next to Movies (10K items, 30% themed).
+     Pre-fix v1.13.22 collapsed everything into a Movies / TV pair,
+     which masked small-library coverage. Backed by /api/sections/
+     coverage (same payload as the // PER-SECTION COVERAGE table
+     below). Hidden when there are no managed sections. -->
+<section class="block" id="coverage-comparison-block"
+         data-dash-section="coverage-comparison"
+         data-dash-label="COVERAGE COMPARISON"
+         style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// COVERAGE COMPARISON</h2>
+    <span class="muted small">themed vs unthemed · normalized per section</span>
+  </header>
+  <div class="coverage-comparison-body" id="coverage-comparison-body"></div>
+</section>
+
+<!-- v1.13.34: insight charts. Three small data-viz blocks rendered
+     as CSS+SVG (no external chart lib) so the bundle stays small
+     and the look stays consistent with motif's monospace CRT
+     palette. Each section hides on no-data so a fresh install
+     doesn't render empty axes. -->
+{# v1.15.64: SSR the insight-block visibility so installs WITH
+   data render the block visible on first paint. Pre-fix the block
+   was always display:none + JS revealed after data arrived =
+   visible flash on every nav. Same pattern for the 3 insight
+   rows + the source-breakdown block below. #}
+<section class="block insight-row" id="insight-failures-block"
+         data-dash-section="insight-failures"
+         data-dash-label="FAILURE BREAKDOWN"
+         {% if not _ssr_dash.has_insight_failures %}style="display:none"{% endif %}>
+  <header class="block-head">
+    <h2 class="block-title">// FAILURE BREAKDOWN</h2>
+    <span class="muted small">unacked theme failures by kind · click to drill in</span>
+  </header>
+  <div class="insight-body" id="insight-failures-body"></div>
+</section>
+
+<section class="block insight-row" id="insight-syncs-block"
+         data-dash-section="insight-syncs"
+         data-dash-label="SYNC PERFORMANCE"
+         {% if not _ssr_dash.has_insight_syncs %}style="display:none"{% endif %}>
+  <header class="block-head">
+    <h2 class="block-title">// SYNC PERFORMANCE</h2>
+    <span class="muted small">last 30 runs · wall clock per run · hover for detail</span>
+  </header>
+  <div class="insight-body" id="insight-syncs-body"></div>
+</section>
+
+<section class="block insight-row" id="insight-downloads-block"
+         data-dash-section="insight-downloads"
+         data-dash-label="DOWNLOAD ACTIVITY"
+         {% if not _ssr_dash.has_insight_downloads %}style="display:none"{% endif %}>
+  <header class="block-head">
+    <h2 class="block-title">// DOWNLOAD ACTIVITY</h2>
+    <span class="muted small">last 30 days · download jobs queued per day</span>
+  </header>
+  <div class="insight-body" id="insight-downloads-body"></div>
+</section>
+
+{# v1.24.56: GENERAL STATISTICS moved up into the .dash-pair beside PER-SECTION
+   COVERAGE (v1.24.66) — see that block above. #}
+
+{# v1.24.55: SOURCE BREAKDOWN as a 3-up donut row (Total / Movies / TV),
+   replacing the prior single + collections pies. Same SRC-letter buckets
+   (T/A/U/M/P/–) the library rows show; each donut scopes the same
+   theme_sources feed by media_type, and the three share one legend-toggle
+   (hide a letter → hidden on all three). TV folds anime in (theme_sources
+   carries no anime split). Hidden until /api/stats lands source rows. #}
+<section class="block" id="source-breakdown-block"
+         data-dash-section="source-breakdown"
+         data-dash-label="SOURCE BREAKDOWN"
+         {% if not _ssr_dash.has_source_breakdown %}style="display:none"{% endif %}>
+  <header class="block-head">
+    <h2 class="block-title">// SOURCE BREAKDOWN</h2>
+    <span class="muted small">by library · click a legend item to hide it</span>
+  </header>
+  <div class="source-pie-row">
+    <div class="source-pie-col" id="source-pie-total-col">
+      <div class="source-pie-col-label">// TOTAL</div>
+      <div class="source-breakdown-chart">
+        <svg viewBox="0 0 42 42" aria-label="theme source distribution — total">
+          <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
+          <g id="source-pie-total-slices"></g>
+          <text x="21" y="20" class="source-pie-center-num" text-anchor="middle"
+                id="source-pie-total-num">—</text>
+          <text x="21" y="25" class="source-pie-center-label" text-anchor="middle">items</text>
+        </svg>
+      </div>
+      <div class="source-breakdown-legend" id="source-pie-total-legend"></div>
+    </div>
+    <div class="source-pie-col" id="source-pie-movies-col">
+      <div class="source-pie-col-label">// MOVIES</div>
+      <div class="source-breakdown-chart">
+        <svg viewBox="0 0 42 42" aria-label="theme source distribution — movies">
+          <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
+          <g id="source-pie-movies-slices"></g>
+          <text x="21" y="20" class="source-pie-center-num" text-anchor="middle"
+                id="source-pie-movies-num">—</text>
+          <text x="21" y="25" class="source-pie-center-label" text-anchor="middle">movies</text>
+        </svg>
+      </div>
+      <div class="source-breakdown-legend" id="source-pie-movies-legend"></div>
+    </div>
+    <div class="source-pie-col" id="source-pie-tv-col">
+      <div class="source-pie-col-label">// TV</div>
+      <div class="source-breakdown-chart">
+        <svg viewBox="0 0 42 42" aria-label="theme source distribution — tv">
+          <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
+          <g id="source-pie-tv-slices"></g>
+          <text x="21" y="20" class="source-pie-center-num" text-anchor="middle"
+                id="source-pie-tv-num">—</text>
+          <text x="21" y="25" class="source-pie-center-label" text-anchor="middle">shows</text>
+        </svg>
+      </div>
+      <div class="source-breakdown-legend" id="source-pie-tv-legend"></div>
+    </div>
+  </div>
+</section>
+
+<!-- v1.13.2 (#1): sync history block. Originally rendered as a
+     sparkline; v1.13.16 (B1) swapped it for a 5-row table with
+     timestamp / transport / duration / changes / status columns.
+     Below the table: per-transport summary (avg + count + fallback
+     note) so the user can see GIT vs DATABASE empirically. -->
+<section class="block" id="sync-history-block"
+         data-dash-section="sync-history"
+         data-dash-label="SYNC HISTORY"
+         style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC HISTORY</h2>
+    <span class="muted small">last 5 runs · per-transport averages below</span>
+  </header>
+  <div class="block-body block-body--tight">
+    <div class="sync-history-bars" id="sync-history-bars"></div>
+    <div class="sync-history-summary" id="sync-history-summary"></div>
+  </div>
+</section>
+
+<!-- Copies-block: only renders when there are placements that fell back to
+     copy (cross-FS situation). Was on /coverage; moved here in v1.8.1 since
+     /coverage went away. // RE-LINK ALL converts them to hardlinks where
+     the filesystem permits, no re-download needed. -->
+<section class="block" id="copies-block"
+         data-dash-section="copies"
+         data-dash-label="STORAGE WASTE"
+         style="display:none">
+  <header class="block-head">
+    {# v1.19.84: title trimmed to the short // TITLE form — the
+       "placements that fell back to copy" description it used to
+       carry is redundant with the help-text paragraph in the body
+       below, and every other block keeps its h2 short + lets a
+       sibling element carry context. #}
+    <h2 class="block-title">// STORAGE WASTE</h2>
+    <button class="btn btn-warn" id="relink-all-btn">// RE-LINK ALL</button>
+  </header>
+  <div class="block-body block-body--tight">
+    <p class="muted help-text">
+      These themes were copied instead of hardlinked because the source and destination were on different filesystems.
+      Each copy is duplicate disk usage. Fix the User Share allocation so themes and media share a filesystem,
+      then click RE-LINK ALL to convert copies → hardlinks without re-downloading.
+    </p>
+  </div>
+  <table class="table">
+    <thead>
+      <tr><th>TITLE</th><th>YEAR</th><th>DESTINATION</th><th class="col-year">SIZE</th><th class="col-actions">ACT</th></tr>
+    </thead>
+    <tbody id="copies-body"></tbody>
+  </table>
+</section>
+
+<!-- v1.13.21: LAST SYNC pre-block removed. The hero has the
+     `Last run …` relative-time line, and the LIVE OPS drawer
+     surfaces a richer per-stage report. The wall-of-text block
+     was duplicating both surfaces with no extra signal. -->
+
+<section class="block"
+         data-dash-section="recent-activity"
+         data-dash-label="RECENT ACTIVITY">
+  <header class="block-head">
+    <h2 class="block-title">// RECENT ACTIVITY</h2>
+    <a href="/queue" class="link-tiny">// all events →</a>
+  </header>
+  <ol class="event-stream" id="event-stream"></ol>
+</section>
+</div>{# /#dash-sections #}
+
+{# v1.24.53: SERVICES panel — live status of motif's external dependencies
+   (Plex reachability + round-trip latency, yt-dlp version). Pinned at the
+   bottom outside #dash-sections (a fixed strip), hidden until JS lands.
+   v1.24.62: data-dash-pinned makes it hideable via // customize layout (a
+   hide-only toggle, no reorder — it keeps its pinned bottom position). #}
+<section class="block" id="services-block" style="display:none"
+         data-dash-section="services" data-dash-label="SERVICES"
+         data-dash-pinned>
+  <header class="block-head">
+    <h2 class="block-title">// SERVICES</h2>
+  </header>
+  <div class="services-row" id="services-row"></div>
+</section>
+
+{# v1.13.88: customize layout link relocated here from the hero
+   description line. Bottom-of-page is a low-attention area
+   appropriate for a low-frequency power-user action. Anchor
+   id stays `dash-customize-btn` so dashboard-customize.js wires
+   up unchanged. Outside #dash-sections so it isn't itself
+   sortable / hideable. #}
+<p class="muted small">
+  <a href="#" id="dash-customize-btn"
+     class="dash-customize-link"
+     title="Rearrange or hide dashboard sections.">// customize layout</a>
+</p>
+{% endblock %}

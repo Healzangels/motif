@@ -1,0 +1,18837 @@
+// motif · vanilla JS frontend (no framework, no build step)
+(() => {
+  'use strict';
+
+  // ---- Helpers ----
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const fmt = {
+    num: (n) => (n ?? 0).toLocaleString(),
+    // v1.13.8 (Phase D): byte-count humanizer. Used by the cache
+    // gauge on /settings; kept generic so other size displays
+    // (sync_runs, snapshot meta, etc.) can reuse without local
+    // formatters.
+    bytes: (n) => {
+      const v = Number(n) || 0;
+      if (v < 1024) return `${v} B`;
+      const units = ['KB', 'MB', 'GB', 'TB'];
+      let x = v;
+      let i = -1;
+      do { x /= 1024; i++; } while (x >= 1024 && i < units.length - 1);
+      const decimals = x >= 100 ? 0 : x >= 10 ? 1 : 2;
+      return `${x.toFixed(decimals)} ${units[i]}`;
+    },
+    time: (iso) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const now = new Date();
+      const diff = (now - d) / 1000;
+      if (diff < 60) return `${Math.round(diff)}s ago`;
+      if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+      if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+      return d.toLocaleDateString() + ' ' + d.toLocaleTimeString().slice(0, 5);
+    },
+    timeShort: (iso) => {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toTimeString().slice(0, 8);
+    },
+    // v1.12.93: format a timestamp from either an ISO 8601 string
+    // or a unix-epoch (seconds; 10-digit number/string) into a
+    // human-readable absolute date+time. Used by INFO card timestamp
+    // rows where the source format varies — themes.youtube_added_at /
+    // edited_at come from ThemerrDB as numeric seconds, while
+    // motif's audit_events / local_files store ISO strings.
+    timeAuto: (val) => {
+      if (val === null || val === undefined || val === '') return '—';
+      let d;
+      if (typeof val === 'number'
+          || (typeof val === 'string' && /^\d{10}$/.test(val.trim()))) {
+        d = new Date(Number(val) * 1000);
+      } else {
+        d = new Date(val);
+      }
+      if (Number.isNaN(d.getTime())) return String(val);
+      return d.toLocaleString(undefined, {
+        year: 'numeric', month: 'short', day: '2-digit',
+        hour: '2-digit', minute: '2-digit',
+      });
+    },
+  };
+
+  // v1.15.138: suppress mouse-driven focus on toggle-able interactive
+  // primitives so a subsequent keyboard event (Esc, Tab, arrows, even
+  // a letter key) doesn't flip the browser's :focus-visible heuristic
+  // on the click-focused element. the user: "if I click T, then esc,
+  // then click T again to unselect, it's now unselected but it has a
+  // square around it like it's still selected … any keyboard click
+  // causes it." Root cause: v1.15.131's universal :focus { outline:
+  // none } correctly kills the mouse-click ring, and v1.15.130's
+  // :focus-visible block correctly paints the keyboard-nav ring —
+  // but a mouse-focused element + a later keyboard event re-evaluates
+  // to :focus-visible (Chromium/WebKit/Firefox heuristic), so the
+  // cyan outline appears AFTER the click even though focus came from
+  // the mouse. preventDefault on mousedown blocks the focus transfer
+  // for mouse interactions only; Tab-keyboard focus still works
+  // (Tab doesn't fire mousedown), so accessibility is preserved.
+  // Selector list mirrors the :focus-visible rule in app.css:552-565.
+  // Kept in sync via tests/test_v1_15_138_keyboard_focus_visible_stick.py.
+  const NO_MOUSE_FOCUS_SEL = [
+    '.btn',
+    '.dlg-close',
+    '.title-glyph',
+    '.chip',
+    '.library-legend-pill',
+    '.tab',
+    '.lib-flag-pill',
+    '.tdb-pill-btn',
+    '.attn-pill-btn',
+    '.state-pill-btn',
+    '.ed-pill-btn',
+    '.pill-filter-clear',
+    '.link-badge',
+    '.src-key-btn',
+    '.src-key-clear',
+  ].join(', ');
+  document.addEventListener('mousedown', (e) => {
+    const t = e.target.closest(NO_MOUSE_FOCUS_SEL);
+    if (t) e.preventDefault();
+  });
+
+  // v1.16.7: refresh library data when the user returns to a
+  // backgrounded tab. Browser setInterval throttling can stall
+  // the rapid-poll while the tab is hidden, leaving rows in a
+  // stale state (commonly "amber DL chip still pulsing for a
+  // row whose download has actually finished"). When the tab
+  // becomes visible again, fire a fresh loadLibrary — that
+  // both repaints with current state AND its built-in
+  // cold-load auto-kick will re-spawn libraryRapidPoll if any
+  // visible row still has in-flight state.
+  // the user: "still see rows getting stuck amber DL but then
+  // refreshing it shows properly updated."
+  // Gated on the presence of #library-body so non-library
+  // pages (settings, dash, queue) don't pay the cost.
+  // v1.16.7: kick libraryRapidPoll-equivalent refresh on tab
+  // return so rows stuck mid-state catch up immediately rather
+  // than waiting for the next throttled background tick.
+  //
+  // v1.17.3 (class 10 audit): extended the wake-up to every
+  // polled surface, not just the library tabs. Chromium throttles
+  // setInterval to ~1/min in inactive tabs — none of motif's
+  // current intervals have ceilings tight enough to die (the
+  // v1.16.7 libraryRapidPoll ceiling 60s→300s was the only such
+  // case), but the throttle still STALLS updates while the tab
+  // is hidden: topbar pills go stale, /queue rows stop refreshing,
+  // ops mini-bar lags behind worker progress. On tab return the
+  // user sees outdated state until the next throttled tick fires.
+  // Triggering a fresh round of fetches on visibilitychange
+  // collapses that gap to milliseconds.
+  //
+  // Per-surface dispatch: always refresh the topbar (every page
+  // has it); refresh ops state (always live); refresh the
+  // page-specific body when its container is present in the DOM.
+  // motifOps.refresh() is the canonical "force a fresh
+  // /api/progress poll now" hook from ops.js.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    // Topbar refresh — pills + chips drive every page's header.
+    // v1.15.108 contract: every refreshTopbarStatus() call chains
+    // .catch() so an unawaited rejection doesn't become an
+    // unhandled promise. try/catch alone doesn't cover the async
+    // rejection path.
+    if (typeof refreshTopbarStatus === 'function') {
+      refreshTopbarStatus().catch(() => { /* swallow */ });
+    }
+    // Ops drawer + mini-bar — re-stat any running background ops.
+    if (window.motifOps && typeof window.motifOps.refresh === 'function') {
+      try { window.motifOps.refresh(); } catch (_) { /* swallow */ }
+    }
+    // Page-specific body refresh — only fire the matching one to
+    // avoid wasted /api hits on pages that don't display that
+    // surface.
+    const path = window.location.pathname;
+    if (document.getElementById('library-body')
+        && typeof loadLibrary === 'function') {
+      loadLibrary().catch(() => { /* network blip — next click recovers */ });
+    }
+    if (path === '/' && typeof loadDashboard === 'function') {
+      loadDashboard().catch(() => {});
+    }
+    if (path === '/queue' && typeof loadQueue === 'function') {
+      loadQueue().catch(() => {});
+    }
+  });
+
+  // v1.16.1: blur the browser's auto-focused element after a
+  // dialog opens. <dialog>.showModal() programmatically focuses
+  // the first focusable child (typically the X close button) —
+  // the browser treats programmatic focus the same as keyboard
+  // focus for :focus-visible purposes, so the v1.15.130 cyan
+  // ring paints around the close button the instant the dialog
+  // opens. the user: "when clicking the info the X in the corner
+  // has a square around it like it being clicked straight away."
+  // The v1.15.138 mousedown-preventDefault doesn't help here
+  // because no mouse event fired — focus came from showModal()
+  // itself. Keyboard users can still Tab into the dialog (Tab
+  // re-focuses the first focusable child); we only suppress the
+  // initial auto-focus ring.
+  function showModalNoFocusRing(dlg) {
+    if (!dlg) return;
+    if (typeof dlg.showModal === 'function') {
+      dlg.showModal();
+      const focused = document.activeElement;
+      if (focused
+          && focused !== dlg
+          && focused !== document.body
+          && typeof focused.blur === 'function') {
+        focused.blur();
+      }
+    } else {
+      dlg.setAttribute('open', '');
+    }
+  }
+
+  // v1.23.44: HELP discovery layer. The // HELP topbar toggle flips help mode
+  // (body.help-mode + persisted) so first-time users get the LEGEND strip +
+  // decoded chips; the // GLOSSARY button opens the full reference dialog. Help
+  // mode is a USER PREFERENCE (it should survive across tabs), so localStorage
+  // — NOT the v1.18.84 sessionStorage scope used for per-tab filter snapshots.
+  const HELP_MODE_KEY = 'motif:help_mode';
+  function applyHelpMode(on) {
+    // v1.23.48: the bar + legend + settings-about are all CSS-gated on
+    // body.help-mode — toggling the class is the single source of truth.
+    document.body.classList.toggle('help-mode', on);
+    const toggle = document.getElementById('help-toggle');
+    if (toggle) toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  function setHelpMode(on) {
+    try { localStorage.setItem(HELP_MODE_KEY, on ? '1' : '0'); } catch (_) { /* disabled */ }
+    applyHelpMode(on);
+  }
+  // v1.23.47: help-feature Phase 2 — per-section orientation on /settings.
+  // the user's call: keep the always-on per-field hints (a new user needs setup
+  // guidance visible), and have help mode ADD a one-line "what this section is
+  // for / when you'd touch it" overview at the top of each settings block.
+  // Content lives here (one map) rather than 22 template injections; the
+  // injected <p> is CSS-gated (body.help-mode) like the v1.23.45 legend.
+  const SETTINGS_HELP_ABOUT = {
+    '// PATHS': 'Where motif stores downloaded themes and reads your yt-dlp cookies. You only change these if your Docker volume mounts differ from the defaults; the disk floor pauses downloads when /config runs low.',
+    '// PLEX SERVER': 'How motif reaches Plex (LAN URL + token), your TMDB key for matching, and which libraries it manages. Set this up first — nothing themes until Plex is connected.',
+    '// DEFAULT PLACEMENT METHOD': 'How motif installs a theme into a Plex folder by default — hardlink (no extra disk), copy (cross-filesystem fallback), or API push. Per-item actions can override it.',
+    '// LIBRARY SECTIONS': 'Pick which Plex libraries motif themes, and tag each as Movies / TV / Anime so the right tabs and matching rules apply.',
+    '// REPROBE PLEX THEMES': 'Re-scan Plex to refresh the +P "Plex also serves a theme" indicator across your library. Run after big Plex-side changes.',
+    '// PROBE TDB URLS': 'Check whether ThemerrDB’s theme URLs are still alive, so the red TDB ✗ "dead URL" state stays accurate. Safe to run anytime.',
+    '// DOWNLOAD TUNING': 'Throttle how fast motif pulls from YouTube so it stays under rate limits — rate-per-hour, concurrency, audio quality, and optional geo-bypass / proxy. Lower these if downloads start failing.',
+    '// FOLDER MATCHING': 'How motif maps a ThemerrDB title to your Plex item — strict edition matching and Plex-Pass-equivalent mode. Tune only if titles aren’t matching.',
+    '// SYNC TIMING': 'When motif takes its daily ThemerrDB pass (cron schedule). The sync is what discovers new themes for your library.',
+    '// AUTOMATION': 'What motif does on its own after a sync — auto-download new themes, auto-place them, and re-scan Plex. Turn these on for a hands-off loop, off to review before anything happens.',
+    '// SYNC TRANSPORT': 'How motif fetches the ThemerrDB tree — git (default, differential), a database snapshot, or per-item HTTP. Only change if the default git transport is blocked.',
+    '// RUNTIME MODE': 'Log verbosity and a dry-run switch that makes motif plan actions without touching files. Use dry-run to preview a big change safely.',
+    '// ORPHAN SCAN': 'Find drift between motif’s tracking and Plex’s actual theme state — themes Plex has that motif doesn’t know about, or vice versa.',
+    '// PROBE PLEX THEME API': 'A read-only diagnostic that maps how your Plex serves themes, used to plan cloud-theme backups.',
+    '// DATABASE BACKUP': 'Take a consistent snapshot of motif.db (its whole state) onto your /config mount. Do this before any risky change.',
+    '// SCHEDULED BACKUPS': 'Automatic nightly snapshots of the database, pruned to the newest few. Set-and-forget insurance.',
+    '// RESTORE': 'Replace the live database from a snapshot, applied on the next restart. This overwrites everything — use only to recover.',
+    '// NOTIFICATIONS': 'Where motif sends alerts (Apprise URLs — Discord, etc.). Add a sink here, then pick which events fire below.',
+    '// EVENTS': 'Which lifecycle events send a notification — theme added, sync done, failures, low disk, and more. Toggle off the noisy ones.',
+    '// API TOKENS': 'Long-lived tokens for scripting motif’s API or wiring it into a dashboard. Treat these like passwords.',
+    '// CHANGE PASSWORD': 'Update your motif login. Only applies when you use local password auth, not forward-auth.',
+    '// HOMEPAGE INTEGRATION': 'A ready-made widget config to surface motif’s stats on a Homepage / dashboard. Copy-paste.',
+    '// IMPORT': 'Bulk-load user theme URLs from a CSV — the round-trip partner of // EXPORT CSV. Good for migrating or batch-fixing URLs.',
+  };
+  function initSettingsHelp() {
+    document.querySelectorAll('.block-head').forEach((head) => {
+      const titleEl = head.querySelector('.block-title');
+      if (!titleEl) return;
+      const about = SETTINGS_HELP_ABOUT[titleEl.textContent.trim()];
+      if (!about) return;
+      // idempotent — don't double-insert on a re-run.
+      const next = head.nextElementSibling;
+      if (next && next.classList.contains('settings-help-about')) return;
+      const p = document.createElement('p');
+      p.className = 'settings-help-about';
+      p.textContent = '// ABOUT — ' + about;
+      head.insertAdjacentElement('afterend', p);
+    });
+  }
+
+  function initHelpMode() {
+    let on = false;
+    try { on = localStorage.getItem(HELP_MODE_KEY) === '1'; } catch (_) { /* disabled */ }
+    applyHelpMode(on);
+    const toggle = document.getElementById('help-toggle');
+    if (toggle) {
+      toggle.addEventListener('click', () => {
+        setHelpMode(!document.body.classList.contains('help-mode'));
+      });
+    }
+    const off = document.getElementById('help-mode-off');
+    if (off) off.addEventListener('click', () => setHelpMode(false));
+    const dlg = document.getElementById('help-glossary');
+    const open = document.getElementById('help-glossary-open');
+    if (dlg && open) open.addEventListener('click', () => showModalNoFocusRing(dlg));
+    if (dlg) {
+      dlg.querySelectorAll('[data-close]').forEach((b) =>
+        b.addEventListener('click', () => dlg.close()));
+      // backdrop click closes (native <dialog> click target IS the dialog).
+      dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
+    }
+    // v1.23.45: the in-context library LEGEND (present only on library pages).
+    // Opens expanded on first help-mode enable; remembers the user's collapse.
+    // v1.23.49: the legend is a header pill (next to NEEDS WORK) + a panel that
+    // drops below; default collapsed so it's just the pill until clicked.
+    const legendToggle = document.getElementById('library-legend-toggle');
+    const legendPanel = document.getElementById('library-legend');
+    if (legendToggle && legendPanel) {
+      const LEG_KEY = 'motif:help_legend_open';
+      const setLegendOpen = (o) => {
+        legendPanel.classList.toggle('open', o);
+        legendToggle.classList.toggle('open', o);
+        legendToggle.setAttribute('aria-expanded', o ? 'true' : 'false');
+        try { localStorage.setItem(LEG_KEY, o ? '1' : '0'); } catch (_) { /* disabled */ }
+      };
+      let lopen = false;
+      try {
+        const v = localStorage.getItem(LEG_KEY);
+        if (v !== null) lopen = v === '1';
+      } catch (_) { /* disabled */ }
+      legendPanel.classList.toggle('open', lopen);
+      legendToggle.classList.toggle('open', lopen);
+      legendToggle.setAttribute('aria-expanded', lopen ? 'true' : 'false');
+      legendToggle.addEventListener('click', () =>
+        setLegendOpen(!legendPanel.classList.contains('open')));
+      const glossLink = document.getElementById('library-legend-gloss');
+      if (glossLink && dlg) glossLink.addEventListener('click', () => showModalNoFocusRing(dlg));
+    }
+    // v1.23.47: per-section // ABOUT overviews on the settings page.
+    initSettingsHelp();
+  }
+
+  // v1.13.50: hoisted regex constants. JS regex literals (/.../)
+  // create a fresh object on every evaluation, so a regex used
+  // inside renderLibraryRow's body was being re-compiled on every
+  // row render. With ~200 rows visible during library polling,
+  // that adds up. Hoisted to module scope so the engine compiles
+  // them once and reuses across renders.
+  const _RX_LINK_BADGE_TITLE = /^(<span class="link-badge[^"]*)("[^>]*title=")([^"]*)/;
+  const _RX_LINK_BADGE_CLASS = /class="link-badge/;
+
+  async function api(method, path, body) {
+    const opts = { method, headers: {} };
+    if (body) {
+      if (body instanceof FormData) {
+        opts.body = body;
+      } else {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+      }
+    }
+    // v1.16.7: explicit cache:'no-store'. Pre-fix relied on the
+    // browser default for fetch caching of GETs; some browsers
+    // can serve repeated identical-URL GETs from the disk/memory
+    // cache when the response carries no Cache-Control header.
+    // /api/library + /api/progress + /api/stats all need real-
+    // time data — caching a "row in-flight" response then re-
+    // serving it while the worker has actually finished is one
+    // of the root causes the user flagged as "rows getting stuck
+    // amber DL but refreshing it shows properly updated."
+    opts.cache = 'no-store';
+    const r = await fetch(path, opts);
+    if (!r.ok) {
+      const text = await r.text().catch(() => '');
+      // v1.19.54: attach r.status + parsed FastAPI `detail` to
+      // the thrown error so callers that want to distinguish
+      // structured error responses (e.g., sha_drift 409 from
+      // the PROMOTE TO ACTIVE plex_cloud branch) can read
+      // `err.status` / `err.detail` without re-parsing the
+      // message. Backward compat: err.message stays
+      // "${status}: ${text}" — existing callers that
+      // .indexOf('409') still work.
+      let parsedDetail = null;
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && typeof parsed === 'object'
+            && 'detail' in parsed) {
+          parsedDetail = parsed.detail;
+        }
+      } catch (_) { /* non-JSON body — leave detail null */ }
+      const err = new Error(`${r.status}: ${text || r.statusText}`);
+      err.status = r.status;
+      err.detail = parsedDetail;
+      throw err;
+    }
+    return r.json();
+  }
+
+  function htmlEscape(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])
+    );
+  }
+
+  // v1.23.39: dead/permanent TDB failure kinds (the red TDB ✗ pill — only a
+  // new URL fixes these). MODULE scope so every consumer can read it:
+  // loadLibrary's computeTdbPill + row render AND loadCoverage's isAddable.
+  // v1.23.38 added isAddable's reference while the set was trapped inside
+  // loadLibrary() → ReferenceError on any dead-URL coverage row, breaking the
+  // whole dashboard coverage render. Mirror of FailureKind.needs_manual_override
+  // (api.py); the standing v1.23.38 drift-guard test ties them together.
+  const TDB_DEAD_FAILURES_GLOBAL = new Set([
+    'video_private', 'video_removed',
+    'video_age_restricted', 'geo_blocked',
+  ]);
+
+  // v1.21.15 (security): scheme allowlist for hrefs. htmlEscape stops
+  // attribute-breakout but NOT a `javascript:` / `data:` URL, so an
+  // <a href> built from Plex / ThemerrDB / CSV-import data could execute
+  // on click (the CSV-import preview was the confirmed sink — the
+  // backend YouTube regex is unanchored, so `javascript:…//youtu.be/<id>`
+  // classified as a clickable YouTube link). Returns the url ONLY when
+  // it's http(s); otherwise null → callers render plain escaped text,
+  // no link. Mirrors the backend's apprise/manual-url scheme guards.
+  function safeHref(url) {
+    const s = String(url ?? '').trim();
+    return /^https?:\/\//i.test(s) ? s : null;
+  }
+
+  // v1.10.17: extract edition tag(s) from a Plex folder path. Mirrors
+  // app/core/normalize.py:parse_folder_name — strips trailing {tag}
+  // groups from the basename, drops the 'edition-' prefix, joins with
+  // '·'. v1.21.80: the Python twin of THIS logic is the editions.py
+  // chokepoint editions.edition_label_for_folder (raw display label);
+  // keep the two in sync — separate runtimes, one grammar. Used to
+  // surface 'Director's Cut' / 'Extended' / etc. on
+  // library rows so users can tell editions apart at a glance (the
+  // title and year are identical across editions of the same film).
+  // v1.10.25: GUID-style tags ({imdb-/tmdb-/tvdb-/plex-/agentid-}) are
+  // skipped — they're scanner hints, not editions, and rendering them
+  // as a pill cluttered the title cell.
+  function parseEditionFromFolderPath(folderPath) {
+    if (!folderPath) return '';
+    const segs = String(folderPath).split(/[\\/]/).filter(Boolean);
+    let s = segs.length ? segs[segs.length - 1] : '';
+    const editions = [];
+    const guidPrefix = /^(imdb|tmdb|tvdb|plex|agentid)-/i;
+    while (true) {
+      const m = s.match(/^(.*)\{([^}]*)\}\s*$/);
+      if (!m) break;
+      const tag = m[2];
+      if (!guidPrefix.test(tag)) editions.unshift(tag);
+      s = m[1].replace(/\s+$/, '');
+    }
+    return editions
+      .map((e) => e.replace(/^edition-/i, ''))
+      .filter(Boolean)
+      .join(' · ');
+  }
+
+  // ---- Nav highlighting ----
+
+  function highlightNav() {
+    const path = window.location.pathname;
+    // v1.14.61: removed `/pending` map entry — route deleted in
+    // v1.12.41, template + JS surface deleted in v1.14.56 / .61.
+    // v1.18.3: '/collections' added so the active-tab underline
+    // renders on the new tab. Pre-fix the path map didn't include
+    // it → `k = undefined` short-circuit → no .active class →
+    // nav read as "no tab selected" even when standing on the
+    // /collections page.
+    const map = { '/': 'dashboard', '/movies': 'movies', '/tv': 'tv',
+                  '/anime': 'anime', '/collections': 'collections',
+                  '/queue': 'queue', '/settings': 'settings' };
+    const k = map[path];
+    if (!k) return;
+    // v1.23.73 (code review): clear the prior tab's .active before adding —
+    // v1.23.71 client-side switching reuses the nav DOM (it's not in the swapped
+    // fragment), so on a full-nav this add-only was harmless but in-place
+    // switching left every visited tab's underline lit.
+    document.querySelectorAll('.nav a.active').forEach((x) => x.classList.remove('active'));
+    const a = document.querySelector(`.nav a[data-nav="${k}"]`);
+    if (a) a.classList.add('active');
+  }
+
+  // ---- Topbar status ----
+
+  function applyTabAvailability(ta) {
+    if (!ta) return;
+    const showHide = (sel, has) => {
+      const n = document.querySelector(sel);
+      if (n) n.style.display = has ? '' : 'none';
+    };
+    const has = (k) => !!(ta[k] && (ta[k].standard || ta[k].fourk));
+    showHide('.nav a[data-nav="movies"]', has('movies'));
+    showHide('.nav a[data-nav="tv"]',     has('tv'));
+    showHide('.nav a[data-nav="anime"]',  has('anime'));
+  }
+
+  // v1.11.33: restore tab visibility from localStorage immediately so
+  // returning users don't see the brief flicker between page paint and
+  // the first /api/stats response. The fresh response from
+  // refreshTopbarStatus will overwrite if it's newer.
+  try {
+    const cached = localStorage.getItem('motif:tab_availability');
+    if (cached) {
+      const ta = JSON.parse(cached);
+      applyTabAvailability(ta);
+      // v1.13.16: also pre-paint the STANDARD/4K toggle chips on the
+      // library page from cached availability, so a tab switch
+      // (MOVIES → TV SHOWS) doesn't briefly show the chips at their
+      // hidden default state before /api/stats lands and fills them
+      // in. adaptLibraryFourkToggle no-ops gracefully when the
+      // resolution chips don't exist (non-library pages).
+      try { adaptLibraryFourkToggle(ta); } catch (_) { /* fine */ }
+    }
+  } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
+
+  // v1.12.50: same trick for the themes-have map. The library row
+  // pill render gates on window.__motif_themes_have[rowMt] to avoid
+  // misleading 'no TDB' pills on a fresh install with an empty
+  // themes table. Without this cache, the first library render on
+  // every page load (and every nav-back to the library tab) had
+  // __motif_themes_have undefined, so the gate returned '' for every
+  // row and pills only appeared after a filter click forced a
+  // re-render. Reading the cached map here seeds the global before
+  // the first render, so pills paint on first frame for any user
+  // who has run /api/stats at least once. The poll still overwrites
+  // with fresh data immediately after.
+  try {
+    const cachedTh = localStorage.getItem('motif:themes_have');
+    if (cachedTh) window.__motif_themes_have = JSON.parse(cachedTh);
+  } catch (_) { /* malformed cache — ignore, the poll will fix it */ }
+
+  // v1.11.72: build a scope label for the library REFRESH FROM PLEX
+  // button — 'MOVIES', '4K MOVIES', 'TV SHOWS', '4K TV', 'ANIME',
+  // '4K ANIME'. Falls back to 'PLEX' on pages without a library-tab
+  // input so the helper is safe to call from anywhere. libraryState
+  // is hoisted to a higher line but only consumed inside callbacks
+  // that run after DOMContentLoaded — its const binding is always
+  // initialised by the time this helper is invoked.
+  function libraryRefreshLabel() {
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return 'PLEX';
+    const tab = tabEl.value;
+    const fourk = !!libraryState.fourk;
+    // v1.18.4: 'collections' added to the tab→label map so the
+    // refresh button on /collections reads `// REFRESH COLLECTIONS`
+    // instead of falling through to `PLEX`. Pre-fix the SSR
+    // template painted "// REFRESH COLLECTIONS" correctly, but
+    // the first refreshTopbarStatus tick called this helper +
+    // overwrote the textContent with "// REFRESH PLEX" — the
+    // brief flicker the user reported. Collections are also NOT
+    // 4K-tagged, so the fourk prefix is intentionally skipped
+    // below (mirrors the library.html template guard).
+    const tabName = (
+      { movies: 'MOVIES', tv: 'TV SHOWS', anime: 'ANIME',
+        collections: 'COLLECTIONS' }[tab]
+    ) || 'PLEX';
+    if (tab === 'collections') return tabName;
+    return fourk ? `4K ${tabName}` : tabName;
+  }
+
+  // v1.14.68: synchronous label-only update for the library
+  // REFRESH button. Single source of truth shared by the
+  // //4K toggle handler (called pre-async so the label flips
+  // on the same paint as the chip-active class) and
+  // refreshTopbarStatus's pre-hash-skip block (catches state
+  // changes that didn't go through a click — e.g.
+  // adaptLibraryFourkToggle's auto-flip on page load).
+  // v1.14.79: also updates the DISABLED state using the
+  // window-stashed enumActive + enumPending maps + the
+  // globalEnumPipeline boolean. Pre-fix the helper only set
+  // the label — disabled was left to refreshTopbarStatus's
+  // main block, which hits the /api/stats 750ms cache + the
+  // v1.14.37 hash-skip and may not run for a full poll
+  // interval after the chip toggle. the user repro: refresh
+  // STD MOVIES → //4K (button correctly clickable) →
+  // //STANDARD (button shown clickable + "// REFRESH MOVIES"
+  // even though STD enum is still mid-run, because the
+  // disable update lagged the label update). Helper now
+  // re-applies the SAME predicate (myTabBusy + grace +
+  // globalEnumPipeline) so the toggle reflects the lock
+  // synchronously, no waiting for a fresh poll.
+  function updateLibraryRefreshBtnLabel() {
+    const btn = document.getElementById('library-refresh-btn');
+    if (!btn) return;
+    const tabKey = libraryState.tab;
+    const variantKey = libraryState.fourk ? 'fourk' : 'standard';
+    const enumActive = window.__motif_enum_active || {};
+    const enumPending = window.__motif_enum_pending || {};
+    const pipelineBusy = !!window.__motif_global_enum_pipeline;
+    const myTabBusy = !!(
+      tabKey
+      && (
+        (enumActive[tabKey] && enumActive[tabKey][variantKey])
+        || (enumPending[tabKey] && enumPending[tabKey][variantKey])
+      )
+    );
+    // Mirror the v1.13.65 grace-window check from the main
+    // refreshTopbarStatus block — the helper runs at chip-
+    // toggle time which is exactly when the grace window
+    // matters most.
+    const grace = window.__motif_lib_click_grace || {};
+    const graceExp = grace[tabKey] && grace[tabKey][variantKey];
+    const graceActive = !!(graceExp && graceExp > Date.now());
+    const stillBusy = myTabBusy || pipelineBusy || graceActive;
+    if (stillBusy) {
+      btn.disabled = true;
+      btn.textContent = '// REFRESHING…';
+    } else {
+      btn.disabled = false;
+      btn.textContent = `// REFRESH ${libraryRefreshLabel()}`;
+    }
+  }
+
+  // v1.13.65: chip row only renders ALL / THEMED / UNTHEMED — but
+  // libraryState.status can also hold off-chip values like 'failures',
+  // 'unplaced', 'not_in_plex' (set via FAIL/UPD pill click-through,
+  // TDB-only toggle, saved-filter presets, /movies?status=… deep
+  // links). Pre-fix those values caused every chip to drop chip-active
+  // (no match), making the row appear "nothing selected" with 0
+  // matches — confusing because the user couldn't tell which filter
+  // was actually applied. Now off-chip statuses fall back to lighting
+  // up ALL so at least one chip is always active. The actual filter
+  // (libraryState.status) still drives the query — only the visual
+  // anchor changes. Clicking ALL still clears to status='all' cleanly.
+  const _LIBRARY_CHIP_STATUSES = new Set(['all', 'has_theme', 'untracked']);
+  function _syncStatusChipActive() {
+    const wantStatus = _LIBRARY_CHIP_STATUSES.has(libraryState.status)
+      ? libraryState.status
+      : 'all';
+    document.querySelectorAll('[data-status]').forEach((x) =>
+      x.classList.toggle('chip-active', x.dataset.status === wantStatus));
+  }
+
+  // v1.17.9: activePlexEnumScopeLabel deleted — defined v1.12.3 but
+  // never wired up (topbar uses op-mini bar labels now). Hygiene
+  // audit removal.
+
+  // v1.11.48: optimistic topbar paint helper for sync/refresh click
+  // handlers. /api/stats has a 1s TTL cache, so an immediate
+  // refreshTopbarStatus right after enqueue often hits a stale
+  // entry and misses the freshly-pending row. This sets the label
+  // and dot directly so feedback lands the same frame as the click,
+  // then queues a real refresh past the cache TTL to reconcile.
+  // v1.14.53: deleted the legacy `paintTopbarSyncing(_label)` shim.
+  // The function was a no-op label-arg + duplicate of
+  // setOptimisticPlaceholder's scheduled refresh — at every caller
+  // setOptimisticPlaceholder was already wired immediately above
+  // and its inner boostPoll handled the refresh nudge. The shim's
+  // motifOps.refresh() + setTimeout(refreshTopbarStatus, 1100)
+  // pair ran a duplicate /api/stats GET + /api/progress poll per
+  // click. AUDIT_FRONTEND.md M1; v1.14.50 audit re-flagged.
+  // The section-refresh site at /api/libraries/{sid}/refresh
+  // (formerly the 4th caller) was the only one without its own
+  // setOptimisticPlaceholder; that site now wires plex_enum
+  // placeholder directly so the topbar mini-bar still surfaces
+  // a // REFRESHING PLEX pill on click instead of waiting for
+  // the next 10s /api/progress poll.
+  // v1.12.118: legacy paintTopbarSyncing retired with the dot+text.
+  // Click feedback is now handled by triggering motifOps.refresh()
+  // immediately so the new op-mini bar appears within a tick, plus
+  // a follow-up refreshTopbarStatus to reconcile UPD/FAIL pills. The
+  // function name is kept as a thin shim so existing callers don't
+  // need rewiring.
+  async function refreshTopbarStatus() {
+    // v1.17.22: in-flight seq guard. Class-6 mirror — CLAUDE.md
+    // bug class 6 documents the "syncWatcher vs
+    // refreshTopbarStatus race," but the function itself was
+    // never guarded. Audit caught it: ~20 caller sites
+    // (10s setInterval, visibilitychange kick, post-action
+    // setTimeout(refreshTopbarStatus, 1100) ×15+, loadQueue
+    // piggyback at line ~3416, syncWatcher poll) mean
+    // overlapping calls are routine. A slow A finishing AFTER
+    // fast B would otherwise:
+    //   - clobber the v1.14.37 _lastHash with stale payload
+    //     (next tick gets hash-skipped against the stale
+    //     hash, freezing the topbar until the hash changes)
+    //   - re-enable a button B's response wanted disabled
+    //   - paint OFFLINE on top of B's fresh success when A's
+    //     await throws after B succeeded
+    // Same _seq token pattern as loadLibrary._seq (line 6348)
+    // and loadQueue._seq (line 3407). Guards both the success
+    // resume AND the catch — a stale failure shouldn't claim
+    // OFFLINE over a fresh success.
+    refreshTopbarStatus._seq = (refreshTopbarStatus._seq || 0) + 1;
+    const _myToken = refreshTopbarStatus._seq;
+    try {
+      const stats = await api('GET', '/api/stats');
+      // v1.17.22: bail if a newer call has superseded us.
+      // Fresh call already ran updateLibraryRefreshBtnLabel
+      // (or will momentarily) — running it again from a stale
+      // resume is harmless but wasteful, and the DOM writes
+      // below would clobber the fresh state.
+      if (refreshTopbarStatus._seq !== _myToken) return;
+      // v1.14.67 + v1.14.68: client-state label update for the
+      // library REFRESH button — runs BEFORE the hash-skip
+      // below because the label is derived from
+      // libraryState.fourk + the library-tab DOM value, NOT
+      // from /api/stats. the user repro: on /tv, click the //4K
+      // chip → button text stayed "// REFRESH TV SHOWS"
+      // instead of flipping to "// REFRESH 4K TV SHOWS". The
+      // toggle handler called refreshTopbarStatus() but the
+      // v1.14.37 hash-skip bailed because the stats payload
+      // hadn't changed. v1.14.67 added the inline update here;
+      // v1.14.68 extracted it to updateLibraryRefreshBtnLabel
+      // so the //4K toggle handler can call it synchronously
+      // (no network RTT) for instant paint, and refreshTopbar-
+      // Status still calls it as a poll-tick safety net for
+      // state changes that didn't go through a click handler.
+      updateLibraryRefreshBtnLabel();
+      // v1.14.37: hash-skip the rest of the function when the
+      // stats payload is byte-identical to the prior tick. Pre-
+      // fix every 15s topbar poll re-ran ~600 lines of DOM
+      // queries + classList toggles + textContent assigns +
+      // dataset writes — most of them no-ops because the
+      // payload hadn't changed since the last poll. On idle
+      // motif (the common case) this is pure CPU + paint waste.
+      // Mirrors the proven `tbody.dataset.lastHash` pattern in
+      // loadLibrary (app.js ≈ 4470). Frontend audit P1.
+      // Safety: this skips DOM updates AND the
+      // window.__motif_* global stashes. That's safe because:
+      //   - the globals' last-set values reflect the same
+      //     stats payload we'd be re-stashing now
+      //   - the OFFLINE-pill recovery relies on the catch{}
+      //     clearing _lastHash (v1.22.70) so the next success
+      //     re-paints past this gate — pre-fix this bullet
+      //     claimed the recovery wasn't hash-gated, but the
+      //     IDLE restore sits BELOW the gate and an idle blip
+      //     resumes with a byte-identical payload
+      //   - first call always proceeds (lastHash is undefined)
+      //   - v1.14.67's client-state label update sits ABOVE
+      //     this gate so client-derived UI stays fresh
+      // Callers that fire after a state-change still hit the
+      // server (the await above runs unconditionally) — only
+      // the post-response paint work is skipped when nothing
+      // actually changed.
+      const newHash = JSON.stringify(stats);
+      if (refreshTopbarStatus._lastHash === newHash) return;
+      refreshTopbarStatus._lastHash = newHash;
+      const q = stats.queue || {};
+      // v1.12.118: legacy "what's running" status text + dot retired.
+      // The new ops mini-bar (driven by /api/progress polling in
+      // ops.js) covers every active operation surface — TDB sync,
+      // Plex enum, download/place/scan/refresh/relink/adopt queues —
+      // through one uniform pill style. The idle pill stays visible
+      // when nothing's running. refreshTopbarStatus's job here is
+      // limited to: keep UPD/FAIL pills in sync, kick the ops
+      // poller when stats sees a fresh sync flag (so the bar
+      // appears within a tick of the click rather than after the
+      // ops idle-poll cadence), and reset the idle pill to its
+      // healthy state.
+      const idle = $('#op-status-idle');
+      if (idle) {
+        idle.classList.remove('op-pill-offline');
+        // v1.15.34: guard the .op-pill-label dereference. Pre-fix
+        // a missing inner span (DOM desync, template variant
+        // without the label child) would null-deref and burn the
+        // entire refreshTopbarStatus tick — every chip on the
+        // topbar would freeze with zero error indication.
+        const idleLabel = idle.querySelector('.op-pill-label');
+        if (idleLabel) idleLabel.textContent = 'IDLE';
+      }
+      // Trigger fast ops refresh on sync transitions so the
+      // mini-bar lights up immediately.
+      const plexEnumBusy = q.plex_enum_in_flight > 0;
+      const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
+      const opsBar = $('#op-mini');
+      const opsHidden = !opsBar || opsBar.hidden;
+      if ((themerrdbBusy || plexEnumBusy) && opsHidden
+          && window.motifOps && typeof window.motifOps.refresh === 'function') {
+        try { window.motifOps.refresh(); } catch (_) { /* swallow */ }
+      }
+      // unacked count drives the FAIL pill below + the
+      // __motif_failed_count global other code reads.
+      const unacked = q.unacked_failures || 0;
+
+      // v1.12.118: failure-count signaling moved to the FAIL op-pill
+      // (already pulses red on its own). The legacy #topbar-status
+      // click-through is retired since the dot+text are gone.
+      // __motif_failed_count global stays so other code that gates
+      // on it doesn't need rewiring.
+      window.__motif_failed_count = unacked;
+
+      // v1.11.77: per-media-type 'we have TDB data for this' flags.
+      // Pre-fix the TDB pill was gated on last_sync_at (a successful
+      // sync ever) — if the user cancelled the very first sync mid-
+      // way, last_sync_at stayed null forever and pills never
+      // rendered, even though themes had real data for items
+      // captured before the cancel. Now we gate on the themes count
+      // being > 0 for the row's media_type, so partial captures
+      // still light up the pills truthfully.
+      // v1.11.97: gate on the TDB-only count (themes whose
+      // upstream_source is a real ThemerrDB hit, not 'plex_orphan').
+      // Pre-fix any uploaded / adopted theme would bump the generic
+      // total > 0 and trip the pill into showing "no TDB" for
+      // every other row in the section, even if a sync had never
+      // been run. The TDB pill is a statement about ThemerrDB
+      // coverage; only TDB-sourced rows should drive it.
+      const movies_tdb = (stats.movies && stats.movies.tdb_total) || 0;
+      const tv_tdb = (stats.tv && stats.tv.tdb_total) || 0;
+      // v1.18.0: collections bucket parallel to movies/tv. The
+      // /api/stats endpoint may not have a 'collections' shape yet
+      // (Phase 7 wires it), so absorb both shapes — a missing
+      // `stats.collections` falls through to 0, which means the TDB
+      // pill gate stays off until collections sync runs.
+      const coll_tdb = (stats.collections && stats.collections.tdb_total) || 0;
+      window.__motif_themes_have = {
+        movie: movies_tdb > 0,
+        tv: tv_tdb > 0,
+        collection: coll_tdb > 0,  // v1.18.0
+        // anime tab pulls from both depending on section type;
+        // either source qualifies it as 'we have data'.
+        // v1.12.2: was referring to undeclared movies_total/tv_total
+        // (renamed to *_tdb in v1.11.97); ReferenceError tripped the
+        // outer catch and lit the OFFLINE indicator on every page
+        // load. Silent catch made it look like a network issue.
+        any: (movies_tdb + tv_tdb + coll_tdb) > 0,
+      };
+      // v1.12.50: cache the themes-have map in localStorage so the
+      // NEXT page load can paint TDB pills on the FIRST render
+      // without waiting for /api/stats. Pre-fix, library rows
+      // rendered before stats landed, so the pill render gate
+      // (haveTdb at row pill time) was always false on first paint;
+      // pills only appeared after a filter click forced a re-render.
+      // Mirrors the localStorage cache pattern established for
+      // tab_availability in v1.11.33.
+      try {
+        localStorage.setItem(
+          'motif:themes_have',
+          JSON.stringify(window.__motif_themes_have),
+        );
+      } catch (_) { /* private mode / quota — fine, just lose the cache */ }
+
+      // v1.13.88: stash topbar counts in localStorage every tick so a
+      // page navigation can pre-populate the badges from cache before
+      // the first /api/stats response lands. Pre-fix: the badge HTML
+      // defaults to `hidden`, JS unhides only after the response, so a
+      // slow /api/stats (during heavy plex_enum) left the badges
+      // invisible for several seconds after every click. the user's
+      // "pills disappear sometimes for a long period" report.
+      try {
+        const cached = {
+          upd: (stats.updates && stats.updates.pending) || 0,
+          fail: (stats.failures && stats.failures.total) || 0,
+          drop: (stats.drops && stats.drops.total) || 0,
+          repush: (stats.repush && stats.repush.total) || 0,  // v1.24.40
+          awaiting: (stats.awaiting && stats.awaiting.total) || 0,  // v1.24.43
+        };
+        localStorage.setItem('motif:topbar_counts', JSON.stringify(cached));
+      } catch (_) { /* private mode quota — fine, just lose the cache */ }
+      // Updates badge — v1.12.106: op-pill primitive, [hidden] attr.
+      const updBadge = $('#topbar-updates-badge');
+      if (updBadge) {
+        const n = (stats.updates && stats.updates.pending) || 0;
+        if (n > 0) {
+          $('#topbar-updates-count').textContent = n;
+          updBadge.hidden = false;
+          // v1.12.48: route the badge to whichever tab owns the
+          // first row with a pending update (mirrors the FAIL
+          // badge's tab_hint logic). Apply the blue TDB ↑ pill
+          // filter so the user lands directly on the rows that
+          // make up the count — matched 1:1 since the
+          // tdb_pills=update SQL now scopes to decision='pending'.
+          // v1.13.78: also include the fourk dimension. Pre-fix the
+          // href was tab-only, so the library page's variant
+          // (standard vs 4K) came from localStorage — landing on
+          // 4K with 0 matches when the actual pending update was
+          // in standard. Now match the v1.13.69 FAIL pattern: read
+          // the breakdown array, use the first entry for the static
+          // href, stash the full list on data-upd-tabs so successive
+          // clicks rotate through every (tab, fourk) pair with a
+          // pending update.
+          // v1.13.79: deep-link target migrated from tdb_pills=update
+          // to attn_pills=update. Same shape as v1.13.68 did for the
+          // FAIL pill (status=failures → attn_pills=fail). Lights up
+          // the blue ! ATTN chip on landing — the canonical chip for
+          // pending updates since v1.13.68. Pre-fix the badge lit up
+          // the older blue ↑ TDB chip, which has slightly different
+          // semantics (TDB ↑ = "this row's TDB URL changed" axis,
+          // ATTN ! = "this row needs your attention for an update
+          // decision"). The two queries usually agree but the ATTN
+          // axis is the user-facing surface aligned with the FAIL
+          // pill's chip.
+          const tabHint = (stats.updates && stats.updates.tab_hint) || 'movies';
+          const updBreakdown = (stats.updates
+                                && Array.isArray(stats.updates.tabs))
+            ? stats.updates.tabs : [];
+          updBadge.dataset.updTabs = JSON.stringify(updBreakdown);
+          const firstUpdTab = updBreakdown[0]?.tab || tabHint;
+          const firstUpdFourk = updBreakdown[0]?.fourk ? '1' : '0';
+          updBadge.href = `/${firstUpdTab}?fourk=${firstUpdFourk}&attn_pills=update`;
+        } else {
+          updBadge.hidden = true;
+        }
+      }
+      // Failures badge — v1.12.106: op-pill primitive, [hidden] attr.
+      // Driver unified with per-row glyph: count every unacked
+      // failure_kind, not just the four 'unavailable' kinds.
+      // Pre-fix the topbar showed FAIL=0 while rows with
+      // cookies_expired / network_error / unknown still rendered
+      // the red ⚠ glyph — visible mismatch between the topbar
+      // attention surface and the per-row signal.
+      const failBadge = $('#topbar-failures-badge');
+      if (failBadge) {
+        const n = (stats.failures && stats.failures.total) || 0;
+        if (n > 0) {
+          $('#topbar-failures-count').textContent = n;
+          failBadge.hidden = false;
+          // v1.12.11: route the badge to whichever tab owns the
+          // first failing row (anime / tv / movies). Pre-fix the
+          // link was hardcoded to /movies which mis-routed every
+          // anime / tv failure.
+          // v1.13.57: route the badge to the unacked-failures
+          // filter (was ?tdb_pills=dead which included ACKED rows,
+          // so "3 FAIL" took the user to a page with 8 matches).
+          // v1.13.68: swap from ?status=failures to ?attn_pills=fail.
+          // status=failures filtered correctly but no chip lit up
+          // on landing — the user couldn't tell a filter was
+          // active, AND // ACK SELECTED stayed hidden because it
+          // gated on tdb_pills.dead. The ⚠ ATTN chip lights up on
+          // attn_pills=fail and the bulk ACK button is now wired
+          // to that gate (see bulk-action visibility block).
+          // v1.13.69: stash the full {tab, fourk, count} breakdown
+          // on the badge so successive clicks rotate through every
+          // tab+variant that has failures (Movies → 4K Movies →
+          // TV → 4K TV → Anime → 4K Anime → back to first). Pre-fix
+          // the badge was a static link to a single tab_hint —
+          // useful for the first click but a dead-end after that.
+          // Click handler below intercepts the navigation.
+          const tabHint = (stats.failures && stats.failures.tab_hint) || 'movies';
+          const breakdown = (stats.failures && Array.isArray(stats.failures.tabs))
+            ? stats.failures.tabs : [];
+          failBadge.dataset.failTabs = JSON.stringify(breakdown);
+          // Static href is the fallback — keeps the badge accessible
+          // without JS / via right-click "open in new tab" → the
+          // first failing tab+variant.
+          const firstTab = breakdown[0]?.tab || tabHint;
+          const firstFourk = breakdown[0]?.fourk ? '1' : '0';
+          failBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=fail`;
+        } else {
+          failBadge.hidden = true;
+        }
+      }
+      // v1.13.1 (Phase C): DROP badge — count of themes ThemerrDB stopped
+      // publishing. v1.23.78: the count is now library-scoped (only drops with
+      // a row in your library — the `themes` table mirrors the WHOLE TDB
+      // catalog, so a dropped title you don't own used to light an un-findable
+      // badge) AND the href routes to the tab that owns the dropped row,
+      // mirroring the UPD pill — pre-fix it hardcoded /movies, so a TV/anime
+      // drop landed on /movies with 0 matches.
+      const dropBadge = $('#topbar-drops-badge');
+      if (dropBadge) {
+        const n = (stats.drops && stats.drops.total) || 0;
+        const cnt = $('#topbar-drops-count');
+        if (n > 0) {
+          if (cnt) cnt.textContent = n;
+          dropBadge.hidden = false;
+          const dropBreakdown = (stats.drops && Array.isArray(stats.drops.tabs))
+            ? stats.drops.tabs : [];
+          // v1.24.44: stash for bindBadgeCycle so DROP also cycles through every
+          // impacted tab (incl. collections) — pre-fix it only linked to the first.
+          dropBadge.dataset.dropTabs = JSON.stringify(dropBreakdown);
+          const firstDropTab = dropBreakdown[0]?.tab
+            || (stats.drops && stats.drops.tab_hint) || 'movies';
+          const firstDropFourk = dropBreakdown[0]?.fourk ? '1' : '0';
+          dropBadge.href = `/${firstDropTab}?fourk=${firstDropFourk}&tdb_pills=dropped`;
+        } else {
+          dropBadge.hidden = true;
+        }
+      }
+      // v1.24.40: RE-PUSH badge — genuinely-dead uploaded themes (a Plex
+      // delete+re-add destroyed the rating_key motif uploaded to). v1.24.44:
+      // cycles through every impacted tab (incl. collections) like FAIL/UPD.
+      const repushBadge = $('#topbar-repush-badge');
+      if (repushBadge) {
+        const n = (stats.repush && stats.repush.total) || 0;
+        const cnt = $('#topbar-repush-count');
+        if (n > 0) {
+          if (cnt) cnt.textContent = n;
+          repushBadge.hidden = false;
+          // v1.24.44: stash the per-tab breakdown for bindBadgeCycle; the static
+          // href = the first impacted tab (right-click / new-tab fallback).
+          const breakdown = (stats.repush && Array.isArray(stats.repush.tabs))
+            ? stats.repush.tabs : [];
+          repushBadge.dataset.repushTabs = JSON.stringify(breakdown);
+          const firstTab = breakdown[0]?.tab
+            || (stats.repush && stats.repush.tab_hint) || 'movies';
+          const firstFourk = breakdown[0]?.fourk ? '1' : '0';
+          repushBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=repush`;
+        } else {
+          repushBadge.hidden = true;
+        }
+      }
+      // v1.24.43: AWAIT badge — downloaded-but-not-placed (!P) rows, surfaced
+      // proactively like FAIL/RE-PUSH. v1.24.44: cycles through every impacted
+      // tab (incl. collections — the bug the user caught with the single hint).
+      const awaitBadge = $('#topbar-await-badge');
+      if (awaitBadge) {
+        const n = (stats.awaiting && stats.awaiting.total) || 0;
+        const cnt = $('#topbar-await-count');
+        if (n > 0) {
+          if (cnt) cnt.textContent = n;
+          awaitBadge.hidden = false;
+          const breakdown = (stats.awaiting && Array.isArray(stats.awaiting.tabs))
+            ? stats.awaiting.tabs : [];
+          awaitBadge.dataset.awaitTabs = JSON.stringify(breakdown);
+          const firstTab = breakdown[0]?.tab
+            || (stats.awaiting && stats.awaiting.tab_hint) || 'movies';
+          const firstFourk = breakdown[0]?.fourk ? '1' : '0';
+          awaitBadge.href = `/${firstTab}?fourk=${firstFourk}&attn_pills=await`;
+        } else {
+          awaitBadge.hidden = true;
+        }
+      }
+      // v1.19.68: COOKIES topbar badge removed. Cookies-needed
+      // rows (failure_kind='cookies_expired') count toward the
+      // FAIL pulse above (its SQL is `failure_kind IS NOT NULL
+      // AND not acked` — includes cookies). The yellow ⚿ row
+      // pill in the TDB column + the TDB-axis ⚿ filter chip
+      // still surface the cookies-needed identity so operators
+      // can filter to that cohort when they want to. The
+      // standalone topbar badge added two-yellow-⚿-surface
+      // duplication for the same underlying count — the user's
+      // v1.19.66 audit follow-up: "let's get rid of yellow ⚿
+      // all together [as a separate attention surface], use
+      // our existing red ! to flag it for the user to ack."
+      // stats.cookies still surfaced in /api/stats for the
+      // settings page + diagnostics; just no consumer toggling
+      // a topbar element anymore.
+      // v1.13.11: DISK warning pill. Only renders when the guard is
+      // enabled (stats.disk.low is non-null) AND we're below the
+      // threshold. Free-MB count goes inline so the operator sees
+      // headroom at a glance.
+      const diskBadge = $('#topbar-disk-badge');
+      if (diskBadge) {
+        const disk = stats.disk || {};
+        const free = $('#topbar-disk-free');
+        if (disk.low === true) {
+          if (free) free.textContent = (disk.free_mb != null) ? `${disk.free_mb}M` : '!';
+          diskBadge.hidden = false;
+          if (disk.free_mb != null && disk.min_mb != null) {
+            diskBadge.title = `${disk.free_mb}MB free on themes_dir's filesystem (min ${disk.min_mb}MB) — downloads are blocked until space frees up.`;
+          }
+        } else {
+          diskBadge.hidden = true;
+        }
+      }
+      // v1.12.118: legacy idle-dot retired — ops.js renderTopbar
+      // owns the idle pill / op-mini handoff now (no flip).
+
+      // v1.11.27: hide every tab's nav link when no managed section
+      // backs it. v1.11.33: cache the availability map in localStorage
+      // so the next page load can paint nav from the cache before the
+      // first stats poll lands — eliminates the brief flicker where
+      // unconfigured tabs flashed visible.
+      if (stats.tab_availability) {
+        const ta = stats.tab_availability;
+        applyTabAvailability(ta);
+        try {
+          localStorage.setItem('motif:tab_availability', JSON.stringify(ta));
+        } catch (_) { /* private mode / quota — fine, we just lose the cache */ }
+        adaptLibraryFourkToggle(ta);
+      }
+
+      // v1.10.44: stash cookies-present so the library row's TDB pill
+      // can flip green when cookies are configured and on disk
+      // (regardless of any stale cookies_expired flag from earlier
+      // probes). The pill goes amber only when the file is actually
+      // missing.
+      if (stats.config) {
+        window.__motif_cookies_present = !!stats.config.cookies_present;
+      }
+
+      // v1.12.41: /pending tab removed. The pending-placements
+      // indicator + library-page banner that pointed at it are
+      // both gone — pending downloads now surface via the
+      // library tab's TDB ↑ pill filter and the per-row UI.
+
+      // Drive dry-run banner
+      const banner = $('#dry-run-banner');
+      if (banner) {
+        banner.style.display = stats.dry_run ? '' : 'none';
+        document.body.classList.toggle('dry-run-on', !!stats.dry_run);
+      }
+      // Drive paths-not-configured banner
+      updatePathsBanner(stats);
+
+      // v1.11.5: every sync/refresh button shares one lock — when EITHER
+      // a ThemerrDB sync or a Plex enum is in flight, all of:
+      //   - dashboard SYNC button
+      //   - movies/tv/anime page REFRESH FROM PLEX
+      //   - settings-page REFRESH FROM PLEX (LIBRARY SECTIONS top-right)
+      //   - per-section REFRESH buttons
+      // are disabled and text-stamped with the operation in flight.
+      // Pre-v1.11.5 the page/settings/per-section refreshes only locked
+      // on plex_enum, so during a ThemerrDB sync the user could fire a
+      // concurrent Plex enum and end up with two sync banners running.
+      // v1.11.27: granular per-tab / per-section button locking.
+      // Pre-fix any plex_enum in flight locked every refresh button on
+      // every page; the user couldn't refresh /tv while /movies was
+      // still scanning. Now each refresh button checks whether ITS
+      // scope is currently in the running set:
+      //   - library page REFRESH: gated on q.plex_enum_active[tab][variant]
+      //   - per-section REFRESH: gated on its section_id appearing in
+      //     q.plex_enum_running_section_ids
+      //   - settings global REFRESH FROM PLEX: gated on ANY section
+      //     enumerating
+      //   - dashboard SYNC: still gated on themerrdb_sync_in_flight
+      //     (it's the only ThemerrDB sync trigger)
+      const enumActive = q.plex_enum_active || {};
+      const enumSectionIds = new Set(q.plex_enum_running_section_ids || []);
+      // v1.14.73: pending-only counterparts. Combined with the
+      // running maps for per-tab/per-section button locks below
+      // (so a queued section stays locked too) but NOT used for
+      // enumTabsActive — that cross-tab signal must stay running-
+      // only or queueing across tabs would re-trigger the
+      // ALL-tabs-locked bug v1.14.66 fixed.
+      const enumPending = q.plex_enum_pending || {};
+      const enumPendingSectionIds = new Set(
+        q.plex_enum_pending_section_ids || []);
+      // 'anyEnumRunning' = there's a section actively running RIGHT
+      // NOW (status='running'). Used for per-section REFRESH buttons
+      // since once a specific section finishes, the user can fire
+      // it again immediately.
+      const anyEnumRunning = enumSectionIds.size > 0;
+      // v1.11.75: 'anyEnumInFlight' = there's any plex_enum job in
+      // pending OR running state. Used for layoutLocked + the
+      // settings global REFRESH so the lock holds through the
+      // ENTIRE enum window (incl. brief gaps where the worker is
+      // between running jobs but more are queued). Pre-fix the lock
+      // released between running sections and the user could see
+      // the per-section MGD checkboxes / SAVE button briefly
+      // re-enable while 'REFRESHING PLEX…' was still showing in the
+      // topbar — confusing.
+      const anyEnumInFlight = plexEnumBusy;
+      // Stash for the empty-state message in loadLibrary().
+      window.__motif_enum_active = enumActive;
+      // v1.14.79: stash the pending-side map alongside the
+      // running map so updateLibraryRefreshBtnLabel can
+      // compute the per-tab myTabBusy at chip-toggle time
+      // without re-fetching /api/stats. globalEnumPipeline is
+      // stashed separately further down (after it's computed).
+      window.__motif_enum_pending = enumPending;
+      // v1.12.69: per-tab busy indicator. Toggle .nav-busy on each
+      // managed-tab anchor whenever any of that tab's variants
+      // (standard / fourk) is currently enumerating. CSS adds a
+      // small pulsing cyan dot via ::after so users can see at a
+      // glance which library tabs are in flux without parsing the
+      // topbar status text.
+      ['movies', 'tv', 'anime'].forEach((tab) => {
+        const anchor = document.querySelector(`.nav a[data-nav="${tab}"]`);
+        if (!anchor) return;
+        const tabBusy = !!(enumActive[tab]
+                           && (enumActive[tab].standard
+                               || enumActive[tab].fourk));
+        anchor.classList.toggle('nav-busy', tabBusy);
+      });
+      // v1.12.69's section-count badge was removed in v1.22.88 —
+      // it anchored on the legacy '#topbar-status .dot' that
+      // v1.12.118 retired, so the badge never rendered again
+      // (dead code; the ops mini-bar carries enum state now).
+      // v1.13.18: silent variant of lockBtn — toggles disabled but
+      // leaves the label intact. The topbar status pill carries the
+      // live state, so swapping the button label was redundant AND
+      // outlasted the pill in some cases. Pass a busyText only if
+      // you genuinely need a label swap (no current callers do).
+      const lockBtn = (btn, locked, _busyText) => {
+        if (!btn) return;
+        btn.disabled = !!locked;
+      };
+      // v1.13.23: split the lock scope so per-library SYNC PLEX
+      // doesn't gate-lock other library tabs or the dashboard SYNC.
+      // Pre-fix any plex_enum in flight locked every // SYNC PLEX
+      // button on every library tab AND the dashboard SYNC THEMERRDB
+      // button — the v1.11.27 intent ("library page REFRESH: gated
+      // on q.plex_enum_active[tab][variant]", lines 449-459 above)
+      // existed in the comments but the implementation collapsed
+      // back to the unified v1.11.5 gate. This block restores the
+      // granular lock:
+      //   - dashboard SYNC: themerrdbBusy only; per-library plex_enum
+      //     is an independent job and shouldn't block another sync.
+      //   - library SYNC PLEX: only when MY tab+variant has an
+      //     enum in flight, OR a global pipeline (sync→enum cascade
+      //     with auto_enum on, or multi-tab SCAN ALL from settings)
+      //     is sweeping every section.
+      //   - settings SYNC PLEX: any plex_enum in flight (it'd dedupe
+      //     poorly per-section), or sync→enum cascade incoming.
+      const autoEnum = (q.auto_enum_after_sync !== false);
+      const tabKey = libraryState.tab;
+      const variantKey = libraryState.fourk ? 'fourk' : 'standard';
+      // v1.13.36: per-variant busy (reverts v1.13.30's tab-wide
+      // gate). User feedback: "when syncing the standard version
+      // of a library the 4k version also becomes unclickable and
+      // says syncing when only the actual library [variant] syncing
+      // should." STANDARD and 4K target different Plex sections
+      // (different jobs, can run independently); the lock should
+      // mirror that. v1.13.30 widened the gate to address a
+      // separate issue (mid-flip DONE flash) which is now handled
+      // entirely by the scope-aware sawBusyScope flag below.
+      // v1.14.73: include pending too. Pre-fix v1.14.66 narrowed
+      // enumActive to running-only, which fixed the cross-tab
+      // ALL-tabs-locking bug but ALSO unlocked the QUEUED tab's
+      // own button. the user repro: queue STD MOVIES → switch to
+      // //4K → queue 4K MOVIES → switch back to //STD: the STD
+      // button became clickable mid-run because the running STD
+      // job had finished and the 4K (now running) wasn't STD
+      // anymore. Combining enumActive + enumPending for the
+      // per-tab signal restores same-tab pending awareness
+      // (queued tab stays locked) while leaving enumTabsActive
+      // running-only (no cross-tab false-cascade).
+      const myTabBusy = !!(
+        tabKey
+        && (
+          (enumActive[tabKey] && enumActive[tabKey][variantKey])
+          || (enumPending[tabKey] && enumPending[tabKey][variantKey])
+        )
+      );
+      // "Global pipeline" = SCAN ALL from settings (every section
+      // queued, naturally lights up multiple tabs as it sweeps) OR
+      // dashboard sync→enum cascade (tdb sync running with auto_enum
+      // on guarantees a global plex_enum follows). Both warrant
+      // locking every library tab's button until the sweep ends.
+      const enumTabsActive = ['movies', 'tv', 'anime'].filter((t) =>
+        enumActive[t] && (enumActive[t].standard || enumActive[t].fourk),
+      ).length;
+      // v1.13.25: pipelineInFlight = ANY in-flight plex_enum job
+      // tagged scope=cascade (post-sync auto-enum) or scope=scan_all
+      // (settings global SYNC PLEX). Keeps the lock stable through
+      // the tail of a multi-section sweep instead of releasing as
+      // each section drains and enumTabsActive falls back to 1.
+      const pipelineInFlight = (q.plex_enum_pipeline_in_flight || 0) > 0;
+      // v1.13.27: stash a per-kind queue snapshot on a window global
+      // so ops.js renderTopbar can compose "(X of Y)" suffixes on the
+      // mini-bar label. plex_enum_in_flight is the live count
+      // (pending + running). hw (high water) tracks the burst's max
+      // so position can be computed as (hw - current + 1). Reset hw
+      // when the queue drains so the next burst starts fresh.
+      const w = window;
+      w.__motif_queue = w.__motif_queue || {};
+      const plexInFlight = q.plex_enum_in_flight || 0;
+      const prevPlex = w.__motif_queue.plex_enum || { current: 0, hw: 0 };
+      // v1.13.29: detect mid-burst growth so the (X of Y) suffix
+      // stays honest when the user queues another scan before the
+      // existing burst drains. Pre-fix the burst's hw was clamped
+      // to its initial peak — once the worker drained from 4→1
+      // (current=1) and the user queued another (current=2),
+      // hw stayed at 4 and the suffix said "(3 of 4)" even though
+      // the real total was 5. Tracking the increase delta
+      // (`grew = max(0, current - prev.current)`) lets hw grow with
+      // late-arriving jobs without losing position progress.
+      const grew = Math.max(0, plexInFlight - prevPlex.current);
+      w.__motif_queue.plex_enum = {
+        current: plexInFlight,
+        hw: plexInFlight === 0
+          ? 0
+          : Math.max(prevPlex.hw + grew, plexInFlight),
+      };
+      const globalEnumPipeline = (themerrdbBusy && autoEnum)
+                              || enumTabsActive > 1
+                              || pipelineInFlight;
+      // v1.14.79: stash for the chip-toggle helper. Pre-fix
+      // //STANDARD ↔ //4K toggle while a STD enum was running
+      // left the previously-busy variant's button stuck in a
+      // clickable "// REFRESH MOVIES" state — the helper
+      // could update the label but not the disabled state
+      // because it had no view of the cross-tab cascade signal
+      // (cascade / scan_all). Stashing the boolean lets the
+      // helper apply the SAME predicate refreshTopbarStatus's
+      // main block uses, so the toggle reflects the lock
+      // immediately instead of waiting for a fresh /api/stats
+      // (which is cached 750ms + hash-skipped when server
+      // state hasn't changed).
+      window.__motif_global_enum_pipeline = globalEnumPipeline;
+      // v1.18.51 / v1.18.52: row-refresh trigger contract.
+      // -------------------------------------------------------------
+      // Any backend op that can mutate visible row state (SRC / DL /
+      // PL / LINK / STATUS axes) MUST keep libraryRapidPoll alive
+      // while it runs AND fire a one-shot loadLibrary on completion.
+      // Without this contract, a row's chips lag the next 30s
+      // background poll — the user's collections-tab repro that
+      // motivated v1.18.51.
+      //
+      // The signal sources we union into `anyMutatingOpActive`:
+      //
+      //   1. themerrdbBusy           — tdb_sync (themes table writes
+      //                                drive SRC, !p, +P, ATTN axes)
+      //   2. plexEnumBusy            — plex_enum (plex_items, place-
+      //                                ments, has_theme — PL/LINK)
+      //   3. q.op_progress_running   — v1.18.52: catches every other
+      //                                op_progress-tracked op
+      //                                (bulk_probe_tdb → STATUS,
+      //                                bulk_lps → PL/+P,
+      //                                tvdb_bridge → SRC linkage,
+      //                                reprobe_plex_themes → PL).
+      //                                Pre-v1.18.52 these mutated
+      //                                rows invisibly — no /api/stats
+      //                                signal at all → rapid-poll
+      //                                auto-stopped → row UI stale.
+      //   4. perJobBusy              — v1.18.93: union of the per-row
+      //                                job queue depths already on
+      //                                /api/stats (download_in_flight,
+      //                                place_in_flight, scan_in_flight,
+      //                                refresh_in_flight). Pre-v1.18.93
+      //                                the v1.18.52 comment claimed
+      //                                "per-row jobs trigger rapid-poll
+      //                                via job_in_flight" — true ONLY
+      //                                for user-click-initiated jobs
+      //                                (the click handler calls
+      //                                libraryRapidPoll() inline).
+      //                                Background-worker-initiated jobs
+      //                                (TDB queue auto-pick, post-place
+      //                                refresh chain) have NO client-
+      //                                side trigger → row stayed amber
+      //                                DL until the next 30s background
+      //                                tick. the user's v1.18.93 repro:
+      //                                Cowboys & Aliens TDB auto-pulled,
+      //                                downloaded + placed + linked PU
+      //                                server-side, UI stuck showing
+      //                                amber DL + +P SRC until hard
+      //                                refresh. job_in_flight on the
+      //                                row is still the per-row
+      //                                renderer's source of truth;
+      //                                this signal is just what makes
+      //                                rapid-poll FIRE in the first
+      //                                place when no click happened.
+      //
+      // Adding a new row-mutating op kind in db.py's op_progress.kind
+      // CHECK: the new kind is automatically covered because
+      // op_progress_running counts ALL kinds. If a future kind is
+      // added that does NOT mutate row state, add an explicit filter
+      // to the SQL in api.py /api/stats — see
+      // test_v1_18_52_row_refresh_contract.py for the audit guard.
+      // -------------------------------------------------------------
+      const opProgressRunning = (q.op_progress_running || 0) > 0;
+      // v1.18.93: per-row job queue depths feed the transition signal
+      // so background-worker-initiated jobs (no click, no rapid-poll
+      // kick from a handler) still trip the contract.
+      const perJobBusy = (
+        (q.download_in_flight || 0)
+        + (q.place_in_flight || 0)
+        + (q.scan_in_flight || 0)
+        + (q.refresh_in_flight || 0)
+        // v1.20.53: relink/adopt are place-pool per-row jobs that mutate
+        // LINK/SRC/PL state but weren't in this union (nor the /api/library
+        // job_in_flight subquery), so a relink (Storage) / adopt (Scan)
+        // sweep left library chips stale until the 30s tick.
+        + (q.relink_in_flight || 0)
+        + (q.adopt_in_flight || 0)
+      ) > 0;
+      const anyMutatingOpActive = !!(
+        themerrdbBusy || plexEnumBusy || opProgressRunning || perJobBusy
+      );
+      const prevAnyMutatingActive = !!w.__motif_queue.anyMutatingOpActive;
+      w.__motif_queue.anyMutatingOpActive = anyMutatingOpActive;
+      // Keep the legacy per-axis stashes for compat with callers that
+      // checked specific flags (e.g. the per-tab REFRESH lock).
+      w.__motif_queue.myTabEnumBusy = myTabBusy;
+      w.__motif_queue.globalEnumActive = globalEnumPipeline;
+      if (anyMutatingOpActive && !prevAnyMutatingActive
+          && typeof libraryRapidPoll === 'function') {
+        libraryRapidPoll();
+      } else if (!anyMutatingOpActive && prevAnyMutatingActive
+                 && typeof loadLibrary === 'function') {
+        // 200ms grace so the worker's final DB write lands before
+        // /api/library reads — without it the one-shot load can
+        // see the pre-write state and re-trigger another rapid-poll
+        // cycle on the next tick anyway.
+        setTimeout(() => loadLibrary().catch(() => {}), 200);
+      }
+      // v1.13.77: cascade-only signal for the dash SYNC THEMERRDB
+      // lock. Pre-fix the lock used globalEnumPipeline, which
+      // includes scan_all (manual REFRESH PLEX) — so clicking
+      // // REFRESH PLEX from the dashboard incorrectly flipped
+      // // SYNC THEMERRDB to // SYNCING…. Cascade-only narrows
+      // the lock to the case the v1.13.25 comment originally
+      // described: post-sync auto-enum where themerrdbBusy has
+      // already flipped false but the cascade plex_enum phase is
+      // still draining. Manual REFRESH PLEX has no preceding TDB
+      // sync, so locking SYNC THEMERRDB during it was always wrong.
+      const cascadeInFlight = (q.plex_enum_cascade_in_flight || 0) > 0;
+      // v1.13.25 (revised v1.13.77): dash SYNC stays locked through
+      // the TDB sync itself + any cascade enum that was kicked off
+      // by the sync. Manual REFRESH PLEX (scan_all) no longer locks
+      // it — they're independent operations.
+      const dashSyncBtnBusy = themerrdbBusy || cascadeInFlight;
+      const libRefreshBusy = myTabBusy || globalEnumPipeline;
+      // v1.14.38: dropped unused `settingsRefreshBusy` const.
+      // The settings-page #refresh-libraries-btn was retired in
+      // v1.13.63 (PLEX → LIBRARY SECTIONS reorg); the variable
+      // had no remaining consumer. Audit L4 cleanup.
+      // Library page SYNC PLEX. v1.13.19: one-word busy label —
+      // "// SYNCING…" stays put for the whole run instead of
+      // changing mid-stream like the v1.13.16 multi-stage swap.
+      // Idle label restored from dataset.origLabel set on click.
+      // v1.13.51: dropped the ✓ DONE flash entirely. Pre-fix the
+      // 1.5s flash transitioned the button to a clickable-but-
+      // labeled-DONE state while the topbar mini-bar was often
+      // still painting cascade activity (post-place refreshes,
+      // reprobe, etc.); the user could re-click SYNC PLEX while
+      // the previous run hadn't fully settled. Now the button
+      // stays disabled with // SYNCING… until BOTH the per-scope
+      // enum is idle AND no sync-related ops are pending in the
+      // /api/progress mini-bar.
+      // v1.13.69: opsSyncActive helper retired alongside its only
+      // remaining caller below — see the per-library button gate
+      // for the full rationale (in short: post-place ops like
+      // refresh_queue fire on every download regardless of tab,
+      // and using them as a button-lock signal regressed v1.13.36's
+      // per-variant independence).
+      const libRefreshBtn = document.getElementById('library-refresh-btn');
+      if (libRefreshBtn) {
+        // v1.13.63: button label is now scope-aware. Pre-fix it
+        // read "// SYNC PLEX" (always) and "// SYNCING…" busy.
+        // v1.13.70: verb renamed sync → refresh across every Plex
+        // re-enumeration surface (per the user's holistic-pass
+        // request). Idle stays scope-aware ("// REFRESH MOVIES",
+        // "// REFRESH 4K TV SHOWS", etc.) so the user sees which
+        // library the button targets. Busy reverts to the v1.13.19
+        // single-word "// REFRESHING…" pattern — the v1.13.63
+        // scope-aware busy label was redundant because the topbar
+        // mini-bar already carries the scope name and the button
+        // didn't need to repeat it.
+        // v1.13.65: bridge the click → worker pickup gap with a
+        // per-tab+variant grace window. Pre-fix the button briefly
+        // re-enabled itself between the optimistic click handler
+        // (btn.disabled = true) and the moment /api/stats first
+        // observed plex_enum_active[tab][variant] = true. The worker
+        // has up to a 2s idle wait before picking the job up, and
+        // /api/stats has a 1s TTL cache — enough overlap that the
+        // refreshTopbarStatus tick mid-gap saw clean signals and
+        // re-enabled the button mid-sync. The grace map is set in
+        // the click handler with a 12s expiry; once the real busy
+        // signal lands (myTabBusy true), we clear the grace so the
+        // natural unlock path takes over.
+        // v1.13.69: drop opsSyncActive from the per-library gate.
+        // Pre-fix `opsSyncActive` matched ANY sync-class op
+        // (plex_enum, refresh_queue, scan_queue, relink_queue,
+        // reprobe_plex_themes, tdb_sync) — but post-place ops like
+        // refresh_queue fire on every download regardless of which
+        // tab/variant is being synced. So a STD MOVIES sync started
+        // a refresh_queue op which then locked the 4K MOVIES button
+        // for the duration of the post-place refresh sweep — a
+        // regression of the v1.13.36 per-variant independence. The
+        // grace window (12s post-click) plus myTabBusy (per-variant
+        // signal from /api/stats) plus globalEnumPipeline (cascade /
+        // scan_all marker) together cover the cadence gap without
+        // borrowing other variants' / tabs' signals.
+        const grace = window.__motif_lib_click_grace || {};
+        const graceExpires = grace[tabKey] && grace[tabKey][variantKey];
+        const nowMs = Date.now();
+        const graceActive = !!(graceExpires && graceExpires > nowMs);
+        if (myTabBusy && grace[tabKey] && grace[tabKey][variantKey]) {
+          // Real busy signal landed — drop the grace so the natural
+          // unlock (myTabBusy → false) re-enables the button cleanly.
+          grace[tabKey][variantKey] = 0;
+        }
+        const libLabel = libraryRefreshLabel();
+        const stillBusy = libRefreshBusy || graceActive;
+        // v1.18.91 (Bug C defensive unlock): if the button has
+        // been showing REFRESHING for >30s AND the topbar
+        // signals fully idle (no mutating op active anywhere),
+        // force-unlock. Catches the case where /api/stats's
+        // per-tab signal (enumActive/enumPending) gets stuck
+        // true past the op's actual completion — the user's
+        // post-v1.18.89/.90 repro: REFRESH 4K MOVIES clicked,
+        // LIVE OPS drawer showed idle + no ops running, button
+        // remained "// REFRESHING…" indefinitely. The natural
+        // unlock path (myTabBusy → false) never fired, leaving
+        // the button stuck. Use a separate `defensiveBusy`
+        // override variable so `stillBusy` stays const-declared
+        // (v1.14.63 OR-identifier allowlist depends on it).
+        let defensiveBusy = stillBusy;
+        if (stillBusy && libRefreshBtn.disabled
+            && !anyMutatingOpActive) {
+          const since = libRefreshBtn.dataset.refreshingSince;
+          const sinceMs = since ? parseInt(since, 10) : 0;
+          if (sinceMs && (Date.now() - sinceMs) > 30000) {
+            defensiveBusy = false;
+            console.debug(
+              "v1.18.91 defensive unlock: REFRESH button stuck "
+              + "with no mutating ops; force-unlocking after 30s.");
+          } else if (!sinceMs) {
+            // First tick that observed the disabled state with
+            // idle topbar — stamp the timestamp so the 30s
+            // window starts now.
+            libRefreshBtn.dataset.refreshingSince = String(Date.now());
+          }
+        }
+        if (defensiveBusy) {
+          libRefreshBtn.disabled = true;
+          libRefreshBtn.textContent = '// REFRESHING…';
+          // Stamp the first-disabled tick so the defensive
+          // unlock above has a clock to measure against.
+          if (!libRefreshBtn.dataset.refreshingSince) {
+            libRefreshBtn.dataset.refreshingSince = String(Date.now());
+          }
+        } else {
+          libRefreshBtn.disabled = false;
+          libRefreshBtn.textContent = `// REFRESH ${libLabel}`;
+          // Clear the timestamp so the next lock starts fresh.
+          delete libRefreshBtn.dataset.refreshingSince;
+        }
+      }
+      // v1.13.63: dash SYNC PLEX (new in v1.13.63) — locked whenever
+      // ANY plex_enum is in flight OR TDB sync is running (writer-
+      // lock contention). Mirrors the dash SYNC THEMERRDB lock
+      // pattern.
+      // v1.13.70: button renamed `// SYNC PLEX` → `// REFRESH PLEX`
+      // / `// REFRESHING PLEX…` as part of the holistic verb pass
+      // (Plex enumeration is a refresh, not a sync — TDB pull is
+      // the only `sync` left). Element id stays `sync-plex-btn` to
+      // avoid breaking external selectors.
+      // v1.14.62: split disabled-state from label. Pre-fix the
+      // `dashPlexBusy = themerrdbBusy || plexEnumBusy` predicate
+      // controlled BOTH the disable AND the label, so during a
+      // TDB sync the button showed "// REFRESHING PLEX…" even
+      // though no plex_enum was actually running — the user repro:
+      // SYNC THEMERRDB click → REFRESH PLEX button label flipped
+      // to "// REFRESHING PLEX…" misleading the user into thinking
+      // Plex was being refreshed.
+      // v1.14.66: dropped themerrdbBusy from the disable predicate.
+      // The original "writer-lock contention" reason was wrong —
+      // the long worker is single-threaded (worker.py:_LONG_JOB_TYPES,
+      // one thread serializes sync/plex_enum/scan), so a plex_enum
+      // queued during a TDB sync simply waits in queue and runs
+      // afterward; no concurrent SQLite writer contention is even
+      // possible. Pre-fix the user saw the button locked AND grayed
+      // during a SYNC THEMERRDB click and read it as "Plex is being
+      // refreshed too" (v1.14.65 added a tooltip but the lock itself
+      // was the source of confusion). Removing the disable lets the
+      // user freely queue a Plex refresh while a TDB sync is running.
+      // The plexEnumBusy disable stays — that's the actual operation,
+      // not a writer-lock guard. The themerrdbBusy tooltip branch is
+      // also retired since the button no longer locks on that signal.
+      const dashSyncPlexBtn = document.getElementById('sync-plex-btn');
+      if (dashSyncPlexBtn) {
+        dashSyncPlexBtn.disabled = plexEnumBusy;
+        dashSyncPlexBtn.textContent = plexEnumBusy
+          ? '// REFRESHING PLEX…'
+          : '// REFRESH PLEX';
+        if (plexEnumBusy) {
+          dashSyncPlexBtn.title = 'Plex refresh in progress…';
+        } else {
+          dashSyncPlexBtn.removeAttribute('title');
+        }
+      }
+      // v1.13.64: dropped the busy/idle branch for
+      // #refresh-libraries-btn. Settings → PLEX → LIBRARY SECTIONS
+      // no longer carries a sync button (v1.13.63 reorg) — the dash
+      // SYNC PLEX + per-tab // SYNC <NAME> own every sync path.
+      // v1.14.38: settingsRefreshBusy variable also dropped from
+      // the cluster above — see audit L4 cleanup marker.
+      // Dashboard SYNC button. v1.13.25: label adapts to
+      // auto_enum_after_sync — `// SYNC THEMERRDB + PLEX` when the
+      // cascade is on (the click runs both phases) and `// SYNC
+      // THEMERRDB` when off (sync-only). v1.13.19's note about
+      // "stable label regardless of auto_enum" was reverted because
+      // the user couldn't tell what their click would actually do
+      // when the schedule setting was on. setSyncButtonState's
+      // idle-restore reads dataset.origLabel so the label stays in
+      // sync with the current setting after the run completes.
+      const syncBtn = document.getElementById('sync-now-btn');
+      if (syncBtn) {
+        // v1.13.70: combined label updated to spell out both
+        // verbs after the holistic Plex-enum rename
+        // (`// SYNC THEMERRDB + PLEX` was ambiguous — "+ PLEX"
+        // could read as "+ sync plex"). Now it makes both halves
+        // explicit: a TDB sync followed by a Plex refresh. The
+        // sync-only label stays unchanged.
+        syncBtn.dataset.origLabel = autoEnum
+          ? '// SYNC THEMERRDB + REFRESH PLEX'
+          : '// SYNC THEMERRDB';
+        // v1.13.19: dash sync button busy state is owned by
+        // setSyncButtonState (idle/running/done with stable
+        // // SYNCING… label). Refresh-poll just toggles the
+        // disabled flag so a sync triggered from another tab /
+        // the daily cron also locks the button here.
+        // v1.14.69: busy label spelled out as
+        // `// SYNCING THEMERRDB…` to match the explicit
+        // verb+scope+ellipsis form REFRESH PLEX uses
+        // (`// REFRESHING PLEX…`). the user wanted the two
+        // dash-button busy states to read symmetrically. The
+        // === comparison on the unlock branch is updated to
+        // the same string so the cross-tab/cron unlock path
+        // still matches. Historical "// SYNCING…" mentions in
+        // pre-v1.14.69 markers above are left as-is — they
+        // describe the prior shape.
+        // v1.18.49: busy label mirrors origLabel's two-phase shape
+        // when auto_enum_after_sync is on. Pre-fix the label read
+        // `// SYNCING THEMERRDB…` even while the post-sync Plex
+        // refresh cascade was still draining — operator had no UI
+        // hint that REFRESH PLEX was also queued. the user flagged it:
+        // "when you click sync themerrdb on the dashboard it does
+        // not indicate that the plex refreshes are queued up on the
+        // status bar." Now the busy label spells both phases the
+        // same way idle label does, so the in-flight state matches
+        // the next-action state.
+        const busyLabel = autoEnum
+          ? '// SYNCING THEMERRDB + REFRESH PLEX…'
+          : '// SYNCING THEMERRDB…';
+        // v1.18.61: live-sync the idle label when the auto_enum_after_sync
+        // setting toggles. Pre-fix only setSyncButtonState('idle') restored
+        // from dataset.origLabel — toggling the setting in /settings
+        // updated dataset.origLabel but left textContent showing the
+        // stale label until the next manual sync completed. the user:
+        // "Dashboard I am still only seeing sync themerrdb when the
+        // joint action of themerrdb and refresh plex is checked in
+        // settings." Now: when the button is idle (not busy, not in
+        // an optimistic-placeholder state, not in the ✓ DONE flash)
+        // and textContent doesn't match the current origLabel, sync
+        // it. Guards:
+        //   - dashSyncBtnBusy=true → busy branch below owns text
+        //   - syncWatcher !== null → setSyncButtonState owns lifecycle
+        //   - textContent is a busy label → unlock branch handles it
+        //   - textContent is `✓ DONE` → done-flash; let it expire
+        //   - textContent === origLabel → already in sync
+        const knownBusyLabels = new Set([
+          '// SYNCING THEMERRDB…',
+          '// SYNCING THEMERRDB + REFRESH PLEX…',
+        ]);
+        if (!dashSyncBtnBusy && !syncWatcher
+            && !knownBusyLabels.has(syncBtn.textContent)
+            && syncBtn.textContent !== '✓ DONE'
+            && syncBtn.textContent !== syncBtn.dataset.origLabel) {
+          syncBtn.textContent = syncBtn.dataset.origLabel;
+        }
+        if (dashSyncBtnBusy && syncBtn.textContent === syncBtn.dataset.origLabel) {
+          syncBtn.disabled = true;
+          syncBtn.textContent = busyLabel;
+        } else if (!dashSyncBtnBusy && !syncWatcher
+                   && knownBusyLabels.has(syncBtn.textContent)) {
+          // v1.13.21 (was v1.13.20): only unlock here when no
+          // syncWatcher owns the lifecycle. setSyncButtonState's
+          // running → done → idle pipeline (with the 1.5s ✓ DONE
+          // flash) is the canonical owner whenever the user clicked
+          // SYNC from THIS tab. Pre-fix a fast /api/stats poll could
+          // flip the button back to "// SYNC THEMERRDB" before the
+          // watcher's done-flash landed, so the button briefly looked
+          // clickable mid-flight. Unlock only fires for the cross-tab /
+          // cron path (no local watcher) where the poll IS the
+          // lifecycle.
+          syncBtn.disabled = false;
+          syncBtn.textContent = syncBtn.dataset.origLabel;
+        }
+        // v1.14.65: tooltip explains lock reason on the SYNC
+        // THEMERRDB button. When dashSyncBtnBusy is true via
+        // cascadeInFlight (post-sync auto-enum still draining)
+        // — NOT themerrdbBusy — the user sees a // SYNCING…
+        // label even though the TDB phase finished. Tooltip
+        // clarifies which phase is active. Mirror of the
+        // sync-plex-btn tooltip above.
+        if (themerrdbBusy) {
+          syncBtn.title = 'TDB sync in progress…';
+        } else if (cascadeInFlight) {
+          syncBtn.title =
+            'Post-sync Plex refresh cascade still draining. '
+            + 'Will re-enable when the auto-enum cascade '
+            + 'finishes.';
+        } else {
+          syncBtn.removeAttribute('title');
+        }
+      }
+      // Per-section REFRESH — lock only if THIS section is enumerating.
+      // v1.14.73: extended to include pending sections too so a
+      // queued section's REFRESH button stays locked. Without
+      // this, clicking REFRESH on section A queues a job, then
+      // section A's button becomes clickable again immediately
+      // (even though section A is in queue). Mirror of the
+      // myTabBusy fix above — same v1.14.66-over-correction
+      // surface, same fix shape (combine running + pending sets).
+      document.querySelectorAll('button[data-section-refresh]').forEach((b) => {
+        const sid = b.dataset.sectionRefresh;
+        const inFlight = enumSectionIds.has(sid)
+                       || enumPendingSectionIds.has(sid);
+        lockBtn(b, inFlight, '…');
+      });
+      // Lock per-section MGD checkboxes + A/4K flag pills + libraries
+      // SAVE while ANY sync (themerrdb / plex_enum) is in flight at
+      // all — pending OR running. v1.11.75: switched from
+      // anyEnumRunning (running-only) to anyEnumInFlight so the
+      // lock holds across brief gaps between running sections.
+      // Pre-fix the user saw MGD checkboxes / SAVE re-enable between
+      // sections while 'REFRESHING PLEX…' was still showing.
+      const layoutLocked = themerrdbBusy || anyEnumInFlight;
+      document.querySelectorAll('input[data-section-toggle]').forEach((cb) => {
+        cb.disabled = layoutLocked;
+      });
+      document.querySelectorAll('button[data-section-row-toggle], button.lib-flag-pill').forEach((b) => {
+        if (layoutLocked) {
+          if (!b.dataset.preLockDisabled) {
+            b.dataset.preLockDisabled = b.disabled ? '1' : '0';
+          }
+          b.disabled = true;
+        } else if (b.dataset.preLockDisabled !== undefined) {
+          b.disabled = b.dataset.preLockDisabled === '1';
+          delete b.dataset.preLockDisabled;
+        }
+      });
+      const libSaveBtn = document.getElementById('libraries-save-btn');
+      if (libSaveBtn) {
+        if (layoutLocked) {
+          if (!libSaveBtn.dataset.preLockDisabled) {
+            libSaveBtn.dataset.preLockDisabled = libSaveBtn.disabled ? '1' : '0';
+          }
+          libSaveBtn.disabled = true;
+        } else if (libSaveBtn.dataset.preLockDisabled !== undefined) {
+          libSaveBtn.disabled = libSaveBtn.dataset.preLockDisabled === '1';
+          delete libSaveBtn.dataset.preLockDisabled;
+          updateLibrariesSaveButton();
+        }
+      }
+    } catch (e) {
+      // v1.17.22: bail if a newer call has succeeded ahead of
+      // us — painting OFFLINE on top of a fresh success would
+      // be a lie. Still log the error for diagnosis even on
+      // stale failure (the error itself is real).
+      if (refreshTopbarStatus._seq !== _myToken) {
+        try { console.error('refreshTopbarStatus failed (stale):', e); } catch (_) {}
+        return;
+      }
+      // v1.12.118: stats poll failed — flip the idle pill to an
+      // OFFLINE state. Same visual family as IDLE but tone-keyed
+      // red so the user notices motif lost its connection.
+      const idle = $('#op-status-idle');
+      if (idle) {
+        idle.classList.add('op-pill-offline');
+        const lbl = idle.querySelector('.op-pill-label');
+        if (lbl) lbl.textContent = 'OFFLINE';
+      }
+      // v1.22.70: clear the v1.14.37 hash so the next SUCCESSFUL poll
+      // re-paints. Pre-fix an idle-state blip wedged the pill at
+      // OFFLINE — the IDLE restore sits BELOW the hash gate, and the
+      // post-recovery payload usually hashes identical to the
+      // pre-blip one. Mirror of the v1.20.60 loadQueue fix.
+      refreshTopbarStatus._lastHash = '';
+      // v1.12.2: log the actual error so future "OFFLINE for no
+      // apparent reason" debugging doesn't require code-archeology.
+      // Silent catch in v1.11.97 hid a ReferenceError for ~5 days.
+      try { console.error('refreshTopbarStatus failed:', e); } catch (_) {}
+    }
+  }
+
+  // v1.24.44: generic tab-cycle binder for ALL topbar badges. v1.24.48: FAIL +
+  // UPD converged onto this (were their own bindFailure/bindUpdatesBadgeCycle
+  // copies) so the cycle logic + the /collections regex live in ONE place — the
+  // next library-tab axis change touches one spot, not three. `datasetKey` is the
+  // data-* attr the badge stashed its tab breakdown into; `query` is the deep-link
+  // filter the landed tab applies. A collection-only count was unreachable when a
+  // badge had only a single tab_hint (the user's 2026-06-25 7-AWAIT repro).
+  function bindBadgeCycle(badgeId, datasetKey, query) {
+    const badge = document.getElementById(badgeId);
+    if (!badge) return;
+    badge.addEventListener('click', (e) => {
+      let tabs;
+      try { tabs = JSON.parse(badge.dataset[datasetKey] || '[]'); }
+      catch (_) { return; }
+      if (!Array.isArray(tabs) || tabs.length <= 1) return;
+      const m = window.location.pathname.match(/^\/(movies|tv|anime|collections)/);
+      const here = m ? m[1] : null;
+      const sp = new URLSearchParams(window.location.search);
+      const hereFourk = sp.get('fourk') === '1' || sp.get('fourk') === 'true';
+      let idx = -1;
+      if (here) idx = tabs.findIndex((t) => t.tab === here && !!t.fourk === hereFourk);
+      const next = tabs[(idx + 1) % tabs.length];
+      if (!next) return;
+      e.preventDefault();
+      window.location.href = `/${next.tab}?fourk=${next.fourk ? '1' : '0'}&${query}`;
+    });
+  }
+
+  function bindDryRunBanner() {
+    const btn = $('#dry-run-disable-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (!confirm('Disable dry-run? Real downloads and placements will resume.')) return;
+      try {
+        const fd = new FormData();
+        fd.append('enabled', 'false');
+        await api('POST', '/api/dry-run', fd);
+        // v1.15.108: await + .catch — pre-fix this was a bare
+        // call, so a rejection became an unhandled promise rejection
+        // (console only). The outer try/catch only catches the api()
+        // POST above; the unawaited refresh slipped past.
+        refreshTopbarStatus().catch(() => {});
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    });
+  }
+
+  // ---- Dashboard ----
+
+  function renderStat(path, value) {
+    $$(`[data-stat="${path}"]`).forEach((el) => {
+      el.textContent = typeof value === 'number' ? fmt.num(value) : (value ?? '—');
+    });
+  }
+
+  // v1.13.75: backfill banner — surfaces once after upgrade when the
+  // v43 migration restored failure_kind on rows whose TDB-failure
+  // flag was wiped by the pre-v1.13.74 bug. Banner explains the
+  // post-upgrade FAIL counter jump; // DISMISS clears the marker.
+  async function loadBackfillBanner() {
+    const banner = document.getElementById('dash-backfill-banner');
+    if (!banner) return;
+    let data;
+    try {
+      data = await api('GET', '/api/dashboard/backfill-banner');
+    } catch (_) { return; }
+    const n = (data && Number(data.count)) || 0;
+    if (n <= 0) return;
+    const count = document.getElementById('dash-backfill-count');
+    if (count) count.textContent = n;
+    banner.style.display = '';
+    const dismiss = document.getElementById('dash-backfill-dismiss');
+    if (dismiss && !dismiss.dataset.bound) {
+      dismiss.dataset.bound = '1';
+      dismiss.addEventListener('click', async () => {
+        try {
+          await api('DELETE', '/api/dashboard/backfill-banner');
+          banner.style.display = 'none';
+        } catch (e) {
+          alert('Could not dismiss banner: ' + e.message);
+        }
+      });
+    }
+  }
+
+  // v1.24.52: RECENTLY ADDED carousel — poster strip of the titles motif most
+  // recently placed a theme on. Cards are built via DOM APIs (textContent) so a
+  // Plex title can't inject markup. A content hash skips the rebuild when the
+  // poll returns the same set. Posters load from the same-origin Plex art proxy;
+  // a 404 (no art / Plex down) flips the card to a text-only tile. Click → the
+  // same INFO dialog a library row opens.
+  function _shortDate(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString();
+  }
+
+  // v1.24.63: media-type ICON for the carousel meta line — Feather-style line
+  // icons rendered in currentColor (film / tv-with-antenna / stacked-cards),
+  // replacing the ▶/▭/▦ glyphs (the user preferred these). The film + tv icons are
+  // the same ones the Missing-Trailer-Downloader carousel uses; collections get a
+  // stacked-cards icon (a collection = a stack of posters). media_type is the
+  // openInfoDialog form ('movie'/'tv'/'collection'); unknown → no icon. The SVG
+  // markup is a fixed constant (no interpolation), so innerHTML is injection-safe.
+  function _recentTypeIcon(mt) {
+    const inner = {
+      movie: '<rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/>'
+        + '<line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/>'
+        + '<line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/>'
+        + '<line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/>'
+        + '<line x1="17" y1="17" x2="22" y2="17"/>',
+      tv: '<rect x="2" y="7" width="20" height="15" rx="2" ry="2"/>'
+        + '<polyline points="17 2 12 7 7 2"/>',
+      collection: '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>'
+        + '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+    }[mt];
+    if (!inner) return '';
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"'
+      + ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
+      + inner + '</svg>';
+  }
+
+  async function loadRecentlyAdded() {
+    const block = document.getElementById('recently-added-block');
+    const strip = document.getElementById('recently-added-strip');
+    if (!block || !strip) return;
+    let items;
+    try {
+      const data = await api('GET', '/api/recently-placed');
+      items = (data && Array.isArray(data.items)) ? data.items : [];
+    } catch (_) { return; }
+    if (!items.length) { block.style.display = 'none'; return; }
+    const hash = items.map((it) => `${it.rating_key}:${it.placed_at}`).join('|');
+    if (strip.dataset.lastHash === hash) { block.style.display = ''; return; }
+    strip.dataset.lastHash = hash;
+    strip.textContent = '';
+    items.forEach((it) => {
+      const rk = String(it.rating_key);
+      const card = document.createElement('button');
+      card.type = 'button';
+      card.className = 'recent-card';
+      card.title = (it.title || '') + (it.year ? ` (${it.year})` : '');
+      const img = document.createElement('img');
+      img.className = 'recent-poster';
+      img.loading = 'lazy';
+      img.alt = '';
+      img.src = `/api/plex/art/${encodeURIComponent(rk)}`;
+      img.addEventListener('error', () => card.classList.add('recent-card-noart'));
+      const title = document.createElement('span');
+      title.className = 'recent-title';
+      title.textContent = it.title || '';
+      const meta = document.createElement('span');
+      meta.className = 'recent-meta';
+      // v1.24.58: year (bracketed, led by the media-type glyph) and the placed
+      // date on their own centered lines — reads like a normal movie/show year
+      // and drops the "·" separator (the user).
+      const yearLine = document.createElement('span');
+      yearLine.className = 'recent-meta-year';
+      const icon = _recentTypeIcon(it.media_type);
+      if (icon) {
+        const g = document.createElement('span');
+        g.className = 'recent-type';
+        g.innerHTML = icon;  // fixed SVG constant — see _recentTypeIcon
+        g.setAttribute('aria-hidden', 'true');
+        yearLine.append(g);
+      }
+      if (it.year) {
+        yearLine.append(document.createTextNode(`(${it.year})`));
+      }
+      const dateLine = document.createElement('span');
+      dateLine.className = 'recent-meta-date';
+      dateLine.textContent = _shortDate(it.placed_at);
+      meta.append(yearLine, dateLine);
+      card.append(img, title, meta);
+      card.addEventListener('click', () => {
+        if (typeof openInfoDialog === 'function') {
+          openInfoDialog(it.media_type, it.tmdb_id, it.section_id, rk)
+            .catch(console.error);
+        }
+      });
+      strip.appendChild(card);
+    });
+    block.style.display = '';
+    _setupCarouselAutoScroll();
+  }
+
+  // v1.24.54: carousel auto-scroll — slowly advance the strip when the toggle is
+  // on (persisted in localStorage). Pauses on hover so clicking a poster isn't a
+  // moving target; loops back to the start at the end. Bound once.
+  function _setupCarouselAutoScroll() {
+    if (_setupCarouselAutoScroll._bound) return;
+    const strip = document.getElementById('recently-added-strip');
+    const cb = document.getElementById('recent-autoscroll');
+    if (!strip || !cb) return;
+    _setupCarouselAutoScroll._bound = true;
+    // v1.24.57: default ON — an unset key (first visit) reads as enabled; only
+    // an explicit '0' (the user unchecked it) disables it.
+    // v1.24.61: versioned key (was 'motif:recentAutoScroll'). the user's prefs
+    // carried an explicit '0' persisted during the v1.24.54-56 broken-scroll
+    // phase, which beat the default-ON; the new key is unset for him → ON.
+    const KEY = 'motif:recentAutoScroll2';
+    const stored = localStorage.getItem(KEY);
+    cb.checked = stored === null ? true : stored === '1';
+    let timer = null;
+    // v1.24.61: hide the horizontal scrollbar while auto-scrolling — it's noise
+    // when the strip drives itself (the user). Manual scroll (toggle off) keeps it.
+    // overflow-x stays auto so scrollLeft still works; only the bar is hidden.
+    function applyScrollbarVis() {
+      strip.classList.toggle('recent-strip-autoscroll', cb.checked);
+    }
+    function tick() {
+      // v1.24.64: pause while hovering OR while a modal dialog (the INFO card,
+      // or any confirm) is open — the strip shouldn't drift behind it (the user).
+      // `dialog[open]` is the codebase idiom for "a native modal is showing".
+      // v1.24.82: also bail when the tab is hidden (no idle-tab scroll churn),
+      // and read hover live via :hover instead of a `paused` flag — a 30s poll
+      // re-render of the strip mid-hover could drop the mouseleave and leave the
+      // flag stuck true (autoscroll silently dead until the next enter/leave).
+      if (document.hidden
+          || strip.matches(':hover')
+          || document.querySelector('dialog[open]')) return;
+      if (strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1) {
+        strip.scrollLeft = 0;
+      } else {
+        strip.scrollLeft += 1;
+      }
+    }
+    function start() { if (!timer) timer = setInterval(tick, 30); }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+    cb.addEventListener('change', () => {
+      localStorage.setItem(KEY, cb.checked ? '1' : '0');
+      applyScrollbarVis();
+      if (cb.checked) start(); else stop();
+    });
+    applyScrollbarVis();
+    if (cb.checked) start();
+  }
+
+  // v1.24.53: SERVICES panel — live status of motif's external dependencies.
+  // Cards built via DOM APIs (a Plex friendly-name can't inject markup). The
+  // latency number legitimately changes each poll, so there's no hash-skip.
+  function _serviceCard(name, state, statusText, sub) {
+    const card = document.createElement('div');
+    card.className = 'service-card';
+    const head = document.createElement('div');
+    head.className = 'service-name';
+    const dot = document.createElement('span');
+    dot.className = `service-dot service-dot-${state}`;
+    const nm = document.createElement('span');
+    nm.textContent = name;
+    head.append(dot, nm);
+    const status = document.createElement('span');
+    status.className = 'service-status';
+    status.textContent = statusText;
+    card.append(head, status);
+    if (sub) {
+      const s = document.createElement('span');
+      s.className = 'service-sub';
+      s.textContent = sub;
+      card.appendChild(s);
+    }
+    return card;
+  }
+
+  async function loadServices() {
+    const block = document.getElementById('services-block');
+    const row = document.getElementById('services-row');
+    if (!block || !row) return;
+    let data;
+    try { data = await api('GET', '/api/services'); } catch (_) { return; }
+    if (!data) { block.style.display = 'none'; return; }
+    row.textContent = '';
+    const plex = data.plex || {};
+    const plexState = !plex.configured ? 'idle' : (plex.online ? 'ok' : 'down');
+    const plexStatus = !plex.configured ? 'not configured'
+      : (plex.online ? `online · ${plex.latency_ms}ms` : 'offline');
+    row.appendChild(_serviceCard(
+      plex.name || 'Plex', plexState, plexStatus,
+      plex.version ? `v${plex.version}` : ''));
+    const yt = (data.yt_dlp || {}).version;
+    row.appendChild(_serviceCard(
+      'yt-dlp', yt ? 'ok' : 'down', yt ? `v${yt}` : 'unavailable', ''));
+    block.style.display = '';
+  }
+
+  async function loadDashboard() {
+    if (!$('#stats-grid')) return;
+    // v1.15.109: in-flight guard mirroring loadLibrary / loadQueue /
+    // loadLibraries. loadDashboard fans into multiple sequential
+    // fetches (/api/stats → /api/storage/copies → /api/insights/*
+    // etc.) and writes to many DOM nodes. The 30s setInterval +
+    // sync-watcher's loadDashboard call (app.js:2062, 2103) can
+    // overlap a manual /api/stats kick; older response's DOM writes
+    // would interleave with newer ones. Most writes are idempotent
+    // (single-element renderStat) but the bar widths + activity
+    // counters could flash stale values briefly.
+    loadDashboard._seq = (loadDashboard._seq || 0) + 1;
+    const _myToken = loadDashboard._seq;
+    // v1.24.52: refresh the RECENTLY ADDED carousel alongside the dash poll. Its
+    // own content-hash skips the DOM rebuild when the set is unchanged, so the
+    // 30s tick doesn't flicker the strip or reset its scroll (bug-class 4).
+    loadRecentlyAdded().catch(() => {});
+    loadServices().catch(() => {});  // v1.24.53: SERVICES panel (Plex ping + yt-dlp)
+    const stats = await api('GET', '/api/stats');
+    if (loadDashboard._seq !== _myToken) return;
+    renderStat('movies.downloaded', stats.movies.downloaded);
+    renderStat('movies.placed', stats.movies.placed);
+    renderStat('tv.downloaded', stats.tv.downloaded);
+    renderStat('tv.placed', stats.tv.placed);
+    renderStat('queue.pending', stats.queue.pending);
+    renderStat('queue.running', stats.queue.running);
+    renderStat('queue.failed', stats.queue.failed);
+
+    // v1.15.27: ACTIVITY row stats (themes added today/week).
+    // the user: "would be great to be able to tell either on the
+    // dashboard or somewhere how many new themes were added
+    // automatically." Backed by /api/stats activity.placements_*
+    // counts which COUNT(*) FROM placements WHERE placed_at >=
+    // datetime('now', '-N day').
+    const activity = stats.activity || {};
+    const todayEl = $('#activity-placements-today');
+    if (todayEl) todayEl.textContent = fmt.num(activity.placements_today || 0);
+    const weekEl = $('#activity-placements-week');
+    if (weekEl) weekEl.textContent = fmt.num(activity.placements_week || 0);
+
+    // v1.23.34: the top COVERAGE card bars + headline % are now
+    // written by setCov() in renderPlexCoverage (% of the library
+    // themed). The old downloaded/TDB-catalogue bar "filled but
+    // meant nothing" (the user) and is gone — it used /api/stats
+    // totals; coverage uses the /api/coverage/plex arrays instead.
+
+    // v1.13.21: LAST SYNC pre-block removed. Hero `Last run …`
+    // line + LIVE OPS drawer cover this surface; no JS populates
+    // a #last-sync element any more.
+
+    // v1.13.1 (#2): live last/next sync line under the hero. Reads
+    // stats.last_sync (most recent sync_runs row) + stats.next_sync_at
+    // (computed from cron); renders relative times so the daily
+    // rhythm is legible at a glance without a /settings detour.
+    renderDashSyncLine(stats);
+
+    // v1.13.2 (#1): sync history sparkline. Hidden when there's
+    // no telemetry data yet (fresh install or pre-v37 schema).
+    try {
+      const hist = await api('GET', '/api/sync/history?limit=30');
+      // v1.15.109: re-check the seq token after each await —
+      // a fresh loadDashboard call between this await and the
+      // render below would mean our hist payload is already
+      // superseded, and writing it would clobber the newer one.
+      if (loadDashboard._seq !== _myToken) return;
+      renderSyncHistory(hist);
+    } catch (_) { /* swallow; widget stays hidden */ }
+
+    // v1.12.67: per-section coverage. Hidden if there's only one
+    // managed section (no comparison value); rendered as a table
+    // with click-through to the matching library tab + 4K toggle.
+    try {
+      const sec = await api('GET', '/api/sections/coverage');
+      if (loadDashboard._seq !== _myToken) return;
+      renderSectionCoverage(sec.sections || []);
+      // v1.13.27: comparison bars also fed from per-section data so
+      // each library has its own normalized bar instead of being
+      // collapsed into a Movies / TV aggregate.
+      renderCoverageComparison(sec.sections || []);
+      // v1.23.90: the PLEX ANIME card is populated in renderPlexCoverage from
+      // /api/coverage/plex's anime array (matches the ANIME tab), not summed
+      // from the per-section payload here — renderPlexAnimeCard retired.
+    } catch (_) { /* non-fatal — dashboard still renders */ }
+
+    // v1.13.34: dashboard insights (failure breakdown, sync
+    // performance sparkline, daily download activity). Single
+    // /api/dashboard/insights round-trip — three chart sections
+    // each render from one slice of the response. Each render
+    // function hides its block on empty data so a fresh install
+    // doesn't render placeholder axes.
+    try {
+      const ins = await api('GET', '/api/dashboard/insights');
+      if (loadDashboard._seq !== _myToken) return;
+      renderFailureBreakdown(ins.failures || []);
+      renderSyncPerformance(ins.syncs || []);
+      renderDownloadActivity(ins.downloads || []);
+    } catch (_) { /* non-fatal — insights are optional */ }
+
+    // v1.13.21: theme-source breakdown. Buckets every plex_items row by SRC
+    // letter. Hidden when the breakdown is empty (fresh install before first
+    // plex_enum); each donut's legend is click-to-toggle. v1.24.55: 3-up donuts
+    // (Total / Movies / TV); v1.24.56: the per-library GENERAL STATISTICS table
+    // pivots the same theme_sources feed — no second API call.
+    try {
+      renderAllSourcePies(stats.theme_sources || []);
+      renderGeneralStats(stats.theme_sources || []);
+    } catch (_) { /* non-fatal */ }
+
+    // Recent events
+    const evs = await api('GET', '/api/events?limit=20');
+    if (loadDashboard._seq !== _myToken) return;
+    const stream = $('#event-stream');
+    // v1.15.128: empty-state fallback — pre-fix a fresh install
+    // with zero events left the dashboard's event-stream <ul>
+    // visually empty (the section header read "EVENT STREAM"
+    // with nothing below it). Mirrors the v1.13.58 library
+    // empty-state pattern: tell the user where events COME
+    // from so they know what to do to see one.
+    // v1.21.8 (audit MED, class 4): hash-guard the innerHTML write.
+    // loadDashboard runs on a 30s poll; an unconditional rewrite reset
+    // scrollTop to 0 every tick, snapping a user reading older events
+    // back to the top. Mirrors the queue-page #event-stream-full guard.
+    const streamHtml = evs.events.map((e) => `
+      <li>
+        <span class="event-time">${htmlEscape(fmt.timeShort(e.ts))}</span>
+        <span class="event-level event-level-${htmlEscape(e.level)}">${htmlEscape(e.level)}</span>
+        <span class="event-component">${htmlEscape(e.component)}</span>
+        <span class="event-msg" title="${htmlEscape(e.message)}">${htmlEscape(e.message)}</span>
+      </li>
+    `).join('') || '<li class="muted small">no events yet — actions and worker activity (sync / download / place) appear here</li>';
+    if (stream.dataset.lastHash !== streamHtml) {
+      stream.innerHTML = streamHtml;
+      stream.dataset.lastHash = streamHtml;
+    }
+  }
+
+  // v1.13.1 (#2): dashboard last/next sync line. Renders relative
+  // times next to the hero so the user can see at a glance when
+  // motif last ran and when the next scheduled run is. Hidden
+  // until the first /api/stats response lands so we don't render
+  // an empty line on first paint.
+  function fmtRelativePast(iso) {
+    if (!iso) return null;
+    try {
+      const t = new Date(iso).getTime();
+      if (!isFinite(t)) return null;
+      const sec = Math.max(0, (Date.now() - t) / 1000);
+      if (sec < 60)        return 'just now';
+      if (sec < 3600)      return `${Math.floor(sec / 60)}m ago`;
+      if (sec < 86400)     return `${Math.floor(sec / 3600)}h ago`;
+      if (sec < 86400 * 7) return `${Math.floor(sec / 86400)}d ago`;
+      return new Date(iso).toLocaleDateString();
+    } catch (_) { return null; }
+  }
+  function fmtRelativeFuture(iso) {
+    if (!iso) return null;
+    try {
+      const t = new Date(iso).getTime();
+      if (!isFinite(t)) return null;
+      const sec = Math.max(0, (t - Date.now()) / 1000);
+      if (sec < 60)        return 'in <1m';
+      if (sec < 3600)      return `in ${Math.floor(sec / 60)}m`;
+      if (sec < 86400)     return `in ${Math.floor(sec / 3600)}h`;
+      if (sec < 86400 * 7) return `in ${Math.floor(sec / 86400)}d`;
+      return new Date(iso).toLocaleString();
+    } catch (_) { return null; }
+  }
+  function renderDashSyncLine(stats) {
+    const line = document.getElementById('dash-sync-line');
+    const nextEl = document.getElementById('dash-sync-next');
+    const lastEl = document.getElementById('dash-sync-last');
+    if (!line || !nextEl || !lastEl) return;
+    const nextRel = fmtRelativeFuture(stats.next_sync_at);
+    const ls = stats.last_sync;
+    let lastTxt = '';
+    if (ls && ls.finished_at) {
+      const rel = fmtRelativePast(ls.finished_at);
+      const tot = (ls.new_count || 0) + (ls.updated_count || 0);
+      const summary = (ls.status === 'success'
+        ? (tot === 0 ? 'no changes' : `${fmt.num(tot)} change${tot !== 1 ? 's' : ''}`)
+        : `${ls.status}`);
+      lastTxt = `Last run ${rel || ls.finished_at} · ${summary}`;
+    } else if (ls && ls.started_at) {
+      lastTxt = `Last run started ${fmtRelativePast(ls.started_at) || ls.started_at} (still running)`;
+    } else {
+      lastTxt = 'No sync runs yet';
+    }
+    const nextTxt = nextRel
+      ? `Next sync ${nextRel}`
+      : 'Next sync schedule unavailable';
+    nextEl.textContent = nextTxt;
+    lastEl.textContent = lastTxt;
+    // v1.24.94: reveal via visibility (the row was visibility:hidden with a
+    // reserved min-height) so the fill doesn't shift the dashboard down.
+    line.style.visibility = 'visible';
+  }
+
+  // v1.13.16 (B1): sync history bar chart replaced with a sparse
+  // 5-row table. The bars made every run look like decoration; a
+  // tabular view makes each datum legible at a glance: timestamp,
+  // transport, duration, change count, status. Pre-fix runs that
+  // pre-dated the v37 telemetry columns rendered as "UNKNOWN" with
+  // an unhelpful tooltip — those rows now render with a muted
+  // dash where their transport would be, no special-case visual.
+  let _lastSyncHistoryKey = '';
+
+  function renderSyncHistory(payload) {
+    const block = document.getElementById('sync-history-block');
+    const barsEl = document.getElementById('sync-history-bars');
+    const sumEl = document.getElementById('sync-history-summary');
+    if (!block || !barsEl || !sumEl) return;
+    const runs = (payload && payload.runs) || [];
+    if (!runs.length) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(payload);
+    if (key === _lastSyncHistoryKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastSyncHistoryKey = key;
+    block.style.display = '';
+    // v1.14.38: renamed local from `fmt` → `fmtN` so it doesn't
+    // shadow the module-level `fmt` helpers object (defined at
+    // ~line 9). Pre-fix any future edit inside renderSyncHistory
+    // that reached for `fmt.timeAuto` (or any other helper field)
+    // would silently get the local function instead. Audit L6.
+    const fmtN = (n) => (n == null ? '—' : Number(n).toLocaleString());
+    // Most-recent first so the table reads top-down chronologically.
+    const recent = runs.slice().sort((a, b) =>
+      String(b.started_at || '').localeCompare(String(a.started_at || ''))
+    ).slice(0, 5);
+    const rows = recent.map((r) => {
+      const startedShort = (r.started_at || '')
+        .replace('T', ' ')
+        .replace(/\..*$/, '')
+        .replace(/\+.*$/, '');
+      const transport = r.transport
+        ? `<span class="sync-hist-transport sync-hist-transport-${r.transport}">${htmlEscape(r.transport.toUpperCase())}</span>`
+        : '<span class="muted">—</span>';
+      const wcTxt = r.wall_clock_seconds == null
+        ? '<span class="muted">running…</span>'
+        : `${r.wall_clock_seconds.toFixed(1)}s`;
+      const tot = (r.new_count || 0) + (r.updated_count || 0);
+      const changeTxt = r.no_changes
+        ? '<span class="muted">no changes</span>'
+        : tot > 0
+          ? `${fmtN(r.new_count)} new · ${fmtN(r.updated_count)} upd`
+          : '<span class="muted">no changes</span>';
+      let statusBadge;
+      if (r.status === 'failed') {
+        statusBadge = '<span class="sync-hist-status sync-hist-status-failed">FAIL</span>';
+      } else if (r.fallback_reason) {
+        statusBadge = `<span class="sync-hist-status sync-hist-status-fallback" title="${htmlEscape(r.fallback_reason)}">FALLBACK</span>`;
+      } else if (r.no_changes) {
+        statusBadge = '<span class="sync-hist-status sync-hist-status-noop">NO-OP</span>';
+      } else {
+        statusBadge = '<span class="sync-hist-status sync-hist-status-ok">OK</span>';
+      }
+      return `<tr>
+        <td class="sync-hist-when">${htmlEscape(startedShort)}</td>
+        <td class="sync-hist-tx">${transport}</td>
+        <td class="sync-hist-dur">${wcTxt}</td>
+        <td class="sync-hist-changes">${changeTxt}</td>
+        <td class="sync-hist-status-cell">${statusBadge}</td>
+      </tr>`;
+    }).join('');
+    barsEl.innerHTML = `<table class="sync-hist-table">
+      <thead><tr>
+        <th>WHEN (UTC)</th><th>TRANSPORT</th><th>DURATION</th>
+        <th>CHANGES</th><th>STATUS</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+    // Per-transport summary row — kept as a one-line footer so the
+    // dashboard glance still answers "which path do I usually take?"
+    const summary = (payload && payload.summary) || [];
+    const known = summary.filter((s) => s.transport && s.transport !== 'unknown');
+    if (!known.length) {
+      sumEl.innerHTML = '<span class="muted small">// no completed runs yet</span>';
+      return;
+    }
+    sumEl.innerHTML = known.map((s) => {
+      const fbNote = s.fallback_count
+        ? ` <span class="muted">· ${s.fallback_count} fb</span>` : '';
+      const noopNote = s.no_change_count
+        ? ` <span class="muted">· ${s.no_change_count} no-op</span>` : '';
+      return `<span class="sync-history-sum sync-history-sum-${s.transport}">`
+        + `<span class="sync-history-sum-label">${htmlEscape(s.transport.toUpperCase())}</span> `
+        + `<b>${s.avg_wall_clock}s</b> avg `
+        + `<span class="muted">· ${s.count} runs</span>`
+        + fbNote + noopNote
+        + `</span>`;
+    }).join('');
+  }
+
+  // v1.13.21: theme-source pie. Renders a donut chart of the
+  // SRC-letter distribution coming from /api/stats.theme_sources.
+  // Legend pills are click-to-toggle: clicking dims the slice and
+  // removes its share from the centered total + percentages so the
+  // user can ask "of just the items WITH a theme, how are sources
+  // split?" by hiding the "-" wedge.
+  //
+  // Persisted hide-set lives in localStorage so the user's filter
+  // preference survives page reloads (mirrors the library filter
+  // chip toolbar's persistence pattern).
+  const _SOURCE_PIE_HIDE_KEY = 'motif:dash:src-hide';
+  const _SOURCE_LETTER_META = [
+    { letter: 'T', cls: 'T', name: 'ThemerrDB' },
+    { letter: 'A', cls: 'A', name: 'Adopted' },
+    { letter: 'U', cls: 'U', name: 'User-supplied' },
+    { letter: 'M', cls: 'M', name: 'Manual sidecar' },
+    { letter: 'P', cls: 'P', name: 'Plex-served' },
+    { letter: '-', cls: 'X', name: 'No theme' },
+  ];
+  // v1.24.59: each of the three source donuts (Total / Movies / TV) owns its
+  // hidden-set again — clicking a legend letter hides it on JUST that donut
+  // (the user: "make the toggle independent"). v1.24.55 had briefly shared one Set
+  // across all three; pre-that, v1.19.29 kept the two pies (items + collections)
+  // independent. The legacy _SOURCE_PIE_HIDE_KEY seeds Total; Movies/TV get their
+  // own keys, seeded once from the legacy key so the existing hidden-letter state
+  // carries to all three on first load, then they diverge.
+  const _MOVIES_PIE_HIDE_KEY = 'motif:dash:src-hide-movies';
+  const _TV_PIE_HIDE_KEY = 'motif:dash:src-hide-tv';
+  function _loadHiddenSet(key) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch (_) { return new Set(); }
+  }
+  function _persistHiddenSet(key, set) {
+    try {
+      localStorage.setItem(key, JSON.stringify(Array.from(set)));
+    } catch (_) { /* localStorage full / disabled */ }
+  }
+  // First run for a donut's own key: clone the legacy shared state so the deploy
+  // doesn't visually jump (e.g. a previously-hidden "–" wedge re-appearing).
+  function _seedIndependentSet(ownKey, legacyKey) {
+    try {
+      if (localStorage.getItem(ownKey) !== null) return _loadHiddenSet(ownKey);
+    } catch (_) { /* fall through to seed */ }
+    const seed = _loadHiddenSet(legacyKey);
+    _persistHiddenSet(ownKey, seed);
+    return seed;
+  }
+  let _totalPieHidden = _loadHiddenSet(_SOURCE_PIE_HIDE_KEY);
+  let _moviesPieHidden = _seedIndependentSet(_MOVIES_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY);
+  let _tvPieHidden = _seedIndependentSet(_TV_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY);
+
+  // v1.18.20: internal renderer accepting per-donut element IDs + an optional
+  // mediaTypeFilter. v1.24.55: wrapped by renderTotalSourcePie (no filter),
+  // renderMoviesSourcePie ('movie') and renderTvSourcePie ('show'); all three
+  // share the same slice/legend logic — cumulative-percentage dasharrays,
+  // per-letter buckets, click-to-hide legend.
+  function _renderSourcePie(rows, opts) {
+    const {
+      blockId, slicesId, legendId, centerNumId,
+      mediaTypeFilter, lastKeyKey,
+      // v1.24.59: each donut passes its OWN hidden-set (independent toggles).
+      hiddenSet,
+    } = opts;
+    const block = document.getElementById(blockId);
+    const slicesEl = document.getElementById(slicesId);
+    const legendEl = document.getElementById(legendId);
+    const centerNum = document.getElementById(centerNumId);
+    if (!block || !slicesEl || !legendEl || !centerNum) return;
+
+    const scopedRows = mediaTypeFilter
+      ? rows.filter((r) => r.media_type === mediaTypeFilter)
+      : rows;
+
+    // Aggregate per-letter across media types — the legend can
+    // be filtered later if a media-type split is wanted; for v1
+    // the chart shows the full library picture.
+    const totals = Object.fromEntries(
+      _SOURCE_LETTER_META.map((m) => [m.letter, 0])
+    );
+    let grand = 0;
+    for (const r of scopedRows) {
+      const k = totals[r.letter] != null ? r.letter : '-';
+      totals[k] += r.count || 0;
+      grand += r.count || 0;
+    }
+    if (grand <= 0) { block.style.display = 'none'; return; }
+
+    // Active = letters NOT in the (per-pie) hidden set.
+    const visibleTotal = _SOURCE_LETTER_META
+      .filter((m) => !hiddenSet.has(m.letter))
+      .reduce((acc, m) => acc + totals[m.letter], 0);
+
+    const key = JSON.stringify({ totals, hidden: Array.from(hiddenSet) });
+    if (key === _pieState[lastKeyKey]) { block.style.display = ''; return; }
+    _pieState[lastKeyKey] = key;
+    block.style.display = '';
+
+    // Build slice <circle>s. r=15.915 → circumference ≈ 100 so the
+    // dasharray length doubles as a percentage. Each slice's offset
+    // advances by the cumulative percentage of preceding visible
+    // slices; hidden slices contribute 0 to the dasharray but stay
+    // in the SVG (dimmed) so toggling back in animates from the
+    // same axis.
+    const denom = visibleTotal > 0 ? visibleTotal : 1;
+    let cumulative = 0;
+    const sliceMarkup = _SOURCE_LETTER_META.map((m) => {
+      const n = totals[m.letter];
+      const hidden = hiddenSet.has(m.letter);
+      const pct = (hidden || n <= 0) ? 0 : (n / denom) * 100;
+      const dash = `${pct.toFixed(3)} ${(100 - pct).toFixed(3)}`;
+      const offset = (100 - cumulative) % 100;
+      cumulative += pct;
+      return `<circle class="source-pie-slice source-pie-${m.cls} ${hidden ? 'dim' : ''}"
+        cx="21" cy="21" r="15.915"
+        stroke-dasharray="${dash}" stroke-dashoffset="${offset.toFixed(3)}"></circle>`;
+    }).join('');
+    slicesEl.innerHTML = sliceMarkup;
+
+    centerNum.textContent = (visibleTotal || grand).toLocaleString();
+
+    // Legend — letter, name, count + (percent). Click toggles hide.
+    // v1.24.68: count + (pct%) grouped on the right, 1 row per source — mirrors
+    // the reference's "Local Trailer  4271 (29.0%)" selector style. 1-decimal
+    // pct to match.
+    legendEl.innerHTML = _SOURCE_LETTER_META.map((m) => {
+      const n = totals[m.letter];
+      const hidden = hiddenSet.has(m.letter);
+      const pct = visibleTotal > 0 && !hidden
+        ? ((n / visibleTotal) * 100).toFixed(1)
+        : '—';
+      const safeLetter = m.letter === '-' ? '–' : m.letter;
+      return `<button type="button" class="source-legend-item ${hidden ? 'off' : ''}"
+                      data-letter="${m.letter}"
+                      title="click to ${hidden ? 'show' : 'hide'} ${htmlEscape(m.name)}">
+        <span class="source-legend-swatch source-legend-swatch-${m.cls}"></span>
+        <span class="source-legend-letter source-pie-${m.cls}-text">${safeLetter}</span>
+        <span class="source-legend-name">${htmlEscape(m.name)}</span>
+        <span class="source-legend-vals">
+          <span class="source-legend-count">${n.toLocaleString()}</span>
+          <span class="source-legend-pct">${hidden ? 'hidden' : '(' + pct + '%)'}</span>
+        </span>
+      </button>`;
+    }).join('');
+  }
+
+  // v1.24.55: per-donut render-skip cache for the 3-up source row. all_rows holds
+  // the unfiltered /api/stats theme_sources feed so a legend-toggle click can
+  // re-render the clicked donut from one source. The *_key fields are the
+  // last-rendered hash per donut (skip the DOM swap when unchanged).
+  const _pieState = {
+    all_rows: [],
+    total_key: '',
+    movies_key: '',
+    tv_key: '',
+  };
+
+  // v1.24.55: three source donuts — Total (all), Movies, TV (= plex_items 'show',
+  // which folds anime in; theme_sources carries no anime split). Each scopes the
+  // SAME theme_sources feed by media_type. v1.24.59: each donut filters through
+  // its OWN hidden-set (independent toggles). The old single + collections pies
+  // were replaced (the user: "replace our existing 2 with the three new ones").
+  function renderTotalSourcePie(rows) {
+    _renderSourcePie(rows, {
+      blockId: 'source-pie-total-col', slicesId: 'source-pie-total-slices',
+      legendId: 'source-pie-total-legend', centerNumId: 'source-pie-total-num',
+      mediaTypeFilter: null, lastKeyKey: 'total_key', hiddenSet: _totalPieHidden,
+    });
+  }
+  function renderMoviesSourcePie(rows) {
+    _renderSourcePie(rows, {
+      blockId: 'source-pie-movies-col', slicesId: 'source-pie-movies-slices',
+      legendId: 'source-pie-movies-legend', centerNumId: 'source-pie-movies-num',
+      mediaTypeFilter: 'movie', lastKeyKey: 'movies_key', hiddenSet: _moviesPieHidden,
+    });
+  }
+  function renderTvSourcePie(rows) {
+    _renderSourcePie(rows, {
+      blockId: 'source-pie-tv-col', slicesId: 'source-pie-tv-slices',
+      legendId: 'source-pie-tv-legend', centerNumId: 'source-pie-tv-num',
+      mediaTypeFilter: 'show', lastKeyKey: 'tv_key', hiddenSet: _tvPieHidden,
+    });
+  }
+  function renderAllSourcePies(rows) {
+    _pieState.all_rows = rows;
+    const section = document.getElementById('source-breakdown-block');
+    if (section) {
+      section.style.display = rows.some((r) => (r.count || 0) > 0) ? '' : 'none';
+    }
+    renderTotalSourcePie(rows);
+    renderMoviesSourcePie(rows);
+    renderTvSourcePie(rows);
+  }
+
+  // v1.24.56: // GENERAL STATISTICS — per-library source split. Pivots the same
+  // theme_sources feed the donuts use into a compact table: each library
+  // (Total / Movies / TV / Anime / Collections) × [LOCAL (T/A/U/M) | PLEX (P) |
+  // MISSING (–) | COVERAGE %]. Adopted from the Missing-Trailer-Downloader
+  // dashboard the user asked to mirror ("general Statistics better"), kept on
+  // motif's SRC axis — no genre-skip column (motif has no genre-skip concept).
+  // is_anime splits TV from ANIME (theme_sources carries it as of v1.24.56;
+  // plex_items.media_type is 'show' for both).
+  const _GS_LOCAL_LETTERS = new Set(['T', 'A', 'U', 'M']);
+  function _gsBucket(rows) {
+    let local = 0, plex = 0, missing = 0;
+    for (const r of rows) {
+      const n = r.count || 0;
+      if (r.letter === 'P') plex += n;
+      else if (_GS_LOCAL_LETTERS.has(r.letter)) local += n;
+      else missing += n;  // '-' or any unknown letter — fold in, never drop
+    }
+    const total = local + plex + missing;
+    const cov = total > 0 ? Math.round(((local + plex) / total) * 100) : 0;
+    return { local, plex, missing, total, cov };
+  }
+  function renderGeneralStats(rows) {
+    const section = document.getElementById('general-stats-block');
+    const body = document.getElementById('general-stats-body');
+    if (!section || !body) return;
+    const isShow = (r) => r.media_type === 'show';
+    // keep=true rows render even when empty (TOTAL anchors the table).
+    const defs = [
+      { label: '// TOTAL', cls: 'gs-total', keep: true, match: () => true },
+      { label: '// MOVIES', match: (r) => r.media_type === 'movie' },
+      { label: '// TV', match: (r) => isShow(r) && !r.is_anime },
+      { label: '// ANIME', match: (r) => isShow(r) && !!r.is_anime },
+      { label: '// COLLECTIONS', match: (r) => r.media_type === 'collection' },
+    ];
+    const grand = _gsBucket(rows);
+    if (grand.total <= 0) { section.style.display = 'none'; return; }
+    section.style.display = '';
+    body.innerHTML = defs.map((d) => {
+      const b = _gsBucket(rows.filter(d.match));
+      // Skip empty per-library rows (no anime / collections library) but
+      // always keep TOTAL so the table never renders headerless.
+      if (b.total <= 0 && !d.keep) return '';
+      const covCls = b.cov >= 80 ? 'accent-green' : (b.cov >= 40 ? '' : 'accent-red');
+      return `<tr class="${d.cls || ''}">
+        <td class="gs-lib">${htmlEscape(d.label)}</td>
+        <td class="col-num"><b>${b.total.toLocaleString()}</b></td>
+        <td class="col-num source-pie-T-text">${b.local.toLocaleString()}</td>
+        <td class="col-num source-pie-P-text">${b.plex.toLocaleString()}</td>
+        <td class="col-num source-pie-X-text">${b.missing.toLocaleString()}</td>
+        <td class="col-num ${covCls}"><b>${b.cov}%</b></td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Click delegate for legend toggle. Lives outside the renderer so
+  // re-renders don't accumulate listeners.
+  // v1.24.59: route the toggle to the clicked donut's OWN Set (the user: "make the
+  // toggle independent"). Discriminate by the enclosing .source-pie-col id; only
+  // that donut's cache key is invalidated + re-rendered, so the other two keep
+  // their own hidden-letter state.
+  document.addEventListener('click', (ev) => {
+    const btn = ev.target.closest('.source-legend-item');
+    if (!btn) return;
+    const letter = btn.dataset.letter;
+    if (!letter) return;
+    const col = btn.closest('.source-pie-col');
+    const which = {
+      'source-pie-total-col':  { set: _totalPieHidden,  key: _SOURCE_PIE_HIDE_KEY, cache: 'total_key',  render: renderTotalSourcePie },
+      'source-pie-movies-col': { set: _moviesPieHidden, key: _MOVIES_PIE_HIDE_KEY, cache: 'movies_key', render: renderMoviesSourcePie },
+      'source-pie-tv-col':     { set: _tvPieHidden,     key: _TV_PIE_HIDE_KEY,     cache: 'tv_key',     render: renderTvSourcePie },
+    }[col ? col.id : ''];
+    if (!which) return;
+    if (which.set.has(letter)) which.set.delete(letter);
+    else which.set.add(letter);
+    _persistHiddenSet(which.key, which.set);
+    _pieState[which.cache] = '';  // re-render only the clicked donut
+    which.render(_pieState.all_rows || []);
+  });
+
+  // v1.12.67: render the per-section coverage table on the
+  // dashboard. Hidden when only one section is managed (no
+  // comparison story); otherwise lists each section with its
+  // total / themed / unthemed / failures / pending-updates plus
+  // a click-through that lands the user on the right library
+  // tab + 4K variant.
+  // v1.13.12: section-coverage render guard. Pre-fix every dashboard
+  // poll (30s + post-sync) re-wrote body.innerHTML even when the
+  // numbers hadn't changed, causing a brief but visible flash. Hash
+  // the inputs and skip the swap when nothing differs.
+  let _lastSectionCoverageKey = '';
+
+  function renderSectionCoverage(sections) {
+    const block = document.getElementById('section-coverage-block');
+    const body = document.getElementById('section-coverage-body');
+    if (!block || !body) return;
+    if (!sections.length || sections.length < 2) {
+      block.style.display = 'none';
+      return;
+    }
+    const key = JSON.stringify(sections);
+    if (key === _lastSectionCoverageKey) {
+      // Idempotent — no DOM swap, no flash.
+      block.style.display = '';
+      return;
+    }
+    _lastSectionCoverageKey = key;
+    block.style.display = '';
+    body.innerHTML = sections.map((s) => {
+      // v1.24.79: Collections rows had no branch here → fell through to
+      // 'MOVIES' + a spurious 'STD' sub-label (the synthetic collections row is
+      // tab='collections', is_4k=0). Mirror renderCoverageComparison: label
+      // COLLECTIONS with no STD/4K suffix.
+      const isCollections = s.tab === 'collections';
+      const fourkLabel = isCollections ? '' : (s.is_4k ? '4K' : 'STD');
+      const typeLabel = isCollections     ? 'COLLECTIONS'
+                      : s.tab === 'anime' ? 'ANIME'
+                      : s.tab === 'tv'    ? 'TV'
+                      :                     'MOVIES';
+      const href = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}`;
+      // v1.24.82: THEMED / UNTHEMED cells drill into the same library status
+      // filter the tab's chips use (has_theme / untracked), mirroring the
+      // failures + pending cells' click-through.
+      const themedHref = `${href}&status=has_theme`;
+      const unthemedHref = `${href}&status=untracked`;
+      // v1.12.120: failures + pending cells own click-through to a
+      // pre-filtered library view. Failures land on the red ✗ pill
+      // filter; pending lands on the blue ↑ pill filter. Cells set
+      // data-href + class="col-clickable" so the row's own
+      // click-through skips them (handler checks the closest <td>).
+      // v1.13.57: failureHref now uses ?status=failures (unacked
+      // only) to match the dashboard `failures` count. Pre-fix it
+      // routed to ?tdb_pills=dead which included acked rows, so
+      // clicking a "3 failures" cell could land on a 12-row view.
+      const failureHref = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}&status=failures`;
+      const pendingHref = `/${s.tab}?fourk=${s.is_4k ? 1 : 0}&tdb_pills=update`;
+      // v1.13.39: tooltips on every per-section coverage cell. The
+      // row-level cursor: pointer signals "click to drill in" but
+      // hover gave no per-cell context — user reported "the ? over
+      // the section doesn't show any information". Add hover hints
+      // so each column tells the user what the number represents
+      // without leaving the dashboard.
+      const sectionTip =
+        `Section ID: ${s.section_id || '(unknown)'} · `
+        + `${typeLabel} ${fourkLabel} · click to open this library tab`;
+      const totalTip = `Plex items in this section`;
+      const themedTip = `Items with a theme (motif placement, sidecar, or Plex agent)`;
+      const unthemedTip = (s.unthemed > 0)
+        ? `${fmt.num(s.unthemed)} item${s.unthemed === 1 ? '' : 's'} without any theme`
+        : `Every item in this section has a theme`;
+      const failureCell = s.failures > 0
+        ? `<td class="col-num accent-red col-clickable" data-href="${htmlEscape(failureHref)}" title="${fmt.num(s.failures)} unacked failures · click to filter">${fmt.num(s.failures)}</td>`
+        : `<td class="col-num muted" title="No unacked theme failures in this section">0</td>`;
+      const pendingCell = s.pending_updates > 0
+        ? `<td class="col-num accent col-clickable" data-href="${htmlEscape(pendingHref)}" title="${fmt.num(s.pending_updates)} TDB updates awaiting decision · click to filter">${fmt.num(s.pending_updates)}</td>`
+        : `<td class="col-num muted" title="No pending ThemerrDB updates in this section">0</td>`;
+      const unthemedCellTipped = s.unthemed > 0
+        ? `<td class="col-num col-clickable" data-href="${htmlEscape(unthemedHref)}" title="${htmlEscape(unthemedTip)} · click to filter">${fmt.num(s.unthemed)}</td>`
+        : `<td class="col-num muted" title="${htmlEscape(unthemedTip)}">0</td>`;
+      const themedCell = s.themed > 0
+        ? `<td class="col-num accent-green col-clickable" data-href="${htmlEscape(themedHref)}" title="${htmlEscape(themedTip)} · click to filter">${fmt.num(s.themed)}</td>`
+        : `<td class="col-num muted" title="${htmlEscape(themedTip)}">0</td>`;
+      // Drill-through: clicking a row navigates to the library
+      // tab. Whole-row clickability via data-href + cursor:pointer
+      // styling so the click target isn't just a tiny link.
+      return `
+        <tr class="section-coverage-row" data-href="${htmlEscape(href)}" title="${htmlEscape(sectionTip)}">
+          <td title="${htmlEscape(sectionTip)}">${htmlEscape(s.title || '')}</td>
+          <td class="col-year col-section-type" title="${htmlEscape(sectionTip)}">
+            <span class="section-type-main">${typeLabel}</span>
+            <span class="section-type-sub muted small">${fourkLabel}</span>
+          </td>
+          <td class="col-num" title="${htmlEscape(totalTip)}"><b>${fmt.num(s.total || 0)}</b></td>
+          ${themedCell}
+          ${unthemedCellTipped}
+          ${failureCell}
+          ${pendingCell}
+        </tr>
+      `;
+    }).join('');
+    // Bind click-through. Idempotent: removing-and-readding a
+    // listener on each render avoids leaks across loadDashboard
+    // calls. v1.12.120: a click that originated on a cell with
+    // its own data-href (failures / pending count) takes
+    // precedence over the row's default tab landing — so the
+    // user lands on the filtered view they asked for instead of
+    // the raw library tab.
+    body.querySelectorAll('tr.section-coverage-row').forEach((tr) => {
+      tr.addEventListener('click', (ev) => {
+        const cell = ev.target.closest('td.col-clickable');
+        if (cell && cell.dataset.href) {
+          ev.stopPropagation();
+          window.location.href = cell.dataset.href;
+          return;
+        }
+        const href = tr.getAttribute('data-href');
+        if (href) window.location.href = href;
+      });
+    });
+  }
+
+  // v1.13.34: failure-kind breakdown — horizontal bars, sorted by
+  // count desc. Each bar links the user into the library filtered
+  // to its failure kind (?status=failures&fk=<kind>). Hidden when
+  // there are no unacked failures so a clean install doesn't
+  // render an empty rail. Cache hash so the 30s dashboard poll
+  // doesn't redraw when nothing changed.
+  let _lastInsightFailuresKey = '';
+  function renderFailureBreakdown(rows) {
+    const block = document.getElementById('insight-failures-block');
+    const body = document.getElementById('insight-failures-body');
+    if (!block || !body) return;
+    if (!rows.length) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows);
+    if (key === _lastInsightFailuresKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastInsightFailuresKey = key;
+    block.style.display = '';
+    const max = rows.reduce((acc, r) => Math.max(acc, r.count), 0) || 1;
+    body.innerHTML = rows.map((r) => {
+      const pct = (r.count / max) * 100;
+      // v1.24.81: drill into the tab that owns the most of this failure kind
+      // (r.tab from /api/dashboard/insights). Pre-fix every bar hardcoded
+      // /movies — but the library's status=failures filter is media-type-scoped
+      // to its tab, so an anime/TV-only failure kind landed on an EMPTY movies
+      // view. r.tab routes to where the failures actually live.
+      // v1.13.57: ?status=failures matches the dashboard's "unacked"
+      // count semantics — pre-fix ?tdb_pills=dead included acked
+      // rows so clicking a "5 video_removed" insight cell could
+      // land on a 12-row view.
+      const href = `/${r.tab || 'movies'}?status=failures&fk=${encodeURIComponent(r.kind)}`;
+      return `<a class="insight-fail-row"
+                  href="${htmlEscape(href)}"
+                  title="${htmlEscape(r.label)}: ${fmt.num(r.count)} unacked. Click to view in library.">
+        <span class="insight-fail-label">${htmlEscape(r.label)}</span>
+        <span class="insight-fail-bar">
+          <span class="insight-fail-bar-fill" style="width:${pct}%"></span>
+        </span>
+        <span class="insight-fail-count">${fmt.num(r.count)}</span>
+      </a>`;
+    }).join('');
+  }
+
+  // v1.13.34: sync-performance sparkline. SVG line chart of the
+  // last 30 sync runs' wall_clock_seconds. Markers are color-coded
+  // by status (no_changes = muted, failed = red, otherwise green).
+  // Tooltip on hover via title= carries the per-point detail
+  // (timestamp, transport, duration, no_changes/error).
+  let _lastInsightSyncsKey = '';
+  function renderSyncPerformance(rows) {
+    const block = document.getElementById('insight-syncs-block');
+    const body = document.getElementById('insight-syncs-body');
+    if (!block || !body) return;
+    if (rows.length < 2) { block.style.display = 'none'; return; }
+    // v1.13.35: hide when there's no real duration signal — every
+    // row at zero seconds (e.g., a series of immediate-cancel
+    // runs) would normalize to a flat baseline that reads as
+    // "everything's stuck" when really there's just no data.
+    // Server-side filter excludes NULL wall_clock_seconds; this
+    // additionally guards the all-zero edge.
+    const haveRealDuration = rows.some((r) => (r.wall_clock_seconds || 0) > 0);
+    if (!haveRealDuration) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows.map((r) => [
+      r.finished_at, r.wall_clock_seconds, r.transport, r.status, r.no_changes,
+    ]));
+    if (key === _lastInsightSyncsKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastInsightSyncsKey = key;
+    block.style.display = '';
+    // Geometry: fixed-aspect SVG (viewBox-driven so the chart
+    // scales with the parent without being pixel-pegged). Padding
+    // gives the markers room to render without clipping at the
+    // chart edges.
+    const W = 600;
+    const H = 80;
+    const PAD_X = 8;
+    const PAD_Y = 6;
+    const innerW = W - PAD_X * 2;
+    const innerH = H - PAD_Y * 2;
+    const seconds = rows.map((r) => r.wall_clock_seconds || 0);
+    const maxSec = Math.max(...seconds, 1);
+    const minSec = 0;
+    const xAt = (i) => PAD_X + (rows.length === 1 ? innerW / 2 : (i / (rows.length - 1)) * innerW);
+    const yAt = (s) => PAD_Y + innerH - ((s - minSec) / (maxSec - minSec)) * innerH;
+    const linePath = rows.map((r, i) => {
+      const x = xAt(i).toFixed(1);
+      const y = yAt(seconds[i]).toFixed(1);
+      return (i === 0 ? 'M' : 'L') + x + ',' + y;
+    }).join(' ');
+    // Markers: a small circle per run. Color = status.
+    const markers = rows.map((r, i) => {
+      const cx = xAt(i).toFixed(1);
+      const cy = yAt(seconds[i]).toFixed(1);
+      let cls = 'sync-mark-ok';
+      if (r.status === 'failed') cls = 'sync-mark-fail';
+      else if (r.no_changes) cls = 'sync-mark-noop';
+      // Tooltip carries the full record so the user can drill
+      // without leaving the page. Local time format keeps it
+      // readable; transport tag is short.
+      const when = (r.finished_at || '').replace('T', ' ').replace(/\..*/, '');
+      const trans = (r.transport || '?').toUpperCase();
+      const noOp = r.no_changes ? ' · no-op' : '';
+      const fail = r.status === 'failed' ? ' · FAILED' : '';
+      const detail = ` · ${seconds[i].toFixed(1)}s · ${r.new_count || 0}n/${r.updated_count || 0}u`;
+      const title = `${when} · ${trans}${detail}${noOp}${fail}`;
+      return `<circle class="${cls}" cx="${cx}" cy="${cy}" r="3">
+        <title>${htmlEscape(title)}</title>
+      </circle>`;
+    }).join('');
+    // Labels for context: max seconds on the right edge, run
+    // count on the left. Keeps the chart self-explanatory without
+    // a full axis system.
+    const maxLabel = `${maxSec.toFixed(1)}s`;
+    body.innerHTML = `
+      <div class="sync-spark-wrap">
+        <svg viewBox="0 0 ${W} ${H}"
+             preserveAspectRatio="none"
+             class="sync-spark-svg"
+             aria-label="Sync wall-clock per run">
+          <path class="sync-spark-line" d="${linePath}"/>
+          ${markers}
+        </svg>
+        <div class="sync-spark-meta muted small">
+          <span>oldest · ${rows.length} runs</span>
+          <span>peak ${htmlEscape(maxLabel)}</span>
+        </div>
+      </div>`;
+  }
+
+  // v1.13.34: daily download activity bars. One bar per day for
+  // the last 30 days (server already trims with the 30-day
+  // window). Days with zero downloads still get a bar slot so
+  // the X-axis cadence stays consistent — empty slots are
+  // sized to a hairline rather than truly zero so the user
+  // sees the day exists but no work happened.
+  let _lastInsightDownloadsKey = '';
+  function renderDownloadActivity(rows) {
+    const block = document.getElementById('insight-downloads-block');
+    const body = document.getElementById('insight-downloads-body');
+    if (!block || !body) return;
+    if (!rows.length) { block.style.display = 'none'; return; }
+    const key = JSON.stringify(rows);
+    if (key === _lastInsightDownloadsKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastInsightDownloadsKey = key;
+    block.style.display = '';
+    // Backfill missing days so bars cadence cleanly. Server
+    // returns only days WITH at least one download; we want a
+    // fixed 30-slot horizontal axis so the user sees idle days
+    // too. Iterate from 29 days ago → today, fill from the
+    // server map.
+    const have = new Map(rows.map((r) => [r.day, r.count]));
+    const today = new Date();
+    const days = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      const iso = d.toISOString().slice(0, 10);
+      days.push({ day: iso, count: have.get(iso) || 0 });
+    }
+    const max = days.reduce((acc, r) => Math.max(acc, r.count), 0) || 1;
+    const total = days.reduce((acc, r) => acc + r.count, 0);
+    body.innerHTML = `
+      <div class="dl-activity-wrap">
+        <div class="dl-activity-bars">
+          ${days.map((r) => {
+            const pct = r.count > 0 ? Math.max(2, (r.count / max) * 100) : 0;
+            const tip = r.count > 0
+              ? `${r.day}: ${fmt.num(r.count)} download${r.count === 1 ? '' : 's'}`
+              : `${r.day}: idle`;
+            return `<span class="dl-activity-bar"
+                          style="height:${pct}%"
+                          title="${htmlEscape(tip)}"></span>`;
+          }).join('')}
+        </div>
+        <div class="dl-activity-meta muted small">
+          <span>30 days</span>
+          <span>${fmt.num(total)} total · peak ${fmt.num(max)}/day</span>
+        </div>
+      </div>`;
+  }
+
+  // Polled by the SYNC button to know when both the sync + plex_enum
+  // jobs have finished. Set when the user clicks // SYNC, cleared when
+  // /api/stats reports queue.sync_in_flight == 0.
+  let syncWatcher = null;
+
+  function setSyncButtonState(state) {
+    // v1.13.19: re-introduce a one-word busy label so the user gets
+    // immediate confirmation their click landed (without waiting on
+    // the topbar status pill's poll round-trip). The bad pattern in
+    // v1.13.18 was multi-stage swaps ("SCANNING TV SHOWS…" → next
+    // section) — those still don't happen because we use a single
+    // generic // SYNCING… that's stable for the whole run.
+    // v1.14.69: busy label spelled out as
+    // `// SYNCING THEMERRDB…` (was generic `// SYNCING…`) to
+    // match REFRESH PLEX's explicit form (`// REFRESHING
+    // PLEX…`). The poll-driven cross-tab/cron unlock branch
+    // (refreshTopbarStatus) was updated to the same string.
+    const btn = $('#sync-now-btn');
+    if (!btn) return;
+    const idleLabel = btn.dataset.origLabel || '// SYNC THEMERRDB';
+    if (state === 'idle') {
+      btn.disabled = false;
+      btn.textContent = idleLabel;
+    } else if (state === 'running') {
+      btn.disabled = true;
+      // v1.18.49: busy label spells both phases when the idle label
+      // does — auto_enum_after_sync mode shows
+      // `// SYNCING THEMERRDB + REFRESH PLEX…` so the operator
+      // sees plex refresh is queued behind the sync. Detect by
+      // inspecting the idleLabel (set by refreshTopbarStatus based
+      // on autoEnum) rather than re-fetching config here.
+      btn.textContent = idleLabel.includes('REFRESH PLEX')
+        ? '// SYNCING THEMERRDB + REFRESH PLEX…'
+        : '// SYNCING THEMERRDB…';
+    } else if (state === 'done') {
+      // v1.13.51: dropped the 1.5s ✓ DONE flash. User feedback —
+      // the flash made the button look briefly clickable while
+      // the cascade was still settling, and the visual transition
+      // didn't add signal beyond what the topbar mini-bar already
+      // shows. 'done' now collapses straight into 'idle'. Existing
+      // callers that fire setSyncButtonState('done') keep working
+      // (no signature change); they just get the immediate
+      // transition instead of the flash.
+      setSyncButtonState('idle');
+    }
+  }
+
+  function bindDashboard() {
+    const syncBtn = $('#sync-now-btn');
+    if (!syncBtn) return;
+    syncBtn.addEventListener('click', async (ev) => {
+      setSyncButtonState('running');
+      // v1.13.19: paint the topbar mini-bar optimistically so the
+      // user sees a SYNCING pill immediately on click instead of
+      // waiting for the worker's idle-wait + first poll round-trip
+      // (1-2s of stale IDLE state pre-fix). The placeholder gets
+      // replaced by the real op-progress row as soon as it lands.
+      // boostPoll is called inside setOptimisticPlaceholder so we
+      // don't need to call it again here.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder('tdb_sync', '// SYNCING THEMERRDB');
+        }
+      } catch (_) {}
+      try {
+        // metadata_only: don't auto-enqueue downloads. Downloads happen
+        // explicitly from /movies, /tv, /anime via the missing-themes
+        // banner or per-row RE-DL.
+        await api('POST', '/api/sync/now', { metadata_only: true });
+      } catch (e) {
+        alert('Sync failed: ' + e.message);
+        // v1.22.88: clear the optimistic placeholder set above — the
+        // catalogued class every sibling already clears (sync-plex
+        // v1.17.13, revert v1.18.21, redownload v1.15.36); this one
+        // left // SYNCING THEMERRDB in the mini-bar for the 5s TTL
+        // after a failed enqueue.
+        try {
+          if (window.motifOps
+              && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('tdb_sync');
+          }
+        } catch (_) { /* cosmetic */ }
+        setSyncButtonState('idle');
+        return;
+      }
+      // v1.14.53: paintTopbarSyncing call removed — setOptimistic
+      // Placeholder('tdb_sync', ...) above already wired the
+      // boostPoll + scheduled refresh.
+      // v1.12.127: 'done' means the action this user triggered has
+      // finished. With auto_enum=ON that's both phases (sync + the
+      // auto-enqueued enum); with auto_enum=OFF it's just the sync
+      // job. Polling auto_enum_after_sync per-tick lets the user
+      // change the setting mid-flight and have the watcher adapt.
+      if (syncWatcher) clearInterval(syncWatcher);
+      let primed = false;
+      syncWatcher = setInterval(async () => {
+        // v1.17.13: bail when tab is hidden. Race audit finding
+        // #8: under Chromium's ~1/min throttle in background tabs
+        // the 2s interval stretches, and the tick body still
+        // hits /api/stats + possibly writes the ✓ DONE flash to a
+        // tab the user can't see. The visibilitychange handler at
+        // page top re-arms work on tab return, so we lose nothing
+        // by skipping the body here.
+        if (document.visibilityState !== 'visible') return;
+        try {
+          const s = await api('GET', '/api/stats');
+          const tdbInFlight = (s.queue && s.queue.themerrdb_sync_in_flight) || 0;
+          const enumInFlight = (s.queue && s.queue.plex_enum_in_flight) || 0;
+          const autoEnum = !(s.queue && s.queue.auto_enum_after_sync === false);
+          const inFlight = autoEnum
+            ? (tdbInFlight + enumInFlight)
+            : tdbInFlight;
+          if (inFlight > 0) primed = true;
+          if (primed && inFlight === 0) {
+            clearInterval(syncWatcher);
+            syncWatcher = null;
+            setSyncButtonState('done');
+            loadDashboard().catch(console.error);
+          } else if (!primed && inFlight === 0) {
+            // v1.22.70: the sync finished (or failed) inside the
+            // POST→first-tick gap — we never saw busy. Pre-fix this
+            // watcher polled forever and, being non-null, blocked
+            // refreshTopbarStatus's unlock (bug class 6): the button
+            // wedged at // SYNCING… until reload. Mirror the v1.13.29
+            // reload-path branch: clear silently and let the
+            // poll-driven unlock own the label.
+            clearInterval(syncWatcher);
+            syncWatcher = null;
+          }
+        } catch (e) { /* ignore transient errors */ }
+      }, 2000);
+    });
+
+    // If the page loads while a sync OR plex_enum is already in
+    // progress (left running by another tab/session, or daily cron
+    // mid-run), reflect that. v1.12.127: also honors auto_enum.
+    api('GET', '/api/stats').then((s) => {
+      const tdbBusy = (s && s.queue && s.queue.themerrdb_sync_in_flight) || 0;
+      const enumBusy = (s && s.queue && s.queue.plex_enum_in_flight) || 0;
+      const autoEnum = !(s && s.queue && s.queue.auto_enum_after_sync === false);
+      const initialBusy = autoEnum ? (tdbBusy + enumBusy) : tdbBusy;
+      if (initialBusy > 0) {
+        setSyncButtonState('running');
+        if (syncWatcher) clearInterval(syncWatcher);
+        // v1.13.29: was `primed = true`, which fired ✓ DONE on the
+        // reload path for a sync the user never triggered (cron tail
+        // landing during page load → the FIRST poll saw inFlight=0
+        // and immediately flashed DONE). Click path (~line 1268)
+        // correctly starts primed=false; this reload path now
+        // matches it. Cost: if the cron sync finishes between
+        // setSyncButtonState('running') above and the first poll
+        // tick below, the button just clears silently on the next
+        // refreshTopbarStatus tick (which has its own unlock path
+        // gated on `!syncWatcher && !dashSyncBtnBusy`) instead of
+        // claiming "DONE" for an action the user didn't take.
+        let primed = false;
+        syncWatcher = setInterval(async () => {
+          // v1.17.13: bail when tab is hidden — same shape as
+          // the click-path syncWatcher above. Race audit
+          // finding #8.
+          if (document.visibilityState !== 'visible') return;
+          try {
+            const s2 = await api('GET', '/api/stats');
+            const t2 = (s2.queue && s2.queue.themerrdb_sync_in_flight) || 0;
+            const e2 = (s2.queue && s2.queue.plex_enum_in_flight) || 0;
+            const ae2 = !(s2.queue && s2.queue.auto_enum_after_sync === false);
+            const inFlight2 = ae2 ? (t2 + e2) : t2;
+            if (inFlight2 > 0) primed = true;
+            if (primed && inFlight2 === 0) {
+              clearInterval(syncWatcher);
+              syncWatcher = null;
+              setSyncButtonState('done');
+              loadDashboard().catch(console.error);
+            } else if (!primed && inFlight2 === 0) {
+              // Sync finished between page-load probe and first
+              // tick — we never saw busy here. Clear the watcher
+              // and let refreshTopbarStatus's poll-driven unlock
+              // handle the button label.
+              clearInterval(syncWatcher);
+              syncWatcher = null;
+            }
+          } catch (e) { /* ignore */ }
+        }, 2000);
+      }
+    }).catch((e) => {
+      // v1.15.35: log the page-load stats probe failure. Pre-fix
+      // the empty .catch silently swallowed first-stats-call
+      // failures — if /api/stats 500'd on initial pageload (DB
+      // mid-migration, server start race), the sync watcher
+      // never armed and the operator had no UI signal that
+      // something was wrong. console.error keeps this out of
+      // the user's face but visible in dev tools.
+      try { console.error('Page-load /api/stats probe failed:', e); }
+      catch (_) { /* ignore log failures */ }
+    });
+
+    // v1.13.63: dash SYNC PLEX button. Only present when
+    // auto_enum_after_sync is FALSE (server-rendered conditional
+    // in dashboard.html) — when ON, // SYNC THEMERRDB already
+    // triggers a global plex_enum behind it, so a sibling button
+    // is redundant. Hits /api/libraries/refresh which re-discovers
+    // sections and enqueues a plex_enum job per included section
+    // tagged scope=scan_all (lights up globalEnumPipeline → locks
+    // every per-library // SYNC <NAME> button automatically while
+    // the sweep runs).
+    // v1.13.70: button + every user-visible label flipped from
+    // SYNC → REFRESH (Plex enumeration). `// SYNC THEMERRDB` (the
+    // sibling button) is unchanged — that one IS a sync.
+    const syncPlexBtn = $('#sync-plex-btn');
+    if (syncPlexBtn) {
+      syncPlexBtn.addEventListener('click', async () => {
+        syncPlexBtn.disabled = true;
+        syncPlexBtn.textContent = '// REFRESHING PLEX…';
+        try {
+          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+            window.motifOps.setOptimisticPlaceholder(
+              'plex_enum', '// REFRESHING PLEX',
+            );
+          }
+        } catch (_) {}
+        try {
+          await api('POST', '/api/libraries/refresh');
+        } catch (e) {
+          // v1.17.13: clear the optimistic placeholder we set
+          // above. Pre-fix the placeholder lingered on the
+          // topbar mini-bar for its full 5s TTL even though
+          // the POST failed and no real op was enqueued. Race
+          // audit finding #2 (class 5 silent topbar drift).
+          try {
+            if (window.motifOps
+                && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('plex_enum');
+            }
+          } catch (_) {}
+          alert('Refresh Plex failed: ' + e.message);
+          syncPlexBtn.disabled = false;
+          syncPlexBtn.textContent = '// REFRESH PLEX';
+          return;
+        }
+        // v1.14.53: paintTopbarSyncing call removed — set
+        // OptimisticPlaceholder('plex_enum', ...) above already
+        // wired the boostPoll + scheduled refresh.
+        // refreshTopbarStatus owns the lifecycle from here — once
+        // every scope=scan_all plex_enum job drains, the button
+        // re-enables on its own poll tick.
+      });
+    }
+  }
+
+  // ---- Manual theme URL override modal ----
+
+  // v1.14.0: validators for theme URLs. Was YouTube-only; widened
+  // for SoundCloud. Mirror of url_source() in app/core/sync.py —
+  // keep both regexes in lockstep.
+  // v1.20.43: + /embed/ + music. so the SET URL preview + acceptance
+  // agree with sync.py _YT_VID_RE ({v=, youtu.be, /embed/, /shorts/}).
+  const YOUTUBE_URL_RE = /^https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/|youtube\.com\/embed\/)[A-Za-z0-9_-]{6,}/i;
+  const SOUNDCLOUD_URL_RE = /^https?:\/\/(?:www\.|m\.)?soundcloud\.com\/[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?\/[a-z0-9](?:[a-z0-9_-]*[a-z0-9])?/i;
+  // v1.20.26: Instagram reels/posts/IGTV. Mirror of _IG_URL_RE in
+  // app/core/sync.py. Optional /<username>/ segment before reel/p/tv.
+  const INSTAGRAM_URL_RE = /^https?:\/\/(?:www\.|m\.)?instagram\.com\/(?:[A-Za-z0-9._]+\/)?(?:reels?|p|tv)\/[A-Za-z0-9_-]+/i;
+  // v1.22.90: Facebook videos/reels/watch + fb.watch shortlinks.
+  // Mirror of _FB_URL_RE in app/core/sync.py — keep in lockstep.
+  // Forms: /<page>/videos/[<slug>/]<id>, /reel/<id>, /share/v/<code>,
+  // /watch?v=<id>, /video.php?v=<id>, fb.watch/<code>.
+  const FACEBOOK_URL_RE = /^https?:\/\/(?:(?:www\.|m\.|web\.|mbasic\.)?facebook\.com\/(?:(?:[A-Za-z0-9.\-]+\/)?videos\/(?:[^/?#]+\/)?\d+|reel\/\d+|share\/[vr]\/[A-Za-z0-9_-]+|(?:watch\/?|video\.php)\?(?:[^#]*&)?v=\d+)|fb\.watch\/[A-Za-z0-9_-]+)/i;
+  const THEME_URL_RE = new RegExp(
+    `(${YOUTUBE_URL_RE.source})|(${SOUNDCLOUD_URL_RE.source})|(${INSTAGRAM_URL_RE.source})|(${FACEBOOK_URL_RE.source})`,
+    'i',
+  );
+
+  // v1.14.0: classify a theme URL by its source. Returns
+  // 'youtube' | 'soundcloud' | 'instagram' | 'unknown'. Used by:
+  //  - the info card to label URL rows ("youtube url" / "soundcloud url"
+  //    / "instagram url")
+  //  - SET URL dialog live preview ("detected: Instagram")
+  //  - ACCEPT UPDATE confirm dialog (warns when source differs)
+  // Pure function. Mirror of url_source() in app/core/sync.py.
+  function urlSource(url) {
+    if (!url) return 'unknown';
+    // v1.22.90: Facebook BEFORE YouTube — YOUTUBE_URL_RE requires a
+    // youtube host so the JS order is cosmetic, but sync.py's
+    // unanchored `v=` regex forces FB-first there; keep the mirrors
+    // in the same order so a future regex tweak can't drift them.
+    if (FACEBOOK_URL_RE.test(url)) return 'facebook';
+    if (YOUTUBE_URL_RE.test(url)) return 'youtube';
+    if (SOUNDCLOUD_URL_RE.test(url)) return 'soundcloud';
+    if (INSTAGRAM_URL_RE.test(url)) return 'instagram';  // v1.20.26
+    return 'unknown';
+  }
+  // v1.17.9: urlSourceLabel deleted — only had one historical
+  // caller that's since been migrated to inline source detection.
+  // Hygiene audit removal.
+
+  // v1.19.87: openOverrideDialog + closeOverrideDialog removed — the
+  // failure-recovery override-dlg was dead code (no `data-act=
+  // open-override` was emitted anywhere, so the dialog could never
+  // open). The live SET URL flow is manual-url-dlg, which already
+  // carries the live preview + KEEP AS BACKUP checkbox.
+
+  // v1.14.2: shared SET URL live preview helper. Wires an `input`
+  // listener to the URL field so the operator sees "detected:
+  // SoundCloud" / "detected: YouTube" / "detected: not recognized"
+  // as they paste. Free clarity, no round-trip. Used by
+  // manual-url-dlg.
+  function bindUrlSourcePreview(inputId, statusId) {
+    const input = document.getElementById(inputId);
+    const status = document.getElementById(statusId);
+    if (!input || !status) return;
+    const update = () => {
+      const url = (input.value || '').trim();
+      if (!url) {
+        // Don't overwrite an error message during empty state —
+        // empty just means "user hasn't typed yet."
+        if (status.dataset.live === '1') {
+          status.textContent = '';
+          status.classList.remove('ok', 'err');
+          status.removeAttribute('data-live');
+        }
+        return;
+      }
+      const src = urlSource(url);
+      if (src === 'youtube') {
+        status.textContent = 'detected: YouTube';
+        status.classList.remove('err'); status.classList.add('ok');
+      } else if (src === 'soundcloud') {
+        status.textContent = 'detected: SoundCloud';
+        status.classList.remove('err'); status.classList.add('ok');
+      } else if (src === 'instagram') {  // v1.20.26
+        status.textContent = 'detected: Instagram';
+        status.classList.remove('err'); status.classList.add('ok');
+      } else if (src === 'facebook') {  // v1.22.90
+        status.textContent = 'detected: Facebook';
+        status.classList.remove('err'); status.classList.add('ok');
+      } else {
+        status.textContent = 'detected: not recognized (must be YouTube, SoundCloud, Instagram, or Facebook)';
+        status.classList.remove('ok'); status.classList.add('err');
+      }
+      status.dataset.live = '1';
+    };
+    input.addEventListener('input', update);
+  }
+
+  // v1.19.87: bindOverrideDialog removed with the dead override-dlg
+  // (see the openOverrideDialog removal note above). The live SET URL
+  // submit lives in the manual-url-dlg form handler.
+
+  // v1.14.47: probe-then-confirm + /unplace flow extracted from
+  // the recovery-card dispatcher (where it lived inline in
+  // `hydrateRecoveryOptions` since v1.13.47/v1.14.27/v1.14.28).
+  // Now that LET PLEX SERVE moved from INFO TRY THIS NEXT to the
+  // SOURCE menu, this helper is callable from the top-level
+  // SOURCE-menu dispatcher (which has no access to the inner
+  // hydrateRecoveryOptions scope). The inner copy stays — it's
+  // still used by the failure-state `purge-and-ack` flow which
+  // bundles unplace + clear-failure differently.
+  async function _probeAndConfirmLPSAtTopLevel(mt, id, baseDialogText) {
+    let probeWarning = '';
+    try {
+      const res = await api('POST', `/api/items/${mt}/${id}/probe-tdb`);
+      if (res.ok) {
+        probeWarning = '✓ TDB URL probed: alive\n\n';
+      } else if (res.indeterminate) {
+        // v1.14.42: kind-aware hint mirrors the inner version.
+        const hint = res.kind === 'cookies_expired'
+          ? 'cookies needed for definitive answer'
+          : res.kind === 'network_error'
+            ? 'transient network issue — retry later'
+            : 'ambiguous — could be transient anti-bot/cookies/throttling, or actually dead';
+        probeWarning = `? TDB URL probe inconclusive: ${res.message} (${hint})\n\n`;
+      } else {
+        probeWarning = `⚠ TDB URL probed: DEAD (${res.message}).\n   Re-fetching from TDB won't work until the URL is back. Recovery via PUSH TO PLEX from the PLACE menu still works (uses motif's existing canonical).\n\n`;
+      }
+    } catch (e) {
+      // v1.14.51: surface the probe API failure instead of silently
+      // proceeding. the user's stated safety-net intent (v1.14.28
+      // probe design): "before I let Plex take over, confirm the
+      // recovery path back is intact". A probe that silently fails
+      // (network blip, server 500, auth lapse) violates that
+      // contract — the user clicks OK assuming the empty preamble
+      // means ✓ alive. Now the dialog explicitly says we couldn't
+      // verify so the user can decide whether to proceed blind.
+      probeWarning = `? TDB URL probe FAILED to run (${e.message || e}). Couldn't verify recovery path.\n\n`;
+    }
+    return confirm(probeWarning + baseDialogText);
+  }
+
+  // v1.20.18: force-capture whatever Plex is currently serving for a
+  // row as a Plex Backup (PB), even when the strict DOWNLOAD PLEX
+  // BACKUP run found no cloud (metadata://) theme. Invoked from the
+  // SOURCE-menu handler's 0-result branch. Confirm-gated: the swap
+  // replaces any existing TB/UB backup, but it's reversible — the
+  // ThemerrDB linkage lives on themes.youtube_url (untouched), so
+  // SOURCE → DOWNLOAD TDB BACKUP re-pulls it anytime. The backend
+  // sha256-dedups identical bytes, so it's a no-op when Plex is just
+  // echoing motif's own uploaded theme back as the selected entry.
+  function cloudBackupForceCapture(rk, hasTdb) {
+    // v1.21.35: branch the revert copy on whether the row actually has
+    // a ThemerrDB theme. For a TDB-less row (plex_orphan — e.g. a
+    // Kometa-built collection, the user's A24 Films repro) there is no
+    // green TDB pill and no DOWNLOAD TDB BACKUP, so promising a re-pull
+    // there is inaccurate. hasTdb is undefined on legacy callers → the
+    // safe no-TDB copy (it never claims a revert path that may not exist).
+    const revertNote = hasTdb
+      ? ' This replaces any existing TB/UB backup on the row — you can '
+        + 're-pull the ThemerrDB theme anytime via SOURCE → DOWNLOAD '
+        + 'TDB BACKUP.'
+      : ' This row has no ThemerrDB theme (e.g. a Kometa-built '
+        + 'collection) — there is no green TDB pill to revert to. Motif '
+        + 'keeps a copy of whatever Plex is serving, replacing any '
+        + 'existing backup on the row.';
+    const proceed = confirm(
+      "Plex isn't serving a cloud theme motif would auto-back-up "
+      + 'here.\n\nCapture whatever Plex IS currently serving for this '
+      + 'row as a Plex Backup anyway?' + revertNote
+    );
+    if (!proceed) return;
+    api('POST', '/api/admin/cloud-themes-backup-run',
+        { rks: [rk], force: true, allow_existing_local: true })
+      .then((res) => {
+        if (!(res && res.ok)) return;
+        if (window.motifOps
+            && typeof window.motifOps.boostPoll === 'function') {
+          try { window.motifOps.boostPoll(); } catch (_) {}
+        }
+        if (typeof libraryRapidPoll === 'function'
+            && document.getElementById('library-body')) {
+          libraryRapidPoll();
+        }
+        if (window.motifOps
+            && typeof window.motifOps.waitForOp === 'function') {
+          window.motifOps.waitForOp(res.op_id || 'cloud-themes-backup',
+                                     { timeoutMs: 30000 })
+            .then((fin) => {
+              if (!fin) return;  // timed out — drawer has detail
+              const proc = fin.processed_total || 0;
+              const errs = fin.error_count || 0;
+              // v1.20.19: the worker stamps a definitive outcome
+              // breakdown into detail.backup_outcome so we don't have
+              // to guess swap-vs-identical. Falls back to the coarse
+              // conditional only if an older worker didn't stamp it.
+              const outcome = (fin.detail && fin.detail.backup_outcome)
+                || null;
+              if (fin.status === 'failed' || errs > 0) {
+                // v1.22.3: don't blame Plex — the failure is often a local
+                // disk/permission error (e.g. the canonical theme.mp3 not
+                // being writable in-place). Point at the LOGS, which now
+                // carry the exact reason, without asserting the cause.
+                alert(
+                  "Couldn't capture this row's theme — the backup didn't "
+                  + 'complete (a Plex fetch error or a local disk / '
+                  + 'permission error). Check the LOGS tab for the exact '
+                  + 'reason. Your existing backup is untouched.'
+                );
+              } else if (outcome && outcome.downloaded > 0) {
+                alert(
+                  'Captured — Plex was serving a theme different from '
+                  + 'your existing backup. The row now shows a PB badge.'
+                  // v1.21.35: only promise the TDB revert when the row
+                  // actually has a ThemerrDB theme (not a Kometa/orphan).
+                  + (hasTdb
+                     ? ' Re-pull the ThemerrDB theme anytime via SOURCE '
+                       + '→ DOWNLOAD TDB BACKUP.'
+                     : ' This row has no ThemerrDB theme to revert to.')
+                );
+              } else if (outcome && outcome.skipped_identical > 0) {
+                alert(
+                  'No swap — Plex was serving a theme byte-identical '
+                  + 'to your existing backup, so there was nothing '
+                  + 'distinct to capture. Your backup is unchanged.'
+                );
+              } else if (proc === 0 || (outcome
+                  && outcome.downloaded === 0
+                  && outcome.skipped_identical === 0)) {
+                // v1.21.32: 0-captured now has a single cause — Plex isn't
+                // serving a theme motif can grab for this row. The old
+                // second cause (no TMDB id to key a backup to, e.g. a
+                // collection with no ThemerrDB match — the user's A24 Films
+                // repro) is gone: the force path now MINTS a synthetic
+                // orphan tmdb_id for NULL-guid rows so a served theme is
+                // captured. If we still got 0 here, Plex genuinely served
+                // nothing capturable.
+                alert(
+                  'Nothing was captured for this row — Plex isn\'t '
+                  + 'currently serving a theme motif can grab. Your '
+                  + 'existing backup is untouched.'
+                );
+              } else {
+                // Fallback for an older worker without the stamp.
+                alert(
+                  "Capture complete. If Plex's theme differed from "
+                  + 'your existing backup, the row now shows a PB '
+                  + 'badge; if it was byte-identical, your backup was '
+                  + 'left as-is.'
+                );
+              }
+            })
+            .catch(() => { /* polling-only; cosmetic */ });
+        }
+      })
+      .catch((e) => {
+        if (e && e.message && e.message.indexOf('409') !== -1) {
+          alert('Another cloud-themes-backup run is already in '
+                + 'flight. Wait for it to finish or cancel it from '
+                + 'the ops drawer.');
+        } else {
+          alert('Capture failed to start: ' + (e.message || e));
+        }
+      });
+  }
+
+  // v1.14.47: SOURCE-menu LET PLEX SERVE flow. Mirrors the
+  // recovery-card `purge-revert-to-plex` branch (which v1.14.47
+  // removed from the no-fail INFO branch) — probe TDB URL,
+  // confirm with folder hint, POST /unplace, refresh.
+  async function letPlexServeFlow(mt, id, sectionId, btn, ratingKey) {
+    if (btn) btn.disabled = true;
+    try {
+      // v1.14.53: predicate uses `sectionId == null` (strict
+      // null/undefined check) rather than `!sectionId` so an
+      // empty-string sectionId doesn't short-circuit and match
+      // the first mt+id row from a different section.
+      // v1.21.61 (C2b): hoisted so its rating_key scopes the unplace to
+      // THIS edition (LET PLEX SERVE on Theatrical no longer hits Extended).
+      // v1.22.2: resolve the row by the CLICKED rating_key when present.
+      // Pre-fix this matched by (mt,id,section) only — ambiguous for a
+      // multi-edition title (4 Watchmen rows all match) → .find() returned
+      // the FIRST edition, so the unplace + the folder hint both targeted
+      // the wrong cut. The menu now passes rk; legacy callers (no rk) keep
+      // the old behavior.
+      const lpsRow = (libraryState.items || []).find((row) =>
+        ratingKey
+          ? String(row.rating_key) === String(ratingKey)
+          : (row.theme_media_type === mt
+             && String(row.theme_tmdb) === String(id)
+             && (sectionId == null || row.section_id === sectionId)));
+      const folderHint = (lpsRow && lpsRow.media_folder)
+        ? lpsRow.media_folder : null;
+      const folderLine = folderHint
+        ? `Plex folder: ${folderHint}\n\n`
+        : '';
+      const baseText = 'LET PLEX SERVE\n\n'
+        + 'This will:\n'
+        + '  • DELETE motif\'s theme.mp3 from the Plex folder\n'
+        + '  • KEEP motif\'s canonical at /themes/ (in case you change your mind)\n\n'
+        + folderLine
+        + 'Plex\'s own theme (cloud / embed) will become the only one served.\n'
+        + 'Recovery: PUSH TO PLEX from the PLACE menu re-places motif\'s canonical, no re-download needed.\n\n'
+        + 'Proceed?';
+      const origLabel = btn ? btn.textContent : '';
+      if (btn) btn.textContent = '// PROBING…';
+      const ok = await _probeAndConfirmLPSAtTopLevel(mt, id, baseText);
+      if (btn) btn.textContent = origLabel;
+      if (!ok) return;
+      // v1.21.61 (C2b): pass the row's rating_key so the backend unplaces
+      // ONLY this edition's placement.
+      // v1.22.2: prefer the clicked rk (authoritative); fall back to the
+      // resolved row's rk for legacy callers.
+      const _rk = ratingKey || (lpsRow && lpsRow.rating_key) || '';
+      const _qs = [
+        sectionId ? `section_id=${encodeURIComponent(sectionId)}` : '',
+        _rk ? `rating_key=${encodeURIComponent(_rk)}` : '',
+      ].filter(Boolean).join('&');
+      const unplaceUrl = `/api/items/${mt}/${id}/unplace${_qs ? `?${_qs}` : ''}`;
+      await api('POST', unplaceUrl);
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+      loadLibrary().catch(() => {});
+      setTimeout(refreshTopbarStatus, 1100);
+    } catch (e) {
+      alert('LET PLEX SERVE failed: ' + e.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // v1.14.47: SOURCE-menu ADOPT + LET PLEX SERVE flow. Mirrors
+  // the recovery-card branch (which v1.14.47 removed) — adopt
+  // sidecar via /adopt-sidecar, then unplace, refresh. Two
+  // chained API calls; bail out if adopt fails (no point
+  // unplacing if motif doesn't own the file yet).
+  async function adoptAndLetPlexServeFlow(mt, id, sectionId, ratingKey, btn) {
+    if (btn) btn.disabled = true;
+    const origLabel = btn ? btn.textContent : '';
+    try {
+      if (!ratingKey) {
+        alert('No rating_key — open ADOPT from the row\'s SOURCE menu directly.');
+        return;
+      }
+      const ok = confirm(
+        'ADOPT + LET PLEX SERVE\n\n'
+        + 'This will:\n'
+        + '  • ADOPT the existing theme.mp3 at the Plex folder (claim ownership)\n'
+        + '  • Then DELETE it from the Plex folder\n'
+        + '  • KEEP motif\'s canonical at /themes/ (in case you change your mind)\n\n'
+        + 'Plex\'s own theme (cloud / embed) will become the only one served.\n'
+        + 'Recovery: PUSH TO PLEX from the PLACE menu re-places motif\'s canonical.\n\n'
+        + 'Proceed?'
+      );
+      if (!ok) return;
+      if (btn) btn.textContent = '// ADOPTING…';
+      try {
+        await api('POST', `/api/plex_items/${encodeURIComponent(ratingKey)}/adopt-sidecar`);
+      } catch (err) {
+        alert('Adopt failed: ' + err.message);
+        return;
+      }
+      if (btn) btn.textContent = '// UNPLACING…';
+      // v1.22.2: scope the unplace to THIS edition via ratingKey (already
+      // held for the adopt-sidecar call above). Pre-fix this URL carried
+      // only section_id → the backend resolved _unplace_edition=None and
+      // the DELETE fell to the section-wide branch, nuking EVERY edition's
+      // placement for a multi-edition title (same class as the LET PLEX
+      // SERVE rk-omission). rating_key scopes it to the clicked cut.
+      const _aqs = [
+        sectionId ? `section_id=${encodeURIComponent(sectionId)}` : '',
+        ratingKey ? `rating_key=${encodeURIComponent(ratingKey)}` : '',
+      ].filter(Boolean).join('&');
+      const unplaceUrl = `/api/items/${mt}/${id}/unplace${_aqs ? `?${_aqs}` : ''}`;
+      // v1.14.53: wrap the unplace POST in its own try/catch so a
+      // post-adopt /unplace failure tells the user the chained
+      // flow landed mid-state (motif owns the inode now AND the
+      // file is still at the Plex folder). Pre-fix the generic
+      // outer catch alerted "ADOPT + LET PLEX SERVE failed: …"
+      // with no hint that step 1 succeeded — re-clicking ADOPT
+      // 409'd ("nothing to adopt — already managed") and the
+      // user concluded nothing happened. Now the message names
+      // the surviving recovery path (LET PLEX SERVE from the
+      // SOURCE menu, gated on placed=true which is still the
+      // current state).
+      try {
+        await api('POST', unplaceUrl);
+      } catch (unplaceErr) {
+        alert(
+          'ADOPT succeeded but UNPLACE failed: '
+          + (unplaceErr.message || unplaceErr) + '\n\n'
+          + 'Motif now owns the sidecar (it adopted successfully) '
+          + 'but the file is still at the Plex folder. To finish '
+          + 'the flow, run LET PLEX SERVE from the row\'s SOURCE '
+          + 'menu — that path skips the adopt step and just '
+          + 'unplaces.',
+        );
+        // Still refresh so the row reflects the adopt-succeeded state.
+        loadLibrary().catch(() => {});
+        setTimeout(refreshTopbarStatus, 1100);
+        return;
+      }
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+      loadLibrary().catch(() => {});
+      setTimeout(refreshTopbarStatus, 1100);
+    } catch (e) {
+      alert('ADOPT + LET PLEX SERVE failed: ' + e.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }
+    }
+  }
+
+  async function unplaceTheme(mediaType, tmdbId, title, sectionId, isPlexUpload, ratingKey) {
+    // Removes motif's theme from Plex — the theme.mp3 sidecar for
+    // hardlink/copy rows, or the API upload for PU (plex_upload) rows —
+    // but keeps motif's canonical so PUSH TO PLEX can restore it without
+    // re-downloading.
+    // v1.12.77: scope to section_id so DEL on a 4K row only
+    // unlinks the 4K folder's theme.mp3 — sibling editions keep
+    // playing motif's theme.
+    const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
+    const scopeNote = sectionId
+      ? '\n\nScoped to this section only — sibling editions keep their themes in place.'
+      : '';
+    // v1.20.57: PU rows have no Plex-folder sidecar — DEL removes
+    // motif's API upload (the handler does the Plex-side teardown).
+    const ok = confirm(isPlexUpload
+      ? `Remove ${labelTitle}'s theme from Plex?\n\n` +
+        `Motif will delete its API-uploaded theme; Plex falls back to its own theme if it has one.\n\n` +
+        `Motif's local copy stays in /data/media/themes — click PUSH TO PLEX to re-upload without re-downloading.${scopeNote}`
+      : `Remove ${labelTitle} from the Plex folder?\n\n` +
+        `Plex will stop playing this theme until you push it back.\n\n` +
+        `Motif's canonical copy stays in /data/media/themes — click PUSH TO PLEX ` +
+        `on the row to restore it without re-downloading.${scopeNote}`);
+    if (!ok) return;
+    try {
+      // v1.22.38 (audit): thread the row's rating_key so the unplace scopes to
+      // THIS edition. Without it the backend takes its "absent rk = section-wide
+      // fan-out" branch and physically unlinks EVERY edition's theme.mp3 in the
+      // section (multi-edition data loss) — the same class the LET PLEX SERVE
+      // sites fixed in v1.21.61/.93. DEL on Theatrical no longer nukes Extended.
+      const _uParams = new URLSearchParams();
+      if (sectionId) _uParams.set('section_id', sectionId);
+      if (ratingKey) _uParams.set('rating_key', ratingKey);
+      const _uq = _uParams.toString();
+      const url = `/api/items/${mediaType}/${tmdbId}/unplace${_uq ? '?' + _uq : ''}`;
+      await api('POST', url);
+    } catch (e) {
+      alert('Unplace failed: ' + e.message);
+    }
+  }
+
+  async function replaceTheme(mediaType, tmdbId, btn, kind) {
+    // Push motif's existing canonical back into the Plex folder. Force
+    // overwrite so any sidecar that reappeared since unplace is replaced.
+    // v1.18.23: accepts an optional `kind` ('file' | 'api') that
+    // scopes the placement method. Absent → worker uses the
+    // global default. Wired to PUSH TO PLEX (FILE) / (API) menu
+    // items via the action handlers below.
+    if (btn) btn.disabled = true;
+    try {
+      const bodyInit = kind
+        ? { method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ kind }) }
+        : { method: 'POST' };
+      // v1.21.69: forward the row's rating_key so PUSH/REPLACE scopes to
+      // this edition (backend deletes only this edition's placements +
+      // tags the place job with edition_key).
+      const _rk = (btn && btn.dataset) ? btn.dataset.rk : '';
+      const _qs = _rk ? `?rating_key=${encodeURIComponent(_rk)}` : '';
+      const resp = await fetch(
+        `/api/items/${mediaType}/${tmdbId}/replace${_qs}`, bodyInit,
+      );
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        throw new Error(`${resp.status}: ${text || resp.statusText}`);
+      }
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+      // v1.11.86: kick the topbar so the /pending banner + nav dot
+      // re-evaluate against the new pending_placements count
+      // (which now excludes items with a queued place job).
+      // Schedule past /api/stats's 1s TTL.
+      setTimeout(refreshTopbarStatus, 1100);
+    } catch (e) {
+      alert('Replace failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // v1.18.23: SWITCH PLACEMENT — flip between sidecar and
+  // plex_upload. Endpoint computes the target kind from current
+  // state; we just POST and refresh.
+  async function switchPlacement(mediaType, tmdbId, btn) {
+    if (btn) btn.disabled = true;
+    try {
+      // v1.21.69: forward the row's rating_key so the flip scopes to this
+      // edition (deletes only this edition's placement + tags the job).
+      const _rk = (btn && btn.dataset) ? btn.dataset.rk : '';
+      const _qs = _rk ? `?rating_key=${encodeURIComponent(_rk)}` : '';
+      const r = await fetch(
+        `/api/items/${mediaType}/${tmdbId}/switch-placement${_qs}`,
+        { method: 'POST' },
+      );
+      if (!r.ok) {
+        const text = await r.text().catch(() => '');
+        throw new Error(`${r.status}: ${text || r.statusText}`);
+      }
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+      setTimeout(refreshTopbarStatus, 1100);
+    } catch (e) {
+      alert('Switch placement failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function purgeTheme(mediaType, tmdbId, title, isOrphan, dlOnly, sectionId, plexAlso, isPlexUpload, rk) {
+    const labelTitle = title ? `"${title}"` : `${mediaType} ${tmdbId}`;
+    // v1.10.38: PURGE is full destruction — delete both motif's
+    // canonical at /data/media/themes AND the placement in the Plex
+    // folder. If you want to keep the Plex-folder file but stop
+    // managing the theme, use UNMANAGE instead.
+    // v1.11.8: when there's no current placement (DL-only state — row
+    // was placed and the user already DEL'd it), the warning shifts to
+    // emphasize that PUSH TO PLEX won't be available afterward — the
+    // user has to re-acquire the audio via DOWNLOAD / SET URL / UPLOAD
+    // / ADOPT before any future placement.
+    let warning;
+    if (dlOnly && !isOrphan) {
+      warning = '\n\nDownloaded but not placed — motif will delete the canonical at /themes.'
+        + '\n\nAfter PURGE, PUSH TO PLEX is unavailable. To re-place, re-acquire via SOURCE:'
+        + '\n  • DOWNLOAD TDB — re-fetch from ThemerrDB'
+        + '\n  • SET URL — manual YouTube or SoundCloud URL'
+        + '\n  • UPLOAD MP3 — upload a local file'
+        + '\n  • drop a sidecar at the Plex folder and use ADOPT';
+    } else {
+      // v1.20.57: PU rows have no sidecar — PURGE's Plex teardown
+      // removes the API upload (v1.18.60), not a theme.mp3.
+      warning = '\n\nMotif will delete the canonical at /themes AND '
+        + (isPlexUpload ? 'remove the uploaded theme from Plex.'
+                        : 'the theme.mp3 in the Plex folder.');
+      if (isOrphan) {
+        warning += '\n\nUser-provided / adopted — the themes row is removed; the file is gone.'
+          + ' To restore: SET URL, UPLOAD MP3, or drop a sidecar and ADOPT.';
+      } else {
+        warning += '\n\nIf ThemerrDB still tracks the title, the row flips to —;'
+          + ' DOWNLOAD TDB becomes available in the SOURCE menu.';
+      }
+      warning += isPlexUpload
+        ? '\n\nUse UNMANAGE to delete only the local copy and leave Plex serving its upload.'
+        : '\n\nUse UNMANAGE to keep the Plex-folder file.';
+    }
+    // v1.12.77: surface section-scope in the confirm copy so the
+    // user knows the action only targets the row's edition. The
+    // backend detects last-section and only drops the themes row +
+    // tracking metadata when nothing else is managed for the title.
+    const scopeNote = sectionId
+      ? '\n\nScoped to this section only — sibling editions (e.g. 4K vs standard) keep their themes.'
+      : '';
+    // v1.13.31: post-PURGE preview.
+    // v1.13.34: softened the no-fallback branch. When the row's
+    // plexAlso flag is true, motif KNOWS Plex serves a separate
+    // (cloud / embed) theme — confident claim is fine. When false,
+    // motif can't actually tell whether Plex has a Pass cloud
+    // theme available, because Plex hides cloud-availability when
+    // a sidecar wins. The previous "Plex has no fallback" copy was
+    // overconfident in those cases. Now the negative branch says
+    // "no detected fallback" — accurate without claiming knowledge
+    // motif doesn't have.
+    const fallbackNote = plexAlso
+      ? '\n\nAfter PURGE: Plex serves its own theme for this title (cloud / embed) — Plex\'s version becomes the active one. (To remove the Plex-side too, do it in Plex itself.)'
+      : (dlOnly && !isOrphan)
+        ? ''  // dlOnly already covers the consequence above.
+        : '\n\nAfter PURGE: motif has no detected fallback for this title — it will be themeless until the next sync (assuming TDB has a URL). If Plex Pass has a cloud theme for this title, that may surface as the active one instead.';
+    const ok = confirm(`Purge ${labelTitle}?${warning}${scopeNote}${fallbackNote}\n\nThis cannot be undone.`);
+    if (!ok) return;
+    try {
+      // v1.21.83: rating_key scopes PURGE to THIS edition (siblings in the
+      // same section keep their files/rows).
+      const _p = [];
+      if (sectionId) _p.push(`section_id=${encodeURIComponent(sectionId)}`);
+      if (rk) _p.push(`rating_key=${encodeURIComponent(rk)}`);
+      const url = `/api/items/${mediaType}/${tmdbId}/forget`
+        + (_p.length ? `?${_p.join('&')}` : '');
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok && r.status !== 204) {
+        const t = await r.text().catch(() => '');
+        throw new Error(`${r.status}: ${t || r.statusText}`);
+      }
+    } catch (e) {
+      alert('Purge failed: ' + e.message);
+    }
+  }
+
+  // v1.18.15: deleteOrphan() removed. The DELETE menu entry was
+  // dropped in favor of the PURGE → CLEAR URL composition; the
+  // api_delete_item backend endpoint stays as a power-user API
+  // path but is no longer reachable from the UI.
+
+  async function revertToThemerrDb(mediaType, tmdbId, btn) {
+    // v1.12.37: REVERT is now a one-step undo. The /revert endpoint
+    // swaps the canonical URL back to themes.previous_youtube_url
+    // (could be a user URL or a TDB URL depending on what was
+    // captured). Skip the confirm dialog — REVERT is non-destructive
+    // and round-trippable (clicking REVERT a second time returns
+    // the row to its pre-first-revert state).
+    // v1.12.47: scope to the row's section_id so REVERT only
+    // re-themes the section the user clicked from (matches
+    // ACCEPT UPDATE's per-section behavior).
+    if (btn) btn.disabled = true;
+    // v1.18.21: paint the optimistic topbar placeholder BEFORE
+    // the POST awaits, mirroring the redownload pattern at
+    // app.js:3021. RESTORE/REVERT enqueues a download → place
+    // chain (api_revert_to_themerrdb at api.py:13114+) — same
+    // shape as redownload — so the user expects the same
+    // topbar feedback. Pre-fix the user reported the row's amber
+    // DL+PL pills were the only visible signal during the
+    // download+place run; no status bar in the corner. Now the
+    // topbar lights up `// QUEUING DOWNLOAD` the same frame the
+    // user clicks and ages out via its 5s TTL if the request
+    // fails. (libraryRapidPoll below handles the per-row state
+    // updates as download/place transitions land.)
+    try {
+      if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+        window.motifOps.setOptimisticPlaceholder(
+          'download_queue', '// QUEUING DOWNLOAD',
+        );
+      }
+    } catch (_) { /* swallow — placeholder is cosmetic */ }
+    try {
+      const sectionId = btn?.dataset?.sectionId;
+      // v1.21.73: forward rating_key so REVERT scopes the override
+      // restore/drop + the accepted-pending_update reset to this edition.
+      const ratingKey = btn?.dataset?.rk;
+      const _rp = [];
+      if (sectionId) _rp.push(`section_id=${encodeURIComponent(sectionId)}`);
+      if (ratingKey) _rp.push(`rating_key=${encodeURIComponent(ratingKey)}`);
+      const url = _rp.length
+        ? `/api/items/${mediaType}/${tmdbId}/revert?${_rp.join('&')}`
+        : `/api/items/${mediaType}/${tmdbId}/revert`;
+      await api('POST', url);
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+    } catch (e) {
+      alert('Revert failed: ' + e.message);
+      if (btn) btn.disabled = false;
+      // v1.18.21: mirror v1.15.36 — clear the optimistic
+      // placeholder on failure so the topbar doesn't show
+      // "// QUEUING DOWNLOAD" for a row that didn't queue.
+      try {
+        if (window.motifOps
+            && window.motifOps.clearOptimisticPlaceholder) {
+          window.motifOps.clearOptimisticPlaceholder('download_queue');
+        }
+      } catch (_) { /* swallow */ }
+    }
+  }
+
+  // v1.12.37: REMOVE-menu CLEAR URL drops the user override and
+  // re-downloads from TDB. Calls /clear-url which captures the
+  // dropped URL into themes.previous_youtube_url so REVERT can
+  // restore it later.
+  // v1.12.64: while the request is in flight, lock every action
+  // button on the row so the user can't accidentally click PURGE
+  // / DEL between firing CLEAR URL and the row refresh that hides
+  // the now-irrelevant CLEAR URL button. On error we re-enable the
+  // locked buttons since there's no refresh coming; on success the
+  // refresh re-renders them in their natural state.
+  async function clearUrlOverride(mediaType, tmdbId, btn, sectionId) {
+    if (btn) btn.disabled = true;
+    const row = btn ? btn.closest('tr') : null;
+    const lockedButtons = [];
+    if (row) {
+      row.querySelectorAll('details.row-menu button').forEach((b) => {
+        if (!b.disabled) {
+          b.disabled = true;
+          lockedButtons.push(b);
+        }
+      });
+    }
+    try {
+      // v1.12.86: optional section_id scopes the clear so only this
+      // section's previous_urls row is dropped. Without it the
+      // endpoint drops every section's snapshot for the title.
+      const sec = sectionId
+        ? `?section_id=${encodeURIComponent(sectionId)}`
+        : '';
+      await api('POST', `/api/items/${mediaType}/${tmdbId}/clear-url${sec}`);
+      if (btn) btn.textContent = 'QUEUED';
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+    } catch (e) {
+      alert('Clear URL failed: ' + e.message);
+      lockedButtons.forEach((b) => { b.disabled = false; });
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function redownload(mediaType, tmdbId, btn, sectionId) {
+    if (btn) btn.disabled = true;
+    try {
+      // v1.12.73: pass section_id so the re-download targets only
+      // the row's section. Pre-fix, RE-DOWNLOAD TDB / DOWNLOAD TDB
+      // on a 4K row enqueued downloads for every section that
+      // owned the title — wrong for per-edition theming since
+      // sibling sections might have their own per-section
+      // overrides (v1.12.72) the user wants to keep.
+      // v1.21.64 (C3): pass the row's rating_key so the download (+ its
+      // chained place) target THIS edition's folder.
+      const _rdlRk = (btn && btn.dataset) ? btn.dataset.rk : '';
+      const _rdlQp = [
+        sectionId ? `section_id=${encodeURIComponent(sectionId)}` : '',
+        _rdlRk ? `rating_key=${encodeURIComponent(_rdlRk)}` : '',
+      ].filter(Boolean).join('&');
+      const url = `/api/items/${mediaType}/${tmdbId}/redownload${_rdlQp ? `?${_rdlQp}` : ''}`;
+      // v1.13.44: paint the optimistic topbar placeholder BEFORE the
+      // POST awaits, so the topbar lights up the same frame the user
+      // clicks. Pre-fix (v1.13.37) the placeholder fired post-await,
+      // so on a slow round-trip (~50-200ms) the row's amber DL pill
+      // — driven by libraryRapidPoll's separate poll cycle — could
+      // beat the topbar to the screen. Now the topbar is first and
+      // the row state catches up. Best-effort: if the API call fails,
+      // the placeholder ages out via its 5s TTL.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'download_queue', '// QUEUING DOWNLOAD',
+          );
+        }
+      } catch (_) { /* swallow — placeholder is cosmetic */ }
+      await api('POST', url);
+      if (btn) btn.textContent = 'QUEUED';
+      // If we're on /movies, /tv, /anime, light up rapid-poll so the row
+      // updates as the download/place transitions land.
+      if (typeof libraryRapidPoll === 'function'
+          && document.getElementById('library-body')) {
+        libraryRapidPoll();
+      }
+    } catch (e) {
+      alert('Re-download failed: ' + e.message);
+      if (btn) btn.disabled = false;
+      // v1.15.36: clear the optimistic placeholder on failure
+      // (mirrors the v1.15.35 fix on download-backup). Pre-fix
+      // the placeholder set above lingered for its 5s TTL even
+      // though the action failed — operator dismissed the alert
+      // and saw "// QUEUING DOWNLOAD" in the drawer for a row
+      // that wasn't actually queued.
+      try {
+        if (window.motifOps
+            && window.motifOps.clearOptimisticPlaceholder) {
+          window.motifOps.clearOptimisticPlaceholder('download_queue');
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+    }
+  }
+
+  // v1.17.9: relinkItem deleted — the /api/items/{mt}/{id}/relink
+  // endpoint is still alive and called from elsewhere (bulk RELINK
+  // path), but this single-row wrapper had no callers / no template
+  // onclick. Hygiene audit removal.
+
+  async function acceptUpdate(mediaType, tmdbId, btn) {
+    // v1.12.42: tailor the confirm prompt based on whether the
+    // row's current source is a user URL.
+    // v1.12.46: also scope the action to a single section if the
+    // button carries a data-section-id. Pre-fix accept-update
+    // fanned out across every section owning the title, so
+    // accepting from a 4K library row also overwrote the
+    // standard library's placement — wrong when the user wants
+    // different themes per edition.
+    // v1.14.2: show actual URLs + their source labels in the
+    // prompt. the user's principle — when a user took the time to
+    // provide a URL, they get explicit confirmation of what
+    // it'll be replaced with, especially if the new TDB URL is
+    // a different source (SoundCloud user override → YouTube
+    // TDB URL is a regression worth flagging).
+    let rowItem = null;
+    if (btn) {
+      rowItem = (libraryState.items || []).find((it) =>
+        it.theme_media_type === mediaType
+        && String(it.theme_tmdb) === String(tmdbId)
+      );
+    }
+    const isUserSrcRow = rowItem
+      ? (computeSrcLetter(rowItem) === 'U')
+      : false;
+    const currentUrl = rowItem
+      ? (rowItem.override_url || rowItem.youtube_url || '')
+      : '';
+    const newTdbUrl = rowItem
+      ? (rowItem.pending_update?.new_youtube_url
+         || rowItem.youtube_url || '')
+      : '';
+    const currentSrc = urlSource(currentUrl);
+    const newSrc = urlSource(newTdbUrl);
+    const sourcesDiffer = isUserSrcRow
+      && currentUrl && newTdbUrl
+      && currentSrc !== newSrc
+      && currentSrc !== 'unknown'
+      && newSrc !== 'unknown';
+    const truncate = (u) => (u && u.length > 70)
+      ? u.slice(0, 67) + '…'
+      : u;
+    let promptText;
+    if (sourcesDiffer) {
+      // Strongest warning: source change is a regression risk.
+      promptText = '⚠ SOURCE CHANGE — Accept the ThemerrDB update?\n\n'
+        + `Your current ${currentSrc.toUpperCase()} URL:\n`
+        + `  ${truncate(currentUrl)}\n\n`
+        + `Will be replaced by ThemerrDB's ${newSrc.toUpperCase()} URL:\n`
+        + `  ${truncate(newTdbUrl)}\n\n`
+        + 'You explicitly set the current URL on a different source — '
+        + 'TDB is going to overwrite it with their pick. Your URL is '
+        + 'saved (REVERT in the SOURCE menu restores it), but the '
+        + 'theme file gets re-downloaded.';
+    } else if (isUserSrcRow) {
+      // User override, same source — explain the replace + REVERT path.
+      promptText = 'Accept the ThemerrDB update?\n\n'
+        + (currentUrl ? `Your URL:\n  ${truncate(currentUrl)}\n\n` : '')
+        + (newTdbUrl ? `New TDB URL:\n  ${truncate(newTdbUrl)}\n\n` : '')
+        + 'Motif will download from the new URL and overwrite '
+        + 'the current theme file in this section. Your manual URL '
+        + 'is saved — REVERT in the SOURCE menu will restore it. '
+        + '(If your URL exactly matched the new TDB URL, REVERT will '
+        + 'be unavailable; the INFO card explains.)';
+    } else if (rowItem
+               && rowItem.pending_update_kind === 'new_theme_available'
+               && computeSrcLetter(rowItem) === '-') {
+      // v1.19.72 (M1 follow-up to v1.19.71): SRC=— row where
+      // sync just discovered a brand-new TDB theme — no existing
+      // file to overwrite. Pre-fix the T-branch's "previous file
+      // is unrecoverable" copy fired on these rows, which was a
+      // lie (there IS no previous file). The new copy reflects
+      // the actual action.
+      promptText = 'Accept the new ThemerrDB theme?\n\n'
+        + (newTdbUrl ? `New URL:\n  ${truncate(newTdbUrl)}\n\n` : '')
+        + 'Motif will download this theme into the row. There is '
+        + 'no existing theme on this row — this is the first one.';
+    } else {
+      // T-source row, plain TDB-to-TDB update. Existing wording
+      // generalized from "YouTube" to source-agnostic.
+      promptText = 'Accept the ThemerrDB update?\n\n'
+        + (newTdbUrl ? `New URL:\n  ${truncate(newTdbUrl)}\n\n` : '')
+        + 'Motif will download from the new URL and '
+        + 'overwrite the current theme file in this section. The '
+        + 'previous file is unrecoverable after this.';
+    }
+    if (!confirm(promptText)) return;
+    if (btn) btn.disabled = true;
+    try {
+      // v1.21.81: rating_key scopes the accept DECISION to the clicked
+      // edition (sibling editions keep their own pending state).
+      const sectionId = btn?.dataset?.sectionId;
+      const rk = btn?.dataset?.rk;
+      const params = [];
+      if (sectionId) params.push(`section_id=${encodeURIComponent(sectionId)}`);
+      if (rk) params.push(`rating_key=${encodeURIComponent(rk)}`);
+      const url = `/api/updates/${mediaType}/${tmdbId}/accept`
+        + (params.length ? `?${params.join('&')}` : '');
+      await api('POST', url);
+      if (btn) btn.textContent = 'QUEUED';
+      setTimeout(() => loadLibrary().catch(()=>{}), 600);
+    } catch (e) {
+      alert('Accept failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function declineUpdate(mediaType, tmdbId, btn) {
+    if (!confirm(
+        'Keep your current theme and dismiss this update?\n\n' +
+        'The topbar UPD count drops; the blue TDB ↑ pill stays so you can ' +
+        'still spot the row. Your theme file is unchanged. You\'ll see another ' +
+        'prompt only if ThemerrDB publishes a further URL change.')) return;
+    if (btn) btn.disabled = true;
+    try {
+      // v1.12.99: pass sectionId so decline scopes to the row's
+      // section. Pre-fix decline was title-global and silently
+      // applied to sibling sections.
+      // v1.21.81: rating_key scopes the decline DECISION to the clicked
+      // edition (sibling editions keep their own pending state).
+      const sectionId = btn?.dataset?.sectionId;
+      const rk = btn?.dataset?.rk;
+      const params = [];
+      if (sectionId) params.push(`section_id=${encodeURIComponent(sectionId)}`);
+      if (rk) params.push(`rating_key=${encodeURIComponent(rk)}`);
+      const url = `/api/updates/${mediaType}/${tmdbId}/decline`
+        + (params.length ? `?${params.join('&')}` : '');
+      await api('POST', url);
+      if (btn) btn.textContent = 'KEPT';
+      setTimeout(() => loadLibrary().catch(()=>{}), 600);
+    } catch (e) {
+      alert('Decline failed: ' + e.message);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  // v1.15.97: removed `openItemDialog` + `bindDialog` (~160 lines).
+  // The flow was doubly-dead: the function early-returned when
+  // `#item-dlg` wasn't found (no template ever declared that
+  // element), and the only call sites were inside its own
+  // click-handler self-loop (circular dependency, no external
+  // entry point). v1.15.94 landed a JS-side section-id thread
+  // through `bindDialog`'s clear-override handler not realizing
+  // the surface was unreachable; v1.15.97 removes both. The
+  // active info card is `openInfoDialog` (further down this
+  // file) which is section-aware by design and doesn't expose
+  // a CLEAR OVERRIDE button at all. The v1.15.94 server-side
+  // fix (api_clear_override taking an optional section_id)
+  // remains as defensive API surface — future callers (CLI,
+  // external integrations, or a re-added per-section CLEAR
+  // override button) can use it.
+
+  // ---- Coverage ----
+
+  function fmtBytes(n) {
+    if (!n) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    let v = n;
+    while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+    return `${v.toFixed(v >= 100 ? 0 : v >= 10 ? 1 : 2)} ${units[i]}`;
+  }
+
+  async function loadCoverage() {
+    // Guards on the storage stat card — present on both /coverage AND
+    // /dashboard since the coverage cards moved up to the dash hero in v1.8.
+    if (!$('#storage-hardlinks')) return;
+
+    // Storage waste section (independent of Plex)
+    try {
+      const stats = await api('GET', '/api/stats');
+      $('#storage-hardlinks').textContent = fmt.num(stats.storage.hardlinks);
+      $('#storage-copies').textContent = fmt.num(stats.storage.copies);
+      $('#storage-wasted').textContent = fmtBytes(stats.storage.copies_bytes);
+
+      // Orphans count (themes adopted from Plex with no upstream match)
+      const orphanEl = $('#orphan-count');
+      if (orphanEl) {
+        orphanEl.textContent = fmt.num(stats.storage.orphans || 0);
+      }
+
+      const copiesBlock = $('#copies-block');
+      if (copiesBlock) {
+        if (stats.storage.copies > 0) {
+          copiesBlock.style.display = '';
+          const copies = await api('GET', '/api/storage/copies');
+          $('#copies-body').innerHTML = copies.items.map((c) => `
+            <tr>
+              <td>${htmlEscape(c.title)}</td>
+              <td class="col-year">${htmlEscape(c.year || '')}</td>
+              <td class="mono small" style="color:var(--fg-dim)">${htmlEscape(c.media_folder)}</td>
+              <td class="col-year">${fmtBytes(c.file_size)}</td>
+              <td class="col-actions">
+                <button class="btn btn-tiny" data-act="relink" data-mt="${c.media_type}" data-id="${c.tmdb_id}">// RELINK</button>
+              </td>
+            </tr>
+          `).join('') || '<tr><td colspan="5" class="muted center">no copies</td></tr>';
+        } else {
+          copiesBlock.style.display = 'none';
+        }
+      }
+    } catch (e) {
+      console.error('storage stats failed', e);
+    }
+
+    // Plex coverage report — populates the stat cards on every page that
+    // includes them; missing-themes tables only render when present.
+    let data;
+    try {
+      data = await api('GET', '/api/coverage/plex');
+    } catch (e) {
+      const mb = $('#movies-missing-body');
+      if (mb) mb.innerHTML = `<tr><td colspan="4" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    if (!data.enabled) {
+      const mb = $('#movies-missing-body');
+      if (mb) mb.innerHTML = '<tr><td colspan="4" class="muted">Plex integration disabled</td></tr>';
+      return;
+    }
+    if (data.error) {
+      const mb = $('#movies-missing-body');
+      if (mb) mb.innerHTML = `<tr><td colspan="4" class="accent-red">Plex error: ${htmlEscape(data.error)}</td></tr>`;
+      return;
+    }
+
+    // v1.23.34: shared writer for the three reworked top COVERAGE
+    // cards. headline % + bar = themed/total (% of the library
+    // themed); foot = "<themed> of <total> themed" + "<ready> ready
+    // to add" (ready = TDB-available rows not yet themed — what
+    // motif's next run can place). Each element is guarded so pages
+    // that include the coverage report but not these cards no-op.
+    const setCov = (key, themed, totalN, ready) => {
+      const pctEl = document.getElementById(`cov-${key}-pct`);
+      if (pctEl) pctEl.textContent = totalN ? `${Math.round(themed / totalN * 100)}%` : '—';
+      const bar = $(`[data-bar-fill="${key}"]`);
+      if (bar) bar.style.width = `${totalN ? (themed / totalN * 100) : 0}%`;
+      const themedEl = document.getElementById(`cov-${key}-themed`);
+      if (themedEl) themedEl.textContent = fmt.num(themed);
+      const totalEl = document.getElementById(`cov-${key}-total`);
+      if (totalEl) totalEl.textContent = fmt.num(totalN);
+      const readyEl = document.getElementById(`cov-${key}-ready`);
+      if (readyEl) readyEl.textContent = fmt.num(ready);
+    };
+
+    // v1.23.36 + v1.23.38: a row is "ready to add" only if motif could
+    // actually download + place a theme now — TDB-available, Plex-unthemed,
+    // not already placed by motif, and NOT a dead TDB URL (the red TDB ✗
+    // pill: video removed/private/etc. that only a new URL fixes). the user:
+    // dash counted video_removed rows as ready though the URL can't download.
+    const isAddable = (m) => m.motif_available && !m.has_theme && !m.placed
+      && !(m.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(m.failure_kind));
+
+    const renderMissing = (items, bodyId) => {
+      const tbody = $(bodyId);
+      if (!tbody) return;
+      const missing = items.filter((it) => !it.has_theme && it.motif_available);
+      tbody.innerHTML = missing.length ? missing.map((it) => `
+        <tr>
+          <td>${htmlEscape(it.title)}</td>
+          <td class="col-year">${htmlEscape(it.year || '')}</td>
+          <td><span class="ok">▸ available</span></td>
+          <td class="col-actions">
+            ${it.tmdb_id ? `<button class="btn btn-tiny btn-warn" data-act="redl" data-mt="movie" data-id="${it.tmdb_id}">// DOWNLOAD</button>` : ''}
+          </td>
+        </tr>
+      `).join('') : '<tr><td colspan="4" class="muted center">no missing themes — fully covered ✓</td></tr>';
+    };
+
+    renderMissing(data.movies || [], '#movies-missing-body');
+    renderMissing((data.tv || []), '#tv-missing-body');
+
+    // v1.15.31 reset: pre-v1.15.27 PLEX-card hydration restored.
+    // Big number = library total (#plex-{movies,tv}-total). No bar
+    // on the PLEX card itself — the v1.13.27 per-section comparison
+    // block below is where the visual coverage bars live.
+    // v1.23.41: foot = ThemerrDB reach — "W in ThemerrDB · N not in
+    // ThemerrDB" (W = motif_available, N = total − W). Replaces the
+    // "X with theme" half that just restated the top COVERAGE card's
+    // themed number (the user: the two card rows were too similar).
+    const total = data.movies.length;
+    const withTheme = data.movies.filter((m) => m.has_theme).length;
+    const motifAvail = data.movies.filter((m) => m.motif_available).length;
+    $('#plex-movies-total').textContent = fmt.num(total);
+    $('#plex-movies-motif').textContent = fmt.num(motifAvail);
+    $('#plex-movies-not-tdb').textContent = fmt.num(total - motifAvail);
+
+    const tvTotal = data.tv.length;
+    const tvMotif = data.tv.filter((m) => m.motif_available).length;
+    $('#plex-tv-total').textContent = fmt.num(tvTotal);
+    $('#plex-tv-motif').textContent = fmt.num(tvMotif);
+    $('#plex-tv-not-tdb').textContent = fmt.num(tvTotal - tvMotif);
+
+    // v1.23.90: PLEX ANIME card — sourced from data.anime here (movie+show in
+    // anime sections, matching the ANIME library tab + the // ANIME THEMED
+    // card) instead of the retired renderPlexAnimeCard's sum over
+    // /api/sections/coverage section totals (which included collections). Card
+    // reveals once the live total is > 0 (the SSR template hides it when
+    // plex_anime_total is 0). Sibling of the PLEX MOVIES/TV blocks above.
+    const animeItems = data.anime || [];
+    const animeTotal = animeItems.length;
+    const animeMotif = animeItems.filter((m) => m.motif_available).length;
+    const animeCard = document.getElementById('plex-anime-card');
+    const animeTotalEl = $('#plex-anime-total');
+    const animeMotifEl = $('#plex-anime-motif');
+    const animeNotTdbEl = $('#plex-anime-not-tdb');
+    if (animeTotalEl) animeTotalEl.textContent = fmt.num(animeTotal);
+    if (animeMotifEl) animeMotifEl.textContent = fmt.num(animeMotif);
+    if (animeNotTdbEl) animeNotTdbEl.textContent = fmt.num(animeTotal - animeMotif);
+    if (animeCard) animeCard.style.display = animeTotal > 0 ? '' : 'none';
+
+    // v1.15.47: TDB top-card foot stats — corrected math.
+    // Pre-v1.15.47 used:
+    //   "in library" = motif_available count (TDB-matched Plex items)
+    //   "themed" = has_theme count (ALL Plex-themed items, including
+    //              M/U/P that aren't TDB-tracked)
+    // That made "themed" > "in library" possible (themed counted
+    // non-TDB sources) and on TV it produced themed > TDB total
+    // (1,842 > 930 — mathematically impossible for "of TDB's
+    // catalog, how many are themed"). the user: "the themerdb
+    // available under tv and under anime don't make sense with
+    // the themerrdb tv series card above the numbers don't add up."
+    //
+    // Corrected semantic: TDB card foot = "of TDB's N tracked
+    // titles, X are in your library and Y of those are themed."
+    //   "in library" = motif_available count (unchanged)
+    //   "themed" = motif_available AND has_theme (TDB-tracked
+    //              titles currently themed — strictly ≤ in-library)
+    //
+    // TV side combines (tv + anime) because TDB doesn't
+    // distinguish — both are media_type='tv' in themes. v1.15.26
+    // split anime out of PLEX TV (correctly — separate cards),
+    // but the TDB-perspective foot needs them recombined. The
+    // v1.15.47 /api/coverage/plex `anime` array makes the JS
+    // combine a one-liner.
+    // v1.23.34: top COVERAGE cards (replaced the old TDB in-library/themed
+    // foot). v1.23.40: TV is tv-only + ANIME is its own card (was combined),
+    // so each card's total matches its library tab + bottom PLEX card.
+    // v1.23.36: ready-to-add (isAddable) excludes rows motif already placed
+    // (has_theme lags a fresh placement) + dead-URL rows.
+    const animeList = data.anime || [];
+    setCov('movies', withTheme, total,
+      data.movies.filter(isAddable).length);
+    setCov('tv',
+      data.tv.filter((m) => m.has_theme).length,
+      data.tv.length,
+      data.tv.filter(isAddable).length);
+    setCov('anime',
+      animeList.filter((m) => m.has_theme).length,
+      animeList.length,
+      animeList.filter(isAddable).length);
+
+    // v1.18.20: Plex Collections card + TDB Collections card foot.
+    // Same shape as the Plex Movies/TV/Anime cards above, plus the
+    // TDB Collections card foot mirrors the in-library / themed
+    // calculation from the v1.15.47 movies + tv foot fix. Card
+    // visibility: hidden by default in the template if SSR saw 0
+    // collections; reveal here once the live total is > 0 so
+    // post-enum reveals don't lag a page refresh.
+    const collectionsList = (data.collections || []);
+    const collectionsTotal = collectionsList.length;
+    const collectionsWithTheme = collectionsList.filter(
+      (c) => c.has_theme).length;
+    const collectionsMotif = collectionsList.filter(
+      (c) => c.motif_available).length;
+    const collectionsCard = document.getElementById('plex-collections-card');
+    const plexCollectionsTotalEl = $('#plex-collections-total');
+    const plexCollectionsMotifEl = $('#plex-collections-motif');
+    const plexCollectionsNotTdbEl = $('#plex-collections-not-tdb');
+    if (plexCollectionsTotalEl) plexCollectionsTotalEl.textContent = fmt.num(collectionsTotal);
+    // v1.23.41: ThemerrDB reach foot (in-TDB vs not-in-TDB).
+    if (plexCollectionsMotifEl) plexCollectionsMotifEl.textContent = fmt.num(collectionsMotif);
+    if (plexCollectionsNotTdbEl) plexCollectionsNotTdbEl.textContent = fmt.num(collectionsTotal - collectionsMotif);
+    if (collectionsCard) {
+      collectionsCard.style.display = collectionsTotal > 0 ? '' : 'none';
+    }
+    // v1.23.34: collections COVERAGE card (see setCov above).
+    // v1.23.36: ready excludes already-placed rows (see movies/tv).
+    setCov('collections', collectionsWithTheme, collectionsTotal,
+      collectionsList.filter(isAddable).length);
+
+    // v1.13.27: per-section comparison bars live in
+    // renderCoverageComparison and are populated from
+    // /api/sections/coverage (called alongside renderSectionCoverage
+    // in loadDashboard's section-coverage fetch). The earlier
+    // aggregated movies/tv recomputation that lived here was dead
+    // code by v1.13.27 and was removed in v1.13.28.
+  }
+
+  // v1.23.90: renderPlexAnimeCard retired. The PLEX ANIME card is now
+  // populated in renderPlexCoverage from /api/coverage/plex's `anime` array
+  // (movie+show in anime sections, matching the ANIME library tab), like its
+  // PLEX MOVIES/TV siblings — not a sum over /api/sections/coverage section
+  // totals, which counted anime-section COLLECTIONS too and so disagreed with
+  // the // ANIME THEMED card (the user: "anime numbers don't match, 1,244 vs
+  // 1,341"). data.anime carries motif_available per item, so the "in
+  // ThemerrDB / not in ThemerrDB" foot is derivable without the per-section sum.
+
+  // v1.13.22: per-row stacked-bar comparison block.
+  // v1.13.27: input is now an array of plex_sections (from
+  // /api/sections/coverage) instead of an aggregated movies / tv
+  // pair. Each section gets its own row with a 2-segment bar
+  // (themed vs unthemed), normalized to that section's total — so
+  // a 28-item 4K Movies library at 90% themed reads as a near-full
+  // bar even though Movies (10K items) at 30% themed reads as a
+  // mostly-empty bar of similar visual width. Pre-fix the user
+  // reported the aggregate view masked small-library coverage.
+  //
+  // The 3-segment "themed / TDB-available / no-TDB" axis from
+  // v1.13.22 is dropped — the section coverage payload doesn't
+  // carry the TDB-availability split (that data lives in
+  // /api/coverage/plex's per-item motif_available flag), and the
+  // 2-segment view is what users actually compare across rows.
+  let _lastCoverageComparisonKey = '';
+  function renderCoverageComparison(sections) {
+    const block = document.getElementById('coverage-comparison-block');
+    const body = document.getElementById('coverage-comparison-body');
+    if (!block || !body) return;
+    const rows = (sections || []).filter((s) => (s.total || 0) > 0);
+    if (rows.length === 0) { block.style.display = 'none'; return; }
+    // v1.13.29: include tab, is_4k, is_anime in the cache key. Pre-fix
+    // a section reclassification from /settings (toggling A/4K flags)
+    // would change the rendered tab + STD/4K subtype label but not
+    // the totals, so the hash matched and the swap was skipped — the
+    // user kept seeing the stale classification on screen until
+    // numbers happened to change.
+    const key = JSON.stringify(rows.map((s) => [
+      s.section_id, s.title, s.total, s.themed,
+      s.tab, s.is_4k, s.is_anime,
+    ]));
+    if (key === _lastCoverageComparisonKey) {
+      block.style.display = '';
+      return;
+    }
+    _lastCoverageComparisonKey = key;
+    block.style.display = '';
+    body.innerHTML = rows.map((s) => {
+      const total = s.total || 0;
+      const themed = s.themed || 0;
+      const unthemed = Math.max(0, total - themed);
+      const pctThemed = total ? (themed / total) * 100 : 0;
+      const pctUnthemed = total ? (unthemed / total) * 100 : 0;
+      const pctDisplay = pctThemed >= 10
+        ? Math.round(pctThemed)
+        : pctThemed.toFixed(1);
+      const fourkLabel = s.is_4k ? '4K' : 'STD';
+      // v1.18.20: collections tab label. The synthetic
+      // collections aggregate row carries tab='collections' +
+      // is_4k=0 + is_anime=0; render its sub-label as just
+      // "COLLECTIONS" without the STD/4K suffix (the 4K split
+      // doesn't apply to Plex collections).
+      const typeLabel = s.tab === 'collections' ? 'COLLECTIONS'
+                      : s.tab === 'anime'       ? 'ANIME'
+                      : s.tab === 'tv'          ? 'TV'
+                      :                           'MOVIES';
+      const sectionTitle = s.title || `${typeLabel} ${fourkLabel}`;
+      const subLabel = s.tab === 'collections'
+        ? typeLabel
+        : `${typeLabel} ${fourkLabel}`;
+      const href = s.tab === 'collections'
+        ? '/collections'
+        : `/${s.tab}?fourk=${s.is_4k ? 1 : 0}`;
+      return `<a class="coverage-row" data-tab="${htmlEscape(s.tab || '')}"
+                  href="${htmlEscape(href)}">
+        <div class="coverage-row-head">
+          <span class="coverage-row-tab">
+            ${htmlEscape(sectionTitle)}
+            <span class="muted small">· ${subLabel}</span>
+          </span>
+          <span class="coverage-row-ratio">
+            ${fmt.num(themed)} <span class="muted">/ ${fmt.num(total)} themed</span>
+            <span class="coverage-row-pct">${pctDisplay}%</span>
+          </span>
+        </div>
+        <div class="coverage-bar"
+             title="${fmt.num(themed)} themed · ${fmt.num(unthemed)} unthemed">
+          <span class="coverage-bar-seg coverage-bar-seg-themed"
+                style="flex-basis:${pctThemed}%; ${themed === 0 ? 'display:none' : ''}"></span>
+          <span class="coverage-bar-seg coverage-bar-seg-no-tdb"
+                style="flex-basis:${pctUnthemed}%; ${unthemed === 0 ? 'display:none' : ''}"></span>
+        </div>
+      </a>`;
+    }).join('');
+  }
+
+  function bindCoverage() {
+    const btn = $('#relink-all-btn');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      if (!confirm('Re-link all copies as hardlinks?')) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// QUEUED';
+      try {
+        await api('POST', '/api/storage/relink');
+      } catch (e) {
+        alert('Relink failed: ' + e.message);
+        btn.disabled = false;
+        btn.textContent = orig;
+        return;
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = orig;
+        loadCoverage().catch(console.error);
+      }, 2000);
+    });
+  }
+
+  // ---- Queue / Logs ----
+
+  let queueFilter = 'all';
+  // v1.15.41: SINCE chip filter for the EVENT STREAM pane. Stored
+  // as seconds (0 = ALL), passed to /api/events?since=N. the user's
+  // ask: "you can tell how many were added in a day but not which
+  // easily" — the chip row drills the dashboard count into the
+  // matching rows. Allowed values mirror the chip data-evfilter
+  // attrs in queue.html (0/3600/86400/604800).
+  let eventStreamSince = 0;
+  // v1.22.79: one-shot deep-link filters. The dashboard's
+  // // SHOW IN LOGS links /queue?level=WARNING&component=download;
+  // v1.22.56 used the params to pick the events panel but the fetch
+  // never applied them — operator landed on the full unfiltered
+  // stream with no signal a filter was promised.
+  let eventStreamLevel = '';
+  let eventStreamComponent = '';
+
+  // v1.22.56: LOGS view toggle. The page now shows ONE full-width panel
+  // at a time (JOBS or EVENT STREAM) instead of the old side-by-side
+  // split — mirrors the library STANDARD/4K resolution toggle. With no
+  // side-by-side panes there's no horizontal scroll, so the v1.19.6/.24/
+  // .25 _updateScrollAffordance chevron helper + its scroll/resize
+  // listeners (and the .jobs-scroll-x / .scroll-chevron-wrap DOM they
+  // drove) were removed. setLogView flips which .log-panel is active +
+  // syncs the toggle chips' active/aria state + the LIVE indicator that
+  // belongs to the EVENT STREAM view only.
+  function setLogView(view) {
+    const target = (view === 'events') ? 'events' : 'jobs';
+    document.querySelectorAll('[data-logpanel]').forEach((p) => {
+      p.classList.toggle('is-active', p.dataset.logpanel === target);
+    });
+    document.querySelectorAll('.chip[data-logview]').forEach((c) => {
+      const on = c.dataset.logview === target;
+      c.classList.toggle('chip-active', on);
+      c.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('[data-logview-for]').forEach((el) => {
+      el.hidden = el.dataset.logviewFor !== target;
+    });
+  }
+
+  async function loadQueue() {
+    if (!$('#jobs-body')) return;
+    // v1.15.108: in-flight guard mirroring loadLibrary's pattern
+    // (app.js:5561). Pre-fix two loadQueue calls could race —
+    // the 10s setInterval (line 12639) overlapping with a click
+    // handler (cancel/ack/filter chip) let whichever response
+    // landed second win, clobbering fresher data with stale.
+    // /queue is the highest-frequency polling page; every click
+    // handler also kicks loadQueue, so the race surface is wide.
+    // On fetch error, bail without clobbering tbody — the existing
+    // rows + their event listeners stay intact until the next
+    // successful poll, matching pre-fix behavior on transient
+    // network blips.
+    loadQueue._seq = (loadQueue._seq || 0) + 1;
+    const _myToken = loadQueue._seq;
+    const path = queueFilter === 'all' ? '/api/jobs' : `/api/jobs?status=${queueFilter}`;
+    // v1.17.13: surface fetch errors in-tbody. Pre-fix the
+    // unguarded `await api(...)` only logged to console — on
+    // /queue with the API down the user saw stale rows
+    // indefinitely with no signal that polling had stopped.
+    // Error UX audit HIGH 1. Pattern mirrors loadLibrary's
+    // tbody-write-on-error (line ~6175).
+    let data;
+    try {
+      data = await api('GET', path);
+    } catch (e) {
+      if (loadQueue._seq !== _myToken) return;
+      const tb = $('#jobs-body');
+      if (tb) {
+        // v1.22.79: <li> — #jobs-body is an <ol> since the v1.19.6 grid
+        // rework; the parser dropped the table-row wrapper in list
+        // context, so the v1.17.13 error surfaced as bare unstyled text.
+        tb.innerHTML = `<li class="accent-red">`
+          + `queue load failed: ${htmlEscape(e.message)}</li>`;
+        // v1.20.60: clear the v1.20.54 hash so the next SUCCESSFUL poll
+        // always re-renders. Without this, if the job list is unchanged
+        // across the blip (common on an idle queue), the hash-skip sees
+        // _jobsHtml === lastHash and skips the write → the red error row
+        // sticks until the jobs actually change.
+        tb.dataset.lastHash = '';
+      }
+      return;
+    }
+    if (loadQueue._seq !== _myToken) return;
+    // v1.12.81: piggyback a topbar refresh on every queue poll. /queue
+    // is where the user sits when watching for jobs/events, so the
+    // expectation is "if anything changed, the badges reflect it".
+    // Pre-fix the UPD badge could lag the actual pending_updates row
+    // by up to 30s (the topbar's own poll cadence) since loadQueue
+    // didn't kick it. Cheap — one extra request per 10s while the
+    // tab is /queue, not running otherwise.
+    refreshTopbarStatus().catch(() => {});
+    // v1.20.54: hash-skip the rewrite (bug class #4 / DESIGN_SYSTEM §3
+    // "innerHTML flicker on poll") so a 10s poll returning the SAME jobs
+    // doesn't blow the .jobs-scroll-y scroll position. Mirrors the
+    // library tbody.dataset.lastHash pattern. The cancel / ack click
+    // handlers are delegated, so they survive a skipped write.
+    const _jobsBody = $('#jobs-body');
+    const _jobsHtml = data.jobs.map((j) => {
+      // v1.11.36: cancel button on pending / running rows.
+      // cancel_requested=1 + status='running' shows 'CANCELLING…' so
+      // the user knows their click registered while the worker
+      // walks to its next safe yield point.
+      // v1.18.95: op_progress-synthesized rows (is_op_progress=true)
+      // skip the CANCEL button — /api/jobs/{id}/cancel expects an
+      // int job_id, but synthetic rows carry a string id ("op:<op_id>").
+      // CANCEL still works via the LIVE OPS drawer (top-right).
+      const isOpProgress = !!j.is_op_progress;
+      const cancellable = !isOpProgress
+        && (j.status === 'pending' || j.status === 'running');
+      const cancelling = !isOpProgress
+        && j.cancel_requested && j.status === 'running';
+      // v1.11.53: when a row is stuck in 'cancelling…' (worker thread
+      // wedged on DB-lock contention or a long Plex call) the user
+      // needs an escape hatch. × FORCE hits /api/jobs/{id}/cancel?force=true
+      // which marks the row cancelled regardless of cooperative state.
+      // v1.15.54: per-job ACK button on failed-non-acked rows.
+      // the user: "let's add the ability to ack failures in the
+      // failed section of jobs. they'll remain there after ack
+      // but allows us to see unack from the dashboard at a
+      // glance." POSTs /api/items/{mt}/{id}/clear-failure (same
+      // endpoint the library's per-row + bulk ACK use), which
+      // clears the theme's failure_kind + failure_acked_at —
+      // job row stays under FAILED filter but flips visually to
+      // the green "failed (acknowledged)" style via the existing
+      // isAckedFail branch above. Topbar FAIL pill drops via the
+      // unacked_failures count.
+      // v1.19.93: dropped the media_type/tmdb_id requirement. The
+      // /api/jobs/{id}/ack-failure endpoint already handles
+      // theme-less jobs (global sync/enum failures) — it stamps
+      // jobs.acked_at and SKIPS the theme ack (api.py:18352). Pre-fix
+      // a failed SYNC job (no media_type) showed NO // ACK button, so
+      // a crashed sync run was undismissable from LOGS — exactly what
+      // the user hit after the v1.19.71 _flush_sync_batch crash. Keep
+      // the isOpProgress guard: op-rows carry string ids ("op:<id>")
+      // the int-typed endpoint can't take.
+      const ackableFail = !isOpProgress
+                       && j.status === 'failed' && !j.acked_at;
+      const actionCell = cancelling
+        ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" data-force="1" title="worker isn't responding to the cooperative cancel; mark cancelled directly">× FORCE</button>`
+        : (cancellable
+            ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" title="cancel this job (running jobs bail at the next safe yield)">× CANCEL</button>`
+            : (ackableFail
+                ? `<button class="btn btn-tiny" data-act="ack-job-failure" data-job-id="${htmlEscape(j.id)}" data-mt="${htmlEscape(j.media_type)}" data-id="${htmlEscape(j.tmdb_id)}" title="Acknowledge this failure — clears the row's failure_kind + drops it from the topbar FAIL count. Job stays here for audit history (style flips to the green 'failed (acknowledged)' tone post-click).">// ACK FAILURE</button>`
+                : ''));
+      // v1.12.12: failed + acked rows render in green ('ACKNOWLEDGED')
+      // — they're historical records of failures the user has seen
+      // and dismissed. Still status='failed' under the hood so the
+      // FAILED filter chip surfaces them; the visual state just
+      // de-emphasizes them next to live failures.
+      const isAckedFail = j.status === 'failed' && j.acked_at;
+      const stateLevel = isAckedFail ? 'INFO'
+                       : j.status === 'failed' ? 'ERROR'
+                       : j.status === 'running' ? 'WARNING'
+                       : 'INFO';
+      const stateLabel = isAckedFail ? 'failed (acknowledged)' : j.status;
+      const stateTip = isAckedFail
+        ? `acknowledged at ${fmt.time(j.acked_at)} — kept for history; original error: ${(j.last_error || '').slice(0, 200)}`
+        : '';
+      // v1.14.19: when a row is sitting in `pending` with a
+      // last_error and a future next_run_at, it's NOT stuck —
+      // it's waiting on the worker's exponential backoff
+      // (1m → 5m → 25m → 125m, see worker._mark_failed). Pre-fix
+      // the row showed status="pending" with the error message
+      // and no hint that an auto-retry was scheduled, so
+      // transient failures (network blips, 503s) read as
+      // permanently stuck. Surface "↻ retry in Xm Ys" inline
+      // with the error so the user can tell the difference at
+      // a glance.
+      let retryHint = '';
+      if (j.status === 'pending' && j.last_error && j.next_run_at) {
+        try {
+          const nextMs = new Date(j.next_run_at).getTime();
+          const deltaMs = nextMs - Date.now();
+          if (deltaMs > 1000) {
+            const totalSec = Math.round(deltaMs / 1000);
+            const m = Math.floor(totalSec / 60);
+            const s = totalSec % 60;
+            const dur = m > 0 ? `${m}m ${s}s` : `${s}s`;
+            retryHint = ` <span class="muted small" title="auto-retry scheduled at ${htmlEscape(fmt.time(j.next_run_at))}">↻ retry in ${dur}</span>`;
+          } else {
+            retryHint = ` <span class="muted small">↻ retry pending</span>`;
+          }
+        } catch (_) { /* fall through with no hint */ }
+      }
+      // v1.19.6: emit <li class="jobs-grid-row"> instead of <tr>;
+      // each cell is a <span> sitting in the parent's grid layout.
+      // Matches the .jobs-grid-row CSS grid-template-columns.
+      // v1.19.20: op_progress-synthesized rows go through the
+      // SAME 7-cell grid as per-row jobs. v1.19.19's compact
+      // flex branch was reverted because it dropped the ID
+      // column for op rows, breaking the user's expectation that
+      // every row's ID lives in the ID column. The original
+      // bug v1.19.19 was trying to fix (op_id wider than 80px
+      // misaligning the columns) is now solved at the CSS
+      // layer via subgrid on .jobs-grid — every row inherits
+      // the parent's column widths, so the widest op_id sets
+      // the shared ID column width for all rows.
+      return `
+      <li class="jobs-grid-row">
+        <span>${htmlEscape(j.id)}</span>
+        <span>${htmlEscape(j.job_type)}</span>
+        <span class="muted">${htmlEscape(j.media_type ?? '')} ${htmlEscape(j.tmdb_id ?? '')}</span>
+        <span><span class="event-level event-level-${stateLevel}"${stateTip ? ` title="${htmlEscape(stateTip)}"` : ''}>${htmlEscape(stateLabel)}</span></span>
+        <span class="muted">${htmlEscape(fmt.time(j.created_at))}</span>
+        <span class="muted jobs-note-cell" title="${htmlEscape(j.last_error ?? '')}">${htmlEscape((j.last_error ?? '').slice(0, 60))}${retryHint}</span>
+        <span>${actionCell}</span>
+      </li>
+    `;
+    }).join('') || '<li class="jobs-list-empty muted center">no jobs in the queue — work appears here when you click SYNC THEMERRDB on the dashboard, REFRESH FROM PLEX on a library, or any per-row action that downloads / places / refreshes</li>';
+    if (_jobsBody.dataset.lastHash !== _jobsHtml) {
+      _jobsBody.innerHTML = _jobsHtml;
+      _jobsBody.dataset.lastHash = _jobsHtml;
+    }
+
+    // v1.22.56: the horizontal-scroll affordance refresh was removed —
+    // the full-width jobs grid never scrolls sideways (fluid columns +
+    // ellipsis truncation), so there's no overflow state to recompute.
+
+    // v1.12.76: removed the CLEAR FAILED visibility toggle. The
+    // button itself is gone from the queue template — see
+    // commit message for rationale. Per-row ACK FAILURE plus the
+    // library bulk-ACK SELECTED cover the same workflow without
+    // forcing the user to leave the library page.
+
+    // v1.15.41: include the SINCE chip's value when set so the
+    // server-side filter does the row-trimming (vs filtering 200
+    // unrelated rows client-side and ending up with 3 visible).
+    const _evq = new URLSearchParams({ limit: '200' });
+    if (eventStreamSince > 0) _evq.set('since', String(eventStreamSince));
+    // v1.22.79: deep-link level/component filters (see bindQueue) —
+    // the // SHOW IN LOGS links carried them for tags but they were
+    // never applied to the fetch.
+    if (eventStreamLevel) _evq.set('level', eventStreamLevel);
+    if (eventStreamComponent) _evq.set('component', eventStreamComponent);
+    const evsPath = `/api/events?${_evq.toString()}`;
+    let evs;
+    try {
+      evs = await api('GET', evsPath);
+    } catch (e) {
+      if (loadQueue._seq !== _myToken) return;
+      // v1.22.79: mirror the jobs-pane error surface (v1.17.13) —
+      // pre-fix an events-fetch failure threw AFTER the jobs render,
+      // silently freezing the events pane on stale rows. Hash cleared
+      // (the v1.20.60 pattern) so the next good poll re-renders.
+      const _ebErr = $('#event-stream-full');
+      if (_ebErr) {
+        _ebErr.innerHTML = `<li class="accent-red">`
+          + `event stream load failed: ${htmlEscape(e.message)}</li>`;
+        _ebErr.dataset.lastHash = '';
+      }
+      return;
+    }
+    // v1.22.79: stale-token re-check after the SECOND await — pre-fix
+    // a slow in-flight poll (since=0) resolving after a fresh
+    // SINCE-chip load clobbered the filtered render with the
+    // unfiltered list (loadDashboard re-checks after every await;
+    // this one didn't).
+    if (loadQueue._seq !== _myToken) return;
+    // v1.14.89: detect whether a REPROBE op is currently
+    // running so the REPROBE AGAIN buttons render disabled
+    // ("// REPROBE RUNNING…") while the job is in flight.
+    // Pre-fix the user could spam-click REPROBE AGAIN and
+    // queue multiple back-to-back reprobe runs (the user's
+    // logs showed two starts at 12:17:49 and 12:18:00 from
+    // a single click sequence). Reads the live ops state
+    // from motifOps's polled snapshot.
+    let _reprobeRunning = false;
+    try {
+      const opsState = (window.motifOps && window.motifOps.state)
+        ? (window.motifOps.state().ops || [])
+        : [];
+      _reprobeRunning = opsState.some((o) =>
+        o.kind === 'reprobe_plex_themes'
+        && (o.status === 'running' || o.status === 'cancelling'));
+    } catch (_) { /* motifOps not available — fine */ }
+    // v1.14.89: dedupe REPROBE warnings by rating_key. Pre-fix
+    // every REPROBE run logged a fresh WARNING for each
+    // unresolved row, so the events list piled up identical-
+    // looking entries (rk=693570 errored at 12:16:54, again
+    // at 12:17:04, etc). the user: "hard to tell since old
+    // reprobe and open rows below." Events come back DESC by
+    // id, so the FIRST seen instance per rk is the newest;
+    // older instances are suppressed to keep the list focused
+    // on what's still unresolved.
+    const _seenReprobeRks = new Set();
+    // v1.20.54: same hash-skip as #jobs-body — a quiet 10s poll
+    // shouldn't reset the event-stream scroll. New events change the
+    // HTML → write (back to newest-at-top, intended); unchanged → skip.
+    const _evBody = $('#event-stream-full');
+    const _evHtml = evs.events.map((e) => {
+      // v1.14.82: per-event inline actions for component=reprobe
+      // events. The REPROBE worker logs WARNING-level events
+      // with detail={rating_key, reason, media_type, tmdb_id,
+      // section_id, title} for each row that couldn't be
+      // classified (sidecar empty / plex range-GET failed /
+      // sidecar missing / etc). Pre-fix the operator could see
+      // the rating_key in the message but had to manually map
+      // rk → row before they could PURGE / UNPLACE / etc. Now
+      // the OPEN ROW button deep-links the INFO dialog
+      // directly so the existing SOURCE-menu actions can
+      // resolve the issue. REPROBE AGAIN re-fires the global
+      // reprobe job to retry. Hint text describes the reason
+      // in operator-friendly terms.
+      let actionsHtml = '';
+      let hintHtml = '';
+      if (e.component === 'reprobe' && e.detail) {
+        let det = null;
+        try { det = JSON.parse(e.detail); } catch (_) { /* skip */ }
+        if (det && det.rating_key) {
+          // v1.14.89: dedupe by rk — skip older entries for
+          // the same rk. Returning '' from the .map() callback
+          // contributes empty string to the joined HTML, so
+          // suppressed rows render nothing.
+          if (_seenReprobeRks.has(det.rating_key)) return '';
+          _seenReprobeRks.add(det.rating_key);
+          const reason = String(det.reason || '');
+          // Map reason → operator-readable hint.
+          const hint = reason === 'sidecar empty'
+            ? 'Empty 0-byte theme.mp3 at the Plex folder. PURGE to clear motif state, then re-download.'
+            : reason === 'sidecar missing'
+            ? 'theme.mp3 was deleted out from under motif. RE-DL or LET PLEX SERVE to recover.'
+            : reason === 'plex range-GET failed'
+            ? 'Plex didn\'t serve the theme bytes — could be a transient hiccup. Click REPROBE AGAIN to retry.'
+            : reason === 'empty response'
+            ? 'Plex returned 0 bytes for the theme. Likely a Plex agent issue; try REPROBE AGAIN.'
+            : reason.startsWith('probe error:')
+            ? `Probe raised an exception: ${reason.slice(13).trim()}`
+            : reason;
+          hintHtml = `<span class="event-hint muted small">// ${htmlEscape(hint)}</span>`;
+          // OPEN ROW button only renders when we have the
+          // resolved IDs (theme_id wasn't NULL at log time).
+          // For plex-orphan rows, openInfoDialog needs media_type
+          // and tmdb_id from the themes row, which we don't have.
+          if (det.media_type && det.tmdb_id !== null && det.tmdb_id !== undefined) {
+            const sectionAttr = det.section_id
+              ? ` data-section-id="${htmlEscape(String(det.section_id))}"` : '';
+            // v1.14.90: data-fourk + data-title piggyback so the
+            // OPEN ROW handler can deep-link to the right library
+            // variant AND prefill the search box. Pre-fix the
+            // navigation routed to whichever fourk the user last
+            // visited (typically wrong) and showed the entire
+            // section's results, so the operator had to scroll/
+            // search to find the row that errored.
+            const fourkAttr = (det.is_4k === 1 || det.is_4k === true)
+              ? ' data-fourk="1"' : ' data-fourk="0"';
+            const titleAttr = det.title
+              ? ` data-title="${htmlEscape(String(det.title))}"` : '';
+            actionsHtml += (
+              `<button class="btn btn-tiny" data-act="reprobe-open-row" `
+              + `data-mt="${htmlEscape(String(det.media_type))}" `
+              + `data-id="${htmlEscape(String(det.tmdb_id))}"`
+              + `${sectionAttr}${fourkAttr}${titleAttr} `
+              + `title="Open the INFO dialog for this row so you can `
+              + `PURGE / UNPLACE / etc. via the SOURCE menu.">`
+              + `// OPEN ROW</button>`
+            );
+          }
+          // v1.14.89: REPROBE AGAIN renders disabled with the
+          // RUNNING label when a reprobe is already in flight,
+          // so the user can't queue back-to-back runs.
+          const reprobeBtnAttrs = _reprobeRunning
+            ? 'disabled title="REPROBE PLEX THEMES is already running…"'
+            : 'title="Re-fire the global REPROBE PLEX THEMES job to '
+              + 'retry every sidecar-bearing row, including this one."';
+          const reprobeBtnText = _reprobeRunning
+            ? '// REPROBE RUNNING…'
+            : '// REPROBE AGAIN';
+          actionsHtml += (
+            `<button class="btn btn-tiny" data-act="reprobe-again" `
+            + `${reprobeBtnAttrs}>${reprobeBtnText}</button>`
+          );
+        }
+      }
+      return `
+      <li>
+        <span class="event-time">${htmlEscape(fmt.timeShort(e.ts))}</span>
+        <span class="event-level event-level-${htmlEscape(e.level)}">${htmlEscape(e.level)}</span>
+        <span class="event-component">${htmlEscape(e.component)}</span>
+        <span class="event-msg" title="${htmlEscape(e.detail || '')}">${htmlEscape(e.message)}</span>
+        ${hintHtml}
+        ${actionsHtml ? `<span class="event-actions">${actionsHtml}</span>` : ''}
+      </li>
+    `;
+    // v1.15.128: empty-state fallback — pre-fix a queue page with
+    // zero events in the current SINCE filter rendered an empty
+    // <ul> below the EVENT STREAM header. Honest message tells
+    // the user whether to widen the filter (since=ALL would
+    // surface older events) or wait for activity.
+    }).join('') || '<li class="muted small">no events match the current SINCE filter — try widening to ALL or wait for worker activity</li>';
+    if (_evBody.dataset.lastHash !== _evHtml) {
+      _evBody.innerHTML = _evHtml;
+      _evBody.dataset.lastHash = _evHtml;
+    }
+  }
+
+  function bindQueue() {
+    if (!$('#jobs-body')) return;
+
+    // v1.22.56: JOBS / EVENT STREAM view toggle (replaces the side-by-
+    // side split). Clicking a toggle chip swaps the active panel.
+    const _qp = new URLSearchParams(window.location.search);
+    $$('.chip[data-logview]').forEach((c) => {
+      c.addEventListener('click', () => setLogView(c.dataset.logview));
+    });
+    // Land on the right panel for dashboard deep-links: ?status=… is a
+    // JOBS filter, ?since=/?level=/?component=… are EVENT STREAM filters.
+    // The /queue handler SSRs the same choice into the active-panel
+    // class for a flash-free first paint; this re-applies it client-side
+    // (covers in-app SPA-style nav where the server view isn't re-rendered).
+    const _initialView = _qp.has('status')
+      ? 'jobs'
+      : (_qp.has('since') || _qp.has('level') || _qp.has('component'))
+        ? 'events'
+        : 'jobs';
+    setLogView(_initialView);
+
+    // v1.11.73: honor ?status=failed (etc) on initial /queue load so
+    // the topbar 'red dot → click' shortcut lands on the right
+    // filter without an extra click.
+    const initialStatus = new URLSearchParams(window.location.search).get('status');
+    if (initialStatus && ['pending','running','failed','cancelled','done'].includes(initialStatus)) {
+      queueFilter = initialStatus;
+      $$('.chip[data-jobfilter]').forEach((x) => x.classList.remove('chip-active'));
+      const target = document.querySelector(
+        `.chip[data-jobfilter="${initialStatus}"]`);
+      if (target) target.classList.add('chip-active');
+    }
+
+    $$('.chip[data-jobfilter]').forEach((c) => {
+      c.addEventListener('click', () => {
+        $$('.chip[data-jobfilter]').forEach((x) => x.classList.remove('chip-active'));
+        c.classList.add('chip-active');
+        queueFilter = c.dataset.jobfilter;
+        loadQueue().catch(console.error);
+      });
+    });
+
+    // v1.15.41: SINCE chip row for the EVENT STREAM pane. Mirrors
+    // the JOBS chip pattern above. Honors a ?since=<seconds>
+    // deep-link param so a future "X added today" link from the
+    // dashboard can drop the operator straight into the 24h view.
+    // v1.22.79: consume the level/component deep-link params (the
+    // template has promised them since the backfill banner shipped).
+    eventStreamLevel = (_qp.get('level') || '').trim();
+    eventStreamComponent = (_qp.get('component') || '').trim();
+    const allowedSince = new Set(['0', '3600', '86400', '604800']);
+    const initialSince = new URLSearchParams(window.location.search).get('since');
+    if (initialSince && allowedSince.has(initialSince)) {
+      eventStreamSince = parseInt(initialSince, 10);
+      $$('.chip[data-evfilter]').forEach((x) => x.classList.remove('chip-active'));
+      const target = document.querySelector(
+        `.chip[data-evfilter="${initialSince}"]`);
+      if (target) target.classList.add('chip-active');
+    }
+    $$('.chip[data-evfilter]').forEach((c) => {
+      c.addEventListener('click', () => {
+        $$('.chip[data-evfilter]').forEach((x) => x.classList.remove('chip-active'));
+        c.classList.add('chip-active');
+        eventStreamSince = parseInt(c.dataset.evfilter || '0', 10);
+        loadQueue().catch(console.error);
+      });
+    });
+
+    // v1.12.76: CLEAR FAILED click handler removed alongside the
+    // button. Per-row ACK FAILURE (api_clear_failure, v1.12.74)
+    // now also cancels the matching failed download job, so the
+    // bulk path through the LOGS page is no longer needed.
+    // Library page bulk-ACK SELECTED handles "dismiss many at
+    // once" via the same per-row endpoint, keeping the workflow
+    // on the page where the user is already reviewing the rows.
+    // The /api/jobs/clear-failed endpoint stays available for
+    // scripts/external callers.
+
+    // v1.11.36: cancel-job click handler. Posts to /api/jobs/{id}/cancel.
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act="cancel-job"]');
+      if (!btn || !$('#jobs-body')) return;
+      const id = btn.dataset.jobId;
+      if (!id) return;
+      const forced = btn.dataset.force === '1';
+      const prompt = forced
+        ? `Force-cancel job ${id}? The worker may be stuck on a stalled DB write or Plex call — this marks the job cancelled in the queue regardless of whether the worker thread ever responds.`
+        : `Cancel job ${id}? Running jobs bail at the next safe yield (a few seconds).`;
+      if (!confirm(prompt)) return;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        const url = forced
+          ? `/api/jobs/${encodeURIComponent(id)}/cancel?force=true`
+          : `/api/jobs/${encodeURIComponent(id)}/cancel`;
+        await api('POST', url);
+        await loadQueue().catch(()=>{});
+        // v1.11.78: poke the topbar past /api/stats's 1s TTL so the
+        // 'SYNCING WITH …' label, the failed-job dot, and per-button
+        // locks update the same frame as the cancel completes.
+        // Pre-fix the user had to refresh the page to see the topbar
+        // status reflect 'IDLE' after a force-cancel.
+        setTimeout(refreshTopbarStatus, 1100);
+      } catch (err) {
+        alert('Cancel failed: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = '× CANCEL';
+      }
+    });
+
+    // v1.15.54 / v1.15.60: per-job ACK handler. Mirrors the
+    // v1.11.36 cancel-job pattern — delegated listener so it
+    // survives jobs-body innerHTML rewrites on every loadQueue()
+    // poll.
+    //
+    // v1.15.60 routes through the new /api/jobs/{id}/ack-failure
+    // endpoint which acks BOTH the job (jobs.acked_at, flips
+    // /queue row to the green 'failed (acknowledged)' tone via
+    // v1.12.12) AND the theme (themes.failure_acked_at, drops
+    // the topbar FAIL pill). Pre-v1.15.60 the handler hit
+    // /clear-failure (theme only) which left the JOB row red —
+    // the user: "clicking htem actually doesn't do anything
+    // currently." It WAS clearing the theme, but the visual
+    // signal lived on the JOB row which stayed un-acked.
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act="ack-job-failure"]');
+      if (!btn || !$('#jobs-body')) return;
+      const jobId = btn.dataset.jobId;
+      if (!jobId) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// ACKING…';
+      try {
+        await api('POST', `/api/jobs/${encodeURIComponent(jobId)}/ack-failure`);
+        await loadQueue().catch(() => {});
+        // Same 1100ms past-/api/stats-TTL trick as other ACK
+        // paths so the topbar FAIL pill drops on the same frame.
+        setTimeout(refreshTopbarStatus, 1100);
+      } catch (err) {
+        alert('ACK failed: ' + (err && err.message ? err.message : 'unknown error'));
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+
+    // v1.14.82: per-event REPROBE-error action handlers. Wired
+    // off the document so the listener survives the events-list
+    // innerHTML rewrites that loadQueue does on every poll.
+    document.addEventListener('click', async (e) => {
+      const openBtn = e.target.closest('button[data-act="reprobe-open-row"]');
+      if (openBtn && $('#event-stream-full')) {
+        const mt = openBtn.dataset.mt;
+        const id = openBtn.dataset.id;
+        const sid = openBtn.dataset.sectionId || undefined;
+        const fourk = openBtn.dataset.fourk;
+        const title = openBtn.dataset.title || '';
+        if (mt && id) {
+          // v1.14.85: navigate to the library page (not just
+          // overlay the dialog on /queue) so closing the dialog
+          // leaves the user ON the row and they can take
+          // follow-up actions (PURGE/UNPLACE/etc) from the
+          // library's SOURCE menu. The info_open + info_mt +
+          // info_section URL params trigger the dialog auto-
+          // open after loadLibrary lands. Pre-fix the dialog
+          // popped over /queue, the user had to manually
+          // navigate to find the row after closing.
+          // v1.14.90: also pass ?fourk= (from the section's
+          // is_4k) and ?q= (the title) so the page lands on the
+          // right library variant with the search pre-filtered
+          // to JUST that row. Pre-fix the navigation honored
+          // last-visited fourk so a row in standard movies
+          // could land on the empty 4K variant; even on the
+          // right variant the user still had to scan a section's
+          // worth of rows. the user: "It would be great if we
+          // could make it fill in the search bar with the name
+          // of the movie so it truly would result in bringing
+          // up just that row."
+          const tabPath = mt === 'movie' ? '/movies' : '/tv';
+          const params = new URLSearchParams();
+          params.set('info_open', String(id));
+          params.set('info_mt', String(mt));
+          if (sid) params.set('info_section', String(sid));
+          if (fourk === '0' || fourk === '1') params.set('fourk', fourk);
+          if (title) params.set('q', title);
+          window.location.href = `${tabPath}?${params.toString()}`;
+        }
+        return;
+      }
+      const reprobeBtn = e.target.closest('button[data-act="reprobe-again"]');
+      if (reprobeBtn && $('#event-stream-full')) {
+        if (!confirm('Re-fire REPROBE PLEX THEMES? Re-runs the '
+                     + 'sidecar verification across every applicable row.')) {
+          return;
+        }
+        reprobeBtn.disabled = true;
+        const orig = reprobeBtn.textContent;
+        reprobeBtn.textContent = '// QUEUEING…';
+        try {
+          await api('POST', '/api/admin/reprobe-plex-themes');
+          // Refresh the events list past the action so the new
+          // REPROBE op's progress shows up promptly.
+          setTimeout(() => loadQueue().catch(() => {}), 1100);
+        } catch (err) {
+          alert('REPROBE failed: ' + err.message);
+          reprobeBtn.disabled = false;
+          reprobeBtn.textContent = orig;
+        }
+      }
+    });
+  }
+
+  // ---- Libraries ----
+
+  async function loadLibraries() {
+    if (!$('#libraries-movies-body')) return;
+    // v1.15.108: in-flight guard mirroring loadLibrary/loadQueue.
+    // Pre-fix a rapid sequence of section-include toggles +
+    // libraries-save clicks each kicked their own loadLibraries
+    // (via setTimeout fallbacks at app.js:3764, 3892), letting
+    // an older response clobber a newer one. The two affected
+    // tbody nodes (libraries-movies-body / libraries-tv-body)
+    // would render briefly-stale section flags until the next
+    // user action.
+    loadLibraries._seq = (loadLibraries._seq || 0) + 1;
+    const _myToken = loadLibraries._seq;
+    let data;
+    try {
+      data = await api('GET', '/api/libraries');
+    } catch (e) {
+      if (loadLibraries._seq !== _myToken) return;
+      $('#libraries-movies-body').innerHTML = `<tr><td colspan="7" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    if (loadLibraries._seq !== _myToken) return;
+    const movieRows = [];
+    const tvRows = [];
+    for (const s of data.sections) {
+      const included = !!s.included;
+      const stale = (() => {
+        const last = new Date(s.last_seen_at);
+        return (Date.now() - last.getTime()) > 1000 * 60 * 60 * 24 * 7;
+      })();
+      const locations = (s.location_paths || []).map(htmlEscape).join('<br>') || '<span class="muted">—</span>';
+      const isAnime = !!s.is_anime;
+      const is4k = !!s.is_4k;
+      // v1.11.6: ROLE column is now two toggleable pills (A + 4K) instead
+      // of a dropdown. Default = neither selected = 'standard'. A alone =
+      // 'anime'. 4K alone = '4k'. Both = 'anime_4k'. Movie sections still
+      // hide the A pill (motif's anime tabs draw from type='show' sections
+      // in typical Plex layouts).
+      const showAnime = s.type !== 'movie';
+      const animePill = showAnime
+        ? `<button type="button"
+                   class="lib-flag-pill lib-flag-pill-anime${isAnime ? ' is-active' : ''}"
+                   data-section-flag="anime"
+                   data-section-id="${htmlEscape(s.section_id)}"
+                   aria-pressed="${isAnime ? 'true' : 'false'}"
+                   title="anime library — feeds the ANIME tab">A</button>`
+        : '';
+      const fourkPill = `<button type="button"
+                                  class="lib-flag-pill lib-flag-pill-4k${is4k ? ' is-active' : ''}"
+                                  data-section-flag="4k"
+                                  data-section-id="${htmlEscape(s.section_id)}"
+                                  aria-pressed="${is4k ? 'true' : 'false'}"
+                                  title="4K library — feeds the 4K toggle on its tab">4K</button>`;
+      // v1.11.13: explicit role label so 'standard' (= no pills active)
+      // is visible. Pre-fix users sometimes thought a section was set
+      // to standard but the saved is_4k flag was 1 from an earlier
+      // save — the absence of an active pill meant nothing was clicked,
+      // not that the section WAS standard. The label updates live as
+      // pills toggle (handler below) so the displayed role matches what
+      // SAVE will send.
+      const roleLabel = (() => {
+        if (isAnime && is4k) return 'anime 4K';
+        if (isAnime) return 'anime';
+        if (is4k) return '4K';
+        return 'standard';
+      })();
+      const row = `
+        <tr style="${stale ? 'opacity:0.45' : ''}" data-section-row="${htmlEscape(s.section_id)}">
+          <td class="lib-col-id">${htmlEscape(s.section_id)}</td>
+          <td class="lib-col-section"><strong>${htmlEscape(s.title)}</strong>${stale ? ' <span class="muted" style="font-size:var(--t-tiny)">(stale)</span>' : ''}</td>
+          <td class="lib-col-type"><span class="muted">${htmlEscape(s.type)}</span></td>
+          <td class="lib-col-mgd">
+            <input type="checkbox" data-section-toggle="${htmlEscape(s.section_id)}" ${included ? 'checked' : ''} />
+          </td>
+          <td class="lib-col-role">
+            <div class="lib-flag-group">${animePill}${fourkPill}<span class="lib-flag-label" data-section-role-label="${htmlEscape(s.section_id)}">${roleLabel}</span></div>
+          </td>
+          <td class="lib-locations mono small" style="color:var(--fg-dim)">${locations}</td>
+          <td class="lib-col-actions">
+            <button class="btn btn-tiny" data-section-refresh="${htmlEscape(s.section_id)}" title="re-enumerate just this section from Plex">// REFRESH</button>
+          </td>
+        </tr>
+      `;
+      if (s.type === 'movie') movieRows.push(row); else tvRows.push(row);
+    }
+    $('#libraries-movies-body').innerHTML = movieRows.join('') ||
+      '<tr><td colspan="7" class="muted center">no movie sections discovered</td></tr>';
+    $('#libraries-tv-body').innerHTML = tvRows.join('') ||
+      '<tr><td colspan="7" class="muted center">no TV sections discovered</td></tr>';
+  }
+
+  function bindLibraries() {
+    // v1.13.64: dropped the click handler for #refresh-libraries-btn.
+    // The button itself was removed in v1.13.63 (Settings → PLEX →
+    // LIBRARY SECTIONS no longer has a sync action — dash SYNC PLEX +
+    // per-tab // SYNC <NAME> cover every sync path). The companion
+    // branch in refreshTopbarStatus that was locking that button
+    // was also removed in v1.13.64.
+
+    // Per-section refresh button — enumerate just this section from Plex.
+    // The stats poll lock will keep the button disabled while any
+    // plex_enum is in flight (across all sections) to prevent dupes.
+    document.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-section-refresh]');
+      if (!btn) return;
+      const sid = btn.dataset.sectionRefresh;
+      const orig = btn.dataset.origLabel || btn.textContent;
+      btn.dataset.origLabel = orig;
+      btn.disabled = true;
+      btn.textContent = '…';
+      try {
+        await api('POST', `/api/libraries/${encodeURIComponent(sid)}/refresh`);
+        // v1.11.48: optimistic paint to beat the /api/stats 1s TTL.
+        // v1.14.53: replaced the old `paintTopbarSyncing` shim with
+        // a direct setOptimisticPlaceholder('plex_enum', ...) call
+        // (the shim was a duplicate of setOptimisticPlaceholder's
+        // boostPoll cascade everywhere except here, where it was
+        // the only optimistic surface). Now matches the per-tab
+        // // REFRESH MOVIES path at the bottom of this file.
+        try {
+          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+            window.motifOps.setOptimisticPlaceholder(
+              'plex_enum', '// REFRESHING PLEX',
+            );
+          }
+        } catch (_) {}
+        setTimeout(() => loadLibraries().catch(()=>{}), 4000);
+      } catch (err) {
+        // v1.17.13: clear the optimistic plex_enum placeholder
+        // we set above. Same class-5 pattern as the SYNC PLEX
+        // topbar btn + REFRESH FROM PLEX library btn. Caught
+        // in v1.17.13 audit + adjacent grep — agent's audit
+        // listed 5 sites but missed this per-section variant.
+        try {
+          if (window.motifOps
+              && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('plex_enum');
+          }
+        } catch (_) {}
+        alert('Refresh failed: ' + err.message);
+        btn.disabled = false;
+        btn.textContent = orig;
+        delete btn.dataset.origLabel;
+      }
+      // Don't re-enable here — stats poll's plex_enum_in_flight lock
+      // keeps the row buttons disabled until the worker drains.
+    });
+
+    // Deferred save: capture every MGD / ANIME / 4K change into librariesDirty
+    // (keyed by section_id). The // SAVE button commits everything in one
+    // click — consistent with the rest of /settings, and the user can flip
+    // several sections without each toggle firing a request.
+    document.addEventListener('change', (e) => {
+      const tog = e.target.closest('input[data-section-toggle]');
+      if (!tog) return;
+      const sid = tog.dataset.sectionToggle;
+      if (!librariesDirty[sid]) librariesDirty[sid] = {};
+      librariesDirty[sid].included = tog.checked;
+      // v1.11.13: when MGD turns ON, also re-assert the current role so
+      // SAVE always lands the section in the visible state — even if the
+      // user didn't touch the pills. Pre-fix a user who enabled MGD on a
+      // section that had been previously saved as 4K (gold pill active)
+      // could click SAVE without touching the 4K pill and get a section
+      // that was 'managed but with the wrong role' (4K instead of the
+      // standard they expected if no pill was active in their head).
+      if (tog.checked) {
+        const row = tog.closest('tr');
+        if (row) {
+          const animePill = row.querySelector('button[data-section-flag="anime"]');
+          const fourkPill = row.querySelector('button[data-section-flag="4k"]');
+          const isAnime = animePill && animePill.getAttribute('aria-pressed') === 'true';
+          const is4k = fourkPill && fourkPill.getAttribute('aria-pressed') === 'true';
+          librariesDirty[sid].role = (isAnime && is4k) ? 'anime_4k'
+                                   : isAnime           ? 'anime'
+                                   : is4k              ? '4k'
+                                   :                     'standard';
+        }
+      }
+      updateLibrariesSaveButton();
+    });
+    // v1.11.6: A / 4K pill toggles. Each pill flips its own aria-pressed
+    // state, then the change is captured into librariesDirty as a role
+    // string ('standard' / 'anime' / '4k' / 'anime_4k') derived from the
+    // current pressed state of both pills on the same row.
+    document.addEventListener('click', (e) => {
+      const pill = e.target.closest('button.lib-flag-pill');
+      if (!pill) return;
+      e.preventDefault();
+      if (pill.disabled) return;
+      const next = pill.getAttribute('aria-pressed') !== 'true';
+      pill.setAttribute('aria-pressed', next ? 'true' : 'false');
+      pill.classList.toggle('is-active', next);
+      const sid = pill.dataset.sectionId;
+      const row = pill.closest('tr');
+      const animePill = row.querySelector('button[data-section-flag="anime"]');
+      const fourkPill = row.querySelector('button[data-section-flag="4k"]');
+      const isAnime = animePill && animePill.getAttribute('aria-pressed') === 'true';
+      const is4k = fourkPill && fourkPill.getAttribute('aria-pressed') === 'true';
+      const role = (isAnime && is4k) ? 'anime_4k'
+                 : isAnime           ? 'anime'
+                 : is4k              ? '4k'
+                 :                     'standard';
+      if (!librariesDirty[sid]) librariesDirty[sid] = {};
+      librariesDirty[sid].role = role;
+      // v1.11.13: keep the inline role label in sync as pills toggle.
+      const label = row.querySelector('span[data-section-role-label]');
+      if (label) {
+        label.textContent = (isAnime && is4k) ? 'anime 4K'
+                          : isAnime           ? 'anime'
+                          : is4k              ? '4K'
+                          :                     'standard';
+      }
+      updateLibrariesSaveButton();
+    });
+
+    // SAVE button: iterate dirty sections, fire per-row requests in
+    // sequence (handful of rows, so parallelism not worth the
+    // complexity), surface a summary status.
+    document.getElementById('libraries-save-btn')?.addEventListener('click', async () => {
+      const btn = document.getElementById('libraries-save-btn');
+      const status = document.getElementById('libraries-save-status');
+      const entries = Object.entries(librariesDirty);
+      if (entries.length === 0) return;
+      btn.disabled = true;
+      status.textContent = `saving ${entries.length}…`;
+      status.classList.remove('ok', 'err');
+      let ok = 0;
+      let failed = 0;
+      const failures = [];
+      for (const [sid, change] of entries) {
+        try {
+          if ('included' in change) {
+            const fd = new FormData();
+            fd.append('included', change.included ? 'true' : 'false');
+            await api('POST', `/api/libraries/${encodeURIComponent(sid)}/include`, fd);
+          }
+          if ('role' in change) {
+            await api('POST', `/api/libraries/${encodeURIComponent(sid)}/flags`,
+                      { role: change.role });
+          }
+          ok += 1;
+          // v1.22.88: drop ONLY the saved section from the dirty
+          // map — the unconditional wipe below also dropped FAILED
+          // sections, visually reverting their toggles and disabling
+          // SAVE so the user couldn't retry without re-toggling.
+          delete librariesDirty[sid];
+        } catch (err) {
+          console.error('libraries save failed for', sid, err);
+          failed += 1;
+          // v1.11.4: keep the first failure's message visible in the
+          // status line so the user actually sees WHY it failed (e.g.
+          // a 409 from the role guard) instead of a vague "see console".
+          failures.push(err.message || String(err));
+        }
+      }
+      if (failed === 0) {
+        status.textContent = `✓ saved ${ok} section${ok === 1 ? '' : 's'}`;
+      } else {
+        const detail = failures[0] || '';
+        status.textContent = `✗ ${failed} of ${ok + failed} failed: ${detail}`;
+      }
+      status.classList.add(failed === 0 ? 'ok' : 'err');
+      updateLibrariesSaveButton();
+      // v1.11.32: kick the topbar so adaptive nav (MOVIES / TV / ANIME
+      // visibility) and the standard/4K toggle reflect the new flag
+      // state immediately. Pre-fix the user had to wait up to 15s for
+      // the next stats poll to surface a freshly-enabled tab.
+      // v1.15.108: .catch suppresses the unhandled rejection if the
+      // refresh call itself errors (rare; bare call swallowed it).
+      refreshTopbarStatus().catch(() => {});
+      // Re-fetch authoritative state, in case anything diverged
+      setTimeout(() => loadLibraries().catch(()=>{}), 600);
+      // v1.11.4: keep the message up longer when there's a failure so
+      // the user has time to read it (4s was too brief for a multi-
+      // line 409 detail).
+      const clearAfter = failed === 0 ? 4000 : 12000;
+      // v1.17.20: snapshot-compare so a re-click within the
+      // dismiss window doesn't get its fresh status wiped by
+      // the prior click's stale timer. Audit race #6.
+      const snapshot = status.textContent;
+      setTimeout(() => {
+        if (status.textContent !== snapshot) return;
+        status.textContent = '';
+        status.classList.remove('ok', 'err');
+      }, clearAfter);
+    });
+  }
+
+  // Per-section pending changes captured by the libraries SAVE button.
+  // Shape: {section_id: {included?: bool, role?: 'standard'|'4k'|'anime'|'anime_4k'}}.
+  let librariesDirty = {};
+
+  function updateLibrariesSaveButton() {
+    const btn = document.getElementById('libraries-save-btn');
+    if (!btn) return;
+    const n = Object.keys(librariesDirty).length;
+    btn.disabled = n === 0;
+    // v1.19.81 (settings uniformity audit): scoped label — was the
+    // lone un-scoped // SAVE; now names its scope like every other
+    // settings save button (matches the SSR default in settings.html).
+    btn.textContent = n === 0 ? '// SAVE SECTIONS' : `// SAVE SECTIONS (${n})`;
+  }
+
+
+  async function loadTokens() {
+    if (!$('#tokens-body')) return;
+    // v1.17.13: surface fetch errors in-tbody. Pre-fix a failing
+    // /api/tokens left the table at whatever it last rendered
+    // (placeholder "loading…" on first load, or stale rows on
+    // re-load); user might create a duplicate token thinking they
+    // had none. Error UX audit HIGH 2.
+    let data;
+    try {
+      data = await api('GET', '/api/tokens');
+    } catch (e) {
+      $('#tokens-body').innerHTML = `<tr><td colspan="6" `
+        + `class="accent-red">tokens load failed: `
+        + `${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    if (!data.tokens.length) {
+      $('#tokens-body').innerHTML = '<tr><td colspan="6" class="muted center">no tokens yet</td></tr>';
+      return;
+    }
+    $('#tokens-body').innerHTML = data.tokens.map((t) => {
+      const revoked = !!t.revoked_at;
+      return `
+        <tr style="${revoked ? 'opacity:0.4' : ''}">
+          <td>${htmlEscape(t.name)}${revoked ? ' <span class="muted">(revoked)</span>' : ''}</td>
+          <td><span class="link-badge ${t.scope === 'admin' ? 'link-badge-copy' : 'link-badge-hardlink'}">${htmlEscape(t.scope)}</span></td>
+          <td class="muted mono small">${htmlEscape(t.token_prefix)}…</td>
+          <td class="muted">${htmlEscape(fmt.time(t.created_at))}</td>
+          <td class="muted">${t.last_used_at ? htmlEscape(fmt.time(t.last_used_at)) : '<span class="muted">never</span>'}</td>
+          <td class="col-actions">
+            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}" title="Revoke this token (clients using it will start failing)">// REVOKE</button>`}
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
+
+  function bindSettings() {
+    const newBtn = $('#new-token-btn');
+    if (!newBtn) return;
+
+    const dlg = $('#new-token-dlg');
+    const form = $('#new-token-form');
+    const result = $('#new-token-result');
+    const valEl = $('#new-token-value');
+
+    newBtn.addEventListener('click', () => {
+      form.style.display = '';
+      result.style.display = 'none';
+      form.reset();
+      // v1.16.1: drop auto-focus ring on the dialog's first
+      // focusable child (the close button or first form input).
+      showModalNoFocusRing(dlg);
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(form);
+      try {
+        const r = await api('POST', '/api/tokens', fd);
+        valEl.textContent = r.token;
+        form.style.display = 'none';
+        result.style.display = '';
+        loadTokens().catch(console.error);
+      } catch (err) {
+        alert('Token creation failed: ' + err.message);
+      }
+    });
+
+    document.addEventListener('click', async (e) => {
+      const r = e.target.closest('[data-revoke-token]');
+      if (!r) return;
+      if (!confirm('Revoke this token? Anything using it will break immediately.')) return;
+      try {
+        await api('DELETE', `/api/tokens/${r.dataset.revokeToken}`);
+        loadTokens().catch(console.error);
+      } catch (err) {
+        alert('Revoke failed: ' + err.message);
+      }
+    });
+
+    const pwForm = $('#password-form');
+    if (pwForm) {
+      pwForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(pwForm);
+        const status = $('#password-status');
+        status.textContent = '';
+        status.classList.remove('accent-red', 'ok');
+        try {
+          await api('POST', '/api/admin/password', fd);
+          status.textContent = '✓ password updated';
+          status.classList.add('ok');
+          pwForm.reset();
+        } catch (err) {
+          status.textContent = '✗ ' + err.message;
+          status.classList.add('accent-red');
+        } finally {
+          // v1.17.5: auto-dismiss the password update status.
+          // Pre-fix both `✓ password updated` and `✗ <error>`
+          // lingered indefinitely until next page nav. 5s gives
+          // the user time to read either message.
+          const snapshot = status.textContent;
+          setTimeout(() => {
+            if (status.textContent !== snapshot) return;
+            status.textContent = '';
+            status.classList.remove('accent-red', 'ok');
+          }, 5000);
+        }
+      });
+    }
+
+    // Dry-run runtime mode controls
+    const onBtn = $('#dry-run-on-btn');
+    const offBtn = $('#dry-run-off-btn');
+    const cur = $('#dry-run-current');
+    async function refreshDryRunState() {
+      if (!cur) return;
+      try {
+        const r = await api('GET', '/api/dry-run');
+        // v1.22.55: status renders as a standard .pill (settings redesign) —
+        // tone via class, not inline style.color.
+        cur.textContent = r.dry_run ? 'DRY-RUN — no real action' : 'LIVE — real downloads + placements';
+        cur.className = r.dry_run ? 'pill pill-warn' : 'pill';
+        cur.style.color = '';
+        if (onBtn) onBtn.disabled = !!r.dry_run;
+        if (offBtn) offBtn.disabled = !r.dry_run;
+      } catch (e) {
+        // v1.17.13: surface "STATE UNKNOWN" instead of leaving
+        // the label blank / stale. Pre-fix a failing /api/dry-run
+        // (network blip, server down) left the label at its
+        // last value — if state actually flipped server-side
+        // the UI silently disagreed. Both buttons re-enabled so
+        // the user can still click to retry through setDryRun()
+        // (which has its own error path). Error UX audit HIGH 5.
+        cur.textContent = 'STATE UNKNOWN — refresh failed';
+        // v1.22.55: error tone via the pill family (.pill-danger, the red
+        // sibling of .pill-warn added this tag for exactly this state).
+        cur.className = 'pill pill-danger';
+        cur.style.color = '';
+        if (onBtn) onBtn.disabled = false;
+        if (offBtn) offBtn.disabled = false;
+      }
+    }
+    async function setDryRun(value) {
+      const fd = new FormData();
+      fd.append('enabled', value ? 'true' : 'false');
+      try {
+        await api('POST', '/api/dry-run', fd);
+        refreshDryRunState();
+        // v1.15.108: .catch — see matching note above the dry-run-off
+        // handler. Unawaited rejection slipped past the outer try.
+        refreshTopbarStatus().catch(() => {});
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+    if (onBtn) onBtn.addEventListener('click', () => {
+      if (confirm('Enable dry-run? Pending downloads and placements will be simulated, not executed.')) setDryRun(true);
+    });
+    if (offBtn) offBtn.addEventListener('click', () => {
+      if (confirm('Disable dry-run? Real downloads and placements will resume immediately.')) setDryRun(false);
+    });
+    if (cur) refreshDryRunState();
+  }
+
+  // ---- Scans page ----
+
+  let scansState = {
+    runId: null,
+    filter: '',
+    q: '',
+    page: 0,
+    pageSize: 50,
+    findings: [],
+    selectedIds: new Set(),
+  };
+
+  async function loadScansList() {
+    const tbody = $('#scan-runs-body');
+    if (!tbody) return;
+    try {
+      const data = await api('GET', '/api/scans');
+      const runs = data.runs || [];
+      if (!runs.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="muted center">no scans yet — click SCAN PLEX FOLDERS to start</td></tr>';
+        return;
+      }
+      tbody.innerHTML = runs.map((r) => {
+        const status = htmlEscape(r.status);
+        const dur = r.finished_at && r.started_at
+          ? Math.round((new Date(r.finished_at) - new Date(r.started_at)) / 1000) + 's'
+          : (r.status === 'running' ? '…' : '–');
+        return `<tr data-run="${r.id}">
+          <td>${r.id}</td>
+          <td>${htmlEscape(r.started_at)}</td>
+          <td><span class="status-${status}">${status.toUpperCase()}</span> ${dur}</td>
+          <td>${r.sections_scanned}</td>
+          <td>${r.folders_walked}</td>
+          <td>${r.themes_found}</td>
+          <td>${r.findings_count}</td>
+          <td><button class="btn btn-tiny" data-view-scan="${r.id}">// VIEW</button></td>
+        </tr>`;
+      }).join('');
+      tbody.querySelectorAll('[data-view-scan]').forEach((btn) => {
+        btn.addEventListener('click', () => loadScanDetail(parseInt(btn.dataset.viewScan, 10)));
+      });
+
+      // Auto-poll if any run is in progress. Also refresh the detail
+      // pane (scansState.runId) so the actions disable/enable as the
+      // run flips out of 'running'.
+      if (data.running) {
+        setTimeout(() => {
+          loadScansList().catch(console.error);
+          if (scansState.runId) {
+            loadScanDetail(scansState.runId).catch(()=>{});
+          }
+        }, 3000);
+      }
+    } catch (e) {
+      // v1.17.13: surface in-tbody instead of console-only.
+      // Pre-fix a failing /api/scans left the prior table
+      // visible (or the "no scans yet" empty state — same
+      // template for both states), so the user couldn't tell
+      // load failure from genuine empty. Error UX audit HIGH 4.
+      tbody.innerHTML = `<tr><td colspan="8" class="accent-red">`
+        + `scans list failed: ${htmlEscape(e.message)}</td></tr>`;
+    }
+  }
+
+  async function triggerScan() {
+    const btn = $('#scan-trigger-btn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.textContent = '// SCANNING...';
+    try {
+      await api('POST', '/api/scans');
+      await loadScansList();
+    } catch (e) {
+      alert('Scan failed to start: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '// SCAN PLEX FOLDERS';
+    }
+  }
+
+  async function loadScanDetail(runId) {
+    scansState.runId = runId;
+    scansState.page = 0;
+    scansState.filter = '';
+    scansState.selectedIds.clear();
+
+    const block = $('#scan-detail-block');
+    if (block) block.style.display = '';
+    $('#scan-detail-id').textContent = runId;
+
+    try {
+      const data = await api('GET', `/api/scans/${runId}`);
+      const run = data.run || {};
+      // Track run status so renderFindings can disable the per-row decision
+      // dropdowns while a scan is still mid-flight (clicking does nothing
+      // server-side and confuses users).
+      scansState.runStatus = run.status || '';
+      const liveTag = scansState.runStatus === 'running'
+        ? ' · <span class="accent-cyan">RUNNING — actions disabled until complete</span>'
+        : '';
+      $('#scan-detail-meta').innerHTML =
+        `started ${htmlEscape(run.started_at)} · ${htmlEscape(String(run.findings_count || 0))} findings${liveTag}`;
+      const sm = $('#scan-summary');
+      const k = data.kind_counts || {};
+      sm.innerHTML = `
+        <div class="kpi-row" style="margin-top:10px">
+          <div class="kpi"><div class="kpi-num">${k.exact_match || 0}</div><div class="kpi-lbl">EXACT</div></div>
+          <div class="kpi"><div class="kpi-num">${k.hash_match || 0}</div><div class="kpi-lbl">HASH MATCH</div></div>
+          <div class="kpi"><div class="kpi-num">${k.content_mismatch || 0}</div><div class="kpi-lbl">MISMATCH</div></div>
+          <div class="kpi"><div class="kpi-num">${k.orphan_resolvable || 0}</div><div class="kpi-lbl">ORPHANS (RESOLVED)</div></div>
+          <div class="kpi"><div class="kpi-num">${k.orphan_unresolved || 0}</div><div class="kpi-lbl">ORPHANS (UNRESOLVED)</div></div>
+        </div>`;
+      await loadFindings();
+    } catch (e) {
+      // v1.17.13: surface load failure in the detail-meta strip
+      // so the user knows the scan-detail pane is stale. The
+      // findings table will be empty (loadFindings never ran),
+      // matching the existing "no findings" empty-state look —
+      // without this message, both states would render
+      // identically. Error UX audit HIGH 4.
+      const meta = $('#scan-detail-meta');
+      if (meta) {
+        meta.innerHTML = `<span class="accent-red">`
+          + `detail load failed: ${htmlEscape(e.message)}</span>`;
+      }
+    }
+  }
+
+  async function loadFindings() {
+    const runId = scansState.runId;
+    if (!runId) return;
+    const params = new URLSearchParams({
+      offset: String(scansState.page * scansState.pageSize),
+      limit: String(scansState.pageSize),
+    });
+    if (scansState.filter) params.set('kind', scansState.filter);
+    if (scansState.q) params.set('q', scansState.q);
+    try {
+      const data = await api('GET', `/api/scans/${runId}/findings?${params}`);
+      scansState.findings = data.findings || [];
+      renderFindings();
+    } catch (e) {
+      // v1.17.13: surface load failure in the findings tbody.
+      // Pre-fix a failing load left whatever was previously
+      // rendered (or the empty "no findings" state on first
+      // open) — indistinguishable from a real empty result.
+      // Error UX audit HIGH 4.
+      const tb = $('#scan-findings-body');
+      if (tb) {
+        tb.innerHTML = `<tr><td colspan="7" class="accent-red">`
+          + `findings load failed: ${htmlEscape(e.message)}`
+          + `</td></tr>`;
+      }
+    }
+  }
+
+  function renderFindings() {
+    const tbody = $('#scan-findings-body');
+    if (!tbody) return;
+    if (!scansState.findings.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="muted center">no findings match this filter</td></tr>';
+      return;
+    }
+    tbody.innerHTML = scansState.findings.map((f) => {
+      const folder = htmlEscape(f.media_folder.split('/').pop());
+      let resolved = '';
+      if (f.resolved_metadata) {
+        try {
+          const md = JSON.parse(f.resolved_metadata);
+          const ids = [
+            md.tmdb_id ? `tmdb:${md.tmdb_id}` : null,
+            md.imdb_id ? md.imdb_id : null,
+            md.tvdb_id ? `tvdb:${md.tvdb_id}` : null,
+          ].filter(Boolean).join(' / ');
+          resolved = `<span class="muted small">${htmlEscape(md.source || '')}</span> ${htmlEscape(ids)}`;
+        } catch {}
+      }
+      const checked = scansState.selectedIds.has(f.id) ? 'checked' : '';
+      // Display "lock" for the keep_existing internal value (cosmetic relabel
+      // that doesn't touch the DB enum).
+      const decisionLabel = f.decision === 'pending' ? '–'
+                           : f.decision === 'keep_existing' ? 'lock'
+                           : htmlEscape(f.decision);
+      const isAdopted = !!f.adopted_at;
+      // Lock per-row interaction while the scan run is still active.
+      // The worker writes findings rows as it goes, so users can land on
+      // a partially-populated table — clicking decisions then would hit
+      // a moving target and actions would silently no-op.
+      const scanRunning = scansState.runStatus === 'running';
+      const lockReason = scanRunning ? 'scan still running — wait for completion' : '';
+      let actions;
+      if (isAdopted) {
+        actions = '<span class="muted small">DONE</span>';
+      } else if (scanRunning) {
+        actions = '<span class="muted small" title="' + htmlEscape(lockReason) + '">SCANNING…</span>';
+      } else {
+        actions = `<select class="input" data-decide="${f.id}">
+             <option value="">–</option>
+             <option value="adopt">adopt</option>
+             <option value="replace">replace</option>
+             <option value="keep_existing">lock</option>
+           </select>`;
+      }
+      const cbDisabled = isAdopted || scanRunning;
+      return `<tr data-finding="${f.id}">
+        <td><input type="checkbox" data-select="${f.id}" ${checked} ${cbDisabled ? 'disabled' : ''} /></td>
+        <td><span class="kind-${htmlEscape(f.finding_kind)}">${htmlEscape(f.finding_kind)}</span></td>
+        <td title="${htmlEscape(f.media_folder)}">${folder}</td>
+        <td>${resolved}</td>
+        <td><code class="small">${htmlEscape(f.file_sha256.substring(0, 12))}…</code></td>
+        <td>${decisionLabel}</td>
+        <td>${actions}</td>
+      </tr>`;
+    }).join('');
+
+    tbody.querySelectorAll('[data-select]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const id = parseInt(cb.dataset.select, 10);
+        if (cb.checked) scansState.selectedIds.add(id);
+        else scansState.selectedIds.delete(id);
+        updateBulkBar();
+      });
+    });
+
+    tbody.querySelectorAll('[data-decide]').forEach((sel) => {
+      sel.addEventListener('change', async () => {
+        const id = parseInt(sel.dataset.decide, 10);
+        const decision = sel.value;
+        if (!decision) return;
+        try {
+          await api('POST', `/api/scans/findings/${id}/decision`, { decision });
+          await loadFindings();
+        } catch (e) {
+          alert('Decision failed: ' + e.message);
+        }
+      });
+    });
+
+    updateBulkBar();
+  }
+
+  function updateBulkBar() {
+    const bar = $('#scan-bulk-bar');
+    if (!bar) return;
+    const n = scansState.selectedIds.size;
+    if (n === 0) {
+      bar.style.display = 'none';
+      return;
+    }
+    bar.style.display = '';
+    $('#scan-bulk-count').textContent = `${n} selected`;
+  }
+
+  function bindScans() {
+    if (!$('#scan-trigger-btn')) return;
+    $('#scan-trigger-btn').addEventListener('click', () => triggerScan().catch(console.error));
+
+    document.querySelectorAll('.scan-filter-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.scan-filter-btn').forEach((b) =>
+          b.classList.remove('scan-filter-active'));
+        btn.classList.add('scan-filter-active');
+        scansState.filter = btn.dataset.filterKind || '';
+        scansState.page = 0;
+        scansState.selectedIds.clear();
+        loadFindings().catch(console.error);
+      });
+    });
+
+    // Findings search box (debounced) — searches folder path / file path /
+    // resolved-metadata title via the new ?q= server param.
+    const findingsSearch = $('#scan-findings-search');
+    if (findingsSearch) {
+      let dt;
+      findingsSearch.addEventListener('input', () => {
+        clearTimeout(dt);
+        dt = setTimeout(() => {
+          scansState.q = findingsSearch.value.trim();
+          scansState.page = 0;
+          scansState.selectedIds.clear();
+          loadFindings().catch(console.error);
+        }, 250);
+      });
+    }
+
+    const selectAll = $('#findings-select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', () => {
+        scansState.findings.forEach((f) => {
+          if (!f.adopted_at) {
+            if (selectAll.checked) scansState.selectedIds.add(f.id);
+            else scansState.selectedIds.delete(f.id);
+          }
+        });
+        renderFindings();
+      });
+    }
+
+    $('#findings-prev-btn')?.addEventListener('click', () => {
+      if (scansState.page > 0) { scansState.page -= 1; loadFindings().catch(console.error); }
+    });
+    $('#findings-next-btn')?.addEventListener('click', () => {
+      scansState.page += 1; loadFindings().catch(console.error);
+    });
+
+    // Generic bulk adopt by finding kind. The two adopt buttons share
+    // this helper — only the kind filter and confirmation copy differ.
+    async function bulkAdoptKind(kind, label) {
+      const ids = scansState.findings
+        .filter((f) => f.finding_kind === kind && !f.adopted_at)
+        .map((f) => f.id);
+      if (!ids.length) {
+        alert(`No ${kind} findings on this page to bulk-adopt.`);
+        return;
+      }
+      if (!confirm(`Adopt ${ids.length} ${label}? Each will be hardlinked into your themes_dir.`)) {
+        return;
+      }
+      try {
+        const r = await api('POST', '/api/scans/findings/decisions/bulk',
+                            { finding_ids: ids, decision: 'adopt' });
+        alert(`Enqueued ${r.enqueued} adoption(s).`);
+        await loadFindings();
+      } catch (e) {
+        alert('Bulk adopt failed: ' + e.message);
+      }
+    }
+
+    $('#scan-bulk-adopt-btn')?.addEventListener('click',
+      () => bulkAdoptKind('hash_match', 'hash-matched theme(s) (these match a ThemerrDB record by content)'));
+    $('#scan-bulk-adopt-tmdb-btn')?.addEventListener('click',
+      () => bulkAdoptKind('orphan_resolvable', 'TMDB-matched theme(s) (motif will manage these as manual M sources)'));
+
+    document.querySelectorAll('[data-bulk]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const decision = btn.dataset.bulk;
+        const ids = Array.from(scansState.selectedIds);
+        if (!ids.length) return;
+        const label = decision === 'keep_existing' ? 'lock' : decision;
+        if (!confirm(`Apply "${label}" to ${ids.length} finding(s)?`)) return;
+        try {
+          const r = await api('POST', '/api/scans/findings/decisions/bulk',
+                              { finding_ids: ids, decision });
+          alert(`Enqueued ${r.enqueued} action(s).`);
+          scansState.selectedIds.clear();
+          await loadFindings();
+        } catch (e) {
+          alert('Bulk action failed: ' + e.message);
+        }
+      });
+    });
+
+    loadScansList().catch(console.error);
+  }
+
+
+
+  function bindSettingsTabs() {
+    const tabs = document.querySelectorAll('#settings-tabs .tab');
+    if (!tabs.length) return;
+
+    function showTab(name) {
+      tabs.forEach((t) => t.classList.toggle('tab-active', t.dataset.tab === name));
+      document.querySelectorAll('.tab-panel').forEach((p) => {
+        p.style.display = p.dataset.panel === name ? '' : 'none';
+      });
+      // v1.15.64: keep <html data-settings-tab="X"> in sync with the
+      // active tab so the SSR CSS rules (app.css .tab-panel block) and
+      // JS inline-style writes agree. Without this, the CSS !important
+      // from the initial /settings#X SSR continues to clobber the JS's
+      // post-click style swap, leaving the panel stuck on the deep-link.
+      document.documentElement.setAttribute('data-settings-tab', name);
+      // Update URL hash for deep links
+      const newHash = '#' + name;
+      if (window.location.hash !== newHash) {
+        history.replaceState(null, '', newHash);
+      }
+    }
+
+    tabs.forEach((t) => {
+      t.addEventListener('click', () => showTab(t.dataset.tab));
+    });
+
+    // Honor #hash on page load
+    const initial = (window.location.hash || '').replace(/^#/, '');
+    const valid = Array.from(tabs).map((t) => t.dataset.tab);
+    if (valid.includes(initial)) {
+      showTab(initial);
+    } else if (document.documentElement.getAttribute('data-settings-tab')) {
+      // v1.15.65: defense in depth — if base.html's SSR script
+      // somehow stamped an attribute that isn't a real panel (a
+      // future drift, or a direct setAttribute from devtools),
+      // reset to the default panel. Without this the SSR CSS
+      // `html[data-settings-tab] .tab-panel { display: none !important; }`
+      // rule would keep every panel hidden = blank page.
+      showTab('paths');
+    }
+  }
+
+  // v1.15.66: bulk user-URL import — preview + apply pair.
+  // Drives the // IMPORT settings panel. File picker → POST to
+  // /api/import/preview (parse + categorize) → render results
+  // table with per-row action picker for conflicts → APPLY posts
+  // resolved decisions to /api/import/apply.
+  //
+  // Per-row controls:
+  //   * Apply checkbox (default ✓ for clean rows, off for
+  //     conflicts/no_match/skipped/invalid_url)
+  //   * Action picker (conflict only): Replace / Keep / Skip
+  //   * Verify badge when match came from title+year fallback
+  function bindImportPanel() {
+    const fileInput = document.getElementById('import-csv-file');
+    const previewBtn = document.getElementById('import-preview-btn');
+    const previewStatus = document.getElementById('import-preview-status');
+    const resultsBlock = document.getElementById('import-preview-results');
+    const summaryEl = document.getElementById('import-preview-summary');
+    const tbody = document.getElementById('import-preview-tbody');
+    const selectAll = document.getElementById('import-row-select-all');
+    const applyBtn = document.getElementById('import-apply-btn');
+    const applyStatus = document.getElementById('import-apply-status');
+    // v1.15.68: completion banner + reset. Shown after a successful
+    // // APPLY IMPORT; hides the preview table to make the success
+    // unambiguous (the user's v1.15.67 feedback). Reset clears state
+    // so a follow-up CSV can be staged without a page reload.
+    const completeBanner = document.getElementById('import-apply-complete');
+    const completeApplied = document.getElementById('import-complete-applied');
+    const completeSkipped = document.getElementById('import-complete-skipped');
+    const completeErrors = document.getElementById('import-complete-errors');
+    const completeErrorsWrap = document.getElementById('import-complete-errors-wrap');
+    const completeReset = document.getElementById('import-complete-reset');
+    // v1.15.69: import-preview-hint removed (was verbose + unhelpful
+    // per the user); previewHint var dropped from the local closure.
+    const tableEl = document.getElementById('import-preview-table');
+    if (!fileInput || !previewBtn) return;
+
+    let previewRows = [];
+
+    fileInput.addEventListener('change', () => {
+      previewBtn.disabled = !fileInput.files || !fileInput.files.length;
+      previewStatus.textContent = fileInput.files && fileInput.files.length
+        ? fileInput.files[0].name : '';
+    });
+
+    function renderPreviewTable(rows) {
+      previewRows = rows;
+      tbody.innerHTML = '';
+      if (!rows.length) {
+        resultsBlock.style.display = 'none';
+        return;
+      }
+      // v1.15.66: status pill tone matches the row's classification.
+      //   clean        → green (default)
+      //   conflict     → btn-warn amber
+      //   no_match     → muted
+      //   invalid_url  → btn-danger
+      //   skipped      → muted
+      const tone = {
+        clean: 'btn-tone-ok',
+        conflict: 'btn-warn',
+        // v1.15.73: DUPLICATE uses the muted tone — visually
+        // distinct from CLEAN (green-ish) so the user reads
+        // "this is a no-op match" at a glance, not "this will apply".
+        duplicate: 'btn-tone-muted',
+        no_match: 'btn-tone-muted',
+        invalid_url: 'btn-danger',
+        skipped: 'btn-tone-muted',
+      };
+      // v1.15.71: src-letter rendering reuses the library's
+      // .link-badge family (link-badge-themerrdb green for T,
+      // link-badge-user violet for U, link-badge-adopt cyan for A,
+      // link-badge-manual red for M, link-badge-cloud amber for P).
+      // the user's v1.15.70 feedback: "make the U purple like in the
+      // library section ... if we were doing a bulk import over an
+      // A or T let's have the proper blue A, green T or red M".
+      // The v1.15.66 src-pill src-X class never existed in CSS — it
+      // would just render as a plain inline span with no color.
+      const SRC_BADGE = {
+        T: ['link-badge-themerrdb', 'motif manages from ThemerrDB'],
+        U: ['link-badge-user', 'User-provided URL'],
+        A: ['link-badge-adopt', 'Adopted sidecar (no TDB link)'],
+        M: ['link-badge-manual', 'Manual sidecar (motif does not own)'],
+        P: ['link-badge-cloud', 'Plex agent / cloud theme'],
+      };
+      function renderSrcBadge(letter) {
+        const meta = SRC_BADGE[letter];
+        if (!meta) return '<span class="muted">—</span>';
+        return `<span class="link-badge ${meta[0]}" title="${meta[1]}">${letter}</span>`;
+      }
+
+      // v1.15.69: row rendering mirrors library.html row shape. Each
+      // <td> uses the matching .col-* class from the thead so the
+      // table-layout:fixed column widths line up. URL cells get
+      // .url-cell (ellipsis truncation + title-attr full URL).
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const tr = document.createElement('tr');
+        tr.dataset.importIndex = String(i);
+        tr.dataset.importStatus = r.status;
+        // Apply checkbox: pre-checked when default_action is anything
+        // other than 'skip'.
+        const canApply = (r.status === 'clean' || r.status === 'conflict');
+        const checked = canApply && r.default_action !== 'skip';
+        // Action picker: only meaningful for clean (replace/skip) or
+        // conflict (keep/replace/download-only-on-P).
+        // v1.15.71: P-row conflicts gain a "Download only" option —
+        // the user: "if it's a P row then let's offer an additional
+        // action for download only so that way we're downloading a
+        // backup copy but still allowing plex to serve the theme
+        // until motif one is pushed." Apply maps download_only →
+        // user_override + download enqueued with force_place=False
+        // so the row stays P after the import lands.
+        // v1.15.73: DUPLICATE rows are not actionable (no-op by
+        // definition); fall through to the "—" placeholder.
+        // v1.18.82: CONFLICT dropdown simplified. Pre-fix had
+        // four options including a Skip duplicate — api.py:11310
+        // treats action='keep' and action='skip' identically
+        // (both increment the `skipped` counter, no DB write), so
+        // Skip on CONFLICT was visual noise. the user: "keep vs
+        // replace vs skip" — confusion was real. Three distinct
+        // intents now:
+        //   Keep current   = leave row alone (default no-op)
+        //   Replace        = overwrite with imported URL
+        //   Backup only    = (P-rows) download imported as backup,
+        //                    Plex keeps serving its own theme
+        // Each option carries a `title=` tooltip with the full
+        // semantics so a future "what does this do?" hovers
+        // produce an answer. "Backup only" replaces v1.15.71's
+        // "Download backup (Plex stays)" — same action, shorter
+        // label so the select width matches sibling rows.
+        let actionHtml = '<span class="muted small">—</span>';
+        if (r.status === 'clean') {
+          actionHtml = `
+            <select class="input input-tiny" data-import-action
+                    aria-label="Action for this row">
+              <option value="replace" ${r.default_action === 'replace' ? 'selected' : ''}
+                      title="Apply the imported URL to this row">Apply</option>
+              <option value="skip" ${r.default_action === 'skip' ? 'selected' : ''}
+                      title="Don't apply — leave the row unchanged">Skip</option>
+            </select>`;
+        } else if (r.status === 'conflict') {
+          const downloadOnlyOption = (r.current_src === 'P')
+            ? `<option value="download_only" ${r.default_action === 'download_only' ? 'selected' : ''}
+                       title="Download the imported URL as a backup file — Plex continues serving its own theme. Use // PROMOTE TO ACTIVE later to deploy the backup.">Backup only</option>`
+            : '';
+          actionHtml = `
+            <select class="input input-tiny" data-import-action
+                    aria-label="Action for this conflicting row">
+              <option value="keep" ${r.default_action === 'keep' ? 'selected' : ''}
+                      title="Leave the row unchanged — keep the current URL or source.">Keep current</option>
+              <option value="replace" ${r.default_action === 'replace' ? 'selected' : ''}
+                      title="Overwrite the current URL/source with the imported URL.">Replace</option>
+              ${downloadOnlyOption}
+            </select>`;
+        }
+        const statusLabel = {
+          clean: 'CLEAN',
+          conflict: 'CONFLICT',
+          duplicate: 'DUPLICATE',
+          no_match: 'NO MATCH',
+          invalid_url: 'INVALID URL',
+          skipped: 'SKIPPED',
+        }[r.status] || r.status;
+        // v1.15.80: suppress VERIFY on DUPLICATE rows. the user: "what
+        // does the duplicate verify status indicate?" — VERIFY means
+        // the row matched via title+year fallback (not exact IMDB),
+        // so the user should spot-check before applying. But
+        // DUPLICATE is a definitional no-op (current URL == imported
+        // URL), so there's nothing to apply and nothing to verify.
+        // The badge was just visual noise on those rows.
+        const showVerify = r.verify && r.status !== 'duplicate';
+        const verifyBadge = showVerify
+          ? ' <span class="pill pill-warn small" title="Matched by title+year, not IMDB — verify before apply">VERIFY</span>'
+          : '';
+        // Current cell: src-letter badge + a small info button that
+        // opens the standard // MOTIF INFO dialog for this row.
+        // v1.15.73: dropped the inline URL preview. the user: "Maybe
+        // instead of showing the current url we show the info
+        // button which allows you to see the current info row that
+        // row?" The URL stack made the cell taller than IMPORTED
+        // URL (single line) and the columns weren't vertically
+        // aligned. Now both cells are single-line.
+        // The info button is hidden for orphan_pending rows (no
+        // theme exists yet → openInfoDialog would 404).
+        const canInfo = r.current_src && r.theme_tmdb_id != null
+                         && r.theme_media_type;
+        // v1.15.76: reuse the library's .row-info-btn class so the
+        // glyph-sized 30px button matches the // INFO buttons in
+        // /movies, /tv, /anime. The v1.15.73 .import-info-btn
+        // inherited .btn-tiny's 72px min-width and rendered as a
+        // tall thin rectangle — the user: "the U and info button is
+        // weirdly stretching, let's use the same looking info
+        // button from the libraries section." The ⓘ glyph matches
+        // the library row's affordance too. import-info-btn stays
+        // as a click-delegation selector hook (no styling).
+        const infoBtn = canInfo
+          ? `<button type="button" class="btn btn-tiny row-info-btn import-info-btn"
+                    data-info-mt="${htmlEscape(r.theme_media_type)}"
+                    data-info-tmdb="${htmlEscape(String(r.theme_tmdb_id))}"
+                    title="Open // MOTIF INFO for this row">ⓘ</button>`
+          : '';
+        const currentInner = r.current_src
+          ? `<span class="current-stack">${renderSrcBadge(r.current_src)}${infoBtn}</span>`
+          : '<span class="muted">—</span>';
+        // v1.15.77: compact play-link form for the IMPORTED URL
+        // cell. v1.15.71-76 rendered the full URL with ellipsis
+        // truncation; the user: "the import url being so long
+        // looks a bit off, let's explore ways to make that look
+        // better." Now: "▶ {video_id}" — click opens the URL in
+        // a new tab so the user can preview the video before
+        // applying; hover surfaces the full URL via title=.
+        // extractVideoId handles both YouTube (11 chars) +
+        // SoundCloud (sc-prefix) so the helper output is the
+        // compact source-of-truth identifier.
+        let importedInner;
+        if (r.imported_url) {
+          const vid = (typeof extractYouTubeVideoId === 'function')
+            ? extractYouTubeVideoId(r.imported_url) : '';
+          // Fall back to the URL itself if we can't parse a vid
+          // (the link is still clickable; ellipsis handles long
+          // values via .url-link's max-width:100% + overflow).
+          const label = vid || r.imported_url;
+          // v1.21.15 (security): only link http(s) URLs; a javascript:
+          // payload that the unanchored YT regex mis-classified renders
+          // as plain text, not a clickable link.
+          const _impHref = safeHref(r.imported_url);
+          importedInner = _impHref
+            ? `<a class="url-link" target="_blank" rel="noopener"`
+              + ` href="${htmlEscape(_impHref)}"`
+              + ` title="${htmlEscape(r.imported_url)}">`
+              + `<span class="url-link-glyph">▶</span>${htmlEscape(label)}`
+              + `</a>`
+            : `<span class="url-link" title="${htmlEscape(r.imported_url)}">`
+              + `<span class="url-link-glyph">▶</span>${htmlEscape(label)}`
+              + `</span>`;
+        } else {
+          importedInner = '<span class="muted">—</span>';
+        }
+        // v1.15.77: IMDB cell renders as a link to imdb.com,
+        // matching every other library tab — the user: "Can we
+        // also make the imdb id a url to the imdb page same
+        // as the libraries section." Hot-link to the title
+        // page so the user can verify the match in one click.
+        const imdbInner = r.imdb
+          ? `<a href="https://www.imdb.com/title/${htmlEscape(r.imdb)}"`
+            + ` target="_blank" rel="noopener">${htmlEscape(r.imdb)}</a>`
+          : '<span class="muted">—</span>';
+        tr.innerHTML = `
+          <td class="col-state">
+            <input type="checkbox" data-import-apply ${checked ? 'checked' : ''} ${canApply ? '' : 'disabled'}>
+          </td>
+          <td class="col-import-status"><span class="pill ${tone[r.status] || ''} small">${htmlEscape(statusLabel)}</span>${verifyBadge}</td>
+          <td class="col-title">${htmlEscape(r.title || '')}</td>
+          <td class="col-imdb mono">${imdbInner}</td>
+          <td class="col-import-current">${currentInner}</td>
+          <td class="col-import-url">${importedInner}</td>
+          <td class="col-import-action">${actionHtml}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+      resultsBlock.style.display = '';
+    }
+
+    function renderSummary(counts) {
+      const parts = [];
+      if (counts.clean) parts.push(`<strong>${counts.clean}</strong> CLEAN`);
+      if (counts.conflict) parts.push(`<strong>${counts.conflict}</strong> CONFLICT`);
+      // v1.15.73: DUPLICATE before NO MATCH in the chip order —
+      // duplicates are the most common "your CSV is the same as
+      // what's already here" outcome, so it reads first.
+      if (counts.duplicate) parts.push(`<strong>${counts.duplicate}</strong> DUPLICATE`);
+      if (counts.no_match) parts.push(`<strong>${counts.no_match}</strong> NO MATCH`);
+      if (counts.invalid_url) parts.push(`<strong>${counts.invalid_url}</strong> INVALID URL`);
+      if (counts.skipped) parts.push(`<strong>${counts.skipped}</strong> SKIPPED`);
+      summaryEl.innerHTML = parts.join(' · ') || '<span class="muted">no rows</span>';
+    }
+
+    previewBtn.addEventListener('click', async () => {
+      if (!fileInput.files || !fileInput.files.length) return;
+      previewBtn.disabled = true;
+      const origLabel = previewBtn.textContent;
+      previewBtn.textContent = '// PARSING…';
+      applyStatus.textContent = '';
+      try {
+        const fd = new FormData();
+        fd.append('file', fileInput.files[0]);
+        const resp = await fetch('/api/import/preview', {
+          method: 'POST', body: fd, credentials: 'same-origin',
+        });
+        if (!resp.ok) {
+          const detail = await resp.text();
+          throw new Error(`HTTP ${resp.status}: ${detail.slice(0, 200)}`);
+        }
+        const data = await resp.json();
+        renderPreviewTable(data.rows || []);
+        renderSummary(data.counts || {});
+      } catch (e) {
+        alert('Preview failed: ' + (e.message || e));
+        resultsBlock.style.display = 'none';
+      } finally {
+        previewBtn.textContent = origLabel;
+        previewBtn.disabled = false;
+      }
+    });
+
+    // Header checkbox: bulk-toggle every row's apply checkbox.
+    // Skips disabled rows (no_match/invalid_url/skipped) so a
+    // mis-click doesn't try to apply unactionable rows.
+    selectAll?.addEventListener('change', () => {
+      const want = selectAll.checked;
+      tbody.querySelectorAll('input[data-import-apply]:not(:disabled)')
+        .forEach((cb) => { cb.checked = want; });
+    });
+
+    // v1.15.73: delegate info-button clicks to openInfoDialog so the
+    // user can see the full row state (URLs, dates, failure, etc.)
+    // without leaving the import preview. Mirrors the library row's
+    // info button. Click bubbles through tbody to keep one listener.
+    tbody?.addEventListener('click', (ev) => {
+      const btn = ev.target.closest('.import-info-btn');
+      if (!btn) return;
+      ev.preventDefault();
+      const mt = btn.dataset.infoMt;
+      const tmdb = btn.dataset.infoTmdb;
+      if (typeof openInfoDialog === 'function' && mt && tmdb) {
+        openInfoDialog(mt, tmdb).catch(console.error);
+      }
+    });
+
+    function showCompleteBanner(data) {
+      // v1.15.68: replace inline-text "N applied" with the prominent
+      // green-bordered // ✓ IMPORT COMPLETE block. Hide the preview
+      // table so the success state is visually unambiguous.
+      if (!completeBanner) return;
+      completeApplied.textContent = String(data.applied || 0);
+      completeSkipped.textContent = String(data.skipped || 0);
+      if (data.errors && data.errors.length) {
+        completeErrors.textContent = String(data.errors.length);
+        completeErrorsWrap.style.display = '';
+      } else {
+        completeErrorsWrap.style.display = 'none';
+      }
+      completeBanner.style.display = '';
+      if (tableEl) tableEl.style.display = 'none';
+      if (applyBtn) applyBtn.style.display = 'none';
+      if (applyStatus) applyStatus.textContent = '';
+    }
+
+    function resetImportPanel() {
+      // v1.15.68: clear state so the user can stage a follow-up CSV
+      // without a page reload. Mirror initial state of every element
+      // the preview / apply mutated.
+      previewRows = [];
+      if (fileInput) fileInput.value = '';
+      if (previewStatus) previewStatus.textContent = '';
+      if (previewBtn) previewBtn.disabled = true;
+      if (resultsBlock) resultsBlock.style.display = 'none';
+      if (completeBanner) completeBanner.style.display = 'none';
+      if (tableEl) tableEl.style.display = '';
+      if (applyBtn) {
+        applyBtn.style.display = '';
+        applyBtn.disabled = false;
+      }
+      if (tbody) tbody.innerHTML = '';
+    }
+
+    completeReset?.addEventListener('click', resetImportPanel);
+
+    applyBtn?.addEventListener('click', async () => {
+      const decisions = [];
+      const trs = tbody.querySelectorAll('tr[data-import-index]');
+      for (const tr of trs) {
+        const idx = Number(tr.dataset.importIndex);
+        const row = previewRows[idx];
+        if (!row || (row.status !== 'clean' && row.status !== 'conflict')) continue;
+        const cb = tr.querySelector('input[data-import-apply]');
+        if (!cb || !cb.checked) continue;
+        const sel = tr.querySelector('select[data-import-action]');
+        const action = sel ? sel.value : 'skip';
+        // v1.15.71: 'download_only' is a P-row variant of 'replace' —
+        // write the user_override + enqueue the download, but don't
+        // force-place. The user_overrides row exists so the URL is
+        // canonical going forward; Plex keeps serving its own theme
+        // until the user manually PUSHes. Surfaces at the API layer
+        // as action='replace' + force_place=false; the backend reads
+        // both fields.
+        const forcePlace = (action !== 'download_only');
+        const apiAction = (action === 'download_only') ? 'replace' : action;
+        decisions.push({
+          theme_media_type: row.theme_media_type,
+          theme_tmdb_id: row.theme_tmdb_id,
+          // v1.15.67: orphan-pending support. When the preview matched
+          // a plex_items row without an existing themes row (NO TDB),
+          // theme_tmdb_id is null and imdb_id_for_orphan tells the
+          // apply endpoint to synthesize a plex_orphan theme on the
+          // fly (same path manual-url uses for orphan rows).
+          imdb_id_for_orphan: row.imdb_id_for_orphan || null,
+          imported_url: row.imported_url,
+          action: apiAction,
+          force_place: forcePlace,
+        });
+      }
+      if (!decisions.length) {
+        alert('Nothing to apply — every row is unchecked or unactionable.');
+        return;
+      }
+      if (!confirm(`Apply ${decisions.length} URL change(s)?`)) return;
+      applyBtn.disabled = true;
+      const origLabel = applyBtn.textContent;
+      applyBtn.textContent = '// APPLYING…';
+      applyStatus.textContent = '';
+      try {
+        const data = await api('POST', '/api/import/apply', { decisions });
+        showCompleteBanner(data);
+        // Refresh the topbar / dashboard stats post-apply so the
+        // user sees the count effects immediately. /api/stats has
+        // a 1s TTL cache; delay just past it.
+        setTimeout(() => {
+          if (typeof refreshTopbarStatus === 'function') refreshTopbarStatus().catch(() => {});
+        }, 1100);
+      } catch (e) {
+        alert('Apply failed: ' + (e.message || e));
+        applyBtn.textContent = origLabel;
+        applyBtn.disabled = false;
+      }
+    });
+  }
+
+  // ---- Config form (paths, plex, downloads, matching, sync, runtime tabs) ----
+  // The form fields are declarative — we read /api/config once, populate
+  // every [data-cfg-field], then on save we collect the dirty fields per tab
+  // and PATCH /api/config.
+
+  let configCache = null;       // { config, env_overrides, ... } from last GET
+  // v1.17.13: tracks whether the most recent /api/config GET
+  // failed. When set, bindConfigSaves refuses to PATCH — pre-fix
+  // a failed config load left every form field at HTML defaults
+  // (empty inputs, unchecked boxes), and a subsequent SAVE click
+  // would PATCH those defaults over the real server-side values,
+  // SILENTLY WIPING the user's config. Error UX audit HIGH 3 —
+  // the most dangerous of the silent-loader bugs because it
+  // turns into data loss the moment the user touches anything.
+  let configLoadFailed = false;
+
+  function _renderConfigLoadFailedBanner(err) {
+    // Inject (or update) a banner at the top of the settings
+    // page explaining that loading failed + offering a retry.
+    // Lives outside the form so it's visible regardless of
+    // which sub-tab is active.
+    const main = document.querySelector('main')
+      || document.querySelector('body');
+    if (!main) return;
+    let banner = document.getElementById('cfg-load-failed-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'cfg-load-failed-banner';
+      banner.className = 'missing-banner';
+      banner.style.margin = '12px 0';
+      // v1.17.13: use existing `.missing-banner-text` primitive
+      // (per the v1.15.89 class-hygiene lint contract — no JS-
+      // only class names without backing CSS).
+      banner.innerHTML = `
+        <span class="missing-banner-glyph">⚠</span>
+        <div class="missing-banner-text">
+          <strong>Settings load failed</strong> —
+          <span data-cfg-load-err></span>.
+          Saves are disabled until the next successful load
+          (otherwise blank form fields could overwrite your
+          real config).
+          <button class="btn btn-tiny" data-cfg-retry
+                  style="margin-left:var(--gap-2)">// RETRY</button>
+        </div>`;
+      main.insertBefore(banner, main.firstChild);
+      banner.querySelector('[data-cfg-retry]')
+        .addEventListener('click', () => loadConfigIntoForms());
+    }
+    const errEl = banner.querySelector('[data-cfg-load-err]');
+    if (errEl) errEl.textContent = err && err.message ? err.message : '';
+  }
+
+  function _clearConfigLoadFailedBanner() {
+    const banner = document.getElementById('cfg-load-failed-banner');
+    if (banner && banner.parentNode) banner.parentNode.removeChild(banner);
+  }
+
+  async function loadConfigIntoForms() {
+    if (!document.querySelector('[data-cfg-field], [data-cfg-field-list]')) return;
+    let data;
+    try {
+      data = await api('GET', '/api/config');
+    } catch (e) {
+      // v1.17.13: visible banner + save-disable instead of the
+      // pre-fix silent `console.error` + `return`. See the
+      // configLoadFailed declaration above for full rationale.
+      console.error('config load failed', e);
+      configLoadFailed = true;
+      _renderConfigLoadFailedBanner(e);
+      return;
+    }
+    configCache = data;
+    configLoadFailed = false;
+    _clearConfigLoadFailedBanner();
+    populateConfigForms(data);
+  }
+
+  function getDotted(obj, dotted) {
+    return dotted.split('.').reduce((o, k) => (o == null ? o : o[k]), obj);
+  }
+
+  function populateConfigForms(data) {
+    const cfg = data.config;
+    const envOverrides = data.env_overrides || {};
+
+    // Scalar fields
+    document.querySelectorAll('[data-cfg-field]').forEach((el) => {
+      const path = el.dataset.cfgField;
+      const v = getDotted(cfg, path);
+      if (el.type === 'checkbox') {
+        el.checked = !!v;
+      } else if (path === 'plex.token') {
+        // Special: token is masked. Show empty, but mark "(set)" placeholder.
+        el.value = '';
+        el.placeholder = cfg.plex && cfg.plex.token_set ? '(set — leave empty to keep)' : 'paste token here';
+      } else {
+        el.value = v == null ? '' : v;
+      }
+
+      // Env override: disable + show badge
+      if (envOverrides[path]) {
+        el.disabled = true;
+      } else {
+        el.disabled = false;
+      }
+    });
+
+    // List fields (CSV in UI, list in JSON)
+    document.querySelectorAll('[data-cfg-field-list]').forEach((el) => {
+      const path = el.dataset.cfgFieldList;
+      const v = getDotted(cfg, path);
+      el.value = Array.isArray(v) ? v.join(', ') : '';
+      el.disabled = !!envOverrides[path];
+    });
+
+    // v1.17.0: newline-separated list variant (Apprise URLs, etc.).
+    document.querySelectorAll('[data-cfg-field-lines]').forEach((el) => {
+      const path = el.dataset.cfgFieldLines;
+      const v = getDotted(cfg, path);
+      el.value = Array.isArray(v) ? v.join('\n') : '';
+      el.disabled = !!envOverrides[path];
+    });
+
+    // Env-override badges
+    document.querySelectorAll('[data-env-badge]').forEach((b) => {
+      b.style.display = envOverrides[b.dataset.envBadge] ? '' : 'none';
+    });
+
+    // v1.21.21: capture the cron sub-toggle's env-lock state (the scalar
+    // loop above already set .disabled from env overrides) so the
+    // dependency logic never re-enables an env-locked field, then wire the
+    // main→sub gray-out once and apply the current state.
+    const cronSub = document.querySelector('[data-cfg-field="sync.auto_enum_after_cron_sync"]');
+    if (cronSub) {
+      cronSub.dataset.envLocked = cronSub.disabled ? '1' : '0';
+      const cronMain = document.querySelector('[data-cfg-field="sync.auto_enum_after_sync"]');
+      if (cronMain && !cronMain.dataset.cronDepWired) {
+        cronMain.addEventListener('change', applyCronEnumDependency);
+        cronMain.dataset.cronDepWired = '1';
+      }
+      applyCronEnumDependency();
+    }
+  }
+
+  // v1.21.21: the cron-only sub-toggle (sync.auto_enum_after_cron_sync) has
+  // NO effect when the main toggle (sync.auto_enum_after_sync) is on — main
+  // already covers the cron sync. Disable + gray it out in that state so the
+  // dependency reads clearly instead of leaving a silently-inert checkbox.
+  // Env-locked subs (MOTIF_AUTO_ENUM_AFTER_CRON_SYNC) stay disabled
+  // regardless — we never re-enable those. Disabled inputs are skipped by
+  // collectFieldsForTab, so the sub's stored value is preserved (not
+  // overwritten) while it's grayed.
+  function applyCronEnumDependency() {
+    const main = document.querySelector('[data-cfg-field="sync.auto_enum_after_sync"]');
+    const sub = document.querySelector('[data-cfg-field="sync.auto_enum_after_cron_sync"]');
+    if (!main || !sub) return;
+    const envLocked = sub.dataset.envLocked === '1';
+    const disabled = envLocked || main.checked;
+    sub.disabled = disabled;
+    const label = sub.closest('.form-checkbox-sub');
+    if (label) label.classList.toggle('is-disabled', disabled);
+  }
+
+  function collectFieldsForTab(tabSpec) {
+    // tab is "paths", "plex", etc. — find every [data-cfg-field*="<tab>."]
+    // and assemble a partial PATCH body.
+    // v1.21.12: tabSpec may be a single section OR space-separated
+    // sections ("sync placement") so ONE save button (the // AUTOMATION
+    // block) can PATCH fields from more than one config section in a
+    // single request.
+    const out = {};
+    (tabSpec || '').split(/\s+/).filter(Boolean).forEach((tab) => {
+    out[tab] = out[tab] || {};
+
+    document.querySelectorAll(`[data-cfg-field^="${tab}."]`).forEach((el) => {
+      if (el.disabled) return;  // env-overridden
+      const path = el.dataset.cfgField;
+      const key = path.split('.').slice(1).join('.');
+      let v;
+      if (el.type === 'checkbox') {
+        v = !!el.checked;
+      } else if (el.type === 'number') {
+        const num = el.value === '' ? null : Number(el.value);
+        v = Number.isFinite(num) ? num : null;
+      } else if (path === 'plex.token') {
+        // Empty string = preserve. Don't include the field at all if empty.
+        if (el.value === '') return;
+        v = el.value;
+      } else {
+        v = el.value;
+      }
+      // Set via dotted path within out[tab]
+      const parts = key.split('.');
+      let cur = out[tab];
+      for (let i = 0; i < parts.length - 1; i++) {
+        cur[parts[i]] = cur[parts[i]] || {};
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = v;
+    });
+
+    document.querySelectorAll(`[data-cfg-field-list^="${tab}."]`).forEach((el) => {
+      if (el.disabled) return;
+      const path = el.dataset.cfgFieldList;
+      const key = path.split('.').slice(1).join('.');
+      const list = el.value.split(',').map((s) => s.trim()).filter(Boolean);
+      out[tab][key] = list;
+    });
+
+    // v1.17.0: newline-separated list variant. Apprise URLs are
+    // long enough that comma-separation would force the user
+    // onto one wrapped line; line-per-URL is readable and matches
+    // how Apprise's own docs document them. Same set-via-dotted-
+    // path shape as the comma-list above.
+    document.querySelectorAll(`[data-cfg-field-lines^="${tab}."]`).forEach((el) => {
+      if (el.disabled) return;
+      const path = el.dataset.cfgFieldLines;
+      const key = path.split('.').slice(1).join('.');
+      const list = el.value.split('\n').map((s) => s.trim()).filter(Boolean);
+      // Set via dotted path within out[tab] — same nested-object
+      // builder as data-cfg-field above so a path like
+      // notifications.events.foo materializes the events sub-object.
+      const parts = key.split('.');
+      let cur = out[tab];
+      for (let i = 0; i < parts.length - 1; i++) {
+        cur[parts[i]] = cur[parts[i]] || {};
+        cur = cur[parts[i]];
+      }
+      cur[parts[parts.length - 1]] = list;
+    });
+    });  // v1.21.12: close the per-section loop
+
+    return out;
+  }
+
+  // v1.13.8 (Phase D): cache observability gauge for the settings
+  // page. Read-only — surfaces what's in <db_dir>/cache/ so the
+  // user can see Phase A's tarball + Phase B's git mirror + etc.
+  // accumulating without surprise. Hidden until /api/cache/size
+  // returns exists=true with a non-empty artifact list.
+  async function loadCacheGauge() {
+    const block = document.getElementById('cache-gauge');
+    const totalEl = document.getElementById('cache-gauge-total');
+    const listEl = document.getElementById('cache-gauge-list');
+    if (!block || !totalEl || !listEl) return;
+    try {
+      const data = await api('GET', '/api/cache/size');
+      if (!data || !data.exists || !data.artifacts || data.artifacts.length === 0) {
+        block.hidden = true;
+        return;
+      }
+      totalEl.textContent = `${fmt.bytes(data.total_bytes || 0)} total`;
+      listEl.innerHTML = data.artifacts.map((a) => `
+        <li>
+          <span>${htmlEscape(a.label || a.name)}${a.is_dir ? '/' : ''}</span>
+          <span class="cache-gauge-bytes">${fmt.bytes(a.bytes || 0)}</span>
+        </li>
+      `).join('');
+      block.hidden = false;
+    } catch (_) {
+      block.hidden = true;
+    }
+  }
+
+  // v1.13.38: REPROBE PLEX THEMES wiring. Background admin action
+  // that backfills the +P composite indicator for sidecar-bearing
+  // rows by temporarily renaming each theme.mp3 and HEAD-probing
+  // Plex. Confirms before kicking off (it's slow and touches files
+  // in /data); status drives the live-ops drawer via op_progress.
+  // v1.14.98: shared completion watcher for the settings probe
+  // buttons (REPROBE PLEX THEMES, PROBE TDB URLS). Pre-fix the
+  // status text said "✓ started — see // LIVE OPS for progress"
+  // and never updated, so the user had to open the drawer to know
+  // when it actually finished. the user: "could we make the status
+  // on the reprobe button the text to the right update once its
+  // completed."
+  //
+  // Strategy: poll window.motifOps.state() every 2s for an op
+  // with the matching kind. Track whether we ever saw it
+  // running/pending — that tells us "the op did register" vs
+  // "the op was instantaneous + already pruned." Update the
+  // status text on terminal transition (done / failed /
+  // cancelled). Stop after 30 min as a safety bound.
+  function _watchOpForCompletion(kind, statusEl) {
+    if (!statusEl) return;
+    const startTime = Date.now();
+    const TIMEOUT_MS = 30 * 60 * 1000;
+    let sawActive = false;
+    const interval = setInterval(() => {
+      if (Date.now() - startTime > TIMEOUT_MS) {
+        // v1.17.20: surface timeout instead of silently dying.
+        // Pre-fix the watcher hit 30min, cleared the interval,
+        // and left whatever progress text was on screen — user
+        // had no signal the watcher gave up. Audit race #3.
+        clearInterval(interval);
+        statusEl.textContent = (
+          '× watcher timed out after 30 min — '
+          + 'see // LIVE OPS for actual op status'
+        );
+        statusEl.classList.remove('form-status-ok');
+        statusEl.classList.add('form-status-fail');
+        _autoDismissOpStatus(statusEl);
+        return;
+      }
+      let ops = [];
+      try {
+        if (window.motifOps && window.motifOps.state) {
+          ops = (window.motifOps.state().ops || []);
+        }
+      } catch (_) { return; }
+      // v1.15.7: filter out stale op_progress rows that finished
+      // BEFORE this watcher started. op_progress retains rows for
+      // 24h post-finish — if the user just clicked PROBE TDB URLS
+      // moments after a previous probe was cancelled, the old
+      // cancelled row is still in motifOps.state().ops with the
+      // same kind. The pre-fix watcher's first poll (within ~2s)
+      // would land in the gap between threading.Thread.start() and
+      // the spawned thread's start_progress call (a few hundred
+      // ms), see the OLD cancelled row, and report "× cancelled"
+      // immediately — even though the new probe was about to run.
+      // the user: "right away after clicking probe tdb url from the
+      // settings to do a bulk prob it will say cancelled right
+      // away, then a few seconds later see the status bar change
+      // and it begin the probe."
+      //
+      // Filter: ignore ops whose started_at is older than the
+      // watcher's own startTime. The new run's start_progress
+      // will stamp a fresh started_at >= watcher startTime, so
+      // the filter naturally picks up the new row once it
+      // appears + ignores the stale one until then.
+      const op = ops.find((o) => {
+        if (o.kind !== kind) return false;
+        // No started_at? Can't compare — accept (degrade gracefully).
+        if (!o.started_at) return true;
+        const opStarted = new Date(o.started_at).getTime();
+        if (Number.isNaN(opStarted)) return true;
+        // Allow a 5-second negative skew in case the server clock
+        // and client clock disagree slightly + the new op was
+        // stamped just before the watcher started polling.
+        return opStarted >= startTime - 5000;
+      });
+      if (!op) {
+        // The op isn't currently in the list. Two cases:
+        //   (a) we already saw it running → it finished + got
+        //       pruned out of the active set. Treat as done.
+        //   (b) we haven't seen it yet → keep waiting (worker
+        //       may not have picked it up yet).
+        if (sawActive) {
+          clearInterval(interval);
+          statusEl.textContent = '✓ done — see // LIVE OPS for the run summary';
+          statusEl.classList.remove('form-status-fail');
+          statusEl.classList.add('form-status-ok');
+          _autoDismissOpStatus(statusEl);
+        }
+        return;
+      }
+      const live = (op.status === 'running' || op.status === 'pending'
+                    || op.status === 'cancelling');
+      if (live) {
+        sawActive = true;
+        // Light progress hint while running so the user sees the
+        // status text moving.
+        if ((op.stage_total || 0) > 0) {
+          statusEl.textContent = (
+            `… ${op.stage_current || 0}/${op.stage_total} `
+            + '(see // LIVE OPS for full progress)'
+          );
+        }
+        return;
+      }
+      // Terminal status.
+      clearInterval(interval);
+      if (op.status === 'done') {
+        const processed = op.processed_total || op.stage_current || 0;
+        statusEl.textContent = `✓ done — ${processed} processed`;
+        statusEl.classList.remove('form-status-fail');
+        statusEl.classList.add('form-status-ok');
+      } else if (op.status === 'cancelled') {
+        statusEl.textContent = '× cancelled';
+        statusEl.classList.remove('form-status-ok');
+        statusEl.classList.add('form-status-fail');
+      } else {
+        const errMsg = (op.detail && op.detail.error_message)
+          ? ` — ${op.detail.error_message}` : '';
+        statusEl.textContent = `✗ ${op.status}${errMsg}`;
+        statusEl.classList.remove('form-status-ok');
+        statusEl.classList.add('form-status-fail');
+      }
+      _autoDismissOpStatus(statusEl);
+    }, 2000);
+  }
+
+  // v1.15.18: clear op-status messages after a short delay. Pre-fix
+  // the "✓ done — N processed" / "× cancelled" / "✗ failed" text
+  // next to the // PROBE TDB URLS / // REPROBE FAILURES / // REPROBE
+  // PLEX THEMES buttons stayed up until the page was refreshed.
+  // the user: "for the reprobe failures button when you click cancel
+  // it says cancelled until the page is refreshed maybe make it
+  // dismiss the message after a small duration, same with on
+  // completion of a run since that info lives in the info card
+  // [LIVE OPS] as well". 8s is long enough to read at a glance,
+  // short enough that a stale "✓ done" doesn't confuse the next
+  // action.
+  function _autoDismissOpStatus(statusEl, ms) {
+    if (!statusEl) return;
+    const delay = (typeof ms === 'number') ? ms : 8000;
+    // Capture the snapshot of what we're dismissing so a fresh run
+    // (which would re-set textContent before this fires) doesn't
+    // get its own message wiped by our stale timer.
+    const snapshot = statusEl.textContent;
+    setTimeout(() => {
+      if (statusEl.textContent !== snapshot) return;
+      statusEl.textContent = '';
+      statusEl.classList.remove('form-status-ok', 'form-status-fail');
+    }, delay);
+  }
+
+  function bindReprobePlexThemes() {
+    const btn = document.getElementById('reprobe-plex-themes-btn');
+    const status = document.getElementById('reprobe-plex-themes-status');
+    if (!btn || !status) return;
+    btn.addEventListener('click', async () => {
+      const ok = confirm(
+        'Reprobe Plex themes for every motif-placed row?\n\n'
+        + 'For each row, motif fetches the first 2 KB of what Plex '
+        + 'is currently serving (a Range request, no full download) '
+        + 'and compares it byte-for-byte to the local theme.mp3. '
+        + 'Differing prefix means Plex has its own theme.\n\n'
+        + 'Read-only — no files are renamed or modified. Runs ~6 '
+        + 'rows in parallel; expect ~100 ms per row. Cancellable.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        await api('POST', '/api/admin/reprobe-plex-themes');
+        status.textContent = '✓ started — see // LIVE OPS for progress';
+        status.classList.add('form-status-ok');
+        // v1.14.98: kick off the completion watcher so the status
+        // text flips to "done" / "failed" / "cancelled" once the
+        // op terminates.
+        _watchOpForCompletion('reprobe_plex_themes', status);
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+        status.classList.add('form-status-fail');
+        // v1.17.5: auto-dismiss the start-path error so a stale
+        // `✗ failed` doesn't linger forever. The watcher handles
+        // the success-path dismiss; this only fires when start
+        // itself raised (no watcher launched).
+        _autoDismissOpStatus(status, 8000);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  }
+
+  // v1.23.15: // DATABASE BACKUP card wiring. CREATE BACKUP NOW
+  // POSTs a VACUUM INTO snapshot; the list below renders existing
+  // backups (download / delete per row) from
+  // /api/admin/database-backups. the user: settings feature to back
+  // up the database.
+  function bindDatabaseBackup() {
+    const createBtn = document.getElementById('database-backup-create-btn');
+    const status = document.getElementById('database-backup-status');
+    const listEl = document.getElementById('database-backup-list');
+    if (!createBtn || !listEl) return;
+
+    function fmtDate(iso) {
+      try { return new Date(iso).toLocaleString(); } catch (e) { return iso; }
+    }
+
+    async function refreshList() {
+      try {
+        const r = await api('GET', '/api/admin/database-backups');
+        const backups = (r && r.backups) || [];
+        if (!backups.length) {
+          listEl.innerHTML = '<p class="form-hint backup-list-empty">'
+            + 'No backups yet — click // CREATE BACKUP NOW to make one.</p>';
+          return;
+        }
+        listEl.innerHTML = backups.map((b) => {
+          const name = htmlEscape(b.name);
+          const href = '/api/admin/database-backup/download/'
+            + encodeURIComponent(b.name);
+          return '<div class="backup-row">'
+            + '<div class="backup-row-main">'
+            + `<div class="backup-row-name">${name}</div>`
+            + `<div class="backup-row-meta">${fmtBytes(b.size)} · `
+            + `${htmlEscape(fmtDate(b.created_at))}</div>`
+            + '</div>'
+            + '<div class="backup-row-actions">'
+            + `<a class="btn btn-tiny" href="${href}" download>// DOWNLOAD</a>`
+            + `<button type="button" class="btn btn-tiny btn-warn" `
+            + `data-backup-restore="${name}">// RESTORE</button>`
+            + `<button type="button" class="btn btn-tiny btn-danger" `
+            + `data-backup-delete="${name}">// DELETE</button>`
+            + '</div></div>';
+        }).join('');
+      } catch (e) {
+        listEl.innerHTML = '<p class="form-hint backup-list-empty">'
+          + 'Couldn\'t load backups: '
+          + htmlEscape(e && e.message ? e.message : 'error') + '</p>';
+      }
+    }
+
+    // v1.23.17: restore surfaces.
+    const pendingBanner = document.getElementById('database-restore-pending');
+    const restoreStatus = document.getElementById('database-restore-status');
+
+    async function refreshPending() {
+      if (!pendingBanner) return;
+      try {
+        const r = await api('GET', '/api/admin/database-restore/pending');
+        pendingBanner.hidden = !(r && r.pending);
+      } catch (e) { /* leave banner as-is on a transient error */ }
+    }
+
+    function showStaged(msg) {
+      if (restoreStatus) {
+        restoreStatus.textContent = '✓ ' + (msg || 'restore staged — restart to apply');
+        restoreStatus.className = 'form-status form-status-ok';
+      }
+      refreshPending();
+    }
+
+    async function restoreFromName(name) {
+      const ok = confirm(
+        'Restore from ' + name + '?\n\n'
+        + 'This REPLACES the entire live database with this snapshot — '
+        + 'all current themes, placements, overrides and accounts are '
+        + 'overwritten.\n\n'
+        + 'motif backs up the current database first, then applies the '
+        + 'restore on the NEXT CONTAINER RESTART. Nothing changes until '
+        + 'you restart.\n\nContinue?'
+      );
+      if (!ok) return;
+      try {
+        const r = await api('POST', '/api/admin/database-restore', { name });
+        showStaged(r && r.message);
+      } catch (e) {
+        alert('Restore failed: ' + (e && e.message ? e.message : 'error'));
+      }
+    }
+
+    // Delegated delete + restore — rows are re-rendered, so bind on the
+    // stable container.
+    listEl.addEventListener('click', async (ev) => {
+      const restoreBtn = ev.target.closest('[data-backup-restore]');
+      if (restoreBtn) {
+        await restoreFromName(restoreBtn.getAttribute('data-backup-restore'));
+        return;
+      }
+      const btn = ev.target.closest('[data-backup-delete]');
+      if (!btn) return;
+      const name = btn.getAttribute('data-backup-delete');
+      const ok = confirm(
+        'Delete backup ' + name + '?\n\n'
+        + 'Removes the snapshot file from /config/backups. Does NOT '
+        + 'touch the live database.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      try {
+        await api('POST', '/api/admin/database-backup/delete', { name });
+        await refreshList();
+      } catch (e) {
+        alert('Delete failed: ' + (e && e.message ? e.message : 'error'));
+        btn.disabled = false;
+      }
+    });
+
+    // Restore-from-file (upload).
+    const uploadBtn = document.getElementById('database-restore-upload-btn');
+    const fileInput = document.getElementById('database-restore-file');
+    if (uploadBtn && fileInput) {
+      uploadBtn.addEventListener('click', async () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (!file) {
+          if (restoreStatus) {
+            restoreStatus.textContent = '✗ choose a .db file first';
+            restoreStatus.className = 'form-status form-status-fail';
+          }
+          return;
+        }
+        const ok = confirm(
+          'Restore from uploaded file "' + file.name + '"?\n\n'
+          + 'This REPLACES the entire live database. motif validates the '
+          + 'file + backs up the current database first, then applies the '
+          + 'restore on the NEXT CONTAINER RESTART.\n\nContinue?'
+        );
+        if (!ok) return;
+        uploadBtn.disabled = true;
+        const orig = uploadBtn.textContent;
+        uploadBtn.textContent = '// UPLOADING…';
+        if (restoreStatus) { restoreStatus.textContent = ''; restoreStatus.className = 'form-status'; }
+        try {
+          const fd = new FormData();
+          fd.append('file', file);
+          const r = await api('POST', '/api/admin/database-restore/upload', fd);
+          showStaged(r && r.message);
+          fileInput.value = '';
+        } catch (e) {
+          if (restoreStatus) {
+            restoreStatus.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+            restoreStatus.className = 'form-status form-status-fail';
+          }
+        } finally {
+          uploadBtn.disabled = false;
+          uploadBtn.textContent = orig;
+        }
+      });
+    }
+
+    // Cancel a staged restore.
+    const cancelBtn = document.getElementById('database-restore-cancel-btn');
+    if (cancelBtn) {
+      cancelBtn.addEventListener('click', async () => {
+        try {
+          await api('POST', '/api/admin/database-restore/cancel');
+          // v1.23.20: hide the banner OPTIMISTICALLY — the cancel
+          // already removed the pending file, so don't leave the
+          // banner up if the confirming GET below is slow/queued.
+          if (pendingBanner) pendingBanner.hidden = true;
+          if (restoreStatus) {
+            restoreStatus.textContent = '✓ staged restore cancelled';
+            restoreStatus.className = 'form-status form-status-ok';
+          }
+          refreshPending();   // best-effort re-confirm, not awaited
+        } catch (e) {
+          alert('Cancel failed: ' + (e && e.message ? e.message : 'error'));
+        }
+      });
+    }
+
+    refreshPending();
+
+    createBtn.addEventListener('click', async () => {
+      createBtn.disabled = true;
+      const orig = createBtn.textContent;
+      createBtn.textContent = '// BACKING UP…';
+      if (status) { status.textContent = ''; status.className = 'form-status'; }
+      try {
+        const r = await api('POST', '/api/admin/database-backup');
+        if (status) {
+          status.textContent = '✓ created '
+            + (r && r.backup ? r.backup.name : '');
+          status.classList.add('form-status-ok');
+        }
+        await refreshList();
+      } catch (e) {
+        if (status) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+          status.classList.add('form-status-fail');
+        }
+      } finally {
+        createBtn.disabled = false;
+        createBtn.textContent = orig;
+      }
+    });
+
+    refreshList();
+  }
+
+  // v1.14.29: BULK PROBE TDB URLS wiring. Mirror of the REPROBE
+  // PLEX THEMES button immediately above — kicks off a background
+  // job that yt-dlp --simulate's every theme row's currently-
+  // effective URL (24 h cooldown). Live progress shows in the //
+  // LIVE OPS drawer like all op_progress-tracked work.
+  function bindBulkProbeTdb() {
+    const btn = document.getElementById('bulk-probe-tdb-btn');
+    const status = document.getElementById('bulk-probe-tdb-status');
+    if (!btn || !status) return;
+    btn.addEventListener('click', async () => {
+      const ok = confirm(
+        'Probe every theme row\'s TDB URL?\n\n'
+        + 'Runs yt-dlp --simulate against the row\'s currently-'
+        + 'effective URL (your override if set, otherwise the TDB '
+        + 'URL). Dead URLs (removed, private, age-restricted, geo-'
+        + 'blocked) get marked red so // LET PLEX SERVE doesn\'t '
+        + 'silently destroy your recovery path.\n\n'
+        + 'Rows probed in the last 24 h are skipped. Concurrency = 3 '
+        + '(YouTube rate-limits aggressively). Cancellable.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        await api('POST', '/api/admin/bulk-probe-tdb');
+        status.textContent = '✓ started — see // LIVE OPS for progress';
+        status.classList.add('form-status-ok');
+        // v1.14.98: same completion watcher as REPROBE PLEX THEMES.
+        _watchOpForCompletion('bulk_probe_tdb', status);
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+        status.classList.add('form-status-fail');
+        // v1.17.5: auto-dismiss start-path error (see bindReprobePlexThemes).
+        _autoDismissOpStatus(status, 8000);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  }
+
+  // v1.15.10: REPROBE FAILURES — recovery counterpart to the bulk
+  // probe sweep above. Targets only rows currently marked failed
+  // (failure_kind IS NOT NULL) and bypasses the 24h cooldown.
+  // the user: "I'm seeing currently 1842 fails … from a previous probe
+  // gone bad … reprobing manually from the info card brings them back
+  // alive but I have no way to bulk reprobe from settings because of
+  // the 24hr cooldown when I try it just says done 0 - processed".
+  // Shares the bulk-probe-tdb op_id (server-side) so the running-
+  // lock + LIVE OPS watcher just work — same kind="bulk_probe_tdb"
+  // for the completion watcher.
+  function bindReprobeTdbFailures() {
+    const btn = document.getElementById('reprobe-tdb-failures-btn');
+    const status = document.getElementById('reprobe-tdb-failures-status');
+    if (!btn || !status) return;
+    btn.addEventListener('click', async () => {
+      const ok = confirm(
+        'Reprobe every row with a red TDB ✗ pill?\n\n'
+        + 'Bypasses the 24 h cooldown. Use after fixing a config '
+        + 'issue that mass-red-pilled rows (cookies, rate-limit, '
+        + 'network).\n\n'
+        + 'v1.15.33: includes ACKED failures too — every row with '
+        + 'failure_kind set, regardless of ack state. Alive results '
+        + 'clear the failure_kind so the TDB ✗ pill drops back to '
+        + 'clean (and frees any stale ack).\n\n'
+        + 'Concurrency = 3, cancellable from // LIVE OPS.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        await api('POST', '/api/admin/reprobe-tdb-failures');
+        status.textContent = '✓ started — see // LIVE OPS for progress';
+        status.classList.add('form-status-ok');
+        _watchOpForCompletion('bulk_probe_tdb', status);
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+        status.classList.add('form-status-fail');
+        // v1.17.5: auto-dismiss start-path error (see bindReprobePlexThemes).
+        _autoDismissOpStatus(status, 8000);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+  }
+
+  // v1.18.85: PROBE PLEX THEME API — diagnostic under the
+  // DIAGNOSTICS tab. Title fragments → POST → render JSON.
+  // Used to characterise Plex's theme response shape across
+  // the four P sub-flavors (themerr-plex embed / user upload
+  // / Plex Pass cloud / sidecar) so we can plan the cloud-
+  // theme backup feature. Single tag's diagnostic; if cloud
+  // themes don't return bytes, this block goes away in a
+  // later tag (the production feature would not need it).
+  function bindProbePlexThemes() {
+    const btn = document.getElementById('probe-plex-themes-btn');
+    const status = document.getElementById('probe-plex-themes-status');
+    const ta = document.getElementById('probe-plex-themes-titles');
+    const out = document.getElementById('probe-plex-themes-output');
+    const compactCb = document.getElementById('probe-plex-themes-compact');
+    // v1.19.41: copy-to-clipboard button. Enabled on successful
+    // probe run; disabled while idle or on error.
+    const copyBtn = document.getElementById('probe-plex-themes-copy-btn');
+    if (!btn || !status || !ta || !out) return;
+    btn.addEventListener('click', async () => {
+      const raw = ta.value || '';
+      const titles = raw.split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (!titles.length) {
+        status.textContent = '✗ enter at least one title fragment';
+        status.className = 'form-status form-status-fail';
+        return;
+      }
+      if (titles.length > 8) {
+        status.textContent = '✗ cap is 8 titles per call';
+        status.className = 'form-status form-status-fail';
+        return;
+      }
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PROBING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      out.style.display = 'none';
+      out.textContent = '';
+      // v1.19.41: disable copy button while probing (stale output
+      // shouldn't be copyable).
+      if (copyBtn) copyBtn.disabled = true;
+      try {
+        // v1.18.87: send compact flag so the response strips hex
+        // body previews + filters response headers to the
+        // diagnostic-essentials whitelist. Default on (chat-paste
+        // primary use case); uncheck for full bytes locally.
+        const compact = !compactCb || compactCb.checked;
+        const data = await api(
+          'POST', '/api/admin/probe-plex-themes',
+          { titles, compact },
+        );
+        out.textContent = JSON.stringify(data, null, 2);
+        out.style.display = '';
+        // v1.19.41: enable copy button now that output is real.
+        if (copyBtn) copyBtn.disabled = false;
+        const matched = (data.results || []).filter((r) => r.matched).length;
+        status.textContent = (
+          `✓ done — ${matched}/${titles.length} resolved · `
+          + `paste output for analysis`
+        );
+        status.classList.add('form-status-ok');
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        // v1.18.86: auto-dismiss per v1.17.5 contract. Pre-fix the
+        // probe's status text persisted forever — re-runs wrote
+        // over it but a single run left "✓ done" on the page until
+        // next manual interaction. 6000ms tier matches the
+        // "richer diagnostic payload" category in DESIGN_SYSTEM.md
+        // §3 (the JSON output IS the rich payload here).
+        _autoDismissOpStatus(status, 6000);
+      }
+    });
+    // v1.19.41: copy-to-clipboard handler. Reads the rendered
+    // JSON from #probe-plex-themes-output (already stringified by
+    // the run handler above), pushes to navigator.clipboard. On
+    // browsers without the clipboard API (rare; old Safari),
+    // falls back to the document.execCommand('copy') textarea
+    // trick which still works in all evergreen browsers. UX:
+    // button text flashes "// COPIED ✓" for 1.5s on success.
+    if (copyBtn) {
+      copyBtn.addEventListener('click', async () => {
+        const text = out.textContent || '';
+        if (!text) {
+          return;
+        }
+        const origLabel = copyBtn.textContent;
+        let ok = false;
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            await navigator.clipboard.writeText(text);
+            ok = true;
+          } else {
+            const ta2 = document.createElement('textarea');
+            ta2.value = text;
+            ta2.style.position = 'fixed';
+            ta2.style.left = '-9999px';
+            document.body.appendChild(ta2);
+            ta2.select();
+            try {
+              ok = document.execCommand('copy');
+            } finally {
+              document.body.removeChild(ta2);
+            }
+          }
+        } catch (_) {
+          ok = false;
+        }
+        copyBtn.textContent = ok ? '// COPIED ✓' : '// COPY FAILED';
+        setTimeout(() => {
+          copyBtn.textContent = origLabel;
+        }, 1500);
+      });
+    }
+  }
+
+  // v1.15.8: TEST COOKIES button on the Settings PATHS tab.
+  // Pre-fix the only signal of cookies-working was an indirect
+  // one — a successful download (positive) or a cookies_expired
+  // probe failure (negative). The startup log line just checks
+  // file existence, not content / format / expiration. the user:
+  // "is there any way to test to make sure my cookies.txt file
+  // is working properly? I see its being detected in the
+  // startup log entry but how do I know its actually working".
+  //
+  // Server returns a structured checklist (5 checks); this
+  // renderer flips each into a green ✓ or red ✗ row in the
+  // results <ul>. Click-to-rerun for re-test after editing.
+  function bindTestCookies() {
+    const btn = document.getElementById('test-cookies-btn');
+    const status = document.getElementById('test-cookies-status');
+    const results = document.getElementById('test-cookies-results');
+    if (!btn || !status || !results) return;
+    const labelMap = {
+      file_present: 'File present',
+      parseable: 'Netscape format',
+      youtube_cookies: 'YouTube auth cookies',
+      not_expired: 'Auth cookies not expired',
+      yt_dlp_load: 'yt-dlp loads cookies',
+    };
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// TESTING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      results.style.display = 'none';
+      results.innerHTML = '';
+      try {
+        const r = await api('POST', '/api/admin/test-cookies');
+        const checks = Array.isArray(r.checks) ? r.checks : [];
+        // Render each check as a <li> with ✓ / ✗ + label + detail.
+        results.innerHTML = checks.map((c) => {
+          const mark = c.ok ? '✓' : '✗';
+          const cls = c.ok ? 'cookies-test-ok' : 'cookies-test-fail';
+          const label = labelMap[c.name] || c.name;
+          return (
+            `<li class="${cls}">`
+            + `<span class="cookies-test-mark">${mark}</span>`
+            + `<span class="cookies-test-label">${htmlEscape(label)}</span>`
+            + `<span class="cookies-test-detail">${htmlEscape(c.detail || '')}</span>`
+            + '</li>'
+          );
+        }).join('');
+        results.style.display = '';
+        if (r.ok) {
+          status.textContent = '✓ cookies look good';
+          status.classList.add('form-status-ok');
+        } else {
+          status.textContent = '✗ check the failed item(s) below';
+          status.classList.add('form-status-fail');
+        }
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'test failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        // v1.17.5: auto-dismiss the test-result line after 6s.
+        // The `<ul>` results block below carries the per-check
+        // detail (and persists for the user to inspect); the
+        // status line is a one-line summary that should auto-
+        // clear like the other test buttons.
+        _autoDismissOpStatus(status, 6000);
+      }
+    });
+  }
+
+  // v1.17.0: TEST NOTIFICATION button on /settings → NOTIFICATIONS.
+  // POSTs to /api/admin/test-notification which calls the
+  // dispatcher's synchronous test_dispatch() path — bypasses the
+  // per-event toggle gate but still respects per-sink config.
+  // Surfaces per-sink outcome inline (embedded N ok/fail +
+  // external 1 ok/fail) so the user can tell which sink is
+  // misconfigured without digging through events log.
+  function bindTestNotification() {
+    const btn = document.getElementById('test-notification-btn');
+    const status = document.getElementById('test-notification-status');
+    if (!btn || !status) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// SENDING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        const r = await api('POST', '/api/admin/test-notification');
+        if (r.error) {
+          status.textContent = '✗ ' + r.error;
+          status.classList.add('form-status-fail');
+        } else {
+          // Summarize per-sink outcome. Embedded shows N/N ok,
+          // external shows 1/1 ok or fail. Both-not-configured
+          // would have hit the r.error path above.
+          const parts = [];
+          if (r.embedded && r.embedded.configured > 0) {
+            const tag = r.embedded.fail === 0
+              ? `✓ embedded ${r.embedded.ok}/${r.embedded.configured}`
+              : `✗ embedded ${r.embedded.ok}/${r.embedded.configured} (${r.embedded.fail} failed)`;
+            parts.push(tag);
+          }
+          if (r.external && r.external.configured) {
+            const tag = r.external.fail === 0
+              ? '✓ external 1/1'
+              : '✗ external 0/1 failed';
+            parts.push(tag);
+          }
+          // v1.17.1 (L4): optional-chain in case a future server
+          // change ever returns only one of the two top-level
+          // keys (e.g. a per-sink dispatch path). Pre-fix this
+          // would throw TypeError and the catch block would
+          // surface a useless "Cannot read properties of undefined"
+          // message — the optional chain treats absence as ok.
+          const allOk = (r.embedded?.fail ?? 0) === 0
+                     && (r.external?.fail ?? 0) === 0;
+          status.textContent = parts.join(' · ');
+          status.classList.add(allOk ? 'form-status-ok' : 'form-status-fail');
+        }
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'test failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        // v1.17.2: auto-dismiss the TEST NOTIFICATION result after
+        // 4s so the "✓ embedded 1/1" tag doesn't linger forever
+        // post-click. Mirrors the save-button auto-clear pattern
+        // (the user: "dismiss after a short period like other text
+        // we do this for"). 4s gives the user enough time to read
+        // the outcome before it vanishes.
+        setTimeout(() => {
+          if (status.classList.contains('form-status-ok')
+              || status.classList.contains('form-status-fail')) {
+            status.textContent = '';
+            status.className = 'form-status';
+          }
+        }, 4000);
+      }
+    });
+  }
+
+  // v1.24.21: TEST CONNECTION button on the Settings PLEX tab. Connects with
+  // the saved URL+token and surfaces the server name/version (or the error)
+  // inline. Mirrors bindTestNotification's lifecycle + auto-dismiss.
+  function bindTestPlex() {
+    const btn = document.getElementById('test-plex-btn');
+    const status = document.getElementById('test-plex-status');
+    if (!btn || !status) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// CONNECTING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        const r = await api('POST', '/api/admin/test-plex');
+        if (r.ok) {
+          status.textContent = `✓ ${r.server_name}`
+            + (r.version ? ` (v${r.version})` : '');
+          status.classList.add('form-status-ok');
+        } else {
+          status.textContent = '✗ ' + (r.error || 'connection failed');
+          status.classList.add('form-status-fail');
+        }
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'test failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        setTimeout(() => {
+          if (status.classList.contains('form-status-ok')
+              || status.classList.contains('form-status-fail')) {
+            status.textContent = '';
+            status.className = 'form-status';
+          }
+        }, 4000);
+      }
+    });
+  }
+
+  // v1.13.2 (#3): pre-flight transport probe wiring. Auto-fires
+  // once on settings load so the user sees today's reachability
+  // without clicking; click-to-rerun for manual re-test (handy
+  // after editing the URL fields). Uses CURRENTLY-SAVED config —
+  // user must save first if they want to probe a new value.
+  function bindSyncProbe() {
+    const btn = document.getElementById('sync-probe-btn');
+    const status = document.getElementById('sync-probe-status');
+    if (!btn || !status) return;
+    async function runProbe() {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PROBING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        const res = await api('POST', '/api/sync/probe');
+        if (res.ok) {
+          status.textContent = `✓ ${res.transport.toUpperCase()} `
+            + `reachable · ${res.latency_ms}ms · ${res.detail || ''}`;
+          status.classList.add('form-status-ok');
+        } else {
+          status.textContent = `✗ ${res.transport.toUpperCase()} failed: `
+            + (res.error || 'unknown error');
+          status.classList.add('form-status-fail');
+        }
+      } catch (e) {
+        status.textContent = `✗ probe request failed: ${e.message}`;
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        // v1.17.5: auto-dismiss the probe result after 6s. Pre-fix
+        // the result lingered for the entire settings session
+        // (and got reset on every page load via the auto-probe
+        // below, painting a stale-looking "reachable" timestamp
+        // even when the user wasn't actively testing). 6s is
+        // long enough for the auto-probe-on-load result to be
+        // read and then fade gracefully.
+        _autoDismissOpStatus(status, 6000);
+      }
+    }
+    btn.addEventListener('click', () => { runProbe().catch(()=>{}); });
+    // Auto-probe once on load. Small delay so /api/config has
+    // landed and the dropdown shows the actual current value
+    // before the result text appears.
+    setTimeout(() => { runProbe().catch(()=>{}); }, 800);
+  }
+
+  function bindConfigSaves() {
+    document.querySelectorAll('[data-save]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const tab = btn.dataset.save;
+        // v1.17.2: a tab can have multiple SAVE buttons (e.g. the
+        // NOTIFICATIONS tab has one SAVE NOTIFICATIONS up top for
+        // URLs and one SAVE EVENTS below the event-toggles block
+        // — both PATCH the entire notifications config, since the
+        // backend handles partial saves idempotently; the second
+        // button is purely a UX-grouping affordance per the user's
+        // request). Update EVERY matching status element so each
+        // button's adjacent text flashes "✓ saved" regardless of
+        // which one was clicked.
+        const statuses = document.querySelectorAll(
+          `[data-save-status="${tab}"]`);
+        // v1.17.13: refuse to PATCH if the last /api/config GET
+        // failed. Pre-fix a save click after a failed load would
+        // serialize the form's HTML defaults (empty inputs,
+        // unchecked boxes) and overwrite real server-side
+        // values. The banner from loadConfigIntoForms is the
+        // visible signal; this is the safety net. Error UX
+        // audit HIGH 3 — most dangerous of the silent loaders.
+        if (configLoadFailed) {
+          statuses.forEach((s) => {
+            s.textContent = '✗ save blocked — settings load '
+              + 'failed; click RETRY in the banner above';
+            s.classList.add('err');
+          });
+          setTimeout(() => {
+            statuses.forEach((s) => {
+              s.textContent = '';
+              s.classList.remove('ok', 'err');
+            });
+          }, 4000);
+          return;
+        }
+        statuses.forEach((s) => {
+          s.textContent = 'saving…';
+          s.classList.remove('ok', 'err');
+        });
+        const body = collectFieldsForTab(tab);
+        // v1.17.5: error-path auto-clear. Pre-fix the setTimeout
+        // lived inside the success branch only, so a `✗ <error>`
+        // text from a failed save lingered on screen indefinitely.
+        // the user: "make sure they all have the same dismiss after
+        // a bit built in." Move the clear into a finally block so
+        // both ok + err paths auto-dismiss. Error clears at 4000ms
+        // (a bit longer so the user has time to read the failure)
+        // vs 2500ms for success — mirrors the libraries-save +
+        // bindTestNotification durations.
+        let _saveOk = false;
+        try {
+          const res = await api('PATCH', '/api/config', body);
+          configCache = res;
+          populateConfigForms(res);
+          statuses.forEach((s) => {
+            s.textContent = '✓ saved';
+            s.classList.add('ok');
+          });
+          // Refresh topbar so paths banner updates if themes_dir was just set
+          refreshTopbarStatus().catch(() => {});
+          _saveOk = true;
+        } catch (e) {
+          statuses.forEach((s) => {
+            s.textContent = '✗ ' + e.message;
+            s.classList.add('err');
+          });
+        } finally {
+          // v1.17.20: snapshot-compare so a re-click within the
+          // dismiss window doesn't get its fresh '✓ saved' / '✗
+          // <err>' message wiped by the prior click's stale
+          // timer. Mirrors `_autoDismissOpStatus`'s snapshot
+          // pattern at line ~5464. Audit race #6.
+          const dismissMs = _saveOk ? 2500 : 4000;
+          statuses.forEach((s) => {
+            const snapshot = s.textContent;
+            setTimeout(() => {
+              if (s.textContent !== snapshot) return;
+              s.textContent = '';
+              s.classList.remove('ok', 'err');
+            }, dismissMs);
+          });
+        }
+      });
+    });
+
+    // Clear-token button
+    document.querySelectorAll('[data-cfg-clear]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const path = btn.dataset.cfgClear;
+        if (path !== 'plex.token') return;
+        if (!confirm('Clear Plex token? motif will lose Plex access until you set a new one.')) return;
+        try {
+          await api('PATCH', '/api/config', { plex: { token: null } });
+          await loadConfigIntoForms();
+        } catch (e) {
+          alert('Failed: ' + e.message);
+        }
+      });
+    });
+  }
+
+  // ---- Paths-not-configured banner (every page) ----
+
+  function updatePathsBanner(stats) {
+    const banner = document.getElementById('paths-banner');
+    const navDot = document.getElementById('nav-attn-settings');
+    if (!banner) return;
+    const ready = stats && stats.config && stats.config.paths_ready;
+    if (ready) {
+      banner.style.display = 'none';
+      if (navDot) navDot.style.display = 'none';
+    } else {
+      banner.style.display = '';
+      if (navDot) navDot.style.display = '';
+    }
+  }
+
+
+  // ---- Pending (staged-but-not-placed) ----
+  // v1.14.61: deleted ~170 lines of pending-page JS surface
+  // (pendingState / loadPending / pendingApprove / pendingDiscard
+  // / pendingItemsForKeys / renderPendingTable / bindPending).
+  // The /pending route was removed in v1.12.41; v1.14.56 removed
+  // the orphan templates/pending.html. The JS scaffold + 4 server
+  // endpoints (/api/pending, /api/pending/count, /api/pending/place,
+  // /api/pending/discard) survived the cleanup with zero callers.
+  // Audit follow-up after v1.14.59 caught the dead surface.
+  // The DOMContentLoaded calls (bindPending, loadPending) + the
+  // /pending poll-interval + the highlightNav `/pending` map entry
+  // are also removed below. The 4 server endpoints get deleted
+  // in api.py — see the v1.14.61 marker on the api_pending def.
+
+  // ---- Library (unified Plex-items browse) ----
+
+  const libraryState = {
+    tab: null,
+    fourk: false,
+    // v1.18.1: per-section scope for the /collections tab. Empty
+    // string = ALL sections (the default). Set via the per-section
+    // chip row's click handler in the tab-toggle bindings below.
+    // Other tabs ignore this field — they use `fourk` for the
+    // STANDARD/4K narrowing instead.
+    section_id: "",
+    page: 1,
+    perPage: 50,
+    q: "",
+    status: "all",
+    // v1.10.20: secondary 'TDB MATCH' filter ∈ {any, tracked, untracked}.
+    // Stacks on top of `status` to slice further (e.g. MANUAL + TRACKED
+    // shows the manual rows that have a TDB alternative for REPLACE).
+    tdb: "any",
+    // v1.11.66: SRC letter filter (T / U / A / M / P / -). Empty
+    // v1.11.89: multi-select Set of SRC letters (T/U/A/M/P/-) the user
+    // wants to keep visible. Empty Set = no filter (show all). Click a
+    // legend button to toggle that letter; CLEAR empties the set. Pure
+    // client-side: pagination/total reflect the underlying status+tdb
+    // pass.
+    srcFilter: new Set(),
+    // v1.12.7 / v1.12.23: TDB pill states. Possible values:
+    // 'tdb', 'update', 'cookies', 'dead', 'none'. v1.12.23 moved
+    // the actual filtering server-side so counts + pagination +
+    // sort all honor the set; the client just tracks the
+    // selection and ships it as ?tdb_pills=... on each fetch.
+    tdbPills: new Set(),
+    // v1.12.23: DL / PL / Link pill multi-select sets. Same
+    // server-side pattern as srcFilter / tdbPills.
+    //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red).
+    //            v1.12.81 retired 'mismatch' — content divergence is
+    //            a LINK fact ('m') only.
+    //   plPills: 'on' (green dot), 'off' (faded), 'await' (amber),
+    //            'broken' (red, v1.12.81 — placement row exists but
+    //            theme.mp3 missing from the Plex folder).
+    //   linkPills: 'hl', 'c', 'm' (mismatch), 'none'
+    dlPills: new Set(),
+    plPills: new Set(),
+    linkPills: new Set(),
+    // v1.12.41: EDITION axis. 'has' = rows with a Plex
+    // {edition-...} folder tag, 'none' = rows without.
+    edPills: new Set(),
+    // v1.13.68: ATTN axis. Mirrors the title-cell `!`-glyph
+    // priority states. Possible values: 'fail' (red ⚠ —
+    // un-acked failure), 'update' (blue ! — pending TDB
+    // update), 'mismatch' (amber ! M — canonical diverged
+    // from placement), 'await' (amber ! P — downloaded, not
+    // yet placed), 'broken' (red ↺ — canonical missing on
+    // disk, Plex copy intact). Multi-select, server-side
+    // filter, AND with other axes. Topbar's `N FAIL` pill
+    // click-through routes to ?attn_pills=fail.
+    attnPills: new Set(),
+    // v1.10.15: column sort state. sort key whitelisted server-side.
+    sort: "title",
+    sortDir: "asc",
+    // Set of "media_type:tmdb_id" keys checked via the per-row checkbox.
+    // Survives pagination (we restore checkboxes on render).
+    selected: new Set(),
+    // v1.16.10: row-data cache keyed by libKey, parallel to `selected`.
+    // Pre-fix the bulk-bar count badges + click handlers walked
+    // libraryState.items (visible page only) so a SELECT ALL FILTERED
+    // of 484 rows showed `(50)` on every action button — the page
+    // size — and the handlers themselves silently dropped the 434
+    // off-page rows. the user: "doing a select all is not reflecting
+    // correctly on the bulk actions. Also let plex server isn't
+    // displaying a number at all anytime." Populated by:
+    //   - SELECT ALL FILTERED pagination (off-page rows)
+    //   - syncSelectedRowsFromItems() on every items render
+    //     (refreshes data for visible rows so it stays fresh)
+    //   - per-row checkbox + select-all-visible toggles
+    // Cleared alongside `selected` on bulk-action finish / CLEAR.
+    selectedRows: new Map(),
+  };
+
+  // v1.16.10: refresh selectedRows from the latest libraryState.items
+  // for any currently-selected key. Called on every items render so
+  // visible-page rows always carry fresh data; off-page rows retain
+  // whatever was cached when they were last seen (typically from
+  // SELECT ALL FILTERED's pagination).
+  function syncSelectedRowsFromItems() {
+    for (const it of (libraryState.items || [])) {
+      const k = libKey(it);
+      if (libraryState.selected.has(k)) {
+        libraryState.selectedRows.set(k, it);
+      }
+    }
+  }
+
+  function libKey(it) {
+    // v1.24.17: append rating_key so a multi-edition title's editions get
+    // DISTINCT selection keys. They share theme_media_type+theme_tmdb but
+    // render as SEPARATE rows (the dedup at ~7878 keys on folder_path), so the
+    // pre-fix `mt:theme_tmdb` key collapsed them → checking one checked both,
+    // and selectedRows kept only the LAST edition per title. Every bulk action
+    // (DOWNLOAD/PUSH/REVERT/LPS/ADOPT/ACCEPT) then silently dropped all-but-one
+    // edition from the batch (and could act on the wrong one). rating_key is
+    // unique per plex_items row (per edition); fall back to folder_path then ''.
+    return `${it.theme_media_type || it.plex_media_type}:${it.theme_tmdb || it.rating_key}:${it.rating_key || it.folder_path || ''}`;
+  }
+
+  // v1.15.139: parse the bulk-probe-tdb op's terminal `activity`
+  // string into counters. The server writes the line in
+  // api.py:2876-2881 _post_terminal_activity helper with shape:
+  //   "alive=N (cleared=M), dead=D, indeterminate=I, other=O"
+  // Optional leading prefix "Cancelled at X/Y — " or "Bailed at X/Y — "
+  // and optional trailing suffix " — likely rate-limited; …".
+  function parseBulkProbeActivity(s) {
+    const out = { alive: null, cleared: null, dead: null, indet: null, other: null };
+    if (!s) return out;
+    const m = String(s).match(
+      /alive=(\d+)\s*\(cleared=(\d+)\),\s*dead=(\d+),\s*indeterminate=(\d+),\s*other=(\d+)/);
+    if (m) {
+      out.alive = +m[1]; out.cleared = +m[2]; out.dead = +m[3];
+      out.indet = +m[4]; out.other = +m[5];
+    }
+    return out;
+  }
+
+  // v1.15.139: format the parsed counters into a concise button
+  // label. the user's case: "you can tell easily if any cleared or
+  // all still failed". So we prioritize CLEARED + DEAD in the
+  // summary. Indeterminate (rare — exception during probe of one
+  // row) shown only when non-zero. Edge cases:
+  //   - status=failed: probe thread itself crashed (rare)
+  //   - status=cancelled: user cancelled mid-run from the drawer
+  //   - cleared=null: shouldn't happen but defend against a
+  //     mid-roll-out activity-string change
+  function formatBulkProbeSummary(counts, status) {
+    if (status === 'failed') return '// PROBE FAILED';
+    if (status === 'cancelled') return '// PROBE CANCELLED';
+    const { alive, cleared, dead, indet } = counts;
+    if (cleared == null) return '// PROBE DONE';
+    const parts = [];
+    if (cleared > 0) parts.push(`${cleared} CLEARED`);
+    if (dead > 0) parts.push(`${dead} DEAD`);
+    if (indet > 0) parts.push(`${indet} ?`);
+    if (parts.length === 0) {
+      // alive>0 but cleared=0 = rows were already alive (no failure
+      // to clear). For the user's "only failures selected" flow this
+      // shouldn't happen — but if he probes a healthy row, surface
+      // it sensibly rather than blanking.
+      if (alive > 0) parts.push(`${alive} ALIVE`);
+      else parts.push('NO CHANGES');
+    }
+    return '// ' + parts.join(' · ');
+  }
+
+  // v1.15.139: poll /api/progress watching for the bulk-probe-tdb
+  // op to transition to a terminal state, then render the result
+  // summary on `btn`. Used in place of the v1.15.60 blind 2s timer
+  // so the user gets immediate feedback at completion without
+  // having to read // LIVE OPS. Robust to the user navigating away
+  // mid-poll (btn.isConnected check) and to never-arriving
+  // completion (30-min wall-clock ceiling).
+  async function watchBulkProbeCompletion(btn, origText) {
+    const start = Date.now();
+    const maxWait = 30 * 60 * 1000;
+    let sawRunning = false;
+    while (Date.now() - start < maxWait) {
+      // Bail if the button isn't on the page anymore (route change).
+      if (!btn.isConnected) return;
+      let ops = null;
+      try {
+        const r = await fetch('/api/progress', { credentials: 'same-origin' });
+        if (r.ok) ops = (await r.json()).ops || [];
+      } catch (_) { /* network blip — retry next tick */ }
+      const op = (ops || []).find((o) => o.op_id === 'bulk-probe-tdb');
+      if (op) {
+        const isTerminal = ['done', 'failed', 'cancelled'].includes(op.status);
+        if (op.status === 'running' || op.status === 'cancelling') {
+          sawRunning = true;
+          if (op.stage_total > 0) {
+            btn.textContent = `// PROBING ${op.stage_current || 0}/${op.stage_total}`;
+          } else {
+            btn.textContent = '// PROBING…';
+          }
+        } else if (isTerminal && sawRunning) {
+          // Real completion of OUR dispatch. The sawRunning gate
+          // avoids latching onto a stale terminal row from a
+          // previous run (load_active returns the most recent
+          // finished row in the same 24h window).
+          const counts = parseBulkProbeActivity(op.activity || '');
+          btn.textContent = formatBulkProbeSummary(counts, op.status);
+          // Reload library + topbar so the TDB pills reflect the
+          // new state. The 1100ms topbar gap matches the
+          // /api/stats 1s server-cache TTL (v1.13.56 pattern).
+          if (typeof loadLibrary === 'function') {
+            setTimeout(() => loadLibrary().catch(() => {}), 200);
+          }
+          if (typeof refreshTopbarStatus === 'function') {
+            setTimeout(refreshTopbarStatus, 1100);
+          }
+          setTimeout(() => {
+            if (!btn.isConnected) return;
+            btn.disabled = false;
+            btn.textContent = origText;
+          }, 5000);
+          return;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    // Wall-clock ceiling reached — restore the button rather than
+    // leaving it stuck. The op may still be running server-side
+    // (the drawer continues to show it); the user can just wait
+    // and check the drawer for a count of unusually long runs.
+    if (btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+
+  // v1.16.0 / renamed v1.16.2: TVDB-bridge stats hydration +
+  // completion watcher. Sister functions to the v1.15.139
+  // bulk-probe-tdb pair — load stranded count / last-run
+  // timestamp on settings render, watch the bridge op to
+  // completion + render result counts.
+  // v1.24.93: the bridge was originally misnamed for the anime
+  // agent (v1.16.0); the user-facing label became TVDB BRIDGE in
+  // v1.16.2 and the internals were renamed in v1.24.93 (schema
+  // v68) — op_id ("tvdb-bridge"), op_progress.kind ("tvdb_bridge"),
+  // the route (/api/admin/tvdb-bridge/rebuild), and the
+  // runtime_settings key (last_tvdb_bridge_at) are all TVDB-named
+  // now. The feature links TVDB-only rows (most TV); it was never
+  // anime-specific.
+  async function hydrateTvdbBridgeStats() {
+    const strandedEl = document.querySelector('[data-tvdb-stranded]');
+    const lastRunEl = document.querySelector('[data-tvdb-last-run]');
+    if (!strandedEl || !lastRunEl) return;
+    try {
+      const r = await fetch('/api/admin/diagnostics/tvdb-gap',
+                            { credentials: 'same-origin' });
+      if (!r.ok) {
+        strandedEl.textContent = '?';
+        lastRunEl.textContent = 'error';
+        return;
+      }
+      const body = await r.json();
+      strandedEl.textContent =
+        String(body.summary?.total_stranded ?? '?');
+      const last = body.summary?.last_bridge_run_at;
+      lastRunEl.textContent = last
+        ? fmt.time(last)
+        : 'never';
+      if (!body.summary?.tmdb_configured) {
+        const btn = document.getElementById('tvdb-bridge-rebuild-btn');
+        if (btn) {
+          btn.disabled = true;
+          btn.title = 'Set the TMDB API key above first.';
+        }
+      }
+    } catch (_) { /* network blip — UI shows ? */ }
+  }
+
+  function parseTvdbBridgeActivity(s) {
+    // The op's terminal activity line is composed by
+    // _tvdb_bridge_run as:
+    //   "linked=N, unmappable=N, no_record=N, errors=N"
+    const out = { linked: null, unmappable: null,
+                  no_record: null, errors: null };
+    if (!s) return out;
+    const m = String(s).match(
+      /linked=(\d+),\s*unmappable=(\d+),\s*no_record=(\d+),\s*errors=(\d+)/);
+    if (m) {
+      out.linked = +m[1]; out.unmappable = +m[2];
+      out.no_record = +m[3]; out.errors = +m[4];
+    }
+    return out;
+  }
+
+  function formatTvdbBridgeSummary(counts, status) {
+    if (status === 'failed') return '// BRIDGE FAILED';
+    if (status === 'cancelled') return '// BRIDGE CANCELLED';
+    if (counts.linked == null) return '// BRIDGE DONE';
+    const parts = [];
+    if (counts.linked > 0) parts.push(`${counts.linked} LINKED`);
+    if (counts.unmappable > 0) parts.push(`${counts.unmappable} UNMAPPABLE`);
+    if (counts.no_record > 0) parts.push(`${counts.no_record} NO TDB`);
+    if (counts.errors > 0) parts.push(`${counts.errors} ERR`);
+    if (parts.length === 0) parts.push('NO CHANGES');
+    return '// ' + parts.join(' · ');
+  }
+
+  async function watchTvdbBridgeCompletion(btn, origText, resultEl) {
+    const start = Date.now();
+    const maxWait = 30 * 60 * 1000;
+    let sawRunning = false;
+    while (Date.now() - start < maxWait) {
+      if (!btn.isConnected) return;
+      let ops = null;
+      try {
+        const r = await fetch('/api/progress',
+                              { credentials: 'same-origin' });
+        if (r.ok) ops = (await r.json()).ops || [];
+      } catch (_) { /* network blip — retry next tick */ }
+      const op = (ops || []).find((o) => o.op_id === 'tvdb-bridge');
+      if (op) {
+        const isTerminal =
+          ['done', 'failed', 'cancelled'].includes(op.status);
+        if (op.status === 'running' || op.status === 'cancelling') {
+          sawRunning = true;
+          if (op.stage_total > 0) {
+            btn.textContent =
+              `// BRIDGING ${op.stage_current || 0}/${op.stage_total}`;
+          } else {
+            btn.textContent = '// BRIDGING…';
+          }
+        } else if (isTerminal && sawRunning) {
+          const counts = parseTvdbBridgeActivity(op.activity || '');
+          btn.textContent = formatTvdbBridgeSummary(counts, op.status);
+          if (resultEl && op.status === 'done') {
+            resultEl.textContent =
+              `processed ${op.stage_current ?? '?'} rows`;
+            // v1.19.81: tone via .form-status-ok class (shared
+            // palette) instead of inline style.color.
+            resultEl.className = 'form-status';
+            resultEl.classList.add('form-status-ok');
+            // v1.20.56: auto-dismiss (DESIGN_SYSTEM §3) — pre-fix this
+            // ✓ status stamped and lingered until the next interaction,
+            // unlike every sibling diagnostic status.
+            _autoDismissOpStatus(resultEl, 6000);
+          }
+          // Reload the stranded count so the user sees their
+          // backfill landed.
+          hydrateTvdbBridgeStats().catch(() => {});
+          setTimeout(() => {
+            if (!btn.isConnected) return;
+            btn.disabled = false;
+            btn.textContent = origText;
+          }, 8000);
+          return;
+        }
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+    // Wall-clock ceiling — restore button rather than leave stuck.
+    if (btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  }
+
+  // v1.10.20: hide the secondary TDB-match chips when the primary chip
+  // already implies a TDB answer. THEMERRDB ⇒ tracked, UNTRACKED ⇒
+  // untracked, THEMERRDB ONLY ⇒ tracked (and uses a different code
+  // path on the backend that doesn't apply tdb filtering anyway).
+  // Resets the filter to 'any' on hide so it doesn't silently leak
+  // into the URL.
+  function updateTdbFilterVisibility() {
+    // v1.12.7: was the visibility gate for the old 3-chip TDB MATCH
+    // row; replaced by the always-visible TDB pill multi-select row.
+    // Kept as a no-op stub because several status-chip handlers
+    // still call it and removing the call sites cleanly is out of
+    // scope for this ship — strictly cosmetic.
+    return;
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll('th.col-sort').forEach((th) => {
+      const ind = th.querySelector('.sort-indicator');
+      if (!ind) return;
+      const isActive = th.dataset.sort === libraryState.sort;
+      th.classList.toggle('col-sort-active', isActive);
+      ind.textContent = isActive ? (libraryState.sortDir === 'desc' ? '▼' : '▲') : '';
+    });
+    // v1.12.68: reflect the attention-sort state on the
+    // // NEEDS WORK chip. Active when libraryState.sort is
+    // 'attention'; clicking toggles back to the prior column
+    // sort (or title asc as the fallback).
+    const attnBtn = document.getElementById('library-sort-attention-btn');
+    if (attnBtn) {
+      attnBtn.classList.toggle('chip-active', libraryState.sort === 'attention');
+    }
+  }
+
+  // v1.23.71: client-side library tab switching. The nav tab links are <a href>
+  // full-page navigations — each switch re-downloaded + re-parsed the ~18k-line
+  // app.js and re-ran all init before loadLibrary even fired (the user's "~1s
+  // loading on tab switch"; the /api/library query itself is ≤160ms, measured
+  // v1.23.70). switchLibraryTab swaps the tab in place instead: fetch the new
+  // tab's server-rendered HTML, swap only the per-tab fragments (the toolbar
+  // chips + the legend — the server stays the source of truth), re-bind the
+  // swapped chips, re-hydrate libraryState, loadLibrary(). Progressive
+  // enhancement: the <a href> still works and ANY error falls back to a full
+  // navigation, so this can never regress nav.
+  function bindLibraryToolbarChips() {
+    document.querySelectorAll('.chips [data-section-id]').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.chips [data-section-id]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        b.classList.add('chip-active');
+        libraryState.section_id = b.dataset.sectionId || '';
+        // v1.18.1: persist per-tab section choice. Only relevant on /collections.
+        try {
+          const tabKey = (document.getElementById('library-tab') || {}).value;
+          if (tabKey === 'collections') {
+            if (libraryState.section_id) {
+              localStorage.setItem('motif:collections-section', libraryState.section_id);
+            } else {
+              localStorage.removeItem('motif:collections-section');
+            }
+          }
+        } catch (_) { /* private mode / quota — fine */ }
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+      });
+    });
+    // 4K toggle
+    document.querySelectorAll('.chips [data-fourk]').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        b.classList.add('chip-active');
+        libraryState.fourk = b.dataset.fourk === '1';
+        // v1.14.68: synchronous label flip so the toggle feels instant.
+        updateLibraryRefreshBtnLabel();
+        // v1.12.9: persist per-tab variant choice.
+        try {
+          const tabKey = (document.getElementById('library-tab') || {}).value;
+          if (tabKey) {
+            localStorage.setItem(`motif:variant:${tabKey}`,
+              libraryState.fourk ? 'fourk' : 'standard');
+          }
+        } catch (_) { /* private mode / quota — fine */ }
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+        // v1.11.84: the REFRESH lock is per-variant — re-evaluate now.
+        refreshTopbarStatus().catch(() => {});
+      });
+    });
+  }
+
+  function hydrateLibraryStateForTab(tab, sp) {
+    libraryState.tab = tab;
+    libraryState.page = 1;
+    if (tab === 'collections') {
+      libraryState.fourk = false;
+    } else {
+      let f = false;
+      if (sp && sp.has('fourk')) {
+        const v = sp.get('fourk');
+        f = (v === '1' || v === 'true');
+      } else {
+        try { f = localStorage.getItem('motif:variant:' + tab) === 'fourk'; } catch (_) { /* fine */ }
+      }
+      libraryState.fourk = f;
+    }
+    if (tab === 'collections') {
+      let sec = (sp && sp.get('section_id')) || '';
+      if (!sec) {
+        try { sec = localStorage.getItem('motif:collections-section') || ''; } catch (_) { /* fine */ }
+      }
+      // v1.18.18 default-to-first-chip logic, mirrored from the init hydration.
+      const chipNodes = document.querySelectorAll('.chips [data-section-id]');
+      const validSecIds = new Set();
+      chipNodes.forEach((c) => { if (c.dataset.sectionId) validSecIds.add(c.dataset.sectionId); });
+      const firstChip = chipNodes[0];
+      if (!sec || !validSecIds.has(sec)) sec = firstChip ? (firstChip.dataset.sectionId || '') : '';
+      libraryState.section_id = sec;
+    } else {
+      libraryState.section_id = '';
+    }
+    // reflect the resolved variant/section on the freshly-swapped chips.
+    document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+      x.classList.toggle('chip-active', x.dataset.fourk === (libraryState.fourk ? '1' : '0')));
+    document.querySelectorAll('.chips [data-section-id]').forEach((x) =>
+      x.classList.toggle('chip-active', (x.dataset.sectionId || '') === libraryState.section_id));
+    // pill filters (SRC/TDB/DL/PL/LINK/ATTN), q + sort are intentionally KEPT in
+    // memory across the switch — mirrors the full-nav cross-tab persistence
+    // (v1.13.13) without the sessionStorage round-trip.
+  }
+
+  async function switchLibraryTab(href, push) {
+    if (push === undefined) push = true;
+    const url = new URL(href, location.origin);
+    const tab = (url.pathname.replace(/^\/+/, '') || 'movies');
+    if (['movies', 'tv', 'anime', 'collections'].indexOf(tab) === -1) {
+      window.location.href = href; return;
+    }
+    // v1.23.73 (code review): in-flight guard — two quick switches must not
+    // interleave the post-fetch DOM swap / pushState / state hydration (loadLibrary
+    // has its own _seq, but the chip swap + history + title did not).
+    switchLibraryTab._seq = (switchLibraryTab._seq || 0) + 1;
+    const myseq = switchLibraryTab._seq;
+    const resp = await fetch(url.pathname + url.search, { credentials: 'same-origin' });
+    if (switchLibraryTab._seq !== myseq) return;  // a newer switch superseded us
+    if (!resp.ok) throw new Error('tab fetch ' + resp.status);
+    const html = await resp.text();
+    if (switchLibraryTab._seq !== myseq) return;
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    // bail to a full nav if the fetched page isn't the expected library shape.
+    // v1.23.73 (code review): target the toolbar tablist specifically — the
+    // filter status row is also .chips[role="tablist"] but carries no aria-label.
+    const newChips = doc.querySelector('.chips[role="tablist"][aria-label]');
+    const curChips = document.querySelector('.chips[role="tablist"][aria-label]');
+    if (!newChips || !curChips) throw new Error('toolbar chips not found');
+    curChips.replaceWith(newChips);
+    const newLeg = doc.querySelector('.library-legend-body');
+    const curLeg = document.querySelector('.library-legend-body');
+    if (newLeg && curLeg) curLeg.innerHTML = newLeg.innerHTML;
+    const newSub = doc.getElementById('library-subtitle');
+    const curSub = document.getElementById('library-subtitle');
+    if (newSub && curSub) curSub.textContent = newSub.textContent;
+    const tabEl = document.getElementById('library-tab');
+    if (tabEl) tabEl.value = tab;
+    const newTitle = doc.querySelector('title');
+    if (newTitle) document.title = newTitle.textContent;
+    bindLibraryToolbarChips();  // re-bind the chips we just swapped in
+    if (push) history.pushState({ libTab: tab }, '', url.pathname + url.search);
+    highlightNav();
+    hydrateLibraryStateForTab(tab, url.searchParams);
+    updateLibraryRefreshBtnLabel();
+    const tbody = document.getElementById('library-body');
+    if (tbody) { try { delete tbody.dataset.lastHash; } catch (_) { /* fine — forces loading… + a fresh render */ } }
+    window.scrollTo(0, 0);
+    await loadLibrary();
+    refreshTopbarStatus().catch(() => {});
+  }
+
+  async function loadLibrary() {
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return;
+    // v1.23.21 (code review): every render invalidates the INFO prefetch
+    // cache — catches background sync/enum mutations a user click didn't
+    // trigger, and bounds the Map (entries otherwise only evict on a
+    // failed fetch, never on success). loadLibrary only runs from event
+    // handlers, well after _infoPrefetch is initialized.
+    _infoPrefetch.clear();
+    libraryState.tab = tabEl.value;
+    // v1.13.13: persist filter combo so a hop to another library
+    // tab (MOVIES → TV SHOWS) lands with the same filters applied.
+    _saveLibraryFilterState();
+    // v1.22.95: every filter mutation funnels through loadLibrary,
+    // so this is the one chokepoint that keeps the // FILTERS
+    // toggle's active-count badge honest (pill clicks, CLEAR ALL,
+    // presets, deep-links — all of them).
+    updateFilterDrawerUi();
+    const params = new URLSearchParams({
+      tab: libraryState.tab,
+      fourk: libraryState.fourk ? 'true' : 'false',
+      page: libraryState.page,
+      per_page: libraryState.perPage,
+    });
+    // v1.18.1: section_id is only meaningful for the /collections
+    // tab. Other tabs use the fourk binary toggle for the same
+    // narrowing axis. Empty string means "all included sections."
+    if (libraryState.tab === 'collections' && libraryState.section_id) {
+      params.set('section_id', libraryState.section_id);
+    }
+    if (libraryState.q) params.set('q', libraryState.q);
+    if (libraryState.status !== 'all') params.set('status', libraryState.status);
+    if (libraryState.tdb && libraryState.tdb !== 'any') {
+      params.set('tdb', libraryState.tdb);
+    }
+    // v1.12.23: pill axes ride the URL so the server filters
+    // honor counts + pagination + sort. Pre-fix these were
+    // client-side only — the count was the pre-filter total
+    // and sort across pages dropped rows the filter rejected.
+    if (libraryState.srcFilter && libraryState.srcFilter.size > 0) {
+      params.set('src_pills', Array.from(libraryState.srcFilter).join(','));
+    }
+    if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
+      params.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+    }
+    if (libraryState.dlPills && libraryState.dlPills.size > 0) {
+      params.set('dl_pills', Array.from(libraryState.dlPills).join(','));
+    }
+    if (libraryState.plPills && libraryState.plPills.size > 0) {
+      params.set('pl_pills', Array.from(libraryState.plPills).join(','));
+    }
+    if (libraryState.edPills && libraryState.edPills.size > 0) {
+      params.set('ed_pills', Array.from(libraryState.edPills).join(','));
+    }
+    if (libraryState.linkPills && libraryState.linkPills.size > 0) {
+      params.set('link_pills', Array.from(libraryState.linkPills).join(','));
+    }
+    // v1.13.68: ATTN axis ships alongside the existing pill axes.
+    if (libraryState.attnPills && libraryState.attnPills.size > 0) {
+      params.set('attn_pills', Array.from(libraryState.attnPills).join(','));
+    }
+    if (libraryState.sort && libraryState.sort !== 'title') {
+      params.set('sort', libraryState.sort);
+    }
+    if (libraryState.sortDir && libraryState.sortDir !== 'asc') {
+      params.set('sort_dir', libraryState.sortDir);
+    }
+    const tbody = document.getElementById('library-body');
+    // v1.13.23: don't clobber tbody to "loading…" when prior rows are
+    // already rendered. The v1.13.21 hash-skip (~3697) compares the
+    // new HTML against tbody.dataset.lastHash — when the new render
+    // matches (unchanged poll, same items), the populated-branch
+    // write is skipped, so a fresh "loading…" placeholder painted
+    // here would persist on screen until the user navigated away.
+    // Visible during sync plex (slow API under DB lock contention)
+    // AND during ordinary 5s rapid-poll ticks. Only paint the
+    // placeholder on the empty-state case (no prior render); during
+    // a re-fetch, leave existing rows in place until the new render
+    // either matches (skip) or differs (overwrite).
+    if (tbody.dataset.lastHash == null) {
+      tbody.innerHTML = `<tr><td colspan="10" class="muted center">loading…</td></tr>`;
+    }
+    // v1.13.28: in-flight guard. Pre-fix two loadLibrary() calls
+    // could race — a fast filter-chip click while the prior fetch
+    // was still in flight would let whichever response landed second
+    // win, possibly clobbering fresher data with stale. Bumping a
+    // monotonic token on each call lets the older call detect it's
+    // been superseded and bail before touching tbody.
+    loadLibrary._seq = (loadLibrary._seq || 0) + 1;
+    const _myToken = loadLibrary._seq;
+    let data;
+    try {
+      data = await api('GET', '/api/library?' + params.toString());
+    } catch (e) {
+      if (loadLibrary._seq !== _myToken) return;
+      tbody.innerHTML = `<tr><td colspan="10" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      return;
+    }
+    if (loadLibrary._seq !== _myToken) return;
+    // v1.10.35: silent dedup keyed on (theme, media_type, folder_path).
+    // Plex sometimes lists one movie twice in the same section under
+    // different rating_keys (file versions Plex didn't merge). When
+    // those rating_keys share the same folder_path the rows are
+    // visually identical and just confuse the user — collapse them.
+    // Distinct folder_paths (1408 base vs Director's Cut, or movie
+    // mounted in standard + 4K sections) stay as separate rows so
+    // the edition pill / section label differentiates correctly.
+    // Untracked rows / orphans / blank folder_path fall back to
+    // rating_key so unrelated items aren't accidentally merged.
+    const seenItems = new Map();
+    const dedupedItems = [];
+    for (const it of (data.items || [])) {
+      const themed = (it.theme_media_type
+                      && it.theme_tmdb !== null
+                      && it.theme_tmdb !== undefined);
+      const key = (themed && it.folder_path)
+        ? `t:${it.theme_media_type}:${it.theme_tmdb}:${it.folder_path}`
+        : `rk:${it.rating_key}`;
+      if (seenItems.has(key)) continue;
+      seenItems.set(key, it);
+      dedupedItems.push(it);
+    }
+    libraryState.items = dedupedItems;
+    // v1.16.10: keep the selectedRows cache fresh — picks up the
+    // latest row data for any selected key visible on this page so
+    // bulk-action counts + handlers reflect current state. Off-page
+    // selected rows (added via SELECT ALL FILTERED) retain their
+    // cached snapshot until re-encountered.
+    syncSelectedRowsFromItems();
+    // v1.15.85: cold-load auto-kick. If any rendered row has an
+    // in-flight job, fire libraryRapidPoll so the row state catches
+    // up to the worker without waiting for a manual refresh. Handles
+    // the case the user flagged: queue a download from one tab (or the
+    // settings-import flow), navigate to /movies, see an amber DL
+    // pill on the row but no progress in the topbar. Pre-fix the
+    // amber persisted until the user hit refresh, because there's
+    // no continuous background loadLibrary — the existing
+    // libraryRapidPoll only fires for user-triggered actions in
+    // *this tab*, so a background job from elsewhere left its row
+    // amber indefinitely.
+    //
+    // The rapid-poll's own auto-stop (2 consecutive empty polls)
+    // tears it down once every visible row's job_in_flight clears.
+    // libraryRapidPoll guards against re-entry by returning early
+    // when a timer is already running, so repeated kicks just
+    // extend the 60s window (each tick re-extends it via this same
+    // code path, so the poll keeps running as long as any row
+    // is in flight — auto-stop based on state, not time).
+    //
+    // The topbar's own /api/progress poll is on a separate cadence
+    // (10s idle → 1s when ops are running); it'll catch the synth
+    // op within 10s of navigation, independently. This fix targets
+    // the row's amber pill, not the topbar.
+    if (dedupedItems.some((it) => !!it.job_in_flight)
+        && typeof libraryRapidPoll === 'function') {
+      libraryRapidPoll();
+    }
+    if (dedupedItems.length === 0) {
+      // v1.11.27: when an enum is actively running for this tab, show
+      // a 'scanning now' cue instead of the stale 'click REFRESH FROM
+      // PLEX' instruction. window.__motif_enum_active is updated by
+      // the topbar status tick (set when plex_enum_active[tab][variant]
+      // is true). Until it's clear the banner sits on the same prompt
+      // that's been there for first-time visitors.
+      // v1.13.58: distinguish "no rows in this library at all" from
+      // "filter matched nothing". Pre-fix the "enable Plex sections"
+      // prompt fired even when sections were enabled and the library
+      // had thousands of rows — the user just had a filter that
+      // matched nothing. The new copy points at the active filters
+      // (the actual fix path) instead of the unrelated Plex-sections
+      // settings page.
+      const tab = libraryState.tab;
+      const variant = libraryState.fourk ? 'fourk' : 'standard';
+      const enumActive = !!(window.__motif_enum_active
+                            && window.__motif_enum_active[tab]
+                            && window.__motif_enum_active[tab][variant]);
+      const filtersActive = !!(
+        (libraryState.q && libraryState.q.length > 0)
+        || (libraryState.status && libraryState.status !== 'all')
+        || (libraryState.tdb && libraryState.tdb !== 'any')
+        || (libraryState.srcFilter && libraryState.srcFilter.size > 0)
+        || (libraryState.tdbPills && libraryState.tdbPills.size > 0)
+        || (libraryState.dlPills && libraryState.dlPills.size > 0)
+        || (libraryState.plPills && libraryState.plPills.size > 0)
+        || (libraryState.linkPills && libraryState.linkPills.size > 0)
+        || (libraryState.edPills && libraryState.edPills.size > 0)
+        || (libraryState.attnPills && libraryState.attnPills.size > 0)
+      );
+      let msg;
+      if (enumActive) {
+        msg = 'scanning Plex now — items will appear as the enum completes…';
+      } else if (filtersActive) {
+        msg = 'no items match the current filters — click // CLEAR ALL above or adjust the chips to widen the view';
+      } else {
+        msg = 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
+      }
+      // v1.18.86: colspan must match the 11-column header (select +
+      // TITLE + ED + YEAR + TDB + SRC + DL + PL + LINK + IMDB +
+      // ACTIONS). v1.15.53 bumped the Jinja loading row to 11 but
+      // this JS empty-state row was missed — under v1.18.84's
+      // STATUS=! repro on /collections, the 0-match render trailed
+      // an empty 11th cell. Audit caught it.
+      // v1.20.33: hash-guard the empty state with the SAME lastHash
+      // mechanism as the populated branch. Pre-fix this branch wrote
+      // unconditionally then DELETED lastHash (v1.13.21, to force a
+      // render on the N→0→N transition). But deleting it made the NEXT
+      // loadLibrary see lastHash==null and repaint the "loading…"
+      // placeholder (~line 7090) — so on a 0-result filter, every
+      // background poll (frequent while downloads are in flight) flickered
+      // loading… ⇄ no-items. the user: "when there are no results on a
+      // filter will continuously see it say briefly loading the no results
+      // then loading again back and forth." Using the full empty-row HTML
+      // as the hash keeps the N→0→N safety (empty HTML never hash-matches
+      // a row render, so a return to N still rebuilds) AND stops the
+      // placeholder repaint + the redundant same-message rewrite.
+      const emptyHtml = `<tr><td colspan="11" class="muted center">${msg}</td></tr>`;
+      if (tbody.dataset.lastHash !== emptyHtml) {
+        tbody.innerHTML = emptyHtml;
+        tbody.dataset.lastHash = emptyHtml;
+      }
+    } else {
+      // v1.12.23: pill filtering moved server-side. The server's
+      // sql_count + sql_rows + ORDER BY all honor the pill set, so
+      // counts / pagination / sort are correct. dedupedItems is
+      // the final list to render — the only client-side trim is
+      // the rating_key dedup pass above.
+      // v1.13.21 (was v1.13.20): hash-skip the innerHTML swap when the
+      // newly-rendered HTML is byte-identical to the previous render.
+      // Pre-fix every triggered loadLibrary (action click, +600ms /
+      // +15s retries, post-place refetch) tore down + rebuilt the
+      // entire tbody even when nothing visible had changed, blowing
+      // the user's scroll position back to the top mid-action. Cost:
+      // one string compare per loadLibrary. The non-empty branch is
+      // the only place we hit; the empty-state branch above always
+      // writes fresh HTML for the prompt and doesn't get hash-guarded.
+      const newHtml = dedupedItems.map(renderLibraryRow).join('');
+      if (tbody.dataset.lastHash !== newHtml) {
+        tbody.innerHTML = newHtml;
+        tbody.dataset.lastHash = newHtml;
+      }
+    }
+    updateLibrarySelectionUi();
+    const cntEl = document.getElementById('library-count');
+    if (cntEl) {
+      // v1.10.10: when the user is on THEMERRDB ONLY, label the count
+      // with the media type so it's obvious the chip is tab-scoped (the
+      // SQL filter is by t.media_type — a /movies tab will never include
+      // tv rows, but the label removes any ambiguity for the user).
+      let scope = '';
+      if (libraryState.status === 'not_in_plex') {
+        if (libraryState.tab === 'movies') scope = ' ThemerrDB-only movies';
+        else if (libraryState.tab === 'tv') scope = ' ThemerrDB-only shows';
+        else scope = ' ThemerrDB-only items';
+      }
+      cntEl.textContent =
+        `· ${fmt.num(data.total)}${scope || ' match' + (data.total === 1 ? '' : 'es')}`;
+    }
+
+    // v1.10.10: missing-themes banner removed. The chip filters
+    // (THEMERRDB / DOWNLOADED / READY TO PLACE) and per-row actions
+    // give the user direct paths to every action the banner offered,
+    // so a separate "X downloads available" callout was just noise
+    // (and it was firing on the FAILURES tab too where it made no
+    // sense). The scan-needed hint stays — different concept.
+    const scanHint = document.getElementById('library-scan-hint');
+    if (scanHint) {
+      scanHint.style.display = data.plex_enumerated ? 'none' : '';
+    }
+    // v1.11.77: TDB pill gate now lives on window.__motif_themes_have
+    // (set during the topbar /api/stats tick) — keyed per media_type
+    // so a cancelled-mid-sync still renders pills for the side that
+    // got data. The previous last_sync_at gate is gone.
+    const totalPages = Math.max(1, Math.ceil(data.total / libraryState.perPage));
+    // v1.14.13: FIRST + LAST shortcuts wrap the existing PREV / NEXT
+    // pair so users can jump to either end without click-spamming
+    // PREV / NEXT — relevant on libraries with hundreds of pages.
+    // Disabled state mirrors PREV (« first off on page 1) and NEXT
+    // (» last off on the final page) so the boundary feedback is
+    // consistent across the four buttons.
+    const onFirst = libraryState.page <= 1;
+    const onLast = libraryState.page >= totalPages;
+    document.getElementById('library-pager').innerHTML = `
+      <button data-lib-page="1" ${onFirst ? 'disabled' : ''}>« first</button>
+      <button data-lib-page="${libraryState.page - 1}" ${onFirst ? 'disabled' : ''}>« prev</button>
+      <span>page ${libraryState.page} / ${totalPages}</span>
+      <button data-lib-page="${libraryState.page + 1}" ${onLast ? 'disabled' : ''}>next »</button>
+      <button data-lib-page="${totalPages}" ${onLast ? 'disabled' : ''}>last »</button>
+    `;
+  }
+
+  // v1.11.66: standalone SRC-letter classifier. Mirrors the badge
+  // branch order in renderLibraryRow so the click-to-filter on the
+  // SRC legend agrees with what the row's badge actually shows.
+  // Returns one of T / U / A / M / P / - (literal dash).
+  // v1.23.39: TDB_DEAD_FAILURES_GLOBAL hoisted to module scope (top of the
+  // file) so loadCoverage's isAddable can read it too — was function-scoped
+  // here, which threw a ReferenceError from the coverage card render.
+
+  // v1.12.7: classify a row by its TDB pill state for the multi-
+  // select TDB pill filter. Returns one of:
+  //   'tdb'     — TDB-tracked, no failure  → green pill
+  //   'update'  — pending upstream URL update (declined or pending)
+  //                → blue TDB ↑ pill
+  //   'cookies' — cookies-required failure (user-fixable)
+  //                → amber TDB ⚠ pill
+  //   'dead'    — permanent upstream failure → red TDB ✗ pill
+  //   'none'    — no themes record / orphan → gray "no TDB" pill
+  // Precedence matches the row pill render: update > dead > cookies
+  // > tdb > none. The pending_update flag (decision IN pending,
+  // declined) lights up blue regardless of the underlying tracked
+  // state; the row's actionable_update flag is what gates the
+  // ACCEPT / KEEP menu actions but isn't relevant for filtering.
+  // ============================================================
+  // v1.13.11: saved filter presets — snapshot the current library
+  // filter combo as a named preset and replay later from a dropdown.
+  // Uses /api/saved-filters (scope='library'). Snapshot string is the
+  // exact URL query the deep-link hydration code in bindLibrary
+  // already understands, so applying a preset = setting
+  // window.location.search to it.
+  // ============================================================
+
+  function _buildPresetQueryString() {
+    // Mirror loadLibrary's params logic but EXCLUDE pagination/tab/
+    // fourk — those are page context, not filter state. The deep-link
+    // hydration code (bindLibrary) reads each of these keys.
+    const p = new URLSearchParams();
+    if (libraryState.q) p.set('q', libraryState.q);
+    if (libraryState.status && libraryState.status !== 'all') {
+      p.set('status', libraryState.status);
+    }
+    if (libraryState.tdb && libraryState.tdb !== 'any') {
+      p.set('tdb', libraryState.tdb);
+    }
+    if (libraryState.srcFilter && libraryState.srcFilter.size > 0) {
+      p.set('src_pills', Array.from(libraryState.srcFilter).join(','));
+    }
+    if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
+      p.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+    }
+    if (libraryState.dlPills && libraryState.dlPills.size > 0) {
+      p.set('dl_pills', Array.from(libraryState.dlPills).join(','));
+    }
+    if (libraryState.plPills && libraryState.plPills.size > 0) {
+      p.set('pl_pills', Array.from(libraryState.plPills).join(','));
+    }
+    if (libraryState.edPills && libraryState.edPills.size > 0) {
+      p.set('ed_pills', Array.from(libraryState.edPills).join(','));
+    }
+    if (libraryState.linkPills && libraryState.linkPills.size > 0) {
+      p.set('link_pills', Array.from(libraryState.linkPills).join(','));
+    }
+    // v1.13.68: ATTN axis persists in URL alongside the existing pills.
+    if (libraryState.attnPills && libraryState.attnPills.size > 0) {
+      p.set('attn_pills', Array.from(libraryState.attnPills).join(','));
+    }
+    if (libraryState.sort && libraryState.sort !== 'title') {
+      p.set('sort', libraryState.sort);
+    }
+    if (libraryState.sortDir && libraryState.sortDir !== 'asc') {
+      p.set('sort_dir', libraryState.sortDir);
+    }
+    return p.toString();
+  }
+
+  // v1.13.13: cross-tab filter + search persistence.
+  //
+  // Pre-fix switching between MOVIES → TV SHOWS → ANIME walked the user
+  // back to a no-filter library every time, since each tab is a fresh
+  // page load with empty URL params. Now libraryState gets snapshotted
+  // to sessionStorage on every loadLibrary() call and replayed when the
+  // user lands on another library tab without filter URL params.
+  //
+  // Precedence: URL deep-links (e.g., topbar UPD click → /movies?
+  // tdb_pills=update) always win; sessionStorage only fills in when the
+  // URL carries no filter keys. CLEAR ALL nukes the sessionStorage
+  // snapshot too so the next tab visit truly starts clean.
+  //
+  // v1.18.84: storage backend switched localStorage → sessionStorage.
+  // Pre-fix, opening /collections in a NEW TAB (or refreshing in a
+  // case where v1.18.50's reload-clear missed) inherited the
+  // localStorage filter snapshot from a sibling tab, including
+  // STATUS=! that returned 0 matches on /collections. the user:
+  // "continue after refresh to find myself back at this filter, or
+  // opening a new tab it's back at this filter." sessionStorage is
+  // per-tab so:
+  //   * new tab → empty, fresh view ✓
+  //   * within-tab nav (MOVIES → TV → COLLECTIONS) → preserved ✓
+  //     (v1.13.13 intent)
+  //   * refresh → preserved by sessionStorage BUT v1.18.50's
+  //     _maybeClearStorageOnReload still clears (now via
+  //     sessionStorage.removeItem) ✓
+  // Same scope discipline v1.17.15 used for the search query `q`.
+  // The v1.15.52 "cross-session resurfacing surprised me" complaint
+  // applied equally to the filter snapshot — same fix, same rationale.
+  const _LIB_STATE_KEY = 'motif:library_filter_state';
+  const _LIB_FILTER_URL_KEYS = [
+    'status', 'tdb', 'tdb_pills', 'src_pills', 'dl_pills', 'pl_pills',
+    'link_pills', 'ed_pills', 'attn_pills', 'sort', 'sort_dir', 'q',
+  ];
+
+  // v1.17.15: cross-tab search persistence via sessionStorage.
+  // the user's request: search "yu-gi-oh" in /movies → click TV
+  // SHOWS nav → the search persists on /tv (and /anime). Full-
+  // page nav clears everything else, but the search query
+  // survives via this key.
+  //
+  // sessionStorage threads a needle the v1.15.52 fix specifically
+  // narrowed:
+  //   * localStorage `q` was removed in v1.15.52 because OLD
+  //     searches (days-old, cross-session) were resurfacing and
+  //     surprising users — clobbering the filter chips they'd
+  //     just set.
+  //   * sessionStorage scope is exactly one browser tab:
+  //     - survives the page navigations within the tab
+  //       (/movies → /tv → /anime)
+  //     - clears on tab close (no stale-query resurfacing)
+  //     - separate per tab (a fresh tab doesn't see the search
+  //       from your other open tab)
+  // That matches both the user's current ask AND the v1.15.52
+  // constraint without violating either.
+  const _LIB_SESSION_Q_KEY = 'motif:library_q';
+
+  function _writeSessionQ(q) {
+    try {
+      if (q) sessionStorage.setItem(_LIB_SESSION_Q_KEY, q);
+      else sessionStorage.removeItem(_LIB_SESSION_Q_KEY);
+    } catch (_) { /* private mode / quota — fine */ }
+  }
+
+  function _readSessionQ() {
+    try {
+      return sessionStorage.getItem(_LIB_SESSION_Q_KEY) || '';
+    } catch (_) { return ''; }
+  }
+
+  function _clearSessionQ() {
+    try { sessionStorage.removeItem(_LIB_SESSION_Q_KEY); }
+    catch (_) { /* fine */ }
+  }
+
+  function _saveLibraryFilterState() {
+    try {
+      // v1.15.52: drop `q` from the persisted payload. Pre-fix
+      // an old search query (e.g. "rubble" from days ago) would
+      // resurface on a fresh tab / refresh + drag along the
+      // stale filter snapshot from that save-moment, clobbering
+      // the user's current intent. the user: "I'll see in the
+      // search bar something I searched long before or in a
+      // different session and it will clear the filters I had
+      // set." Search is now ephemeral — URL ?q= deep-links
+      // still set it; in-session typing still drives it; but
+      // it doesn't survive across sessions/tabs. Filter chips
+      // KEEP persisting (the v1.13.13 "filter MOVIES → click
+      // TV SHOWS without starting over" intent stays).
+      const payload = {
+        status: libraryState.status,
+        tdb: libraryState.tdb,
+        srcFilter: Array.from(libraryState.srcFilter || []),
+        tdbPills: Array.from(libraryState.tdbPills || []),
+        dlPills: Array.from(libraryState.dlPills || []),
+        plPills: Array.from(libraryState.plPills || []),
+        linkPills: Array.from(libraryState.linkPills || []),
+        edPills: Array.from(libraryState.edPills || []),
+        // v1.13.68: ATTN axis persists alongside the others.
+        attnPills: Array.from(libraryState.attnPills || []),
+        sort: libraryState.sort,
+        sortDir: libraryState.sortDir,
+      };
+      // v1.18.84: sessionStorage (per-tab) instead of localStorage
+      // (cross-tab). See the _LIB_STATE_KEY comment block for the
+      // full rationale — short version: cross-tab leakage was
+      // resurfacing stale filters in fresh tabs, with STATUS=! on
+      // /collections returning 0 matches.
+      sessionStorage.setItem(_LIB_STATE_KEY, JSON.stringify(payload));
+    } catch (_) { /* private mode / quota — fine */ }
+  }
+
+  function _hydrateLibraryFromStorage() {
+    let raw;
+    // v1.18.84: read from sessionStorage. Opportunistically evict
+    // any leftover localStorage entry from pre-v1.18.84 sessions so
+    // the migration is one-shot. Idempotent — once evicted on the
+    // first post-upgrade tab, future tabs see nothing in
+    // localStorage to remove.
+    try {
+      localStorage.removeItem(_LIB_STATE_KEY);
+    } catch (_) { /* fine */ }
+    try { raw = sessionStorage.getItem(_LIB_STATE_KEY); } catch (_) { return; }
+    if (!raw) return;
+    let payload;
+    try { payload = JSON.parse(raw); } catch (_) { return; }
+    if (!payload || typeof payload !== 'object') return;
+    // v1.15.52: q is no longer persisted (see _saveLibraryFilterState).
+    // Forward-compatible: older payloads may still have payload.q
+    // from before v1.15.52 — explicitly do NOT restore it, so the
+    // stale query doesn't haunt the next page load. URL ?q= still
+    // hydrates above this fn in bindLibrary; in-session typing
+    // still drives libraryState.q. Just no cross-session restore.
+    if (payload.status && payload.status !== 'all') {
+      libraryState.status = payload.status;
+      // v1.13.65: off-chip statuses (failures, unplaced, etc.) fall
+      // back to ALL chip so the row is never "nothing active". See
+      // _syncStatusChipActive header for full rationale.
+      _syncStatusChipActive();
+    }
+    if (payload.tdb && payload.tdb !== 'any') {
+      libraryState.tdb = payload.tdb;
+      document.querySelectorAll('[data-tdb]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.tdb === payload.tdb));
+    }
+    const HYDRATE_MAP = [
+      { key: 'srcFilter', attr: 'srcFilter', activeClass: 'src-key-btn-active' },
+      { key: 'tdbPills',  attr: 'tdbPill',   activeClass: 'tdb-pill-btn-active' },
+      { key: 'dlPills',   attr: 'dlPill',    activeClass: 'state-pill-btn-active' },
+      { key: 'plPills',   attr: 'plPill',    activeClass: 'state-pill-btn-active' },
+      { key: 'linkPills', attr: 'linkPill',  activeClass: 'link-pill-btn-active' },
+      { key: 'edPills',   attr: 'edPill',    activeClass: 'state-pill-btn-active' },
+      // v1.13.68: ATTN pill hydration follows the same pattern.
+      { key: 'attnPills', attr: 'attnPill',  activeClass: 'attn-pill-btn-active' },
+    ];
+    for (const m of HYDRATE_MAP) {
+      const arr = payload[m.key];
+      if (!Array.isArray(arr) || !arr.length) continue;
+      arr.forEach((v) => libraryState[m.key].add(v));
+      const kebab = m.attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+      document.querySelectorAll(`[data-${kebab}]`).forEach((x) => {
+        const xVal = x.dataset[m.attr];
+        if (xVal && libraryState[m.key].has(xVal)) {
+          x.classList.add(m.activeClass);
+        }
+      });
+    }
+    if (payload.sort && payload.sort !== 'title') libraryState.sort = payload.sort;
+    if (payload.sortDir && payload.sortDir !== 'asc') libraryState.sortDir = payload.sortDir;
+  }
+
+  function _clearLibraryFilterStorage() {
+    // v1.18.84: clear sessionStorage (the canonical store). Also
+    // wipe the legacy localStorage entry for paranoia — CLEAR ALL
+    // semantics demand both surfaces are clean even if a stale
+    // localStorage value somehow survived the one-shot eviction
+    // in _hydrateLibraryFromStorage.
+    try { sessionStorage.removeItem(_LIB_STATE_KEY); } catch (_) { /* fine */ }
+    try { localStorage.removeItem(_LIB_STATE_KEY); } catch (_) { /* fine */ }
+  }
+
+  // v1.18.50: clear filter+search storage on browser refresh (F5 /
+  // Cmd+R / reload button) while leaving them intact on tab clicks.
+  // the user: "when you refresh the page can we make it clear filters
+  // and any search text, want it to stay though when changing tabs
+  // still." Pre-fix, both the localStorage filter snapshot and the
+  // sessionStorage search query survived refresh, so a stale filter
+  // set could resurface even after the user expected a fresh page.
+  //
+  // The discriminator is `performance.getEntriesByType('navigation')
+  // [0].type`:
+  //   * 'reload'      — F5 / Cmd+R / reload button → CLEAR
+  //   * 'navigate'    — click on nav link, address bar, bookmark
+  //                     → KEEP (tab change between MOVIES / TV / etc.)
+  //   * 'back_forward'— browser back/forward → KEEP (the user
+  //                     expects state to come back)
+  //   * 'prerender'   — KEEP (treat as fresh nav)
+  //
+  // Called from bindLibrary's hydration path BEFORE
+  // `_hydrateLibraryFromStorage` so a reload skips the restore.
+  // The URL ?q= and ?<axis>_pills= deep-links still hydrate
+  // normally — refresh-clear only affects the cross-tab snapshot
+  // backed by storage. Silent-fail-safe: if the Performance API
+  // is unavailable (older browsers, restricted contexts), we
+  // default to NOT clearing (i.e. preserve current behavior),
+  // mirroring the v1.13.13 default.
+  function _isPageReload() {
+    try {
+      const entries = performance.getEntriesByType
+        && performance.getEntriesByType('navigation');
+      if (entries && entries.length > 0) {
+        return entries[0].type === 'reload';
+      }
+      // Fallback for older browsers — performance.navigation is
+      // deprecated but still present in some engines. TYPE_RELOAD === 1.
+      if (performance.navigation
+          && typeof performance.navigation.type === 'number') {
+        return performance.navigation.type === 1;
+      }
+    } catch (_) { /* private mode / restricted context */ }
+    return false;
+  }
+
+  function _maybeClearStorageOnReload() {
+    if (!_isPageReload()) return;
+    _clearLibraryFilterStorage();
+    _clearSessionQ();
+  }
+
+  let _libraryPresets = [];
+  let _activePresetId = null;
+
+  // v1.13.18 (A2): popover-driven preset menu. Renders each saved
+  // filter as a clickable list item with an inline × delete; the
+  // bookmark star fills when the current state matches a saved
+  // preset so users get a glanceable indicator (v1.23.14: via the
+  // .has-active class on the SVG star, not a glyph swap). The drift
+  // detector clears it when libraryState diverges. <details>/
+  // <summary> handles open/close natively; an outside-click
+  // listener closes when focus drifts.
+  async function loadLibraryPresets() {
+    const list = document.getElementById('library-presets-list');
+    if (!list) return;
+    let data;
+    try {
+      data = await api('GET', '/api/saved-filters?scope=library');
+    } catch (e) {
+      console.error('saved-filters load failed:', e);
+      // v1.15.103: surface fetch failure to the user instead of
+      // leaving the list in its initial "none yet" / pre-load
+      // empty state. AUDIT_FRONTEND.md M7 — a transient 500 here
+      // (or auth expiry, or any backend error) leaves the //
+      // PRESETS popover claiming the user has no saved filters
+      // when they do. The muted-error li signals "load failed,
+      // try again or check console" so the user has an
+      // actionable signal instead of silent emptiness.
+      list.innerHTML = (
+        '<li class="library-presets-popup-empty muted small">'
+        + 'preset load failed — see console</li>'
+      );
+      return;
+    }
+    _libraryPresets = (data && data.filters) || [];
+    _renderPresetsList();
+    _updatePresetActiveState();
+  }
+
+  function _renderPresetsList() {
+    const list = document.getElementById('library-presets-list');
+    if (!list) return;
+    if (!_libraryPresets.length) {
+      list.innerHTML = '<li class="library-presets-popup-empty muted small">none yet</li>';
+      return;
+    }
+    list.innerHTML = _libraryPresets.map((f) => `
+      <li>
+        <button type="button" class="library-presets-popup-apply"
+                data-preset-id="${f.id}"
+                title="Apply this preset">${htmlEscape(f.name)}</button>
+        <button type="button" class="library-presets-popup-del"
+                data-preset-del="${f.id}"
+                title="Delete">×</button>
+      </li>
+    `).join('');
+  }
+
+  function _updatePresetActiveState() {
+    const menu = document.getElementById('library-presets-menu');
+    const bookmark = menu ? menu.querySelector('.library-presets-bookmark') : null;
+    if (!menu || !bookmark) return;
+    const here = _buildPresetQueryString();
+    const match = _libraryPresets.find((f) => f.query_json === here);
+    _activePresetId = match ? match.id : null;
+    // v1.23.14: fill is CSS-driven off .has-active (the star is an
+    // inline SVG now, not a ☆/★ text glyph — a textContent swap
+    // would wipe the SVG). The bookmark guard above still ensures
+    // the element exists before we toggle its menu's class.
+    if (match) {
+      menu.classList.add('has-active');
+    } else {
+      menu.classList.remove('has-active');
+    }
+    // Highlight the active item in the list.
+    const list = document.getElementById('library-presets-list');
+    if (list) {
+      list.querySelectorAll('.library-presets-popup-apply').forEach((btn) => {
+        btn.classList.toggle('is-active',
+          match && String(match.id) === btn.dataset.presetId);
+      });
+    }
+  }
+
+  async function saveLibraryPreset() {
+    const queryStr = _buildPresetQueryString();
+    if (!queryStr) {
+      alert('No filters active — select at least one filter, search, or sort before saving.');
+      return;
+    }
+    const name = (prompt('Save current filter as:') || '').trim();
+    if (!name) return;
+    try {
+      await api('POST', '/api/saved-filters', {
+        name, scope: 'library', query_json: queryStr,
+      });
+      await loadLibraryPresets();
+    } catch (e) {
+      alert('Save failed: ' + (e.message || e));
+    }
+  }
+
+  function applyLibraryPreset(id) {
+    const preset = _libraryPresets.find((f) => f.id === Number(id));
+    if (!preset) return;
+    const path = window.location.pathname;
+    const hash = window.location.hash || '';
+    const sep = preset.query_json ? '?' : '';
+    window.location.href = `${path}${sep}${preset.query_json}${hash}`;
+  }
+
+  async function deletePresetById(id) {
+    const preset = _libraryPresets.find((f) => f.id === Number(id));
+    if (!preset) return;
+    if (!confirm(`Delete saved filter "${preset.name}"?`)) return;
+    try {
+      await api('DELETE', `/api/saved-filters/${id}`);
+      // If the deleted preset was active, strip the URL so we
+      // land in a clean state. Otherwise just re-fetch the list.
+      if (Number(id) === _activePresetId) {
+        window.location.href = window.location.pathname;
+        return;
+      }
+      await loadLibraryPresets();
+    } catch (e) {
+      alert('Delete failed: ' + (e.message || e));
+    }
+  }
+
+  function bindLibraryPresets() {
+    const menu = document.getElementById('library-presets-menu');
+    const saveBtn = document.getElementById('library-presets-save');
+    const list = document.getElementById('library-presets-list');
+    if (!menu) return;
+    if (saveBtn) {
+      saveBtn.addEventListener('click', () => {
+        menu.removeAttribute('open');
+        saveLibraryPreset().catch((e) => console.error(e));
+      });
+    }
+    if (list) {
+      list.addEventListener('click', (ev) => {
+        const apply = ev.target.closest('.library-presets-popup-apply');
+        if (apply) {
+          applyLibraryPreset(apply.dataset.presetId);
+          return;
+        }
+        const del = ev.target.closest('.library-presets-popup-del');
+        if (del) {
+          ev.stopPropagation();
+          deletePresetById(del.dataset.presetDel).catch((e) => console.error(e));
+        }
+      });
+    }
+    // Outside-click closes the popover.
+    document.addEventListener('click', (ev) => {
+      if (!menu.hasAttribute('open')) return;
+      if (!menu.contains(ev.target)) menu.removeAttribute('open');
+    });
+    // Drift detection — refresh the bookmark active-state every 600ms
+    // so applying a preset, then editing pills, flips the icon back
+    // to ☆ without a polling-heavy approach.
+    setInterval(_updatePresetActiveState, 600);
+    loadLibraryPresets().catch((e) => console.error(e));
+  }
+
+  function computeTdbPill(it) {
+    const isThemerrDbAvail = it.upstream_source
+      && it.upstream_source !== 'plex_orphan';
+    if (!isThemerrDbAvail) return 'none';
+    // v1.12.48: pending_update only meaningful when the row is
+    // actually themed. If src='-' (no theme anywhere) there's
+    // nothing to "update" — fall through to plain green TDB so
+    // the SOURCE menu prompts a fresh download instead of an
+    // ACCEPT UPDATE that would just download the same URL.
+    // v1.19.71: SRC=— exception for kind='new_theme_available'.
+    // When sync just discovered a NEW TDB theme for an unthemed
+    // row, the !UPD signal IS meaningful — operator can ACCEPT
+    // to download. Other kinds (upstream_changed, urls_match)
+    // still gate on SRC !== '-' since they imply changes to an
+    // existing theme.
+    if (it.pending_update
+        && (computeSrcLetter(it) !== '-'
+            || it.pending_update_kind === 'new_theme_available')) {
+      return 'update';
+    }
+    if (it.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(it.failure_kind)) {
+      return 'dead';
+    }
+    if (it.failure_kind === 'cookies_expired'
+        && !window.__motif_cookies_present) {
+      return 'cookies';
+    }
+    // v1.13.1 (Phase C): dropped state ranks below failures — a
+    // dropped-AND-broken row should still surface as red TDB✗ so
+    // the user fixes the URL first. Only reach 'dropped' when the
+    // URL still works.
+    if (it.tdb_dropped_at) return 'dropped';
+    // v1.24.75: tracked but no theme video (youtube_url empty) → ∅ bucket.
+    // Mirrors the TDB ∅ row pill (tdbAvailLabel) + the backend `empty` filter
+    // branch; ranks below dropped/failures, above the green tdb fallthrough.
+    if (!it.youtube_url) return 'empty';
+    return 'tdb';
+  }
+
+  // v1.20.0: single source of truth for "this row has an ACTIONABLE
+  // pending update" — pending_update is set AND either the row is
+  // themed (SRC≠—) OR it's a new_theme_available row (v1.19.71, which
+  // deliberately targets SRC=— rows). Replaces the inline predicate
+  // that drifted across the bulk-bar / accept-gate sites (the
+  // v1.18.24/.75/.38 + v1.19.98 SRC-axis mirror-drift class — the
+  // v1.20.0 rollover audit caught selectedEligibleUpdates still using
+  // the bare SRC≠'-' form, which hid the bulk bar for selected
+  // new-theme SRC=— rows). The glyph / computeSrcLetter render sites
+  // keep their inline form (they can't call this — it calls
+  // computeSrcLetter, and one IS computeSrcLetter).
+  function pendingUpdateActionable(it) {
+    return !!it.pending_update
+      && (computeSrcLetter(it) !== '-'
+          || it.pending_update_kind === 'new_theme_available');
+  }
+
+  // v1.20.3: SRC letter → SOURCE-menu tone short-name (the
+  // `lib-source-<tone>` button variant). KEEP CURRENT keeps the
+  // row's CURRENT source, so its button should read in that
+  // source's color — a green KEEP CURRENT on a P-row wrongly
+  // implied "keep the TDB theme" (the user). M has no button tone
+  // (M's axis color is red = danger on a button) and '-' has no
+  // source to keep → both omitted, fall back to neutral green.
+  const SRC_LETTER_TONE = { T: 'themerrdb', A: 'adopt', U: 'user', P: 'plex' };
+
+  function computeSrcLetter(it) {
+    // v1.18.0: a plex_upload placement (collections — POST to
+    // /library/metadata/{rk}/themes instead of a hardlink/copy)
+    // has media_folder='' (empty string is falsy in JS), so the
+    // pre-v1.18 `!!it.media_folder` check classified motif-
+    // uploaded collection themes as "not placed" — they fell
+    // through to the P/sidecar/none branches and rendered as '–'.
+    // Recognize the new placement_kind as a placed state so T/U
+    // fire correctly for collections too.
+    const placed = !!it.media_folder
+                   || it.placement_kind === 'plex_upload';
+    const placedProv = it.placement_provenance;
+    const sidecarOnly = !placed && !!it.plex_local_theme;
+    const isOrphanRow = it.upstream_source === 'plex_orphan';
+    const sourceKind = it.source_kind || null;
+    const svid = it.source_video_id || '';
+    const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
+    if (placed && sourceKind === 'themerrdb') return 'T';
+    if (placed && sourceKind === 'adopt') return 'A';
+    if (placed && (sourceKind === 'url' || sourceKind === 'upload')) return 'U';
+    // v1.20.65: a PROMOTED cloud-backup row (plex_upload placement +
+    // source_kind='plex_cloud') is Plex's own cloud theme re-deployed
+    // from motif's backup — render P, not the T the provenance='auto'
+    // fallback below would give. Mirror of _SRC_LETTER_SQL.
+    if (placed && sourceKind === 'plex_cloud') return 'P';
+    if (placed && placedProv === 'auto') return 'T';
+    if (placed && placedProv === 'manual') {
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId
+        || svid.startsWith('sc-') || svid.startsWith('ig-')
+        || svid.startsWith('fb-'));
+      return (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
+    }
+    if (sidecarOnly) return 'M';
+    // v1.12.112: 'P' fires when Plex's theme claim is verified live
+    // (HEAD against /library/metadata/{rk}/theme returned 200) OR
+    // hasn't been tested yet (NULL → optimistic trust). Verified
+    // stale (0) falls through to '-'. Mirrors the SRC SQL's
+    // COALESCE(plex_theme_verified_ok, 1) = 1 check exactly so the
+    // row badge agrees with server-side filtering. Reverts v1.12.111's
+    // media_type gate — themerr-plex embeds on movies legitimately
+    // classify as P, and verification distinguishes them from stale
+    // post-PURGE cache without baking a media-type assumption.
+    const verified = it.plex_theme_verified_ok;
+    const verifiedOk = (verified === null || verified === undefined
+                        || verified === 1);
+    if (it.plex_has_theme && verifiedOk) return 'P';
+    return '-';
+  }
+
+  function renderLibraryRow(it) {
+    // v1.10.1: not_in_plex rows are ThemerrDB-only — synthesized into the
+    // plex-shaped schema by the API. Render them with a distinct style and
+    // limited actions (the title isn't in the user's Plex library, so
+    // download still works but placement targets nothing).
+    if (it.not_in_plex) {
+      return renderLibraryRowNotInPlex(it);
+    }
+    const themed = it.theme_tmdb !== null && it.theme_tmdb !== undefined;
+    const themeMt = it.theme_media_type;
+    const themeId = it.theme_tmdb;
+    const downloaded = !!it.file_path;
+
+    // Source badge — reflects what Plex is actually playing. v1.10.4 split
+    // the old generic M into U/A/M so the user can tell at a glance whether
+    // motif owns the file:
+    //   T = ThemerrDB-sourced; motif downloaded from upstream (auto)
+    //   U = User-managed: motif placed a file the user provided (UI upload
+    //       or manual YouTube URL). Either an override on a real ThemerrDB
+    //       title, or an orphan with no upstream record.
+    //   A = Adopted sidecar: motif took ownership of an existing theme.mp3
+    //       at the Plex folder (no ThemerrDB link, file is the source of
+    //       truth). Differentiated from U by source_video_id pattern.
+    //   M = Loose theme.mp3 sidecar at the Plex folder that motif doesn't
+    //       manage yet (run /scans → ADOPT to claim it).
+    //   P = Plex agent / cloud — Plex has a theme but no local sidecar AND
+    //       motif doesn't manage it.
+    //   — = no theme anywhere.
+    //
+    // v1.10.12: source_kind on local_files is the authoritative
+    // discriminator. 'themerrdb' / 'url' / 'upload' / 'adopt' are
+    // stamped at insert time. The svid heuristic stays as a fallback
+    // for rows older than the migration that didn't get backfilled
+    // confidently.
+    // v1.10.53: SRC badge leads with source_kind (the authoritative
+    // sticker on the canonical) instead of placedProv. Pre-1.10.53 a
+    // re-download on top of an adopted row could update local_files
+    // (provenance=auto, source_kind=themerrdb) while leaving the
+    // placement row at provenance=manual (because place_theme
+    // skipped the placement when force=False and a sidecar
+    // already existed). The old logic gated on placedProv first
+    // and then used source_kind only inside the manual branch, so
+    // 'manual placement + themerrdb local_files' rendered as U.
+    // Now: source_kind tells the truth about who owns the canonical;
+    // placedProv only matters for legacy rows with no source_kind.
+    //   themerrdb → T
+    //   adopt     → A
+    //   url/upload→ U
+    //   null      → fall back to placedProv + svid heuristic
+    // v1.18.24: class-P (mirror drift) fix — this local `placed`
+    // was the second of three sites that needed v1.18.0's plex_
+    // upload recognition. computeSrcLetter (line 7212) and
+    // renderLibraryRow's pl-pill block got the fix; this
+    // renderLibraryRow inline-SRC block did NOT, so plex_upload
+    // rows rendered SRC=P (collections) or SRC=– (movies post
+    // SWITCH PLACEMENT) even though the SAME rows showed
+    // LINK=PU correctly. the user's repro after v1.18.23 deploy:
+    // 101 Dalmatians collection SRC=P + LINK=PU contradicts each
+    // other; M*A*S*H movie post-switch SRC=blank + LINK=PU. The
+    // OR-with-plex_upload makes the inline render agree with
+    // computeSrcLetter.
+    const placed = !!it.media_folder
+                   || it.placement_kind === 'plex_upload';
+    const placedProv = it.placement_provenance;
+    const sidecarOnly = !placed && !!it.plex_local_theme;
+    const isOrphanRow = it.upstream_source === 'plex_orphan';
+    const sourceKind = it.source_kind || null;
+    const svid = it.source_video_id || '';
+    const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
+    let srcCell;
+    if (placed && sourceKind === 'themerrdb') {
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+    } else if (placed && sourceKind === 'adopt') {
+      srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link)">A</span>';
+    } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
+      srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL)">U</span>';
+    } else if (placed && sourceKind === 'plex_cloud') {
+      // v1.21.8: mirror-drift fix. computeSrcLetter + _SRC_LETTER_SQL
+      // (v1.20.65) classify a PLACED plex_cloud row as P, but this
+      // inline-SRC render lacked the branch and fell through to the
+      // `placedProv === 'auto'` → T case below. After PROMOTE TO
+      // ACTIVE on a plex_cloud BK row the chip rendered T while the
+      // src filter / sort / dashboard donut all said P — the exact
+      // v1.18.0→v1.18.24 inline-lag class the placement-kind contract
+      // warns about. Must sit BEFORE the auto fallback.
+      srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud theme">P</span>';
+    } else if (placed && placedProv === 'auto') {
+      // Legacy rows (source_kind NULL) — provenance='auto' === T.
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+    } else if (placed && placedProv === 'manual') {
+      // Legacy fallback heuristic for rows without source_kind.
+      const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId
+        || svid.startsWith('sc-') || svid.startsWith('ig-')
+        || svid.startsWith('fb-'));
+      const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
+      if (kind === 'adopt') {
+        srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link)">A</span>';
+      } else {
+        srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL)">U</span>';
+      }
+    } else if (sidecarOnly) {
+      srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar (click ADOPT to manage)">M</span>';
+    } else if (it.plex_has_theme
+               && (it.plex_theme_verified_ok === null
+                   || it.plex_theme_verified_ok === undefined
+                   || it.plex_theme_verified_ok === 1)) {
+      // v1.16.9: gate the P chip on the SAME verified_ok check
+      // that computeSrcLetter uses (~line 6539). Pre-fix this
+      // render branch fired purely on `plex_has_theme`, missing
+      // the verified_ok=0 case (phantom-P: Plex still claims a
+      // theme but HEAD verification failed). computeSrcLetter
+      // returned '-' for those rows + the server _SRC_LETTER_SQL
+      // (api.py:646) returned '-' too — but the chip rendered as
+      // P. The mismatch confused the user's filter results: T+`-`
+      // selected showed orange "P" badges (rows whose server
+      // letter was actually '-' but JS rendered as P), and +P
+      // alone showed rows the server filter said matched but
+      // were rendered with the wrong chip color. Aligning the
+      // render with computeSrcLetter closes the mismatch.
+      srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud theme">P</span>';
+    } else {
+      srcCell = '<span class="muted" title="no theme">—</span>';
+    }
+    // v1.13.34: composite-+P detection rewritten. v1.13.31's gate
+    // (`plex_has_theme && verifiedOk`) over-fired massively because
+    // Plex sets `pi.has_theme=1` on EVERY row where its metadata
+    // reports a theme — including the sidecar motif itself placed.
+    // So every T/U/A/M row got a phantom +P. The right discriminator
+    // for "Plex also serves its own theme" is the absent-sidecar
+    // case: `has_theme=1 AND local_theme_file=0`. That covers Plex
+    // Pass cloud themes, themerr-plex embeds, and stale Plex agent
+    // claims — all the cases where Plex's theme isn't backed by a
+    // file at the folder. When motif placed a sidecar successfully,
+    // local_theme_file=1 and the composite condition stays false
+    // (no separate Plex theme to surface). Edge case: sidecar
+    // externally deleted while motif's lf row still claims placement
+    // — `canonical_missing` exclusion below would route that to the
+    // dl-broken state instead.
+    //
+    // Visual change: drop the stacked second chip (it looked
+    // double-stacked when the cell wrapped). Replace with a single
+    // corner-dot indicator on the primary chip — same chip, single
+    // visual unit. Class `link-badge-also-plex` triggers the
+    // `::after` dot in app.css.
+    // v1.13.38: read the persisted plex_independent_theme flag
+    // (schema v39) instead of recomputing from has_theme +
+    // local_theme_file. plex_enum captures the observation when
+    // it CAN be made (no sidecar at the folder yet); the value
+    // sticks through subsequent placements. PURGE clears it on
+    // HEAD-404. Result: the dot only fires on rows where motif
+    // KNOWS Plex serves a separate theme — no transient false
+    // positives, no transient disappearances. Pre-fix the gate
+    // was a runtime recomputation that only held in the brief
+    // window before plex_enum stamped local_theme_file=1 after
+    // a placement.
+    const _primaryLetter = computeSrcLetter(it);
+    const _plexAlso = it.plex_independent_theme === 1
+                      && _primaryLetter !== 'P'
+                      && _primaryLetter !== '-';
+    if (_plexAlso) {
+      // Inject the indicator class onto the existing chip rather
+      // than appending a new chip. The matchAll/replace pattern
+      // touches only the first link-badge in srcCell (the primary
+      // letter chip we just built) and adds an extra class +
+      // tooltip explaining the composite state.
+      srcCell = srcCell.replace(
+        _RX_LINK_BADGE_TITLE,
+        '$1 link-badge-also-plex$2$3 · Plex also serves its own theme (cloud / embed); the small dot signals the composite state.',
+      );
+      // If the chip didn't have a title= attr (rare path), still
+      // tag the class so the dot renders.
+      if (!srcCell.includes('link-badge-also-plex')) {
+        srcCell = srcCell.replace(
+          _RX_LINK_BADGE_CLASS,
+          'class="link-badge link-badge-also-plex',
+        );
+      }
+    }
+
+    // v1.11.62: 'broken' DL state — motif's local_files row says we
+    // have a canonical, but a stat-check (server-side) found the file
+    // missing. The placement in the Plex folder is still there, so
+    // the row should call out 'still in plex, not downloaded' and
+    // surface a RESTORE FROM PLEX action.
+    const dlBroken = !!it.canonical_missing && !!it.file_path;
+    // v1.11.99: mismatch_state tracks "canonical content diverged
+    // from the placement file". v1.12.81 removed the amber
+    // 'mismatch' DL state — the LINK column's M glyph is the
+    // single source of truth for content divergence, and the
+    // amber `!` row-title glyph is the at-a-glance attention
+    // signal. DL now answers exactly one question: is the canonical
+    // file present?
+    const isMismatch = !!it.mismatch_state;
+    const dl = dlBroken ? 'broken'
+             : (downloaded ? 'on' : '');
+    // v1.12.65: PL column gains a third state — 'await' (amber) —
+    // when the canonical exists but no placement does. Pre-fix, a
+    // post-DEL row dropped to a plain gray PL dot, the same as a
+    // never-themed row, so the "you have the file, push it to
+    // Plex" call-to-action wasn't visible from the column scan.
+    // Amber matches the title-glyph color so the row's two
+    // attention signals agree.
+    // v1.12.66: awaitingApproval was originally declared further
+    // down (after the title-cell glyphs), but the v1.12.65 pl
+    // computation referenced it before its const declaration —
+    // ReferenceError in the temporal dead zone, which crashed
+    // renderLibraryRow and left every library tab stuck at
+    // "loading…". Moved the declaration up here so pl can read it
+    // safely; the original declaration site below is removed.
+    // v1.12.81: PL gains 'broken' — placement row exists but the
+    // theme.mp3 is missing from the Plex folder (Plex deleted it,
+    // file moved manually, etc.). Symmetry with DL=broken; uses
+    // the same red palette so users can spot the inverse case.
+    // v1.14.39 → v1.14.40: LPS (Let-Plex-Serve) state.
+    // v1.14.39 added a blue PL chip + blue title glyph for this
+    // state. v1.14.40 moves the LPS signal to the LINK column
+    // (a new `PS` chip, see linkCell below) so the PL chip can
+    // honestly render gray ("no placement" — true) and the title
+    // glyph isn't fighting the pending-update glyph for blue.
+    // The discriminator stays the same (plex_independent_theme=1
+    // + has-canonical + no-placement) and `awaitingApproval`
+    // still subtracts `lpsState` so the amber-await render doesn't
+    // fire on LPS rows. Mirrors the server SQL exclusion in
+    // attn_pills="await" + _row_matches_pl (api.py).
+    // v1.18.27: lpsState must also exclude plex_upload rows.
+    // the user's *batteries not included repro after PUSH TO PLEX
+    // (API): the row had plex_independent_theme=1 (Plex Pass
+    // cloud theme alongside) + no media_folder (plex_upload
+    // uses ''), so pre-fix lpsState evaluated true → LINK chip
+    // rendered PS even though motif's API push was the active
+    // theme. LPS specifically means motif WITHDREW its
+    // placement; a live plex_upload placement is the opposite
+    // intent. Same shape as the v1.18.16 awaitingApproval +
+    // v1.18.22 plex_independent_theme suppression — the
+    // placement_kind='plex_upload' discriminator is the
+    // authoritative signal "motif IS placing here, just via
+    // API instead of sidecar."
+    const isPlexUpload = it.placement_kind === 'plex_upload';
+    // v1.19.66: lpsState retained for the awaitingApproval
+    // suppression below — when motif has a canonical but no
+    // placement AND Plex serves, the "!P needs placement" amber
+    // glyph would mislead (motif INTENDED no placement). Subtle
+    // but load-bearing. lpsState is not (anymore) used to render
+    // the LINK=PS chip: v1.19.66 dropped the PS chip + render
+    // branch + SQL filter + library.html chip entirely after
+    // v1.19.64's pure-P widening produced wall-to-wall PS chips
+    // on the user's library (5,240 amber chips for the most-common
+    // row shape). Post-v1.19.61 the original PS semantic (LET
+    // PLEX SERVE outcome: motif has file + no placement + Plex
+    // serves) is covered by the BU chip via the backup_only
+    // stamp unification — so PS lost its unique meaning and
+    // became vestigial.
+    const lpsState = !!it.file_path
+                   && !it.media_folder
+                   && it.plex_independent_theme === 1
+                   && !isPlexUpload;
+    // v1.18.16: plex_upload (collections) is a placed-via-API row.
+    // media_folder='' makes `!it.media_folder` truthy but the row
+    // IS placed; exclude it from awaitingApproval so PL renders
+    // as 'on' (green) instead of 'await' (amber). Mirrors the
+    // backend _row_matches_pl + _row_matches_attn await fixes.
+    const awaitingApproval = !it.job_in_flight && !!it.file_path
+                          && !it.media_folder && !lpsState
+                          && !isPlexUpload;
+    const placementBroken = !!placed && !!it.placement_missing;
+    // v1.18.25 introduced the 'pushed' (cyan) PL state to mark
+    // plex_upload placements (API push, no folder sidecar) apart
+    // from sidecar placements. v1.19.67 collapsed it to PL=on
+    // (green), reasoning the adjacent LINK=PU chip already conveyed
+    // "API push" so cyan was a pure duplicate (v1.19.66 audit R2).
+    // v1.19.82 restored it — the duplicate premise was incomplete.
+    // The LINK chain renders M (mismatch) BEFORE the plex_upload
+    // branch, so a mismatched plex_upload row shows LINK=M not PU,
+    // and mismatch hides placement-kind for HL/C alike. In that
+    // state PL=green+LINK=M is indistinguishable from a mismatched
+    // sidecar; cyan PL is the only at-a-glance "API placement (no
+    // folder sidecar)" signal. Visual-only: the server still
+    // classifies plex_upload as pl_pills='on' (api.py _row_matches_pl),
+    // so cyan rows match the PL=on filter; LINK=PU stays the axis
+    // for filtering just-API-pushes.
+    const pl = placementBroken ? 'broken'
+             : (placed && isPlexUpload) ? 'pushed'
+             : placed ? 'on'
+             : awaitingApproval ? 'await'
+             : '';
+    // v1.13.13 (Option C): pulse-tint the DL dot amber when a
+    // download job is in flight for this row. Doesn't add a new
+    // state to the legend — it's a transient cue that disappears
+    // when the job lands. job_in_flight encodes the job_type
+    // (download / place); pl gets a similar pulse when a place
+    // job is in flight for symmetry.
+    const downloadInFlight = it.job_in_flight === 'download';
+    const placeInFlight = it.job_in_flight === 'place';
+    // v1.12.81 / v1.13.13: hover tooltips for the DL / PL state dots
+    // so each color is self-describing. KISS pass — short reasons
+    // first, action hints stay terse.
+    const dlTip = downloadInFlight
+      ? 'Download in progress…'
+      : dl === 'broken'
+        ? 'Canonical missing on disk (Plex copy intact).'
+        : dl === 'on'
+          ? 'Canonical theme is on disk.'
+          : 'No canonical downloaded.';
+    // v1.14.40: LPS tooltip moved out of the PL chip — the PL
+    // chip now correctly reads as "no placement" (gray, with
+    // the standard "Not placed" wording). The LPS-specific
+    // tooltip lives on the new PS LINK chip (see linkCell
+    // below) so the row's two LPS surfaces (LINK chip + tooltip)
+    // share one source of truth.
+    // v1.18.25 introduced a 'pushed' (cyan) tooltip branch;
+    // v1.19.67 removed it; v1.19.82 restored it (see the pl
+    // derivation note above). The 'on' wording stays folder-
+    // specific ("Placed in Plex folder") — correct for HL/C
+    // sidecars; 'pushed' gets the honest metadata-store wording
+    // since plex_upload rows have no folder sidecar.
+    const plTip = placeInFlight
+      ? 'Placement in progress…'
+      : pl === 'broken'
+        ? 'Placement file missing from Plex folder.'
+        : pl === 'pushed'
+          ? 'Pushed to Plex — served from its metadata store (no folder sidecar).'
+          : pl === 'on'
+            ? 'Placed in Plex folder.'
+            : pl === 'await'
+              ? 'Downloaded, awaiting placement.'
+              : 'Not placed in Plex folder.';
+    let linkCell = '<span class="link-glyph link-glyph-none">—</span>';
+    // v1.19.21: BK = backup-only intent. Worker stamps
+    // last_place_attempt_reason='backup_only' after a
+    // bulk_backup download with auto_place=false; the retry
+    // sweep skips on this reason. UI shows BK to signal
+    // "motif has the file ready, not placed by intent".
+    // Without this, the SRC pill renders '–' (no placement,
+    // not P-classified) and the row looks like nothing's
+    // happening even though motif has a 7+MB theme.mp3 in
+    // canonical storage. Repro: the user's Indiana Jones
+    // (movie/335977 sec=1). PUSH TO PLEX manually flips intent.
+    // Check this BEFORE the placed-state checks: if download
+    // happened but no placement AND reason=backup_only, BK
+    // takes priority over placed-state rendering.
+    const isBackupOnly = !placed && downloaded
+                        && it.last_place_attempt_reason === 'backup_only';
+    // v1.19.43: B = cloud-themes-backup (source_kind='plex_cloud').
+    // Both BK and B rows share backup_only stamp; B distinguishes
+    // rows backed up AUTOMATICALLY from Plex's cloud catalog
+    // (v1.19.42 walker) vs BK's user-explicit backup intent. Check
+    // BEFORE the BK branch — every B row also satisfies isBackupOnly,
+    // so flipping the order would render every B as BK and hide
+    // the cloud-backup classification from the filter chip.
+    const isPlexCloudBackup = isBackupOnly
+                            && it.source_kind === 'plex_cloud';
+    // v1.19.90: TB = ThemerrDB Backup (source_kind='themerrdb' +
+    // backup_only — the DOWNLOAD TDB BACKUP flow). v1.20.20: refreshed
+    // for the v1.20.17 AB split — backup chips read by SOURCE four
+    // ways: PB=plex_cloud, TB=themerrdb, AB=adopt, UB=user(url/upload/
+    // NULL). Check after PB but before the generic backup_only branch.
+    const isTdbBackup = isBackupOnly
+                      && it.source_kind === 'themerrdb';
+    // v1.20.17: AB = Adopted Backup (source_kind='adopt' + backup_only).
+    // Split out of UB so the chips read by source: PB=plex_cloud,
+    // TB=themerrdb, AB=adopt, UB=user (url/upload/NULL). Check after
+    // TB but before the generic backup_only branch (now UB-only).
+    const isAdoptBackup = isBackupOnly
+                        && it.source_kind === 'adopt';
+    if (it.needs_repush) {
+      // v1.24.28: RP = re-push needed. A plex_upload theme whose uploaded
+      // rating_key was destroyed by a Plex delete+re-add — verify_placement_health
+      // stamped theme_present=0, and the API nulled media_folder/placement_kind
+      // (so `placed` is false and SRC falls to '-'). The bytes are gone from
+      // Plex's metadata store; motif still has the canonical. PLACE re-uploads
+      // to the new rk. Checked FIRST — it's mutually exclusive with the
+      // placed-state + backup branches (it WAS placed, isn't a backup).
+      linkCell = '<span class="link-glyph link-glyph-repush" title="Re-push needed — motif uploaded this theme to Plex, but the item was removed + re-added, so Plex no longer serves it. PLACE to re-upload from motif\'s copy.">RP</span>';
+    } else if (isPlexCloudBackup) {
+      // v1.19.75: badge label BP → PB. Reordered to read as
+      // "<scope> Backup" — Plex Backup. CSS class .link-glyph-b
+      // + data-link-pill='b' kept for deep-link stability.
+      // Tooltip trimmed to HL/C/M/PU one-sentence style.
+      linkCell = '<span class="link-glyph link-glyph-b" title="Plex Backup — motif\'s copy of the theme Plex was serving for this row, staged as insurance. PROMOTE TO ACTIVE from INFO to deploy.">PB</span>';
+    } else if (isTdbBackup) {
+      // v1.19.90: ThemerrDB-sourced backup (DOWNLOAD TDB BACKUP) —
+      // pale-green chip, distinct from the user-backup violet.
+      linkCell = '<span class="link-glyph link-glyph-tb" title="ThemerrDB Backup — motif downloaded the ThemerrDB theme but left Plex serving. PROMOTE TO ACTIVE from INFO to deploy.">TB</span>';
+    } else if (isAdoptBackup) {
+      // v1.20.17: AB = adopted sidecar staged as a backup (motif owns
+      // the inode but left Plex serving). Pale-cyan chip, in the SRC=A
+      // (adopt) family. Pre-v1.20.17 these painted UB (violet).
+      linkCell = '<span class="link-glyph link-glyph-ab" title="Adopted Backup — motif adopted a sidecar but left Plex serving. PROMOTE TO ACTIVE from INFO to deploy.">AB</span>';
+    } else if (isBackupOnly) {
+      // v1.19.75: badge label BU → UB. Reordered to read as
+      // "<scope> Backup" — User Backup. CSS class
+      // .link-glyph-bk + data-link-pill='bk' kept for deep-
+      // link stability. Tooltip trimmed from the v1.19.63
+      // wall of provenance reasoning to a single sentence
+      // matching the HL/C/M/PU style — the operator already
+      // knows where the file came from, the chip just needs
+      // to convey "ready to push" + the CTA.
+      linkCell = '<span class="link-glyph link-glyph-bk" title="User Backup — motif has the file ready but not placed in the Plex folder. PUSH TO PLEX to install.">UB</span>';
+    } else if (isMismatch && placed) {
+      linkCell = '<span class="link-glyph link-glyph-mismatch" title="Mismatch — canonical differs from Plex copy">M</span>';
+    } else if (it.placement_kind === 'hardlink') {
+      // v1.19.66: removed the PS render branch that sat here.
+      // PS was vestigial post-v1.19.61 — the LET-PLEX-SERVE
+      // outcome (motif has canonical + no placement + Plex
+      // serves) is now stamped backup_only by the worker and
+      // paints BU above. v1.19.64 widened PS to also paint on
+      // pure-P rows, which produced wall-to-wall PS chips on
+      // the user's library (5,240 rows). Reverted in v1.19.66.
+      // Pure-P rows + the rare lpsState case both fall through
+      // to the LINK=— default. Filter "Plex serves + no backup"
+      // via SRC=P chip + LINK=— chip combination.
+      linkCell = '<span class="link-glyph link-glyph-hardlink" title="Hardlink (shared inode)">HL</span>';
+    } else if (it.placement_kind === 'copy') {
+      linkCell = '<span class="link-glyph link-glyph-copy" title="Copy (cross-FS fallback — uses extra disk)">C</span>';
+    } else if (it.placement_kind === 'plex_upload') {
+      // v1.18.22: new PU = Pushed link state. motif uploaded the
+      // audio bytes to Plex's metadata store via the
+      // /library/metadata/{rk}/themes API instead of placing a
+      // sidecar file at the Plex folder. The audio Plex serves
+      // is motif's; the SRC letter still reflects origin
+      // (T/U/A) and the +P composite stamp is suppressed by
+      // plex_enum for these rows (motif IS the source, no
+      // independent Plex theme). Currently used for collections
+      // (no folder exists); a future tag will let users opt
+      // movie/show rows into the same path.
+      linkCell = '<span class="link-glyph link-glyph-pu" title="Pushed — motif uploaded the theme to Plex via API. Plex serves it from its metadata store (no sidecar at the media folder).">PU</span>';
+    }
+
+    // Title-cell glyphs
+    const titleGlyphs = [];
+    let rowExtra = '';
+    // v1.12.66: awaitingApproval declaration moved up to the dl/pl
+    // block. It was here originally but pl now needs it earlier;
+    // declaring twice would shadow + ReferenceError under TDZ.
+    // v1.12.106: strict one-glyph hierarchy. Pre-fix a row could
+    // stack up to FOUR glyphs (failure + job + update + await /
+    // mismatch / broken) which read as visual noise — users had
+    // to decode the order to figure out what was actually
+    // attention-worthy. New rule: surface the highest-priority
+    // signal as the single glyph; the rest stay reachable in the
+    // INFO card and via the row tinting (.row-failure) /
+    // state-pill columns.
+    //
+    // v1.13.14: in-flight (download/place) branch removed from the
+    // glyph hierarchy. The DL/PL state-pill-pending pulse (v1.13.13
+    // Option C) covers transient operational state in the columns
+    // where it belongs; the title-cell glyph slot is reserved for
+    // attention signals that need user intervention (failure,
+    // pending update, await, mismatch, broken). Order is now:
+    // failure > pending update > mismatch > await > broken > none.
+    let glyphHtml = null;
+    if (it.failure_kind && !it.failure_acked_at) {
+      // v1.10.50: only show the ! glyph when the failure hasn't been
+      // acknowledged. Acked rows keep their red TDB pill (still
+      // failing upstream) but no longer pull attention; they're
+      // hidden from the FAILURES filter for the same reason.
+      // v1.12.87: clicking opens INFO — INFO is the single ACK
+      // entry-point with the raw yt-dlp error + recovery options.
+      // v1.14.4: source-agnostic labels (was 'YouTube cookies expired'
+      // pre-v1.14.4 — wrong on a SoundCloud Go+ failure).
+      const human = {
+        'cookies_expired': 'Cookies expired',
+        'video_private': 'Track or video is private',
+        'video_removed': 'Track or video was removed',
+        'video_age_restricted': 'Age-restricted',
+        'geo_blocked': 'Geo-blocked',
+        'network_error': 'Network error',
+        'unknown': 'Unknown failure'
+      }[it.failure_kind] || it.failure_kind;
+      const ackTip = `${human} — click to view in INFO and ACK`;
+      glyphHtml =
+        `<button class="title-glyph title-glyph-fail" title="${htmlEscape(ackTip)}" `
+        + `data-act="info" data-mt="${themeMt}" data-id="${themeId}" `
+        + `data-section-id="${htmlEscape(it.section_id || '')}" `
+        + `data-rk="${htmlEscape(it.rating_key || '')}" `
+        + `data-kind-human="${htmlEscape(human)}" data-msg="${htmlEscape(it.failure_message || '')}" type="button">⚠</button>`;
+      rowExtra = ' class="row-failure"';
+    } else if (it.actionable_update
+               && (computeSrcLetter(it) !== '-'
+                   || it.pending_update_kind === 'new_theme_available')) {
+      // v1.12.78: blue ! glyph for pending upstream updates. Gated
+      // on actionable_update (decision='pending') so KEEP CURRENT
+      // clears it. Suppressed on src='-' rows (DOWNLOAD path covers
+      // them, no theme to update from).
+      // v1.19.71: SRC=— exception for kind='new_theme_available'.
+      // Pre-fix the SRC=— gate suppressed the blue ! even when
+      // sync had just discovered a NEW TDB theme for an unthemed
+      // row — exactly the case the user wants surfaced (so the
+      // operator sees TDB has a candidate theme to consider).
+      // Other kinds (upstream_changed, urls_match) still gate
+      // on SRC !== '-' because they imply "URL changed on
+      // existing theme" which is a no-op when there's no theme.
+      const updTip = (it.pending_update_kind === 'urls_match')
+        ? 'ThemerrDB now matches your override URL — open INFO to see the diff, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.'
+        : (it.pending_update_kind === 'new_theme_available')
+          ? 'ThemerrDB has a new theme for this row — open INFO to see it, ACCEPT to download or KEEP CURRENT to dismiss.'
+          : 'ThemerrDB has a new URL for this row — open INFO to see the proposed change, ACCEPT UPDATE / KEEP CURRENT in the SOURCE menu.';
+      glyphHtml =
+        `<span class="title-glyph title-glyph-update title-glyph-action" title="${htmlEscape(updTip)}">!</span>`;
+    } else if (it.mismatch_state === 'pending') {
+      // v1.12.81: canonical content diverged from the placement
+      // file (SET URL / UPLOAD MP3 over an existing placement).
+      // PLACE menu has the resolution actions.
+      glyphHtml =
+        `<span class="title-glyph title-glyph-await title-glyph-action" title="Mismatch — canonical differs from Plex copy. Open INFO for the diff.">!</span>`;
+    // v1.14.40: removed the v1.14.39 LPS title-glyph branch.
+    // The LPS state is now signaled via the PS LINK chip (see
+    // linkCell above), which makes more semantic sense — LPS
+    // IS a link relationship type. The title-cell `!` slot is
+    // reserved for genuine attention signals (mismatch, await,
+    // broken). The `awaitingApproval` predicate still subtracts
+    // `lpsState` so the amber `!` doesn't fire on LPS rows;
+    // genuine "theme went missing externally" cases (Radarr/
+    // Sonarr deleted the placement file but motif still has the
+    // canonical) DO fire because they have plex_independent_
+    // theme=0 — they're not LPS, they're broken.
+    } else if (it.needs_repush) {
+      // v1.24.33: a stale plex_upload (RP) reads as downloaded-but-unplaced,
+      // so pre-fix it tripped the generic amber ! below — visually identical to
+      // an ATTN glyph (the user's confusion) and with no way to find them. Give it
+      // its OWN orange ⟳ (matching the RP LINK badge) that LINKS to the
+      // link_pills=rp filter, so one click surfaces every row needing a re-push.
+      // Checked before awaitingApproval so RP wins its own glyph. Mirrors the
+      // dlBroken ↺-links-to-status pattern.
+      glyphHtml =
+        `<a class="title-glyph title-glyph-repush" title="Re-push needed — Plex no longer serves this uploaded theme (its rating_key was destroyed by a delete + re-add). Click to see every row needing a re-push, then // PLACE." href="/${libraryState.tab}?link_pills=rp">⟳</a>`;
+    } else if (it.last_place_attempt_reason === 'plex_rejected:over_ceiling') {
+      // v1.24.45: a collection theme too large for Plex's ~10MB upload ceiling
+      // EVEN AFTER motif's auto-downscale (theme too long, or no ffmpeg in the
+      // build). Collections have no sidecar fallback, so the row stays unthemed
+      // until the user shortens / replaces the theme. Distinct ⊘ so it doesn't
+      // read as a normal "awaiting placement" amber ! (the user's "nothing
+      // happened" — the over-ceiling failure was invisible on the row).
+      glyphHtml =
+        `<span class="title-glyph title-glyph-toobig" title="Theme too large for Plex (>~10MB) even after compression — collections can't use a sidecar fallback. // SET URL to a shorter or smaller-bitrate source.">⊘</span>`;
+    } else if (awaitingApproval) {
+      // v1.12.65: amber ! for canonical-downloaded-but-not-placed.
+      // PLACE → PUSH TO PLEX applies, REMOVE → PURGE discards.
+      glyphHtml =
+        `<span class="title-glyph title-glyph-await" title="Downloaded, awaiting placement">!</span>`;
+    } else if (dlBroken) {
+      // v1.11.62: motif's canonical was deleted but the placement
+      // is still in the Plex folder. RESTORE FROM PLEX recovers.
+      glyphHtml =
+        `<a class="title-glyph title-glyph-broken" title="Canonical missing — Plex copy intact (RESTORE FROM PLEX)" href="/${libraryState.tab}?status=dl_missing">↺</a>`;
+    }
+    if (glyphHtml) titleGlyphs.push(glyphHtml);
+
+    const imdb = it.guid_imdb || '';
+    const imdbLink = imdb
+      ? `<a href="https://www.imdb.com/title/${htmlEscape(imdb)}" target="_blank" rel="noopener">${htmlEscape(imdb)}</a>`
+      : '<span class="muted">—</span>';
+
+    const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
+    // v1.10.17: edition tag from folder_path so users can tell apart
+    // multiple Plex entries that share title+year (Director's Cut,
+    // Extended, IMAX, etc.). Renders as a yellow chip after the title.
+    const editionLabel = (() => {
+      const ed = parseEditionFromFolderPath(it.folder_path);
+      return ed
+        ? ` <span class="edition-pill" title="Plex edition tag">${htmlEscape(ed)}</span>`
+        : '';
+    })();
+    // v1.10.33: at-a-glance ThemerrDB-tracked indicator. v1.10.40
+    // added the red TDB ✗ state for permanent-failure rows;
+    // v1.10.42 splits cookies_expired out as a yellow TDB ⚠ since
+    // that one's user-fixable (drop a cookies.txt file) rather
+    // than a dead URL.
+    // v1.23.39: was a 2nd copy of the dead-failures set here (drift risk);
+    // now reads the module-scope TDB_DEAD_FAILURES_GLOBAL.
+    const tdbAvailLabel = (() => {
+      if (it.not_in_plex) return '';
+      // v1.11.29: hide the TDB pill entirely until we have data for
+      // this row's media_type. Pre-sync the themes table is empty,
+      // so every row would render as 'no TDB' — misleading.
+      // v1.11.77: changed gate from last_sync_at (successful sync
+      // ever) to per-media-type themes count > 0, so partial
+      // captures (cancelled-mid-sync, sync only finished movies
+      // before TV index was reached, etc.) still light up the pills
+      // truthfully for the side that DID get data.
+      // v1.18.0: 'collection' rows carry theme_media_type='collection'
+      // (and plex_media_type='collection'). Map them to the dedicated
+      // bucket so the TDB-coverage gate reads truthfully when
+      // collections sync ran but movies/tv haven't.
+      let rowMt;
+      if (it.theme_media_type === 'collection'
+          || it.plex_media_type === 'collection') {
+        rowMt = 'collection';
+      } else if (it.theme_media_type === 'tv'
+                 || it.plex_media_type === 'show') {
+        rowMt = 'tv';
+      } else {
+        rowMt = 'movie';
+      }
+      const haveTdb = !!(window.__motif_themes_have
+                         && window.__motif_themes_have[rowMt]);
+      if (!haveTdb) return '';
+      const isThemerrDbAvail = it.upstream_source
+        && it.upstream_source !== 'plex_orphan';
+      if (!isThemerrDbAvail) {
+        return ' <span class="tdb-pill tdb-pill-no" title="No ThemerrDB record for this title.">no TDB</span>';
+      }
+      // v1.11.16: include the actual failure_kind + failure_message in
+      // the pill tooltip when something failed, so hover gives concrete
+      // 'error info' (was: a generic recovery list with no indication
+      // of which specific reason applied to THIS row).
+      // v1.14.4: source-agnostic phrasing for the TDB pill tooltip.
+      // Pre-fix every label said "YouTube" / "video" — wrong on a
+      // SoundCloud-source failure (Go+ paywall, removed track, etc.).
+      const kindHuman = {
+        'cookies_expired': 'cookies expired or missing',
+        'video_private': 'track or video is private',
+        'video_removed': 'track or video was removed at the source',
+        'video_age_restricted': 'track or video is age-restricted',
+        'geo_blocked': 'track or video is geo-blocked in this region',
+        'network_error': 'network error reaching the source',
+        'unknown': 'unknown failure',
+      };
+      const why = kindHuman[it.failure_kind] || it.failure_kind || '';
+      const detail = it.failure_message
+        ? `&#10;detail: ${htmlEscape(it.failure_message)}`
+        : '';
+      // v1.18.65: pending_update must beat failure_kind in the
+      // inline row pill — the v1.18.62 → v1.18.63 work surfaced
+      // pending URLs as the "freshest TDB signal" everywhere
+      // EXCEPT this inline render, which still checked
+      // failure_kind first. the user's repro: Am I Actually the
+      // Strongest? row had a working override + a video_removed
+      // failure on the committed TDB URL + a pending update
+      // pointing at a fresh alive TDB URL. Info card showed
+      // the pending URL (correctly), computeTdbPill returned
+      // 'update' (correctly), but the visible row pill stayed
+      // red TDB ✗ because this block fired before the
+      // pending_update check below. Re-ordering: pending_update
+      // ↑ (the forward action is "ACCEPT UPDATE to fix the row")
+      // wins over the historical-failure red. Matches
+      // computeTdbPill's priority (line 7341) exactly — same
+      // class-9 mirror-drift sub-pattern as v1.18.24's plex_
+      // upload triple-fix. v1.12.108 archaeology preserved
+      // below.
+      // v1.19.71: SRC=— exception for kind='new_theme_available'.
+      // Mirrors computeTdbPill's exception — surfaces blue TDB ↑
+      // on unthemed rows where sync just discovered a brand-new
+      // TDB theme. Other kinds still gate on SRC !== '-' since
+      // they imply URL changes to existing themes.
+      if (it.pending_update
+          && (computeSrcLetter(it) !== '-'
+              || it.pending_update_kind === 'new_theme_available')) {
+        if (it.pending_update_kind === 'urls_match') {
+          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches TDB — ACCEPT UPDATE to convert U → T (no re-download).">TDB ↑</span>';
+        }
+        if (it.pending_update_kind === 'new_theme_available') {
+          return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB has a new theme for this row — ACCEPT to download or KEEP CURRENT to dismiss.">TDB ↑</span>';
+        }
+        return ' <span class="tdb-pill tdb-pill-update" title="Upstream URL changed — ACCEPT or KEEP from SOURCE menu.">TDB ↑</span>';
+      }
+      if (it.failure_kind === 'cookies_expired') {
+        if (window.__motif_cookies_present) {
+          // Cookies are configured — the next download attempt should
+          // succeed and clear the flag. Stay green.
+          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracked (cookies will refresh on next download)">TDB</span>';
+        }
+        // v1.15.17: glyph ⚠ → ⚿ (squared key, U+26BF). The amber ⚠
+        // visually clustered with .tdb-pill-await / .tdb-pill-mismatch
+        // (also amber + same warning glyph), making "cookies needed"
+        // read as just-another-amber-warning. The key glyph anchors
+        // the cookies semantic at-a-glance, paired with the v1.15.17
+        // yellow color in .tdb-pill-cookies.
+        return ` <span class="tdb-pill tdb-pill-cookies" title="Cookies required: ${htmlEscape(why)}${detail}">TDB ⚿</span>`;
+      }
+      if (it.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(it.failure_kind)) {
+        return ` <span class="tdb-pill tdb-pill-dead" title="Upstream URL broken: ${htmlEscape(why)}${detail}">TDB ✗</span>`;
+      }
+      // v1.12.108: restore the blue .tdb-pill-update for any row
+      // with pending_update=true. v1.12.106 collapsed it under
+      // "duplicate of glyph" but the user wants the pill as a
+      // post-KEEP-CURRENT visual cue: glyph clears (action no
+      // longer pending) but pill stays so the row is still
+      // sortable / filterable as "has an upstream update". The
+      // strict per-row hierarchy means the GLYPH is gated on
+      // actionable_update (decision=='pending'); the PILL is
+      // gated on pending_update (decision in pending+declined),
+      // so KEEP CURRENT clears one but not the other.
+      // v1.12.108: pending_update is now also gated on motif
+      // tracking presence per-section in the SQL — the pill
+      // doesn't show on post-PURGE / pure-P / pure-'-' rows.
+      // v1.18.65: this branch is unreachable post-fix (pending_
+      // update is now checked at the top of the block) — keep
+      // the comment archaeology + a defensive fallthrough render
+      // for any future ordering change that demotes pending_
+      // update below something else without re-reading the
+      // mirror-drift archaeology.
+      if (it.pending_update
+          && (computeSrcLetter(it) !== '-'
+              || it.pending_update_kind === 'new_theme_available')) {
+        if (it.pending_update_kind === 'urls_match') {
+          return ' <span class="tdb-pill tdb-pill-update" title="Your manual URL matches TDB — ACCEPT UPDATE to convert U → T (no re-download).">TDB ↑</span>';
+        }
+        if (it.pending_update_kind === 'new_theme_available') {
+          return ' <span class="tdb-pill tdb-pill-update" title="ThemerrDB has a new theme for this row — ACCEPT to download or KEEP CURRENT to dismiss.">TDB ↑</span>';
+        }
+        return ' <span class="tdb-pill tdb-pill-update" title="Upstream URL changed — ACCEPT or KEEP from SOURCE menu.">TDB ↑</span>';
+      }
+      // v1.13.1 (Phase C): gray TDB◌ for items TDB used to publish
+      // and has now stopped publishing. The local theme still works;
+      // it's just no longer endorsed upstream. ACK DROP / CONVERT TO
+      // MANUAL in the SOURCE menu let the user dismiss.
+      if (it.tdb_dropped_at) {
+        const dt = (typeof it.tdb_dropped_at === 'string'
+                    && it.tdb_dropped_at.length >= 10)
+                    ? it.tdb_dropped_at.slice(0, 10) : '';
+        const since = dt ? ` (since ${dt})` : '';
+        return ` <span class="tdb-pill tdb-pill-dropped" title="ThemerrDB stopped tracking this title${since}.">TDB ◌</span>`;
+      }
+      // v1.24.73: TDB record but NO theme video. upstream_source is set (so the
+      // row reached this green fallthrough) yet themes.youtube_url is empty —
+      // ThemerrDB lists the title but has no URL to download from. Keyed on the
+      // SAME it.youtube_url the v1.24.71 REPLACE TDB gate uses, so the pill and
+      // the (absent) REPLACE TDB action now AGREE instead of the green pill
+      // implying a healthy theme that can't be fetched. the user's Daredevil:
+      // Born Again repro — green TDB + no REPLACE TDB read as confusing.
+      if (!it.youtube_url) {
+        return ' <span class="tdb-pill tdb-pill-empty" title="ThemerrDB lists this title but has no theme video to download — use SET URL or UPLOAD MP3.">TDB ∅</span>';
+      }
+      return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracked">TDB</span>';
+    })();
+
+    // v1.10.24 Option C row actions — collapse the wide button row into
+    // categorized menu buttons so each row stays in-bounds:
+    //   [ⓘ INFO]  ·  [SOURCE ▾]  [PLACE ▾]  [REMOVE ▾]
+    //
+    // SOURCE ▾  — where the theme comes from
+    //               DOWNLOAD/RE-DL/REVERT, URL, UPLOAD, ADOPT,
+    //               REPLACE w/ TDB
+    // PLACE ▾   — push the canonical to Plex's folder
+    //               REPLACE (when downloaded but not placed),
+    //               RE-PUSH (when already placed)
+    // REMOVE ▾  — destructive
+    //               DEL, UNMANAGE, × PURGE
+    //
+    // Native <details>/<summary> popover, same pattern as v1.10.13's
+    // overflow with click-outside-close handler. Empty menus are
+    // suppressed so untracked rows don't get a useless PLACE/REMOVE
+    // button. INFO stays as its own clickable button.
+    // v1.12.65: dropped awaitingApproval from the lock predicate.
+    // Pre-fix, a post-DEL row (downloaded but unplaced) had every
+    // SOURCE action greyed out with a tooltip pointing at the
+    // removed /pending tab. Now SOURCE is unlocked — clicking
+    // DOWNLOAD TDB / SET URL / etc. legitimately replaces the
+    // awaiting canonical, which is what the user typically wants.
+    // The amber title-glyph + amber PL pill remain as the visual
+    // "action required" signal; PLACE → PUSH TO PLEX is still
+    // the obvious recovery action.
+    const lockManualActions = !!it.job_in_flight;
+    const lockTitle = it.job_in_flight ? 'wait for current job to finish' : '';
+    const isOrphan = it.upstream_source === 'plex_orphan';
+    const isManual = it.provenance === 'manual';
+    const isThemerrDb = it.upstream_source && it.upstream_source !== 'plex_orphan';
+    const sourceKindForActions = (() => {
+      if (it.source_kind) return it.source_kind;
+      if (!isManual) return null;
+      const svid = it.source_video_id || '';
+      if (svid === '') return 'upload';
+      // v1.20.42: 11-char = YouTube, sc-/ig- = SoundCloud/Instagram user
+      // URLs — all 'url', not 'adopt' (mirrors _SRC_LETTER_SQL).
+      if (/^[A-Za-z0-9_-]{11}$/.test(svid)
+          || svid.startsWith('sc-') || svid.startsWith('ig-')
+          || svid.startsWith('fb-')) return 'url';
+      return 'adopt';
+    })();
+    const isManualPlacement = placed && placedProv === 'manual';
+
+    function menuItemHtml(act, label, tip, extras = {}) {
+      const dataset = [
+        extras.rk !== undefined ? `data-rk="${htmlEscape(extras.rk)}"` : '',
+        extras.mt !== undefined ? `data-mt="${htmlEscape(extras.mt)}"` : '',
+        extras.id !== undefined ? `data-id="${htmlEscape(extras.id)}"` : '',
+        // v1.12.46: section_id flows through so handlers can scope
+        // their action to the row's section (e.g. ACCEPT UPDATE
+        // placing only in the section the user clicked from,
+        // rather than fanning out to every section owning the
+        // title — important when the same title lives in both
+        // standard and 4K libraries with different editions).
+        extras.sectionId !== undefined ? `data-section-id="${htmlEscape(extras.sectionId)}"` : '',
+        `data-title="${htmlEscape(it.plex_title)}"`,
+        `data-year="${htmlEscape(it.year || '')}"`,
+        extras.orphan !== undefined ? `data-orphan="${extras.orphan ? '1' : '0'}"` : '',
+        // v1.11.8: data-dl-only flags the DL-only PURGE case so the
+        // confirm dialog can show the stronger warning ("after PURGE
+        // you cannot PUSH TO PLEX"). Default '0' when absent so
+        // btn.dataset.dlOnly === '1' is a clean predicate.
+        extras.dlOnly !== undefined ? `data-dl-only="${extras.dlOnly}"` : '',
+        // v1.12.54: TDB canonical URL flows through to SET URL so
+        // the dialog can warn the user when their input matches —
+        // setting the same URL as a manual override would just
+        // create the U→T conversion loop the v1.12.53 sweep was
+        // designed to surface, with extra UI churn for no benefit.
+        extras.ytUrl !== undefined ? `data-yt-url="${htmlEscape(extras.ytUrl)}"` : '',
+        // v1.12.107: row's currently-applied URL (per-section
+        // override → '' override → themes.youtube_url) flows
+        // through to the SET URL dialog so its match-warning
+        // can fire when the user types the URL that's already
+        // applied — covers the U-overrides-itself case the
+        // v1.12.54 TDB-match warning didn't catch.
+        extras.appliedUrl !== undefined ? `data-applied-url="${htmlEscape(extras.appliedUrl)}"` : '',
+        // v1.12.62: row's current SRC letter flows through too so
+        // the SET URL match-warning copy can branch — for src='-'
+        // there's no file to "re-download", just to download.
+        extras.srcLetter !== undefined ? `data-src-letter="${htmlEscape(extras.srcLetter)}"` : '',
+        // v1.13.31: data-plex-also flags rows where Plex serves
+        // its own theme regardless of motif's local placement.
+        // PURGE confirm dialog reads it to surface the "Plex has a
+        // fallback" preview so the user knows whether removing
+        // motif's manage state leaves the title themeless or
+        // gracefully falls back to Plex's own served theme.
+        extras.plexAlso !== undefined ? `data-plex-also="${extras.plexAlso ? '1' : '0'}"` : '',
+        // v1.18.28: data-kind flows the row's CURRENT placement_kind
+        // (or the menu item's intended kind) through to the
+        // action='replace' dispatcher so RE-PUSH / collection PUSH
+        // / mismatch PUSH overwrite via the captured kind rather
+        // than the global settings.default_placement_method. The
+        // explicit replace-file / replace-api actions bypass this
+        // path entirely — they hardcode their kind at dispatch.
+        extras.kind !== undefined ? `data-kind="${htmlEscape(extras.kind)}"` : '',
+        // v1.19.62: allow_existing_local flag for the DOWNLOAD PLEX
+        // BACKUP action. '1' on PS-with-DL rows so the swap branch
+        // fires; '0' (or unset) for pure-P rows (existing v1.19.43
+        // behavior).
+        extras.allowExistingLocal !== undefined ? `data-allow-existing-local="${htmlEscape(extras.allowExistingLocal)}"` : '',
+        // v1.21.35: data-has-tdb flags whether the row has a real
+        // ThemerrDB theme (upstream_source != 'plex_orphan' + a TDB
+        // youtube_url). DOWNLOAD PLEX BACKUP's force-capture copy reads
+        // it to avoid promising a "re-pull via DOWNLOAD TDB BACKUP"
+        // revert path that doesn't exist for TDB-less rows (e.g. a
+        // Kometa-built collection — the user's A24 Films repro).
+        extras.hasTdb !== undefined ? `data-has-tdb="${extras.hasTdb}"` : '',
+      ].filter(Boolean).join(' ');
+      // v1.11.14: extras.tone tints the source menu entries to match
+      // the SRC column badge colors so the user can read at a glance
+      // which source state each action lands them in:
+      //   themerrdb = T (green) — TDB download / re-download / revert
+      //   user      = U (violet) — SET URL / UPLOAD MP3
+      //   adopt     = A (cyan) — ADOPT
+      //   plex      = P (amber) — LET PLEX SERVE / ADOPT + LET PLEX SERVE
+      //   place_file = HL (green) — PUSH TO PLEX (FILE) / RE-PUSH (FILE) / SWITCH TO SIDECAR
+      //   place_api = PU (cyan) — PUSH TO PLEX (API) / RE-PUSH (API) / SWITCH TO API
+      // v1.14.48: renamed `cloud` → `plex` to match the recovery-card
+      // `tone: "plex"` / `btn-plex` vocab (the class was unused pre-
+      // v1.14.47; v1.14.47 wired the first callers and v1.14.48
+      // realised the SOURCE menu had no matching CSS).
+      // v1.14.50: removed `manual` from the vocab — `.btn.lib-source-
+      // manual` was dead provision (no caller, no future caller — M
+      // is a passive state never produced by an action). Cross-ref
+      // test (test_v1_14_50_tone_class_cross_reference) enforces the
+      // vocab list matches CSS reality.
+      // v1.18.29: added `place_file` / `place_api` for the PLACE
+      // menu so RE-PUSH / SWITCH / PUSH TO PLEX color-code by the
+      // placement_kind they will produce (mirrors the LINK chip).
+      // Falls back to the existing danger / warn / plain styling.
+      const tone = extras.tone ? ` lib-source-${extras.tone}` : '';
+      // v1.11.96: extras.info = blue "informational action" variant
+      // for ACCEPT UPDATE (matches .chip-info / .tdb-pill-update /
+      // .title-glyph-update). danger > warn > info > plain.
+      const cls = extras.danger ? `btn btn-tiny btn-danger${tone}`
+                : extras.warn   ? `btn btn-tiny btn-warn${tone}`
+                : extras.info   ? `btn btn-tiny btn-info${tone}`
+                :                 `btn btn-tiny${tone}`;
+      // v1.10.34: extras.bypassLock lets actions like PUSH TO PLEX
+      // remain clickable when the row is awaitingApproval (downloaded
+      // but not placed). That state IS what PUSH TO PLEX resolves;
+      // pre-1.10.34 the lock disabled it and forced users to /pending.
+      // Real in-flight jobs still disable the button — clicking
+      // mid-run would race the worker.
+      const isLocked = extras.bypassLock
+        ? !!it.job_in_flight
+        : lockManualActions;
+      const lockMsg = it.job_in_flight
+        ? 'wait for current job to finish'
+        : lockTitle;
+      const titleAttr = isLocked
+        ? ` disabled title="${htmlEscape(lockMsg)}"`
+        : ` title="${htmlEscape(tip)}"`;
+      // v1.20.51: reverted v1.20.49's `// `/`× ` row-menu prefix —
+      // the prefix widened the SOURCE/PLACE/REMOVE summary buttons
+      // past their 78px min-width, overflowing the right-anchored
+      // .row-actions cluster left into the IMDB column (the user's
+      // 2026-05-30 repro). Row-menu labels stay bare; the bulk-bar
+      // keeps its `// ` prefix (it has room).
+      return `<button class="${cls}" data-act="${act}" ${dataset}${titleAttr}>${label}</button>`;
+    }
+
+    // SOURCE menu
+    //
+    // v1.12.39: rewritten for consistent intent-grouping and
+    // tone palette so the user can scan the menu top-to-bottom
+    // and the order maps to "what motif thinks the row's most
+    // useful action is" → "general source overrides" →
+    // "housekeeping" → "undo".
+    //
+    // Section order (each section conditionally renders):
+    //   1. CONTEXTUAL PROMPT     — ACCEPT UPDATE / KEEP CURRENT
+    //                              when blue TDB ↑ is up.
+    //   2. PRIMARY ACQUISITION   — ADOPT (sidecar), DOWNLOAD TDB
+    //                              (initial fetch), RE-DOWNLOAD
+    //                              TDB (refresh canonical).
+    //   3. CUSTOM OVERRIDES      — SET URL, UPLOAD MP3.
+    //   4. CROSS-SOURCE REPLACE  — REPLACE TDB on M/U/A/P rows.
+    //   5. HOUSEKEEPING          — ACK FAILURE.
+    //   6. UNDO                  — REVERT.
+    //
+    // Tone palette: blue (info) for upstream-update prompts;
+    // themerrdb-green for TDB-fetching actions; user-violet for
+    // user-source actions; adopt-cyan for ADOPT; plain for
+    // dismiss-style actions (KEEP CURRENT, ACK FAILURE); REVERT
+    // tone tracks its target kind so the button color hints at
+    // where the row will land.
+    const sourceItems = [];
+
+    // v1.10.41: detect P-agent rows so SOURCE shows REPLACE w/ TDB
+    // instead of DOWNLOAD. The user's mental model on those rows is
+    // 'replace Plex's existing theme', not 'fetch one from scratch'.
+    const isPlexAgent = !placed && !it.plex_local_theme && !!it.plex_has_theme;
+
+    // ── 1. CONTEXTUAL PROMPT ──────────────────────────────────
+    // ACCEPT UPDATE stays on the menu whenever the blue TDB ↑
+    // pill is up (pending_update), even after KEEP CURRENT.
+    // KEEP CURRENT only shows while the row is actionable_update
+    // (decision='pending') — once declined, the row's already in
+    // the "kept" state and the action would be a no-op.
+    // v1.12.51: also gate on src!='-'. A pending_update on a row
+    // the user doesn't have themed yet has nothing to "update
+    // from"; ACCEPT UPDATE would just download the current TDB
+    // URL, which is exactly what DOWNLOAD TDB does. Falling
+    // through to PRIMARY ACQUISITION below gives the user the
+    // green DOWNLOAD button instead of the violet ACCEPT UPDATE.
+    // Mirrors the v1.12.48 row-pill gate.
+    const srcLetter = computeSrcLetter(it);
+    // v1.19.72 (H1 follow-up to v1.19.71): SRC=— exception for
+    // kind='new_theme_available'. The blue !UPD glyph + TDB↑ pill
+    // already render on SRC=— new-theme rows; the SOURCE menu now
+    // mirrors that so the prompted CTA exists. Pre-v1.19.72 only
+    // the title-glyph + pill saw the exception → operator clicked
+    // the blue ! but found no ACCEPT UPDATE button.
+    const acceptUpdateGateOk = pendingUpdateActionable(it);
+    if (acceptUpdateGateOk && themed
+        && themeId !== null && themeId !== undefined) {
+      // v1.12.46: pass sectionId so the accept-update endpoint
+      // scopes the download + place to ONLY this row's section.
+      // Pre-fix _enqueue_download fanned out to every section
+      // that owned the title, so accepting from the 4K row
+      // would also overwrite the standard library's theme —
+      // which the user wanted independently themed (different
+      // editions = different themes).
+      // v1.12.54: tooltip branches on pending_update_kind. For
+      // 'urls_match' rows the action is really a U→T reclassify
+      // (no new content gets downloaded — the file on disk
+      // already matches what TDB would fetch); for the regular
+      // 'upstream_changed' case the file genuinely changes.
+      // Same endpoint handles both: api_accept_update's
+      // url_match path covers urls_match and the v1.12.53 eager
+      // flip lands the row at T immediately.
+      // v1.19.34: P-row branch. On a SRC=P row, v1.19.32 routes
+      // ACCEPT UPDATE through the backup-only path (auto_place=
+      // False, no plex_upload) — the tooltip must reflect that
+      // or it teaches the wrong mental model. Pre-fix it claimed
+      // "replace the current theme" which v1.19.32 deliberately
+      // doesn't do on P-rows (Plex keeps serving).
+      const acceptTip = (srcLetter === 'P')
+        ? 'Download the new ThemerrDB URL as a BACKUP. Plex keeps serving — row stays SRC=P with a TB badge. PUSH TO PLEX later to deploy.'
+        : (it.pending_update_kind === 'urls_match')
+          ? 'Convert this row from U to T. Your override URL already matches ThemerrDB, so the file on disk stays put — only the classification changes.'
+          : (it.pending_update_kind === 'new_theme_available'
+             && srcLetter === '-')
+            ? "Download this newly-discovered ThemerrDB theme into the row. No existing theme to overwrite — this is the first one."
+            : 'Download the new ThemerrDB URL and replace the current theme in this section only.';
+      sourceItems.push(menuItemHtml(
+        'accept-update', 'ACCEPT UPDATE',
+        acceptTip,
+        // v1.21.81: rk scopes the accept DECISION to this edition so a
+        // sibling edition's pending !UPD pill survives.
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          rk: it.rating_key, info: true },
+      ));
+      if (it.actionable_update) {
+        const declineTip = (it.pending_update_kind === 'urls_match')
+          ? 'Dismiss the prompt; the row stays U (your manual override stays in place). The blue TDB ↑ pill stays for filter/sort.'
+          : 'Dismiss the prompt; the blue TDB ↑ pill stays for filter/sort.';
+        sourceItems.push(menuItemHtml(
+          'decline-update', 'KEEP CURRENT',
+          declineTip,
+          // v1.20.3: tint by the source being kept (P→amber, U→violet,
+          // etc.) so the color reflects what KEEP CURRENT preserves.
+          { mt: themeMt, id: themeId, sectionId: it.section_id,
+            rk: it.rating_key, tone: SRC_LETTER_TONE[srcLetter] },
+        ));
+      }
+    }
+
+    // ── 2. PRIMARY ACQUISITION ────────────────────────────────
+    // ADOPT — sidecar-only rows (theme.mp3 in the Plex folder
+    // but no motif canonical). Cyan tone matches the A badge
+    // the row will land on.
+    if (sidecarOnly) {
+      sourceItems.push(menuItemHtml(
+        'adopt-sidecar', 'ADOPT',
+        "Take ownership of the existing theme.mp3 sidecar.",
+        { rk: it.rating_key, tone: 'adopt' },
+      ));
+    }
+    // DOWNLOAD TDB / RE-DOWNLOAD TDB — T-source rows where the
+    // upstream URL is healthy. Split into two mutually-exclusive
+    // labels so the action's intent is unambiguous:
+    //   !downloaded || dlBroken  → DOWNLOAD TDB    (initial / recovery)
+    //   downloaded && !dlBroken  → RE-DOWNLOAD TDB (refresh canonical)
+    // Suppressed on M/U/A (those have REPLACE TDB which fits
+    // their mental model better) and on P-agent (REPLACE TDB
+    // appears further down). Suppressed when pending_update is
+    // up (ACCEPT UPDATE replaces both options with the
+    // contextually-correct phrasing) and when accepted_update is
+    // recent (canonical already came from the current TDB URL,
+    // so DOWNLOAD/RE-DOWNLOAD would be a no-op).
+    // Tone: themerrdb-green — matches the T badge the row will
+    // land on.
+    // v1.12.51: !it.pending_update suppresses DOWNLOAD whenever
+    // a pending update exists, on the assumption ACCEPT UPDATE
+    // covers it. That assumption breaks for src='-' rows (no
+    // theme to update from) — those need DOWNLOAD to come back.
+    // The CONTEXTUAL PROMPT block above now skips ACCEPT UPDATE
+    // on src='-', so we mirror the gate here: a src='-' row with
+    // a stale pending_update should still see the green DOWNLOAD
+    // button.
+    // v1.12.78: accepted_update gate now mirrors the pending_update
+    // gate's src='-' escape hatch. Pre-fix a section that PURGEd
+    // after a prior urls_match ACCEPT UPDATE saw DOWNLOAD TDB
+    // suppressed because pending_updates(decision='accepted') is
+    // title-global — it survives section PURGE on non-last sections.
+    // The "downloading would be a no-op" justification breaks on
+    // src='-' (no canonical to be redundant with), so let DOWNLOAD
+    // through and trust the worker to fetch the current TDB URL.
+    // v1.19.72 (H1 follow-up): the v1.12.51 escape hatch
+    // `srcLetter === '-'` lets SRC=— pending_update rows still
+    // show DOWNLOAD TDB. v1.19.71's new_theme_available kind
+    // means the CONTEXTUAL PROMPT now ALSO fires on those rows
+    // — we'd render both ACCEPT UPDATE and DOWNLOAD TDB without
+    // this exclusion. Functionally both download the same URL,
+    // but ACCEPT UPDATE clears the pending_updates decision
+    // → !UPD glyph drops; DOWNLOAD TDB does not. Hide DOWNLOAD
+    // TDB on the new-theme path so the menu has one CTA.
+    const srcDashEscapeOk = srcLetter === '-'
+      && it.pending_update_kind !== 'new_theme_available';
+    if (themed && themeId !== null && themeId !== undefined
+        && !sidecarOnly && !isPlexAgent && !isManualPlacement
+        && !lockManualActions
+        && (!it.pending_update || srcDashEscapeOk)
+        && (!it.accepted_update || srcLetter === '-')
+        // v1.17.17: plex_orphan rows have no ThemerrDB URL to
+        // (re-)download from — themes.youtube_url for an orphan
+        // is the URL captured during the original ADOPT, not a
+        // TDB URL. the user's screenshot showed RE-DOWNLOAD TDB
+        // on a NO TDB row; that path was confusingly named and
+        // functionally broken. SET URL / UPLOAD MP3 / RESTORE
+        // are the right recovery paths for orphans.
+        && !isOrphan) {
+      const tdbDeadForDownload = it.failure_kind
+        && TDB_DEAD_FAILURES_GLOBAL.has(it.failure_kind);
+      const tdbCookiesBlocked = it.failure_kind === 'cookies_expired'
+        && !window.__motif_cookies_present;
+      const tdbBlocked = tdbDeadForDownload || tdbCookiesBlocked;
+      const hasDownloadUrl = !!it.youtube_url
+        || sourceKindForActions === 'url';
+      if (!tdbBlocked && hasDownloadUrl) {
+        if (!downloaded || dlBroken) {
+          // v1.12.73: pass sectionId so RE-DOWNLOAD/DOWNLOAD TDB
+          // targets only this row's section. Without it, the
+          // re-download fanned out to every section that owned
+          // the title — wrong for per-edition theming.
+          sourceItems.push(menuItemHtml(
+            'redl', 'DOWNLOAD TDB',
+            'Download from ThemerrDB and place into the Plex folder for this section.',
+            { mt: themeMt, id: themeId, sectionId: it.section_id,
+              rk: it.rating_key, tone: 'themerrdb' },
+          ));
+        } else {
+          // v1.12.39: RE-DOWNLOAD TDB returned per user feedback
+          // for the canonical-refresh edge case (corrupted file,
+          // post-recovery rebuild, etc.). Distinct from REPLACE
+          // TDB because RE-DOWNLOAD applies to T rows whose
+          // current canonical IS already from TDB; REPLACE TDB
+          // applies to M/U/A/P rows whose current canonical is
+          // NOT from TDB.
+          sourceItems.push(menuItemHtml(
+            'redl', 'RE-DOWNLOAD TDB',
+            'Re-fetch from ThemerrDB and overwrite the canonical for this section (refresh / corruption recovery).',
+            { mt: themeMt, id: themeId, sectionId: it.section_id,
+              rk: it.rating_key, tone: 'themerrdb' },
+          ));
+        }
+      }
+    }
+
+    // ── 3. CUSTOM OVERRIDES ───────────────────────────────────
+    // SET URL / UPLOAD MP3 — always available, on any row. The
+    // user can choose a custom source at any time regardless of
+    // the row's current state. Violet tone matches the U badge
+    // the row will land on.
+    sourceItems.push(menuItemHtml(
+      'manual-url', 'SET URL',
+      'Provide a YouTube or SoundCloud URL as a manual override.',
+      { rk: it.rating_key, tone: 'user', ytUrl: it.youtube_url || '',
+        appliedUrl: it.applied_youtube_url || '',
+        srcLetter: srcLetter },
+    ));
+    sourceItems.push(menuItemHtml(
+      'upload-theme', 'UPLOAD MP3',
+      'Upload an MP3 file as the theme.',
+      // v1.19.83: pass srcLetter so the upload dialog reveals the
+      // KEEP AS BACKUP checkbox on P-rows — mirror of the SET URL
+      // sibling above. Pre-fix this menu item omitted it, so the
+      // button never carried data-src-letter, openUploadDialog got
+      // '', and the `srcLetter === 'P'` reveal gate never fired —
+      // the checkbox (and the hint copy promising it) never showed.
+      { rk: it.rating_key, tone: 'user', srcLetter: srcLetter },
+    ));
+
+    // ── 3.5. TDB DROPPED REMEDIATION (Phase C, v1.13.1) ─────
+    // When ThemerrDB stops publishing this title, the row gets a
+    // gray TDB◌ pill. Two dismissal paths:
+    //   ACK DROP — clear the flag, leave SRC=T as-is. The local
+    //              theme stays linked to the (no-longer-published)
+    //              TDB record. If TDB ever re-adds it, the next
+    //              sync clears the flag automatically.
+    //   CONVERT TO MANUAL — promote the current youtube_url into
+    //              user_overrides; SRC reclassifies T → U; future
+    //              syncs leave the row alone.
+    if (it.tdb_dropped_at && themeMt && themeId !== null
+        && themeId !== undefined) {
+      sourceItems.push(menuItemHtml(
+        'ack-drop', 'ACK DROP',
+        "ThemerrDB stopped publishing this title. Dismiss the TDB◌ flag — the local theme stays as-is.",
+        { mt: themeMt, id: themeId, tone: 'themerrdb' },
+      ));
+      if (it.youtube_url) {
+        sourceItems.push(menuItemHtml(
+          'convert-to-manual', 'CONVERT TO MANUAL',
+          "Take ownership of this row: promote the current URL into user_overrides. SRC flips T → U; sync stops touching it.",
+          { mt: themeMt, id: themeId, sectionId: it.section_id || '',
+            tone: 'user' },
+        ));
+      }
+    }
+
+    // ── 4. CROSS-SOURCE REPLACE ───────────────────────────────
+    // REPLACE TDB — fires when the user is swapping motif's
+    // ThemerrDB download in for an existing theme from another
+    // source (sidecar M, manual U, adopted A, Plex agent P).
+    // Suppressed on T rows (DOWNLOAD/RE-DOWNLOAD TDB covers that
+    // case), on rows with a permanent TDB failure (red ✗ pill —
+    // would re-fail), on rows with cookies blocked, when a blue
+    // TDB ↑ pill is up (ACCEPT UPDATE covers it), and when a
+    // recent accept left the TDB URL as the still-active theme
+    // (SRC=T no-op — but NOT once the user has since overridden it).
+    // v1.14.46: also suppressed on LPS rows (`isPlexAgent &&
+    // downloaded` — motif already has the canonical from a
+    // prior backup or LET PLEX SERVE flow). REPLACE TDB on LPS
+    // would re-download wastefully when PLACE → PUSH TO PLEX
+    // (in the PLACE menu below) achieves the same end state
+    // using the existing canonical via the /replace endpoint.
+    // the user's design point: "since we could just use the push
+    // to plex option to save us a download."
+    const tdbReplaceBlocked = (it.failure_kind
+        && TDB_DEAD_FAILURES_GLOBAL.has(it.failure_kind))
+      || (it.failure_kind === 'cookies_expired'
+          && !window.__motif_cookies_present);
+    // v1.19.49: plex_cloud backups (from the v1.19.42 walker)
+    // are AUTOMATED insurance — not a user commitment to a
+    // specific canonical source. When a row has source_kind=
+    // 'plex_cloud' + backup_only stamp, the user should still
+    // see TDB options (REPLACE TDB, DOWNLOAD TDB BACKUP) so they
+    // can switch to TDB content if they prefer it. Pre-fix the
+    // `downloaded` gate suppressed both because the local_files
+    // row existed. the user's repro: clicked DOWNLOAD PLEX BACKUP
+    // on 12 Monkeys (SRC=P + TDB available) → B badge landed +
+    // SOURCE menu lost REPLACE TDB / DOWNLOAD TDB BACKUP → user
+    // couldn't switch backup source. The "non-cloud canonical"
+    // distinction lets us treat the two cases differently.
+    const isPlexCloudBackupRow = downloaded
+                                && it.source_kind === 'plex_cloud'
+                                && it.last_place_attempt_reason === 'backup_only';
+    const hasNonCloudCanonical = downloaded && !isPlexCloudBackupRow;
+    const lpsHasCanonical = isPlexAgent && hasNonCloudCanonical;
+    // v1.20.2: new_theme_available rows (net-new TDB themes, esp.
+    // SRC=P) get the full TDB toolkit too. Pre-fix `!it.pending_update`
+    // suppressed REPLACE TDB + DOWNLOAD TDB BACKUP whenever the blue
+    // !UPD pill was up, on the "ACCEPT UPDATE covers it" assumption.
+    // the user wants the explicit TDB actions on these net-new rows; the
+    // endpoints resolve the pending update so the !UPD pill clears
+    // ("it's in the motif collection now, no longer an update").
+    const tdbActionPendingOk = !it.pending_update
+      || it.pending_update_kind === 'new_theme_available';
+    // v1.24.71: gate on it.youtube_url — a title can be ThemerrDB-TRACKED
+    // (upstream_source set) but have NO theme video (themes.youtube_url empty,
+    // e.g. a brand-new title TDB catalogs but hasn't got a theme for yet).
+    // REPLACE TDB on such a row 409'd "ThemerrDB record has no youtube_url"
+    // (the user's Daredevil: Born Again repro). DOWNLOAD TDB BACKUP already gates
+    // on it.youtube_url; REPLACE TDB was missing the same sanity check.
+    // v1.24.72: accepted_update is a STICKY historical flag — it stays true
+    // after the user later overrides the accepted TDB theme with a user URL
+    // (SRC=U) / sidecar / etc. The "recent accept already pulled the current
+    // TDB URL (no-op)" concern only holds while the accepted TDB is STILL the
+    // active theme (SRC=T) — and the placement clause below already excludes T.
+    // A bare !accepted_update therefore wrongly hid REPLACE TDB on overridden
+    // rows (the user's Super Mario Galaxy: accepted an update, then set a user
+    // URL → SRC=U, accepted_update sticky → REPLACE TDB vanished). Relax to
+    // "suppress only while the accepted TDB is still active" (srcLetter === 'T').
+    if (isThemerrDb && it.youtube_url && !tdbReplaceBlocked && tdbActionPendingOk
+        && (!it.accepted_update || srcLetter !== 'T') && !lpsHasCanonical
+        && (sidecarOnly || isManualPlacement || isPlexAgent)) {
+      const replaceTip = sidecarOnly
+        ? "Download from ThemerrDB and replace the local sidecar."
+        : isPlexAgent
+          ? "Download from ThemerrDB and replace the Plex agent theme."
+          : "Download from ThemerrDB and replace the current local theme.";
+      sourceItems.push(menuItemHtml(
+        'replace-with-themerrdb', 'REPLACE TDB',
+        replaceTip,
+        { rk: it.rating_key, warn: true, tone: 'themerrdb' },
+      ));
+    }
+
+    // v1.14.45: DOWNLOAD TDB BACKUP — pure-P rows where TDB has
+    // the title. Plex serves its own theme; user gets motif's
+    // canonical as a backup without disturbing Plex's serving
+    // copy. End state mirrors LPS exactly (DL=on, PL=gray,
+    // LINK=PS).
+    //
+    // Gating mirrors the api_recovery_options server-side gate:
+    //   isPlexAgent (Plex serves) AND isThemerrDb (TDB tracks)
+    //   AND no non-cloud canonical yet (v1.19.49: plex_cloud
+    //   backups DO show this option so the user can switch
+    //   backup source TDB ↔ plex_cloud)
+    //   AND TDB URL set (sanity)
+    //   AND not blocked (failure_kind not in DEAD set, cookies
+    //   present if needed) — same gates as REPLACE TDB above.
+    //
+    // v1.19.49: gate widened from `!downloaded` to
+    // `!hasNonCloudCanonical`. Pre-fix, after DOWNLOAD PLEX
+    // BACKUP landed on a SRC=P + TDB-tracked row, this option
+    // disappeared because `downloaded` flipped to true. the user's
+    // request: "Once we choose to download plex backup all
+    // options are gone to either download themerrdb backup or
+    // swap to themerrdb backup instead." plex_cloud backups
+    // are insurance, not commitment — the user should still
+    // be able to switch source.
+    //
+    // Endpoint: /api/items/{mt}/{tmdb}/download-backup (enqueues
+    // a download with auto_place=False).
+    // Tone: themerrdb (green) — additive Plex-friendly action.
+    // v1.20.23: symmetric with DOWNLOAD PLEX BACKUP's gate
+    // (`!downloaded || source_kind !== 'plex_cloud'`). Pre-fix the
+    // `!hasNonCloudCanonical` gate only let PB → TB swap; an adopted
+    // (AB) or user (UB) backup couldn't swap → TB at all, while it
+    // COULD swap → PB. the user's repro: an AB-backup P-row showed
+    // DOWNLOAD PLEX BACKUP but not DOWNLOAD TDB BACKUP. Now any
+    // non-TDB canonical (AB/UB/PB) — or a pure-P row — can swap to a
+    // TDB backup; the download-backup endpoint's UPSERT overwrites
+    // source_kind so the canonical lands as themerrdb (TB). A row
+    // whose canonical is ALREADY themerrdb is excluded (no-op swap).
+    const canSwapToTdbBackup = !downloaded
+                             || it.source_kind !== 'themerrdb';
+    // v1.20.24: yield to ACCEPT UPDATE when it's already on the menu.
+    // On a P-row ACCEPT UPDATE ALSO downloads TDB as a backup
+    // (v1.19.32), so on a row with an actionable new_theme_available
+    // pending (the only kind tdbActionPendingOk lets through) both
+    // would render and do the IDENTICAL thing — a duplicate CTA.
+    // !acceptUpdateGateOk suppresses DOWNLOAD TDB BACKUP exactly when
+    // ACCEPT UPDATE is shown; it still appears when ACCEPT UPDATE
+    // isn't (no pending, or a declined pending) so there's no gap.
+    if (isThemerrDb && isPlexAgent && canSwapToTdbBackup
+        && !tdbReplaceBlocked
+        && tdbActionPendingOk && !acceptUpdateGateOk
+        && !it.accepted_update
+        && it.youtube_url) {
+      const tdbBackupTip = isPlexCloudBackupRow
+        ? "Switch the backup source from Plex's cloud theme to "
+          + "TDB's. Plex keeps serving its own; motif overwrites "
+          + "the plex_cloud copy with TDB content. Row will "
+          + "transition B → BK."
+        : downloaded
+          ? "Switch this row's backup source to ThemerrDB's theme, "
+            + "replacing the current backup. Plex keeps serving its "
+            + "own; the TDB copy lands at /themes/ as a TB backup."
+          : "Download TDB's theme as a local backup. Plex keeps "
+            + "serving its own; motif's copy lives at /themes/ for "
+            + "future PUSH MOTIF'S THEME. Row will move to LPS state "
+            + "(LINK chip becomes PS).";
+      sourceItems.push(menuItemHtml(
+        'download-tdb-backup', 'DOWNLOAD TDB BACKUP',
+        tdbBackupTip,
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          rk: it.rating_key, tone: 'themerrdb' },
+      ));
+    }
+
+    // v1.21.98: RE-DOWNLOAD TDB BACKUP — recovery on TB rows. the user:
+    // Watchmen Theatrical Cut rendered TB via the '' fallback but the
+    // EDITION had no own local_files, so REPLACE/PLACE 409'd "no local
+    // file to replace from — re-download first" with NO re-download option
+    // on the menu. This re-fetches the ThemerrDB theme as THIS edition's
+    // backup (the edition-scoped /download-backup endpoint), so a missing
+    // or mis-keyed per-edition backup recovers + PLACE / PROMOTE work.
+    // canSwapToTdbBackup is false for a TB row (downloaded + themerrdb), so
+    // the DOWNLOAD TDB BACKUP item above never double-renders here.
+    if (isTdbBackup && it.youtube_url && !tdbReplaceBlocked) {
+      sourceItems.push(menuItemHtml(
+        'download-tdb-backup', 'RE-DOWNLOAD TDB BACKUP',
+        "Re-download ThemerrDB's theme as THIS edition's backup — recovers "
+        + "a missing or mis-keyed per-edition backup so PLACE / PROMOTE TO "
+        + "ACTIVE work. Plex keeps serving until you deploy it.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          rk: it.rating_key, tone: 'themerrdb' },
+      ));
+    }
+
+    // v1.19.43: DOWNLOAD PLEX BACKUP — pure-P rows where motif
+    // can back up Plex's OWN cloud theme via the v1.19.42 walker.
+    // The visibility gate is intentionally broader than DOWNLOAD
+    // TDB BACKUP — TDB-less rows (anime cohort: 100% C1 per the
+    // 2026-05-26 probe) are exactly where cloud-backup is most
+    // valuable, since the user has no other recovery option if
+    // Plex Pass lapses. Gate: isPlexAgent + !downloaded. The
+    // run endpoint internally classifies the row's /themes
+    // response — if NOT C1 (e.g., motif/themerr-plex upload
+    // sibling already covers the bytes), nothing happens and the
+    // toast surfaces "0 backed up" so the user gets feedback.
+    // v1.19.48: label renamed BACKUP THIS THEME → DOWNLOAD PLEX
+    // BACKUP. The old label had a demonstrative ("this") that
+    // no other SOURCE-menu label uses; new label mirrors the
+    // DOWNLOAD TDB BACKUP shape exactly (verb + SOURCE + intent).
+    // Tone retoned themerrdb (green) → plex (amber) so at-a-
+    // glance the user knows it's backing up Plex's theme.
+    // Mirrors LET PLEX SERVE / ADOPT + LET PLEX SERVE precedent
+    // (plex-touching actions use amber).
+    // v1.19.62: extend visibility to PS-with-non-plex_cloud-DL
+    // rows. the user's "86 EIGHTY-SIX" repro: SRC=P, DL=green TDB
+    // download, LINK=BK (post-v1.19.61). The user can swap the
+    // TDB local for Plex's actual cloud theme bytes so the
+    // backup matches what Plex is serving. Click sends
+    // {allow_existing_local: true} so the walker accepts rows
+    // with existing local_files; backup_cloud_theme's ON
+    // CONFLICT REPLACEs the existing row with the plex_cloud
+    // bytes. Rows already source_kind='plex_cloud' are filtered
+    // server-side (already cloud-backed; no-op).
+    const isCloudBackupable = isPlexAgent
+                            && (!downloaded
+                                || it.source_kind !== 'plex_cloud');
+    if (isCloudBackupable) {
+      const tooltipBase = "Download Plex's cloud theme (Plex "
+        + "Pass) as a local backup via the v1.19.42 walker. "
+        + "Insurance against Plex Pass loss or catalog drops. "
+        + "Motif keeps the bytes; Plex stays the active source. "
+        + "PROMOTE TO ACTIVE from the INFO card later swaps "
+        + "motif's copy back in via the v1.18.36 re-upload trick.";
+      const swapTooltip = downloaded
+        ? tooltipBase + " ⚠ This row already has a non-Plex "
+          + "local file — it will be REPLACED with Plex's cloud "
+          + "theme bytes."
+        : tooltipBase;
+      // v1.21.35: does this row have a real ThemerrDB theme to revert
+      // to? A TDB-less row (plex_orphan — e.g. a Kometa-built collection
+      // with no TDB match) has no green TDB pill and no DOWNLOAD TDB
+      // BACKUP, so the force-capture copy must not promise that revert.
+      const cloudBackupHasTdb = !!(
+        it.upstream_source && it.upstream_source !== 'plex_orphan'
+        && it.youtube_url);
+      sourceItems.push(menuItemHtml(
+        'backup-cloud-theme', 'DOWNLOAD PLEX BACKUP',
+        swapTooltip,
+        {
+          rk: it.rating_key, tone: 'plex',
+          allowExistingLocal: downloaded ? '1' : '0',
+          hasTdb: cloudBackupHasTdb ? '1' : '0',
+        },
+      ));
+    }
+
+    // v1.14.47: LET PLEX SERVE moved from INFO TRY THIS NEXT to
+    // here. Same gate as the v1.14.44 server `purge-revert-to-
+    // plex` no-fail option (which v1.14.47 removed): Plex serves
+    // its own theme AND motif owns a placement to unplace AND
+    // not already in LPS state. Per the user's UX principle:
+    // "TRY THIS NEXT is for error states; intentional Plex
+    // actions belong in the SOURCE menu". Tone amber matches
+    // the Plex chip color the row transitions toward.
+    //
+    // Gate JS-equivalents to the server:
+    //   p_available  ← it.plex_independent_theme === 1
+    //   motif_has_placement  ← placed (== !!it.media_folder)
+    //   !is_lps  ← implied (LPS requires !placed; placed = true here)
+    if (it.plex_independent_theme === 1 && placed) {
+      sourceItems.push(menuItemHtml(
+        'purge-revert-to-plex', 'LET PLEX SERVE',
+        "Plex has its own track. Drop motif's placement; "
+        + "Plex keeps playing. Motif's canonical stays at "
+        + "/themes/ — PUSH TO PLEX from the PLACE menu "
+        + "restores it later if you change your mind.",
+        // v1.22.2: carry the clicked rk so the unplace scopes to THIS
+        // edition (was omitted → letPlexServeFlow's ambiguous .find()
+        // picked the first edition → 0 placements → silent no-op).
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          rk: it.rating_key, tone: 'plex' },
+      ));
+    }
+
+    // v1.14.47: ADOPT + LET PLEX SERVE — moved from INFO TRY
+    // THIS NEXT for M+P composite rows (sidecar exists at the
+    // Plex folder that motif didn't place AND Plex serves its
+    // own independent theme). Bundled action: adopt the
+    // sidecar, then unplace. Result: motif owns canonical,
+    // Plex serves its own, no file at the Plex folder.
+    //
+    // Gate (mirrors v1.14.27 server):
+    //   m_available  ← it.plex_local_theme === 1 && !placed
+    //                  (sidecar exists, motif didn't place)
+    //   p_available  ← it.plex_independent_theme === 1
+    //                  (Plex serves independently)
+    //   !is_lps      ← implied (LPS requires file_path)
+    if (it.plex_local_theme === 1 && !placed
+        && it.plex_independent_theme === 1
+        && it.rating_key) {
+      sourceItems.push(menuItemHtml(
+        'adopt-and-let-plex-serve', 'ADOPT + LET PLEX SERVE',
+        "Claim the existing sidecar so motif owns the file, "
+        + "then delete it from the Plex folder. Plex's own theme "
+        + "becomes the only one served. Recovery: PUSH TO PLEX "
+        + "from the PLACE menu.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          rk: it.rating_key, tone: 'plex' },
+      ));
+    }
+
+    // ── 5. HOUSEKEEPING ───────────────────────────────────────
+    // v1.12.87: ACK FAILURE moved out of the SOURCE menu — INFO
+    // card's // TRY THIS NEXT section is now the single ACK
+    // entry-point. The row's red ! glyph also routes there
+    // (was inline-clear pre-.87) so users always see the failure
+    // context (kind, raw yt-dlp message, recovery options) before
+    // dismissing. Reduces SOURCE-menu clutter and removes the
+    // "what's the difference between the glyph and SOURCE → ACK"
+    // ambiguity.
+
+    // ── 6. UNDO ───────────────────────────────────────────────
+    // REVERT — one-step undo. Surfaces only when there's a
+    // captured previous URL on the row (themes.previous_youtube_url).
+    // Populated by SET URL replacing an existing override,
+    // ACCEPT UPDATE consuming a U row, REPLACE TDB consuming a
+    // U row, or REVERT itself (round-trippable). Tone tracks
+    // previous_youtube_kind so the button color hints at where
+    // the row will land — violet for user, themerrdb-green for
+    // upstream.
+    // v1.12.40: also suppress when revert_redundant=1 — the
+    // previous URL is a TDB URL that exactly matches the
+    // pending_updates.new_youtube_url that ACCEPT UPDATE would
+    // fetch. REVERT and ACCEPT UPDATE would do the same thing,
+    // so showing both would be confusing. A user-kind previous
+    // URL stays revertible regardless because reverting to U
+    // is a meaningfully different state from accepting the
+    // upstream update. If the previous is a TDB URL that
+    // DOESN'T match the new URL (e.g., TDB rolled forward
+    // again), both buttons render and serve different actions.
+    // v1.12.65: REVERT now requires previous_youtube_kind='user'.
+    // For 'themerrdb' kind the action is functionally identical
+    // to DOWNLOAD TDB / RE-DOWNLOAD TDB / REPLACE TDB — the worker
+    // discards the previous URL value and downloads from
+    // themes.youtube_url either way (no per-job URL override
+    // mechanism). Showing REVERT alongside those actions was
+    // pure UI redundancy that confused users. The INFO card
+    // explains the hidden-REVERT case so the missing button
+    // doesn't read as a bug.
+    // v1.12.101: relax the gate for src='-' and src='M' rows.
+    // After PURGE / UNMANAGE there's no canonical and no
+    // DOWNLOAD TDB action competing with RESTORE — the "kind
+    // collides with TDB action" reasoning above only applies
+    // to T rows where DOWNLOAD TDB is also visible. Without
+    // this relaxation, UNMANAGEing a T row left the user with
+    // no one-step path back ("here's what you just dropped,
+    // bring it back") — they'd have to use DOWNLOAD TDB and
+    // hope the upstream URL still matched. RESTORE makes the
+    // intent explicit. Still gated on revert_redundant=0 so
+    // we don't double-show alongside ACCEPT UPDATE.
+    const restoreEligibleKind = it.previous_youtube_kind === 'user'
+      || (srcLetter === '-' || srcLetter === 'M');
+    if (it.has_previous_url && !it.revert_redundant
+        && restoreEligibleKind) {
+      // v1.12.47: pass sectionId so REVERT scopes the
+      // re-download + place to only this row's section
+      // (matches ACCEPT UPDATE per-section behavior).
+      // v1.12.79: relabel to RESTORE on src='-' rows. PURGE /
+      // UNMANAGE both capture the dropped URL into
+      // previous_youtube_url so the user can bring it back
+      // one-step. "RESTORE" reads more naturally than "REVERT"
+      // for that scenario — "revert" implies undoing a config
+      // change, "restore" implies bringing back a destroyed
+      // theme. Same endpoint, different copy.
+      // v1.12.81: also label RESTORE on src='M' (post-UNMANAGE
+      // sidecar). Pre-fix the user UNMANAGEd a U row → became M
+      // sidecar → button still read REVERT, which was inconsistent
+      // with PURGE's RESTORE label even though both are
+      // "destructive action just happened, bring my URL back".
+      const isRestore = (srcLetter === '-' || srcLetter === 'M');
+      const restoreLabel = isRestore ? 'RESTORE' : 'REVERT';
+      // v1.12.103: tone tracks the captured kind, not a hardcoded
+      // 'user'. Pre-fix the post-PURGE RESTORE on a T row landed
+      // purple even though it was bringing back a themerrdb URL —
+      // visually inconsistent with the green TDB chip the row
+      // showed before the purge. Now: themerrdb-kind → green,
+      // user-kind → purple, so the button color answers "where is
+      // this URL coming from?" the same way the row's SRC badge does.
+      const restoreTone = it.previous_youtube_kind === 'themerrdb'
+        ? 'themerrdb' : 'user';
+      // v1.19.34: P-row REVERT branch. v1.19.33 routes REVERT on
+      // a SRC=P row through auto_place=False so Plex keeps serving;
+      // the tooltip must say so. isRestore (srcLetter='-' OR 'M')
+      // is mutex with srcLetter='P', so the order below is safe.
+      const restoreTip = isRestore
+        ? (restoreTone === 'themerrdb'
+            ? 'Restore the ThemerrDB URL captured before PURGE/UNMANAGE and re-download in this section.'
+            : 'Restore the user URL captured before PURGE/UNMANAGE and re-download in this section.')
+        : (srcLetter === 'P')
+          ? 'Revert to the previously-active URL as a BACKUP. Plex keeps serving — row stays SRC=P with a backup badge (TB if the URL is ThemerrDB-sourced, else UB).'
+          : 'Revert to the previously-active URL and re-download in this section.';
+      sourceItems.push(menuItemHtml(
+        'revert', restoreLabel,
+        restoreTip,
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          rk: it.rating_key, tone: restoreTone },
+      ));
+    }
+
+    // PLACE menu — single-action category, but rendered as a menu for
+    // visual symmetry with the others. Hidden entirely when there's
+    // nothing to push.
+    // v1.11.63: PUSH / RE-PUSH / RESTORE are mutually exclusive based
+    // on the current canonical+placement state:
+    //   downloaded && !placed → PUSH TO PLEX (canonical only, push it out)
+    //   downloaded && placed && !dlBroken → RE-PUSH (force re-place)
+    //   dlBroken && placed → RESTORE FROM PLEX (no canonical to push;
+    //                        recover it from the surviving placement)
+    // Pre-fix RE-PUSH stayed visible alongside RESTORE FROM PLEX even
+    // though there's no canonical to re-push, and PUSH TO PLEX was
+    // theoretically reachable on a row whose 'downloaded' flag was
+    // truthy only because file_path was non-null (ignoring the
+    // missing canonical). Now: if the canonical is gone, PUSH/RE-PUSH
+    // are suppressed; if the canonical is present, RESTORE is suppressed.
+    const placeItems = [];
+    // v1.18.16: tooltip diverges by media type. For collections
+    // (placement_kind='plex_upload' / media_type='collection')
+    // the action POSTs the audio bytes to Plex's collection-theme
+    // API endpoint — no Plex folder is involved. Worker already
+    // dispatches via _do_place at worker.py:1734
+    // → _do_place_collection so the runtime is correct; the
+    // tooltip just needs to match.
+    const isCollectionRow = themeMt === 'collection';
+    if (themed && downloaded && !placed && !dlBroken) {
+      // v1.10.34: bypassLock=true so this stays clickable in the
+      // 'downloaded but not placed' state (a.k.a. awaitingApproval).
+      // Pushing IS the resolution action there — locking it forced
+      // users to /pending unnecessarily.
+      // v1.18.23: split into PUSH TO PLEX (FILE) + PUSH TO PLEX
+      // (API) on movie/TV rows. Collections stay single-button
+      // (no folder option). Each item posts to /replace with an
+      // explicit kind, so the worker knows whether to lay a
+      // sidecar or POST to /library/metadata/{rk}/themes.
+      if (isCollectionRow) {
+        // v1.18.28: pass kind='api' explicitly so the worker
+        // doesn't fall through to settings.default_placement_method
+        // (which could be 'file' and would error since collections
+        // have no folder). Defensive — _do_place at worker.py
+        // already routes collections to _do_place_collection
+        // regardless, but explicit kind keeps the dispatch
+        // self-documenting.
+        // v1.18.29: tone='place_api' colors collection PUSH cyan
+        // to match the row's resulting PU LINK chip.
+        placeItems.push(menuItemHtml(
+          'replace', 'PUSH TO PLEX',
+          "Upload the downloaded theme to Plex via the collection-theme API.",
+          { mt: themeMt, id: themeId, rk: it.rating_key, warn: true,
+            bypassLock: true, kind: 'api', tone: 'place_api' },
+        ));
+      } else {
+        // v1.18.29: split PUSH buttons color-code by destination kind
+        // — green for the sidecar (HL chip) path, cyan for the API
+        // (PU chip) path. The kind suffix in the label + the tone
+        // color together make the choice unambiguous at-a-glance.
+        placeItems.push(menuItemHtml(
+          'replace-file', 'PUSH TO PLEX (FILE)',
+          "Hardlink the downloaded theme as a sidecar at the Plex media folder. Legacy behavior — file lives next to the media.",
+          { mt: themeMt, id: themeId, rk: it.rating_key, warn: true,
+            bypassLock: true, tone: 'place_file' },
+        ));
+        placeItems.push(menuItemHtml(
+          'replace-api', 'PUSH TO PLEX (API)',
+          "Upload the downloaded theme to Plex via /library/metadata API. No sidecar — audio lives in Plex's metadata store.",
+          { mt: themeMt, id: themeId, rk: it.rating_key, warn: true,
+            bypassLock: true, tone: 'place_api' },
+        ));
+      }
+    }
+    if (themed && downloaded && placed && !dlBroken && !isMismatch) {
+      const repushTip = isCollectionRow
+        ? "Re-upload the canonical to Plex's collection-theme API (no re-download)."
+        : "Re-place the canonical at the Plex folder (no re-download).";
+      // v1.18.28: RE-PUSH must preserve the row's CURRENT
+      // placement_kind, not fall through to
+      // settings.default_placement_method. Pre-fix RE-PUSH on a
+      // plex_upload row that had default_method='file' would silently
+      // demote to a sidecar — the user's repro: RE-PUSH and
+      // SWITCH TO SIDECAR had the same visible effect. Collections
+      // are always 'api' (no folder). For movie/TV rows we read
+      // placement_kind: 'plex_upload' → 'api', anything else → 'file'.
+      const repushKind = isCollectionRow
+        ? 'api'
+        : (it.placement_kind === 'plex_upload' ? 'api' : 'file');
+      // v1.18.29: surface the placement_kind in the label and
+      // color so RE-PUSH is unambiguous about which placement
+      // type it will re-create. Collections stay plain "RE-PUSH"
+      // (no folder option means no (FILE)/(API) distinction
+      // exists for them). Movie/TV gain a (FILE) or (API)
+      // suffix matching the row's current kind, and the tone
+      // color matches the LINK chip the row already shows.
+      const repushTone = repushKind === 'api'
+        ? 'place_api' : 'place_file';
+      const repushLabel = isCollectionRow
+        ? 'RE-PUSH'
+        : (repushKind === 'api' ? 'RE-PUSH (API)' : 'RE-PUSH (FILE)');
+      placeItems.push(menuItemHtml(
+        'replace', repushLabel,
+        repushTip,
+        { mt: themeMt, id: themeId, rk: it.rating_key, warn: true,
+          bypassLock: true, kind: repushKind, tone: repushTone },
+      ));
+      // v1.18.23: SWITCH PLACEMENT — flip between sidecar and
+      // plex_upload. Only on movie/TV rows; collections always
+      // use API push (no folder to switch to). Action key
+      // 'switch-placement' hits the new endpoint; it inverts
+      // the current kind automatically (sidecar→api or
+      // api→sidecar). Wraps in confirm because the existing
+      // placement is destroyed first.
+      if (!isCollectionRow) {
+        const isPlexUpload = it.placement_kind === 'plex_upload';
+        const switchLabel = isPlexUpload
+          ? 'SWITCH TO SIDECAR'
+          : 'SWITCH TO API';
+        const switchTip = isPlexUpload
+          ? "Replace the Plex API upload with a sidecar at the media folder."
+          : "Replace the sidecar with a Plex API upload — audio moves into Plex's metadata store.";
+        // v1.18.29: SWITCH buttons color-code by the TARGET kind
+        // (where the placement is going, not where it currently
+        // is). isPlexUpload=true → switch destination is FILE
+        // → green; isPlexUpload=false → switch destination is API
+        // → cyan. The color foreshadows the row's new LINK chip.
+        const switchTone = isPlexUpload ? 'place_file' : 'place_api';
+        placeItems.push(menuItemHtml(
+          'switch-placement', switchLabel,
+          switchTip,
+          { mt: themeMt, id: themeId, rk: it.rating_key, warn: true,
+            bypassLock: true, tone: switchTone },
+        ));
+      }
+    }
+    // v1.11.99: mismatch state — canonical and placement diverged via
+    // SET URL / UPLOAD MP3. Three resolution paths, surfaced together.
+    // bypassLock so they all work even though the row is technically
+    // "awaiting approval" (which would otherwise grey out the menu).
+    if (themed && isMismatch && downloaded && placed) {
+      // v1.18.28: same kind-preservation rule as RE-PUSH — the
+      // mismatch PUSH TO PLEX must overwrite via the row's
+      // CURRENT placement_kind, not the global default. A
+      // mismatch on a plex_upload row should stay plex_upload.
+      const mismatchKind = isCollectionRow
+        ? 'api'
+        : (it.placement_kind === 'plex_upload' ? 'api' : 'file');
+      // v1.18.29: same tone-by-kind rule as RE-PUSH.
+      const mismatchTone = mismatchKind === 'api'
+        ? 'place_api' : 'place_file';
+      placeItems.push(menuItemHtml(
+        'replace', 'PUSH TO PLEX',
+        // v1.20.64: PU/collection rows have no "Plex-folder file"
+        // (media_folder=''); the push re-uploads via the API. Branch
+        // the tooltip on the kind already computed above, mirroring the
+        // RE-PUSH item's PU-aware copy.
+        mismatchKind === 'api'
+          ? "Re-upload the new download to Plex via the API — overwrites the current theme."
+          : "Overwrite the Plex-folder file with the new download.",
+        { mt: themeMt, id: themeId, rk: it.rating_key, info: true,
+          bypassLock: true, kind: mismatchKind, tone: mismatchTone },
+      ));
+      // v1.20.59: ADOPT FROM PLEX is sidecar-only — it re-adopts the
+      // theme.mp3 at the Plex folder as the canonical. A PU
+      // (plex_upload) row has NO folder file (the theme lives in
+      // Plex's metadata store), so api_adopt_from_plex's
+      // `Path(media_folder)/'theme.mp3'` is never a file → it skips
+      // every section and returns {ok:true, sections_adopted:0} — a
+      // silent no-op that left the mismatch unresolved while the
+      // confirm promised a destructive re-adopt. Hide it on PU rows;
+      // PUSH TO PLEX (re-uploads the new download via the API and
+      // clears the mismatch) is the correct resolution there.
+      if (it.placement_kind !== 'plex_upload') {
+        placeItems.push(menuItemHtml(
+          'adopt-from-plex', 'ADOPT FROM PLEX',
+          "Discard the new download and re-adopt the existing Plex-folder file.",
+          { mt: themeMt, id: themeId, info: true, bypassLock: true },
+        ));
+      }
+      if (it.mismatch_state === 'pending') {
+        placeItems.push(menuItemHtml(
+          'keep-mismatch', 'KEEP MISMATCH',
+          "Dismiss from /pending. Library row keeps DL=amber + LINK=M.",
+          { mt: themeMt, id: themeId, rk: it.rating_key, bypassLock: true },
+        ));
+      }
+    }
+    if (themed && dlBroken && placed) {
+      placeItems.push(menuItemHtml(
+        'restore-canonical', 'RESTORE FROM PLEX',
+        "Rebuild the canonical from the surviving Plex-folder file.",
+        { mt: themeMt, id: themeId, warn: true, bypassLock: true },
+      ));
+    }
+
+    // REMOVE menu
+    const removeItems = [];
+    // v1.12.37 (revised): CLEAR URL drops the captured PREVIOUS
+    // URL (themes.previous_youtube_url) so REVERT becomes
+    // unavailable for the row going forward. Useful when the
+    // user is satisfied with the current state and wants to
+    // "commit" — guards against accidental REVERTs and tidies
+    // the INFO card. Only surfaces when there's actually a
+    // previous URL to clear, mirroring the SOURCE-menu REVERT
+    // gating (also has_previous_url-driven).
+    if (it.has_previous_url) {
+      // v1.12.79: tooltip mirrors the SOURCE-menu label flip — on
+      // src='-' / src='M' rows the SOURCE button reads RESTORE
+      // (post-PURGE / post-UNMANAGE recovery), elsewhere REVERT.
+      // Same action, same wording in the menu copy keeps the two
+      // sides consistent.
+      // v1.18.15: tooltip mentions zombie auto-evict so the user
+      // knows CLEAR URL on a post-PURGE orphan removes the row
+      // entirely (replaces the prior DELETE button's job). Only
+      // shown on orphan rows since real TDB rows re-create
+      // themselves on the next sync regardless.
+      const isZombieOrphan = isOrphan && !downloaded && !placed
+        && !it.user_youtube_url && !it.youtube_url;
+      let clearTip;
+      if (isZombieOrphan) {
+        clearTip = "Drop the captured previous URL — RESTORE will "
+                 + "no longer be available. The empty orphan row "
+                 + "will be tidied away.";
+      } else if (srcLetter === '-' || srcLetter === 'M') {
+        clearTip = "Drop the captured previous URL — RESTORE will "
+                 + "no longer be available.";
+      } else {
+        clearTip = "Drop the captured previous URL — REVERT will "
+                 + "no longer be available.";
+      }
+      removeItems.push(menuItemHtml(
+        'clear-url', 'CLEAR URL',
+        clearTip,
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          danger: true },
+      ));
+    }
+    // v1.20.57: DEL/UNMANAGE/PURGE copy is state-aware. A PU
+    // (plex_upload) row has NO Plex-folder sidecar — the theme lives
+    // in Plex's metadata store as motif's API upload. DEL removes that
+    // upload (keeps local), UNMANAGE deletes the local + leaves Plex
+    // serving the upload (row → P, NOT M), PURGE removes both. The
+    // handlers already do the right thing (v1.18.36/.38/.60); only the
+    // copy was sidecar-worded and lied on PU rows.
+    const remIsPU = it.placement_kind === 'plex_upload';
+    if (placed) {
+      // v1.12.77: section_id scopes DEL so only this row's
+      // placement gets unlinked. Sibling editions keep playing.
+      removeItems.push(menuItemHtml(
+        'unplace', 'DEL',
+        remIsPU
+          ? "Remove motif's uploaded theme from Plex (Plex falls back to its own theme if it has one). Local copy stays — PUSH TO PLEX re-uploads."
+          : "Remove the theme.mp3 from the Plex folder. Local copy stays — PUSH TO PLEX restores.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          kind: it.placement_kind, danger: true },
+      ));
+    }
+    if (placed && downloaded) {
+      // v1.12.73: scope UNMANAGE to this row's section so sibling
+      // sections (4K vs standard, anime vs plain) keep their motif
+      // management. The endpoint detects last-section and only
+      // drops the themes row + tracking metadata when nothing else
+      // is managed for the title.
+      removeItems.push(menuItemHtml(
+        'unmanage', 'UNMANAGE',
+        remIsPU
+          ? "Delete motif's local copy + drop tracking. Plex keeps serving its uploaded copy → row becomes P."
+          : "Delete motif's local copy + drop tracking. The Plex-folder file survives (hardlink/copy) → row flips to M.",
+        { mt: themeMt, id: themeId, sectionId: it.section_id,
+          // v1.21.84: rk scopes UNMANAGE to THIS edition (sibling editions
+          // in the same section keep their files/rows).
+          rk: it.rating_key,
+          kind: it.placement_kind, danger: true },
+      ));
+    }
+    // v1.18.8: hide PURGE when there's nothing left to purge.
+    // Pre-fix an orphan in zombie state (post-PURGE: URLs nulled,
+    // no canonical, no placement) still satisfied `isOrphan` so
+    // the button stayed visible — and clicking it ran an
+    // idempotent no-op against api_forget_item. the user's exact
+    // complaint: "after purge youre left with PURGE again which
+    // doesn't do anything." Now: orphans only show PURGE while
+    // they still own something — a captured URL, a downloaded
+    // canonical, or a placement. Once all three are gone
+    // CLEAR URL (the captured previous_url-driven entry above)
+    // is the completion step; v1.18.15 wires it to also drop
+    // the now-empty zombie themes row.
+    const orphanHasPurgeableState = isOrphan && (
+      !!it.user_youtube_url
+      || !!it.youtube_url
+      || downloaded
+      || placed
+    );
+    if (downloaded || orphanHasPurgeableState) {
+      // v1.11.8: surface PURGE on the DL-only state too. After a DEL
+      // (unplaced) the row is "downloaded but not placed" — pre-fix
+      // the menu showed PUSH TO PLEX without a way to also drop the
+      // canonical. PURGE was technically already added (downloaded ||
+      // isOrphan covers !placed && downloaded) but the description
+      // didn't make clear what happens to the recovery path.
+      // v1.18.15: PURGE description for orphans now reflects the
+      // v1.17.24 zombie semantics. Pre-fix "Cannot be undone" was
+      // stale — PURGE captures the URL into previous_urls so
+      // RESTORE works. The full cleanup happens via CLEAR URL on
+      // the zombie row (which v1.18.15 also auto-evicts the row).
+      const purgeDesc = isOrphan
+        ? 'Wipe theme files + override. Row becomes a zombie — '
+          + 'use RESTORE to bring the URL back, or CLEAR URL to '
+          + 'fully forget.'
+        : (placed
+            ? (remIsPU
+                ? 'Delete the local copy, remove the uploaded theme from Plex, and drop tracking → row goes to – (or P if Plex has its own fallback).'
+                : 'Delete the canonical, the Plex-folder file, and motif tracking.')
+            : 'Delete the downloaded canonical. Re-acquire via DOWNLOAD TDB / SET URL / UPLOAD MP3 / ADOPT.');
+      removeItems.push(menuItemHtml(
+        'purge', '× PURGE',
+        purgeDesc,
+        { mt: themeMt, id: themeId, orphan: isOrphan,
+          // v1.12.77: scope PURGE to this row's section so
+          // sibling sections (4K vs standard, anime vs plain)
+          // keep their files. Backend detects last-section and
+          // only drops the themes row + tracking metadata when
+          // nothing else is managed for the title.
+          sectionId: it.section_id,
+          // v1.21.83: rk scopes PURGE to THIS edition — sibling editions
+          // in the SAME section keep their files/rows/flags.
+          rk: it.rating_key,
+          // v1.20.57: placement_kind flows through so the PURGE confirm
+          // can word the Plex-side teardown correctly for PU rows.
+          kind: it.placement_kind,
+          danger: true,
+          // v1.11.88: bypassLock so PURGE stays clickable when the row
+          // is awaitingApproval (downloaded but not placed). PURGE *is*
+          // the legitimate exit from that state — the prior lock left
+          // the user with PUSH TO PLEX as the only enabled action,
+          // forcing them to either accept the placement or leave the
+          // canonical sitting there indefinitely. Real in-flight jobs
+          // still disable the button (job_in_flight).
+          bypassLock: true,
+          dlOnly: !placed && downloaded ? '1' : '0',
+          // v1.13.31: flag whether Plex serves its own theme so the
+          // PURGE confirm can preview the post-action state. Composite
+          // SRC rows (T+P, U+P, A+P, M+P) have a fallback; pure
+          // letter rows (T/U/A/M) without Plex don't.
+          plexAlso: _plexAlso },
+      ));
+    }
+    // v1.18.15: DELETE menu entry removed. The prior v1.18.8
+    // wire-up added a separate `delete-orphan` button alongside
+    // PURGE, which the user found redundant — two destructive
+    // buttons that semantically did the same thing minus the
+    // RESTORE-chain preservation. New model: PURGE drops files +
+    // override (orphan zombies to '–', RESTORE remains available);
+    // CLEAR URL on the zombie drops the captured chain AND, when
+    // the row has nothing else left, auto-evicts the themes row +
+    // cascades. Each button is one surgical primitive; the
+    // composition (PURGE → CLEAR URL) achieves what DELETE used
+    // to do in one step. The api_delete_item backend endpoint
+    // stays as a power-user API path but is no longer surfaced
+    // in the UI.
+
+    function menuButtonHtml(label, items, kindClass) {
+      // v1.12.25: absent buttons render nothing so present buttons
+      // collapse to the right edge of the actions cell. The constant
+      // per-button width comes from `.row-menu > summary { min-width:
+      // 78px }` (app.css) — NOT a per-label class. v1.20.55: dropped
+      // the `row-menu-${label}` class (row-menu-source/place/remove) —
+      // it had no CSS rule (dead since v1.12.25) and the comment
+      // wrongly credited it with the min-width.
+      if (!items.length) return '';
+      const cls = `row-menu ${kindClass || ''}`.trim();
+      return `<details class="${cls}">`
+        + `<summary class="btn btn-tiny" title="${htmlEscape(label)} actions">${htmlEscape(label)} ▾</summary>`
+        + `<div class="row-menu-panel">${items.join('')}</div>`
+        + `</details>`;
+    }
+
+    const acts = [];
+    if (themed && themeId !== null && themeId !== undefined) {
+      acts.push(`<button class="btn btn-tiny row-info-btn" data-act="info" data-mt="${themeMt}" data-id="${themeId}" data-section-id="${htmlEscape(it.section_id || '')}" data-rk="${htmlEscape(it.rating_key || '')}" title="ThemerrDB record details">ⓘ</button>`);
+    }
+    acts.push(menuButtonHtml('SOURCE', sourceItems));
+    acts.push(menuButtonHtml('PLACE', placeItems));
+    acts.push(menuButtonHtml('REMOVE', removeItems, 'row-menu-danger'));
+
+    const actions = `<div class="row-actions">${acts.filter(Boolean).join('')}</div>`;
+
+    const selKey = libKey(it);
+    const selected = libraryState.selected.has(selKey);
+    // v1.10.29: hover-tooltip on the title cell shows the Plex folder
+    // path so duplicate rows (same title+year, different folders) can
+    // be told apart at a glance.
+    const titleTooltip = it.folder_path ? `Plex folder: ${it.folder_path}` : '';
+    // v1.15.53: column layout reordered per the user: TITLE / ED /
+    // YEAR / TDB / SRC / DL / PL / LINK / IMDB / ACTIONS. Edition
+    // promoted to its own <td class="col-edition"> sibling so the
+    // ED filter row + ED column header share the same axis. TDB
+    // cell dropped sectionLabel ([Movies]/[Anime]/etc) — the tab
+    // nav already names the active library; the cell now carries
+    // just the pill.
+    return `
+      <tr${rowExtra}>
+        <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
+        <td>
+          <div class="title-cell" title="${htmlEscape(titleTooltip)}">
+            ${titleGlyphs.join('')}
+            <!-- v1.13.55: pills moved out of the truncated span so
+                 long titles ellipsis on the title text only.
+                 v1.15.53: editionLabel hoisted out to col-edition
+                 too — leaves the title cell with just glyphs +
+                 truncatable name. -->
+            <span class="title-cell-name">${htmlEscape(it.plex_title)}</span>
+          </div>
+        </td>
+        <td class="col-edition">${editionLabel}</td>
+        <td class="col-year">${htmlEscape(it.year || '')}</td>
+        <td class="col-tdb">${tdbAvailLabel}</td>
+        <td class="col-state">${srcCell}</td>
+        <td class="col-state"><span class="state-pill ${dl}${downloadInFlight ? ' state-pill-pending' : ''}" title="${htmlEscape(dlTip)}"></span></td>
+        <td class="col-state"><span class="state-pill ${pl}${placeInFlight ? ' state-pill-pending' : ''}" title="${htmlEscape(plTip)}"></span></td>
+        <td class="col-state">${linkCell}</td>
+        <td class="col-imdb">${imdbLink}</td>
+        <td class="col-actions">${actions}</td>
+      </tr>
+    `;
+  }
+
+  function renderLibraryRowNotInPlex(it) {
+    // ThemerrDB row with no matching plex_items — informational only.
+    // Title is in ThemerrDB but not in the user's Plex library, so
+    // download/place don't make sense (no Plex folder to target). Show
+    // a dim T badge so the source is unambiguous, and provide INFO +
+    // IMDb link so the user can decide whether to add the title to
+    // Plex manually. PURGE is offered if motif somehow already has a
+    // local file for this row (legacy from earlier installs).
+    const themeMt = it.theme_media_type;
+    const themeId = it.theme_tmdb;
+    const downloaded = !!it.file_path;
+    const imdb = it.guid_imdb || '';
+    const imdbLink = imdb
+      ? `<a href="https://www.imdb.com/title/${htmlEscape(imdb)}" target="_blank" rel="noopener">${htmlEscape(imdb)}</a>`
+      : '<span class="muted">—</span>';
+
+    const acts = [
+      `<button class="btn btn-tiny" data-act="info" data-mt="${themeMt}" data-id="${themeId}" data-section-id="${htmlEscape(it.section_id || '')}" data-rk="${htmlEscape(it.rating_key || '')}" title="ThemerrDB record details">ⓘ</button>`,
+    ];
+    if (downloaded) {
+      acts.push(`<button class="btn btn-tiny btn-danger" data-act="purge" data-mt="${themeMt}" data-id="${themeId}" data-title="${htmlEscape(it.theme_title || it.plex_title)}" data-orphan="0" data-section-id="${htmlEscape(it.section_id || '')}" data-rk="${htmlEscape(it.rating_key || '')}" title="Stale local file with no Plex match. Purge to remove.">× PURGE</button>`);
+    }
+
+    const selKey = libKey(it);
+    const selected = libraryState.selected.has(selKey);
+    // v1.15.53: match the main-row column order — TITLE / ED /
+    // YEAR / TDB / SRC / DL / PL / LINK / IMDB / ACTIONS. ED is
+    // always empty for not-in-plex rows (no Plex folder = no
+    // {edition-...} tag to parse).
+    return `
+      <tr class="row-not-in-plex">
+        <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
+        <td>
+          <div class="title-cell">
+            <span class="title-cell-name muted">${htmlEscape(it.plex_title)}</span>
+            <span class="muted small" style="margin-left:6px">(not in your Plex library)</span>
+          </div>
+        </td>
+        <td class="col-edition"></td>
+        <td class="col-year">${htmlEscape(it.year || '')}</td>
+        <td class="col-tdb"></td>
+        <td class="col-state"><span class="link-badge link-badge-themerrdb-only" title="ThemerrDB-tracked title; not in your Plex library">T</span></td>
+        <td class="col-state"><span class="state-pill" title="not applicable"></span></td>
+        <td class="col-state"><span class="state-pill" title="not applicable"></span></td>
+        <td class="col-state"><span class="link-glyph link-glyph-none">—</span></td>
+        <td class="col-imdb">${imdbLink}</td>
+        <td class="col-actions"><div class="row-actions">${acts.join('')}</div></td>
+      </tr>
+    `;
+  }
+
+  function adaptLibraryFourkToggle(ta) {
+    // v1.11.34: when both variants exist the chips work as a toggle
+    // and chip-active follows libraryState.fourk so a return visit
+    // renders the active variant correctly. When only one variant
+    // exists the chip becomes a non-clickable label (chip-active +
+    // chip-label, disabled) so it reads as 'this tab is 4K' rather
+    // than as a button waiting to be pressed. Pre-fix the visible
+    // chip was a regular button that didn't reflect selected state
+    // on revisit.
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return;
+    const tab = tabEl.value;
+    const av = ta && ta[tab];
+    if (!av) return;
+    const toggle = document.querySelector('.chips[aria-label="resolution"]');
+    if (!toggle) return;
+    const stdBtn = toggle.querySelector('[data-fourk="0"]');
+    const fkBtn  = toggle.querySelector('[data-fourk="1"]');
+    const showAny = av.standard || av.fourk;
+    toggle.style.display = showAny ? '' : 'none';
+    if (stdBtn) stdBtn.style.display = av.standard ? '' : 'none';
+    if (fkBtn)  fkBtn.style.display  = av.fourk    ? '' : 'none';
+    // Auto-flip libraryState.fourk when only one variant exists.
+    // v1.12.9: persist the auto-flip outcome too so subsequent
+    // visits (including page reloads) start from the right place
+    // without waiting on /api/stats to land.
+    const persistVariant = () => {
+      try {
+        localStorage.setItem(
+          `motif:variant:${tab}`,
+          libraryState.fourk ? 'fourk' : 'standard',
+        );
+      } catch (_) { /* private mode / quota — fine */ }
+    };
+    if (av.fourk && !av.standard && libraryState.fourk === false) {
+      libraryState.fourk = true;
+      persistVariant();
+      loadLibrary().catch(()=>{});
+    } else if (av.standard && !av.fourk && libraryState.fourk === true) {
+      libraryState.fourk = false;
+      persistVariant();
+      loadLibrary().catch(()=>{});
+    }
+    // Sync chip-active + chip-label state. The 'sole variant' becomes
+    // a label; when both exist the chips act as a toggle.
+    const sole = (av.standard !== av.fourk);
+    if (stdBtn) {
+      const active = sole ? av.standard : !libraryState.fourk;
+      stdBtn.classList.toggle('chip-active', active);
+      stdBtn.classList.toggle('chip-label',  sole);
+      stdBtn.disabled = sole;
+    }
+    if (fkBtn) {
+      const active = sole ? av.fourk : libraryState.fourk;
+      fkBtn.classList.toggle('chip-active', active);
+      fkBtn.classList.toggle('chip-label',  sole);
+      fkBtn.disabled = sole;
+    }
+  }
+
+  // Rapid-poll mode: after the user kicks off a manual URL or upload,
+  // poll loadLibrary every ~5s for up to 60s so the row reflects the
+  // download → place transitions without waiting for the regular 30s
+  // tick.
+  //
+  // v1.10.7: 'often times when on the tab within a library the page
+  // will continue to do a quick reload which is disruptive'. Three
+  // changes to keep polling out of the user's way:
+  //   1. Bumped interval 3s → 5s.
+  //   2. Skip the tick when the user is interacting (search input
+  //      focused, an open <dialog>, or text is selected). The next
+  //      tick still fires, so the row eventually catches up.
+  //   3. Auto-stop early once no visible row has job_in_flight set
+  //      (state is stable; nothing left to watch transition).
+  let libraryRapidTimer = null;
+  let libraryRapidUntil = 0;
+  // v1.16.7: default ceiling raised 60_000 → 300_000 (5 min).
+  // The original 60s was a safety net assuming user actions
+  // would re-extend the window via loadLibrary's cold-load
+  // auto-kick. But two cases broke it:
+  //   1. Background-tab throttling — Chrome throttles
+  //      setInterval to ~1/min in inactive tabs. With 60s
+  //      ceiling, the first throttled tick saw `Date.now() >
+  //      libraryRapidUntil` and stopped the poll. When the user
+  //      returned, the poll was dead.
+  //   2. Long downloads (rate-limited yt-dlp pulls, slow
+  //      videos) running past 60s without the cold-load
+  //      auto-kick re-firing in this tab.
+  // the user's persistent repro: "still see rows getting stuck
+  // amber DL but then refreshing it shows properly updated."
+  // 5min is generous enough for both cases AND the
+  // consecutive-empty auto-stop still ends the poll quickly
+  // once work drains.
+  function libraryRapidPoll(durationMs = 300000) {
+    libraryRapidUntil = Date.now() + durationMs;
+    if (libraryRapidTimer) return;
+    // v1.15.6: track consecutive empty polls so the auto-stop
+    // debounce can wait through the between-jobs gap. Pre-fix
+    // a single empty poll stopped the timer; if that poll
+    // happened to land between a download finishing and the
+    // chained place job being enqueued (sub-second window),
+    // the rapid-poll stopped before the place job ran. After
+    // the place worker finished, no further poll fired until
+    // the 30s background tick — so the row's PL chip flashed
+    // amber for ~30s past actual completion.
+    // the user: "PL amber flashing for a very long time + way
+    // after the status bar has gone back to idle."
+    let consecutiveEmpty = 0;
+    libraryRapidTimer = setInterval(async () => {
+      // v1.17.13: bail when tab is hidden. Race audit #8 — under
+      // Chromium's ~1/min throttle in background tabs the 2s
+      // interval stretches; the existing `Date.now() >
+      // libraryRapidUntil` check at the top can prematurely
+      // terminate rapid-poll (a 5-min ceiling crosses zero
+      // throttled ticks). Bailing on hidden state lets the
+      // visibilitychange handler at page top kick a fresh
+      // loadLibrary on tab return — losing nothing.
+      if (document.visibilityState !== 'visible') return;
+      if (Date.now() > libraryRapidUntil) {
+        clearInterval(libraryRapidTimer);
+        libraryRapidTimer = null;
+        return;
+      }
+      // Skip ticks where the user is doing something — re-rendering the
+      // whole tbody mid-interaction is the disruptive behavior.
+      const ae = document.activeElement;
+      const typingInSearch = ae && ae.id === 'library-search';
+      const dialogOpen = !!document.querySelector('dialog[open]');
+      const sel = window.getSelection && window.getSelection();
+      const hasTextSelection = !!(sel && sel.toString().length > 0);
+      if (typingInSearch || dialogOpen || hasTextSelection) return;
+
+      try {
+        await loadLibrary();
+      } catch (_) { /* network blip — try again next tick */ }
+      // Auto-stop: if none of the rendered rows have a job in flight,
+      // there's nothing left to watch transition — drop polling so we
+      // don't keep flickering the tbody for nothing.
+      // v1.15.6: require 2 consecutive empty polls before stopping.
+      // Handles the between-jobs gap (download done → chained place
+      // enqueue happens in the next worker tick; for ~1-2s no job is
+      // technically in flight). One empty poll could be the gap;
+      // two in a row means the queue actually drained.
+      // v1.18.51 / v1.18.52: treat ANY row-mutating backend op as
+      // "still busy" so rapid-poll survives the full operation
+      // window — not just plex_enum. anyMutatingOpActive unifies
+      // tdb_sync + plex_enum + bulk_probe_tdb + bulk_lps +
+      // tvdb_bridge + reprobe_plex_themes. See refreshTopbarStatus
+      // for the contract narrative. Per-row job_in_flight handles
+      // the per-action lifecycle (downloads, places, etc.).
+      // v1.18.88: debounce widened 2 → 5 consecutive empties (4s →
+      // 10s tolerance) + a one-shot safety-net loadLibrary at +5s
+      // post-auto-stop. the user's "amber DL pulse stuck until manual
+      // page refresh" repro on user-URL flows traced to a race:
+      // a SET URL chain takes ~9s (download 7s + place 2s) with a
+      // 1-2s gap between download-done and place-enqueued where NO
+      // jobs row matches `status IN ('pending','running')`. If that
+      // gap aligned with 2 consecutive poll boundaries (4s window
+      // pre-fix), the auto-stop fired mid-pipeline. Place then ran
+      // with no further polls until the 30s background tick — the
+      // row's amber pulse persisted in the UI for ~25s after the
+      // backend completed. Widened debounce + safety-net catch both
+      // sides of the race.
+      const q = window.__motif_queue || {};
+      const globalOpActive = !!q.anyMutatingOpActive;
+      const stillBusy = globalOpActive
+        || (libraryState.items || []).some(it => !!it.job_in_flight);
+      if (stillBusy) {
+        consecutiveEmpty = 0;
+      } else {
+        consecutiveEmpty += 1;
+        if (consecutiveEmpty >= 5) {
+          clearInterval(libraryRapidTimer);
+          libraryRapidTimer = null;
+          // v1.18.88 safety net: one final loadLibrary at +5s
+          // catches state that landed in the gap between the last
+          // poll and the auto-stop. Idempotent — if nothing
+          // changed, the hash-skip in loadLibrary suppresses the
+          // repaint. Cost is one extra fetch per rapid-poll cycle.
+          setTimeout(() => {
+            if (document.visibilityState !== 'visible') return;
+            loadLibrary().catch(() => {});
+          }, 5000);
+        }
+      }
+    // v1.15.6: cadence tightened 5000ms → 2000ms. The rapid-poll's
+    // whole reason to exist is to surface mid-action transitions
+    // (DL/PL chip state, in-flight pulse) faster than the 30s
+    // background poll. A 5s cadence meant the chip lagged the
+    // worker by up to 5s even on the happy path. 2s halves the
+    // visible lag without obvious DOM-thrash cost (the loadLibrary
+    // call itself is cheap; the per-row diff is the v1.14.81 hash-
+    // skip story for the OPS drawer — library tbody is full
+    // rewrite but on a 2s cadence it's still smooth).
+    }, 2000);
+  }
+
+  function updateLibrarySelectionUi() {
+    const bar = document.getElementById('library-bulk-bar');
+    const cnt = document.getElementById('library-selected-count');
+    const all = document.getElementById('library-select-all');
+    if (!bar || !cnt) return;
+    const n = libraryState.selected.size;
+    cnt.textContent = fmt.num(n);
+    // v1.12.55 / v1.12.120: previously the bulk bar auto-surfaced
+    // ACCEPT ALL UPDATES / KEEP ALL CURRENT when the user clicked
+    // the blue TDB ↑ pill (`tdb_pills=update`) — that was the topbar
+    // UPD badge target before v1.13.79.
+    // v1.13.79 migrated the topbar UPD badge to the blue ! ATTN
+    // chip (`attn_pills=update`), making that the canonical
+    // "review pending updates" surface. v1.14.17 finishes the
+    // migration: the auto-no-selection bulk surfacing now lives
+    // ONLY on `attn_pills=update` (via showBarForAttn /
+    // onAttnUpdate below). On the legacy blue TDB ↑ pill, the
+    // buttons still appear once the user picks rows
+    // (selectedEligibleUpdates > 0) — same with-selection
+    // semantic the rest of the bulk-action buttons follow.
+    // Per the user: "when filtered by blue pill TDB we shouldn't
+    // see the bulk actions automatically since those features
+    // have been moved to the blue !".
+    //
+    // Selection-driven branch survives because the user can
+    // SELECT ALL FILTERED on the TDB↑ view and intentionally
+    // bulk-act on that hand-picked set — the v1.12.120 case
+    // that prevented the "narrow + select-then-bulk" intent
+    // from being lost.
+    // v1.16.10: count over the selection-wide cache so SELECT ALL
+    // FILTERED → ACCEPT-ALL / KEEP-ALL surfaces even when the
+    // eligible rows are off the visible page.
+    let selectedEligibleUpdates = 0;
+    for (const it of libraryState.selectedRows.values()) {
+      if (pendingUpdateActionable(it)) {
+        selectedEligibleUpdates++;
+      }
+    }
+    const showBarForUpdates = (selectedEligibleUpdates > 0);
+    // v1.13.68: also reveal the bar when an ATTN chip with a scoped
+    // bulk action is active — fail / update / mismatch / await /
+    // broken — even with no selection. The chip-active state is
+    // the user's signal that they want to take a bulk action; the
+    // bar carries the buttons for it.
+    const showBarForAttn = (
+      libraryState.attnPills.has('fail')
+      || libraryState.attnPills.has('update')
+      || libraryState.attnPills.has('mismatch')
+      || libraryState.attnPills.has('await')
+      || libraryState.attnPills.has('broken')
+    );
+    bar.style.display = (n > 0 || showBarForUpdates || showBarForAttn) ? '' : 'none';
+    // When nothing is selected but the bar is showing because of
+    // an ATTN chip filter (v1.13.68 surfacing), hide the "N
+    // selected" prefix and show a contextual scope hint instead —
+    // bulk actions on those filters explain their own scope without
+    // needing a row count.
+    // v1.14.17: showBarForUpdates is now selection-driven only, so
+    // this branch fires only on showBarForAttn.
+    const detail = document.getElementById('library-bulk-detail');
+    const countWrap = document.getElementById('library-bulk-count-wrap');
+    if (showBarForAttn && n === 0) {
+      if (countWrap) countWrap.style.display = 'none';
+      const visiblePendingUpdates = (libraryState.items || []).filter(
+        // v1.20.0: pendingUpdateActionable consolidates the SRC=— +
+        // new_theme_available exception (inline since v1.19.98).
+        (it) => pendingUpdateActionable(it),
+      ).length;
+      if (detail) {
+        if (libraryState.attnPills.has('update') && visiblePendingUpdates > 0) {
+          detail.textContent = `${visiblePendingUpdates} pending update${visiblePendingUpdates !== 1 ? 's' : ''} · bulk actions below`;
+        } else {
+          detail.textContent = 'bulk actions below';
+        }
+      }
+    } else {
+      if (countWrap) countWrap.style.display = '';
+      if (detail) detail.textContent = '';
+    }
+    // v1.12.5: tri-state header checkbox — checked when every visible
+    // row is selected, indeterminate when some are, unchecked when
+    // none. Lets the user see at a glance whether clicking the
+    // header will select-all or deselect-all on the current page.
+    // v1.13.55: derive visibleSelected from libraryState.selected
+    // (single source of truth) rather than reading cb.checked from
+    // the DOM. The browser's native indeterminate→checked auto-
+    // clear on click made cb.checked momentarily lie during the
+    // header click handler, which left the header stuck on `-`
+    // even after a deselect-all transition. Also reset BOTH
+    // .checked and .indeterminate first, then assign the correct
+    // state — pre-fix only the chosen branch wrote .indeterminate,
+    // so a stale `true` could survive when neither tri-state
+    // branch fired.
+    if (all) {
+      const rowBoxes = document.querySelectorAll('#library-body input[data-lib-select]');
+      const visibleCount = rowBoxes.length;
+      const visibleSelected = Array.from(rowBoxes).filter(
+        (cb) => libraryState.selected.has(cb.dataset.libSelect)
+      ).length;
+      all.checked = false;
+      all.indeterminate = false;
+      if (visibleCount > 0 && visibleSelected > 0) {
+        if (visibleSelected === visibleCount) {
+          all.checked = true;
+        } else {
+          all.indeterminate = true;
+        }
+      }
+      // v1.14.26: defensive belt — if libraryState.selected is
+      // empty, force the header to fully unchecked regardless of
+      // what the per-row visibility check computed. Catches edge
+      // cases like a stale rowBox NodeList from a mid-render
+      // re-paint, browser-level indeterminate quirks (Safari has
+      // some), and the rare "header still shows `−` after CLEAR"
+      // path the user flagged. The conditional above already does
+      // the right thing in the happy path; this is the
+      // belt-and-suspenders for the unhappy path.
+      if (libraryState.selected.size === 0) {
+        all.checked = false;
+        all.indeterminate = false;
+      }
+    }
+    const ackBtn = document.getElementById('library-ack-selected-btn');
+    const dlBtn = document.getElementById('library-download-selected-btn');
+    const adoptBtn = document.getElementById('library-adopt-selected-btn');
+    // v1.15.4: bulk TDB BACKUP for P-only selections.
+    const backupBtn = document.getElementById('library-tdb-backup-btn');
+    // v1.19.43: bulk BACKUP CLOUD THEMES for pure-P selections
+    // (with or without a TDB URL — anime is the highest-ROI cohort).
+    const cloudBackupBtn = document.getElementById('library-cloud-backup-btn');
+    // v1.11.28: walk the current selection and decide which bulk
+    // actions are meaningful. M-only sidecars can only be ADOPTed
+    // (no themes record to download from); TDB-tracked rows can
+    // become T via // TDB SELECTED. Mixed selections show both.
+    let hasSidecarOnly = false;
+    let hasTdbEligible = false;
+    // v1.15.4: track whether the selection is purely-P-with-TDB —
+    // every row's primary letter is P (Plex serves it, motif owns
+    // nothing locally) AND each has a usable TDB URL. This is the
+    // exact case where "DOWNLOAD TDB BACKUP" makes sense: motif
+    // builds its own canonical without touching Plex's served
+    // theme. Mixed selections (P + others) fall through to the
+    // existing DOWNLOAD & REPLACE FROM TDB action.
+    let selectionAllPureP = false;
+    let pureP_count = 0;
+    // v1.12.60: track whether any selected row would have its
+    // existing theme replaced by a bulk DOWNLOAD-FROM-TDB action.
+    // Pure-'-' selections download cleanly; selections that mix in
+    // U/A/M/P (anything with a current theme other than T) get an
+    // adjusted button label so the user knows they're about to
+    // overwrite content, not just fetch.
+    let hasReplaceTarget = false;
+    // v1.13.33: count rows in the selection that are downloaded
+    // but awaiting placement. Mirrors the per-row awaitingApproval
+    // gate (line ~4291): file_path set, no media_folder, no
+    // job_in_flight. PUSH TO PLEX bulk action only renders when at
+    // least one such row is selected.
+    let pushableCount = 0;
+    // v1.15.46: count M+P composite rows eligible for the bulk
+    // ADOPT + LET PLEX SERVE action. Gate mirrors the per-row
+    // SOURCE-menu gate at line ~6619: plex_local_theme=1 +
+    // !placed + plex_independent_theme=1 + rating_key. Bulk
+    // button visible when ≥1 such row is selected; click handler
+    // chains adopt+unplace per row (fail-fast on adopt).
+    let adoptLpsCount = 0;
+    // v1.15.49: bucket the M / M+P / +P-only counts so the three
+    // overlapping bulk buttons (ADOPT SELECTED, LET PLEX SERVE,
+    // ADOPT + LET PLEX SERVE) only show for their proper subset.
+    // the user: "when these filters are set let plex server and
+    // adopt and let plex serve becomes redundant and when its
+    // [an] M it should be the adopt option." Pre-v1.15.49 all
+    // three could show simultaneously on a pure-M+P selection,
+    // with LET PLEX SERVE specifically being a footgun (motif
+    // doesn't own M sidecars; LPS deletes the only theme).
+    //
+    //   adoptOnlyCount = M sidecar WITHOUT Plex independent
+    //                    theme → only ADOPT applies (LPS makes
+    //                    no sense without Plex's own to fall
+    //                    back to).
+    //   adoptLpsCount  = M+P composite → ADOPT + LPS is the safe
+    //                    combo (claim ownership, then drop).
+    //   lpsOnlyCount   = +P composite NOT M sidecar (T/A/U+P) →
+    //                    LPS alone applies; motif owns the
+    //                    placement so unplacing is safe.
+    //
+    // Each row falls into exactly one bucket. No overlap → no
+    // redundancy. Buttons hide when their bucket is empty.
+    let adoptOnlyCount = 0;
+    let lpsOnlyCount = 0;
+    if (n > 0) {
+      // v1.16.10: walk libraryState.selectedRows (cached selection-wide
+      // row data) instead of libraryState.items (visible page only).
+      // Pre-fix a SELECT ALL FILTERED of 484 rows showed `(50)` on every
+      // bulk button — the page size — because this loop only saw the
+      // visible page. With the cache, every bucket count reflects the
+      // full selection.
+      for (const it of libraryState.selectedRows.values()) {
+        // v1.18.24: count plex_upload placements as `placed` so
+        // bulk-bar bucket counts (themed-vs-not, sidecarOnly,
+        // etc.) treat API-pushed rows correctly. Same drift bug
+        // as the renderLibraryRow inline-SRC block above.
+        const placed = !!it.media_folder
+                       || it.placement_kind === 'plex_upload';
+        const sidecarOnly = !placed && !!it.plex_local_theme;
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        if (sidecarOnly) hasSidecarOnly = true;
+        // v1.13.46: TDB-eligible only when the row has a usable
+        // upstream URL. Rows with a 'dead' (red TDB ✗) or 'cookies'
+        // (amber TDB ⚠) pill have a broken / blocked URL —
+        // re-downloading guarantees the same failure. Excluding
+        // them from the eligible set hides // DOWNLOAD FROM TDB
+        // (and // DOWNLOAD & REPLACE FROM TDB) when the entire
+        // selection is in a failure state. Mixed selections still
+        // show the button, but the click handler filters these
+        // out and surfaces "X unchanged" in the confirm dialog.
+        const tdbState = computeTdbPill(it);
+        const tdbActionable = tdbState !== 'dead' && tdbState !== 'cookies';
+        if (themed && tdbActionable) hasTdbEligible = true;
+        // v1.12.60: any T row is "already TDB-sourced" so the
+        // download is a refresh, not a replace — same for '-'
+        // (no theme to replace). Anything else (U/A/M/P) IS a
+        // replace target.
+        const srcLetter = computeSrcLetter(it);
+        if (srcLetter !== 'T' && srcLetter !== '-') {
+          hasReplaceTarget = true;
+        }
+        // v1.15.4: count pure-P-with-TDB rows. The visibility
+        // gate below shows DOWNLOAD TDB BACKUP only when the
+        // ENTIRE selection is pure-P + TDB-actionable (every
+        // row qualifies). Mixed selections route to the
+        // existing replace flow.
+        if (srcLetter === 'P' && themed && tdbActionable) {
+          pureP_count++;
+        }
+        // v1.13.33: pushable = downloaded canonical exists, no
+        // placement, not currently in flight. Excludes orphans
+        // (theme_tmdb null) since the /replace endpoint won't
+        // resolve them.
+        // v1.19.38: was `!it.media_folder` alone — wrongly
+        // classified plex_upload rows (media_folder='') as
+        // "not yet placed" → wrongly counted toward bulk PUSH.
+        // Reuse the `placed` derivation above (line ~9726)
+        // which carries the canonical v1.18.0 widening
+        // `!!media_folder || placement_kind === 'plex_upload'`.
+        // Same class-9 mirror-drift sub-pattern v1.18.24 / .75
+        // fixed at the inline-SRC + isPlexAgentRow sites.
+        const awaitingApproval = !it.job_in_flight
+                              && !!it.file_path
+                              && !placed;
+        if (awaitingApproval && themed) pushableCount++;
+        // v1.15.46: M+P composite gate (mirrors line ~6619 per-row).
+        // v1.15.49: extend to fill all three buckets exactly once.
+        const isMSidecar = it.plex_local_theme === 1 && !placed;
+        const isPlexIndep = it.plex_independent_theme === 1;
+        if (isMSidecar && isPlexIndep && it.rating_key) {
+          adoptLpsCount++;
+        } else if (isMSidecar) {
+          // M sidecar without Plex independent theme — ADOPT only.
+          adoptOnlyCount++;
+        } else if (isPlexIndep
+                   && srcLetter !== 'P'
+                   && srcLetter !== '-') {
+          // T/A/U + Plex independent → LPS alone (motif owns the
+          // placement, unplacing is safe). Mirrors line 8641's
+          // isComposite gate minus the M+P case (which is the
+          // adoptLps bucket above).
+          lpsOnlyCount++;
+        }
+      }
+    }
+    // v1.15.51: effective-count helpers + count-badge formatter
+    // hoisted above all visibility/label decisions so every
+    // bulk-button block can use them. Counts rows that the click
+    // handler will actually operate on: selection-mode counts
+    // selected matching rows; no-selection mode counts visible
+    // matching rows (attn-pill driven fallback). Standardizes
+    // the "(N)" badge across all per-row iterator handlers per
+    // the user: "make this consistant across all bulk actions."
+    const effectiveCount = (predicate) => {
+      if (n > 0) {
+        // v1.16.10: count over selectedRows (selection-wide cache)
+        // so badges like `// ACCEPT ALL UPDATES (N)` show the full
+        // count after SELECT ALL FILTERED, not just the visible
+        // page's matching subset.
+        let c = 0;
+        for (const it of libraryState.selectedRows.values()) {
+          if (predicate(it)) c++;
+        }
+        return c;
+      }
+      return (libraryState.items || []).filter(predicate).length;
+    };
+    const themedPred = (it) => (
+      it.theme_media_type
+      && it.theme_tmdb !== null
+      && it.theme_tmdb !== undefined
+      && it.upstream_source !== 'plex_orphan'
+    );
+    // v1.19.38: was `!it.media_folder` alone — same fix as the
+    // per-row pushableCount above. plex_upload rows have
+    // media_folder='' so `!it.media_folder` evaluated as TRUE
+    // → bulk PUSH count over-reported on selections containing
+    // any plex_upload row. CLAUDE.md SRC-axis mirror-drift class.
+    const pushCount = effectiveCount(
+      (it) => !it.job_in_flight && !!it.file_path
+              && !it.media_folder
+              && it.placement_kind !== 'plex_upload'
+              && themedPred(it)
+    );
+    const revertCount = effectiveCount(
+      (it) => it.mismatch_state === 'pending'
+              && it.theme_media_type && it.theme_tmdb != null
+    );
+    const restoreCount = effectiveCount(
+      (it) => it.canonical_missing && it.file_path
+              && it.theme_media_type && it.theme_tmdb != null
+    );
+    const ackCount = effectiveCount(
+      (it) => it.failure_kind && !it.failure_acked_at
+              && it.theme_media_type && it.theme_tmdb != null
+    );
+    const downloadCount = effectiveCount((it) => {
+      if (!themedPred(it)) return false;
+      const tdbState = computeTdbPill(it);
+      return tdbState !== 'dead' && tdbState !== 'cookies';
+    });
+    // v1.15.59: ACCEPT ALL UPDATES / KEEP ALL CURRENT eligible
+    // count — rows with pending_update where SRC isn't '-' (the
+    // canonical filter from v1.12.95). Drives the (N) badge on
+    // both buttons.
+    const updateCount = effectiveCount(
+      // v1.20.0: pendingUpdateActionable (consolidated v1.19.98 fix).
+      (it) => pendingUpdateActionable(it)
+    );
+    // v1.15.60: bulk PROBE TDB count — selected rows that have
+    // a usable TDB URL to re-probe. Same `themedPred` gate as
+    // DOWNLOAD FROM TDB; doesn't exclude dead/cookies pills
+    // because re-probing those IS the recovery action.
+    const probeTdbCount = effectiveCount(themedPred);
+    // v1.19.43: bulk BACKUP CLOUD THEMES count — pure-P rows
+    // without a downloaded canonical. Distinct from pureP_count:
+    // doesn't require a TDB URL (anime cohort is 100% TDB-less
+    // per probe, but 100% C1 — cloud-backup is the only viable
+    // option). Includes rows with broken-TDB pills (dead/cookies)
+    // since those are exactly the rows that NEED cloud-backup
+    // (no TDB recovery path).
+    // v1.24.15 (holistic review): comment corrected. This bulk gate is
+    // `!placed && !downloaded && plex_independent_theme` — NARROWER than the
+    // per-row "DOWNLOAD PLEX BACKUP" action (plex_has_theme && !plex_local_theme,
+    // app.js ~9515/9930). A P row Plex serves but that was never
+    // independence-probed shows the per-row action yet is EXCLUDED from this
+    // bulk count. Bulk count + bulk handler agree with each other (the badge is
+    // honest about bulk's scope), so this is left as-is on purpose — the comment
+    // is fixed so a future audit doesn't "correct" the field the wrong way.
+    const cloudBackupCount = effectiveCount((it) => {
+      const placed = !!it.media_folder
+                     || it.placement_kind === 'plex_upload';
+      const downloaded = !!it.file_path;
+      const isPlexAgentLite = !!it.plex_independent_theme;
+      return !placed && !downloaded && isPlexAgentLite;
+    });
+    // "(N)" badge formatter — bare label when count === 1,
+    // "// LABEL (N)" when count > 1. Mirrors v1.15.46/49.
+    const withCount = (label, count) => (
+      count > 1 ? `${label} (${count})` : label
+    );
+
+    // v1.12.6: TDB-only browse hides DOWNLOAD-FROM-TDB / ADOPT —
+    // the rows aren't in your Plex library so neither action makes
+    // sense. CSV export becomes the primary action there. EXPORT
+    // CSV stays visible regardless of mode (it's a pure read-out).
+    const onTdbOnly = libraryState.status === 'not_in_plex';
+    // v1.12.11: ACK SELECTED is now scoped to the red TDB ✗ pill
+    // filter — that's the canonical "I'm reviewing failures" view
+    // post-removal of the FAILURES status chip. Outside that filter
+    // ACK is hidden (still reachable per-row via ACK FAILURE in the
+    // SOURCE menu).
+    // v1.13.68: switch the gate from tdb_pills.dead to attn_pills.fail.
+    // The new ⚠ ATTN chip is the "rows that need ACK" view (un-acked
+    // failures only); the legacy red TDB ✗ pill includes acked rows
+    // too, so binding the bulk-ACK there caused the action to no-op
+    // on the already-acked subset. The topbar `N FAIL` pill now
+    // routes here (?attn_pills=fail) so this is the standard surface
+    // for bulk acknowledgement.
+    const onAttnFail = libraryState.attnPills.has('fail');
+    if (ackBtn) {
+      ackBtn.style.display = onAttnFail ? '' : 'none';
+      // v1.15.51: count badge. Uses ackCount + withCount helpers
+      // defined below — Function-style declarations would lift,
+      // but const lambdas don't. ackCount/withCount are evaluated
+      // at apply time (inside the if block, after declaration);
+      // see updateLibrarySelectionUi flow — this block runs once
+      // per render, after all consts are bound.
+      if (onAttnFail && ackCount > 0) {
+        ackBtn.textContent = withCount('// ACK FAILURES', ackCount);
+      } else {
+        ackBtn.textContent = '// ACK FAILURES';
+      }
+    }
+    // v1.12.101: hide DOWNLOAD-FROM-TDB on the update filter. The
+    // update filter is the ACCEPT/KEEP workflow surface; bulk
+    // download competes with that by silently overwriting the
+    // pending update with a fresh fetch (which then triggers the
+    // accept path anyway). Removing it from this filter keeps the
+    // intent clear: choose for each row, then accept-all or keep-all.
+    // v1.14.17: gate flipped from `tdbPills.has('update')` to the
+    // canonical `attnPills.has('update')` since the v1.13.79
+    // ATTN axis migration. Filtering by the legacy blue TDB ↑
+    // pill no longer counts as "the ACCEPT/KEEP workflow surface"
+    // — DOWNLOAD/ADOPT/PUSH are visible there as normal bulk
+    // actions on whatever rows the user picks.
+    const onAttnUpdateFilter = libraryState.attnPills.has('update');
+    if (dlBtn)    dlBtn.style.display    = (!onTdbOnly && !onAttnUpdateFilter && hasTdbEligible) ? '' : 'none';
+    // v1.15.49: ADOPT SELECTED visibility narrowed from
+    // hasSidecarOnly (any M sidecar) to adoptOnlyCount > 0 (M
+    // sidecars WITHOUT Plex independent theme). M+P composites
+    // go to // ADOPT + LET PLEX SERVE instead — same reason
+    // the user flagged: with both buttons visible, the operator
+    // could click the wrong one and end up with a half-state.
+    // Label gets a count badge for consistency with v1.15.46's
+    // adoptLps button.
+    if (adoptBtn) {
+      adoptBtn.style.display = (!onTdbOnly && !onAttnUpdateFilter
+                                && adoptOnlyCount > 0) ? '' : 'none';
+      // v1.15.59: switched from inline ternary to withCount()
+      // helper (defined at the top of this function) for
+      // convention parity with the other bulk buttons. The
+      // helper itself was added in v1.15.51; v1.15.49 wrote
+      // the inline form before that helper existed.
+      if (adoptOnlyCount > 0) {
+        adoptBtn.textContent = withCount('// ADOPT SELECTED', adoptOnlyCount);
+      }
+      // v1.17.2: title tooltip explaining the M vs M+P split.
+      // the user's repro: filtered SRC=M with 1342 selected, but
+      // ADOPT SELECTED said (860) — couldn't tell why. The 482
+      // missing rows are M+P composites (yellow-dot M chip),
+      // which route to // ADOPT + LET PLEX SERVE instead because
+      // plain ADOPT on those leaves Plex's independent theme
+      // still playing alongside motif's — ambiguous state.
+      // The tooltip surfaces the v1.15.49 design intent so
+      // users don't have to chase it in PROJECT_HISTORY.
+      const offCount = adoptLpsCount;
+      adoptBtn.title = (
+        `ADOPT ${adoptOnlyCount} sidecar(s) — claims the existing `
+        + `theme.mp3 in the Plex folder as motif's canonical.`
+        + (offCount > 0
+            ? `\n\n${offCount} other M-tagged row${offCount === 1 ? '' : 's'} `
+              + 'in this selection ' + (offCount === 1 ? 'is' : 'are')
+              + ' M+P composite(s) (yellow-dot M chip) — Plex serves '
+              + 'its own theme alongside the sidecar. Those route to '
+              + '// ADOPT + LET PLEX SERVE which adopts and unplaces '
+              + 'in one step, avoiding ambiguous-double-theme state.'
+            : '')
+      );
+    }
+    // v1.15.4: DOWNLOAD TDB BACKUP visibility. Shows when the
+    // ENTIRE selection is pure-P + TDB-actionable (mixed
+    // selections route through DOWNLOAD & REPLACE FROM TDB
+    // instead — no need to duplicate the action). Gated off on
+    // tdb-only-browse + attn-update filter for the same reasons
+    // as the regular download button. selectionAllPureP is
+    // true iff pureP_count > 0 AND it equals the total selection
+    // size — every selected row qualifies.
+    selectionAllPureP = pureP_count > 0 && pureP_count === n;
+    if (backupBtn) {
+      backupBtn.style.display = (
+        !onTdbOnly && !onAttnUpdateFilter && selectionAllPureP
+      ) ? '' : 'none';
+      // v1.19.52: switched to withCount() for "// LABEL (N)"
+      // consistency with the other bulk buttons. Pre-fix the
+      // hand-rolled "// DOWNLOAD N TDB BACKUPS" was the only
+      // bulk button using a "VERB N THING" shape — every
+      // other was "// VERB THING (N)".
+      if (selectionAllPureP) {
+        backupBtn.textContent = withCount(
+          '// DOWNLOAD TDB BACKUP', pureP_count,
+        );
+      }
+    }
+    // v1.19.43: bulk BACKUP CLOUD THEMES. Visibility gate is
+    // broader than DOWNLOAD TDB BACKUP (selectionAllPureP) — we
+    // show this as soon as ≥1 pure-P row without a canonical is
+    // selected, because cloud-backup works whether or not TDB
+    // has the title (the anime cohort is exactly the case where
+    // TDB-less rows benefit most). Mixed selections still see
+    // the button — the run endpoint scopes to the {rks} list
+    // and silently classifies non-C1 rows as skipped.
+    if (cloudBackupBtn) {
+      cloudBackupBtn.style.display = (
+        !onTdbOnly && !onAttnUpdateFilter && cloudBackupCount > 0
+      ) ? '' : 'none';
+      // v1.19.48: label mirrors DOWNLOAD TDB BACKUP shape
+      // exactly so the bulk-bar reads consistently across the
+      // two "download a backup" actions.
+      // v1.19.52: switched to withCount() for "// LABEL (N)"
+      // consistency with the other bulk buttons (sibling
+      // DOWNLOAD TDB BACKUP got the same treatment).
+      if (cloudBackupCount > 0) {
+        cloudBackupBtn.textContent = withCount(
+          '// DOWNLOAD PLEX BACKUP', cloudBackupCount,
+        );
+      }
+    }
+    // v1.13.33: PUSH TO PLEX bulk button. Visible when the selection
+    // contains at least one downloaded-but-not-placed row. Gated off
+    // on the TDB-only browse and the update-filter view since
+    // neither flow targets an existing canonical.
+    const pushBtn = document.getElementById('library-push-selected-btn');
+    if (pushBtn) {
+      pushBtn.style.display = (!onTdbOnly && !onAttnUpdateFilter && pushableCount > 0) ? '' : 'none';
+      if (pushCount > 0) {
+        pushBtn.textContent = withCount('// PUSH TO PLEX', pushCount);
+      }
+    }
+    // v1.12.60: relabel DOWNLOAD-FROM-TDB based on selection mix so
+    // the user reads accurate intent. Pure '-' (or T) selections
+    // are clean fetches; mixing in U/A/M/P means existing themes
+    // will be overwritten — say so in both the label and tooltip.
+    if (dlBtn) {
+      // v1.15.51: count-badge applied to both label variants.
+      if (hasReplaceTarget) {
+        dlBtn.textContent = withCount('// DOWNLOAD & REPLACE FROM TDB', downloadCount);
+        dlBtn.title = 'Download from ThemerrDB. Selected rows with existing themes (U / A / M / P) will be overwritten with the TDB version.';
+      } else {
+        dlBtn.textContent = withCount('// DOWNLOAD FROM TDB', downloadCount);
+        dlBtn.title = 'Download and place each selected row from ThemerrDB.';
+      }
+    }
+    const exportBtn = document.getElementById('library-export-csv-btn');
+    if (exportBtn) {
+      exportBtn.style.display = '';
+      // v1.15.59: count badge. EXPORT CSV is selection-only (no
+      // attn-pill no-selection fallback — the handler alerts
+      // "no rows selected" when size === 0). Show the count
+      // directly from selection size so the operator sees the
+      // export scope before clicking.
+      exportBtn.textContent = withCount('// EXPORT CSV', n);
+    }
+    // v1.12.55: bulk update actions visible only when the user is
+    // on the blue-↑-pill click-through (the topbar UPD badge
+    // target). Outside that filter the actions don't fit the
+    // mental model — ACCEPT ALL UPDATES would silently fan out
+    // beyond the rows the user is looking at.
+    // v1.12.101: also gate on visiblePendingUpdates so the buttons
+    // disappear when the filter is up but no rows actually have a
+    // pending update (e.g., user already accepted/declined them).
+    // v1.13.68: also light up on attn_pills.update (the new chip
+    // path). showBarForUpdates already keys off tdb_pills.update;
+    // we OR in the attn equivalent so users coming from the new
+    // ATTN chip row see the same bulk actions.
+    const onAttnUpdate = libraryState.attnPills.has('update');
+    const showAcceptAll = showBarForUpdates || onAttnUpdate;
+    const acceptAllBtn = document.getElementById('library-accept-all-updates-btn');
+    const declineAllBtn = document.getElementById('library-decline-all-updates-btn');
+    // v1.20.1: selection-aware labels matching the other bulk buttons
+    // (PROBE TDB SELECTED (N) / EXPORT CSV (N)). the user: nothing
+    // selected → no count ("it's presumed all"); a selection → drop
+    // "ALL", switch to singular/plural + the selection count. Pre-fix
+    // a selection still read "ACCEPT ALL UPDATES" (no count for 1, or
+    // a count that looked global). updateCount is already selection-
+    // scoped (effectiveCount → selected rows when n>0). The "ALL"
+    // fallback also covers the edge where a selection has 0 actionable
+    // rows (showAcceptAll true via the ATTN=update chip).
+    const selScoped = n > 0 && updateCount > 0;
+    if (acceptAllBtn) {
+      acceptAllBtn.style.display = showAcceptAll ? '' : 'none';
+      if (showAcceptAll) {
+        acceptAllBtn.textContent = selScoped
+          ? `// ACCEPT UPDATE${updateCount === 1 ? '' : 'S'} (${updateCount})`
+          : '// ACCEPT ALL UPDATES';
+      }
+    }
+    if (declineAllBtn) {
+      declineAllBtn.style.display = showAcceptAll ? '' : 'none';
+      if (showAcceptAll) {
+        declineAllBtn.textContent = selScoped
+          ? `// KEEP CURRENT (${updateCount})`
+          : '// KEEP ALL CURRENT';
+        // v1.20.3: tint by the source being kept — the same SRC tone
+        // the per-row KEEP CURRENT uses. A single clean source across
+        // the actionable rows → that tone (P→amber, U→violet, etc.);
+        // M / mixed / none → neutral green. Pre-fix the default-green
+        // button implied "keep the TDB theme" even on P-rows (the user).
+        declineAllBtn.classList.remove(
+          'lib-source-themerrdb', 'lib-source-adopt',
+          'lib-source-user', 'lib-source-plex');
+        const _keepRows = n > 0
+          ? Array.from(libraryState.selectedRows.values())
+          : (libraryState.items || []);
+        let _keepLetter = null, _keepMixed = false;
+        for (const it of _keepRows) {
+          if (!pendingUpdateActionable(it)) continue;
+          const l = computeSrcLetter(it);
+          if (_keepLetter === null) _keepLetter = l;
+          else if (_keepLetter !== l) { _keepMixed = true; break; }
+        }
+        const _keepTone = (!_keepMixed && _keepLetter)
+          ? SRC_LETTER_TONE[_keepLetter] : undefined;
+        if (_keepTone) declineAllBtn.classList.add(`lib-source-${_keepTone}`);
+      }
+    }
+    // v1.13.68: PUSH TO PLEX bulk button now also surfaces when the
+    // ATTN await chip is active, even with no selection — same UX
+    // pattern as ACCEPT ALL UPDATES on the update chip. With a
+    // selection it still uses the per-row pushableCount logic above.
+    const onAttnAwait = libraryState.attnPills.has('await');
+    if (pushBtn && onAttnAwait && pushableCount === 0) {
+      pushBtn.style.display = '';
+      pushBtn.textContent = '// PUSH ALL TO PLEX';
+      pushBtn.title = 'Push every awaiting-placement row visible in this filter into Plex.';
+    }
+    // v1.13.68: REVERT MISMATCH bulk action — visible when the ATTN
+    // mismatch chip is active. Iterates the per-row revert path
+    // client-side (no dedicated bulk endpoint yet — same shape as
+    // PUSH TO PLEX).
+    const onAttnMismatch = libraryState.attnPills.has('mismatch');
+    const revertBtn = document.getElementById('library-revert-mismatch-btn');
+    if (revertBtn) {
+      revertBtn.style.display = onAttnMismatch ? '' : 'none';
+      // v1.15.51: count badge.
+      if (onAttnMismatch && revertCount > 0) {
+        revertBtn.textContent = withCount('// REVERT MISMATCH', revertCount);
+      }
+    }
+    // v1.13.68: RESTORE FROM PLEX bulk action — visible when the
+    // ATTN broken chip is active. Iterates the per-row restore path.
+    const onAttnBroken = libraryState.attnPills.has('broken');
+    const restoreBtn = document.getElementById('library-restore-from-plex-btn');
+    if (restoreBtn) {
+      restoreBtn.style.display = onAttnBroken ? '' : 'none';
+      // v1.15.51: count badge.
+      if (onAttnBroken && restoreCount > 0) {
+        restoreBtn.textContent = withCount('// RESTORE FROM PLEX', restoreCount);
+      }
+    }
+    // v1.14.27 / v1.15.49: bulk LET PLEX SERVE visibility.
+    // v1.15.49 narrowed the gate from "+P SRC pill active" to
+    // lpsOnlyCount > 0 (T/A/U+P composites in the selection) to
+    // eliminate the M+P footgun.
+    // v1.16.10: drop the v1.15.60 +P-filter safety net. With the
+    // selectedRows cache (selection-wide row data) lpsOnlyCount
+    // sees the full selection, not just the visible page, so the
+    // "data-attribute drift / visible-page-only undercount" case
+    // the safety net was added for no longer applies. The bare-
+    // label-without-count branch the safety net carried was the user's
+    // current complaint: "let plex server isn't displaying a number
+    // at all anytime." Now: button shows iff there's an actual T/A/U+P
+    // composite to LPS, and the count badge is always present.
+    const letPlexServeBtn = document.getElementById('library-let-plex-serve-btn');
+    if (letPlexServeBtn) {
+      letPlexServeBtn.style.display = lpsOnlyCount > 0 ? '' : 'none';
+      if (lpsOnlyCount > 0) {
+        letPlexServeBtn.textContent = withCount('// LET PLEX SERVE', lpsOnlyCount);
+      }
+    }
+    // v1.15.60: bulk PROBE TDB SELECTED visibility. Shows when
+    // ≥1 selected row is TDB-trackable. Click handler POSTs the
+    // selected items to /api/admin/bulk-probe-tdb (existing
+    // endpoint, accepts {items: [...]} for scoped probe per
+    // v1.15.1). btn-info color matches the per-row INFO PROBE
+    // button family.
+    const probeTdbBtn = document.getElementById('library-bulk-probe-tdb-btn');
+    if (probeTdbBtn) {
+      probeTdbBtn.style.display = probeTdbCount > 0 ? '' : 'none';
+      if (probeTdbCount > 0) {
+        probeTdbBtn.textContent = withCount('// PROBE TDB SELECTED', probeTdbCount);
+      }
+    }
+    // v1.15.46: bulk ADOPT + LET PLEX SERVE — visible when ≥1
+    // selected row is an M+P composite (gate counted above).
+    // No filter-axis restriction (unlike LET PLEX SERVE's
+    // onPlusPFilter gate) because the action is unambiguous
+    // per row — fixed end state regardless of which library
+    // filter the user is on. Label scales with count so the
+    // operator knows the actionable scope at-a-glance.
+    const adoptLpsBtn = document.getElementById('library-adopt-and-lps-btn');
+    if (adoptLpsBtn) {
+      adoptLpsBtn.style.display = adoptLpsCount > 0 ? '' : 'none';
+      // v1.15.59: withCount() helper (convention parity).
+      if (adoptLpsCount > 0) {
+        adoptLpsBtn.textContent = withCount('// ADOPT + LET PLEX SERVE', adoptLpsCount);
+      }
+      // v1.17.2: tooltip mirroring the v1.15.49 design intent
+      // (paired with the ADOPT SELECTED tooltip above). Surfaces
+      // WHY this button exists separately from ADOPT — the user's
+      // confusion was the bucket split between the two.
+      adoptLpsBtn.title = (
+        `Two-step on ${adoptLpsCount} M+P composite row(s): `
+        + 'adopt the sidecar AS motif\'s canonical, THEN unplace '
+        + 'it so Plex\'s own theme is the only one served. '
+        + 'Specifically for rows with the yellow-dot M chip '
+        + '(plex_independent_theme=1) where plain ADOPT would '
+        + 'leave two themes active.'
+      );
+    }
+    // v1.12.101: keep // EXPORT CSV anchored as the rightmost
+    // action regardless of which other buttons render. Without
+    // this the bar renders in DOM order (DOWNLOAD / ADOPT / EXPORT
+    // / ACK / ACCEPT ALL / KEEP ALL), so the dynamic accept/keep
+    // pair pushes EXPORT into the middle on the update filter.
+    // Re-append ensures it always sits at the end of the flex row.
+    if (exportBtn && exportBtn.parentNode) {
+      exportBtn.parentNode.appendChild(exportBtn);
+    }
+    // v1.17.18: keep the // MORE ▾ overflow menu anchored to the
+    // very end of the bar (right of EXPORT CSV's re-append above)
+    // so it's the rightmost element regardless of which other
+    // buttons render. Then run _layoutBulkBar to move any
+    // overflowing buttons into the dropdown panel.
+    const _overflowMenu = document.getElementById('library-bulk-overflow-menu');
+    if (_overflowMenu && _overflowMenu.parentNode) {
+      _overflowMenu.parentNode.appendChild(_overflowMenu);
+    }
+    _layoutBulkBar();
+    // v1.18.44: schedule a second layout pass on the next
+    // frame to catch cases where button text changes haven't
+    // yet propagated to the browser's width measurements at
+    // the synchronous call above. textContent assignments do
+    // dirty the layout, but reading scrollWidth doesn't ALWAYS
+    // force a re-flow if other state is also dirty in the
+    // same tick. The rAF pass guarantees we measure after the
+    // browser's first paint following our DOM writes.
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(_layoutBulkBar);
+    }
+  }
+
+  // v1.17.18: bulk-bar overflow layout.
+  //
+  // Pre-fix the bar fell back to horizontal scroll when buttons
+  // exceeded the container width (v1.17.6) — buttons clipped at
+  // the right edge with no visual cue. the user's screenshot of an
+  // update-filter view showed `// RESTORE FROM PLEX` cut off mid-
+  // word with no scroll indicator.
+  //
+  // The new behavior: when the bar would overflow, move the
+  // rightmost visible action button into the // MORE ▾ overflow
+  // menu and repeat until the bar fits. Constant height preserved
+  // (the v1.17.6 contract); discoverable instead of clipped (the
+  // v1.17.18 complaint).
+  //
+  // DOM order in library.html roughly tracks priority: greens
+  // (SELECT/CLEAR/DOWNLOAD/ADOPT) first, then context-active
+  // buttons, then EXPORT last. Moving rightmost-first means
+  // low-priority buttons go to the dropdown first.
+  //
+  // SELECT ALL FILTERED + CLEAR are the always-needed bookends —
+  // they never get moved (sentinel ID check below).
+  //
+  // The function is idempotent: it first puts every button back
+  // inline (resetting any prior overflow state), then re-measures
+  // and re-shifts. This lets visibility changes (filter switches,
+  // selection size changes) re-trigger a fresh layout without
+  // accumulating stale moves.
+  const _BULK_BAR_PRIMARY_IDS = new Set([
+    'library-select-all-filtered-btn',
+    'library-clear-selection-btn',
+  ]);
+
+  // v1.20.31: reliable horizontal-overflow test for the bulk bar.
+  // `bar.scrollWidth <= bar.clientWidth` is NOT dependable here: v1.17.21
+  // set the bar to `overflow: visible` (so the // MORE ▾ dropdown can
+  // escape downward), and on an overflow:visible flex row a child that
+  // overflows horizontally doesn't reliably grow scrollWidth — so the
+  // check intermittently reported "fits" while buttons painted past the
+  // right border, only snapping into the // MORE menu once a later pass
+  // (rAF / ResizeObserver) happened to measure differently. the user:
+  // "selecting all is making selections spill outside of borders, after
+  // a little bit it fixes itself."
+  //
+  // Measuring the rightmost visible child's painted edge against the
+  // bar's inner content edge via getBoundingClientRect is accurate
+  // regardless of the overflow property, and the read forces a
+  // synchronous reflow so it's never stale. 1px tolerance absorbs
+  // sub-pixel rounding.
+  function _barHasOverflow(bar) {
+    const cs = getComputedStyle(bar);
+    const innerRight = bar.getBoundingClientRect().right
+      - (parseFloat(cs.paddingRight) || 0)
+      - (parseFloat(cs.borderRightWidth) || 0);
+    let maxRight = -Infinity;
+    for (const child of bar.children) {
+      if (child.style.display === 'none') continue;
+      const r = child.getBoundingClientRect().right;
+      if (r > maxRight) maxRight = r;
+    }
+    return maxRight > innerRight + 1;
+  }
+
+  function _layoutBulkBar() {
+    const bar = document.getElementById('library-bulk-bar');
+    if (!bar || bar.style.display === 'none') return;
+    const overflowMenu = document.getElementById('library-bulk-overflow-menu');
+    if (!overflowMenu) return;
+    const panel = overflowMenu.querySelector('[data-bulk-overflow-panel]');
+    if (!panel) return;
+
+    // Reset: pull every panel child back into the bar (just before
+    // the overflow menu so DOM order is preserved). This way a
+    // resize OR visibility change that frees space restores
+    // buttons to the inline bar.
+    while (panel.firstChild) {
+      bar.insertBefore(panel.firstChild, overflowMenu);
+    }
+    overflowMenu.style.display = 'none';
+
+    // Measure post-reset. If no overflow, we're done.
+    if (!_barHasOverflow(bar)) return;
+
+    // Show the overflow menu so the measurement includes its
+    // natural width (we'd otherwise over-fit and have to back
+    // out a button).
+    overflowMenu.style.display = '';
+
+    // Walk visible action buttons rightmost-first (DOM order
+    // descending), moving each into the panel until the bar
+    // fits. Skip the primary bookends (SELECT ALL FILTERED,
+    // CLEAR) and the overflow menu itself.
+    const candidates = Array.from(bar.querySelectorAll('button.btn-tiny'))
+      .filter((btn) => {
+        if (_BULK_BAR_PRIMARY_IDS.has(btn.id)) return false;
+        if (btn.style.display === 'none') return false;
+        if (overflowMenu.contains(btn)) return false;
+        return true;
+      })
+      .reverse();
+
+    for (const btn of candidates) {
+      if (!_barHasOverflow(bar)) break;
+      panel.insertBefore(btn, panel.firstChild);
+    }
+
+    // If nothing actually moved (e.g. only the primaries fit and
+    // the overflow indicator itself is what's pushing overflow),
+    // hide the empty dropdown.
+    if (panel.children.length === 0) {
+      overflowMenu.style.display = 'none';
+    }
+  }
+
+  // v1.17.18: re-run layout on container width changes.
+  // ResizeObserver fires for the bar itself (sidebar collapse,
+  // window resize, drawer open/close). Without this the layout
+  // only runs on selection/visibility events — a manual window
+  // resize would leave buttons clipped or stranded in the
+  // overflow menu until the next selection change.
+  const _bulkBarObserver = (typeof ResizeObserver === 'function')
+    ? new ResizeObserver(() => _layoutBulkBar())
+    : null;
+
+  function _installBulkBarObserver() {
+    if (!_bulkBarObserver) return;
+    const bar = document.getElementById('library-bulk-bar');
+    if (bar) _bulkBarObserver.observe(bar);
+  }
+
+  // v1.22.95: collapsible filter drawer. The seven pill axes hide
+  // behind the // FILTERS toggle by default; the count badge keeps
+  // active-but-hidden filters discoverable (a filter must never be
+  // silently narrowing the table from inside a closed drawer).
+  function _activeAxisFilterCount() {
+    const s = libraryState;
+    return (s.tdbPills?.size || 0) + (s.srcFilter?.size || 0)
+      + (s.attnPills?.size || 0) + (s.dlPills?.size || 0)
+      + (s.plPills?.size || 0) + (s.linkPills?.size || 0)
+      + (s.edPills?.size || 0);
+  }
+
+  function _setFilterDrawerOpen(open) {
+    const drawer = document.getElementById('library-filter-drawer');
+    const toggle = document.getElementById('library-filter-toggle');
+    if (!drawer || !toggle) return;
+    drawer.hidden = !open;
+    toggle.classList.toggle('is-open', open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    try {
+      localStorage.setItem('motifFilterDrawerOpen', open ? '1' : '0');
+    } catch (_) { /* private mode / quota — fine */ }
+  }
+
+  function updateFilterDrawerUi() {
+    const badge = document.getElementById('library-filter-count');
+    if (!badge) return;
+    const n = _activeAxisFilterCount();
+    badge.hidden = n === 0;
+    badge.textContent = String(n);
+  }
+
+  function bindLibrary() {
+    const tabEl = document.getElementById('library-tab');
+    if (!tabEl) return;
+
+    // v1.18.50: clear filter+search storage on browser refresh,
+    // keep on tab change. Must fire BEFORE any hydration read
+    // (URL ?q= path at ~line 9890 reads sessionStorage; URL-no-
+    // filter path at ~line 9980 reads localStorage). On a reload
+    // both stores are wiped here so the subsequent hydration
+    // calls land empty; on a nav-click (tab change) both stores
+    // pass through untouched and hydrate normally.
+    _maybeClearStorageOnReload();
+
+    // v1.18.70: flush filter + search state on pagehide so a
+    // navigation away (click /logs / /settings / a deep-link
+    // before loadLibrary's deferred save fires) captures the
+    // user's latest selections. the user's repro: changed a filter,
+    // immediately clicked /logs, came back to the section, the
+    // hydrated filter was an EARLIER selection. loadLibrary's
+    // synchronous `_saveLibraryFilterState()` (line 6644) only
+    // fires when loadLibrary is called — fast filter+nav races
+    // could navigate before the filter-chip click handler's
+    // loadLibrary call landed. pagehide is the canonical hook
+    // for "tab is about to be hidden / unloaded" (bfcache-
+    // friendly vs beforeunload). Idempotent: if loadLibrary
+    // already flushed, this is a no-op write.
+    window.addEventListener('pagehide', () => {
+      try {
+        _saveLibraryFilterState();
+        _writeSessionQ(libraryState.q || '');
+      } catch (_) { /* private mode / quota — fine */ }
+    });
+
+    // v1.17.18: install the bulk-bar resize observer once on
+    // bind so window-resize / sidebar-toggle triggers a fresh
+    // overflow-menu layout. _layoutBulkBar is also called from
+    // updateLibrarySelectionUi so most state changes re-layout
+    // naturally; this observer covers width-only changes that
+    // don't go through that path.
+    _installBulkBarObserver();
+
+    // v1.10.50: pre-load library state from URL query params so a
+    // deep-link like /movies?status=failures (the topbar failure
+    // badge target) lands with the filter already active. Falls
+    // through to the chip-active states for the matching value.
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const wantStatus = sp.get('status');
+      if (wantStatus) {
+        const valid = new Set(['all','has_theme','themed','manual','plex_agent','untracked',
+                               'downloaded','placed','unplaced','failures',
+                               'not_in_plex']);
+        if (valid.has(wantStatus)) {
+          libraryState.status = wantStatus;
+          // v1.13.65: off-chip statuses fall back to ALL chip-active
+          // (see _syncStatusChipActive comment).
+          _syncStatusChipActive();
+          // v1.12.6: faded-T TDB-only pill mirrors not_in_plex mode.
+          // Sync its active class on initial load so deep-links land
+          // with the right indicator.
+          const tdbOnlyBtn = document.querySelector('[data-tdb-only]');
+          if (tdbOnlyBtn) {
+            tdbOnlyBtn.classList.toggle(
+              'src-key-btn-active',
+              wantStatus === 'not_in_plex',
+            );
+          }
+        }
+      }
+      const wantTdb = sp.get('tdb');
+      if (wantTdb && ['any','tracked','untracked'].includes(wantTdb)) {
+        libraryState.tdb = wantTdb;
+        document.querySelectorAll('[data-tdb]').forEach((x) =>
+          x.classList.toggle('chip-active', x.dataset.tdb === wantTdb));
+      }
+      // v1.12.9 / v1.12.23: deep-link to any of the pill multi-
+      // selects via ?tdb_pills= / ?src_pills= / ?dl_pills= /
+      // ?pl_pills= / ?link_pills= (comma-separated). The failures
+      // badge uses ?tdb_pills=dead; future surfaces (e.g. dashboard
+      // shortcuts) can deep-link any combination.
+      const PILL_DEEP_LINKS = [
+        { param: 'tdb_pills',  state: 'tdbPills',  attr: 'tdbPill',
+          activeClass: 'tdb-pill-btn-active',
+          // v1.14.23: include the v1.13.1 'dropped' token so URL
+          // deep-links like ?tdb_pills=dropped hydrate the TDB ◌
+          // chip on page load. Pre-fix the parser silently
+          // stripped 'dropped' — same mirror-principle leak as
+          // the v1.14.10/11/17 +P/Pp chain, one more axis.
+          // v1.24.75: 'empty' (TDB ∅) added — same hydration contract.
+          values: new Set(['tdb','update','cookies','dead','none','dropped','empty']) },
+        { param: 'src_pills',  state: 'srcFilter', attr: 'srcFilter',
+          activeClass: 'src-key-btn-active',
+          // v1.14.17: include the v1.14.10 'Pp' composite-+P
+          // wire token so URL deep-links like ?src_pills=Pp
+          // hydrate the chip on page load. Pre-fix the parser
+          // silently stripped Pp from the URL — same mirror-
+          // principle leak as v1.14.11's _pset miss, one layer
+          // up the deep-link chain.
+          values: new Set(['T','U','A','M','P','Pp','-']) },
+        { param: 'dl_pills',   state: 'dlPills',   attr: 'dlPill',
+          activeClass: 'state-pill-btn-active',
+          values: new Set(['on','off','broken']) },
+        { param: 'pl_pills',   state: 'plPills',   attr: 'plPill',
+          activeClass: 'state-pill-btn-active',
+          // v1.18.30: 'pushed' removed alongside the cyan PL
+          // filter chip itself — the chip selected the literal
+          // same row set as LINK=PU so it was dead UI weight.
+          // PL is back to a pure health axis; LINK owns the
+          // mechanism filtering.
+          values: new Set(['on','await','off','broken']) },
+        { param: 'link_pills', state: 'linkPills', attr: 'linkPill',
+          activeClass: 'link-pill-btn-active',
+          // v1.14.43: 'ps' added — the LPS-state filter chip.
+          // Without this entry, ?link_pills=ps deep-links would
+          // silently strip; same +P/Pp leak shape v1.14.17 fixed
+          // for SRC.
+          // v1.19.43: 'b' added — the cloud-themes-backup filter
+          // chip (link-glyph-b). Same mirror-principle as v1.14.43
+          // ps + v1.18.22 pu: deep-link parser allowlist must
+          // include every token the template surfaces.
+          // v1.19.50: 'bk' added — the v1.19.21 BK badge finally
+          // gets its filter chip (the user's audit: "BK is no one
+          // of the sortable filters anywhere"). Complementary
+          // to 'b' (plex_cloud) — both use backup_only stamp;
+          // source_kind discriminates.
+          values: new Set(['hl','c','m','none','ps','pu','rp','b','bk','tb','ab']) },
+        { param: 'ed_pills',   state: 'edPills',   attr: 'edPill',
+          activeClass: 'state-pill-btn-active',
+          values: new Set(['has','none']) },
+        // v1.13.68: ATTN deep-link. Topbar `N FAIL` click-through
+        // ships `?attn_pills=fail`; users can also deep-link any
+        // combo (?attn_pills=fail,update for an audit-everything
+        // view).
+        { param: 'attn_pills', state: 'attnPills', attr: 'attnPill',
+          activeClass: 'attn-pill-btn-active',
+          // v1.15.17: 'cookies' added so topbar COOKIES chip's
+          // ?attn_pills=cookies deep-link selects the new STATUS
+          // pill on landing. Stays in sync with the pillAxes
+          // values list above (~line 7612) per the v1.14.58
+          // cross-reference test contract.
+          // v1.24.40: 'repush' added so the topbar RE-PUSH badge's
+          // ?attn_pills=repush deep-link selects the new ⟳ ATTN chip on
+          // landing. Keep in sync with the pillAxes values + template per the
+          // v1.14.58 cross-reference test.
+          values: new Set(['fail','cookies','update','mismatch','await','broken','restore','repush']) },
+      ];
+      for (const dl of PILL_DEEP_LINKS) {
+        const raw = sp.get(dl.param);
+        if (!raw) continue;
+        raw.split(',').map((s) => s.trim()).forEach((p) => {
+          if (dl.values.has(p)) libraryState[dl.state].add(p);
+        });
+        const kebab = dl.attr.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+        document.querySelectorAll(`[data-${kebab}]`).forEach((x) => {
+          const xVal = x.dataset[dl.attr];
+          const active = !!xVal && libraryState[dl.state].has(xVal);
+          x.classList.toggle(dl.activeClass, active);
+        });
+      }
+      // v1.14.7: presence of `?fourk=` is an explicit override —
+      // both ?fourk=1 (force 4K) AND ?fourk=0 (force standard) must
+      // beat the localStorage-saved variant. Pre-fix the gate only
+      // checked for 'true'/'1', so a deep-link to ?fourk=0 (e.g.
+      // the topbar UPD/FAIL pill href) would fall through to the
+      // localStorage branch and land on whichever variant the user
+      // happened to last visit on that tab — typically the WRONG
+      // one. the user's repro: 1 UPD pill in the topbar, click sends
+      // user to /movies?fourk=0&attn_pills=update (the pending
+      // update IS in standard movies), but localStorage has
+      // motif:variant:movies='fourk' from a previous 4K visit, so
+      // the page renders 4K with 0 matches.
+      // v1.14.90: ?q= search-term hydration. Pre-fix the URL
+      // parser handled status/tdb/pills/fourk but not ?q=, so
+      // an OPEN ROW deep-link from /queue (which now passes the
+      // row's title as ?q= to bring up just that row) had no
+      // effect on the search input — the page rendered every
+      // row in the section. Hydrate libraryState.q AND the
+      // visible <input> so the chip-clear button shows and the
+      // search field reflects the active filter.
+      // v1.17.15: fall back to sessionStorage when the URL has
+      // no ?q= so a `/movies → /tv → /anime` nav within a tab
+      // carries the search across the full-page reloads.
+      // URL ?q= still wins (deep-links are an explicit user
+      // intent). sessionStorage scope keeps stale searches from
+      // cross-session resurfacing (the v1.15.52 complaint).
+      const wantQ = sp.get('q') || _readSessionQ();
+      if (wantQ) {
+        libraryState.q = wantQ;
+        const searchInput = document.getElementById('library-search');
+        if (searchInput) searchInput.value = wantQ;
+        // Also seed sessionStorage on URL-driven hydration so
+        // a deep-link → tab-switch flow continues to carry the
+        // search.
+        _writeSessionQ(wantQ);
+      }
+      // v1.18.1: section_id hydration for the /collections tab.
+      // URL param wins; localStorage fallback for return visits.
+      // v1.18.18: ALL chip dropped — an empty section_id resolves
+      // to the first available section chip (the template uses
+      // the same default at first paint). Skipped silently on
+      // non-collection tabs (the chip row isn't rendered there).
+      try {
+        const tabKey = (document.getElementById('library-tab') || {}).value;
+        if (tabKey === 'collections') {
+          let wantSec = sp.get('section_id') || '';
+          if (!wantSec) {
+            const saved = localStorage.getItem('motif:collections-section') || '';
+            wantSec = saved;
+          }
+          // v1.18.18: if no specific section requested OR the
+          // saved value points at a section that no longer has
+          // any collections (chip not in the rendered set), fall
+          // back to the first chip. Without this an empty
+          // section_id would silently apply no filter — but the
+          // SQL still expects a section because we removed the
+          // ALL escape hatch.
+          const chipNodes = document.querySelectorAll(
+            '.chips [data-section-id]',
+          );
+          const validSecIds = new Set();
+          chipNodes.forEach((c) => {
+            const sid = c.dataset.sectionId || '';
+            if (sid) validSecIds.add(sid);
+          });
+          if (!wantSec || !validSecIds.has(wantSec)) {
+            const firstChip = chipNodes[0];
+            wantSec = firstChip
+              ? (firstChip.dataset.sectionId || '')
+              : '';
+          }
+          libraryState.section_id = wantSec;
+          chipNodes.forEach((x) => {
+            x.classList.toggle('chip-active',
+                               (x.dataset.sectionId || '') === wantSec);
+          });
+        }
+      } catch (_) { /* fine */ }
+
+      const sawFourkParam = sp.has('fourk');
+      if (sawFourkParam) {
+        const v = sp.get('fourk');
+        const want4k = (v === 'true' || v === '1');
+        libraryState.fourk = want4k;
+        document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+          x.classList.toggle('chip-active',
+                             x.dataset.fourk === (want4k ? '1' : '0')));
+      } else {
+        // v1.12.9: no explicit ?fourk= override → fall back to the
+        // last variant the user picked on THIS tab. Persisted per-
+        // tab so movies/tv/anime each remember independently.
+        // adaptLibraryFourkToggle still wins when only one variant
+        // is enabled in settings (the auto-flip preserves the
+        // "only-4K-shows" case).
+        try {
+          const tabKey = (document.getElementById('library-tab') || {}).value;
+          if (tabKey) {
+            const saved = localStorage.getItem(`motif:variant:${tabKey}`);
+            if (saved === 'fourk') {
+              libraryState.fourk = true;
+              document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+                x.classList.toggle('chip-active', x.dataset.fourk === '1'));
+            }
+          }
+        } catch (_) { /* private mode / quota — fine */ }
+      }
+    } catch (_) { /* URLSearchParams not supported — skip */ }
+
+    // v1.13.13: if the URL carried no filter params, hydrate from
+    // the localStorage snapshot (last loadLibrary() call). Lets a
+    // user filter MOVIES then click TV SHOWS without starting over.
+    // URL deep-links still win — only fires when sp has none of the
+    // recognized filter keys.
+    try {
+      const sp2 = new URLSearchParams(window.location.search);
+      const hasFilterParam = _LIB_FILTER_URL_KEYS.some((k) => sp2.has(k));
+      if (!hasFilterParam) _hydrateLibraryFromStorage();
+    } catch (_) { /* fine */ }
+
+    // v1.22.95: filter drawer toggle + initial state. Runs AFTER the
+    // hydration block above so the auto-open check sees deep-link /
+    // storage-restored filters. Open when the user left it open
+    // (localStorage) OR any axis filter is active — a dashboard
+    // deep-link like ?attn_pills=fail must land with its filter
+    // visible, not narrowing the table from inside a closed drawer.
+    document.getElementById('library-filter-toggle')
+      ?.addEventListener('click', () => {
+        const drawer = document.getElementById('library-filter-drawer');
+        if (drawer) _setFilterDrawerOpen(drawer.hidden);
+      });
+    let _drawerWasOpen = false;
+    try {
+      _drawerWasOpen =
+        localStorage.getItem('motifFilterDrawerOpen') === '1';
+    } catch (_) { /* private mode — default closed */ }
+    if (_drawerWasOpen || _activeAxisFilterCount() > 0) {
+      _setFilterDrawerOpen(true);
+    }
+    updateFilterDrawerUi();
+
+    // v1.23.71: the section/4K toolbar chip bindings live in a re-callable
+    // module-scope fn now so client-side tab switching can re-bind the chips it
+    // swaps in (the chips are direct-bound per-element, not delegated).
+    bindLibraryToolbarChips();
+
+    // Status filter chips (scoped to library section).
+    // v1.14.41: removed the "avoid collision with browse.html"
+    // note — browse.html was deleted with the audit M1 sweep.
+    // The #library-body gate below was originally a defensive
+    // collision guard; kept because it's a useful "only bind on
+    // the library page" check for shared-template safety.
+    document.querySelectorAll('#library-body, #library-pager').length &&
+      document.querySelectorAll('[data-status]').forEach((b) => {
+        // Only bind on the library page (skip if no library tbody)
+        if (!document.getElementById('library-body')) return;
+        b.addEventListener('click', () => {
+          document.querySelectorAll('[data-status]').forEach((x) =>
+            x.classList.remove('chip-active'));
+          b.classList.add('chip-active');
+          libraryState.status = b.dataset.status;
+          libraryState.page = 1;
+          updateTdbFilterVisibility();
+          // v1.12.6: top-bar status chip click implicitly exits
+          // THEMERRDB-only mode (the faded T pill in the SRC row),
+          // since the user picked a non-tdb-only status chip.
+          const tdbOnlyBtn = document.querySelector('[data-tdb-only]');
+          if (tdbOnlyBtn) {
+            tdbOnlyBtn.classList.toggle(
+              'src-key-btn-active',
+              libraryState.status === 'not_in_plex',
+            );
+          }
+          // v1.10.51: bulk-bar action buttons swap on filter change
+          // (e.g. FAILURES → ACK SELECTED only).
+          updateLibrarySelectionUi();
+          loadLibrary().catch(console.error);
+        });
+      });
+
+    // v1.12.7: TDB pill multi-select filter. Replaces the v1.10.20
+     // 3-state TDB MATCH chips. Same toggle pattern as the SRC pill
+     // row — empty data-tdb-pill = CLEAR, data-tdb-pill-all = ALL,
+     // a state name (tdb / update / cookies / dead / none) toggles
+     // membership in the libraryState.tdbPills set. Pure client-side
+     // (visible-page filter) like SRC.
+    if (document.getElementById('library-body')) {
+      // v1.12.23: factor the per-axis pill click handlers so TDB,
+      // DL, PL, LINK all share one implementation. The axis is
+      // identified by the data-* attribute name; each maps to a
+      // libraryState.<axis>Pills Set + the CSS active-class
+      // suffix. SRC uses its own block below because the row
+      // markup is different (link-badge buttons, an extra ALL/
+      // CLEAR clickable pair).
+      const pillAxes = [
+        // v1.14.23: 'dropped' added to TDB ALL set. Pre-fix the
+        // // ALL button on the TDB pill row activated 5 tokens
+        // but missed the v1.13.1 dropped token (TDB ◌ chip) —
+        // same bug class as the v1.14.10/11/17 +P/Pp leak chain
+        // (CLAUDE.md class P, mirror-principle drift). Server +
+        // template + URL parser all already accept 'dropped'.
+        // v1.24.75: 'empty' (TDB ∅) added so ALL covers it too.
+        { attr: 'tdbPill', allAttr: 'tdbPillAll', state: 'tdbPills',
+          activeClass: 'tdb-pill-btn-active',
+          values: ['tdb', 'update', 'cookies', 'dead', 'none', 'dropped', 'empty'] },
+        { attr: 'dlPill', allAttr: 'dlPillAll', state: 'dlPills',
+          activeClass: 'state-pill-btn-active',
+          values: ['on', 'off', 'broken'] },
+        // v1.14.23: 'broken' added to PL ALL set. Same bug class
+        // as TDB above — template + URL parser + server already
+        // accept it; only the click-handler ALL list missed it.
+        // The red ●broken PL pill stayed inactive on // ALL.
+        { attr: 'plPill', allAttr: 'plPillAll', state: 'plPills',
+          activeClass: 'state-pill-btn-active',
+          // v1.14.23: 'broken' added to PL ALL set — the red
+          // ●broken PL pill stayed inactive on // ALL pre-fix.
+          // v1.18.30: 'pushed' removed (filter chip retired
+          // — see PILL_DEEP_LINKS sibling note above).
+          values: ['on', 'await', 'off', 'broken'] },
+        // v1.14.52: 'ps' added to LINK ALL set. Same bug class as
+        // v1.14.23's TDB-`dropped` / PL-`broken` (CLAUDE.md class P
+        // mirror-principle drift). v1.14.43 added the PS chip to
+        // the LINK pill axis (LPS state) and wired the template,
+        // deep-link parser at app.js:6720, and server at
+        // api.py:6811 — but this click-handler ALL list silently
+        // kept the v1.14.40 4-token shape, so // ALL on the LINK
+        // pill row left the amber ●ps chip inactive and the
+        // inverse-select pattern leaked LPS rows that the user
+        // expected to include.
+        { attr: 'linkPill', allAttr: 'linkPillAll', state: 'linkPills',
+          activeClass: 'link-pill-btn-active',
+          // v1.19.43: 'b' added to LINK ALL set for the
+          // cloud-themes-backup filter chip — mirror-principle
+          // (same shape as v1.14.52's 'ps' add). // ALL on the
+          // LINK pill row would otherwise leave the lemon B chip
+          // inactive.
+          // v1.19.50: 'bk' added — v1.19.21 BK badge finally
+          // got its filter chip. Same mirror-principle: // ALL
+          // must include every chip in the row.
+          values: ['hl', 'c', 'm', 'none', 'ps', 'pu', 'rp', 'b', 'bk', 'tb', 'ab'] },
+        { attr: 'edPill', allAttr: 'edPillAll', state: 'edPills',
+          activeClass: 'state-pill-btn-active',
+          values: ['has', 'none'] },
+        // v1.13.68: ATTN axis click handler. Same shape as the
+        // others — empty data-attn-pill clears the set,
+        // data-attn-pill-all selects every state, a value toggles
+        // membership.
+        { attr: 'attnPill', allAttr: 'attnPillAll', state: 'attnPills',
+          activeClass: 'attn-pill-btn-active',
+          // v1.15.17: 'cookies' added — keep in sync with template
+          // (library.html attn-pill-cookies) + deep-link parser
+          // (~line 7402) per v1.14.58 cross-reference test.
+          // v1.24.40: 'repush' — the ⟳ ATTN chip (re-push needed). Same row
+          // set as link_pills=rp; keep in sync with template + deep-link parser.
+          values: ['fail', 'cookies', 'update', 'mismatch', 'await', 'broken', 'restore', 'repush'] },
+      ];
+      for (const axis of pillAxes) {
+        const dataKey = axis.attr;       // camelCase for dataset
+        const allKey = axis.allAttr;
+        // Convert camelCase → kebab-case for querySelector:
+        const kebab = dataKey.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+        const allKebab = allKey.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase());
+        const sel = `[data-${kebab}], [data-${allKebab}]`;
+        document.querySelectorAll(sel).forEach((b) => {
+          b.addEventListener('click', () => {
+            const set = libraryState[axis.state];
+            if (b.dataset[allKey]) {
+              // v1.19.76: derive ALL from DOM-present chips
+              // instead of the static `axis.values` list. Two
+              // wins: (a) // ALL auto-respects template-time
+              // chip hides (e.g. v1.18.50 HL/C/M hide on
+              // /collections), (b) orphan tokens whose chip
+              // was retired (link_pills=ps post-v1.19.66,
+              // attn_pills=cookies post-v1.19.67) stop
+              // polluting the URL because their chips aren't
+              // in the DOM. `axis.values` is still the
+              // permissive allowlist used by the deep-link
+              // parser so old bookmarks still hydrate.
+              const allowedValues = new Set(axis.values);
+              document.querySelectorAll(`[data-${kebab}]`).forEach((chip) => {
+                const v = chip.dataset[dataKey];
+                if (v && allowedValues.has(v)) set.add(v);
+              });
+            } else {
+              const want = b.dataset[dataKey];
+              if (!want) {
+                set.clear();
+              } else if (set.has(want)) {
+                set.delete(want);
+              } else {
+                set.add(want);
+              }
+            }
+            document.querySelectorAll(`[data-${kebab}]`).forEach((x) => {
+              const xVal = x.dataset[dataKey];
+              const active = !!xVal && set.has(xVal);
+              x.classList.toggle(axis.activeClass, active);
+            });
+            libraryState.page = 1;
+            loadLibrary().catch(console.error);
+          });
+        });
+      }
+    }
+
+    // v1.11.66: SRC legend buttons toggle a client-side SRC-letter
+    // filter on top of whatever status / TDB chips are already
+    // active. Clicking the active letter again or hitting CLEAR
+    // resets the filter. Pure client-side: pagination/total still
+    // reflect the underlying status+tdb pass.
+    if (document.getElementById('library-body')) {
+      // v1.14.10: 'Pp' is the composite-+P-only token (rows where the
+      // primary SRC letter is set AND Plex also serves its own theme
+      // — the yellow-dot indicator). Included in ALL so the inverse-
+      // filter pattern ("light them all, then deselect what I don't
+      // want") covers the new chip too.
+      const allLetters = ['T', 'U', 'A', 'M', 'P', 'Pp', '-'];
+      // v1.12.6: include data-tdb-only in the bind so the faded T
+      // pill in the SRC row gets a click handler. It's a mode switch
+      // (status='not_in_plex') rather than an additive filter, so
+      // it short-circuits the per-letter toggle path.
+      document.querySelectorAll('[data-src-filter], [data-src-filter-all], [data-tdb-only]').forEach((b) => {
+        b.addEventListener('click', () => {
+          if (b.dataset.tdbOnly) {
+            // Toggle the THEMERRDB-ONLY browse mode. When activating,
+            // wipe the SRC letter set (per-row source isn't meaningful
+            // in TDB-only rows) and flip status. When deactivating,
+            // return to status='all'.
+            const goingOn = libraryState.status !== 'not_in_plex';
+            if (goingOn) {
+              libraryState.srcFilter.clear();
+              libraryState.status = 'not_in_plex';
+            } else {
+              libraryState.status = 'all';
+            }
+            libraryState.page = 1;
+            // Sync status-chip visual state (so the top filter bar
+            // visually de-activates / reactivates ALL).
+            // v1.13.65: 'not_in_plex' is an off-chip status — falls
+            // back to ALL chip-active so the row is never blank.
+            _syncStatusChipActive();
+            // Repaint SRC legend — every letter inactive when
+            // TDB-only is on; the TDB pill itself is the only active.
+            document.querySelectorAll('[data-src-filter]').forEach((x) => {
+              const xVal = x.dataset.srcFilter;
+              const active = !!xVal && libraryState.srcFilter.has(xVal);
+              x.classList.toggle('src-key-btn-active', active);
+            });
+            b.classList.toggle('src-key-btn-active', goingOn);
+            loadLibrary().catch(console.error);
+            return;
+          }
+          // v1.11.89: multi-select. Empty data-src-filter = CLEAR
+          // (drop all). data-src-filter-all = ALL (add every letter).
+          // A letter = toggle membership in the set.
+          // v1.11.90: ALL button added opposite CLEAR for the
+          // inverse-filter pattern ("light them all up, then
+          // deselect the ones I want excluded").
+          if (b.dataset.srcFilterAll) {
+            // v1.19.76: derive ALL from DOM-present src-filter
+            // chips instead of the static `allLetters` list.
+            // v1.18.50 hides SRC=A and SRC=M on /collections;
+            // pre-fix this added them to srcFilter anyway,
+            // polluting the URL with tokens that match zero
+            // collection rows. `allLetters` is still the
+            // intersection allowlist so a future stray
+            // data-src-filter token can't sneak in.
+            const allowedLetters = new Set(allLetters);
+            document.querySelectorAll('[data-src-filter]').forEach((chip) => {
+              const v = chip.dataset.srcFilter;
+              if (v && allowedLetters.has(v)) {
+                libraryState.srcFilter.add(v);
+              }
+            });
+          } else {
+            const want = b.dataset.srcFilter;
+            if (!want) {
+              libraryState.srcFilter.clear();
+            } else if (libraryState.srcFilter.has(want)) {
+              libraryState.srcFilter.delete(want);
+            } else {
+              libraryState.srcFilter.add(want);
+            }
+          }
+          // v1.12.6: any letter / ALL / CLEAR click also implicitly
+          // exits THEMERRDB-only mode if it was active — they're
+          // mutually exclusive (can't filter not-in-Plex rows by
+          // per-row SRC).
+          if (libraryState.status === 'not_in_plex') {
+            libraryState.status = 'all';
+            document.querySelectorAll('[data-status]').forEach((x) =>
+              x.classList.toggle('chip-active', x.dataset.status === 'all'));
+          }
+          // Repaint active styling on the legend — every letter in
+          // the set lights up. CLEAR / ALL aren't "active" states;
+          // they're actions. The faded-T TDB-only pill mirrors the
+          // status mode rather than the SRC set.
+          document.querySelectorAll('[data-src-filter]').forEach((x) => {
+            const xVal = x.dataset.srcFilter;
+            const active = !!xVal && libraryState.srcFilter.has(xVal);
+            x.classList.toggle('src-key-btn-active', active);
+          });
+          const tdbOnlyBtn = document.querySelector('[data-tdb-only]');
+          if (tdbOnlyBtn) {
+            tdbOnlyBtn.classList.toggle(
+              'src-key-btn-active',
+              libraryState.status === 'not_in_plex',
+            );
+          }
+          libraryState.page = 1;
+          loadLibrary().catch(console.error);
+        });
+      });
+    }
+
+    // Library tab chips (data-libtab) — only used on /coverage
+    document.querySelectorAll('[data-libtab]').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('[data-libtab]').forEach((x) =>
+          x.classList.remove('chip-active'));
+        b.classList.add('chip-active');
+        libraryState.tab = b.dataset.libtab;
+        const tabEl = document.getElementById('library-tab');
+        if (tabEl) tabEl.value = libraryState.tab;
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+      });
+    });
+
+    // Search debounce
+    const search = document.getElementById('library-search');
+    let dt;
+    // v1.13.12: ✕ clear button. Toggle visibility by input emptiness;
+    // click fires the same load path as typing-and-deleting would.
+    const clearBtn = document.getElementById('library-search-clear');
+    function _syncClearVisibility() {
+      if (!clearBtn || !search) return;
+      clearBtn.style.display = search.value ? '' : 'none';
+    }
+    search?.addEventListener('input', () => {
+      _syncClearVisibility();
+      clearTimeout(dt);
+      dt = setTimeout(() => {
+        libraryState.q = search.value.trim();
+        libraryState.page = 1;
+        // v1.17.15: persist to sessionStorage so the search
+        // survives /movies → /tv → /anime nav clicks within
+        // this browser tab. See _LIB_SESSION_Q_KEY header for
+        // why sessionStorage and not localStorage.
+        _writeSessionQ(libraryState.q);
+        loadLibrary().catch(console.error);
+      }, 250);
+    });
+    if (clearBtn) {
+      clearBtn.addEventListener('click', () => {
+        if (!search) return;
+        search.value = '';
+        _syncClearVisibility();
+        libraryState.q = '';
+        libraryState.page = 1;
+        // v1.17.15: ✕ clears the session-persisted query too,
+        // otherwise a tab-switch would resurrect it.
+        _clearSessionQ();
+        search.focus();
+        loadLibrary().catch(console.error);
+      });
+    }
+    _syncClearVisibility();
+
+    // v1.13.13: CLEAR ALL — wipe every filter axis, search, and sort
+    // back to defaults; clear the cross-tab persistence snapshot too
+    // so the next library tab the user visits also lands clean. Saved
+    // presets are explicitly NOT touched (selecting a preset is the
+    // path to re-apply it, not lose it).
+    document.getElementById('library-clear-all')?.addEventListener('click', () => {
+      libraryState.q = '';
+      libraryState.status = 'all';
+      libraryState.tdb = 'any';
+      libraryState.srcFilter.clear();
+      libraryState.tdbPills.clear();
+      libraryState.dlPills.clear();
+      libraryState.plPills.clear();
+      libraryState.linkPills.clear();
+      libraryState.edPills.clear();
+      // v1.13.68: include the new ATTN axis in CLEAR ALL.
+      libraryState.attnPills.clear();
+      libraryState.sort = 'title';
+      libraryState.sortDir = 'asc';
+      libraryState.page = 1;
+      const search = document.getElementById('library-search');
+      if (search) search.value = '';
+      // v1.17.15: CLEAR ALL also drops the session-persisted
+      // search, otherwise a tab-switch right after CLEAR ALL
+      // would resurrect "yu-gi-oh" without the surrounding
+      // filter context the user just blew away.
+      _clearSessionQ();
+      const clearBtn = document.getElementById('library-search-clear');
+      if (clearBtn) clearBtn.style.display = 'none';
+      // Reset every visual chip / pill back to its default.
+      document.querySelectorAll('[data-status]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.status === 'all'));
+      document.querySelectorAll('[data-tdb]').forEach((x) =>
+        x.classList.toggle('chip-active', x.dataset.tdb === 'any'));
+      [['src-key-btn-active', 'src-key-btn'],
+       ['tdb-pill-btn-active', 'tdb-pill-btn'],
+       ['state-pill-btn-active', 'state-pill-btn'],
+       ['link-pill-btn-active', 'link-pill-btn'],
+       // v1.13.68: clear the new ATTN chip-active class too.
+       ['attn-pill-btn-active', 'attn-pill-btn']].forEach(([cls]) => {
+        document.querySelectorAll('.' + cls).forEach((x) => x.classList.remove(cls));
+      });
+      _clearLibraryFilterStorage();
+      // Also strip URL filter keys so a refresh + share-link land
+      // clean rather than re-applying whatever the URL still carries.
+      try {
+        const url = new URL(window.location.href);
+        _LIB_FILTER_URL_KEYS.forEach((k) => url.searchParams.delete(k));
+        window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      } catch (_) { /* fine */ }
+      loadLibrary().catch(console.error);
+    });
+
+    // Refresh — v1.10.6: send {tab, fourk} so the backend only enumerates
+    // sections backing the current tab variant. While the enum runs the
+    // button is left in a 'REFRESHING…' state; refreshTopbarStatus's
+    // plex_enum_in_flight signal flips it back when the worker finishes.
+    document.getElementById('library-refresh-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      // v1.13.63: scope-aware busy label.
+      // v1.13.70: reverted to the v1.13.19 single-word
+      // "// REFRESHING…" pattern + verb sync→refresh. Topbar mini-
+      // bar already carries the scope name ("REFRESHING 4K
+      // MOVIES"), so the button label echoing it was redundant.
+      // Idle restore stays scope-aware (// REFRESH 4K MOVIES) via
+      // refreshTopbarStatus.
+      btn.textContent = '// REFRESHING…';
+      // v1.13.65: stamp a 12s grace window so refreshTopbarStatus
+      // keeps the button locked through the click → worker pickup
+      // gap (worker idle wait up to 2s + /api/stats cache TTL 1s,
+      // plus headroom for slow networks). Cleared by
+      // refreshTopbarStatus once myTabBusy goes true, so the natural
+      // unlock path takes over the moment the real signal lands.
+      try {
+        const w = window;
+        w.__motif_lib_click_grace = w.__motif_lib_click_grace || {};
+        const gtab = libraryState.tab;
+        const gvar = libraryState.fourk ? 'fourk' : 'standard';
+        w.__motif_lib_click_grace[gtab] = w.__motif_lib_click_grace[gtab] || {};
+        w.__motif_lib_click_grace[gtab][gvar] = Date.now() + 12000;
+      } catch (_) { /* fine */ }
+      // v1.13.19: optimistic topbar pill so the click → busy
+      // transition is instant. Tone 'plex' tints the placeholder
+      // green to match the real plex_enum op when it lands.
+      // v1.13.21 (was v1.13.20): the optimistic label reads the
+      // section name ("// REFRESHING 4K MOVIES") via
+      // libraryRefreshLabel instead of the generic "// SCANNING
+      // PLEX". The real plex_enum op when it lands carries the
+      // same section name in its stage_label, so there's no jank
+      // when the placeholder is replaced — same string, same tone,
+      // no flicker.
+      // v1.13.70: verb sync→refresh on the optimistic placeholder
+      // and the topbar paint. Button itself shows the single-word
+      // "// REFRESHING…" (above); the topbar still shows the scope
+      // name so the user sees which library is active.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          const label = (typeof libraryRefreshLabel === 'function')
+            ? libraryRefreshLabel()
+            : 'PLEX';
+          window.motifOps.setOptimisticPlaceholder(
+            'plex_enum', `// REFRESHING ${label}`,
+          );
+        }
+      } catch (_) {}
+      try {
+        await api('POST', '/api/library/refresh', {
+          tab: libraryState.tab,
+          fourk: !!libraryState.fourk,
+        });
+        // v1.14.53: paintTopbarSyncing call removed —
+        // setOptimisticPlaceholder('plex_enum', ...) above already
+        // wired the boostPoll + scheduled refresh.
+        setTimeout(() => loadLibrary().catch(()=>{}), 5000);
+        setTimeout(() => loadLibrary().catch(()=>{}), 15000);
+      } catch (err) {
+        // v1.17.13: clear the optimistic placeholder we set above
+        // — see SYNC PLEX topbar btn for the same pattern. Race
+        // audit finding #2.
+        try {
+          if (window.motifOps
+              && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('plex_enum');
+          }
+        } catch (_) {}
+        alert('Refresh failed: ' + err.message);
+        btn.disabled = false;
+        // v1.13.70: idle label uses scope-aware REFRESH verb.
+        btn.textContent = `// REFRESH ${libraryRefreshLabel()}`;
+      }
+      // Don't re-enable here — refreshTopbarStatus owns the lock based on
+      // plex_enum_in_flight. The button restores once the worker drains.
+    });
+
+    // Pager
+    document.getElementById('library-pager')?.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-lib-page]');
+      if (!b || b.disabled) return;
+      libraryState.page = Number(b.dataset.libPage);
+      loadLibrary().catch(console.error);
+    });
+
+    // v1.12.68: // NEEDS WORK chip toggles the attention sort.
+    // Stores the prior (column) sort on first activation so a
+    // second click can restore it cleanly. Title-asc is the
+    // fallback when no prior sort is recorded.
+    document.getElementById('library-sort-attention-btn')?.addEventListener('click', () => {
+      if (libraryState.sort === 'attention') {
+        // Toggle off — restore the prior sort or default to title
+        const prior = libraryState._attentionPriorSort
+                   || { sort: 'title', sortDir: 'asc' };
+        libraryState.sort = prior.sort;
+        libraryState.sortDir = prior.sortDir;
+        libraryState._attentionPriorSort = null;
+      } else {
+        // Toggle on — remember the current sort to restore later
+        libraryState._attentionPriorSort = {
+          sort: libraryState.sort,
+          sortDir: libraryState.sortDir,
+        };
+        libraryState.sort = 'attention';
+        libraryState.sortDir = 'asc';  // ascending = highest priority first
+      }
+      libraryState.page = 1;
+      updateSortIndicators();
+      loadLibrary().catch(console.error);
+    });
+
+    // v1.10.15: column sort. Click a th[data-sort] to sort. Re-clicking
+    // the active column toggles asc → desc → asc. Switching columns
+    // resets to asc. The active column shows a ▲/▼ indicator.
+    document.querySelectorAll('th.col-sort').forEach((th) => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (!key) return;
+        // v1.12.68: clicking a column header while attention sort is
+        // active clears the "prior sort" memory — the user has
+        // explicitly picked a new column, so the // NEEDS WORK
+        // toggle no longer needs to restore an older value.
+        if (libraryState.sort === 'attention') {
+          libraryState._attentionPriorSort = null;
+        }
+        if (libraryState.sort === key) {
+          libraryState.sortDir = libraryState.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          libraryState.sort = key;
+          libraryState.sortDir = 'asc';
+        }
+        libraryState.page = 1;  // reset to first page on sort change
+        updateSortIndicators();
+        loadLibrary().catch(console.error);
+      });
+    });
+    updateSortIndicators();
+
+    // (v1.10.10) // DOWNLOAD ALL handler removed alongside the
+    // missing-themes banner; /api/library/download-missing endpoint is
+    // still available for scripted callers but no UI binds to it.
+
+    // Per-row select checkbox toggle
+    document.getElementById('library-body')?.addEventListener('change', (e) => {
+      const cb = e.target.closest('input[data-lib-select]');
+      if (!cb) return;
+      const k = cb.dataset.libSelect;
+      if (cb.checked) {
+        libraryState.selected.add(k);
+        // v1.16.10: mirror into selectedRows so bulk counts +
+        // handlers see this row. The visible-row data is in
+        // libraryState.items — look it up rather than trust a
+        // stale cache.
+        const row = (libraryState.items || []).find(
+          (it) => libKey(it) === k);
+        if (row) libraryState.selectedRows.set(k, row);
+      } else {
+        libraryState.selected.delete(k);
+        libraryState.selectedRows.delete(k);
+      }
+      updateLibrarySelectionUi();
+    });
+
+    // Select-all / deselect-all on the visible page.
+    // v1.12.5: tri-state behavior — if every visible row is already
+    // selected, click DEselects them; otherwise SELECT all visible.
+    // v1.13.55: derive intent from libraryState.selected rather than
+    // cb.checked (the native toggle makes cb.checked lie mid-handler).
+    // v1.22.95: 'change', NOT 'click' + preventDefault. Browsers
+    // toggle a checkbox BEFORE dispatching click, and preventDefault
+    // makes them REVERT it AFTER the handler returns — clobbering the
+    // explicit headerCb.checked write below, so the box looked
+    // unchecked until the next async poll re-render re-set it
+    // seconds later (the user: "clicking it ... shows it as still
+    // unchecked and after a bit of time it will check itself").
+    // 'change' fires after the native toggle completes with nothing
+    // pending to revert, so the canonical-state writes stick
+    // immediately and the box behaves like a normal checkbox.
+    document.getElementById('library-select-all')?.addEventListener('change', (e) => {
+      const headerCb = e.currentTarget;
+      const rowBoxes = document.querySelectorAll('#library-body input[data-lib-select]');
+      if (rowBoxes.length === 0) return;
+      const visibleKeys = Array.from(rowBoxes).map((cb) => cb.dataset.libSelect);
+      // v1.14.26: indeterminate-click intent is DESELECT, not
+      // select-all. Pre-fix `turnOn = !allSelected` meant clicking
+      // a partially-selected (indeterminate) header re-selected
+      // every row — counterintuitive.
+      //
+      // v1.16.11: master-toggle semantics — the header acts on the
+      // ENTIRE selection, not just the visible page. Pre-fix the user
+      // would SELECT ALL FILTERED (484 rows) → click header expecting
+      // "clear all" → only the 50 visible rows deselected, leaving
+      // 434 stuck in the bulk bar with no visible signal of where
+      // they came from. With pagination, visible-only semantics is
+      // confusing. New rules:
+      //   selected.size === 0           → click selects all visible
+      //   selected.size  >  0 (any kind) → click CLEARS EVERYTHING
+      // No more "indeterminate cycles back to all-selected" trap.
+      // the user: "when trying to clear the select all by clicking the
+      // check box next to title it gets into a weird stuck state."
+      const anySelected = libraryState.selected.size > 0;
+      const turnOn = !anySelected;
+      if (turnOn) {
+        // v1.16.10: build a libKey → row lookup over the visible
+        // page so the loop below populates selectedRows without
+        // an O(n²) find() per box.
+        const rowByKey = new Map();
+        for (const it of (libraryState.items || [])) {
+          rowByKey.set(libKey(it), it);
+        }
+        rowBoxes.forEach((cb, i) => {
+          cb.checked = true;
+          const k = visibleKeys[i];
+          libraryState.selected.add(k);
+          const row = rowByKey.get(k);
+          if (row) libraryState.selectedRows.set(k, row);
+        });
+      } else {
+        // v1.16.11: full clear — mirror the // CLEAR button
+        // semantics so the bulk bar collapses on a single click.
+        libraryState.selected.clear();
+        libraryState.selectedRows.clear();
+        rowBoxes.forEach((cb) => { cb.checked = false; });
+      }
+      // v1.15.61: explicitly set the header checkbox state HERE
+      // before calling updateLibrarySelectionUi, so the visual
+      // state matches the canonical libraryState even if the
+      // native toggle landed on the other value (clicking an
+      // indeterminate box natively sets checked=true, but the
+      // master-toggle intent may be CLEAR → checked=false).
+      // v1.22.95: these writes now run inside a 'change' handler
+      // (post-native-toggle, nothing pending to revert) so they
+      // stick immediately in every browser.
+      headerCb.indeterminate = false;
+      headerCb.checked = turnOn;
+      // updateLibrarySelectionUi still runs to refresh the bulk
+      // bar (counts, button visibility, etc) — the redundant
+      // header write inside it is harmless and serves as the
+      // safety belt for race cases.
+      updateLibrarySelectionUi();
+    });
+
+    // Bulk-bar buttons
+    document.getElementById('library-clear-selection-btn')?.addEventListener('click', () => {
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
+        cb.checked = false;
+      });
+      updateLibrarySelectionUi();
+    });
+    document.getElementById('library-download-selected-btn')?.addEventListener('click', async (e) => {
+      // v1.11.30: filter the bulk-TDB action to ONLY items that are
+      // ThemerrDB-tracked. Pre-fix the handler split the selKey on ':'
+      // and treated parts[1] as a tmdb_id even when the row was
+      // sidecar-only (M) and parts[1] was actually a Plex rating_key.
+      // That made the worker try to download a 'tmdb_id=<rating_key>'
+      // — at best a 404, at worst a redownload loop on a synthetic
+      // orphan with the same id. Now we walk libraryState.items and
+      // include only rows where theme_tmdb is real and the row isn't
+      // a plex_orphan (which has no upstream URL to fetch from).
+      const items = [];
+      const skipped = [];
+      // v1.13.46: separately track rows skipped because their TDB
+      // is in a failure state (dead URL or cookies-blocked) so the
+      // confirm dialog can call them out as "unchanged" instead of
+      // bundling them with the generic skipped count. Pure-failure
+      // selections never reach this code path — the button is
+      // hidden by the v1.13.46 hasTdbEligible gate — but mixed
+      // selections do, and the user wants to see explicitly that
+      // the failed rows aren't being touched by this bulk action.
+      let skippedDead = 0;
+      let skippedCookies = 0;
+      // v1.12.66: per-source-letter breakdown so the confirm dialog
+      // can show "3 will be downloaded fresh, 2 will replace U content,
+      // 1 will replace P-agent" instead of a faceless "12 rows" count.
+      // The user picked this up from a v1.11.30 selection that mixed
+      // M sidecars (now ADOPT-only) with downloadable rows; making the
+      // mix legible avoids accidental overwrites.
+      const breakdown = { T: 0, U: 0, A: 0, M: 0, P: 0, '-': 0 };
+      // v1.16.10: walk the selection-wide cache instead of the visible
+      // page so SELECT ALL FILTERED → DOWNLOAD actually queues every
+      // selected row, not just the 50 on screen.
+      for (const it of libraryState.selectedRows.values()) {
+        const key = libKey(it);
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        if (!themed) {
+          skipped.push(it.plex_title || key);
+          continue;
+        }
+        // v1.13.46: route dead / cookies-blocked rows away from the
+        // download set BEFORE adding to items[]. Re-downloading
+        // a row whose URL is permanently broken (dead) or whose
+        // cookies are missing (cookies) is guaranteed to fail
+        // again — including these in the bulk POST would just
+        // burn worker time + add fresh failure log noise.
+        const tdbState = computeTdbPill(it);
+        if (tdbState === 'dead') {
+          skippedDead++;
+          continue;
+        }
+        if (tdbState === 'cookies') {
+          skippedCookies++;
+          continue;
+        }
+        const srcLetter = computeSrcLetter(it);
+        if (srcLetter in breakdown) breakdown[srcLetter]++;
+        // v1.19.8: include section_id so the backend can scope
+        // the download to ONLY the selected row's section. Pre-fix
+        // the payload was just {media_type, tmdb_id}; backend's
+        // _enqueue_download fanned out to EVERY section
+        // containing that (mt, tid). the user's 2026-05-24 repro:
+        // selected 4 items on the 4K tab, the bulk action ALSO
+        // downloaded their standard-section siblings → "+7 QUEUED"
+        // instead of the expected +3 + std-library state changed
+        // unexpectedly.
+        items.push({
+          media_type: it.theme_media_type,
+          tmdb_id: it.theme_tmdb,
+          section_id: it.section_id,
+          // v1.21.85: rating_key -> backend resolves edition so a bulk
+          // download/replace of a tagged edition targets THAT edition's
+          // folder (not the standard '' edition).
+          rating_key: it.rating_key,
+        });
+      }
+      if (items.length === 0) {
+        // v1.13.46: refine the empty-selection alert when the
+        // reason is dead/cookies rather than M sidecars / no-TDB.
+        if (skippedDead + skippedCookies > 0 && skipped.length === 0) {
+          alert(
+            `Nothing downloadable in selection — `
+            + `${skippedDead ? `${skippedDead} row${skippedDead === 1 ? ' has' : 's have'} a dead TDB URL` : ''}`
+            + `${(skippedDead && skippedCookies) ? ', ' : ''}`
+            + `${skippedCookies ? `${skippedCookies} row${skippedCookies === 1 ? ' is' : 's are'} cookies-blocked` : ''}`
+            + `. Use SET URL / UPLOAD MP3 / ADOPT EXISTING THEME on each row, or drop a fresh cookies.txt then retry.`,
+          );
+          return;
+        }
+        alert('Nothing downloadable in selection — every selected row is a sidecar (use ADOPT SELECTED) or has no ThemerrDB record.');
+        return;
+      }
+      // v1.12.66: confirm dialog with kind-by-kind breakdown so the
+      // user knows exactly which source classes get overwritten. Only
+      // shows breakdown lines for non-zero counts; if everything is
+      // '-' (a clean download spread) the dialog reads simpler.
+      const lines = [];
+      const parts = [];
+      if (breakdown['-']) parts.push(`${breakdown['-']} unthemed (clean download)`);
+      if (breakdown.T)    parts.push(`${breakdown.T} T (refresh)`);
+      if (breakdown.U)    parts.push(`${breakdown.U} U (replace user URL)`);
+      if (breakdown.A)    parts.push(`${breakdown.A} A (replace adopted)`);
+      if (breakdown.M)    parts.push(`${breakdown.M} M (replace sidecar)`);
+      if (breakdown.P)    parts.push(`${breakdown.P} P (replace Plex agent)`);
+      const willReplace = breakdown.T + breakdown.U + breakdown.A
+                        + breakdown.M + breakdown.P;
+      lines.push(`Download ${items.length} theme${items.length === 1 ? '' : 's'} from ThemerrDB?`);
+      lines.push('');
+      lines.push('Breakdown:');
+      lines.push('  ' + parts.join('\n  '));
+      if (willReplace > 0) {
+        lines.push('');
+        lines.push(`⚠ ${willReplace} row${willReplace === 1 ? '' : 's'} will have their existing theme replaced. This cannot be undone in bulk; per-row REVERT remains available where applicable.`);
+      }
+      if (skipped.length) {
+        lines.push('');
+        lines.push(`(${skipped.length} skipped — sidecars use ADOPT, no-TDB rows have no upstream to fetch.)`);
+      }
+      // v1.13.46: surface dead/cookies skip reasons in the confirm
+      // dialog so the user reading "Download 50 themes" sees that
+      // the 5 red-TDB rows in their 55-row selection were carved
+      // out as "unchanged" and won't be re-attempted. Matches the
+      // user's explicit ask: "if selected in a large bulk grouping
+      // just state in state change warning the failed unchanged."
+      if (skippedDead + skippedCookies > 0) {
+        lines.push('');
+        lines.push('Unchanged:');
+        if (skippedDead) {
+          lines.push(`  ${skippedDead} dead-TDB row${skippedDead === 1 ? '' : 's'} (URL broken — fix per-row via SET URL / UPLOAD MP3 / ADOPT EXISTING THEME)`);
+        }
+        if (skippedCookies) {
+          lines.push(`  ${skippedCookies} cookies-blocked row${skippedCookies === 1 ? '' : 's'} (drop a fresh cookies.txt then retry)`);
+        }
+      }
+      if (!confirm(lines.join('\n'))) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// QUEUING';
+      // v1.19.53: optimistic placeholder so the topbar mini-bar
+      // shows the queued state immediately rather than waiting
+      // for the next poll tick. Mirrors the v1.19.52 DOWNLOAD
+      // PLEX BACKUP polish + every other queueing SOURCE-menu
+      // action.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'download_queue', '// QUEUING DOWNLOADS',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      try {
+        const r = await api('POST', '/api/library/download-batch', { items });
+        const skipNote = skipped.length ? ` (${skipped.length} skipped — use ADOPT for sidecars)` : '';
+        btn.textContent = `// ${r.enqueued} QUEUED${skipNote}`;
+        if ((r.enqueued || 0) === 0) {
+          // v1.22.34 (audit): a 0-enqueued bulk download is easy to miss as a
+          // fleeting "0 QUEUED" — tell the user why nothing happened.
+          alert('Nothing was queued — the selected rows are already '
+                + 'downloading, already themed, or were filtered out server-side.'
+                + (skipped.length
+                   ? ` (${skipped.length} skipped — use ADOPT for sidecars.)`
+                   : ''));
+        }
+        libraryState.selected.clear();
+        libraryState.selectedRows.clear();
+        setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+        // v1.13.56: refresh topbar past the /api/stats 1s TTL
+        // so the UPD / FAIL pills reflect the new state quickly.
+        setTimeout(refreshTopbarStatus, 1100);
+        libraryRapidPoll();
+      } catch (err) {
+        alert('Bulk download failed: ' + err.message);
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v1.15.4: bulk DOWNLOAD TDB BACKUP — for pure-P selections
+    // where Plex serves its own theme + a TDB source is
+    // available. Posts to /api/library/download-batch with
+    // place=false so the worker downloads to /themes/ but
+    // doesn't hardlink into the Plex folder. Net effect: Plex
+    // keeps serving its own theme; motif gets a backup ready
+    // to push if Plex's ever goes away. the user: "I would like
+    // to make it so movies that are just P have a bulk action
+    // when there is a themerrdb source also available so we
+    // can bulk download TDB Backup as right now have to go one
+    // by one."
+    document.getElementById('library-tdb-backup-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const items = [];
+      const skipped = [];
+      // v1.16.10: selection-wide cache walk (see DOWNLOAD handler).
+      for (const it of libraryState.selectedRows.values()) {
+        const key = libKey(it);
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        if (!themed) {
+          skipped.push(it.plex_title || key);
+          continue;
+        }
+        const tdbState = computeTdbPill(it);
+        if (tdbState === 'dead' || tdbState === 'cookies') {
+          skipped.push(it.plex_title || key);
+          continue;
+        }
+        const srcLetter = computeSrcLetter(it);
+        if (srcLetter !== 'P') {
+          // Visibility gate enforces pure-P, but defend the
+          // handler in case the gate's stale (rapid selection
+          // changes between toggle + click).
+          skipped.push(it.plex_title || key);
+          continue;
+        }
+        // v1.19.8: see DOWNLOAD handler above — include
+        // section_id so backend scopes to the selected row's
+        // section, not every section containing the item.
+        items.push({
+          media_type: it.theme_media_type,
+          tmdb_id: it.theme_tmdb,
+          section_id: it.section_id,
+          // v1.21.85: rating_key -> backend resolves edition so a bulk
+          // download/replace of a tagged edition targets THAT edition's
+          // folder (not the standard '' edition).
+          rating_key: it.rating_key,
+        });
+      }
+      if (items.length === 0) {
+        alert('Nothing to back up — every selected row is either '
+              + 'not P-source, lacks a usable TDB URL, or has no '
+              + 'ThemerrDB record.');
+        return;
+      }
+      const ok = confirm(
+        `Download TDB BACKUP for ${items.length} P-source row${items.length === 1 ? '' : 's'}?\n\n`
+        + 'For each row this will:\n'
+        + '  • DOWNLOAD the TDB theme into motif\'s /themes/\n'
+        + '  • NOT place it into the Plex folder — Plex keeps\n'
+        + '    serving its own theme (cloud / Pass / embed)\n\n'
+        + 'You can later push the backup to Plex via PUSH TO\n'
+        + 'PLEX (per-row or bulk) if Plex\'s theme ever goes away.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// QUEUING';
+      // v1.19.53: optimistic placeholder — bulk TDB BACKUP enqueues
+      // download jobs that surface via the download_queue synth.
+      // Without the placeholder, the topbar mini-bar shows
+      // nothing for the click→next-poll-tick window.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'download_queue', '// QUEUING TDB BACKUP',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      try {
+        const r = await api('POST', '/api/library/download-batch', {
+          items,
+          place: false,
+        });
+        const skipNote = skipped.length ? ` (${skipped.length} skipped)` : '';
+        btn.textContent = `// ${r.enqueued} QUEUED${skipNote}`;
+        libraryState.selected.clear();
+        libraryState.selectedRows.clear();
+        setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+        setTimeout(refreshTopbarStatus, 1100);
+        libraryRapidPoll();
+      } catch (err) {
+        alert('Bulk TDB backup failed: ' + err.message);
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v1.19.43: bulk BACKUP CLOUD THEMES — walks the selection
+    // and POSTs every pure-P+!downloaded row to the v1.19.42
+    // admin endpoint scoped via `{rks: [...]}`. Each row's
+    // /themes response is classified server-side; non-C1 rows
+    // silently skip (no-op count surfaces in the toast).
+    document.getElementById('library-cloud-backup-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const rks = [];
+      for (const it of libraryState.selectedRows.values()) {
+        const placed = !!it.media_folder
+                       || it.placement_kind === 'plex_upload';
+        const downloaded = !!it.file_path;
+        const isPlexAgentLite = !!it.plex_independent_theme;
+        if (!placed && !downloaded && isPlexAgentLite && it.rating_key) {
+          rks.push(it.rating_key);
+        }
+      }
+      if (rks.length === 0) {
+        alert('Nothing to back up — no selected row is a pure-P '
+              + 'candidate without an existing local theme.');
+        return;
+      }
+      const ok = confirm(
+        `BACKUP CLOUD THEMES for ${rks.length} pure-P row${rks.length === 1 ? '' : 's'}?\n\n`
+        + 'For each row, motif will walk Plex\'s /themes endpoint\n'
+        + 'and, if the row is classified as C1 (single cloud entry,\n'
+        + 'no upload sibling), download Plex\'s cloud theme as a\n'
+        + 'local backup. Plex keeps serving its own theme; motif\n'
+        + 'gets a copy staged for one-click PROMOTE TO ACTIVE\n'
+        + 'recovery if Plex Pass ever lapses or the entry drops.\n\n'
+        + 'Non-C1 rows silently skip (already covered by motif or\n'
+        + 'a themerr-plex upload). Expect ~2 MB per row backed up.'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING';
+      // v1.19.45: endpoint is now async (acquire-then-spawn-thread).
+      // Returns immediately with {ok, op_id, scope}; the actual
+      // work runs in a background thread + surfaces in the ops
+      // drawer + mini-bar. Pre-v1.19.45 the endpoint blocked the
+      // FastAPI event loop for 13+ min and the browser timed out
+      // with "Failed to fetch" while the entire UI locked up.
+      // v1.19.52: bulk handler now mirrors the per-row handler's
+      // shape — optimistic placeholder + waitForOp polling +
+      // explicit toast with (N skipped) count + 409 distinction
+      // + refreshTopbarStatus/loadLibrary timers (TDB BACKUP
+      // sibling parity). Pre-fix the bulk-handler silently
+      // completed with no count surface, so a mixed selection
+      // (e.g., 50 selected, 30 non-C1) left the operator
+      // wondering what motif did with the other 30.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          // v1.19.83: kind MUST match the real server op
+          // (cloud_themes_backup) so the placeholder hands off cleanly
+          // when the op registers running. Pre-fix it used
+          // 'download_queue' — a kind mismatch meant the same-kind
+          // handoff never fired, so when a fast backup op finished
+          // within the 5s TTL the topbar fell back to RE-rendering
+          // "QUEUING PLEX BACKUP" AFTER the rows had already flipped to
+          // PB/UB. the user's repro: stale QUEUING after the LINK changed.
+          window.motifOps.setOptimisticPlaceholder(
+            'cloud_themes_backup', '// QUEUING PLEX BACKUP',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      const expected = rks.length;
+      try {
+        const r = await api('POST', '/api/admin/cloud-themes-backup-run',
+                            { rks });
+        if (r && r.ok) {
+          libraryState.selected.clear();
+          libraryState.selectedRows.clear();
+          // boostPoll surfaces the new op in the mini-bar within
+          // the next poll tick. libraryRapidPoll refreshes the
+          // library page so new B badges land as backups complete.
+          if (window.motifOps && typeof window.motifOps.boostPoll === 'function') {
+            try { window.motifOps.boostPoll(); } catch (_) {}
+          }
+          // v1.19.52: TDB BACKUP sibling parity — both timers so
+          // the topbar pill counts + library row state catch up
+          // within ~1.1s of the worker stamping its completion.
+          setTimeout(() => loadLibrary().catch(() => {}), 1000);
+          setTimeout(refreshTopbarStatus, 1100);
+          libraryRapidPoll();
+          // Poll the op until terminal, then surface counts.
+          if (window.motifOps
+              && typeof window.motifOps.waitForOp === 'function') {
+            window.motifOps.waitForOp(
+              r.op_id || 'cloud-themes-backup',
+              { timeoutMs: 600000 },  // bulk runs can be slow
+            ).then((finalOp) => {
+              // v1.19.83: op is terminal — clear the placeholder so a
+              // fast completion can't leave "QUEUING PLEX BACKUP"
+              // lingering past the work (symmetric with the v1.15.35
+              // failure-path clear). No-op once the 5s TTL has elapsed.
+              try {
+                if (window.motifOps
+                    && window.motifOps.clearOptimisticPlaceholder) {
+                  window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+                }
+              } catch (_) { /* cosmetic */ }
+              if (!finalOp) return;
+              const processed = finalOp.processed_total || 0;
+              const errors = finalOp.error_count || 0;
+              const skipped = Math.max(0, expected - processed - errors);
+              if (finalOp.status === 'done'
+                  && processed === 0 && errors === 0) {
+                alert(
+                  'DOWNLOAD PLEX BACKUP — 0 backed up.\n\n'
+                  + `None of the ${expected} selected row(s) were `
+                  + "classified as backup targets. Their /themes "
+                  + "responses had Plex's SELECTED entry on a "
+                  + "non-cloud source (upload://), so cloud-backup "
+                  + 'wouldn\'t protect them from Plex Pass loss.'
+                );
+              } else if (finalOp.status === 'failed') {
+                alert(
+                  'DOWNLOAD PLEX BACKUP failed mid-run. Check the '
+                  + 'LOGS tab for the worker traceback.'
+                );
+              } else if (errors > 0) {
+                btn.textContent = (skipped > 0)
+                  ? `// ${processed} BACKED UP · ${skipped} SKIPPED · ${errors} ERR`
+                  : `// ${processed} BACKED UP · ${errors} ERR`;
+                alert(
+                  `Bulk DOWNLOAD PLEX BACKUP finished with `
+                  + `${processed} backed up, ${errors} error(s), `
+                  + `${skipped} skipped. Check the LOGS tab for `
+                  + 'error details.'
+                );
+              } else if (skipped > 0) {
+                // Some rows were non-C1; surface the count so the
+                // operator knows what motif did with the rest of
+                // the selection.
+                btn.textContent =
+                  `// ${processed} BACKED UP · ${skipped} SKIPPED`;
+              } else {
+                btn.textContent = `// ${processed} BACKED UP`;
+              }
+            }).catch(() => { /* polling-only; cosmetic */ });
+          } else {
+            btn.textContent = '// QUEUED';
+          }
+        } else {
+          throw new Error('endpoint returned ok=false');
+        }
+      } catch (err) {
+        try {
+          if (window.motifOps
+              && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+          }
+        } catch (_) { /* cosmetic */ }
+        // v1.19.52: 409-specific message mirrors the per-row
+        // handler (v1.19.45). Pre-fix every error lumped into a
+        // generic "failed to start" alert.
+        if (err && err.message && err.message.indexOf('409') !== -1) {
+          alert('Another cloud-themes-backup run is already in '
+                + 'flight. Wait for it to finish or cancel it '
+                + 'from the ops drawer.');
+        } else {
+          alert('Bulk DOWNLOAD PLEX BACKUP failed to start: '
+                + (err.message || err));
+        }
+      }
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 6000);
+    });
+
+    // v1.13.33: bulk PUSH TO PLEX. Walks the selection, fires the
+    // per-row /replace endpoint for each downloaded-but-not-placed
+    // row. The /replace path force-overwrites whatever's in the
+    // Plex folder so a row with M+P state gets motif's canonical
+    // hardlinked over Plex's served theme. Per-row dispatch
+    // matches what the row's PLACE → PUSH TO PLEX action does;
+    // there's no /api/library/place-batch endpoint. Acceptable
+    // for the scale this surfaces (handful of awaiting-placement
+    // rows, not 10K).
+    document.getElementById('library-push-selected-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      // v1.14.15: gain the no-selection bulk path. With nothing
+      // selected the action targets every visible awaiting-
+      // placement row (same shape as REVERT MISMATCH / RESTORE
+      // FROM PLEX). v1.13.68 already exposed the button on
+      // attn_pills=await with no selection — the handler
+      // catches up to that visibility. Per the user: "for keep
+      // current, ack failure and all other bulk actions when
+      // nothing has been selected it becomes a bulk action on
+      // everything".
+      const useSelection = libraryState.selected.size > 0;
+      const candidates = [];
+      const skipped = [];
+      // v1.16.10: when a selection is active, walk the selection-wide
+      // cache so PUSH operates on every selected row (not just the
+      // visible page). Pre-fix the off-page rows were silently dropped
+      // and a `⚠ N rows not on this page` warning told the user to
+      // paginate manually — gone now since the action covers them.
+      const source = useSelection
+        ? libraryState.selectedRows.values()
+        : (libraryState.items || []);
+      for (const it of source) {
+        const key = libKey(it);
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        // v1.19.38: same SRC-axis widening as the per-row + bulk-bar
+        // pushableCount/pushCount fixes above. plex_upload rows have
+        // media_folder='' so `!it.media_folder` evaluated TRUE →
+        // bulk PUSH click handler scooped plex_upload rows into the
+        // candidates list and would have re-pushed them (no-op
+        // server-side but wrong intent surface).
+        const awaitingApproval = !it.job_in_flight
+                              && !!it.file_path
+                              && !it.media_folder
+                              && it.placement_kind !== 'plex_upload';
+        if (awaitingApproval && themed) {
+          candidates.push({
+            mt: it.theme_media_type,
+            id: it.theme_tmdb,
+            title: it.plex_title || '',
+            // v1.21.85: carry section_id + rating_key so /replace scopes
+            // the PUSH to THIS edition (api_replace_item resolves edition
+            // from rating_key, v1.21.69) — pre-fix bulk PUSH was title-wide
+            // and could place into a sibling edition's folder.
+            sid: it.section_id,
+            rk: it.rating_key,
+          });
+        } else if (useSelection) {
+          // Only count rows the user actually picked as "skipped";
+          // in no-selection mode the visible page contains many
+          // ineligible rows that aren't relevant to the action.
+          skipped.push(it.plex_title || key);
+        }
+      }
+      if (candidates.length === 0) {
+        const msg = useSelection
+          ? 'Nothing to push — every selected row is already placed, in flight, or has no downloaded canonical.'
+          : 'Nothing to push — no awaiting-placement rows on this page.';
+        alert(msg);
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      const lines = [`Push ${candidates.length} ${scope} downloaded theme${candidates.length === 1 ? '' : 's'} into Plex?`];
+      if (useSelection && skipped.length) {
+        lines.push('');
+        lines.push(`(${skipped.length} skipped — already placed or no downloaded canonical.)`);
+      }
+      if (!confirm(lines.join('\n'))) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      // v1.15.51: per-row progress label. Pre-fix the button froze
+      // on "// PUSHING…" for the full duration; on a 50-row push
+      // the operator saw no progress for ~10s. Mirrors v1.15.46's
+      // // RUNNING X/N + v1.15.49's ` · ` separator conventions.
+      btn.textContent = `// PUSHING 0/${candidates.length}`;
+      // v1.19.53: optimistic placeholder — each /replace call
+      // enqueues a place job; surface immediate mini-bar
+      // feedback rather than waiting for the next poll tick.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'place_queue', '// QUEUING PUSH',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      let ok = 0;
+      let failed = 0;
+      // Fire sequentially so we don't pile 50 concurrent place
+      // jobs on the worker queue when the user has a big selection.
+      // Each /replace call enqueues a place job; the worker drains
+      // them serially anyway. Per-row failure is caught + counted
+      // so a bad row doesn't abort the rest.
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        try {
+          const _cP = [];
+          if (c.sid) _cP.push(`section_id=${encodeURIComponent(c.sid)}`);
+          if (c.rk) _cP.push(`rating_key=${encodeURIComponent(c.rk)}`);
+          await api('POST', `/api/items/${c.mt}/${c.id}/replace`
+            + (_cP.length ? `?${_cP.join('&')}` : ''));
+          ok++;
+        } catch (_) {
+          failed++;
+        }
+        btn.textContent = `// PUSHING ${i + 1}/${candidates.length}`;
+      }
+      const parts = [`${ok} QUEUED`];
+      if (failed) parts.push(`${failed} FAILED`);
+      if (skipped.length) parts.push(`${skipped.length} SKIPPED`);
+      btn.textContent = `// ${parts.join(' · ')}`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      setTimeout(refreshTopbarStatus, 1100);
+      libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v1.13.68: bulk REVERT MISMATCH. Visible only when the ATTN
+    // mismatch chip is active. Walks the selection (or every visible
+    // mismatched row when no selection) and POSTs the per-row /revert
+    // endpoint scoped to the row's section_id. Same pattern as PUSH
+    // TO PLEX — no /api/library/revert-batch endpoint, but the scale
+    // is bounded by mismatch_state='pending' rows which is small.
+    document.getElementById('library-revert-mismatch-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const useSelection = libraryState.selected.size > 0;
+      const targets = [];
+      // v1.16.10: selection-wide cache walk (see DOWNLOAD handler).
+      const source = useSelection
+        ? libraryState.selectedRows.values()
+        : (libraryState.items || []);
+      for (const it of source) {
+        if (it.mismatch_state !== 'pending') continue;
+        if (!it.theme_media_type || it.theme_tmdb == null) continue;
+        targets.push({
+          mt: it.theme_media_type,
+          id: it.theme_tmdb,
+          section_id: it.section_id || '',
+          // v1.22.80: rk scopes /revert to THIS edition (v1.21.73 —
+          // the per-row path always sent it; this bulk path collected
+          // edition_key but never sent anything, so the backend's
+          // legacy un-scoped revert disturbed sibling editions).
+          rating_key: it.rating_key || '',
+          title: it.plex_title || '',
+        });
+      }
+      if (targets.length === 0) {
+        alert('Nothing to revert — no mismatched rows in '
+              + (useSelection ? 'the current selection' : 'this view') + '.');
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      if (!confirm(`Revert ${targets.length} ${scope} mismatched row${targets.length === 1 ? '' : 's'} to the ThemerrDB version?\nThis re-downloads and overwrites each placement.`)) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      // v1.15.51: per-row progress + ` · ` separator (consistent
+      // with PUSH / ADOPT / ADOPT + LPS handlers).
+      btn.textContent = `// REVERTING 0/${targets.length}`;
+      // v1.19.53: optimistic placeholder — REVERT MISMATCH
+      // re-downloads the TDB canonical so surface via
+      // download_queue.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'download_queue', '// QUEUING REVERT',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      let ok = 0;
+      let failed = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        try {
+          // v1.22.80: thread section + rk (edition scope) — see the
+          // targets.push above.
+          const _rvq = new URLSearchParams();
+          if (t.section_id) _rvq.set('section_id', t.section_id);
+          if (t.rating_key) _rvq.set('rating_key', t.rating_key);
+          const _rvqs = _rvq.toString();
+          const url = _rvqs
+            ? `/api/items/${t.mt}/${t.id}/revert?${_rvqs}`
+            : `/api/items/${t.mt}/${t.id}/revert`;
+          await api('POST', url);
+          ok++;
+        } catch (_) { failed++; }
+        btn.textContent = `// REVERTING ${i + 1}/${targets.length}`;
+      }
+      btn.textContent = failed
+        ? `// ${ok} REVERTED · ${failed} FAILED`
+        : `// ${ok} REVERTED`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      setTimeout(refreshTopbarStatus, 1100);
+      libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v1.13.68: bulk RESTORE FROM PLEX. Visible only when the ATTN
+    // broken chip is active. Iterates per-row /restore-canonical
+    // calls. Each restore re-creates motif's local canonical from
+    // the surviving Plex copy (the .theme.mp3 sidecar Plex still
+    // holds intact).
+    document.getElementById('library-restore-from-plex-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const useSelection = libraryState.selected.size > 0;
+      const targets = [];
+      // v1.16.10: selection-wide cache walk (see DOWNLOAD handler).
+      const source = useSelection
+        ? libraryState.selectedRows.values()
+        : (libraryState.items || []);
+      for (const it of source) {
+        if (!it.canonical_missing || !it.file_path) continue;
+        if (!it.theme_media_type || it.theme_tmdb == null) continue;
+        targets.push({
+          mt: it.theme_media_type,
+          id: it.theme_tmdb,
+          title: it.plex_title || '',
+        });
+      }
+      if (targets.length === 0) {
+        alert('Nothing to restore — no canonical-missing rows in '
+              + (useSelection ? 'the current selection' : 'this view') + '.');
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      if (!confirm(`Restore canonical from Plex on ${targets.length} ${scope} row${targets.length === 1 ? '' : 's'}?`)) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      // v1.15.51: per-row progress + ` · ` separator (consistent
+      // with PUSH / REVERT / ADOPT / ADOPT + LPS handlers).
+      btn.textContent = `// RESTORING 0/${targets.length}`;
+      // v1.19.53: optimistic placeholder — RESTORE FROM PLEX
+      // re-fetches the canonical from Plex (effectively a
+      // download flow from motif's POV) so surface via
+      // download_queue.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'download_queue', '// QUEUING RESTORE',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      let ok = 0;
+      let failed = 0;
+      for (let i = 0; i < targets.length; i++) {
+        const t = targets[i];
+        try {
+          await api('POST', `/api/items/${t.mt}/${t.id}/restore-canonical`);
+          ok++;
+        } catch (_) { failed++; }
+        btn.textContent = `// RESTORING ${i + 1}/${targets.length}`;
+      }
+      btn.textContent = failed
+        ? `// ${ok} RESTORED · ${failed} FAILED`
+        : `// ${ok} RESTORED`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      setTimeout(refreshTopbarStatus, 1100);
+      libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v1.14.27: bulk LET PLEX SERVE — visible when the +P SRC pill
+    // is active. Iterates the per-row /unplace endpoint (deletes
+    // the placement file at Plex folder, keeps motif's canonical).
+    // Same shape as RESTORE FROM PLEX above (use-selection vs
+    // visible-page fallback).
+    document.getElementById('library-let-plex-serve-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const useSelection = libraryState.selected.size > 0;
+      const targets = [];
+      // v1.16.10: selection-wide cache walk (see DOWNLOAD handler).
+      const source = useSelection
+        ? libraryState.selectedRows.values()
+        : (libraryState.items || []);
+      for (const it of source) {
+        // Only act on +P composite rows (motif owns a placement
+        // AND Plex serves its own theme) — same predicate as the
+        // yellow-dot indicator + the Pp pill SQL gate.
+        const isComposite = it.plex_independent_theme === 1
+                         && computeSrcLetter(it) !== 'P'
+                         && computeSrcLetter(it) !== '-';
+        if (!isComposite) continue;
+        // v1.15.49: exclude M sidecars — those route to // ADOPT
+        // + LET PLEX SERVE (which claims ownership first). LPS
+        // alone on an M sidecar deletes the only theme with no
+        // recovery path (motif's canonical doesn't exist yet).
+        // Mirrors the lpsOnlyCount gate in updateBulkBar.
+        // v1.22.80: the widened placed predicate (7th SRC-axis site —
+        // the bare !it.media_folder evaluated !'' as TRUE for
+        // plex_upload rows, the exact v1.19.38 class), so the handler
+        // skipped rows the bucket counted: the button said (N) and the
+        // click did fewer, or "Nothing to LET PLEX SERVE".
+        const _lpsPlaced = !!it.media_folder
+          || it.placement_kind === 'plex_upload';
+        const isMSidecar = it.plex_local_theme === 1 && !_lpsPlaced;
+        if (isMSidecar) continue;
+        if (!it.theme_media_type || it.theme_tmdb == null) continue;
+        targets.push({
+          mt: it.theme_media_type,
+          id: it.theme_tmdb,
+          section_id: it.section_id || '',
+          edition_key: it.edition_key || '',
+          title: it.plex_title || '',
+        });
+      }
+      if (targets.length === 0) {
+        const scopeWord = useSelection ? 'the current selection' : 'this view';
+        alert(
+          `Nothing to LET PLEX SERVE — no T/A/U+P composite rows in ${scopeWord}.\n\n`
+          + '(M+P composites route to // ADOPT + LET PLEX SERVE, '
+          + 'which claims ownership of the sidecar before unplacing '
+          + 'so there\'s a recovery path.)'
+        );
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      // v1.15.28: server-side composite. The pre-fix flow was a
+      // two-stage user dance (click LPS → confirm probe → wait →
+      // re-click LPS → confirm proceed → per-row /unplace). Probe
+      // completion was invisible (sub-poll-cadence ops miss the
+      // topbar mini-bar) and the user typically gave up thinking
+      // nothing happened. the user: "attempting a bulk action of
+      // let plex server doesn't do anything. it indicates it will
+      // reprobe the selected items but nothing ends up happening
+      // or is seen in the status bar." Plus: "if an item was
+      // probed in the last 24hrs then no need to probe again."
+      // /api/admin/bulk-let-plex-serve handles probe-then-unplace
+      // server-side with one op_progress entry visible in LIVE
+      // OPS. Targets probed-fresh within 24h skip the probe stage.
+      const ok = confirm(
+        `LET PLEX SERVE on ${targets.length} ${scope} +P composite row${targets.length === 1 ? '' : 's'}?\n\n`
+        + 'For each row this will:\n'
+        + '  • PROBE the TDB URL (skipped if alive-probed in the '
+        + 'last 24 h) to refresh the row\'s failure status\n'
+        + '  • DELETE motif\'s theme.mp3 from the Plex folder so '
+        + 'long as motif has a canonical to fall back on (PUSH TO '
+        + 'PLEX recovers via hardlink from /themes/)\n'
+        + '  • Rows without a motif canonical are skipped — '
+        + 'wouldn\'t have a recovery path\n\n'
+        + 'Plex\'s own theme (cloud / embed) becomes the only one '
+        + 'served on the unplaced rows. The probe is independent: '
+        + 'a dead TDB URL no longer blocks unplace on U-source rows '
+        + 'where motif\'s canonical came from the user\'s URL. '
+        + 'Watch // LIVE OPS for probe → unplace progress.\n\nProceed?'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING…';
+      try {
+        await api('POST', '/api/admin/bulk-let-plex-serve', {
+          items: targets.map((t) => ({
+            media_type: t.mt,
+            tmdb_id: t.id,
+            section_id: t.section_id || null,
+            edition_key: t.edition_key || '',
+          })),
+        });
+      } catch (e) {
+        alert('LET PLEX SERVE failed to start: '
+              + (e && e.message ? e.message : 'unknown error')
+              + '\n\nIf the message says "already running", wait '
+              + 'for the current bulk LPS to finish (see // LIVE OPS).');
+        btn.disabled = false;
+        btn.textContent = orig;
+        return;
+      }
+      btn.textContent = '// PROBING + UNPLACING…';
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      // v1.15.28: poll motifOps.state() until the bulk-lps op
+      // exits the active set, then reload the library + reset
+      // the button. Pre-fix the v1.14.27 client-side flow used
+      // a 4s fixed timeout which left the button stuck reading
+      // "// LETTING PLEX SERVE…" long after the actual /unplace
+      // calls had returned (or worse, reset before they did).
+      // The new server-side op can run for tens of seconds when
+      // probes are needed, so we follow the op's actual
+      // lifecycle via op_progress.
+      const startedAt = Date.now();
+      const TIMEOUT_MS = 30 * 60 * 1000;
+      let sawActive = false;
+      const finishWatcher = setInterval(() => {
+        if (Date.now() - startedAt > TIMEOUT_MS) {
+          // v1.17.20: surface timeout + still reload library /
+          // topbar so the page reflects whatever final state the
+          // op landed in. Pre-fix the timeout reset the button
+          // but left the library tbody stale until the user
+          // manually refreshed. Audit race #3.
+          clearInterval(finishWatcher);
+          btn.disabled = false;
+          btn.textContent = orig;
+          console.warn(
+            'bulk_lps watcher timed out after 30min — '
+            + 'library may be stale; reloading.'
+          );
+          loadLibrary().catch(() => {});
+          refreshTopbarStatus().catch(() => {});
+          return;
+        }
+        let ops = [];
+        try {
+          if (window.motifOps && window.motifOps.state) {
+            ops = (window.motifOps.state().ops || []);
+          }
+        } catch (_) { return; }
+        const op = ops.find((o) => {
+          if (o.kind !== 'bulk_lps') return false;
+          if (!o.started_at) return true;
+          const opStarted = new Date(o.started_at).getTime();
+          if (Number.isNaN(opStarted)) return true;
+          return opStarted >= startedAt - 5000;
+        });
+        if (op && (op.status === 'running' || op.status === 'pending'
+                   || op.status === 'cancelling')) {
+          sawActive = true;
+          return;
+        }
+        // Op gone OR terminal — only finalize if we actually saw
+        // it active (avoid resetting before the worker thread
+        // calls start_progress).
+        if (!sawActive && !op) return;
+        clearInterval(finishWatcher);
+        btn.disabled = false;
+        btn.textContent = orig;
+        loadLibrary().catch(() => {});
+        refreshTopbarStatus().catch(() => {});
+      }, 1500);
+      libraryRapidPoll();
+    });
+
+    // v1.12.94: shared param-builder for the bulk-pagination handlers
+    // (SELECT ALL FILTERED, EXPORT CSV). Pre-fix each handler had its
+    // own copy of the URL-param construction and both forgot to
+    // include the pill filters (src_pills / tdb_pills / dl_pills /
+    // pl_pills / link_pills / ed_pills), so a filter like
+    // TDB=NO TDB silently dropped — the bulk query then selected /
+    // exported the broader pre-pill result set. Producing a count
+    // higher than the visible // RESULTS. Extracting the builder
+    // ensures the two stay in sync; the main loadLibrary path uses
+    // its own (more sort-aware) constructor and isn't routed
+    // through this helper.
+    function buildLibraryFilterParams(perPage = 200) {
+      const params = new URLSearchParams({
+        tab: libraryState.tab,
+        fourk: libraryState.fourk ? 'true' : 'false',
+        per_page: String(perPage),
+      });
+      if (libraryState.q) params.set('q', libraryState.q);
+      if (libraryState.status !== 'all') params.set('status', libraryState.status);
+      if (libraryState.tdb && libraryState.tdb !== 'any') {
+        params.set('tdb', libraryState.tdb);
+      }
+      if (libraryState.srcFilter && libraryState.srcFilter.size > 0) {
+        params.set('src_pills', Array.from(libraryState.srcFilter).join(','));
+      }
+      if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
+        params.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+      }
+      if (libraryState.dlPills && libraryState.dlPills.size > 0) {
+        params.set('dl_pills', Array.from(libraryState.dlPills).join(','));
+      }
+      if (libraryState.plPills && libraryState.plPills.size > 0) {
+        params.set('pl_pills', Array.from(libraryState.plPills).join(','));
+      }
+      if (libraryState.linkPills && libraryState.linkPills.size > 0) {
+        params.set('link_pills', Array.from(libraryState.linkPills).join(','));
+      }
+      if (libraryState.edPills && libraryState.edPills.size > 0) {
+        params.set('ed_pills', Array.from(libraryState.edPills).join(','));
+      }
+      // v1.14.22: thread attn_pills into the SELECT ALL FILTERED +
+      // EXPORT CSV scope. Pre-fix this helper missed the v1.13.68
+      // ATTN axis even though the function's docstring above
+      // explicitly warns about this exact failure mode for the
+      // earlier ed/dl/pl/link omissions. Net effect: user lands
+      // on `?attn_pills=fail` filter (e.g. 4 visible failures),
+      // clicks // SELECT ALL FILTERED, and selects all 1500
+      // section rows because the scope helper ignored the ATTN
+      // filter the user was staring at. EXPORT CSV had the same
+      // wrong-scope bug.
+      if (libraryState.attnPills && libraryState.attnPills.size > 0) {
+        params.set('attn_pills', Array.from(libraryState.attnPills).join(','));
+      }
+      return params;
+    }
+
+    // v1.10.49: SELECT ALL FILTERED — pulls every page of the current
+    // filter and adds each row's key to libraryState.selected. Useful
+    // for 'manual + TDB tracked → DOWNLOAD ALL' and similar bulk
+    // workflows. Uses a high per_page (200, the API max) to keep
+    // round-trips bounded.
+    document.getElementById('library-select-all-filtered-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const origLabel = btn.textContent;
+      btn.textContent = '// LOADING…';
+      try {
+        const params = buildLibraryFilterParams(200);
+        let page = 1;
+        let collected = 0;
+        while (true) {
+          params.set('page', String(page));
+          const data = await api('GET', '/api/library?' + params.toString());
+          for (const it of (data.items || [])) {
+            // v1.16.10: store the full row data in selectedRows so
+            // the bulk-action count badges + handlers can operate
+            // on the entire filtered set (not just the visible
+            // page's libraryState.items).
+            const k = libKey(it);
+            libraryState.selected.add(k);
+            libraryState.selectedRows.set(k, it);
+            collected++;
+          }
+          const total = data.total || 0;
+          const perPage = data.per_page || 200;
+          if (page * perPage >= total) break;
+          page++;
+          if (page > 200) break;  // safety; never expected
+        }
+        // Reflect new state in the visible page checkboxes.
+        document.querySelectorAll('#library-body input[data-lib-select]').forEach((cb) => {
+          cb.checked = libraryState.selected.has(cb.dataset.libSelect);
+        });
+        updateLibrarySelectionUi();
+        btn.textContent = `// ${collected} SELECTED`;
+      } catch (err) {
+        alert('Select all filtered failed: ' + err.message);
+        btn.textContent = origLabel;
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }, 2500);
+    });
+
+    // v1.12.6: EXPORT CSV — pulls every selected row (paginating
+    // /api/library to recover row data when SELECT ALL FILTERED was
+    // used) and builds a 2-column CSV "Title (Year)","imdb_id" for
+    // mdblist.com / radarr / sonarr importlists. Selection-driven
+    // rather than filter-driven so the user can hand-curate the
+    // export by toggling individual rows before clicking.
+    document.getElementById('library-export-csv-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const selectedKeys = libraryState.selected;
+      if (selectedKeys.size === 0) {
+        alert('No rows selected — pick rows first or click // SELECT ALL FILTERED');
+        return;
+      }
+      btn.disabled = true;
+      const origLabel = btn.textContent;
+      btn.textContent = '// EXPORTING…';
+      try {
+        // Build a key → {title, year, imdb_id} map by walking every
+        // page of the current filter. Same pagination loop the
+        // SELECT ALL FILTERED handler uses; we already paid for
+        // these rows on the way in. v1.12.94: pill filters are now
+        // included via buildLibraryFilterParams (was a copy-paste
+        // omission shared with select-all).
+        const params = buildLibraryFilterParams(200);
+        const rowsByKey = new Map();
+        let page = 1;
+        while (true) {
+          params.set('page', String(page));
+          const data = await api('GET', '/api/library?' + params.toString());
+          for (const it of (data.items || [])) {
+            const k = libKey(it);
+            if (selectedKeys.has(k)) {
+              // v1.15.66: emit Youtube_URL for the round-trip import.
+              // Only set when src='U' (i.e. user_overrides has a row
+              // for this section). applied_youtube_url COALESCEs
+              // override-first so for U-letter rows it IS the user
+              // URL. TDB rows export an empty Youtube_URL cell so
+              // re-import is a no-op for them.
+              const userYt = (computeSrcLetter(it) === 'U')
+                ? (it.applied_youtube_url || '')
+                : '';
+              rowsByKey.set(k, {
+                title: it.theme_title || it.plex_title || it.title || '',
+                year: it.year || '',
+                imdb: it.imdb_id || it.guid_imdb || '',
+                youtube_url: userYt,
+              });
+            }
+          }
+          const total = data.total || 0;
+          const perPage = data.per_page || 200;
+          if (page * perPage >= total) break;
+          page++;
+          if (page > 200) break;  // safety
+        }
+        if (rowsByKey.size === 0) {
+          alert('No selected rows are visible under the current filter.');
+          btn.textContent = origLabel;
+          btn.disabled = false;
+          return;
+        }
+        // v1.21.49: TAB-delimited, not comma. The export is UTF-16 LE
+        // (v1.14.26, for encoding robustness) and Excel / Numbers treat
+        // UTF-16 as "Unicode Text" — which is TAB-separated. A UTF-16 +
+        // comma file made every field land in column A (the user's repro:
+        // headers + data all lumped in the first column). Tab matches
+        // the convention spreadsheet apps split correctly, AND titles
+        // with commas ('Lock, Stock, and Two Smoking Barrels') now need
+        // no quoting at all.
+        // Escape only when a field contains the delimiter (tab), a
+        // quote, or a newline — RFC-4180-style quoting that Excel /
+        // Numbers honor for tab-delimited too.
+        const tsvEscape = (s) => {
+          const v = String(s ?? '');
+          return /[\t"\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+        };
+        const lines = ['Title\tIMDB\tYoutube_URL'];
+        const sorted = Array.from(rowsByKey.values()).sort((a, b) =>
+          a.title.localeCompare(b.title, undefined, { sensitivity: 'base' })
+        );
+        for (const r of sorted) {
+          const titleYear = r.year ? `${r.title} (${r.year})` : r.title;
+          // v1.15.66: 3-column round-trip format. Empty Youtube_URL
+          // cell is the no-op signal on re-import; populated cell
+          // (manually edited or carried over from a prior U row)
+          // tells the import to set / replace the user URL.
+          lines.push(
+            `${tsvEscape(titleYear)}\t${tsvEscape(r.imdb)}\t${tsvEscape(r.youtube_url || '')}`
+          );
+        }
+        // v1.14.6: prefix the UTF-8 BOM so Excel + Numbers decode
+        // multi-byte characters correctly. Without the BOM Excel
+        // falls back to MacRoman / Windows-1252 and renders UTF-8's
+        // é (0xC3 0xA9) as "√©".
+        // v1.14.26: switched from UTF-8 BOM to UTF-16 LE with BOM.
+        // UTF-8 BOM works in modern Excel-on-Windows + Excel-on-Mac
+        // 16.x, but some round-trip paths strip it (Google Drive
+        // upload/download, Excel-on-Mac older import flows) and the
+        // mojibake returns. UTF-16 LE with BOM is what Excel itself
+        // emits when you "Save As CSV (Mac)" — works across Excel
+        // (Mac + Win), Numbers, Google Sheets, LibreOffice without
+        // any encoding-detection guesswork. File size doubles (2
+        // bytes per ASCII char) but our CSVs are small (~60 chars
+        // × N rows = negligible).
+        // the user's v1.14.26 repro: round-tripped through Google
+        // Drive then opened in Excel-on-Mac → "√úbel Blatt" instead
+        // of "Übel Blatt" (UTF-8 BOM stripped somewhere in the
+        // chain). UTF-16 LE BOM is unambiguous — no encoding
+        // detection happens.
+        const csvText = lines.join('\r\n') + '\r\n';
+        const buf = new ArrayBuffer(2 + csvText.length * 2);
+        const view = new DataView(buf);
+        // BOM: 0xFF 0xFE (UTF-16 LE).
+        view.setUint8(0, 0xFF);
+        view.setUint8(1, 0xFE);
+        // Each char as little-endian 16-bit. JS strings ARE UTF-16
+        // internally so charCodeAt gives us the code unit directly.
+        // Surrogate pairs (chars outside BMP) take 2 code units;
+        // charCodeAt iterates code units so this handles them
+        // correctly without manual surrogate decoding.
+        for (let i = 0; i < csvText.length; i++) {
+          view.setUint16(2 + i * 2, csvText.charCodeAt(i), /* littleEndian */ true);
+        }
+        const blob = new Blob([buf],
+                              { type: 'text/csv;charset=utf-16le' });
+        const url = URL.createObjectURL(blob);
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+        const tab = libraryState.tab || 'library';
+        const tag = libraryState.status === 'not_in_plex' ? 'tdb-only' : 'selection';
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `motif-${tab}-${tag}-${stamp}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        btn.textContent = `// EXPORTED ${rowsByKey.size}`;
+      } catch (err) {
+        alert('Export CSV failed: ' + err.message);
+        btn.textContent = origLabel;
+      }
+      setTimeout(() => {
+        btn.disabled = false;
+        btn.textContent = origLabel;
+      }, 2500);
+    });
+
+    // v1.10.49: ADOPT SELECTED — bulk action for sidecar-only rows.
+    // Only fires the inline adopt-sidecar endpoint for selected rows
+    // that are actually sidecar-only (rows without a sidecar are
+    // silently skipped). Each row is rk-keyed so we look it up in
+    // libraryState.items / fall back to fetching per-row data.
+    // v1.15.46: bulk ADOPT + LET PLEX SERVE handler. Mirrors the
+    // per-row SOURCE-menu action (v1.14.47) — adopt the sidecar,
+    // then unplace, per row. Fail-fast on adopt (no point
+    // unplacing if motif doesn't own the file yet); a per-row
+    // unplace failure is tracked but the loop continues so a
+    // single bad row doesn't strand the rest of the selection.
+    // the user's prompt scenario: M-source + red TDB rows where
+    // re-downloading from TDB won't work (URL dead) — best path
+    // is claim ownership + drop the file so Plex's own theme
+    // takes over. Mirrors the // ADOPT SELECTED progress label
+    // pattern + the v1.13.56 topbar-refresh trick (1100ms past
+    // /api/stats TTL).
+    // v1.15.60: bulk PROBE TDB SELECTED handler. Server-side
+    // composite — single POST to /api/admin/bulk-probe-tdb with
+    // the selected {media_type, tmdb_id} items. The endpoint's
+    // scope_items support (v1.15.1) narrows the probe to the
+    // selection so the 24h cooldown only applies to those rows
+    // (not the whole library). Same shape as the bulk LPS handler
+    // (v1.15.28) — fire-and-watch in // LIVE OPS.
+    document.getElementById('library-bulk-probe-tdb-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const useSelection = libraryState.selected.size > 0;
+      const targets = [];
+      // v1.16.10: selection-wide cache walk (see DOWNLOAD handler).
+      const source = useSelection
+        ? libraryState.selectedRows.values()
+        : (libraryState.items || []);
+      for (const it of source) {
+        if (!it.theme_media_type || it.theme_tmdb == null) continue;
+        if (it.upstream_source === 'plex_orphan') continue;
+        targets.push({
+          media_type: it.theme_media_type,
+          tmdb_id: it.theme_tmdb,
+        });
+      }
+      if (targets.length === 0) {
+        alert('Nothing to probe — no TDB-tracked rows in '
+              + (useSelection ? 'the current selection' : 'this view') + '.');
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      const ok = confirm(
+        `PROBE TDB on ${targets.length} ${scope} row${targets.length === 1 ? '' : 's'}?\n\n`
+        + 'Re-checks each row\'s TDB URL via yt-dlp --simulate '
+        + 'and updates the TDB pill (alive / dead / cookies-needed). '
+        + 'Bypasses the 24h cooldown for the selected scope. '
+        + 'Watch // LIVE OPS for progress.\n\nProceed?'
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// STARTING…';
+      try {
+        await api('POST', '/api/admin/bulk-probe-tdb', { items: targets });
+        // v1.15.139: instead of a blind 2s timer + leaving the user
+        // to read // LIVE OPS, watch the op to completion and surface
+        // its alive/cleared/dead summary on the button. the user: "can
+        // it show the status of the probe event similar to ack
+        // failure or some of the other buttons … so you can tell
+        // easily if any cleared or all still failed." The bulk-
+        // probe-tdb op_progress row carries the final counters in
+        // its `activity` field (api.py:2876-2881 _post_terminal_
+        // activity helper); we parse + format them onto the button.
+        watchBulkProbeCompletion(btn, orig);
+      } catch (e) {
+        alert('PROBE TDB failed to start: '
+              + (e && e.message ? e.message : 'unknown error')
+              + '\n\nIf the message says "already running", wait for '
+              + 'the current bulk probe to finish (see // LIVE OPS).');
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+
+    document.getElementById('library-adopt-and-lps-btn')?.addEventListener('click', async (e) => {
+      // v1.16.10: walk the selection-wide cache so the action covers
+      // every selected M+P composite, not just the ones on the
+      // visible page. Pre-fix a SELECT ALL FILTERED of 484 rows was
+      // truncated to the page's ~50; the off-page-selected warning
+      // told the user to manually paginate. Both are gone now.
+      const candidates = Array.from(libraryState.selectedRows.values())
+        .filter((it) => (
+          it.plex_local_theme === 1
+          && !it.media_folder
+          && it.plex_independent_theme === 1
+          && it.rating_key
+          && it.theme_media_type
+          && it.theme_tmdb != null
+        ));
+      if (candidates.length === 0) {
+        alert('No M+P composite rows selected. ADOPT + LET PLEX SERVE '
+              + 'applies to rows where a sidecar exists at the Plex '
+              + 'folder (M) AND Plex serves its own independent theme '
+              + '(+P composite, yellow dot on the SRC pill).');
+        return;
+      }
+      const ok = confirm(
+        `ADOPT + LET PLEX SERVE on ${candidates.length} M+P composite row${candidates.length === 1 ? '' : 's'}?\n\n`
+        + 'Per row this will:\n'
+        + '  • ADOPT the existing theme.mp3 at the Plex folder '
+        + '(motif claims ownership, hardlinks into /themes/)\n'
+        + '  • Then DELETE it from the Plex folder\n'
+        + '  • KEEP motif\'s canonical at /themes/ (recovery via '
+        + 'PUSH TO PLEX from the PLACE menu)\n\n'
+        + 'Plex\'s own theme (cloud / embed) becomes the only one '
+        + 'served on each row.\n\nProceed?'
+      );
+      if (!ok) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// RUNNING 0/${candidates.length}`;
+      // v1.19.53: optimistic placeholder — bulk ADOPT + LPS
+      // chains per-row adopts + unplaces. Adopts dominate the
+      // queue surface so route via adopt_queue.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'adopt_queue', '// QUEUING ADOPT + LPS',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      let adopted = 0, unplaced = 0, adoptFail = 0, unplaceFail = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        const it = candidates[i];
+        // Step 1: adopt. Bail this row on failure.
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(it.rating_key)}/adopt-sidecar`);
+          adopted++;
+        } catch (_err) {
+          adoptFail++;
+          btn.textContent = `// RUNNING ${i + 1}/${candidates.length}`;
+          continue;
+        }
+        // Step 2: unplace. Track partial state if this fails —
+        // the row landed in adopt-succeeded but file-still-at-
+        // Plex state (same as the per-row v1.14.53 hazard).
+        // v1.22.38 (audit): scope the unplace to THIS edition via rating_key —
+        // without it the backend's "absent rk = section-wide fan-out" branch
+        // unlinks every edition's placement in the section (multi-edition data
+        // loss). Mirrors the per-row DEL fix + the v1.21.61/.93 LPS sites.
+        const _bParams = new URLSearchParams();
+        if (it.section_id) _bParams.set('section_id', it.section_id);
+        if (it.rating_key) _bParams.set('rating_key', it.rating_key);
+        const _bq = _bParams.toString();
+        const unplaceUrl = `/api/items/${it.theme_media_type}/${it.theme_tmdb}/unplace${_bq ? '?' + _bq : ''}`;
+        try {
+          await api('POST', unplaceUrl);
+          unplaced++;
+        } catch (_err) {
+          unplaceFail++;
+        }
+        btn.textContent = `// RUNNING ${i + 1}/${candidates.length}`;
+      }
+      // Result label: adopt+unplace counts. Partial-state rows
+      // (adopted but unplace failed) show under PARTIAL so the
+      // operator knows to run LET PLEX SERVE on those manually.
+      const parts = [`${unplaced} DONE`];
+      if (unplaceFail) parts.push(`${unplaceFail} PARTIAL`);
+      if (adoptFail) parts.push(`${adoptFail} ADOPT-FAIL`);
+      btn.textContent = `// ${parts.join(' · ')}`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      setTimeout(refreshTopbarStatus, 1100);
+      if (typeof libraryRapidPoll === 'function') libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3500);
+    });
+
+    document.getElementById('library-adopt-selected-btn')?.addEventListener('click', async (e) => {
+      // v1.15.124: bulk ADOPT now paginates /api/library to recover
+      // off-page selected rows — pre-fix it filtered only the
+      // currently-rendered libraryState.items, so a SELECT ALL
+      // FILTERED selection of 231 rows would adopt only the ~42 on
+      // the visible page even when the filter (SRC=M + NO TDB) had
+      // already scoped to sidecar-only rows. the user: "not sure why
+      // it only is scoping to the 42 on the first page and not the
+      // rest." Same pagination pattern as EXPORT CSV (line 9628+).
+      const selectedKeys = libraryState.selected;
+      if (selectedKeys.size === 0) {
+        alert('No rows selected — pick rows first or click // SELECT ALL FILTERED');
+        return;
+      }
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// SCANNING…';
+      // v1.19.53: optimistic placeholder — bulk ADOPT enqueues
+      // per-row adopts that surface via adopt_queue.
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder(
+            'adopt_queue', '// QUEUING ADOPTS',
+          );
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      let candidates;
+      try {
+        // Walk every page of the current filter; collect rows that
+        // are (a) in the selection set AND (b) sidecar-only state.
+        const params = buildLibraryFilterParams(200);
+        const collected = [];
+        let page = 1;
+        while (true) {
+          params.set('page', String(page));
+          const data = await api('GET', '/api/library?' + params.toString());
+          for (const it of (data.items || [])) {
+            if (!selectedKeys.has(libKey(it))) continue;
+            // sidecar-only state: no placement + a sidecar exists.
+            if (!it.media_folder && !!it.plex_local_theme) {
+              collected.push(it);
+            }
+          }
+          const total = data.total || 0;
+          const perPage = data.per_page || 200;
+          if (page * perPage >= total) break;
+          page++;
+          if (page > 200) break;  // safety; never expected
+        }
+        candidates = collected;
+      } catch (err) {
+        alert('ADOPT scan failed: ' + (err.message || err));
+        btn.disabled = false;
+        btn.textContent = orig;
+        return;
+      }
+      if (candidates.length === 0) {
+        alert('No sidecar-only rows in the selection. ADOPT applies to rows showing the M pill (Plex has a theme.mp3 motif doesn\'t manage).');
+        btn.disabled = false;
+        btn.textContent = orig;
+        return;
+      }
+      const nonSidecar = selectedKeys.size - candidates.length;
+      const tail = nonSidecar > 0
+        ? `\n\n(${nonSidecar} selected row(s) skipped — not sidecar-only state.)`
+        : '';
+      if (!confirm(`Adopt ${candidates.length} sidecar(s)? Each is hardlinked into /themes and managed by motif from now on.${tail}`)) {
+        btn.disabled = false;
+        btn.textContent = orig;
+        return;
+      }
+      btn.textContent = `// ADOPTING 0/${candidates.length}`;
+      let ok = 0, fail = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        const it = candidates[i];
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(it.rating_key)}/adopt-sidecar`);
+          ok++;
+        } catch (err) {
+          fail++;
+        }
+        btn.textContent = `// ADOPTING ${i + 1}/${candidates.length}`;
+      }
+      btn.textContent = `// ${ok} ADOPTED${fail ? ` · ${fail} FAILED` : ''}`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      // v1.13.56: refresh topbar past /api/stats TTL — bulk ADOPT
+      // implicitly clears failures (FAIL pill should drop) and may
+      // affect UPD pill state.
+      setTimeout(refreshTopbarStatus, 1100);
+      libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3500);
+    });
+
+    // v1.10.51: ACK SELECTED — bulk acknowledge failures. Visible only
+    // on the FAILURES filter. Walks the selection, fires
+    // /clear-failure for each themed row that has an unacked
+    // failure_kind. Off-page selections are filtered to candidates
+    // we know about from libraryState.items; the user is told if
+    // any selected rows aren't on the visible page.
+    // v1.12.55: bulk accept-all / decline-all handlers. Both call
+    // server-side endpoints that iterate every pending_updates row
+    // with decision='pending', so the action is one HTTP round-trip
+    // regardless of how many pending updates exist.
+    // v1.12.120: accept/decline ALL UPDATES is two-mode now.
+    // (a) No selection — call /api/updates/accept-all (server walks
+    //     every eligible per-section pending update). The button
+    //     only renders in this mode when tdb_pills=update is the
+    //     ONLY active filter (see updateLibrarySelectionUi); using
+    //     it on a narrowed view would silently fan out beyond what
+    //     the user is looking at.
+    // (b) With selection — iterate the selected rows, call per-row
+    //     /api/updates/{type}/{id}/accept (?section_id=...) on the
+    //     ones with a live pending_update, skip the rest. User's
+    //     bug report: "if someone tries a bulk action against an
+    //     item which doesn't allow that don't attempt the action
+    //     against that row" — the filter is the skip rule.
+    function _selectedActionableForUpdates() {
+      // v1.16.10: walk the selection-wide cache so ACCEPT/KEEP cover
+      // every selected eligible row, not just the visible page.
+      return Array.from(libraryState.selectedRows.values()).filter(
+        // v1.20.0: pendingUpdateActionable (consolidated v1.19.98 fix).
+        (it) => pendingUpdateActionable(it),
+      );
+    }
+
+    document.getElementById('library-accept-all-updates-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const orig = btn.textContent;
+      const selection = _selectedActionableForUpdates();
+      if (selection.length > 0) {
+        const skipped = libraryState.selected.size - selection.length;
+        const skipNote = skipped > 0
+          ? `\n\n${skipped} selected row${skipped !== 1 ? 's' : ''} without a pending update will be skipped.`
+          : '';
+        // v1.19.39: dialog text acknowledges the v1.19.33 P-row
+        // backup branch. Pre-fix the text claimed "the existing
+        // theme replaced" universally — but for P-rows in the
+        // selection (Plex serves its own theme), v1.19.33 routes
+        // through auto_place=False so nothing is replaced (Plex
+        // keeps serving + motif lands the file as a backup).
+        const ok = confirm(
+          `Accept ${selection.length} pending update${selection.length !== 1 ? 's' : ''} from selection?`
+          + skipNote
+          + `\n\nFor URL-match rows this is instant; the rest get a download queued. Rows currently SRC=P (Plex serving its own theme) download as a backup — Plex keeps serving, TB badge appears. Other rows have their existing theme replaced. Per-row REVERT remains available.`
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        let ok_n = 0, fail_n = 0;
+        // v1.17.20: capture the FIRST failure message so the toast
+        // toast carries a hint of WHY (mirrors libraries-save at
+        // L4099). Pre-fix "N FAILED" was opaque — operator had
+        // to open devtools to learn the reason. Error UX audit
+        // MED 6.
+        let firstFailMsg = '';
+        for (let i = 0; i < selection.length; i++) {
+          const it = selection[i];
+          btn.textContent = `// ACCEPTING ${i + 1}/${selection.length}`;
+          try {
+            // v1.21.81: rating_key scopes the accept DECISION per edition.
+            const _p = [];
+            if (it.section_id) _p.push(`section_id=${encodeURIComponent(it.section_id)}`);
+            if (it.rating_key) _p.push(`rating_key=${encodeURIComponent(it.rating_key)}`);
+            const params = _p.length ? `?${_p.join('&')}` : '';
+            await api('POST', `/api/updates/${it.theme_media_type}/${it.theme_tmdb}/accept${params}`);
+            ok_n++;
+          } catch (err) {
+            // v1.13.8: surface the per-item error to the browser
+            // console so the user has a stack trace when X failed
+            // pops in the toast — pre-fix the underlying reason
+            // was completely silent. fail_n still drives the toast
+            // count; the console gets the diagnostic detail.
+            try { console.error('bulk action failed for item:', it, err); } catch (_) {}
+            fail_n++;
+            if (!firstFailMsg) {
+              firstFailMsg = (err && err.message) ? String(err.message) : String(err);
+            }
+          }
+        }
+        // v1.17.20: append first-failure hint to the toast when
+        // anything failed. Title-cased + short (max 60 chars)
+        // so it fits next to the count in the bulk-bar pill.
+        const failTag = fail_n
+          ? ` · ${fail_n} FAILED${firstFailMsg ? ' (' + firstFailMsg.slice(0, 60) + ')' : ''}`
+          : '';
+        btn.textContent = `// ${ok_n} ACCEPTED${failTag}${skipped ? ` · ${skipped} SKIPPED` : ''}`;
+        libraryState.selected.clear();
+        libraryState.selectedRows.clear();
+        libraryRapidPoll();
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        // v1.13.56: refresh topbar past /api/stats TTL so the
+        // blue UPD pill drops to its new count quickly.
+        setTimeout(refreshTopbarStatus, 1100);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+        return;
+      }
+      // No selection — global accept-all path.
+      let pending = 0;
+      try {
+        const res = await api('GET', '/api/updates/count');
+        pending = res.pending || 0;
+      } catch (_) { /* fall through; the endpoint will handle the noop */ }
+      if (pending === 0) {
+        alert('No pending updates to accept.');
+        return;
+      }
+      // v1.19.39: same dialog-copy fix as the per-selection
+      // bulk-accept above. v1.19.33's P-row branch routes through
+      // auto_place=False so the "replacing the current theme"
+      // claim doesn't hold for SRC=P rows in the global fan-out.
+      const ok = confirm(
+        `Accept ${pending} pending ThemerrDB update`
+          + `${pending !== 1 ? 's' : ''}?\n\n`
+          + `For URL-match rows (your override URL == TDB URL) this is `
+          + `instant — no download. For the rest motif will queue a `
+          + `download per row. Rows currently SRC=P (Plex serving) `
+          + `download as a backup — Plex keeps serving, TB badge `
+          + `appears. Other rows have their existing theme replaced. `
+          + `Action cannot be undone in bulk; per-row REVERT remains `
+          + `available.`
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      btn.textContent = `// ACCEPTING ${pending}…`;
+      try {
+        const res = await api('POST', '/api/updates/accept-all');
+        const flipped = res.eager_flipped || 0;
+        const queued = res.downloads_queued || 0;
+        // v1.19.39: surface the P-row backup count from the API
+        // response (the v1.19.39 server side stamps res.p_backup).
+        // Lets the user see "23 ACCEPTED · 5 P-BACKUP" instead of
+        // wondering why some rows still show SRC=P after the bulk.
+        const pBackup = res.p_backup || 0;
+        btn.textContent = `// ${res.accepted} ACCEPTED`
+          + (flipped ? ` · ${flipped} FLIPPED` : '')
+          + (queued ? ` · ${queued} QUEUED` : '')
+          + (pBackup ? ` · ${pBackup} P-BACKUP` : '');
+        libraryRapidPoll();
+      } catch (err) {
+        btn.textContent = '// FAILED';
+        alert('Bulk accept failed: ' + err.message);
+      } finally {
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        // v1.13.56: refresh topbar past /api/stats TTL.
+        setTimeout(refreshTopbarStatus, 1100);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
+      }
+    });
+
+    document.getElementById('library-decline-all-updates-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const orig = btn.textContent;
+      const selection = _selectedActionableForUpdates();
+      if (selection.length > 0) {
+        const skipped = libraryState.selected.size - selection.length;
+        const skipNote = skipped > 0
+          ? `\n\n${skipped} selected row${skipped !== 1 ? 's' : ''} without a pending update will be skipped.`
+          : '';
+        const ok = confirm(
+          `Dismiss ${selection.length} pending update${selection.length !== 1 ? 's' : ''} from selection?`
+          + skipNote
+          + `\n\nThe blue ↑ pill stays on each row for filter/sort, but the topbar UPD count drops accordingly.`
+        );
+        if (!ok) return;
+        btn.disabled = true;
+        let ok_n = 0, fail_n = 0;
+        let firstFailMsg = '';
+        for (let i = 0; i < selection.length; i++) {
+          const it = selection[i];
+          btn.textContent = `// DISMISSING ${i + 1}/${selection.length}`;
+          try {
+            // v1.21.81: rating_key scopes the decline DECISION per edition.
+            const _p = [];
+            if (it.section_id) _p.push(`section_id=${encodeURIComponent(it.section_id)}`);
+            if (it.rating_key) _p.push(`rating_key=${encodeURIComponent(it.rating_key)}`);
+            const params = _p.length ? `?${_p.join('&')}` : '';
+            await api('POST', `/api/updates/${it.theme_media_type}/${it.theme_tmdb}/decline${params}`);
+            ok_n++;
+          } catch (err) {
+            // v1.13.8: surface the per-item error to the browser
+            // console so the user has a stack trace when X failed
+            // pops in the toast — pre-fix the underlying reason
+            // was completely silent. fail_n still drives the toast
+            // count; the console gets the diagnostic detail.
+            try { console.error('bulk action failed for item:', it, err); } catch (_) {}
+            fail_n++;
+            // v1.17.20: capture first failure for the toast.
+            // Mirrors the accept-all branch above. Error UX MED 6.
+            if (!firstFailMsg) {
+              firstFailMsg = (err && err.message) ? String(err.message) : String(err);
+            }
+          }
+        }
+        const failTag = fail_n
+          ? ` · ${fail_n} FAILED${firstFailMsg ? ' (' + firstFailMsg.slice(0, 60) + ')' : ''}`
+          : '';
+        btn.textContent = `// ${ok_n} DISMISSED${failTag}${skipped ? ` · ${skipped} SKIPPED` : ''}`;
+        libraryState.selected.clear();
+        libraryState.selectedRows.clear();
+        libraryRapidPoll();
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        // v1.13.56: refresh topbar past /api/stats TTL so UPD pill drops.
+        setTimeout(refreshTopbarStatus, 1100);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+        return;
+      }
+      // No selection — global decline-all path.
+      let pending = 0;
+      try {
+        const res = await api('GET', '/api/updates/count');
+        pending = res.pending || 0;
+      } catch (_) { /* fall through */ }
+      if (pending === 0) {
+        alert('No pending updates to dismiss.');
+        return;
+      }
+      const ok = confirm(
+        `Dismiss ${pending} pending update${pending !== 1 ? 's' : ''}?\n\n`
+          + `The blue ↑ pill stays on each row for filter/sort, but the `
+          + `topbar UPD count drops to 0. Won't re-prompt unless ThemerrDB `
+          + `updates again.\n\n`
+          + `Includes newly-discovered ThemerrDB themes on unthemed rows `
+          + `(SRC=— rows with kind=new_theme_available) — those will also `
+          + `be marked declined.`
+      );
+      if (!ok) return;
+      btn.disabled = true;
+      btn.textContent = `// DISMISSING ${pending}…`;
+      try {
+        const res = await api('POST', '/api/updates/decline-all');
+        btn.textContent = `// ${res.declined} DISMISSED`;
+      } catch (err) {
+        btn.textContent = '// FAILED';
+        alert('Bulk dismiss failed: ' + err.message);
+      } finally {
+        setTimeout(() => loadLibrary().catch(()=>{}), 600);
+        // v1.13.56: refresh topbar past /api/stats TTL.
+        setTimeout(refreshTopbarStatus, 1100);
+        setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+      }
+    });
+
+    document.getElementById('library-ack-selected-btn')?.addEventListener('click', async (e) => {
+      // v1.14.15: ACK FAILURES gains the no-selection bulk path.
+      // With nothing selected the action targets every visible
+      // un-acked failure on the current page (same shape as
+      // REVERT MISMATCH / RESTORE FROM PLEX since v1.13.68).
+      // Per the user: "for keep current, ack failure and all other
+      // bulk actions when nothing has been selected it becomes a
+      // bulk action on everything".
+      const useSelection = libraryState.selected.size > 0;
+      // v1.16.10: walk the selection-wide cache so ACK covers every
+      // selected un-acked failure, not just the visible page. The
+      // off-page-selected warning that pre-fix forced the user to
+      // re-page through is gone — the action now does what the
+      // label implies.
+      const source = useSelection
+        ? Array.from(libraryState.selectedRows.values())
+        : (libraryState.items || []);
+      const candidates = source.filter((it) => {
+        if (!it.theme_media_type || it.theme_tmdb === null
+            || it.theme_tmdb === undefined) return false;
+        if (!it.failure_kind || it.failure_acked_at) return false;
+        return true;
+      });
+      if (candidates.length === 0) {
+        const where = useSelection ? 'in selection' : 'on this page';
+        alert(`No unacknowledged failures ${where}.`);
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      if (!confirm(`Acknowledge ${candidates.length} ${scope} failure${candidates.length === 1 ? '' : 's'}?`)) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// ACKING 0/${candidates.length}`;
+      let ok = 0, fail = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        const it = candidates[i];
+        try {
+          // v1.14.22: thread section_id through. Pre-fix the bulk
+          // ACK omitted the param, so /clear-failure took the
+          // legacy title-global path (writes themes.failure_acked_at)
+          // instead of the per-section sfa write. Net effect: ACK on
+          // a row from the 4K MOVIES tab also dismissed the failure
+          // on the standard MOVIES sibling — same v1.13.54 cross-
+          // section bleed bug class (CLAUDE.md class K). The
+          // recovery-card paths at app.js:9171-9173 + 9221-9223 +
+          // 9241-9242 thread it correctly; bulk was missed in that
+          // sweep.
+          const ackUrl = it.section_id
+            ? `/api/items/${it.theme_media_type}/${it.theme_tmdb}/clear-failure?section_id=${encodeURIComponent(it.section_id)}`
+            : `/api/items/${it.theme_media_type}/${it.theme_tmdb}/clear-failure`;
+          await api('POST', ackUrl);
+          ok++;
+        } catch (err) {
+          fail++;
+        }
+        btn.textContent = `// ACKING ${i + 1}/${candidates.length}`;
+      }
+      btn.textContent = `// ${ok} ACKED${fail ? ` · ${fail} FAILED` : ''}`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 600);
+      // v1.13.56: also refresh the topbar past the /api/stats 1s TTL
+      // cache so the red FAIL pill drops to its new count within
+      // ~1.1s of the last ACK landing. Pre-fix the FAIL pill clung
+      // to its stale value (e.g. 3 → ack 2 → still showed 3) until
+      // the next 15-30s topbar poll cycle. Mirrors the v1.13.51
+      // closeAndReload pattern used by every other state-changing
+      // action.
+      setTimeout(refreshTopbarStatus, 1100);
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
+    });
+
+    // v1.10.24: close any open row-menu popover when the user clicks
+    // anywhere outside it. Native <details> handles open/close on the
+    // summary itself but doesn't auto-dismiss on outside click.
+    document.addEventListener('click', (e) => {
+      const inside = e.target.closest('.row-menu');
+      document.querySelectorAll('.row-menu[open]').forEach((d) => {
+        if (d !== inside) d.removeAttribute('open');
+      });
+    });
+
+    // v1.17.18: close the bulk-bar overflow menu when the user
+    // clicks a button INSIDE its panel. The row-menu pattern
+    // (line 11355) handles this for per-row menus by scoping to
+    // #library-body; the bulk overflow menu lives outside that
+    // scope and needs its own close-on-action hook. Without
+    // this, clicking // ACK SELECTED from the overflow stays
+    // open after firing — the action runs but the menu lingers
+    // until the user clicks elsewhere.
+    const _bulkOverflowMenu = document.getElementById('library-bulk-overflow-menu');
+    if (_bulkOverflowMenu) {
+      _bulkOverflowMenu.addEventListener('click', (e) => {
+        const btn = e.target.closest('button.btn');
+        // Ignore the summary toggle itself; that's the
+        // explicit open/close affordance.
+        if (!btn || btn.matches('summary')) return;
+        setTimeout(() => _bulkOverflowMenu.removeAttribute('open'), 0);
+      });
+    }
+
+    // v1.10.14: helpers to look up the row a button belongs to and
+    // detect Plex-agent rows. Used to gate destructive overrides
+    // (DOWNLOAD / URL / UPLOAD) behind a confirmation when Plex is
+    // already supplying a theme — the user wants Plex's own themes to
+    // win by default and only override on explicit opt-in.
+    function findItemForButton(btn) {
+      const rk = btn.dataset.rk;
+      const mt = btn.dataset.mt;
+      const id = btn.dataset.id;
+      const items = libraryState.items || [];
+      // v1.22.80: rk-exact match FIRST. The old single find() with an
+      // OR matched whichever row came earlier in render order — a
+      // sibling edition/section with the same (mt, tmdb) could win
+      // over the actual clicked row, mis-driving the isPlexAgentRow
+      // confirm gate (skipped where designed to fire, or vice versa)
+      // and the adopt-sidecar confirm copy.
+      if (rk) {
+        const exact = items.find((it) => it.rating_key === rk);
+        if (exact) return exact;
+      }
+      return items.find((it) =>
+        mt && id && it.theme_media_type === mt
+              && String(it.theme_tmdb) === String(id)
+      );
+    }
+    function isPlexAgentRow(it) {
+      if (!it) return false;
+      // v1.18.75: a placement_kind='plex_upload' row is motif's
+      // OWN upload via Plex's HTTP API — not a P-agent row.
+      // Pre-fix `!it.media_folder` was true for BOTH true P-agent
+      // rows (no motif placement at all) AND plex_upload rows
+      // (motif placed via API, media_folder=''). Excluding the
+      // plex_upload kind narrows the predicate to its real intent:
+      // "Plex has its own theme that motif doesn't manage."
+      // Mirrors the v1.18.0 `placed` calculation in
+      // computeSrcLetter (line ~7367). the user's repro: clicking
+      // UPLOAD MP3 or SET URL on a U+PU row triggered the
+      // "Plex is already supplying a theme" prompt incorrectly —
+      // motif owns the API-uploaded theme; there's no Plex theme
+      // to defer to.
+      const motifPlaced = !!it.media_folder
+                          || it.placement_kind === 'plex_upload';
+      return !motifPlaced && !it.plex_local_theme
+             && !!it.plex_has_theme;
+    }
+    function confirmPlexAgentOverride(action, title, sourceLabel) {
+      // v1.12.59: parenthetical now names the actual source motif
+      // will use (the ThemerrDB version / your manual URL / your
+      // uploaded MP3) instead of the vague "motif's version" — the
+      // user reading the prompt for REPLACE TDB on a P-agent row
+      // shouldn't have to wonder what "motif's version" means when
+      // motif itself is fetching from ThemerrDB.
+      return confirm(
+        `Plex is already supplying a theme for "${title || 'this item'}".\n\n`
+        + `Motif's default is to defer to Plex when it has its own theme. `
+        + `Are you sure you want to ${action}?\n\n`
+        + `(This will replace what Plex currently plays with ${sourceLabel || "motif's version"}.)`
+      );
+    }
+
+    // v1.23.19: prefetch the INFO card on ⓘ hover so the click opens
+    // instantly. v1.23.20 (hotfix): INTENT-based — only fire once the
+    // pointer RESTS on the ⓘ for 150ms, so sweeping down a long list
+    // doesn't burst a request per row. The pre-fix bare mouseover fired
+    // an api_item GET for every row hovered, saturating the browser's
+    // ~6-connection-per-host limit; subsequent requests (incl. a later
+    // settings-page load) then queued behind the backlog and the UI
+    // appeared locked up (the user's repro). 6s cache + the rest-delay
+    // mean one deliberate hover = at most one request. Covers
+    // movies/tv/anime/collections (all share #library-body).
+    // v1.23.21 (code review): mouseover/mouseout BUBBLE and re-fire on
+    // the button's inner nodes, so the v1.23.20 bare handlers reset the
+    // 150ms timer on every sub-pixel move over the ⓘ (and a child
+    // mouseout cancelled it) — the rest-delay rarely actually fired.
+    // The relatedTarget boundary check emulates mouseenter/mouseleave
+    // via delegation: only (re)arm when entering the button from
+    // OUTSIDE it, only cancel when leaving it ENTIRELY.
+    let _infoHoverTimer = null;
+    const _lib = document.getElementById('library-body');
+    _lib?.addEventListener('mouseover', (e) => {
+      const btn = e.target.closest('button[data-act="info"]');
+      if (!btn || btn.contains(e.relatedTarget)) return;
+      const sid = btn.dataset.sectionId
+               || btn.closest('tr')?.dataset.sectionId
+               || undefined;
+      clearTimeout(_infoHoverTimer);
+      _infoHoverTimer = setTimeout(() => {
+        prefetchInfo(btn.dataset.mt, btn.dataset.id, sid,
+                     btn.dataset.rk || undefined);
+      }, 150);
+    });
+    _lib?.addEventListener('mouseout', (e) => {
+      const btn = e.target.closest('button[data-act="info"]');
+      if (!btn || btn.contains(e.relatedTarget)) return;
+      clearTimeout(_infoHoverTimer);
+    });
+
+    // Row clicks: redl, upload-theme, manual-url, delete-orphan, override, info
+    document.getElementById('library-body')?.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      // v1.10.24: action buttons inside a row-menu popover should close
+      // the menu after firing. Schedule the close after the click
+      // handler runs so other handlers see the open state if they
+      // care.
+      const menuParent = e.target.closest('.row-menu');
+      if (menuParent) {
+        setTimeout(() => menuParent.removeAttribute('open'), 0);
+      }
+      const act = btn.dataset.act;
+      // v1.23.21 (code review): any MUTATING row action invalidates the
+      // INFO prefetch cache — else a hover (cached ≤6s) then an action
+      // (CLEAR URL / UNPLACE / PURGE / ACCEPT UPDATE …) then a re-open
+      // within 6s would render the pre-action card. The api() layer is
+      // cache:'no-store' for exactly this reason; the prefetch must not
+      // reintroduce staleness on the card hardened to show live state.
+      if (act && act !== 'info') _infoPrefetch.clear();
+      // v1.13.21 (was v1.13.20): boost the ops poll cadence the moment
+      // the user enqueues work. Pre-fix a single fast yt-dlp call
+      // (~10s) could complete entirely between the drawer's idle
+      // 10s polls, so the topbar status pill never appeared and the
+      // user thought nothing happened. The optimistic placeholder
+      // fills the very-first-frame gap; boostPoll keeps it lit until
+      // /api/progress reflects the running op.
+      // v1.14.38: 'restore' was a typo — the actual action key
+      // is 'restore-canonical' (per the dispatcher branch at
+      // app.js ≈ 8448 + the bulk handler at 7551). Pre-fix the
+      // boostPoll trigger never fired for RESTORE FROM PLEX
+      // clicks: the Set lookup failed silently, so the ops mini-
+      // bar took up to 10s to surface the relink job after the
+      // user clicked. Audit M3 catch.
+      // v1.14.53: added the three v1.14.45/v1.14.47 SOURCE-menu
+      // actions. Same Set-lookup-silent-miss shape as the v1.14.38
+      // 'restore' / 'restore-canonical' typo above — pre-fix the
+      // boostPoll trigger never fired for DOWNLOAD TDB BACKUP or
+      // the new LPS-flow click paths, so the topbar mini-bar
+      // could sit on IDLE for up to ~10s before the queued op
+      // surfaced. download-tdb-backup enqueues a download_queue
+      // job; both LPS actions fire /unplace (place_queue side).
+      const _enqueueing = new Set([
+        'download', 'redl', 'place', 'unplace', 'restore-canonical', 'refresh',
+        'relink', 'adopt', 'manual-url', 'upload-theme', 'replace',
+        'replace-with-themerrdb', 'accept-update', 'revert', 'clear-url',
+        'download-tdb-backup', 'purge-revert-to-plex',
+        'adopt-and-let-plex-serve',
+        'backup-cloud-theme',
+      ]);
+      if (_enqueueing.has(act)) {
+        try {
+          if (window.motifOps && typeof window.motifOps.boostPoll === 'function') {
+            window.motifOps.boostPoll();
+          }
+        } catch (_) { /* swallow — boost is a UX nicety, never fatal */ }
+      }
+      // P-agent override gate: prompt before actions that would replace
+      // Plex's own theme with motif content.
+      // v1.19.37: 'revert' removed from this gate. Pre-fix a REVERT
+      // click on a P-row prompted "this will replace what Plex
+      // plays" — but v1.19.33 routes REVERT on P-rows through
+      // auto_place=False (Plex keeps serving, motif lands the file
+      // as a backup). The SOURCE-menu tooltip (v1.19.34) already
+      // tells the user this is backup-only; the v1.18.75 override
+      // confirm was a direct contradiction. REVERT on non-P rows
+      // doesn't need this gate either (no Plex serve to override).
+      // Audit finding from the post-v1.19.36 deep audit: "user
+      // hovers a tooltip saying 'Plex keeps serving,' clicks, then
+      // reads a dialog saying 'this will replace what Plex plays.'"
+      if (act === 'redl' || act === 'manual-url' || act === 'upload-theme'
+          || act === 'replace-with-themerrdb') {
+        const it = findItemForButton(btn);
+        if (isPlexAgentRow(it)) {
+          const verb = act === 'redl'                  ? 'download from ThemerrDB'
+                     : act === 'manual-url'            ? 'set a manual YouTube URL'
+                     : act === 'upload-theme'          ? 'upload an MP3'
+                     :                                   "replace with ThemerrDB's version";
+          // v1.12.59: source label names what's about to play
+          // instead of the vague "motif's version" the prompt
+          // used to show. Maps each action to the canonical
+          // wording the rest of the UI uses (ThemerrDB / your
+          // manual YouTube URL / your uploaded MP3).
+          const sourceLabel =
+              act === 'manual-url'  ? 'your manual YouTube URL'
+            : act === 'upload-theme' ? 'your uploaded MP3'
+            :                          'the ThemerrDB version';
+          if (!confirmPlexAgentOverride(verb, btn.dataset.title, sourceLabel)) return;
+        }
+      }
+      if (act === 'redl') {
+        // v1.12.73: pass section_id from the menu button (set by
+        // menuItemHtml(extras.sectionId)) so RE-DOWNLOAD TDB /
+        // DOWNLOAD TDB target only the row's section. Mirrors the
+        // ACCEPT UPDATE / REVERT scoping we already do.
+        redownload(btn.dataset.mt, btn.dataset.id, btn,
+                   btn.dataset.sectionId || undefined).catch(console.error);
+      } else if (act === 'download-tdb-backup') {
+        // v1.14.45: SOURCE-menu DOWNLOAD TDB BACKUP for pure-P
+        // rows. Same endpoint the recovery-card dispatcher
+        // calls; section-scoped via the menu button's
+        // dataset.sectionId.
+        // v1.14.46: also fire libraryRapidPoll() so the row's
+        // amber-pulsing DL chip transitions to green within
+        // the rapid-poll window instead of waiting up to 30s
+        // for the next regular library refresh. Mirrors the
+        // pattern in `redownload()` (line ~2285); pre-fix the
+        // SOURCE-menu DOWNLOAD TDB BACKUP click left the chip
+        // stuck at amber until the user manually refreshed.
+        // the user's repro on v1.14.45.
+        const mt = btn.dataset.mt;
+        const id = btn.dataset.id;
+        const sec = btn.dataset.sectionId || '';
+        const bkRk = btn.dataset.rk || '';
+        try {
+          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+            window.motifOps.setOptimisticPlaceholder(
+              'download_queue', '// QUEUING DOWNLOAD',
+            );
+          }
+        } catch (_) { /* placeholder is cosmetic */ }
+        // v1.21.64 (C3): pass rating_key so the backup downloads THIS edition.
+        const bkQp = [
+          sec ? `section_id=${encodeURIComponent(sec)}` : '',
+          bkRk ? `rating_key=${encodeURIComponent(bkRk)}` : '',
+        ].filter(Boolean).join('&');
+        const url = `/api/items/${mt}/${id}/download-backup${bkQp ? `?${bkQp}` : ''}`;
+        api('POST', url).then((res) => {
+          // v1.15.142: surface the 0-enqueued case to the user.
+          // Pre-fix the endpoint returned 200 OK with
+          // `{enqueued_sections: 0}` when no plex_items row
+          // matched the action's tmdb_id (most common cause:
+          // Plex matched the row via a non-TMDB GUID like
+          // AniDB so guid_tmdb was NULL — the strict
+          // guid_tmdb filter in _enqueue_download missed it).
+          // the user's repro on Dark Gathering silently no-opped.
+          // The v1.15.142 server fix relaxes the lookup to use
+          // pi.theme_id linkage, but this client-side surface
+          // catches any future edge where 0 still bubbles up
+          // (e.g. row was removed from Plex mid-click, section
+          // was just excluded) so the user gets clear feedback
+          // instead of wondering why nothing happened.
+          if (res && res.enqueued_sections === 0) {
+            try {
+              if (window.motifOps
+                  && window.motifOps.clearOptimisticPlaceholder) {
+                window.motifOps.clearOptimisticPlaceholder('download_queue');
+              }
+            } catch (_) { /* placeholder is cosmetic */ }
+            alert(
+              'DOWNLOAD TDB BACKUP enqueued nothing.\n\n'
+              + "No included Plex section currently owns this row's "
+              + 'theme record. Possible causes:\n'
+              + '  • the section was just excluded in /settings\n'
+              + '  • Plex removed the title since the last enum\n'
+              + '  • a fresh sync is in flight and plex_enum '
+              + 'hasn\'t re-linked the row yet — retry in a minute\n'
+            );
+            return;
+          }
+          loadLibrary().catch(()=>{});
+          if (typeof libraryRapidPoll === 'function'
+              && document.getElementById('library-body')) {
+            libraryRapidPoll();
+          }
+        }).catch((e) => {
+          alert('DOWNLOAD TDB BACKUP failed: ' + e.message);
+          // v1.15.35: clear the optimistic placeholder on
+          // failure. Pre-fix the placeholder set above (line
+          // ~9389) lingered for its 5s TTL even though the
+          // action had failed — the user dismissed the alert
+          // and saw the drawer still saying "// QUEUING
+          // DOWNLOAD" for a row that wasn't actually queued.
+          try {
+            if (window.motifOps
+                && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('download_queue');
+            }
+          } catch (_) { /* placeholder is cosmetic */ }
+        });
+      } else if (act === 'backup-cloud-theme') {
+        // v1.19.43: SOURCE-menu DOWNLOAD PLEX BACKUP. Scopes the
+        // v1.19.42 admin endpoint to a single rk via the {rks}
+        // body.
+        // v1.19.45: endpoint is now async (acquire-then-spawn-
+        // thread). Returns immediately with {ok, op_id}; the
+        // actual work runs in a background thread + surfaces in
+        // the ops drawer / mini-bar.
+        // v1.19.50: poll the op via motifOps.waitForOp + alert
+        // on the 0-eligible-target case. the user's repro: clicked
+        // DOWNLOAD PLEX BACKUP on 90 Day Fiancé (SRC=P) → walker
+        // found 1 row + classified it as non-C1 → 0 backed up,
+        // ops drawer said "done" but the row didn't change → user
+        // couldn't tell what happened. Explicit alert now
+        // surfaces the "not eligible" case.
+        // v1.19.52: setOptimisticPlaceholder mirrors every other
+        // queueing SOURCE-menu action — gives the user immediate
+        // mini-bar feedback rather than waiting for the next
+        // poll tick.
+        const rk = btn.dataset.rk;
+        // v1.19.62: PS-with-DL rows pass allow_existing_local so
+        // the walker drops its NOT-EXISTS-local_files filter and
+        // backup_cloud_theme's ON CONFLICT REPLACEs the existing
+        // (non-plex_cloud) canonical with Plex's cloud theme bytes.
+        // Pure-P rows leave the flag at '0' (existing v1.19.43
+        // behavior).
+        const allowExistingLocal = btn.dataset.allowExistingLocal === '1';
+        // v1.21.35: TDB-presence flag for the force-capture copy branch.
+        const hasTdb = btn.dataset.hasTdb === '1';
+        try {
+          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+            // v1.19.83: kind must match the real op (cloud_themes_backup)
+            // so the placeholder hands off cleanly — see the bulk
+            // handler for the full rationale (stale QUEUING after the
+            // LINK already changed over).
+            window.motifOps.setOptimisticPlaceholder(
+              'cloud_themes_backup', '// QUEUING PLEX BACKUP',
+            );
+          }
+        } catch (_) { /* placeholder is cosmetic */ }
+        api('POST', '/api/admin/cloud-themes-backup-run',
+            { rks: [rk],
+              allow_existing_local: allowExistingLocal }).then((res) => {
+          if (res && res.ok) {
+            // boostPoll surfaces the new op in the mini-bar.
+            // libraryRapidPoll refreshes the row so the B badge
+            // lands when the worker completes.
+            if (window.motifOps && typeof window.motifOps.boostPoll === 'function') {
+              try { window.motifOps.boostPoll(); } catch (_) {}
+            }
+            if (typeof libraryRapidPoll === 'function'
+                && document.getElementById('library-body')) {
+              libraryRapidPoll();
+            }
+            // Poll for completion + surface 0-result if needed.
+            if (window.motifOps
+                && typeof window.motifOps.waitForOp === 'function') {
+              window.motifOps.waitForOp(res.op_id || 'cloud-themes-backup',
+                                         { timeoutMs: 30000 })
+                .then((finalOp) => {
+                  // v1.19.83: clear the placeholder on terminal (see
+                  // bulk handler) so a fast op can't leave QUEUING
+                  // lingering after the row already changed over.
+                  try {
+                    if (window.motifOps
+                        && window.motifOps.clearOptimisticPlaceholder) {
+                      window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+                    }
+                  } catch (_) { /* cosmetic */ }
+                  if (!finalOp) return;  // timed out — drawer has detail
+                  const processed = finalOp.processed_total || 0;
+                  const errors = finalOp.error_count || 0;
+                  if (finalOp.status === 'done'
+                      && processed === 0 && errors === 0) {
+                    // v1.20.18: the strict run found no cloud
+                    // (metadata://) theme to auto-back-up. Rather
+                    // than a dead-end alert, offer to force-capture
+                    // WHATEVER Plex is currently serving (incl a
+                    // themerr-plex upload://). Reversible: the
+                    // ThemerrDB linkage lives on themes.youtube_url,
+                    // untouched by the swap — re-pull via SOURCE →
+                    // DOWNLOAD TDB BACKUP anytime. backup_cloud_theme
+                    // dedups byte-identical bytes so this is a no-op
+                    // when Plex is just echoing motif's own upload.
+                    cloudBackupForceCapture(rk, hasTdb);
+                  } else if (finalOp.status === 'failed') {
+                    alert(
+                      'DOWNLOAD PLEX BACKUP failed. Check the LOGS '
+                      + 'tab for details.'
+                    );
+                  }
+                })
+                .catch(() => { /* polling-only; cosmetic */ });
+            }
+          } else {
+            // v1.22.34 (audit): res.ok===false on a 200 left the optimistic
+            // placeholder hanging with no feedback (the swallow). Clear it +
+            // tell the user the backup didn't start.
+            try {
+              if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+                window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+              }
+            } catch (_) { /* cosmetic */ }
+            alert('DOWNLOAD PLEX BACKUP could not start'
+                  + (res && res.error ? ': ' + res.error : '.'));
+          }
+        }).catch((e) => {
+          // v1.19.52: clear the optimistic placeholder so the
+          // mini-bar doesn't hang on a queued state that never
+          // landed an op_progress row.
+          try {
+            if (window.motifOps
+                && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+            }
+          } catch (_) { /* cosmetic */ }
+          // The most common failure: 409 if another cloud-backup
+          // run is already in flight. Surface that vs generic
+          // errors.
+          if (e && e.message && e.message.indexOf('409') !== -1) {
+            alert('Another cloud-themes-backup run is already in '
+                  + 'flight. Wait for it to finish or cancel it '
+                  + 'from the ops drawer.');
+          } else {
+            alert('DOWNLOAD PLEX BACKUP failed to start: '
+                  + (e.message || e));
+          }
+        });
+      } else if (act === 'purge-revert-to-plex') {
+        // v1.14.47: SOURCE-menu LET PLEX SERVE (moved from
+        // INFO TRY THIS NEXT). Calls the top-level
+        // letPlexServeFlow helper which does probe-then-
+        // confirm + /unplace + refresh.
+        // v1.14.53: pass `|| undefined` (was `|| ''`) so the
+        // helper's `(!sectionId || row.section_id === sectionId)`
+        // predicate doesn't short-circuit on empty-string AND
+        // the URL builder's `sectionId ? ... : ...` falls through
+        // to the unscoped endpoint deliberately, not by accident.
+        // Empty-string sectionId silently fanned the unplace
+        // server-wide and could pick the wrong section's
+        // media_folder for the confirm dialog hint.
+        letPlexServeFlow(btn.dataset.mt, btn.dataset.id,
+                         btn.dataset.sectionId || undefined, btn,
+                         btn.dataset.rk || undefined)
+          .catch((e) => alert('LET PLEX SERVE failed: ' + e.message));
+      } else if (act === 'adopt-and-let-plex-serve') {
+        // v1.14.47: SOURCE-menu ADOPT + LET PLEX SERVE (moved
+        // from INFO TRY THIS NEXT). Calls the top-level
+        // adoptAndLetPlexServeFlow helper which chains
+        // /adopt-sidecar + /unplace + refresh.
+        // v1.14.53: see purge-revert-to-plex above — same
+        // empty-string sectionId rationale.
+        adoptAndLetPlexServeFlow(
+          btn.dataset.mt, btn.dataset.id,
+          btn.dataset.sectionId || undefined,
+          btn.dataset.rk,  // adopt-sidecar needs rating_key
+          btn,
+        ).catch((e) => alert(
+          'ADOPT + LET PLEX SERVE failed: ' + e.message));
+      } else if (act === 'revert') {
+        revertToThemerrDb(btn.dataset.mt, btn.dataset.id, btn).catch(console.error);
+      } else if (act === 'clear-url') {
+        // v1.12.37 (revised): CLEAR URL drops the captured
+        // previous URL on the row so REVERT becomes unavailable.
+        // Doesn't touch the canonical or user_overrides — the
+        // current playing theme is unaffected.
+        // v1.12.86: pass section_id so the clear scopes to the
+        // row's section. Without it the endpoint clears every
+        // section's snapshot for the title (legacy behavior).
+        const title = btn.dataset.title || 'this theme';
+        if (!confirm(`Clear previous URL for "${title}"?\nREVERT will no longer be available.`)) return;
+        clearUrlOverride(
+          btn.dataset.mt, btn.dataset.id, btn,
+          btn.dataset.sectionId || undefined,
+        ).catch(console.error);
+      } else if (act === 'info') {
+        // v1.12.72: pass section_id from the row so INFO surfaces
+        // the section-specific override (when per-section overrides
+        // exist). Closest tr's first <details data-section-id>
+        // attribute would also work, but the menu button's
+        // data-section-id (set by menuItemHtml) is the cleanest path.
+        // Fall back to undefined when not present.
+        const sid = btn.dataset.sectionId
+                 || btn.closest('tr')?.dataset.sectionId
+                 || undefined;
+        // v1.12.73: blur the trigger button before opening the
+        // dialog so the focus-visible cyan outline doesn't linger
+        // on the row's ⓘ button after the user closes the
+        // dialog with Esc. Same pattern used elsewhere where a
+        // click hands focus off to a modal.
+        btn.blur();
+        // v1.21.68: forward the row's rating_key so the INFO card scopes
+        // its download/placement/override/edition-tag to THIS edition.
+        openInfoDialog(btn.dataset.mt, btn.dataset.id, sid,
+                       btn.dataset.rk || undefined).catch(console.error);
+      } else if (act === 'unplace') {
+        await unplaceTheme(btn.dataset.mt, btn.dataset.id,
+                           btn.dataset.title || '',
+                           btn.dataset.sectionId || undefined,
+                           btn.dataset.kind === 'plex_upload',
+                           btn.dataset.rk || undefined);
+        await loadLibrary().catch(()=>{});
+      } else if (act === 'replace') {
+        // v1.18.28: forward btn.dataset.kind through to
+        // replaceTheme so RE-PUSH + collection PUSH + mismatch
+        // PUSH overwrite via the row's current placement_kind
+        // (not the global default_placement_method). Falsy
+        // dataset.kind → undefined → backend keeps the existing
+        // default-method fallback for any caller that didn't
+        // set a kind.
+        await replaceTheme(btn.dataset.mt, btn.dataset.id, btn,
+                            btn.dataset.kind || undefined);
+      } else if (act === 'replace-file') {
+        // v1.18.23: PUSH TO PLEX (FILE) — explicit sidecar push.
+        await replaceTheme(btn.dataset.mt, btn.dataset.id, btn, 'file');
+      } else if (act === 'replace-api') {
+        // v1.18.23: PUSH TO PLEX (API) — explicit Plex metadata upload.
+        await replaceTheme(btn.dataset.mt, btn.dataset.id, btn, 'api');
+      } else if (act === 'switch-placement') {
+        // v1.18.23: flip sidecar ↔ plex_upload. Endpoint computes
+        // the inverse of the current placement_kind.
+        await switchPlacement(btn.dataset.mt, btn.dataset.id, btn);
+      } else if (act === 'adopt-from-plex') {
+        // v1.11.99: discard motif's new download, re-adopt the file
+        // currently at the Plex folder. Confirm explicitly because
+        // the new download will be replaced.
+        const ok = confirm(
+          "ADOPT FROM PLEX will discard motif's new download and " +
+          "re-adopt the file currently at the Plex folder as the " +
+          "canonical.\n\nThe new theme content motif fetched will be " +
+          "lost — the Plex-folder file becomes the source of truth.\n\n" +
+          "Proceed?");
+        if (!ok) return;
+        try {
+          if (btn) btn.disabled = true;
+          await api('POST',
+            `/api/items/${btn.dataset.mt}/${btn.dataset.id}/adopt-from-plex`);
+          await loadLibrary().catch(() => {});
+          // v1.18.88: rapid-poll so the LINK transition (M=mismatch
+          // → A=adopted) lands in the UI promptly. Pre-fix relied
+          // on the 30s background tick.
+          if (typeof libraryRapidPoll === 'function') libraryRapidPoll();
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Adopt from Plex failed: ' + e.message);
+          if (btn) btn.disabled = false;
+        }
+      } else if (act === 'keep-mismatch') {
+        // v1.11.99: ack the mismatch — drops it from /pending but
+        // keeps both files in place. Library row keeps DL=amber +
+        // LINK=≠ as a passive reminder.
+        try {
+          if (btn) btn.disabled = true;
+          // v1.21.79: pass rating_key so the ack scopes to this edition.
+          const _kmRk = btn.dataset.rk
+            ? `?rating_key=${encodeURIComponent(btn.dataset.rk)}` : '';
+          await api('POST',
+            `/api/items/${btn.dataset.mt}/${btn.dataset.id}/keep-mismatch${_kmRk}`);
+          await loadLibrary().catch(() => {});
+          // v1.18.88: rapid-poll so the row's mismatch-state cleanup
+          // (DL chip + LINK chip) surfaces without a manual refresh.
+          if (typeof libraryRapidPoll === 'function') libraryRapidPoll();
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Keep mismatch failed: ' + e.message);
+          if (btn) btn.disabled = false;
+        }
+      } else if (act === 'accept-update') {
+        // v1.11.74: same flow as the browse-page ACCEPT button —
+        // helper handles the API call + alerting; we just reload
+        // the library so the ↑ glyph clears and the new theme
+        // metadata appears.
+        try {
+          await acceptUpdate(btn.dataset.mt, btn.dataset.id, btn);
+          await loadLibrary().catch(() => {});
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Accept failed: ' + e.message);
+        }
+      } else if (act === 'decline-update') {
+        try {
+          await declineUpdate(btn.dataset.mt, btn.dataset.id, btn);
+          await loadLibrary().catch(() => {});
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (e) {
+          alert('Decline failed: ' + e.message);
+        }
+      } else if (act === 'restore-canonical') {
+        // v1.11.62: recreate the missing canonical from the surviving
+        // placement file. Hardlink first, copy fallback on cross-FS.
+        const title = btn.dataset.title || 'this item';
+        if (!confirm(`Restore canonical /themes copy for "${title}" from the Plex-folder file?`)) return;
+        try {
+          const r = await api('POST', `/api/items/${btn.dataset.mt}/${btn.dataset.id}/restore-canonical`);
+          if (r.skipped && r.skipped.length) {
+            const reasons = r.skipped.map((s) => `${s.section_id}: ${s.reason}`).join('\n');
+            alert(`Restored ${r.restored}; skipped:\n${reasons}`);
+          }
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Restore failed: ' + e.message);
+        }
+      } else if (act === 'purge') {
+        await purgeTheme(btn.dataset.mt, btn.dataset.id,
+                         btn.dataset.title || '',
+                         btn.dataset.orphan === '1',
+                         btn.dataset.dlOnly === '1',
+                         btn.dataset.sectionId || undefined,
+                         btn.dataset.plexAlso === '1',
+                         btn.dataset.kind === 'plex_upload',
+                         btn.dataset.rk || undefined);
+        await loadLibrary().catch(()=>{});
+      // v1.14.38: dropped row-handler `clear-failure` branch.
+      // Per v1.12.87 ("ACK FAILURE moved out of the SOURCE menu —
+      // INFO card's // TRY THIS NEXT section is now the single
+      // ACK entry-point"), no row template emits
+      // `data-act="clear-failure"` anymore — the branch was
+      // unreachable. The recovery-options dispatcher at app.js
+      // ≈ 9522 still handles 'clear-failure' for the INFO card's
+      // ACK button; that path is alive. Audit L2 cleanup. (Bonus:
+      // the dead branch was also missing the section_id param —
+      // would have been a ghost cross-section bleed if reached.)
+      } else if (act === 'unmanage') {
+        // v1.10.18: drop tracking but leave the Plex-folder file in
+        // place. Confirms before firing — destructive and silent
+        // about which file gets deleted (the user may not realize
+        // the canonical is in /themes vs. their Plex folder).
+        const title = btn.dataset.title || 'this item';
+        // v1.20.57: PU rows have no sidecar — UNMANAGE deletes motif's
+        // local copy + tracking but Plex keeps serving its API upload,
+        // so the row lands at P (Plex-served), not M.
+        const unmanagePU = btn.dataset.kind === 'plex_upload';
+        if (!confirm(unmanagePU
+          ? `Stop managing the theme for "${title}"?\n\n`
+            + `Motif will:\n`
+            + `  • delete its local copy at /themes/...\n`
+            + `  • drop its tracking (local_files + placement rows)\n`
+            + `  • LEAVE its uploaded theme on Plex\n\n`
+            + `Plex keeps serving it → the row becomes P (Plex-served). `
+            + `You can re-manage it later (PUSH TO PLEX / SET URL / etc.).`
+          : `Stop managing the theme for "${title}"?\n\n`
+            + `Motif will:\n`
+            + `  • delete its canonical copy at /themes/...\n`
+            + `  • drop its tracking (local_files + placement rows)\n`
+            + `  • LEAVE the theme.mp3 in your Plex folder alone\n\n`
+            + `The row will flip back to M (unmanaged sidecar). You can `
+            + `re-adopt or replace it later.`
+        )) return;
+        try {
+          // v1.12.73: pass section_id from the menu button so
+          // UNMANAGE targets only this row's section. Sibling
+          // sections keep their motif management.
+          // v1.21.84: rating_key scopes UNMANAGE to THIS edition.
+          const sid = btn.dataset.sectionId;
+          const _uP = [];
+          if (sid) _uP.push(`section_id=${encodeURIComponent(sid)}`);
+          if (btn.dataset.rk) _uP.push(`rating_key=${encodeURIComponent(btn.dataset.rk)}`);
+          const unmanageUrl = `/api/items/${btn.dataset.mt}/${btn.dataset.id}/unmanage`
+            + (_uP.length ? `?${_uP.join('&')}` : '');
+          await api('POST', unmanageUrl);
+          libraryRapidPoll();
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Unmanage failed: ' + e.message);
+        }
+      } else if (act === 'upload-theme') {
+        openUploadDialog({
+          ratingKey: btn.dataset.rk,
+          title: btn.dataset.title || '',
+          year: btn.dataset.year || '',
+          // v1.15.75: pass srcLetter so the dialog can reveal the
+          // // DOWNLOAD ONLY checkbox only on P-rows (Plex already
+          // serves a theme — the checkbox lets us keep that serving
+          // intact while landing a backup file).
+          srcLetter: btn.dataset.srcLetter || '',
+        });
+      } else if (act === 'manual-url') {
+        openManualUrlDialog({
+          ratingKey: btn.dataset.rk,
+          title: btn.dataset.title || '',
+          year: btn.dataset.year || '',
+          tdbUrl: btn.dataset.ytUrl || '',
+          appliedUrl: btn.dataset.appliedUrl || '',
+          srcLetter: btn.dataset.srcLetter || '',
+        });
+      } else if (act === 'ack-drop') {
+        // v1.13.1 (Phase C): clear tdb_dropped_at without removing
+        // the row. The TDB◌ pill goes away; SRC stays as-is.
+        const mt = btn.dataset.mt, id = btn.dataset.id;
+        if (!mt || !id) return;
+        try {
+          await api('POST', `/api/items/${mt}/${id}/ack-drop`);
+          loadLibrary().catch(()=>{});
+          // v1.22.88 (class 8): the topbar N DROP pill reads the 1s-TTL
+          // /api/stats cache — without this kick it kept the stale
+          // count for up to 10s after the last ACK ("the ACK didn't
+          // take"). Mirrors every sibling action (e.g. accept-update).
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (err) {
+          alert('ACK DROP failed: ' + err.message);
+        }
+      } else if (act === 'convert-to-manual') {
+        // v1.13.1 (Phase C): promote themes.youtube_url into
+        // user_overrides for this section. SRC reclassifies T→U.
+        const mt = btn.dataset.mt, id = btn.dataset.id;
+        const sectionId = btn.dataset.sectionId || '';
+        if (!mt || !id) return;
+        if (!confirm('Convert to manual? Future syncs will skip this row.')) return;
+        try {
+          const params = sectionId ? `?section_id=${encodeURIComponent(sectionId)}` : '';
+          await api('POST',
+            `/api/items/${mt}/${id}/convert-to-manual${params}`);
+          loadLibrary().catch(()=>{});
+          // v1.22.88 (class 8): see ack-drop above.
+          setTimeout(refreshTopbarStatus, 1100);
+        } catch (err) {
+          alert('CONVERT TO MANUAL failed: ' + err.message);
+        }
+      } else if (act === 'adopt-sidecar') {
+        // v1.10.9: inline adopt — claim the sidecar at this Plex folder.
+        // v1.10.21: surface the match kind in the confirm prompt so the
+        // user knows whether the result will be linked to a ThemerrDB
+        // record (REPLACE w/ TDB available after) or a pure orphan
+        // (file is the source of truth, no TDB alternative).
+        // v1.10.53: third case — TMDB-matched but the YouTube URL is
+        // dead (red TDB ✗ pill). REPLACE w/ TDB won't work until
+        // ThemerrDB updates the URL.
+        const title = btn.dataset.title || 'this item';
+        const it = findItemForButton(btn);
+        const tdbTracked = !!(it && it.upstream_source
+                              && it.upstream_source !== 'plex_orphan');
+        const tdbDead = !!(it && it.failure_kind && new Set([
+          'video_private', 'video_removed',
+          'video_age_restricted', 'geo_blocked',
+        ]).has(it.failure_kind));
+        const matchNote = !tdbTracked
+          ? "No ThemerrDB record — your file is the source of truth."
+          : tdbDead
+            ? "ThemerrDB tracks this title but the YouTube URL is broken (removed / private / restricted). REPLACE TDB stays unavailable until upstream updates."
+            : "ThemerrDB tracks this title — REPLACE TDB will be available after adopt.";
+        if (!confirm(
+          `Adopt the existing theme.mp3 for "${title}"?\n\n${matchNote}\n\n`
+          + `Motif will hardlink the file into /themes and manage it from now on.`
+        )) return;
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/adopt-sidecar`);
+          libraryRapidPoll();
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          alert('Adopt failed: ' + e.message);
+        }
+      } else if (act === 'replace-with-themerrdb') {
+        const title = btn.dataset.title || 'this item';
+        // v1.11.55: skip the per-action confirm when the row is a
+        // P-agent — the upstream P-agent override gate at line 3737
+        // already asked the same question ('Plex is supplying a
+        // theme; replace with motif's version?'). Pre-fix the user
+        // got two near-identical confirms back to back. The gate
+        // doesn't fire for sidecarOnly (M) or isManualPlacement
+        // rows, so this confirm still runs in those cases where
+        // the gate gave no warning.
+        const it = findItemForButton(btn);
+        if (!isPlexAgentRow(it)) {
+          if (!confirm(`Replace "${title}" theme with the ThemerrDB version?`)) return;
+        }
+        // v1.13.65: paint the optimistic topbar placeholder before
+        // the POST so the mini-bar lights up the same frame the user
+        // confirms. Pre-fix REPLACE TDB enqueued a download_queue
+        // server-side but the topbar showed nothing — the row's
+        // amber DL pill was the only signal, and the user had to
+        // wait for the next /api/progress idle poll (up to 10s) for
+        // the topbar bar to appear. Mirrors the redownload() helper.
+        try {
+          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+            window.motifOps.setOptimisticPlaceholder(
+              'download_queue', '// QUEUING DOWNLOAD',
+            );
+          }
+        } catch (_) { /* swallow — placeholder is cosmetic */ }
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(btn.dataset.rk)}/replace-with-themerrdb`);
+          libraryRapidPoll();
+          await loadLibrary().catch(()=>{});
+        } catch (e) {
+          // v1.17.13: clear the download_queue placeholder we set
+          // above — race audit finding #2 (class 5 silent topbar
+          // drift). Without this, a failed REPLACE TDB leaves
+          // the // QUEUING DOWNLOAD pill up for 5s with no real
+          // op behind it.
+          try {
+            if (window.motifOps
+                && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('download_queue');
+            }
+          } catch (_) {}
+          alert('Replace failed: ' + e.message);
+        }
+      }
+    });
+  }
+
+  // ---- ThemerrDB info dialog ----
+
+  // v1.23.19: INFO-card prefetch. Hovering a row's ⓘ kicks off the
+  // api_item GET and caches the promise for a few seconds, so the
+  // click reuses an in-flight (or already-finished) request and the
+  // card opens instantly instead of waiting on a fresh round-trip.
+  // Failed prefetches self-evict so a real click still retries fresh.
+  const _infoPrefetch = new Map();
+  function _infoUrl(mt, tmdb, section, rk) {
+    const p = [];
+    if (section) p.push(`section_id=${encodeURIComponent(section)}`);
+    if (rk) p.push(`rating_key=${encodeURIComponent(rk)}`);
+    return p.length
+      ? `/api/items/${mt}/${tmdb}?${p.join('&')}`
+      : `/api/items/${mt}/${tmdb}`;
+  }
+  function _infoFetch(url) {
+    const hit = _infoPrefetch.get(url);
+    if (hit && (Date.now() - hit.ts) < 6000) return hit.promise;
+    const promise = api('GET', url);
+    _infoPrefetch.set(url, { promise, ts: Date.now() });
+    promise.catch(() => {
+      // drop a failed prefetch so a subsequent real click retries fresh.
+      if (_infoPrefetch.get(url)?.promise === promise) _infoPrefetch.delete(url);
+    });
+    return promise;
+  }
+  function prefetchInfo(mt, tmdb, section, rk) {
+    if (!mt || !tmdb) return;
+    _infoFetch(_infoUrl(mt, tmdb, section, rk));
+  }
+
+  // v1.24.95: branded record-spinner loading state — the motif vinyl icon
+  // (concentric grooves + spindle) spins while a fetch is in flight, replacing a
+  // bare "loading…". A reusable helper so future load states share one spinner.
+  // Strokes are class-driven (CSS vars don't resolve in SVG presentation attrs —
+  // see .record-spinner in app.css). The "loading…" caption stays beneath it.
+  function recordLoaderHtml(label) {
+    return `<div class="record-loader">
+      <svg class="record-spinner" viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="rec-rim" cx="50" cy="50" r="47" stroke-width="1"/>
+        <g class="rec-grooves">
+          <circle class="rec-groove rec-groove-outer" cx="50" cy="50" r="40" stroke-width="3" stroke-dasharray="170 80"/>
+          <circle class="rec-groove" cx="50" cy="50" r="31" stroke-width="2.6" stroke-dasharray="120 70"/>
+          <circle class="rec-groove" cx="50" cy="50" r="22" stroke-width="2.2" stroke-dasharray="70 140"/>
+          <circle class="rec-tick" cx="50" cy="14" r="2.4"/>
+        </g>
+        <circle class="rec-spindle" cx="50" cy="50" r="6.5"/>
+        <circle class="rec-hole" cx="50" cy="50" r="1.6"/>
+      </svg>
+      <p class="muted small">${htmlEscape(label || 'loading…')}</p>
+    </div>`;
+  }
+
+  async function openInfoDialog(mediaType, tmdbId, sectionId, ratingKey) {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    const body = document.getElementById('info-dlg-body');
+    body.innerHTML = recordLoaderHtml('loading…');
+    // v1.16.1: info dialog was the most-clicked-on offender for
+    // the user's "X has a square around it like it being clicked
+    // straight away" repro — the close button is the first
+    // focusable child after showModal().
+    showModalNoFocusRing(dlg);
+    // v1.17.20: in-flight seq guard. Two rapid INFO clicks on
+    // different rows would both write 'loading…', both await
+    // api(), and whichever response landed last would overwrite
+    // body.innerHTML — painting row-A's data while the dialog
+    // says row-B. Mirrors loadLibrary._seq (line 6348). Audit
+    // race #7. Race-critical because the recovery-action
+    // buttons attached inside the rendered body inherit the
+    // wrong data-mt/data-id, so a PROBE TDB URL click on the
+    // stale render fires against the wrong row.
+    openInfoDialog._seq = (openInfoDialog._seq || 0) + 1;
+    const _myToken = openInfoDialog._seq;
+    let data;
+    try {
+      // v1.12.72: pass section_id so the INFO endpoint surfaces
+      // the section-specific user_overrides row in the legacy
+      // `override` field. Falls through to global ('') and then
+      // any-section if no per-section override exists.
+      // v1.21.68: thread rating_key (when known) so api_item narrows the
+      // card to the clicked edition. section_id stays for legacy/order.
+      // v1.23.19: route through _infoFetch so a click reuses the
+      // hover-prefetched (or in-flight) request instead of a fresh GET.
+      data = await _infoFetch(_infoUrl(mediaType, tmdbId, sectionId, ratingKey));
+    } catch (e) {
+      // v1.17.20: bail if this isn't the latest in-flight call —
+      // a newer click is already loading, don't clobber its
+      // 'loading…' with our stale error.
+      if (openInfoDialog._seq !== _myToken) return;
+      body.innerHTML = `<p class="accent-red">${htmlEscape(e.message)}</p>`;
+      return;
+    }
+    // v1.17.20: same guard on the success path before we
+    // continue building the dialog body from data.
+    if (openInfoDialog._seq !== _myToken) return;
+    const t = data.theme || {};
+    const ovr = data.override;
+    const lf = data.local_file;
+    const placements = data.placements || [];
+    // v1.19.59: derive a single human-readable "playback source"
+    // label so the user can answer "what's actually playing on
+    // this row?" without parsing source_kind + provenance +
+    // placement_kind. the user's repro on Bastard!!: SRC=U + applied
+    // url showed TDB's URL with "themerrdb" tag → "why U not T?"
+    // confusion. The URL line falls back to themes.youtube_url
+    // when source_kind=upload but no user_override exists; the
+    // actual playback is the uploaded MP3. New line collapses the
+    // four signals (source_kind, provenance, ovr, placements)
+    // into ONE phrase per row.
+    function _derivePlaybackSourceLabel() {
+      // Plex agent — Plex serves its own theme; motif standing by.
+      // v1.22.71: read the top-level field api_item actually returns.
+      // Pre-fix this read data.theme.plex_independent_theme (a
+      // plex_items column, never on the themes dict) plus an
+      // is_plex_agent field api_item never returned — both undefined,
+      // so every pure-P row fell through to "(none — row has no theme
+      // staged)".
+      if (!lf && data.plex_independent_theme === 1) {
+        return 'Plex serves its own theme (motif standing by)';
+      }
+      if (!lf) return '(none — row has no theme staged)';
+      const sk = lf.source_kind || '';
+      const reason = lf.last_place_attempt_reason || '';
+      // Cloud-themes-backup row (v1.19.42).
+      if (sk === 'plex_cloud' && reason === 'backup_only') {
+        return 'Plex cloud backup staged (B badge · PROMOTE TO ACTIVE to deploy)';
+      }
+      // v1.19.90: ThemerrDB-sourced backup → TB badge.
+      if (sk === 'themerrdb' && reason === 'backup_only') {
+        return `${_humanSourceKind(sk)} (TB badge · backup-only · PROMOTE TO ACTIVE to deploy)`;
+      }
+      // v1.20.17: adopted sidecar staged as backup → AB badge.
+      if (sk === 'adopt' && reason === 'backup_only') {
+        return `${_humanSourceKind(sk)} (AB badge · backup-only · PROMOTE TO ACTIVE to deploy)`;
+      }
+      // BK/UB rows — user-explicit backup intent (url/upload).
+      if (reason === 'backup_only') {
+        return `${_humanSourceKind(sk)} (UB badge · backup-only · PROMOTE TO ACTIVE to deploy)`;
+      }
+      const friendly = _humanSourceKind(sk);
+      // Surface the placement kind so "uploaded MP3" reads
+      // as "uploaded MP3 → Plex stores it" rather than the
+      // ambiguous "user uploaded an MP3 (but is Plex serving
+      // it? where?)".
+      const placedKinds = placements
+        .map((p) => p.placement_kind)
+        .filter(Boolean);
+      const placedSuffix = placedKinds.length
+        ? ` · placed: ${placedKinds.join(', ')}`
+        : ' · not placed';
+      return `${friendly}${placedSuffix}`;
+    }
+    function _humanSourceKind(sk) {
+      switch (sk) {
+        case 'themerrdb':
+          return 'Downloaded from ThemerrDB URL';
+        case 'url':
+          return 'Downloaded from user URL';
+        case 'upload':
+          return 'User-uploaded MP3';
+        case 'adopt':
+          return 'Adopted from existing sidecar';
+        case 'plex_cloud':
+          return "Plex's cloud theme (downloaded by motif)";
+        default:
+          return sk ? `source_kind=${sk}` : '(unknown source)';
+      }
+    }
+    const pu = data.pending_update;
+    // v1.12.37 / v1.12.46: three URL rows render top-of-card —
+    // ThemerrDB, currently applied, previous.
+    //
+    // "currently applied" only fills in when the row's canonical
+    // was actually downloaded from a YouTube URL — i.e., the
+    // local_files row has source_kind 'themerrdb' / 'url' /
+    // 'upload'. M (manual sidecar), A (adopted), and P (Plex
+    // agent) rows have a theme.mp3 in place but its contents
+    // didn't come from a YouTube URL motif controls. Pre-fix
+    // the field showed t.youtube_url for those rows even though
+    // the displayed URL wasn't being applied — misleading.
+    // v1.12.46 leaves it blank for non-URL sources.
+    // v1.18.63: prefer the pending NEW URL over the committed TDB
+    // URL when a pending_update is awaiting decision. The
+    // committed value (themes.youtube_url) is the URL motif's
+    // SYNC last accepted; pu.new_youtube_url is what TDB
+    // currently claims is correct. the user's repro: TDB had a
+    // dead URL → motif marked failed → TDB pushed a NEW working
+    // URL → pending_update fired. The info card showed the
+    // dead URL as "themerrdb url" and PROBE TDB URL probed the
+    // dead one → red pill even though TDB had fixed it.
+    // Showing pu.new_youtube_url here reflects "what TDB
+    // currently claims" — the user's mental model. The
+    // pendingTdbUrl flag drives a "(pending)" suffix in the
+    // label so the user knows ACCEPT UPDATE will commit it.
+    const _committedTdbUrl = t.youtube_url || '';
+    // v1.23.22: surface the pending NEW TDB URL for urls_match too.
+    // Pre-fix the `kind !== 'urls_match'` exclusion (v1.18.63) left the
+    // themerrdb url field showing `—` when TDB published the SAME video
+    // the user's override already uses AND themes.youtube_url was empty
+    // (a bulk-imported U row) — contradicting the THEMERRDB MATCH panel
+    // right below it ("ThemerrDB now publishes the same video"). the user:
+    // "shouldn't the themerrdb url be showing the same url ... because it
+    // has one available." new_youtube_url IS what TDB publishes — show it
+    // regardless of kind. tdbUrlIsPending below stays false when the
+    // committed value already equals it, so no spurious "(pending)".
+    const _pendingTdbUrl = (data.pending_update
+      && data.pending_update.decision === 'pending')
+        ? (data.pending_update.new_youtube_url || '')
+        : '';
+    const tdbUrl = _pendingTdbUrl || _committedTdbUrl;
+    // v1.18.63 + v1.23.22: the "(pending)" suffix still EXCLUDES
+    // urls_match (a same-video format rewrite — nothing to "commit");
+    // v1.23.22 moved the exclusion here so the URL still DISPLAYS above.
+    const tdbUrlIsPending = !!_pendingTdbUrl
+      && data.pending_update.kind !== 'urls_match'
+      && _pendingTdbUrl !== _committedTdbUrl;
+    const lfSource = lf?.source_kind || null;
+    // v1.24.9: a backup-only row's downloaded URL is the BACKUP's
+    // source, NOT an applied theme — Plex is serving its own theme
+    // (that's precisely why motif deferred and stamped backup_only).
+    // Pre-fix the URL rendered under the "applied url" label, so a
+    // TB/UB row read as if the ThemerrDB/user theme was playing.
+    // the user's SpongeBob SquarePants repro: SRC=P + TB backup, but
+    // the card showed "applied url … themerrdb" though Plex served
+    // its own theme. Relabel that line to "backup url" for
+    // backup-only rows (the URL, thumbnail + preview stay — they
+    // correctly previewed the staged backup; only the misleading
+    // "applied" word changes). Returns to "applied url" the moment
+    // PROMOTE TO ACTIVE flips the reason off backup_only.
+    const lfReason = lf?.last_place_attempt_reason || null;
+    const lfIsBackupOnly = lfReason === 'backup_only';
+    // v1.22.11: 'upload' is NOT URL-sourced. A user-uploaded MP3 is a FILE; its
+    // applied theme has no YouTube URL. Pre-fix 'upload' was grouped with
+    // themerrdb/url, so currentUrl fell back to t.youtube_url (the TDB URL) when
+    // no override existed — the card then showed TDB's URL as "applied url",
+    // the TDB video id, a TDB thumbnail + "watch on YouTube" link, and a no-op
+    // REVERT hint, ALL implying the theme came from that URL. It didn't
+    // (the user's LotR "Sam Takes a Step" upload — green TDB pill, but playing an
+    // uploaded MP3). Treat upload like M/A: file-sourced, no applied URL. The
+    // "themerrdb url" row + the "downloaded … source_video_id=" provenance row
+    // still surface what TDB offers and where the uploaded bytes came from.
+    const isUrlSourced = lfSource === 'themerrdb' || lfSource === 'url';
+    const currentUrl = isUrlSourced
+      ? (ovr?.youtube_url || t.youtube_url || '')
+      : '';
+    // v1.12.86: per-section previous URL. Payload comes from a
+    // top-level `previous_url` object {youtube_url, kind,
+    // captured_at} populated by api_item via _load_previous_url.
+    // Pre-v1.12.86 the same data lived on the title-global
+    // themes.previous_youtube_url + previous_youtube_kind columns —
+    // those were dropped in schema v30 along with the cross-section
+    // bleed they caused.
+    const previousUrlObj = data.previous_url || null;
+    const previousUrl = previousUrlObj?.youtube_url || '';
+    const previousKind = previousUrlObj?.kind || null;
+    // ytId for the embedded YouTube thumbnail tracks the currently
+    // applied URL so it always matches what's being played.
+    // v1.14.20 (H1): rewritten to derive from currentUrl's actual
+    // source. Pre-fix the chain `ovr?.youtube_video_id ||
+    // t.youtube_video_id || regex(ytUrl)` always missed the first
+    // term (user_overrides has no youtube_video_id column) and
+    // landed on t.youtube_video_id — the TDB-side video id —
+    // even when the row was actually playing a user-override
+    // video. the user's Batman: Hush screenshot showed exactly this:
+    // currently applied = user URL, video id = TDB video id.
+    // Also affects M/A/P rows (currentUrl='' but the TDB id was
+    // still rendered).
+    const ytUrl = currentUrl;
+    let ytId = '';
+    if (currentUrl) {
+      // v1.18.63: for YouTube URLs, extract the video id from the
+      // URL FIRST. lf.source_video_id can be stale relative to
+      // the actual playing URL — the user's "Am I Actually the
+      // Strongest?" row showed source_video_id=kEp_ZMPWWdU (the
+      // pre-override TDB id) even though currentUrl =
+      // je_uIV5zv5c (user override). The lf.source_video_id is
+      // set at download time but a later override change OR a
+      // recovery-walker rewrite can leave it pointing at the
+      // wrong video. img.youtube.com/vi/kEp_…/hqdefault.jpg
+      // then serves YouTube's default placeholder ("..." icon)
+      // for the dead/removed kEp_ video — the user saw exactly
+      // this on the info-card preview thumbnail.
+      //
+      // URL extraction is deterministic for YouTube watch URLs
+      // and ALWAYS matches the URL being rendered, so prefer
+      // it. Fall back to lf.source_video_id only for non-YT or
+      // when the URL doesn't parse (rare).
+      if (urlSource(currentUrl) === 'youtube') {
+        ytId = (currentUrl.match(/[?&]v=([^&]+)/) || [])[1] || '';
+      }
+      if (!ytId) {
+        // Fallback chain (kept for non-YT URLs + parse failures).
+        // v1.18.13: drop the 'recovered' sentinel — a truthy but
+        // unusable value the v1.18.5 recovery walker stamps for
+        // orphans whose original source_video_id was wiped in
+        // the v1.18.0 cascade. img.youtube.com/vi/recovered/*
+        // 404s; clearing here lets a future URL-extraction win.
+        // v1.18.21: also drop stale 'sc-' SoundCloud ids when
+        // currentUrl is YouTube — prevents img.youtube.com/vi/
+        // sc-foo/hqdefault.jpg 404s on cross-source rows.
+        ytId = (lf && lf.source_video_id) || '';
+        if (ytId === 'recovered') ytId = '';
+        if ((ytId.startsWith('sc-') || ytId.startsWith('ig-')
+             || ytId.startsWith('fb-'))
+            && urlSource(currentUrl) === 'youtube') {
+          ytId = '';
+        }
+      }
+    }
+    const imdb = t.imdb_id ? `<a href="https://www.imdb.com/title/${htmlEscape(t.imdb_id)}" target="_blank" rel="noopener">${htmlEscape(t.imdb_id)}</a>` : '<span class="muted">—</span>';
+    const tmdbLink = t.tmdb_id && t.tmdb_id > 0
+      ? `<a href="https://www.themoviedb.org/${mediaType === 'tv' ? 'tv' : 'movie'}/${t.tmdb_id}" target="_blank" rel="noopener">${t.tmdb_id}</a>`
+      : '<span class="muted">orphan</span>';
+    // v1.12.37: three URL rows render top-of-card so the user
+    // can see ThemerrDB's URL, what's currently active, and what
+    // REVERT will restore. The currently-applied URL gets violet
+    // styling when sourced from a user override (matches the U
+    // badge); themerrdb-green when sourced from the upstream
+    // record. Previous URL color tracks previous_youtube_kind
+    // similarly.
+    const linkOrDash = (url, color) => {
+      if (!url) return '<span class="muted">—</span>';
+      // v1.21.15 (security): scheme-allowlist the href; a non-http(s)
+      // URL renders as escaped text, never a clickable javascript:/data:.
+      const href = safeHref(url);
+      const style = color ? ` style="color:${color}"` : '';
+      return href
+        ? `<a href="${htmlEscape(href)}" target="_blank" rel="noopener"${style}>${htmlEscape(url)}</a>`
+        : `<span${style}>${htmlEscape(url)}</span>`;
+    };
+    const tdbUrlLink = linkOrDash(tdbUrl, 'var(--green-bright)');
+    // v1.12.81: append a kind label after "currently applied" so it
+    // mirrors the "previous url" treatment and the user can read
+    // the source at a glance instead of inferring from color alone.
+    // Color + label match the SRC badge ("user" violet for U-source
+    // overrides; "themerrdb" green for upstream URLs).
+    const currentKind = ovr ? 'user' : (currentUrl ? 'themerrdb' : null);
+    const currentColor = currentKind === 'user'
+      ? 'var(--violet)'
+      : currentKind === 'themerrdb' ? 'var(--green-bright)' : null;
+    const currentKindLabel = currentKind === 'user'
+      ? ' <span class="muted small info-src-tag-user">user</span>'
+      : currentKind === 'themerrdb'
+        ? ' <span class="muted small info-src-tag-tdb">themerrdb</span>'
+        : '';
+    const currentUrlLink = currentUrl
+      ? `${linkOrDash(currentUrl, currentColor)}${currentKindLabel}`
+      : '<span class="muted">—</span>';
+    // v1.24.9: backup-only rows carry the backup's source URL, not an
+    // applied one — label it honestly (see lfIsBackupOnly note above).
+    const appliedUrlLabel = (lfIsBackupOnly && currentUrl)
+      ? 'backup url'
+      : 'applied url';
+    const prevColor = previousKind === 'user'
+      ? 'var(--violet)'
+      : previousKind === 'themerrdb' ? 'var(--green-bright)' : null;
+    const prevKindLabel = previousKind === 'user'
+      ? '<span class="muted small info-src-tag-user">user</span>'
+      : previousKind === 'themerrdb'
+        ? '<span class="muted small info-src-tag-tdb">themerrdb</span>'
+        : '';
+    // v1.13.4 (Issue 2): suppress the INFO card's "previous url"
+    // row when the captured-prev equals what's currently applied —
+    // three identical URLs is visual noise. The library row's
+    // CLEAR URL / REVERT menu items are gated by the same condition
+    // server-side via has_previous_url's WHERE-clause check
+    // (api.py: COALESCE(pv...) != COALESCE(uo..., t.youtube_url)),
+    // so the menu and the card stay in lockstep without a JS shim.
+    // v1.14.18: also suppress when revertHint fires — the three
+    // revertHint branches (no-op, identical URL, themerrdb-source
+    // prev) all mean "reverting won't help", so the URL itself is
+    // non-actionable noise. Single source of truth: if reverting
+    // is unavailable, the URL row hides too.
+    // Per the user: "previos url in the case of a red pill TDB
+    // shouldn't be set to a themerdb url since it has shown to
+    // not be valid".
+    const currentCanonical = (ovr && ovr.youtube_url) || tdbUrl || '';
+    // v1.22.14: a FILE-sourced row (upload / adopt / plex_cloud — motif owns a
+    // non-URL inode) plays a file, not a URL. Mirrors the server's
+    // _row_has_non_url_local_content_sql set. Generalizes the v1.22.11
+    // upload-only revert branch so adopt/plex_cloud rows stop hitting the
+    // URL-centric "re-apply the current URL" hints too (currentCanonical falls
+    // back to tdbUrl for them). P / M (no lf) and SRC=— are NOT file-sourced.
+    const isFileSourced = !!lf && (lfSource === 'upload'
+      || lfSource === 'adopt' || lfSource === 'plex_cloud');
+    let revertHint = '';
+    if (isFileSourced) {
+      // The previous-URL revert machinery + its no-op/identical-URL wording
+      // assumes a URL-based theme, so it reads as nonsense here ("REVERT would
+      // re-apply the current URL" — there IS no applied URL). BUT a file-sourced
+      // row CAN carry a genuinely-actionable previous URL (user-kind, differing
+      // from applied → server has_previous_url ignores source_kind, so REVERT is
+      // LIVE in the SOURCE menu). v1.22.11 claimed REVERT was "correctly absent"
+      // and unconditionally said "unavailable" — contradicting that live REVERT
+      // (review finding). So: suppress the file hint when a live revert exists;
+      // otherwise state plainly there's no URL to revert.
+      const liveRevert = !!previousUrl
+        && previousUrl !== currentCanonical
+        && previousKind === 'user';
+      if (!liveRevert) {
+        const srcWord = lfSource === 'adopt' ? 'an adopted sidecar theme'
+          : lfSource === 'plex_cloud' ? 'a Plex cloud-theme backup'
+          : 'a user-uploaded MP3';
+        revertHint = "unavailable — this row plays " + srcWord + " (a file, "
+          + "not a URL), so there's no applied URL to revert. Use UPLOAD MP3 to "
+          + "replace the file, or DOWNLOAD TDB to switch to the ThemerrDB theme.";
+      }
+    } else if (!previousUrl && pu && pu.decision === 'accepted') {
+      revertHint = "unavailable — no previous URL was captured.";
+    } else if (previousUrl && previousUrl === currentCanonical) {
+      // v1.20.58: on a fresh row the captured previous URL can equal
+      // the applied URL (e.g. ACCEPT UPDATE with no earlier override),
+      // so this fires even though there's nothing different to go back
+      // to. Lead with "nothing to revert to" rather than the old
+      // "identical / re-create the override" wording, which read as if
+      // a duplicate URL existed (the user's repro on Ballerina).
+      revertHint = "unavailable — nothing earlier to revert to: the captured previous URL is the same as the one currently applied, so REVERT would just re-apply the current URL (no-op).";
+    } else if (previousUrl && previousKind === 'themerrdb') {
+      revertHint = "unavailable — the previous URL was a ThemerrDB URL, so reverting would just re-download the current themerrdb URL. Use DOWNLOAD TDB / RE-DOWNLOAD TDB / REPLACE TDB instead — they cover the same outcome with clearer intent.";
+    }
+    const hidePrev = (previousUrl !== '' && previousUrl === currentUrl)
+                  || (previousUrl !== '' && !!revertHint);
+    const previousUrlLink = (previousUrl && !hidePrev)
+      ? `${linkOrDash(previousUrl, prevColor)} ${prevKindLabel}`
+      : '<span class="muted">—</span>';
+    const failBlock = t.failure_kind
+      ? `<dt>last failure</dt><dd class="accent-red">${htmlEscape(t.failure_kind)}${t.failure_message ? ' · ' + htmlEscape(t.failure_message) : ''}</dd>`
+      : '';
+    // v1.12.37: override block shows the metadata around the
+    // user-override row (set_by, set_at, note). The URL itself is
+    // already in the "currently applied" row above, so this block
+    // only renders the audit context.
+    const ovrBlock = ovr
+      ? `<dt>override set</dt><dd><span class="muted small">by ${htmlEscape(ovr.set_by || '')} at ${htmlEscape(fmt.timeAuto(ovr.set_at))}${ovr.note ? ' · ' + htmlEscape(ovr.note) : ''}</span></dd>`
+      : '';
+    // v1.12.37: pending-update block now only carries the
+    // upstream-update decision metadata (detected/decided
+    // timestamps). The actual URLs that drove it (TDB old/new)
+    // are visible from the "themerrdb url" + "previous url"
+    // rows above when they're meaningful — keeps the card from
+    // listing four+ URLs which is hard to scan.
+    let puBlock = '';
+    if (pu) {
+      const decisionLabel = pu.decision === 'accepted' ? 'accepted (current)'
+                          : pu.decision === 'declined' ? 'declined (kept old)'
+                          : 'pending — awaiting ACCEPT UPDATE / KEEP CURRENT';
+      puBlock = `<dt>upstream update</dt>`
+        + `<dd class="muted small">${htmlEscape(decisionLabel)}`
+        + (pu.detected_at ? ` · detected ${htmlEscape(pu.detected_at)}` : '')
+        + (pu.decision_at && pu.decision !== 'pending'
+              ? ` · ${htmlEscape(pu.decision)} ${htmlEscape(pu.decision_at)}`
+              : '')
+        + '</dd>';
+    }
+    // v1.12.65: REVERT-hidden hint moved out of the pu.decision
+    // block — REVERT can be hidden for reasons unrelated to a
+    // pending update (e.g., previous_kind='themerrdb' is now
+    // hidden by design). Block fires whenever there's a previous
+    // URL captured but REVERT wouldn't be useful, so the user
+    // never wonders why an action they expect is missing. Three
+    // cases covered:
+    //   - previous URL matches current canonical (no-op — same
+    //     URL would be re-applied)
+    //   - previous_kind='themerrdb' (functionally identical to
+    //     DOWNLOAD TDB / RE-DOWNLOAD TDB / REPLACE TDB; worker
+    //     ignores the captured URL and pulls themes.youtube_url
+    //     either way, so REVERT was pure UI duplication)
+    //   - no previous URL captured at all (legacy / never-changed)
+    // Each case names the alternative action so the user has a
+    // clear next step without trial and error.
+    // v1.14.18: revertHint computed earlier (above the previous_url
+    // render) so hidePrev can reuse it. Render the hint here as
+    // before — same DOM position in puBlock.
+    if (revertHint) {
+      puBlock += `<dt class="muted">revert</dt>`
+        + `<dd class="muted small">${revertHint}</dd>`;
+    }
+    const placedBlock = placements.length
+      ? `<dt>placed in</dt><dd>${placements.map(p => `<div class="muted small">${htmlEscape(p.media_folder)} <span class="muted">(${htmlEscape(p.placement_kind)})</span></div>`).join('')}</dd>`
+      : '';
+    // v1.18.56: surface source_kind + source_video_id on the
+    // downloaded row so operators can verify the SRC letter
+    // computation directly. Per the user's anime-tab review: he
+    // saw multiple rows showing SRC=A and wasn't sure if that
+    // was the correct classification. Now: source_kind +
+    // source_video_id are visible in the // MOTIF INFO panel,
+    // so the SRC letter's derivation can be confirmed by
+    // looking at the underlying values (T/U/A/M follow from
+    // source_kind + provenance + source_video_id per the
+    // _SRC_LETTER_SQL cases in api.py:915-951).
+    const sourceKindHint = lf && lf.source_kind
+      ? ` · source_kind=<code>${htmlEscape(lf.source_kind)}</code>`
+      : '';
+    const sourceVidHint = lf && lf.source_video_id
+      ? ` · source_video_id=<code>${htmlEscape(
+          // Truncate long hash-derived ids for readability;
+          // adopt-path source_video_ids can be 40+ chars.
+          lf.source_video_id.length > 16
+            ? lf.source_video_id.slice(0, 14) + '…'
+            : lf.source_video_id
+        )}</code>`
+      : '';
+    const dlBlock = lf
+      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="how motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP)">${htmlEscape(lf.provenance)}</span>${sourceKindHint}${sourceVidHint}</dd>`
+      : '';
+    // v1.12.90: in-card audio player. The INFO dialog now serves
+    // the canonical theme.mp3 via /api/items/{mt}/{tmdb}/theme.mp3
+    // so users can preview what's actually playing without leaving
+    // the dialog. Rendered only when there's a local_files row;
+    // canonical_missing rows (dlBroken state) get the endpoint's
+    // 410 — the <audio> element handles that gracefully (no-source
+    // state).
+    // v1.15.125: preload="metadata" → preload="auto". the user's
+    // Watchmen SoundCloud-source theme rendered as 0:00 / 0:00 in
+    // Chrome despite the file playing fine in VLC. Root cause:
+    // yt-dlp + ffmpeg's FFmpegExtractAudio postprocessor emits a
+    // VBR MP3 without the Xing/Info header at offset 0 (the header
+    // ffmpeg writes only on `-id3v2_version 3` + specific encoder
+    // flags). Chrome's MP3 decoder needs the Xing header OR the
+    // full file to compute duration on VBR — `preload="metadata"`
+    // only fetches enough for the codec, so duration stays 0.
+    // `preload="auto"` lets Chrome fetch enough to compute
+    // duration even on VBR-no-Xing MP3s. Trade-off: ~7-8 MB
+    // pre-fetch when the dialog opens, which is fine for the
+    // homelab use case. The audio element falls back to the
+    // text content if the format truly can't decode, AND a
+    // direct download link appears below as an escape hatch
+    // — clicking it lets the user grab the file to test in a
+    // local player (the user verified VLC plays the Watchmen file
+    // fine, ruling out file corruption).
+    const audioBlock = lf && t.media_type !== undefined && t.tmdb_id !== undefined
+      ? (() => {
+          // v1.21.90: include rating_key so the player serves THIS
+          // edition's canonical, not an arbitrary sibling edition's file.
+          const _ap = [];
+          if (sectionId) _ap.push(`section_id=${encodeURIComponent(sectionId)}`);
+          if (ratingKey) _ap.push(`rating_key=${encodeURIComponent(ratingKey)}`);
+          const sec = _ap.length ? `?${_ap.join('&')}` : '';
+          const src = `/api/items/${encodeURIComponent(t.media_type)}/${encodeURIComponent(t.tmdb_id)}/theme.mp3${sec}`;
+          return `<dt>play</dt><dd>`
+            + `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
+            + `your browser doesn't support inline audio playback`
+            + `</audio>`
+            + ` <a href="${htmlEscape(src)}" download="theme.mp3"`
+            +   ` class="muted small" title="Download the canonical theme.mp3 — useful if the inline player can't decode the file">↓</a>`
+            + `</dd>`;
+        })()
+      : '';
+    // v1.13.8 (#5): in-card preview of the TDB-suggested YouTube
+    // URL — distinct from `play` above (which streams the on-disk
+    // theme.mp3). The preview lets the user hear what motif WOULD
+    // download via DOWNLOAD-FROM-TDB or what ACCEPT UPDATE would
+    // pull in, before actually doing it.
+    //
+    // Suppression rules to keep the card clean:
+    //   - hide when the row has no TDB video id (no upstream URL)
+    //   - hide when on-disk file's source_video_id matches the TDB
+    //     video id (would play the same content twice)
+    // Result: T rows in steady state see only `play`; rows with a
+    // pending TDB↑ update or rows without an on-disk file see the
+    // preview as a distinct row.
+    //
+    // Click-to-load: the iframe stays absent until the user clicks
+    // the button, so opening the dialog doesn't fire a YouTube
+    // page request the user didn't ask for. Iframe params clip to
+    // 30 seconds via start=0 + end=30; modestbranding=1 keeps the
+    // YouTube logo subdued; autoplay=1 starts immediately on
+    // click.
+    // v1.14.20 (L1): tdbVidId / onDiskVidId / tdbPreviewBlock all
+    // dropped. v1.13.16 removed the actual TDB preview render but
+    // left the variables behind as no-ops "in case they're needed
+    // later". They never were. Pure deadcode cleanup; the template
+    // interpolation site at the body.innerHTML block was also
+    // removed (no `${tdbPreviewBlock}` anymore).
+    // v1.12.56: pending-update diff section. When an actionable
+    // upstream-changed update is queued, show side-by-side tiles
+    // (current vs proposed) so the user can pre-validate ACCEPT
+    // UPDATE — thumbnails are static URLs, video titles hydrate
+    // async from /api/source/oembed (YouTube + SoundCloud). Skipped for urls_match (URLs
+    // are identical, no diff to display) and for non-pending
+    // decisions (already accepted/declined).
+    const diffSection = renderPendingUpdateDiff(pu, lf, t, ovr);
+    // v1.12.71: TRY THIS NEXT recovery section. Always rendered when
+    // we have media_type + tmdb_id; hydrateRecoveryOptions removes
+    // the section if the server returns no actions. Pre-v1.13.47
+    // this was gated on t.failure_kind, but we now also surface
+    // recovery options on non-failed rows when Plex serves an
+    // independent theme (+P composite / yellow dot) — letting the
+    // user revert to Plex's theme via PURGE without first having
+    // to fail anything. Each suggested action is a button that
+    // hooks into the existing data-act dispatch.
+    const recoverySectionId = (t.media_type && t.tmdb_id !== undefined)
+      ? 'recovery-section'
+      : null;
+    const recoveryPlaceholder = recoverySectionId
+      ? `<section id="${recoverySectionId}" class="recovery-section" hidden>
+           <header class="recovery-section-head">
+             <span class="recovery-section-title">// TRY THIS NEXT</span>
+             <span class="muted small">loading recovery options…</span>
+           </header>
+         </section>`
+      : '';
+    // v1.12.66: per-row events timeline. The INFO endpoint already
+    // returns the last 25 events for this (media_type, tmdb_id);
+    // pre-fix the dialog discarded them. Surfacing the timeline
+    // gives a "what happened to this row" debug log without needing
+    // to grep the global LOGS tab. Collapsed by default to keep
+    // the dialog scannable; expand-on-click for the deep dive.
+    const events = (data.events || []);
+    // v1.24.10: the per-row events table is pruned after 30 days
+    // (_prune_events), so an auto-themed row that nobody has touched
+    // since loses its HISTORY section entirely once its download/place
+    // events age out — the card then shows no "how it got here" at all.
+    // Synthesize a durable baseline origin line from the row's stored
+    // provenance (source_kind + provenance + download date — none of
+    // which are pruned) so every row motif owns a file for always shows
+    // a one-line origin, degrading gracefully from the detailed event
+    // timeline to this single line. the user: "give every themed row at
+    // least a one-line 'how it got here'." Rows with no local file
+    // (pure-P / SRC=—) have no motif-owned provenance to synthesize, so
+    // they stay as before (no section). Backup-only rows are flagged so
+    // the line doesn't read as an applied theme (mirrors v1.24.9).
+    const baselineHistory = lf
+      ? {
+          label: _humanSourceKind(lf.source_kind || ''),
+          provenance: lf.provenance || '',
+          // v1.24.11: pre-format here via the card-wide fmt.timeAuto
+          // (MMM DD, YYYY · HH:MM) so the ORIGIN row's date matches the
+          // motif-added / themerrdb-added dates above it, instead of
+          // renderRowHistory's bare toLocaleString. '' → '—'.
+          at: fmt.timeAuto(lf.downloaded_at || data.motif_added_at || ''),
+          backupOnly: lfIsBackupOnly,
+        }
+      : null;
+    const historySection = renderRowHistory(
+      events, t.media_type, t.tmdb_id, baselineHistory);
+    // v1.12.80: audit_events provenance section. Loaded
+    // asynchronously after the dialog paints — keeps the initial
+    // open snappy and the audit query off the synchronous /api/items
+    // path. Empty placeholder swapped in by hydrateAuditSection when
+    // the fetch lands; if the row has no audit history (older row
+    // pre-v1.12.80), the section stays hidden.
+    const auditPlaceholder = '<div id="audit-section-slot"></div>';
+    // v1.13.3 (Issue 4): explicit section + edition tag right
+    // under the title so the user doesn't have to infer 4K-vs-
+    // Standard from the placement folder path. Renders as a
+    // small chip row: e.g. [4K Movie] [edition: 4K] for the
+    // 4K-section copy of Willy Wonka, or [Standard Movie] for
+    // the std copy. Hidden when section_context is null
+    // (legacy callers / orphan paths).
+    // v1.13.51: dropped the standalone variant chip
+    // ("Standard Movie" / "4K Movie" / etc.) from the chip row.
+    // The gray section-title chip already conveys the variant
+    // (e.g. "Movies" vs "4K Movies", "TV Shows" vs "Anime") so
+    // rendering both was duplicate information. The variant_label
+    // moves to a `title=` tooltip on the section chip for the
+    // edge case where two sections share the exact same name
+    // across variants. Edition chip retained (recolored amber in
+    // CSS to match the row edition pill + filter button).
+    const sc = data.section_context;
+    let scopeChips = '';
+    if (sc) {
+      const scopeLbl = htmlEscape(sc.scope_label || '');
+      scopeChips = `<div class="info-scope-row">`
+        + (sc.section_title
+            ? `<span class="info-scope-chip info-scope-chip-section"`
+              + ` title="${scopeLbl}">${htmlEscape(sc.section_title)}</span>`
+            : '')
+        + (sc.edition
+            ? `<span class="info-scope-chip info-scope-chip-edition">edition: ${htmlEscape(sc.edition)}</span>`
+            : '')
+        + `</div>`;
+    }
+    // v1.14.20 (M2): harmonize the themerrdb / applied url /
+    // previous url label format. All three now use the muted
+    // parens form for the source tag — pre-fix `themerrdb url`
+    // used inline word ("themerrdb soundcloud") while the others
+    // used parens ("currently applied (soundcloud)"), creating
+    // a visual mismatch between rows that sit next to each other.
+    // v1.18.63: when the displayed TDB URL is the PENDING new one
+    // (not yet ACCEPTed), surface that in the label so the user
+    // knows the URL they're looking at hasn't been committed.
+    // v1.18.67: shortened from "(pending — ACCEPT UPDATE to commit)"
+    // to "(pending)" — the user's repro: "wondering if we could fix
+    // the blue pending accept update text as right now it looks a
+    // bit crowded." The full hint moves into the `title` tooltip so
+    // hover still surfaces the action; the visible label stays
+    // compact and reads alongside `(youtube)` / `(soundcloud)`
+    // without wrapping the row.
+    const _pendingSuffix = tdbUrlIsPending
+      ? ' <span class="muted small info-tag-pending" title="ACCEPT UPDATE to commit · KEEP CURRENT to dismiss">(pending)</span>'
+      : '';
+    const tdbSrcTag = tdbUrl
+      ? ` <span class="muted small">(${urlSource(tdbUrl)})</span>${_pendingSuffix}`
+      : '';
+    // v1.19.60: when sync's pending_update captured the PREVIOUS
+    // TDB URL (post-v1.19.60 sync writes always do), surface a
+    // "(was: OLDURL)" suffix on the themerrdb url line so the user
+    // can SEE the diff. Pre-v1.19.60 the old_youtube_url column
+    // stayed NULL (sync.py:992 bug bound None), leaving rows like
+    // Bastard!! with no displayable diff and confusing the
+    // ACCEPT/KEEP CURRENT decision. the user's pause: "currently
+    // both urls are the same so it almost doesn't look like there
+    // is an update."
+    const _pendingOldUrl = (pu && pu.decision === 'pending'
+      && pu.old_youtube_url && pu.old_youtube_url !== pu.new_youtube_url)
+        ? pu.old_youtube_url : '';
+    const tdbWasTag = _pendingOldUrl
+      ? ` <span class="muted small" title="The TDB URL before this sync's roll. Surfaces the diff for ACCEPT/KEEP CURRENT context.">(was: ${htmlEscape(_pendingOldUrl)})</span>`
+      : '';
+    const prevSrcTag = previousUrl
+      ? ` <span class="muted small">(${urlSource(previousUrl)})</span>`
+      : '';
+    // v1.14.28: PROBE TDB URL — fires yt-dlp simulate against the
+    // row's TDB URL so the user can confirm the URL is alive
+    // before doing a destructive action like LET PLEX SERVE.
+    // Result rendered into #probe-result with status tag +
+    // colored text.
+    // v1.14.33: gate on `tdbUrl` only (not `currentUrl || tdbUrl`)
+    // — the probe targets the TDB URL specifically, so a row with
+    // an override but no TDB URL (a plex_orphan with manual URL)
+    // has nothing TDB-side to probe. Pre-fix the button showed for
+    // those rows, then 409'd on click after the user's repro that
+    // the probe was misdirected to the override.
+    const probeBtnHtml = tdbUrl
+      ? `<dt>probe</dt><dd>
+           <button class="btn btn-tiny btn-info"
+                   data-act="probe-tdb"
+                   data-mt="${htmlEscape(t.media_type || '')}"
+                   data-id="${htmlEscape(t.tmdb_id ?? '')}"
+                   title="Run yt-dlp --simulate against the TDB URL to confirm it's still playable. Doesn't download anything. Override URLs are NOT probed — this only verifies the TDB URL.">// PROBE TDB URL</button>
+           <span id="probe-result" class="muted small info-probe-meta"></span>
+           ${data.theme && data.theme.last_probed_at
+             ? `<span class="muted small info-probe-meta">last probed: ${htmlEscape(fmt.timeAuto(data.theme.last_probed_at))}</span>`
+             : ''}
+         </dd>`
+      : '';
+    // v1.24.83: poster hero — the title/scope block sits beside the title's Plex
+    // poster (same /api/plex/art proxy the carousel uses). posterRk prefers the
+    // clicked edition's rating_key, falling back to a placement's plex_rating_key
+    // for the 2-arg callers. The <img> error handler (attached after innerHTML,
+    // below) removes it on 404 / non-art so the hero collapses to just the meta.
+    const posterRk = String(ratingKey
+      || placements.map((p) => p.plex_rating_key).find(Boolean) || '');
+    const posterImgHtml = /^\d+$/.test(posterRk)
+      ? `<img class="info-poster" loading="lazy" alt=""`
+        + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
+      : '';
+    body.innerHTML = `
+      <!-- v1.24.92: back to option A (the user compared A vs B and kept A) — the
+           cover sits top-LEFT with the title, scope chip + playback headline
+           beside it, and the full detail grid runs FULL-WIDTH below the hero as
+           a sibling. Option B (bigger cover + grid nested beside it) lived at
+           tag v1.24.90; the v1.24.91 Esc-close focus fix is layout-independent
+           and stays in bindInfoDialog. -->
+      <div class="info-hero">
+        ${posterImgHtml}
+        <div class="info-hero-meta">
+          <h3 class="info-title">${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
+          ${scopeChips}
+          <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
+        </div>
+      </div>
+      <dl class="dlg-grid">
+        <dt>imdb</dt><dd>${imdb}</dd>
+        <dt>tmdb</dt><dd>${tmdbLink}</dd>
+        <dt>upstream</dt><dd>${t.upstream_source === 'plex_orphan'
+          ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
+          : htmlEscape(t.upstream_source || '')}</dd>
+        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
+        <dt>${appliedUrlLabel} ${currentUrl ? `<span class="muted small">(${urlSource(currentUrl)})</span>` : ''}</dt><dd>${currentUrlLink}</dd>
+        <dt>previous url${prevSrcTag}</dt><dd>${previousUrlLink}</dd>
+        <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
+        ${probeBtnHtml}
+        ${t.upstream_source === 'plex_orphan' ? '' : `
+        <dt>themerrdb added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_added_at))}</dd>
+        <dt>themerrdb edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_edited_at))}</dd>`}
+        <dt>motif added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_added_at))}</dd>
+        <dt>motif edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_edited_at))}</dd>
+        ${failBlock}
+        ${ovrBlock}
+        ${puBlock}
+        ${dlBlock}
+        ${placedBlock}
+        ${audioBlock}
+      </dl>
+      ${recoveryPlaceholder}
+      ${diffSection}
+      ${(() => {
+        // v1.15.129: source-aware thumbnail block. YouTube renders
+        // synchronously from the video id (img.youtube.com/vi/{vid}
+        // /hqdefault.jpg is deterministic, no API call needed).
+        // SoundCloud uses an oembed-fetched thumbnail_url —
+        // rendered with a data attribute that `hydrateSourceThumbnails`
+        // post-paint fills in. Pre-fix only YouTube got a
+        // thumbnail; the user: "for the soundcloud link if its
+        // possible to display the thumbnail in the info card same
+        // as the youtube url."
+        // v1.18.67: skip when the PROPOSED CHANGE diff is rendered.
+        // The diff's CURRENT tile already shows the currently-applied
+        // thumbnail; a second large copy below was redundant. the user:
+        // "have the large current below becomes confusing like you're
+        // seeing it twice. it's showing the right thing just the way
+        // we're displaying it is a bit confusing." On rows without a
+        // pending update (diffSection is ''), keep the bottom
+        // thumbnail as the only "what's playing" preview.
+        if (diffSection) return '';
+        const tUrlSrc = urlSource(ytUrl);
+        if (tUrlSrc === 'youtube' && ytId) {
+          // v1.15.144 / v1.16.1: the <img> now lives INSIDE a
+          // .info-source-thumb-wrap div. The wrapper enforces
+          // 4:3 aspect-ratio (reliable on non-replaced elements);
+          // the img fills the wrapper via object-fit:cover. Pre-
+          // v1.16.1 we set aspect-ratio on the img directly, but
+          // browser behavior for aspect-ratio on replaced elements
+          // with intrinsic dimensions is inconsistent and SC's
+          // 1:1 thumbnails still rendered taller than YT's 4:3
+          // hqdefault.
+          return `<div class="dlg-section">
+            <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
+               style="display:block;text-decoration:none">
+              <div class="info-source-thumb-wrap">
+                <img class="info-source-thumb"
+                     src="https://img.youtube.com/vi/${htmlEscape(ytId)}/hqdefault.jpg"
+                     alt="YouTube thumbnail" loading="lazy" />
+              </div>
+              <p class="muted small info-thumb-caption">
+                ▸ click to watch on YouTube
+              </p>
+            </a>
+          </div>`;
+        }
+        // v1.20.26: Instagram shares SoundCloud's oembed-hydration
+        // path. The backend's /api/source/oembed resolves the IG
+        // thumbnail via yt-dlp metadata (IG's public oEmbed is
+        // deprecated), returning the same {thumbnail_url} shape the
+        // hydrator already consumes — so the only frontend change is a
+        // source-aware caption/alt.
+        if ((tUrlSrc === 'soundcloud' || tUrlSrc === 'instagram'
+             || tUrlSrc === 'facebook') && ytUrl) {
+          // The src attribute is left empty; hydrateSourceThumbnails
+          // fills it in from oembed.thumbnail_url. data-sc-oembed-url
+          // is the trigger attribute the hydrator scans for.
+          // hidden=true initially on the outer wrapper so the empty
+          // <img> doesn't show a broken-image icon during the
+          // oembed round-trip.
+          // v1.16.1: same wrapper-div pattern as the YT branch —
+          // the 4:3 aspect-ratio lives on the wrapper, not the img.
+          const _igLabel = tUrlSrc === 'instagram' ? 'Instagram'
+            : tUrlSrc === 'facebook' ? 'Facebook' : 'SoundCloud';
+          const _igVerb = tUrlSrc === 'instagram' ? 'watch on Instagram'
+            : tUrlSrc === 'facebook' ? 'watch on Facebook'
+            : 'listen on SoundCloud';
+          return `<div class="dlg-section"
+                       data-sc-thumbnail-wrap hidden>
+            <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
+               style="display:block;text-decoration:none">
+              <div class="info-source-thumb-wrap">
+                <img class="info-source-thumb"
+                     data-sc-oembed-url="${htmlEscape(ytUrl)}"
+                     alt="${_igLabel} thumbnail" loading="lazy" />
+              </div>
+              <p class="muted small info-thumb-caption">
+                ▸ click to ${_igVerb}
+              </p>
+            </a>
+          </div>`;
+        }
+        return '';
+      })()}
+      ${auditPlaceholder}
+      ${historySection}
+    `;
+    // v1.24.83: drop the poster on 404 / non-art so the hero collapses to just
+    // the meta (mirrors the carousel's onerror handling; attached here, not
+    // inline, so a future CSP can't block it).
+    body.querySelector('.info-poster')
+      ?.addEventListener('error', (ev) => ev.target.remove());
+    // v1.14.20 (H3): YouTube thumbnail block above gates on
+    // `urlSource(ytUrl) === 'youtube'`. After the H1 fix lands
+    // ytId for a SoundCloud override is the sc-<artist>-<slug>
+    // sentinel — the img.youtube.com/vi/{vid}/hqdefault.jpg URL
+    // would 404 and the "click to watch on YouTube" link would
+    // point at a SC URL. The audioBlock above already lets the
+    // user preview the SC track inline — no separate thumbnail
+    // needed.
+    // v1.12.101: thumbnail moved up above PROVENANCE / HISTORY (was
+    // last in the card). Closing + reopening the dialog now starts
+    // with PROVENANCE + HISTORY collapsed (the audit section's
+    // `open` attribute was removed; HISTORY was already closed by
+    // default), so the visible card height is bounded.
+    // Hydrate diff-tile titles asynchronously (oEmbed proxy); no
+    // await — failures fall back to bare video IDs already in the
+    // markup. Runs after innerHTML so the DOM nodes exist.
+    hydrateDiffTitles(body);
+    // v1.15.129: SoundCloud thumbnail hydration. Same fire-and-
+    // forget pattern as hydrateDiffTitles; failures leave the
+    // wrapper hidden so the user doesn't see a broken-image icon.
+    hydrateSourceThumbnails(body);
+    // v1.12.71: hydrate the TRY THIS NEXT section. Best-effort —
+    // endpoint failure leaves the placeholder copy in place. The
+    // section starts hidden; hydrateRecoveryOptions reveals it
+    // when options exist OR removes it entirely when empty.
+    if (recoverySectionId) {
+      // v1.13.35: pass section_id so the resolved-state lookup
+      // is section-scoped — pre-fix a 4K-only adopt could flip
+      // the standard section's info card to RESOLVED VIA ADOPT.
+      // v1.22.71: thread the clicked row's ratingKey so the recovery
+      // buttons act on THIS edition/section's rk (pre-fix the server
+      // picked an arbitrary plex_items row via unscoped LIMIT 1).
+      hydrateRecoveryOptions(body, t.media_type, t.tmdb_id, sectionId,
+                             ratingKey);
+    }
+    // v1.14.28: wire the PROBE TDB URL button. Click fires
+    // /api/items/{mt}/{id}/probe-tdb (~0.5-2s typical), renders
+    // the result inline in #probe-result with color + text. If
+    // the URL is dead, the row's failure_kind is also written
+    // server-side (the user's option B: preemptive surface) — a
+    // background loadLibrary catches it on the next tick.
+    body.querySelector('button[data-act="probe-tdb"]')?.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const btn = ev.currentTarget;
+      const mt = btn.dataset.mt;
+      const id = btn.dataset.id;
+      const slot = body.querySelector('#probe-result');
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PROBING…';
+      if (slot) {
+        slot.textContent = 'checking…';
+        slot.style.color = '';
+      }
+      try {
+        const res = await api('POST', `/api/items/${mt}/${id}/probe-tdb`);
+        if (res.ok) {
+          if (slot) {
+            // v1.14.49: when the probe-alive cleared a stale stored
+            // failure (failure_kind / sfa rows), surface that inline
+            // so the user knows why the row's red ! / amber acked-
+            // failure dot just disappeared. the user repro on 1408:
+            // probe said alive but INFO card still read "✓ ACKED —
+            // TDB UNAVAILABLE" because the server didn't clear.
+            slot.textContent = res.failure_cleared
+              ? '✓ alive (stale failure cleared)'
+              : '✓ alive';
+            slot.style.color = 'var(--green-bright)';
+          }
+          // v1.14.49: refresh the library + topbar when the probe-
+          // alive cleared state. Without this the row keeps showing
+          // its acked-failure dot until the next 30s auto-poll.
+          // Mirrors the dead-branch reload below.
+          if (res.failure_cleared) {
+            setTimeout(() => loadLibrary().catch(() => {}), 600);
+            setTimeout(refreshTopbarStatus, 1100);
+          }
+        } else if (res.indeterminate) {
+          if (slot) {
+            // v1.14.42: indeterminate set widened to include
+            // UNKNOWN + NETWORK_ERROR. The "cookies needed"
+            // wording was COOKIES_EXPIRED-specific and misled
+            // for the other indeterminate kinds. Now uses the
+            // server message directly + a kind-aware hint.
+            const hint = res.kind === 'cookies_expired'
+              ? ' (cookies needed for conclusive probe)'
+              : res.kind === 'network_error'
+                ? ' (transient — retry later)'
+                : ' (ambiguous — could be transient anti-bot/cookies/throttling, or actually dead)';
+            slot.textContent = `? ${res.message}${hint}`;
+            slot.style.color = 'var(--amber)';
+          }
+        } else {
+          if (slot) {
+            slot.textContent = `✗ ${res.message}`;
+            slot.style.color = 'var(--red)';
+          }
+          // Dead URL — refresh library so the red TDB ✗ pill +
+          // ⚠ glyph appear (server already wrote failure_kind).
+          setTimeout(() => loadLibrary().catch(() => {}), 600);
+          setTimeout(refreshTopbarStatus, 1100);
+        }
+      } catch (err) {
+        if (slot) {
+          slot.textContent = `error: ${err.message}`;
+          slot.style.color = 'var(--red)';
+        }
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        // v1.17.5: auto-dismiss the probe result after 6s. Without
+        // it the stale text persists across rebound probes inside
+        // the same dialog session — clicking PROBE TDB URL twice
+        // in a row left the old result on screen while the new
+        // one was running. The slot's parent dialog closes when
+        // the user dismisses the info card, so this only matters
+        // for in-dialog re-clicks.
+        if (slot) {
+          const snapshot = slot.textContent;
+          setTimeout(() => {
+            if (slot.textContent !== snapshot) return;
+            slot.textContent = '';
+            slot.style.color = '';
+          }, 6000);
+        }
+      }
+    });
+    // v1.12.83: wire the CLEAR button rendered into the // HISTORY
+    // section by renderRowHistory. The PROVENANCE CLEAR is wired
+    // inside hydrateAuditSection because that section is rendered
+    // asynchronously into a placeholder slot; HISTORY is part of
+    // the body's initial innerHTML so we hook it here.
+    body.querySelectorAll('.info-clear-btn[data-clear="events"]').forEach((btn) => {
+      btn.addEventListener('click', (ev) => {
+        // stopPropagation so the click doesn't toggle the parent
+        // <details> element open/closed via summary semantics.
+        ev.preventDefault();
+        ev.stopPropagation();
+        handleInfoClear(ev.currentTarget, body);
+      });
+    });
+    // v1.12.80: load the audit_events provenance log for this row
+    // and render it into #audit-section-slot. Async so the dialog
+    // paints first; failure leaves the slot empty (no error noise
+    // since most rows won't have audit history yet).
+    // v1.12.81: pass section_id so PROVENANCE renders only the
+    // events for the row's section (plus title-global ones like
+    // ADOPT). Pre-fix the standard and 4K cards showed identical
+    // timelines.
+    hydrateAuditSection(body, t.media_type, t.tmdb_id, sectionId);
+  }
+
+  // v1.12.80: fetch audit_events for a row and render a // PROVENANCE
+  // section into the placeholder. Distinct from the // HISTORY
+  // section which renders log_event rows (rolling, includes
+  // sync/worker noise) — this section is the curated "who changed
+  // what" feed sourced from audit_events.
+  async function hydrateAuditSection(root, mediaType, tmdbId, sectionId) {
+    if (!root || !mediaType || tmdbId === undefined) return;
+    const slot = root.querySelector('#audit-section-slot');
+    if (!slot) return;
+    let data;
+    try {
+      const sec = sectionId
+        ? `&section_id=${encodeURIComponent(sectionId)}`
+        : '';
+      data = await api('GET', `/api/items/${mediaType}/${tmdbId}/audit?limit=50${sec}`);
+    } catch (_) {
+      return;
+    }
+    const events = data?.events || [];
+    if (!events.length) return;
+    const fmtTs = (iso) => {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+      } catch (_) { return iso; }
+    };
+    const actionLabel = (a) => ({
+      set_url: 'SET URL',
+      clear_override: 'CLEAR OVERRIDE',
+      clear_previous_url: 'CLEAR URL',
+      accept_update: 'ACCEPT UPDATE',
+      decline_update: 'KEEP CURRENT',
+      revert: 'RESTORE / REVERT',
+      purge: 'PURGE',
+      unmanage: 'UNMANAGE',
+      unplace: 'DEL',
+      adopt: 'ADOPT',
+      replace_with_themerrdb: 'REPLACE TDB',
+      redownload: 'RE-DOWNLOAD',
+      ack_failure: 'ACK FAILURE',
+    }[a] || a.replace(/_/g, ' ').toUpperCase());
+    const renderDetail = (d) => {
+      if (!d || typeof d !== 'object') return '';
+      const lines = [];
+      if (d.old_url) lines.push(`old: ${d.old_url}`);
+      if (d.new_url) lines.push(`new: ${d.new_url}`);
+      if (d.restored_url) lines.push(`restored: ${d.restored_url}`);
+      const extras = Object.entries(d)
+        .filter(([k]) => !['old_url', 'new_url', 'restored_url'].includes(k))
+        .filter(([, v]) => v !== null && v !== undefined && v !== '')
+        .map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`);
+      lines.push(...extras);
+      return lines.length
+        ? `<pre class="history-detail">${htmlEscape(lines.join('\n'))}</pre>`
+        : '';
+    };
+    const rows = events.map((e) => {
+      const sec = e.section_id ? ` <span class="muted small">[section ${htmlEscape(e.section_id)}]</span>` : '';
+      return `
+        <div class="history-row">
+          <div class="history-row-head">
+            <span class="history-ts">${htmlEscape(fmtTs(e.occurred_at))}</span>
+            <span class="history-level history-level-info">${htmlEscape(actionLabel(e.action))}</span>
+            <span class="history-component muted small">${htmlEscape(e.actor || '')}${sec}</span>
+          </div>
+          ${renderDetail(e.details)}
+        </div>
+      `;
+    }).join('');
+    // v1.12.83: per-row CLEAR button. Useful when iterating during
+    // testing — repeated SET URL / ACCEPT UPDATE / PURGE cycles can
+    // bloat PROVENANCE to dozens of entries that aren't useful for
+    // future debugging. data-attrs let the dispatcher know which
+    // (media_type, tmdb_id, section_id) tuple to delete.
+    const clearBtn = `<button type="button" class="btn btn-tiny btn-danger info-clear-btn"
+      data-clear="audit"
+      data-mt="${htmlEscape(mediaType)}"
+      data-id="${htmlEscape(tmdbId)}"
+      data-section-id="${htmlEscape(sectionId || '')}"
+      title="Delete every PROVENANCE entry for this row${sectionId ? ' (this section + title-global rows)' : ''}.">CLEAR</button>`;
+    slot.innerHTML = `
+      <details class="history-section" data-info-section="audit">
+        <summary>
+          <span class="history-section-title">// PROVENANCE</span>
+          <span class="muted small">${events.length} audited change${events.length === 1 ? '' : 's'}</span>
+          ${clearBtn}
+        </summary>
+        <div class="history-body">${rows}</div>
+      </details>
+    `;
+    slot.querySelector('.info-clear-btn')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      handleInfoClear(ev.currentTarget, root);
+    });
+  }
+
+  // v1.12.83: shared dispatcher for the // HISTORY and // PROVENANCE
+  // CLEAR buttons. Confirms with the user, fires the DELETE, then
+  // re-hydrates just the affected section so the dialog stays open.
+  // v1.12.88: target the correct section via [data-info-section]
+  // attribute. Pre-fix the selector was `:not(.history-section-audit)`
+  // looking for a class that was never set, so HISTORY clear matched
+  // the FIRST .history-section in DOM order — which was actually
+  // the audit section's slot. Result: HISTORY stayed visible, audit
+  // section got replaced by an empty placeholder, and the audit
+  // CLEAR button was lost (looked locked from the user's POV).
+  async function handleInfoClear(btn, root) {
+    const which = btn.dataset.clear;  // 'audit' | 'events'
+    const mt = btn.dataset.mt;
+    const id = btn.dataset.id;
+    const sid = btn.dataset.sectionId || null;
+    const label = which === 'audit' ? 'PROVENANCE' : 'HISTORY';
+    if (!confirm(`Clear ${label} for this row?\n\nThis cannot be undone.`)) return;
+    btn.disabled = true;
+    try {
+      // v1.12.119: HISTORY clear is now per-section too. Pre-fix the
+      // events DELETE was title-wide, so clearing on the standard's
+      // INFO card wiped the 4K's history (different libraries / editions
+      // despite the shared tmdb_id). audit was already per-section
+      // since v1.12.83; this aligns history with it.
+      const sec = sid
+        ? `?section_id=${encodeURIComponent(sid)}`
+        : '';
+      const path = which === 'audit'
+        ? `/api/items/${mt}/${id}/audit${sec}`
+        : `/api/items/${mt}/${id}/events${sec}`;
+      await api('DELETE', path);
+      if (which === 'audit') {
+        // Re-hydrate the audit slot. With zero events the slot
+        // ends up empty (hydrateAuditSection bails on no events),
+        // which is the correct visual signal.
+        const slot = root.querySelector('#audit-section-slot');
+        if (slot) slot.innerHTML = '';
+        hydrateAuditSection(root, mt, id, sid || undefined);
+      } else {
+        // Replace the HISTORY <details> in place with a "cleared"
+        // marker. No CLEAR button needed — there's nothing to clear.
+        const node = root.querySelector('details[data-info-section="history"]');
+        if (node) {
+          node.outerHTML = '<details class="history-section history-section-empty"><summary><span class="history-section-title">// HISTORY</span><span class="muted small">cleared</span></summary></details>';
+        }
+      }
+    } catch (e) {
+      alert(`Clear ${label} failed: ${e.message}`);
+      btn.disabled = false;
+    }
+  }
+
+  // v1.12.71: fetch the recovery options for a failed row and
+  // render them as a vertical action list inside the existing
+  // placeholder. Each option is a button that fires the same
+  // data-act dispatch as the SOURCE menu items, so click handling
+  // is shared. Disabled options (e.g. RE-DOWNLOAD when cookies
+  // aren't present for cookies_expired) render greyed with the
+  // disabled_reason as the tooltip.
+  // v1.22.71: rowRk = the CLICKED row's rating_key (request pin). The
+  // body derives `ratingKey` from data.rating_key (the SERVER-resolved
+  // rk for the buttons) — do NOT name this param ratingKey: duplicate
+  // binding = SyntaxError, the exact v1.21.88 break (guard test pins it).
+  async function hydrateRecoveryOptions(root, mediaType, tmdbId, sectionId,
+                                        rowRk) {
+    if (!root || !mediaType || tmdbId === undefined) return;
+    const section = root.querySelector('#recovery-section');
+    if (!section) return;
+    let data;
+    try {
+      // v1.13.35: append section_id so the server's locally-resolved
+      // detection scopes to this row's section. Optional — when
+      // omitted the server falls back to title-global lookup for
+      // backward compatibility with callers that pre-date the
+      // section-scope addition.
+      // v1.22.71: append rating_key so the server's representative-rk
+      // resolution is pinned to the clicked row's edition/section.
+      const params = new URLSearchParams();
+      if (sectionId) params.set('section_id', sectionId);
+      if (rowRk) params.set('rating_key', rowRk);
+      const sec = params.toString() ? `?${params.toString()}` : '';
+      data = await api(
+        'GET',
+        `/api/items/${encodeURIComponent(mediaType)}/${encodeURIComponent(tmdbId)}/recovery-options${sec}`,
+      );
+    } catch (_) {
+      section.querySelector('.muted').textContent = 'recovery options unavailable';
+      return;
+    }
+    // v1.19.35: keep the section visible for BK-state rows even
+    // when options is empty. The v1.19.32/.33 paths land the row
+    // in backup-only mode (no failure_kind → API returns
+    // options=[]) but the v1.18.77 BACKUP READY banner + PROMOTE
+    // TO ACTIVE button still need to render. data.backup_state +
+    // override.intent='backup' are the BK-state hints surfaced
+    // by the v1.19.35 API change.
+    const dataOverrideIntent =
+      (data && data.override && data.override.intent) || null;
+    const isBkState = !!(data && data.backup_state)
+      || dataOverrideIntent === 'backup';
+    if (!data || (!(data.options || []).length && !isBkState)) {
+      section.remove();
+      return;
+    }
+    section.hidden = false;
+    // v1.13.47: human text falls back to a generic note for non-
+    // failed rows that surface recovery options (e.g. +P composite
+    // rows where Plex serves its own theme alongside motif's
+    // sidecar). data.failure_kind is null in that path so the old
+    // `data.human || data.failure_kind` chain produced the literal
+    // string "null" in the header.
+    const human = data.human
+      || (data.failure_kind ? data.failure_kind : '');
+    // v1.13.33: locally-resolved rows annotate the dead TDB URL row
+    // at the top of the dialog so the user sees the axis state at a
+    // glance — the title swap on the section header below carries
+    // the rest of the signal.
+    // v1.13.50: extend the green-banner treatment to acked-only
+    // rows (failure dismissed but no local source). Pre-fix Anna
+    // (video_removed, acked, no canonical) showed the default
+    // // TRY THIS NEXT header while the TV-show counterpart with
+    // an adopted sidecar showed ✓ RESOLVED — visually inconsistent
+    // for two states the user has both explicitly handled. The
+    // wording differs to stay honest: RESOLVED means "you have a
+    // working alternative", ACKED means "you've dismissed the
+    // failure but no theme is currently playing for this row".
+    const ackedOnly = !data.resolved && data.acked;
+    // v1.15.74: plex_resolved also gets the green-banner styling —
+    // the row has a working theme (via Plex) even though motif's
+    // TDB sync failed, so the section reads "soft / informational"
+    // rather than the default red "you need to act" tone.
+    if (data.resolved || ackedOnly || data.plex_resolved) {
+      section.classList.add('recovery-section-resolved');
+      try {
+        const dt = root.querySelectorAll('dt');
+        for (const node of dt) {
+          if ((node.textContent || '').trim().toLowerCase() === 'themerrdb url') {
+            const dd = node.nextElementSibling;
+            if (dd && !dd.querySelector('.tdb-unavailable-badge')) {
+              const badge = document.createElement('span');
+              badge.className = 'tdb-unavailable-badge muted small';
+              // v1.20.64: 3-way. The gate admits resolved / acked /
+              // plex_resolved, but the ternary only had 2 outcomes — a
+              // plex_resolved-but-not-acked row (P-row, TDB failed,
+              // Plex still serving) fell to "failure acknowledged" even
+              // though the user never acked. The section header already
+              // says PLEX SERVES; the badge must agree.
+              badge.textContent = data.resolved
+                ? ' (unavailable — using local source)'
+                : data.acked
+                  ? ' (unavailable — failure acknowledged)'
+                  : ' (unavailable — Plex is serving its own theme)';
+              dd.appendChild(badge);
+            }
+            break;
+          }
+        }
+      } catch (_) { /* annotation is cosmetic — never fail the render */ }
+    }
+    // v1.12.92: render the acked note on its own line below the
+    // header instead of inlining it next to the human label. The
+    // inline version made the header wrap to two lines after ACK,
+    // which jumped the buttons down. The dedicated line keeps the
+    // header height constant pre/post ack. The line is always in
+    // the DOM (empty when not acked) so the section's vertical
+    // size doesn't shift either.
+    const ackedNoteLine = data.acked
+      ? '<p class="recovery-section-note muted small">failure acknowledged — these options stay available until upstream changes</p>'
+      : '<p class="recovery-section-note recovery-section-note-empty"></p>';
+    // v1.13.74: tone→class map. Pre-fix every tone became
+    // `lib-source-{tone}`, which only had CSS rules for
+    // {themerrdb,user,adopt}. Tones like 'info' and 'danger' fell
+    // through to default green styling, so an ACK FAILURE button
+    // styled tone='danger' wouldn't actually render red. Map the
+    // non-source tones to their btn-* counterparts so the
+    // recovery card matches the bulk-action bar's color taxonomy.
+    // v1.14.50: removed `export: 'btn-export'` — no api.py recovery
+    // option ever passed `"tone": "export"` (the .btn-export CSS
+    // class is alive but used directly by library.html's // EXPORT
+    // CSV button, not routed through this map). Caught by the new
+    // tone cross-ref test inverse guard.
+    const TONE_CLASS = {
+      themerrdb: 'lib-source-themerrdb',
+      user: 'lib-source-user',
+      adopt: 'lib-source-adopt',
+      info: 'btn-info',
+      danger: 'btn-danger',
+      plex: 'btn-plex',
+      // v1.15.17: cookies tone — yellow, distinct from the red
+      // ACK button (.btn-danger) used on dead-URL kinds. The
+      // cookies_expired recipe uses this for both FIX COOKIES
+      // (primary action) and the kind-specific ACK FAILURE so
+      // the whole card reads as "auth-credential issue, not a
+      // dead URL". Maps to the .btn-cookies CSS class added in
+      // app.css alongside the other btn-* tones.
+      cookies: 'btn-cookies',
+      // v1.15.34: magenta tone — used by MARK ALIVE (operator
+      // override that can mask a real dead URL). Pre-fix MARK
+      // ALIVE shared the cookies/yellow tone with FIX COOKIES,
+      // making the two actions look identical despite very
+      // different semantics. Magenta visually separates the
+      // override from config-repair surfaces.
+      magenta: 'btn-magenta',
+    };
+    const items = data.options.map((opt) => {
+      const toneClass = opt.tone ? TONE_CLASS[opt.tone] || '' : '';
+      const tone = toneClass ? ` ${toneClass}` : '';
+      const disabledAttr = opt.disabled ? 'disabled' : '';
+      const disabledClass = opt.disabled ? ' recovery-option-disabled' : '';
+      const tooltip = opt.disabled && opt.disabled_reason
+        ? `${opt.tooltip || ''}\n\n(disabled: ${opt.disabled_reason})`
+        : (opt.tooltip || '');
+      // 'info' actions are non-interactive hints (e.g. "drop a
+      // cookies.txt"); render as a styled tile rather than a button
+      // so the user doesn't expect a click to do something.
+      // v1.15.123: also stamp a `recovery-option-info-tone-X` class
+      // so the label color can match the action taken. Pre-fix the
+      // label was hardcoded `color: var(--cyan)` regardless of how
+      // the row was resolved — RESOLVED VIA URL (user override)
+      // showed in cyan even though the U source pill is violet.
+      // the user: "make that purple [for url] / blue [for adopt] /
+      // amber [for plex] so at a quick glance you can tell what was
+      // done." Server already sends tone='user'/'adopt' on the
+      // resolved-via banner per api.py:13407.
+      const infoToneClass = opt.tone ? ` recovery-option-info-tone-${opt.tone}` : '';
+      if (!opt.interactive) {
+        return `<div class="recovery-option recovery-option-info${infoToneClass}${disabledClass}"
+                     title="${htmlEscape(tooltip)}">
+          <span class="recovery-option-label">${htmlEscape(opt.label)}</span>
+          <span class="recovery-option-tip muted small">${htmlEscape(opt.tooltip || '')}</span>
+        </div>`;
+      }
+      // Interactive option — render as a button with the same
+      // data-act / data-mt / data-id / data-rk attributes the
+      // SOURCE menu uses. Clicking dispatches into the existing
+      // library click handler if the row is on-page; otherwise
+      // we fall back to closing the dialog and navigating.
+      return `<button type="button"
+                      class="btn btn-tiny${tone} recovery-option-btn${disabledClass}"
+                      data-act="${htmlEscape(opt.action)}"
+                      data-mt="${htmlEscape(mediaType)}"
+                      data-id="${htmlEscape(tmdbId)}"
+                      data-recovery="1"
+                      ${disabledAttr}
+                      title="${htmlEscape(tooltip)}">
+        ${htmlEscape(opt.label)}
+      </button>`;
+    }).join('');
+    // v1.13.33: title swaps when locally-resolved so the user reads
+    // "this row is fine, the upstream is just dead" instead of "act
+    // now". Body text + options already adapted server-side.
+    // v1.13.50: ACKED title for the acked-but-no-local-source case
+    // (Anna pattern). Same green-banner styling but the wording is
+    // honest — no theme is playing, the alarm is just dismissed.
+    // v1.15.74: plex_resolved title for the P-row-with-failed-TDB
+    // case. Plex serves a theme so the user has a working result
+    // without motif's help — the TRY NEXT actions are OPTIONAL
+    // upgrades, not required next steps. the user: "if the row is
+    // P but a failed red pill tdb you don't really have to try
+    // anything next it would be optional."
+    // v1.18.77: distinguish "user intentionally chose backup" from
+    // "user wanted replace but placement was blocked." Both states
+    // pre-v1.18.77 fell into the data.plex_resolved branch and read
+    // "PLEX SERVES — OPTIONAL UPGRADES" with PUSH TO PLEX as the
+    // suggested action. That's wrong for intent='backup' rows —
+    // the user explicitly chose backup; suggesting PUSH TO PLEX
+    // would invert their choice. v1.18.77 promotes user_overrides.
+    // intent to a first-class column and the banner reflects it.
+    // v1.18.78: backup-intent check must come BEFORE the
+    // data.resolved check. the user's repro on 1941 post-v1.18.77:
+    // checked KEEP AS BACKUP at SET URL time, intent persisted
+    // correctly, but the banner still read "RESOLVED VIA URL"
+    // because `locally_resolved` was true (motif has the
+    // local_files row) and that branch fired first. The
+    // mutually-exclusive `plex_resolved = p_available AND NOT
+    // locally_resolved` then evaluated to false, so the v1.18.77
+    // `data.plex_resolved && overrideIntent === 'backup'` guard
+    // never matched. Now: when the user explicitly chose backup
+    // intent, that wins — regardless of whether motif's file is
+    // on disk (it will be — that's the whole point of backup).
+    const overrideIntent = (data.override && data.override.intent) || null;
+    let sectionTitleText;
+    if (overrideIntent === 'backup') {
+      sectionTitleText = '✓ BACKUP READY — DEFERRING TO PLEX';
+    } else if (data.resolved) {
+      sectionTitleText = '✓ RESOLVED — TDB UNAVAILABLE';
+    } else if (data.plex_resolved) {
+      sectionTitleText = '✓ PLEX SERVES — OPTIONAL UPGRADES';
+    } else if (ackedOnly) {
+      sectionTitleText = '✓ ACKED — TDB UNAVAILABLE';
+    } else {
+      sectionTitleText = '// TRY THIS NEXT';
+    }
+    // v1.18.77: intent-flip buttons. Two mutually-exclusive
+    // conditional buttons that appear when the row has a user
+    // override: one flips backup → replace (PROMOTE TO ACTIVE),
+    // the other flips replace → backup (MARK AS BACKUP). The
+    // flip is via the v1.18.77 /api/items/{mt}/{id}/intent
+    // endpoint which records the intent change in the audit
+    // log and triggers a force-place job on backup → replace
+    // transitions.
+    // v1.18.78: button visibility was gated on `data.plex_resolved`
+    // — but for an intent='backup' row where motif's file is on
+    // disk, `locally_resolved=true` swallows `plex_resolved`
+    // (mutually exclusive). PROMOTE TO ACTIVE never showed.
+    // Now: PROMOTE TO ACTIVE shows whenever intent='backup'
+    // (always meaningful — deploy the backup). MARK AS BACKUP
+    // still gated on `data.plex_resolved` because demoting a
+    // RESOLVED row would un-deploy motif's URL with no fallback
+    // unless Plex has its own theme to serve.
+    let intentFlipBtnsHtml = '';
+    if (overrideIntent) {
+      // v1.19.35: read mt/tid from the function parameters (or
+      // the v1.19.35 `data.theme` passthrough as a redundant
+      // second source), NOT the bare `data.theme` chain that was
+      // ALWAYS undefined pre-v1.19.35. The v1.18.77 PROMOTE/MARK
+      // buttons silently rendered with `data-mt="" data-id=""`
+      // for three years — click hit `/api/items//<empty>/intent`
+      // and 422'd. Class-9 phantom-fix sub-pattern (v1.18.81
+      // already had to fix the override surface; the data.theme
+      // reference was an adjacent silent bug only behavioral
+      // testing finds).
+      const mt = (data.theme && data.theme.media_type)
+        || mediaType || '';
+      const tid = (data.theme && data.theme.tmdb_id)
+        ?? tmdbId ?? '';
+      // v1.18.86: use the dedicated .recovery-section-flip primitive
+      // instead of a second .recovery-section-body wrapper with raw
+      // `style="margin-top:8px"` / `style="margin-left:10px"`. The
+      // primitive carries `margin-top: var(--gap-3)` + flex layout
+      // with `gap: var(--gap-4)` so button + caption sit side-by-side
+      // without per-element px overrides. Design audit (v1.18.85)
+      // surfaced the inline-style drift — fixed structurally.
+      // Both buttons use .btn-warn (mutating amber): PROMOTE +
+      // MARK AS BACKUP both flip user_overrides.intent + trigger
+      // worker-side state changes. Pre-v1.18.86 MARK used .btn-info
+      // (informational blue) — wrong variant per the design system
+      // §2 table; .btn-info is for non-mutating informational
+      // actions (ACCEPT UPDATE). Symmetric mutating pair now reads
+      // as such.
+      if (overrideIntent === 'backup') {
+        // v1.19.39: tooltip branches on synthetic-override. For the
+        // v1.19.35 BK-no-override path (api_recovery_options
+        // synthesizes override.intent='backup' with synthetic=True
+        // when no real user_overrides row exists — e.g. after
+        // v1.19.32 ACCEPT UPDATE on a P-row), there IS no user URL;
+        // motif force-places the TDB content it staged. Saying
+        // "your URL" lies. Carry-through branch (real override)
+        // keeps the v1.18.77 wording.
+        // v1.19.43: third variant for plex_cloud backups (v1.19.42
+        // walker staged Plex's own cloud theme). PROMOTE TO ACTIVE
+        // uploads motif's copy back to Plex via the v1.18.36
+        // re-upload trick — the wording should reflect the
+        // round-trip rather than the generic force-place phrasing.
+        const isSynthetic = !!(data.override && data.override.synthetic);
+        const isPlexCloudSynthetic = isSynthetic
+          && data.override && data.override.source_kind === 'plex_cloud';
+        const promoteTip = isPlexCloudSynthetic
+          ? "Switch this row from backup to active. Motif uploads its copy of Plex's cloud theme back to Plex via the v1.18.36 re-upload trick — Plex serves the same bytes from the now-motif-managed entry."
+          : isSynthetic
+            ? "Switch this row from backup to active. Motif will force-place its downloaded copy over Plex's theme on the next worker cycle."
+            : "Switch this row from backup to active. Motif will force-place your URL over Plex's theme on the next worker cycle.";
+        // v1.19.86: tone-match the deploy button to the row's backup
+        // badge — amber-bright for PB (plex_cloud, link-glyph-b),
+        // violet for UB (user backup, link-glyph-bk). source_kind is
+        // carried on data.override for both synthetic + real BK-state
+        // overrides (api.py recovery-options ~16813/16837).
+        // v1.19.90: pale green for TB (themerrdb backup, link-glyph-tb).
+        const promoteSourceKind =
+          (data.override && data.override.source_kind) || '';
+        const promoteToneClass = promoteSourceKind === 'plex_cloud'
+          ? 'btn-promote-pb'
+          : promoteSourceKind === 'themerrdb'
+            ? 'btn-promote-tb'
+            : promoteSourceKind === 'adopt'
+              ? 'btn-promote-ab'
+              : 'btn-promote-ub';
+        intentFlipBtnsHtml = `
+          <div class="recovery-section-flip">
+            <button class="btn btn-tiny ${promoteToneClass}"
+                    data-act="promote-to-active"
+                    data-mt="${htmlEscape(mt)}"
+                    data-id="${htmlEscape(tid)}"
+                    title="${htmlEscape(promoteTip)}">// PROMOTE TO ACTIVE</button>
+            <span class="muted small">deploy the backup over Plex's theme</span>
+          </div>`;
+      } else if (overrideIntent === 'replace' && data.plex_resolved) {
+        // v1.18.78: MARK AS BACKUP only meaningful when Plex has
+        // its own theme to fall back to. Demoting a RESOLVED
+        // intent=replace row (placement landed) would un-deploy
+        // motif's URL with no theme to serve — hide the button.
+        intentFlipBtnsHtml = `
+          <div class="recovery-section-flip">
+            <button class="btn btn-tiny btn-warn"
+                    data-act="mark-as-backup"
+                    data-mt="${htmlEscape(mt)}"
+                    data-id="${htmlEscape(tid)}"
+                    title="Flip the override to backup intent. Motif stops trying to force the placement past plex_has_theme; the URL stays downloaded as a safety net.">// MARK AS BACKUP</button>
+            <span class="muted small">stop trying to replace Plex's theme; keep as safety net</span>
+          </div>`;
+      }
+    }
+    section.innerHTML = `
+      <header class="recovery-section-head">
+        <span class="recovery-section-title">${htmlEscape(sectionTitleText)}</span>
+        <span class="muted small">${htmlEscape(human)}</span>
+      </header>
+      ${ackedNoteLine}
+      <div class="recovery-section-body">${items}</div>
+      ${intentFlipBtnsHtml}
+    `;
+    // v1.18.77: wire the intent-flip buttons. Same shape as the
+    // probe-tdb handler above — POST to the endpoint, refresh on
+    // success.
+    const _wireIntentFlip = (selector, targetIntent) => {
+      // v1.20.4: was `body.querySelector` — but `body` is undeclared
+      // in hydrateRecoveryOptions' scope (it lives in the sibling
+      // openInfoDialog). Strict mode → ReferenceError the instant
+      // this runs, so PROMOTE TO ACTIVE / MARK AS BACKUP never bound
+      // a click handler (and the throw also skipped the recovery-
+      // option dispatcher below). Card rendered via innerHTML so it
+      // looked live but was dead. Use `section` (the in-scope
+      // recovery container that already holds the buttons).
+      section.querySelector(selector)?.addEventListener('click',
+        async (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const btn = ev.currentTarget;
+          const mt = btn.dataset.mt;
+          const id = btn.dataset.id;
+          btn.disabled = true;
+          const origLabel = btn.textContent;
+          btn.textContent = '// FLIPPING…';
+          // v1.19.54: PROMOTE TO ACTIVE on a plex_cloud-backed
+          // row may detect SHA drift server-side (motif's backup
+          // is older than Plex's current selected cloud theme).
+          // The endpoint returns 409 with a structured payload;
+          // catch it here, show a confirm dialog, retry with
+          // `force_stale: true` on user accept.
+          const _postIntent = async (extras = {}) => {
+            // v1.20.4: was `body.dataset.sectionId` (undeclared `body`
+            // → ReferenceError, and never set anyway). Use the
+            // sectionId PARAMETER — the exact value the recovery-
+            // options GET used, so the PROMOTE POST hits the same
+            // section the BK state was detected in (the backup_only
+            // local_files row + its synthesized override live at that
+            // section; an empty section_id would 409 'nothing to
+            // promote').
+            // v1.21.88: rating_key scopes PROMOTE/MARK-AS-BACKUP to THIS
+            // edition (sibling editions keep their intent + placement).
+            const sec = sectionId || '';
+            const _ip = [];
+            if (sec) _ip.push(`section_id=${encodeURIComponent(sec)}`);
+            if (ratingKey) _ip.push(`rating_key=${encodeURIComponent(ratingKey)}`);
+            const qs = _ip.length ? `?${_ip.join('&')}` : '';
+            return api(
+              'POST',
+              `/api/items/${mt}/${id}/intent${qs}`,
+              { intent: targetIntent, ...extras },
+            );
+          };
+          try {
+            let res;
+            try {
+              res = await _postIntent();
+            } catch (initialErr) {
+              // The api() helper throws on non-2xx with the
+              // response body attached. Inspect for sha_drift.
+              const detail = initialErr && initialErr.detail;
+              const isDrift = (
+                initialErr && initialErr.status === 409
+                && detail
+                && typeof detail === 'object'
+                && detail.error === 'sha_drift'
+              );
+              if (!isDrift) throw initialErr;
+              const backShort = (detail.backup_sha || '').slice(0, 12);
+              const currShort = (detail.current_plex_sha || '').slice(0, 12);
+              const proceed = confirm(
+                "Plex's cloud theme has changed since you backed "
+                + "this row up.\n\n"
+                + `Your backup SHA: ${backShort}\n`
+                + `Plex's current SHA: ${currShort}\n\n`
+                + 'PROMOTE TO ACTIVE would deploy your STALE '
+                + 'backup. Plex will then serve the older bytes '
+                + 'until you replace them again.\n\n'
+                + 'To refresh first: close this, then run\n'
+                + 'DOWNLOAD PLEX BACKUP again from the row\'s\n'
+                + 'SOURCE menu to grab the current bytes.\n\n'
+                + 'Proceed with the stale backup anyway?'
+              );
+              if (!proceed) {
+                btn.textContent = origLabel;
+                btn.disabled = false;
+                return;
+              }
+              res = await _postIntent({ force_stale: true });
+            }
+            if (res && res.ok) {
+              // Refresh library + info card. The row's banner +
+              // SRC pill will update on the next loadLibrary tick.
+              setTimeout(() => loadLibrary().catch(() => {}), 200);
+              setTimeout(refreshTopbarStatus, 1100);
+              // v1.18.88: kick libraryRapidPoll. The backup→replace
+              // intent flip triggers a force-place job in the worker
+              // (api.py:/intent endpoint); the place's PL transition
+              // needs polling to surface in the UI without a manual
+              // refresh. Same audit-gap shape as the user-URL flow
+              // the user flagged — adds intent-flip to the row-refresh
+              // contract per DESIGN_SYSTEM § Row-refresh contract.
+              if (typeof libraryRapidPoll === 'function') libraryRapidPoll();
+              // v1.21.23: close the info dialog so the user drops back to
+              // the library table and sees the row's new state. Restores the
+              // original v1.18.88 intent — the old close referenced a stale
+              // dialog id (no-op for 3 tags); closeInfoDialog() targets the
+              // real info-dlg + does the focus/audio teardown.
+              if (typeof closeInfoDialog === 'function') closeInfoDialog();
+            } else {
+              btn.textContent = origLabel;
+              btn.disabled = false;
+              alert((res && res.detail) || 'Intent flip failed');
+            }
+          } catch (e) {
+            console.error('intent flip failed', e);
+            btn.textContent = origLabel;
+            btn.disabled = false;
+          }
+        });
+    };
+    _wireIntentFlip(
+      'button[data-act="promote-to-active"]', 'replace');
+    _wireIntentFlip(
+      'button[data-act="mark-as-backup"]', 'backup');
+    // v1.12.71: dispatch recovery-button clicks. Each button's
+    // data-act matches an existing handler keyword:
+    //   redl, clear-failure → direct API call (mt + tmdb)
+    //   manual-url, upload-theme → open the corresponding dialog
+    //     (needs rating_key from the API response)
+    // Closing the INFO dialog after dispatch lets the user see the
+    // result on the row without manually closing.
+    const ratingKey = data.rating_key || null;
+    // v1.14.28: probe-then-confirm helper for LET PLEX SERVE.
+    // Runs /probe-tdb first (~0.5-2s), then shows the confirm
+    // dialog with the probe result inline. If the URL is
+    // confirmed dead, the dialog text gains a warning so the
+    // user knows the TDB-fallback recovery path is currently
+    // broken (the canonical-based PUSH TO PLEX path is still
+    // available, but a future canonical loss would leave them
+    // stuck).
+    // Per the user's safety-net intent: "before I let Plex take
+    // over, confirm the recovery path back is intact".
+    async function _probeAndConfirmLetPlexServe(mt, id, baseDialogText) {
+      let probeWarning = '';
+      try {
+        const res = await api('POST', `/api/items/${mt}/${id}/probe-tdb`);
+        if (res.ok) {
+          probeWarning = '✓ TDB URL probed: alive\n\n';
+        } else if (res.indeterminate) {
+          // v1.14.42: kind-aware hint (was cookies-only). UNKNOWN
+          // and NETWORK_ERROR are also indeterminate now.
+          const hint = res.kind === 'cookies_expired'
+            ? 'cookies needed for definitive answer'
+            : res.kind === 'network_error'
+              ? 'transient network issue — retry later'
+              : 'ambiguous — could be transient anti-bot/cookies/throttling, or actually dead';
+          probeWarning = `? TDB URL probe inconclusive: ${res.message} (${hint})\n\n`;
+        } else {
+          probeWarning = `⚠ TDB URL probed: DEAD (${res.message}).\n   Re-fetching from TDB won't work until the URL is back. Recovery via PUSH TO PLEX from motif's local canonical still works.\n\n`;
+        }
+      } catch (e) {
+        // v1.14.51: see _probeAndConfirmLPSAtTopLevel — same
+        // safety-net rationale. Don't let a silent probe API
+        // failure mimic an "alive" green light.
+        probeWarning = `? TDB URL probe FAILED to run (${e.message || e}). Couldn't verify recovery path.\n\n`;
+      }
+      return confirm(probeWarning + baseDialogText);
+    }
+    section.querySelectorAll('button.recovery-option-btn').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.stopPropagation();
+        const act = btn.dataset.act;
+        const mt = btn.dataset.mt;
+        const id = btn.dataset.id;
+        const closeAndReload = () => {
+          closeInfoDialog();
+          libraryRapidPoll();
+          loadLibrary().catch(() => {});
+          // v1.13.51: also force-refresh the topbar past the
+          // /api/stats 1s TTL cache so the red FAIL pill clears
+          // immediately after info-card adopt-and-ack /
+          // purge-and-ack / purge-revert-to-plex / clear-failure.
+          // Pre-fix the FAIL count clung to its stale value
+          // until the next 15-30s topbar poll cycle, making
+          // the dismissal feel laggy. Mirrors the v1.11.69
+          // pattern used by every other state-changing button.
+          setTimeout(refreshTopbarStatus, 1100);
+        };
+        try {
+          if (act === 'fix-cookies-link') {
+            // v1.15.17: navigate to /settings#paths where the
+            // cookies.txt field + // TEST COOKIES button live.
+            // The info dialog stays open during the navigation
+            // (the page change closes it implicitly). No API
+            // call needed — this is a pure routing action that
+            // hands off to the operator's existing workflow.
+            closeInfoDialog();
+            window.location.href = '/settings#paths';
+            return;
+          }
+          if (act === 'redl') {
+            // v1.13.50: forward sectionId so the redownload is
+            // section-scoped — pre-fix the recovery dispatcher
+            // omitted the param (only the purge actions had it),
+            // so a 4K-only RE-DOWNLOAD click would re-fetch
+            // every section's row of the title. Same v18
+            // cross-section bleed class the v1.13.35 lookup
+            // scope fix closed for the recovery-options READ.
+            // v1.13.65: paint the optimistic topbar placeholder so
+            // the mini-bar lights up immediately when the user picks
+            // RE-DOWNLOAD from the info dialog's recovery options.
+            // Pre-fix this dispatcher called the API directly with
+            // no placeholder — topbar stayed blank until the next
+            // idle /api/progress poll (up to 10s).
+            try {
+              if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+                window.motifOps.setOptimisticPlaceholder(
+                  'download_queue', '// QUEUING DOWNLOAD',
+                );
+              }
+            } catch (_) { /* swallow — placeholder is cosmetic */ }
+            const redlUrl = sectionId
+              ? `/api/items/${mt}/${id}/redownload?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/redownload`;
+            await api('POST', redlUrl);
+            closeAndReload();
+          } else if (act === 'mark-alive') {
+            // v1.15.24: operator-asserted "URL works in browser,
+            // override yt-dlp's verdict". Title-global clear via
+            // POST /api/items/{mt}/{id}/mark-alive (no
+            // section_id — MARK ALIVE is global since it's
+            // claiming the URL itself works, not just dismissing
+            // a per-section ack). Same close-and-reload shape as
+            // clear-failure: re-hydrate the recovery options +
+            // refresh the topbar so FAIL/COOKIES counts reflect
+            // the cleared state.
+            const confirmed = confirm(
+              'MARK URL ALIVE\n\n'
+              + 'Confirm the YouTube URL plays in your browser?\n\n'
+              + 'This clears motif\'s failure flag — overrides '
+              + 'yt-dlp\'s most recent verdict. Use only when '
+              + 'you\'ve manually verified the URL works (anti-'
+              + 'bot misclassification cases).\n\n'
+              + 'OK = clear failure_kind\n'
+              + 'Cancel = leave the row as-is'
+            );
+            if (!confirmed) return;
+            await api('POST', `/api/items/${mt}/${id}/mark-alive`);
+            await hydrateRecoveryOptions(root, mt, id, sectionId);
+            refreshTopbarStatus().catch(() => {});
+            loadLibrary().catch(() => {});
+          } else if (act === 'clear-failure') {
+            // v1.12.88: ACK from INFO doesn't close the dialog —
+            // re-render the recovery section in place so the user
+            // can keep reading the failure context + recovery
+            // options (now without the ACK FAILURE button, which
+            // is filtered out server-side once acked). Topbar dot
+            // refresh kicks via the standard helper.
+            // v1.12.92: don't innerHTML='' before the re-fetch.
+            // hydrateRecoveryOptions overwrites innerHTML once the
+            // new data arrives, so the section's old content stays
+            // visible during the ~100ms fetch instead of collapsing
+            // to empty and re-painting (which felt jarring). Also
+            // kick loadLibrary so the row's red ! glyph clears
+            // without requiring a refresh / external click.
+            // v1.13.54: forward sectionId so the ack lands in
+            // section_failure_acks (per-section) instead of the
+            // title-global themes.failure_acked_at — closes the
+            // cross-section bleed where ACK on the 4K info card
+            // dismissed the standard row's failure too.
+            const ackUrl = sectionId
+              ? `/api/items/${mt}/${id}/clear-failure?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/clear-failure`;
+            await api('POST', ackUrl);
+            // v1.13.35: forward sectionId on re-hydrate so the
+            // resolved-state lookup stays section-scoped after
+            // ACK FAILURE.
+            await hydrateRecoveryOptions(root, mt, id, sectionId);
+            refreshTopbarStatus().catch(() => {});
+            loadLibrary().catch(() => {});
+          } else if (act === 'manual-url') {
+            if (!ratingKey) {
+              alert('No rating_key available for this row — open SET URL from the row\'s SOURCE menu.');
+              return;
+            }
+            closeInfoDialog();
+            // v1.15.141: forward full context to openManualUrlDialog
+            // so the SET URL flow opened from INFO matches the one
+            // opened from the row's SOURCE menu. Pre-fix every field
+            // except ratingKey was a hardcoded blank — the dialog
+            // header showed "// — (—)", the live match-warning was
+            // silent (no tdbUrl/appliedUrl to compare against), and
+            // most importantly the // DOWNLOAD ONLY checkbox never
+            // appeared on P rows (the v1.15.75 reveal gate is
+            // `srcLetter === 'P'`, which fails on '').
+            // the user: "the user url from the info card should also
+            // have the same download only option present if it's a
+            // P row."
+            // Title/year/tdbUrl/appliedUrl come from `data` (the
+            // in-scope /api/items response — authoritative for the
+            // row's current state). srcLetter is computed by
+            // looking up the matching libraryState.items row by
+            // rating_key, since computeSrcLetter expects the
+            // library-row shape (placement/source_kind/plex_has_
+            // theme/etc.) rather than the api_item response shape.
+            // For non-library entry points (e.g. dashboard deep-
+            // links where libraryState.items is empty), srcLetter
+            // falls back to '' — same as the pre-v1.15.141 behavior
+            // for those edge paths.
+            const rowItem = (libraryState.items || []).find(
+              (it) => it.rating_key === ratingKey);
+            const tdbUrl = (data.theme && data.theme.youtube_url) || '';
+            const appliedUrl =
+              (data.override && data.override.youtube_url) || tdbUrl;
+            openManualUrlDialog({
+              ratingKey,
+              title: (data.theme && data.theme.title) || '',
+              year: (data.theme && data.theme.year) || '',
+              tdbUrl,
+              appliedUrl,
+              srcLetter: rowItem ? computeSrcLetter(rowItem) : '',
+            });
+          } else if (act === 'upload-theme') {
+            if (!ratingKey) {
+              alert('No rating_key available for this row — open UPLOAD MP3 from the row\'s SOURCE menu.');
+              return;
+            }
+            closeInfoDialog();
+            // v1.19.83: mirror the v1.15.141 manual-url INFO-card fix —
+            // compute srcLetter from the matching library row + pass
+            // title/year so the KEEP AS BACKUP checkbox reveals on
+            // P-rows opened from INFO too (the reveal gate is
+            // `srcLetter === 'P'`, which fails on the pre-fix blanks).
+            const uploadRowItem = (libraryState.items || []).find(
+              (it) => it.rating_key === ratingKey);
+            openUploadDialog({
+              ratingKey,
+              title: (data.theme && data.theme.title) || '',
+              year: (data.theme && data.theme.year) || '',
+              srcLetter: uploadRowItem ? computeSrcLetter(uploadRowItem) : '',
+            });
+          } else if (act === 'adopt-and-ack') {
+            // v1.13.47: smart TRY NEXT — adopt the existing
+            // theme.mp3 at the Plex folder + ack the failure in one
+            // click. Pre-fix called /adopt-from-plex which 409s with
+            // "no mismatch state to resolve" when the row has no
+            // local_files entry (the failed-download case is the
+            // common one — there's no canonical to mismatch). The
+            // SOURCE-menu ADOPT button uses /adopt-sidecar via
+            // adopt_folder() which is the right path: it ingests the
+            // sidecar at the Plex folder into motif's themes_dir
+            // even when no local_files row exists yet. Mirror that.
+            if (!ratingKey) {
+              alert('No rating_key available for this row — open ADOPT from the row\'s SOURCE menu.');
+              return;
+            }
+            await api('POST', `/api/plex_items/${encodeURIComponent(ratingKey)}/adopt-sidecar`);
+            // v1.13.54: section-scope the ack so a 4K-only adopt
+            // doesn't dismiss the standard row's failure too.
+            const adoptAckUrl = sectionId
+              ? `/api/items/${mt}/${id}/clear-failure?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/clear-failure`;
+            await api('POST', adoptAckUrl);
+            closeAndReload();
+          } else if (act === 'purge-and-ack') {
+            // v1.13.44: smart TRY NEXT — drop motif's placement +
+            // ack the failure. Plex's own theme keeps playing
+            // because plex_independent_theme=1 was the detection
+            // that surfaced this option in the first place.
+            // v1.14.27: switched from /forget (full PURGE — also
+            // deletes motif's canonical) to /unplace (delete the
+            // theme.mp3 at the Plex folder, KEEP motif's
+            // canonical at /themes/). Recovery is now a one-click
+            // PUSH TO PLEX from the SOURCE menu. Pre-fix every
+            // LET PLEX SERVE was a one-way trip — the canonical
+            // got deleted alongside the placement, so reverting
+            // required a fresh download from TDB. the user's repro
+            // motivation: "if we did this on a motif managed
+            // theme would it be doing a purge to allow it to be
+            // plex served? ... rather than purge we could just do
+            // a delete of the plex theme.mp3 and leave our
+            // download copy in place."
+            // Confirm dialog: explicit copy describing what gets
+            // deleted vs what survives + how to revert.
+            const folderHint = (() => {
+              // v1.22.7: resolve by the CLICKED rating_key when present, not an
+              // ambiguous (mt,id,section) .find() that returns the first edition.
+              const it = (libraryState.items || []).find((row) =>
+                ratingKey
+                  ? String(row.rating_key) === String(ratingKey)
+                  : (row.theme_media_type === mt
+                     && String(row.theme_tmdb) === String(id)
+                     && (!sectionId || row.section_id === sectionId)));
+              return (it && it.media_folder) ? it.media_folder : null;
+            })();
+            const folderLine = folderHint
+              ? `Plex folder: ${folderHint}\n\n`
+              : '';
+            // v1.14.28: probe-on-confirm — TDB URL freshness
+            // shown inline in the dialog (the user's safety net).
+            const baseText = 'LET PLEX SERVE\n\n'
+              + 'This will:\n'
+              + '  • DELETE motif\'s theme.mp3 from the Plex folder\n'
+              + '  • KEEP motif\'s canonical at /themes/ (in case you change your mind)\n'
+              + '  • Acknowledge the failure (clears the FAIL count)\n\n'
+              + folderLine
+              + 'Plex\'s own theme (cloud / embed) will become the only one served.\n'
+              + 'Recovery: PUSH TO PLEX from the SOURCE menu re-places motif\'s canonical, no re-download needed.\n\n'
+              + 'Proceed?';
+            btn.disabled = true;
+            const origLabel = btn.textContent;
+            btn.textContent = '// PROBING…';
+            const ok = await _probeAndConfirmLetPlexServe(mt, id, baseText);
+            btn.disabled = false;
+            btn.textContent = origLabel;
+            if (!ok) return;
+            // v1.22.7: thread the clicked rating_key so the unplace scopes to
+            // THIS edition. Pre-fix this carried only section_id → the backend
+            // resolved _unplace_edition=None → the section-wide DELETE branch
+            // physically unlinked EVERY edition's placement (the v1.22.2
+            // data-loss bleed, at the 3rd LET PLEX SERVE site that fix missed).
+            const _lpsQs = [
+              sectionId ? `section_id=${encodeURIComponent(sectionId)}` : '',
+              ratingKey ? `rating_key=${encodeURIComponent(ratingKey)}` : '',
+            ].filter(Boolean).join('&');
+            const unplaceUrl = `/api/items/${mt}/${id}/unplace${_lpsQs ? `?${_lpsQs}` : ''}`;
+            await api('POST', unplaceUrl);
+            // v1.13.54: section-scope the ack on the chained
+            // clear-failure so a 4K-only LET PLEX SERVE doesn't
+            // also dismiss the standard row's failure.
+            const purgeAckUrl = sectionId
+              ? `/api/items/${mt}/${id}/clear-failure?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/clear-failure`;
+            await api('POST', purgeAckUrl);
+            closeAndReload();
+          // v1.14.47: removed `adopt-and-let-plex-serve` and
+          // `purge-revert-to-plex` recovery-card branches. Both
+          // were exclusively for the no-fail TRY THIS NEXT
+          // surface, which v1.14.47 emptied (these actions
+          // moved to the SOURCE menu — see the SOURCE-menu
+          // dispatcher's `purge-revert-to-plex` and
+          // `adopt-and-let-plex-serve` branches above for the
+          // top-level `letPlexServeFlow` / `adoptAndLet
+          // PlexServeFlow` invocations). Server's
+          // api_recovery_options no longer emits these action
+          // keys, so the recovery card never receives them.
+          } else if (act === 'revert') {
+            // v1.13.74: REVERT TO USER URL surfaced on the recovery
+            // card when previous_url.kind='url'. Same endpoint the
+            // SOURCE-menu REVERT uses; section-scoped so a 4K-only
+            // revert doesn't disturb the standard row.
+            try {
+              if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+                window.motifOps.setOptimisticPlaceholder(
+                  'download_queue', '// QUEUING DOWNLOAD',
+                );
+              }
+            } catch (_) { /* placeholder is cosmetic */ }
+            const revertUrl = sectionId
+              ? `/api/items/${mt}/${id}/revert?section_id=${encodeURIComponent(sectionId)}`
+              : `/api/items/${mt}/${id}/revert`;
+            await api('POST', revertUrl);
+            closeAndReload();
+          }
+          // v1.14.47: removed `push-to-plex` and `download-tdb-
+          // backup` recovery-card branches — both were exclusive
+          // to the no-fail TRY THIS NEXT surface that v1.14.47
+          // emptied. PUSH TO PLEX moved to the PLACE menu's
+          // existing entry (gated `themed && downloaded &&
+          // !placed && !dlBroken` which is the LPS state).
+          // DOWNLOAD TDB BACKUP stays in the SOURCE menu (added
+          // there in v1.14.45) — same dispatcher branch above.
+        } catch (err) {
+          // v1.17.13: clear the download_queue placeholder if it
+          // was set by the redl / revert branches above. Safe
+          // no-op for the other branches in this dispatcher that
+          // don't set a placeholder. Race audit finding #2 (class
+          // 5 silent topbar drift) — pre-fix a failed RE-DOWNLOAD
+          // or REVERT from the recovery card left the // QUEUING
+          // DOWNLOAD pill on the topbar for the full 5s TTL.
+          try {
+            if (window.motifOps
+                && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('download_queue');
+            }
+          } catch (_) {}
+          alert('Recovery action failed: ' + err.message);
+        }
+      });
+    });
+  }
+
+  // v1.12.66: per-row events timeline. Renders the last 25 events
+  // for this row (already loaded by /api/items/{mt}/{tmdb}) as a
+  // collapsed details popover. Each line shows local-formatted
+  // timestamp · level · component · message, color-coded by level.
+  // Detail JSON is rendered as a nested <pre> when present, so a
+  // failed download's raw error or a sync's index/payload counts
+  // are inspectable without leaving the dialog.
+  function renderRowHistory(events, mediaType, tmdbId, baseline) {
+    // v1.24.10: a row with no live events still gets a durable origin
+    // line when the caller supplies a `baseline` (synthesized from
+    // stored provenance — see openInfoDialog). Only truly empty when
+    // there are neither events NOR a baseline.
+    const hasEvents = !!(events && events.length);
+    if (!hasEvents && !baseline) return '';
+    const fmtTs = (iso) => {
+      if (!iso) return '—';
+      try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return iso;
+        return d.toLocaleString();
+      } catch (_) {
+        return iso;
+      }
+    };
+    const levelClass = (level) => {
+      const l = (level || '').toUpperCase();
+      if (l === 'ERROR') return 'history-level-error';
+      if (l === 'WARNING' || l === 'WARN') return 'history-level-warn';
+      return 'history-level-info';
+    };
+    // v1.24.11: only build the per-event rows when there ARE events —
+    // in the synthesized-baseline branch this map would run over an
+    // empty array and be discarded.
+    const eventRows = hasEvents ? events.map((e) => {
+      const detail = (() => {
+        if (!e.detail) return '';
+        try {
+          const parsed = typeof e.detail === 'string' ? JSON.parse(e.detail) : e.detail;
+          const pretty = JSON.stringify(parsed, null, 2);
+          return `<pre class="history-detail">${htmlEscape(pretty)}</pre>`;
+        } catch (_) {
+          return `<pre class="history-detail">${htmlEscape(String(e.detail))}</pre>`;
+        }
+      })();
+      return `
+        <div class="history-row">
+          <div class="history-row-head">
+            <span class="history-ts">${htmlEscape(fmtTs(e.ts))}</span>
+            <span class="history-level ${levelClass(e.level)}">${htmlEscape((e.level || '').toUpperCase())}</span>
+            <span class="history-component muted small">${htmlEscape(e.component || '')}</span>
+          </div>
+          <div class="history-msg">${htmlEscape(e.message || '')}</div>
+          ${detail}
+        </div>
+      `;
+    }).join('') : '';
+    // v1.24.10: when there are no live events, render the synthesized
+    // baseline origin row instead. It's derived from stored provenance
+    // (not the events table), so there is nothing to CLEAR — the button
+    // and the event-count note are suppressed in this branch.
+    let rows;
+    let summaryNote;
+    let clearBtn = '';
+    if (hasEvents) {
+      rows = eventRows;
+      summaryNote = `${events.length} event${events.length === 1 ? '' : 's'} · click to expand`;
+      // v1.12.83: per-row CLEAR button. The HISTORY section sources
+      // from the rolling events table which has no section_id column,
+      // so this clears across every section that owns the title.
+      // Useful while testing — repeated cycles can bloat HISTORY with
+      // worker / sync chatter that no longer matters. Click handler
+      // is wired by the openInfoDialog dispatcher (data-clear="events").
+      clearBtn = (mediaType !== undefined && tmdbId !== undefined)
+        ? `<button type="button" class="btn btn-tiny btn-danger info-clear-btn"
+            data-clear="events"
+            data-mt="${htmlEscape(mediaType)}"
+            data-id="${htmlEscape(tmdbId)}"
+            title="Delete history for this row.">CLEAR</button>`
+        : '';
+    } else {
+      const originMsg = baseline.label
+        + (baseline.provenance ? ` · ${baseline.provenance}` : '')
+        + (baseline.backupOnly ? ' · backup (deferring to Plex)' : '');
+      rows = `
+        <div class="history-row history-row-synthetic">
+          <div class="history-row-head">
+            <span class="history-ts">${htmlEscape(baseline.at || '—')}</span>
+            <span class="history-level history-level-info">ORIGIN</span>
+            <span class="history-component muted small">provenance</span>
+          </div>
+          <div class="history-msg">${htmlEscape(originMsg)}</div>
+          <div class="muted small history-synthetic-note">Synthesized from this row's stored provenance — the detailed per-event timeline (kept ~30 days) has rolled off.</div>
+        </div>
+      `;
+      summaryNote = 'origin · click to expand';
+    }
+    return `
+      <details class="history-section" data-info-section="history">
+        <summary>
+          <span class="history-section-title">// HISTORY</span>
+          <span class="muted small">${summaryNote}</span>
+          ${clearBtn}
+        </summary>
+        <div class="history-body">${rows}</div>
+      </details>
+    `;
+  }
+
+  // v1.12.56: render the side-by-side diff for an actionable
+  // pending update. Returns '' (no section) when there's nothing
+  // to show. Tiles ship with thumbnail src baked in (constructed
+  // from video ID — works for any public YouTube video) and a
+  // title placeholder that hydrateDiffTitles fills in via the
+  // server oEmbed proxy.
+  function renderPendingUpdateDiff(pu, lf, t, ovr) {
+    if (!pu || pu.decision !== 'pending') return '';
+    if (pu.kind === 'urls_match') {
+      // v1.20.61: urls_match used to render nothing here, leaving the
+      // card blank for a state where ACCEPT UPDATE still does something
+      // real (U→T reclassify, same audio). the user's Zootopia 2 repro:
+      // TDB published the exact video his override already used, so
+      // there's no DIFF to draw (CURRENT === PROPOSED). A single-tile
+      // panel showing the matched theme + the reclassify note beats
+      // emptiness. No arrow, no second tile — they'd be identical.
+      const matchRaw = (ovr && ovr.youtube_url)
+        || pu.new_youtube_url || pu.old_youtube_url || '';
+      const matchSrc = urlSource(matchRaw);
+      const matchVid = matchSrc === 'youtube'
+        ? (extractYouTubeVideoId(matchRaw) || (lf && lf.source_video_id) || '')
+        : ((lf && lf.source_video_id) || '');
+      const matchUrl = (matchSrc === 'youtube' && matchVid)
+        ? `https://www.youtube.com/watch?v=${matchVid}`
+        : matchRaw;
+      const matchThumb = (matchSrc === 'youtube' && matchVid)
+        ? `<a href="${htmlEscape(matchUrl)}" target="_blank" rel="noopener"
+              class="diff-tile-thumb-link">
+             <img src="https://img.youtube.com/vi/${htmlEscape(matchVid)}/hqdefault.jpg"
+                  alt="" loading="lazy" class="diff-tile-thumb" />
+           </a>`
+        : '';
+      return `
+        <section class="diff-section">
+          <header class="diff-section-head">
+            <span class="diff-section-title">// THEMERRDB MATCH</span>
+            <span class="muted small">ThemerrDB now publishes the same video your override already uses — ACCEPT UPDATE just reclassifies this row from your URL (U) to ThemerrDB-managed (T); the file on disk stays put, no re-download.</span>
+          </header>
+          <div class="diff-tiles-single">
+            <div class="diff-tile">
+              <div class="diff-tile-label" style="color:var(--violet)">CURRENT = PROPOSED</div>
+              ${matchThumb}
+              <div class="diff-tile-title" data-oembed-slot="current"
+                   data-oembed-url="${htmlEscape(matchUrl)}">
+                <span class="muted small">${htmlEscape(matchVid || matchUrl || '')}</span>
+              </div>
+            </div>
+          </div>
+        </section>
+      `;
+    }
+    // v1.14.20 (H2): source-aware diff tiles. Pre-fix this
+    // function bailed early on any non-YouTube proposed URL
+    // because extractYouTubeVideoId returned null. SC ACCEPT
+    // UPDATE flows had no visual diff at all. Now the
+    // PROPOSED tile renders for either source — YT keeps the
+    // img.youtube.com thumbnail; SC drops the thumbnail
+    // (img.youtube.com obviously doesn't host SC art) and
+    // shows the URL + oembed-fetched title via the existing
+    // hydrateDiffTitles mechanism (already source-aware via
+    // /api/source/oembed since v1.14.3).
+    const newUrl = pu.new_youtube_url || '';
+    const newSrc = urlSource(newUrl);
+    if (newSrc === 'unknown') return '';  // can't render anything useful
+    // v1.18.62: when a user override is active, surface THE
+    // OVERRIDE URL as the CURRENT tile — not pu.old_youtube_url
+    // (which is the stale TDB URL from when the pending_update
+    // was detected). the user's repro: a U row with a working
+    // override + a failed TDB URL got a pending_update when
+    // TDB fixed their URL. The PROPOSED CHANGE block compared
+    // dead-TDB → new-TDB and ignored the user's working
+    // override entirely. ACCEPT UPDATE actually replaces the
+    // user override with the new TDB URL, so the CURRENT tile
+    // should show what's about to be replaced.
+    const hasOverride = !!(ovr && ovr.youtube_url);
+    const currentRawUrl = hasOverride
+      ? ovr.youtube_url
+      : (pu.old_youtube_url || '');
+    const currentSrc = urlSource(currentRawUrl);
+    const currentVidFromLf = (lf && lf.source_video_id) || '';
+    let currentUrl = '';
+    let currentVid = '';
+    if (currentSrc === 'youtube') {
+      // YT path — vid extraction works; URL canonicalises.
+      // v1.18.65: when an override is active, prefer the video
+      // id extracted FROM the override URL over lf.source_video_id.
+      // the user's "Am I Actually the Strongest?" repro: lf carried
+      // the stale source_video_id=kEp_ZMPWWdU (pre-override TDB
+      // download). currentRawUrl=ovr.youtube_url=je_uIV5zv5c (the
+      // override). The pre-fix `currentVidFromLf || extract(url)`
+      // short-circuited to kEp, so the CURRENT (your URL) tile
+      // rendered the dead kEp thumbnail under the user's override
+      // URL — same class of stale-lf-vs-fresh-URL bug v1.18.63
+      // fixed in the info-card ytId derivation, mirrored here for
+      // the diff-tile thumbnail.
+      currentVid = hasOverride
+        ? (extractYouTubeVideoId(currentRawUrl) || currentVidFromLf || '')
+        : (currentVidFromLf || extractYouTubeVideoId(currentRawUrl) || '');
+      currentUrl = currentVid
+        ? `https://www.youtube.com/watch?v=${currentVid}`
+        : currentRawUrl;
+    } else if (currentSrc === 'soundcloud') {
+      // SC path — preserve the URL verbatim; vid is the synthetic
+      // sc-<artist>-<slug> sentinel from extract_video_id (used
+      // by oembed lookup as the slot key).
+      currentUrl = currentRawUrl;
+      currentVid = currentVidFromLf || '';
+    } else if (currentVidFromLf) {
+      // Fallback: lf has an id but no captured URL — render the
+      // bare id (no link) so the user at least sees what's playing.
+      currentVid = currentVidFromLf;
+    }
+    // Tile renderer: source-aware. YT gets the YouTube thumbnail;
+    // SC + unknown skip the thumbnail and show URL + oembed
+    // title only.
+    const tile = (label, src, vid, url, slot, accent) => {
+      if (!vid && !url) {
+        // v1.19.72 (M2 follow-up to v1.19.71): the new-theme
+        // discovery flow ALWAYS hits this empty branch for the
+        // CURRENT tile (pu.old_youtube_url=NULL + no lf). "No
+        // recorded source" reads as a bug; the truth is more
+        // specific: this is a brand-new TDB discovery and there
+        // IS no prior theme to compare against. The PROPOSED
+        // tile next to it carries the new URL.
+        const emptyCopy = (pu.kind === 'new_theme_available'
+                           && slot === 'current')
+          ? 'no prior theme — this is a brand-new ThemerrDB discovery'
+          : 'no recorded source';
+        return `<div class="diff-tile diff-tile-empty">
+          <div class="diff-tile-label" style="color:${accent}">${htmlEscape(label)}</div>
+          <p class="muted small">${htmlEscape(emptyCopy)}</p>
+        </div>`;
+      }
+      const thumbHtml = (src === 'youtube' && vid)
+        ? `<a href="${htmlEscape(url)}" target="_blank" rel="noopener"
+              class="diff-tile-thumb-link">
+             <img src="https://img.youtube.com/vi/${htmlEscape(vid)}/hqdefault.jpg"
+                  alt="" loading="lazy" class="diff-tile-thumb" />
+           </a>`
+        : '';
+      const subline = vid || url || '';
+      return `<div class="diff-tile">
+        <div class="diff-tile-label" style="color:${accent}">${htmlEscape(label)}</div>
+        ${thumbHtml}
+        <div class="diff-tile-title" data-oembed-slot="${htmlEscape(slot)}"
+             data-oembed-url="${htmlEscape(url)}">
+          <span class="muted small">${htmlEscape(subline)}</span>
+        </div>
+      </div>`;
+    };
+    // Extract vid for the PROPOSED tile per source so YT keeps
+    // its thumbnail. SC has no useful vid for img.youtube.com;
+    // the tile renderer skips the thumbnail when src!=='youtube'.
+    const newVid = newSrc === 'youtube'
+      ? (extractYouTubeVideoId(newUrl) || '')
+      : '';
+    // v1.18.62: CURRENT tile label + header hint adapt when a
+    // user override is the source-of-truth for the "current"
+    // value. The override label distinguishes it visually from
+    // a TDB-default current; the header hint explicitly notes
+    // that ACCEPT UPDATE will drop the override.
+    const currentLabel = hasOverride ? 'CURRENT (your URL)' : 'CURRENT';
+    const headerHint = hasOverride
+      ? 'ACCEPT UPDATE drops your override and switches to the new TDB URL.'
+      : 'ACCEPT UPDATE will replace the left source with the right.';
+    return `
+      <section class="diff-section">
+        <header class="diff-section-head">
+          <span class="diff-section-title">// PROPOSED CHANGE</span>
+          <span class="muted small">${htmlEscape(headerHint)}</span>
+        </header>
+        <div class="diff-tiles">
+          ${tile(currentLabel, currentSrc, currentVid, currentUrl, 'current', 'var(--violet)')}
+          <div class="diff-arrow" aria-hidden="true">→</div>
+          ${tile('PROPOSED', newSrc, newVid, newUrl, 'proposed', 'var(--blue)')}
+        </div>
+      </section>
+    `;
+  }
+
+  // v1.12.56: walk the diff-tile slots in `root` and replace each
+  // placeholder span with the oEmbed video title. Best-effort —
+  // a 404 from the proxy (private/removed/geo-blocked video)
+  // leaves the bare-vid placeholder in place, so the UI never
+  // empties out on lookup failure.
+  async function hydrateDiffTitles(root) {
+    if (!root) return;
+    const slots = root.querySelectorAll('[data-oembed-slot]');
+    await Promise.all(Array.from(slots).map(async (slot) => {
+      const url = slot.getAttribute('data-oembed-url');
+      if (!url) return;
+      try {
+        // v1.14.3: source-aware oembed routes by host (YouTube vs
+        // SoundCloud); identical response shape so the render block
+        // didn't have to branch.
+        const data = await api(
+          'GET',
+          `/api/source/oembed?url=${encodeURIComponent(url)}`,
+        );
+        if (data && data.title) {
+          const author = data.author_name
+            ? `<span class="muted small">${htmlEscape(data.author_name)}</span>`
+            : '';
+          slot.innerHTML = `<div>${htmlEscape(data.title)}</div>${author}`;
+        }
+      } catch (_) {
+        // Leave placeholder; vid is already shown.
+      }
+    }));
+  }
+
+  // v1.15.129: post-paint hydrator for SoundCloud thumbnails in
+  // the info card. YouTube thumbs render synchronously from the
+  // video id (img.youtube.com/vi/{vid}/hqdefault.jpg is
+  // deterministic); SoundCloud thumbs come from
+  // oembed.thumbnail_url which requires an async round-trip.
+  // The render emits an `<img data-sc-oembed-url="..." />`
+  // placeholder inside a `[data-sc-thumbnail-wrap hidden]`
+  // wrapper; this function fills the src + reveals the
+  // wrapper. Failures keep the wrapper hidden so the user
+  // doesn't see a broken-image icon when oembed 404s
+  // (private/deleted/geo-blocked tracks).
+  async function hydrateSourceThumbnails(root) {
+    if (!root) return;
+    const imgs = root.querySelectorAll('img[data-sc-oembed-url]');
+    await Promise.all(Array.from(imgs).map(async (img) => {
+      const url = img.getAttribute('data-sc-oembed-url');
+      if (!url) return;
+      try {
+        const data = await api(
+          'GET',
+          `/api/source/oembed?url=${encodeURIComponent(url)}`,
+        );
+        if (data && data.thumbnail_url) {
+          const wrap = img.closest('[data-sc-thumbnail-wrap]');
+          // v1.20.28: bind the error handler BEFORE setting src so a
+          // failed load re-hides the wrapper instead of leaving a
+          // broken-image icon. IG thumbnails come through a same-origin
+          // proxy (raw CDN urls 403 on cross-origin hotlinks) which can
+          // still 404 if the signed url expired; SC/YT hotlinks can 404
+          // on private/removed tracks.
+          img.addEventListener('error', () => {
+            if (wrap) wrap.hidden = true;
+          }, { once: true });
+          img.src = data.thumbnail_url;
+          if (wrap) wrap.hidden = false;
+        }
+      } catch (_) {
+        // Leave the wrapper hidden — gentler failure than a
+        // broken-image icon. The "click to listen" link below
+        // the image isn't visible until the wrapper unhides,
+        // so the user just sees no thumbnail block at all
+        // when oembed fails.
+      }
+    }));
+  }
+
+  function closeInfoDialog() {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    // v1.12.73: clear focus from any focused element inside the
+    // dialog before closing. Pre-fix, clicking the X (or Esc)
+    // closed the dialog with the X button still :focus, so when
+    // the dialog re-opened next time the X carried a stale cyan
+    // focus-visible outline. Calling blur() releases focus
+    // cleanly; the host page's <body> takes focus instead.
+    const focused = dlg.querySelector(':focus');
+    if (focused && typeof focused.blur === 'function') focused.blur();
+    // v1.12.98: pause + reset any audio elements inside the dialog
+    // before closing. Pre-fix the v1.12.90 in-card preview kept
+    // playing after Esc/× because the <audio> element survived in
+    // the detached DOM until the next open re-rendered it. The user
+    // had no way to stop it short of reopening + scrubbing to the
+    // end. pause() halts playback; setting currentTime=0 rewinds
+    // so the next open starts fresh (also matches the user's
+    // mental model that closing the card = "I'm done with this").
+    dlg.querySelectorAll('audio').forEach((el) => {
+      try {
+        el.pause();
+        el.currentTime = 0;
+      } catch (_) { /* defensive — element may already be torn down */ }
+    });
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
+  }
+
+  function bindInfoDialog() {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    document.getElementById('info-dlg-close')?.addEventListener('click', closeInfoDialog);
+    // v1.13.16: TDB preview removed. YouTube blocks the embed for
+    // many videos (Error 153 / video player configuration error)
+    // and there's no clean alternative without violating ToS. The
+    // INFO card's on-disk play already gives the user audio
+    // verification of motif's canonical; the TDB URL is one click
+    // away in any browser if they want to listen before accepting.
+    //
+    // v1.15.3: bind the dialog's native `close` event so the audio
+    // cleanup also fires when the dialog closes via Esc or backdrop
+    // click — paths that bypass closeInfoDialog(). v1.12.98 wired
+    // the audio pause/reset INTO closeInfoDialog, but Esc on a
+    // <dialog> element triggers the browser's native cancel/close
+    // sequence which calls dlg.close() directly, skipping our
+    // function. The X button kept working because its click
+    // handler routes through closeInfoDialog. the user: "when
+    // playing a theme song from within the info card when closing
+    // the info card with esc the theme will continue to play."
+    //
+    // The cleanup is idempotent (pause on already-paused = no-op;
+    // currentTime=0 on already-zero = no-op) so the X-button path
+    // running it twice (once via closeInfoDialog, once via the
+    // close event) is harmless.
+    dlg.addEventListener('close', () => {
+      dlg.querySelectorAll('audio').forEach((el) => {
+        try {
+          el.pause();
+          el.currentTime = 0;
+        } catch (_) { /* defensive — element may already be torn down */ }
+      });
+      // v1.24.91: drop the focus ring the browser paints on the OPENER when the
+      // card closes via Esc/backdrop. A native <dialog> restores focus to the
+      // element it was opened from (e.g. a dashboard carousel card — a
+      // <button>); because Esc is a KEYBOARD interaction, :focus-visible matches
+      // on that restored element and it keeps its clicked-looking outline. The
+      // X-button path is a mouse interaction so it shows no ring — the user wants
+      // Esc to match the X. Mirrors showModalNoFocusRing's open-side blur
+      // (v1.16.1). rAF so it runs after the browser finishes restoring focus;
+      // skip if focus already moved into another open dialog.
+      requestAnimationFrame(() => {
+        const f = document.activeElement;
+        if (f && f !== document.body && typeof f.blur === 'function'
+            && !(f.closest && f.closest('dialog[open]'))) {
+          f.blur();
+        }
+      });
+    });
+  }
+
+
+  // ---- Manual YouTube URL dialog (Coverage tab) ----
+
+  // v1.12.54: extract the canonical YouTube video ID from a URL
+  // for SET URL match detection. Mirrors the server's
+  // extract_video_id (downloader.py): handles watch?v=, youtu.be/,
+  // shorts/. Returns null on no-match. Used to compare the user's
+  // input to the row's TDB URL so the dialog can warn before the
+  // user pins an identical URL as a manual override.
+  function extractYouTubeVideoId(url) {
+    if (!url) return null;
+    const m = String(url).match(
+      /(?:youtube\.com\/watch\?(?:[^&]*&)*v=|youtu\.be\/|youtube\.com\/shorts\/)([A-Za-z0-9_-]{6,})/i
+    );
+    return m ? m[1] : null;
+  }
+
+  function openManualUrlDialog({ ratingKey, title, year, tdbUrl, appliedUrl, srcLetter }) {
+    const dlg = document.getElementById('manual-url-dlg');
+    if (!dlg) return;
+    document.getElementById('manual-url-rk').value = ratingKey;
+    // v1.12.54: stash the row's TDB URL on the dialog element so
+    // the input-listener (bound once at page load) can read it
+    // each open without rebinding. dataset persists until the
+    // next openManualUrlDialog overwrites it.
+    // v1.12.62: also stash srcLetter so the match-warning can
+    // branch its copy — '-' rows have no file to re-download
+    // (the alternative action is DOWNLOAD TDB, not RE-DOWNLOAD).
+    // v1.12.107: stash appliedUrl too so the warning can fire
+    // when the user is about to set the SAME URL that's already
+    // applied — covers the U-overrides-itself case (typing the
+    // same user URL again is a guaranteed no-op).
+    dlg.dataset.tdbUrl = tdbUrl || '';
+    dlg.dataset.appliedUrl = appliedUrl || '';
+    dlg.dataset.srcLetter = srcLetter || '';
+    const meta = document.getElementById('manual-url-dlg-meta');
+    const ylabel = year ? ` (${htmlEscape(year)})` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
+    document.getElementById('manual-url-input').value = '';
+    document.getElementById('manual-url-status').textContent = '';
+    // v1.12.54: clear any leftover match-hint from a previous open.
+    const hint = document.getElementById('manual-url-match-hint');
+    if (hint) { hint.style.display = 'none'; hint.textContent = ''; }
+    // v1.12.97: reset the live preview block so a stale thumbnail
+    // from the previous open doesn't flash before the user types.
+    const preview = document.getElementById('manual-url-preview');
+    if (preview) preview.hidden = true;
+    // v1.15.75: reveal the // DOWNLOAD ONLY checkbox only when the
+    // row is currently P (Plex serves a theme already). On non-P
+    // rows the option is meaningless — there's no Plex theme to
+    // "keep serving," so we hide the row to avoid the user
+    // toggling it then wondering why no place job fired. Reset
+    // the checkbox state too so a stale check from a prior P-row
+    // dialog doesn't carry over to a new T/U/A/M row.
+    const downloadOnlyRow = document.getElementById('manual-url-download-only-row');
+    const downloadOnlyInput = document.getElementById('manual-url-download-only');
+    if (downloadOnlyInput) downloadOnlyInput.checked = false;
+    if (downloadOnlyRow) {
+      downloadOnlyRow.style.display = (srcLetter === 'P') ? '' : 'none';
+    }
+    // v1.16.1: same X-button auto-focus-ring suppression as the
+    // info / override / upload dialogs.
+    showModalNoFocusRing(dlg);
+  }
+
+  function closeManualUrlDialog() {
+    const dlg = document.getElementById('manual-url-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
+  }
+
+  function bindManualUrlDialog() {
+    const dlg = document.getElementById('manual-url-dlg');
+    if (!dlg) return;
+    document.getElementById('manual-url-dlg-close')?.addEventListener('click', closeManualUrlDialog);
+    document.getElementById('manual-url-cancel')?.addEventListener('click', closeManualUrlDialog);
+    // v1.14.2: same source-detection live preview as the
+    // override dialog. Surfaces "detected: SoundCloud" /
+    // "detected: YouTube" / unrecognized as the user pastes.
+    bindUrlSourcePreview('manual-url-input', 'manual-url-status');
+    // v1.12.54: live match-warning. Whenever the user pauses
+    // typing, compare the input's video ID to the row's TDB URL
+    // (stored on dlg.dataset.tdbUrl by openManualUrlDialog). If
+    // they match, surface an inline hint that pinning the same
+    // URL as an override creates a U row that the next sync
+    // (v1.12.53) will surface as a "convert U → T" prompt anyway.
+    // Pure UX nudge — submit is still allowed.
+    const input = document.getElementById('manual-url-input');
+    const hint = document.getElementById('manual-url-match-hint');
+    if (input && hint) {
+      let matchTimer = null;
+      const checkMatch = () => {
+        const tdbUrl = dlg.dataset.tdbUrl || '';
+        const appliedUrl = dlg.dataset.appliedUrl || '';
+        const userVid = extractYouTubeVideoId(input.value.trim());
+        if (!userVid) {
+          hint.style.display = 'none';
+          return;
+        }
+        // v1.12.107: two match cases land different copy.
+        // 1) Input == currently-applied URL → no-op set. Most
+        //    actionable case for the user — they'd be replacing
+        //    a URL with itself. Suggest DOWNLOAD/RE-DOWNLOAD as
+        //    the action they probably wanted.
+        // 2) Input == TDB URL (and the row's TDB URL differs from
+        //    the applied URL — i.e. they're not setting their
+        //    own existing override) → U→T conversion case the
+        //    v1.12.54 hint covered.
+        // The applied-URL match is checked first because it's the
+        // strict superset on T rows (where applied == TDB) but
+        // distinct on U rows.
+        const appliedVid = extractYouTubeVideoId(appliedUrl);
+        const tdbVid = extractYouTubeVideoId(tdbUrl);
+        const srcLetter = dlg.dataset.srcLetter || '';
+        if (appliedVid && userVid === appliedVid) {
+          const altAction = (srcLetter === '-') ? 'DOWNLOAD TDB' : 'RE-DOWNLOAD TDB';
+          const altIntent = (srcLetter === '-')
+            ? 'fetch from ThemerrDB'
+            : 'refresh the file';
+          // Differentiate U-row vs T-row copy. On a U row the
+          // applied URL IS the user override, so the user is
+          // about to set it to the same thing — pure no-op. On
+          // a T row applied == TDB, so the U→T-conversion warning
+          // is more accurate.
+          if (appliedVid !== tdbVid) {
+            // Pure U-overrides-itself case.
+            hint.textContent = 'This URL matches the row\'s currently-applied user URL. '
+              + 'Setting it again would be a no-op — no override change, no download. '
+              + `Use ${altAction} if you want to ${altIntent}.`;
+          } else {
+            // Applied == TDB (T row).
+            hint.textContent = 'This URL matches the current ThemerrDB URL. '
+              + 'Setting it as a manual override pins the row as U-source — '
+              + 'the next sync will surface a "convert U → T" prompt anyway. '
+              + `Use ${altAction} instead if you just want to ${altIntent}.`;
+          }
+          hint.style.display = '';
+        } else if (tdbVid && userVid === tdbVid) {
+          // Input matches TDB but not applied — user is on a U
+          // row and is about to flip back to TDB-by-URL. Same
+          // U→T-conversion advice as before.
+          const altAction = (srcLetter === '-') ? 'DOWNLOAD TDB' : 'RE-DOWNLOAD TDB';
+          const altIntent = (srcLetter === '-')
+            ? 'fetch from ThemerrDB'
+            : 'refresh the file';
+          hint.textContent = 'This URL matches the current ThemerrDB URL. '
+            + 'Setting it as a manual override pins the row as U-source — '
+            + 'the next sync will surface a "convert U → T" prompt anyway. '
+            + `Use ${altAction} instead if you just want to ${altIntent}.`;
+          hint.style.display = '';
+        } else {
+          hint.style.display = 'none';
+        }
+      };
+      input.addEventListener('input', () => {
+        clearTimeout(matchTimer);
+        matchTimer = setTimeout(checkMatch, 250);
+        // v1.12.97: live preview alongside the match-hint. Same
+        // debounce window so we don't hit oembed on every keystroke.
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(updatePreview, 350);
+      });
+    }
+    // v1.12.97: live YouTube preview. Watches the input and renders
+    // the thumbnail + oembed-fetched title in the dialog as the user
+    // types/pastes a URL. Each new video ID kicks a fresh oembed
+    // fetch (debounced, deduped against the most recent ID). Falls
+    // back to "no title (private/removed/geo-blocked)" when oembed
+    // 404s — same fallback the v1.12.56 PROPOSED CHANGE diff uses.
+    const preview = document.getElementById('manual-url-preview');
+    const previewThumb = document.getElementById('manual-url-preview-thumb');
+    const previewLink = document.getElementById('manual-url-preview-link');
+    const previewTitle = document.getElementById('manual-url-preview-title');
+    const previewVid = document.getElementById('manual-url-preview-vid');
+    let previewTimer = null;
+    let previewLastKey = null;
+    async function updatePreview() {
+      // v1.15.129: source-aware preview. Pre-fix only YouTube
+      // URLs surfaced a thumbnail+title preview in the SET URL
+      // dialog — SoundCloud URLs left the preview hidden even
+      // though the corresponding info-card render handles them.
+      // the user: "would be nice to add this to box when providing
+      // a url and pasting a soundcloud url it shows a preview
+      // of the thumbnail similar to how we treat youtube links."
+      // Branches by source:
+      //   youtube    — thumbnail from img.youtube.com (sync),
+      //                title from oembed (async)
+      //   soundcloud — both thumbnail + title come from the same
+      //                oembed call (sync within one round-trip)
+      //   unknown    — preview stays hidden (no canonical
+      //                thumbnail source)
+      if (!input || !preview) return;
+      const raw = input.value.trim();
+      const src = urlSource(raw);
+      if (src === 'unknown') {
+        preview.hidden = true;
+        previewLastKey = null;
+        return;
+      }
+      // Build a key for the dedup / race-guard. For YouTube the
+      // canonical key is the vid; for SoundCloud it's the URL
+      // (no stable shorter form).
+      let key;
+      let url;
+      let vidLabel;
+      if (src === 'youtube') {
+        const vid = extractYouTubeVideoId(raw);
+        if (!vid) {
+          preview.hidden = true;
+          previewLastKey = null;
+          return;
+        }
+        key = `yt:${vid}`;
+        url = `https://www.youtube.com/watch?v=${encodeURIComponent(vid)}`;
+        vidLabel = vid;
+      } else {
+        key = `sc:${raw}`;
+        url = raw;
+        vidLabel = raw;
+      }
+      // v1.15.140: also require the preview to be visible for the
+      // dedup to apply. Pre-fix `previewLastKey` survived dialog
+      // close (closure-scoped at bindManualUrlDialog level; not
+      // reset by openManualUrlDialog which hides the preview but
+      // doesn't reach into the binding closure). Repro: paste URL
+      // → preview shows; close dialog; reopen + paste SAME URL →
+      // updatePreview computed the same key, hit the dedup, and
+      // returned early — preview stayed hidden. the user: "closing
+      // and reopening the url prevents the thumbnail from loading
+      // again." The `!preview.hidden` guard makes the dedup only
+      // apply while the preview is actually showing the prior
+      // render. Anything that hid the preview (openManualUrlDialog
+      // reset, urlSource→unknown transition, etc.) frees the next
+      // matching-key paste to re-render.
+      if (key === previewLastKey && !preview.hidden) return;
+      previewLastKey = key;
+      previewLink.href = url;
+      previewTitle.textContent = 'loading title…';
+      previewVid.textContent = vidLabel;
+      preview.hidden = false;
+      // YouTube thumbnail renders synchronously from the vid;
+      // SoundCloud waits for the oembed thumbnail_url so the img
+      // src starts blank (visibility hidden until set) to avoid
+      // flashing a broken-image icon.
+      if (src === 'youtube') {
+        const vid = key.slice(3);  // strip 'yt:' prefix
+        previewThumb.src = `https://img.youtube.com/vi/${encodeURIComponent(vid)}/hqdefault.jpg`;
+        previewThumb.style.visibility = '';
+      } else {
+        previewThumb.src = '';
+        previewThumb.style.visibility = 'hidden';
+      }
+      try {
+        const data = await api(
+          'GET',
+          `/api/source/oembed?url=${encodeURIComponent(url)}`,
+        );
+        // Race guard: another keystroke may have changed
+        // previewLastKey before this fetch resolved.
+        if (key !== previewLastKey) return;
+        previewTitle.textContent = data?.title || vidLabel;
+        if (data?.author_name) {
+          previewTitle.textContent += ` · ${data.author_name}`;
+        }
+        // For SoundCloud, also fill in the thumbnail from the
+        // same oembed response. YouTube's thumb is already set
+        // (sync) so skip.
+        // v1.20.28: Instagram too — its thumbnail_url is a same-origin
+        // proxy path (the oembed endpoint rewrites IG CDN urls that
+        // 403 on cross-origin hotlinks), so it loads like SC's. Hide
+        // on load failure rather than flash a broken-image icon.
+        if ((src === 'soundcloud' || src === 'instagram'
+             || src === 'facebook') && data?.thumbnail_url) {
+          previewThumb.onerror = () => {
+            previewThumb.style.visibility = 'hidden';
+          };
+          previewThumb.src = data.thumbnail_url;
+          previewThumb.style.visibility = '';
+        }
+      } catch (_) {
+        if (key !== previewLastKey) return;
+        previewTitle.textContent = src === 'soundcloud'
+          ? 'no title — track may be private, removed, or geo-blocked'
+          : 'no title — video may be private, removed, or geo-blocked';
+      }
+    }
+    const form = document.getElementById('manual-url-form');
+    // v1.22.89 (class 3 double-fire): in-flight submit guard. The
+    // dialog stays open ~700ms after success before closing, so a
+    // double-Enter / double-click fired the POST twice and enqueued
+    // two download jobs for the same row. The flag holds through
+    // that close window; the catch re-arms for retry.
+    let urlSubmitting = false;
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (urlSubmitting) return;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const status = document.getElementById('manual-url-status');
+      const rk = document.getElementById('manual-url-rk').value;
+      const url = document.getElementById('manual-url-input').value.trim();
+      // v1.14.0: accept YouTube OR SoundCloud URLs.
+      if (!THEME_URL_RE.test(url)) {
+        status.textContent = '✗ enter a valid YouTube or SoundCloud URL';
+        status.classList.remove('ok'); status.classList.add('err');
+        return;
+      }
+      // v1.15.75: include download_only when the P-row checkbox is
+      // checked. Backend reads body.download_only — when true the
+      // enqueued download job carries force_place=false so the
+      // worker downloads + lands in local_files but doesn't place
+      // over Plex's theme.
+      const downloadOnlyInput = document.getElementById('manual-url-download-only');
+      const body = { youtube_url: url };
+      if (downloadOnlyInput && downloadOnlyInput.checked) {
+        body.download_only = true;
+      }
+      status.textContent = 'saving…';
+      status.classList.remove('err', 'ok');
+      urlSubmitting = true;
+      if (submitBtn) submitBtn.disabled = true;
+      try {
+        await api('POST', `/api/plex_items/${encodeURIComponent(rk)}/manual-url`, body);
+        status.textContent = body.download_only
+          ? '✓ saved · backup download queued (Plex untouched)'
+          : '✓ saved · download queued';
+        status.classList.add('ok');
+        // v1.19.87: optimistic placeholder moved here from the
+        // deleted override-dlg — the v1.14.71 "light the mini-bar
+        // the moment the user URL is saved" UX belongs on the LIVE
+        // SET URL dialog (the override-dlg it originally lived in
+        // was unreachable, so the UX never actually fired). Hands
+        // off to the real download_queue synth row by kind.
+        try {
+          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+            window.motifOps.setOptimisticPlaceholder(
+              'download_queue', '// THEME DOWNLOAD QUEUED',
+            );
+          }
+        } catch (_) { /* drawer not loaded — fine */ }
+        setTimeout(() => {
+          closeManualUrlDialog();
+          urlSubmitting = false;
+          if (submitBtn) submitBtn.disabled = false;
+          loadLibrary().catch(()=>{});
+          libraryRapidPoll();  // catch the download → place transitions
+        }, 700);
+      } catch (err) {
+        status.textContent = '✗ ' + err.message;
+        status.classList.add('err');
+        urlSubmitting = false;
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+  // ---- Manual upload dialog ----
+
+  function openUploadDialog({ ratingKey, title, year, srcLetter }) {
+    const dlg = document.getElementById('upload-dlg');
+    if (!dlg) return;
+    document.getElementById('upload-rk').value = ratingKey;
+    const meta = document.getElementById('upload-dlg-meta');
+    const ylabel = year ? ` (${htmlEscape(year)})` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
+    document.getElementById('upload-file').value = '';
+    document.getElementById('upload-status').textContent = '';
+    // v1.15.75: reveal // DOWNLOAD ONLY checkbox on P rows (Plex
+    // already serves a theme). Same gate as the manual-url dialog.
+    // Reset the checkbox so a stale check from a prior P-row open
+    // doesn't carry over to the new row.
+    const downloadOnlyRow = document.getElementById('upload-download-only-row');
+    const downloadOnlyInput = document.getElementById('upload-download-only');
+    if (downloadOnlyInput) downloadOnlyInput.checked = false;
+    if (downloadOnlyRow) {
+      downloadOnlyRow.style.display = (srcLetter === 'P') ? '' : 'none';
+    }
+    // v1.16.1: see showModalNoFocusRing — kills the cyan ring
+    // around the auto-focused close button.
+    showModalNoFocusRing(dlg);
+  }
+
+  function closeUploadDialog() {
+    const dlg = document.getElementById('upload-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close();
+    else dlg.removeAttribute('open');
+  }
+
+  function bindUploadDialog() {
+    const dlg = document.getElementById('upload-dlg');
+    if (!dlg) return;
+    document.getElementById('upload-dlg-close')?.addEventListener('click', closeUploadDialog);
+    document.getElementById('upload-cancel')?.addEventListener('click', closeUploadDialog);
+    const form = document.getElementById('upload-form');
+    // v1.22.89 (class 3 double-fire): same in-flight guard as the
+    // manual-url dialog — a double-click during the upload await or
+    // the 700ms close window double-uploaded and queued two place
+    // jobs racing on the same sidecar.
+    let uploadSubmitting = false;
+    form?.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (uploadSubmitting) return;
+      const submitBtn = form.querySelector('button[type="submit"]');
+      const status = document.getElementById('upload-status');
+      const rk = document.getElementById('upload-rk').value;
+      const fileEl = document.getElementById('upload-file');
+      const file = fileEl.files && fileEl.files[0];
+      if (!file) {
+        status.textContent = '✗ choose a file first';
+        status.classList.add('err');
+        return;
+      }
+      // v1.15.75: download_only form field for the P-row backup
+      // path. When checked the backend skips the place enqueue —
+      // file lands in local_files but Plex's theme keeps serving.
+      const downloadOnlyInput = document.getElementById('upload-download-only');
+      const downloadOnly = !!(downloadOnlyInput && downloadOnlyInput.checked);
+      status.textContent = 'uploading…';
+      status.classList.remove('err', 'ok');
+      uploadSubmitting = true;
+      if (submitBtn) submitBtn.disabled = true;
+      const fd = new FormData();
+      fd.append('file', file);
+      if (downloadOnly) fd.append('download_only', '1');
+      try {
+        const r = await fetch(`/api/plex_items/${encodeURIComponent(rk)}/upload-theme`, {
+          method: 'POST', body: fd,
+        });
+        if (!r.ok) {
+          const t = await r.text().catch(() => '');
+          throw new Error(`${r.status}: ${t || r.statusText}`);
+        }
+        status.textContent = downloadOnly
+          ? '✓ uploaded · backup saved (Plex untouched)'
+          : '✓ uploaded · placement queued';
+        status.classList.add('ok');
+        setTimeout(() => {
+          closeUploadDialog();
+          uploadSubmitting = false;
+          if (submitBtn) submitBtn.disabled = false;
+          loadLibrary().catch(()=>{});
+          libraryRapidPoll();  // watch the place job land
+        }, 700);
+      } catch (err) {
+        status.textContent = '✗ ' + err.message;
+        status.classList.add('err');
+        uploadSubmitting = false;
+        if (submitBtn) submitBtn.disabled = false;
+      }
+    });
+  }
+
+
+  // ---- Bootstrap ----
+
+  // v1.13.8 (#8): self-update notifier. /api/release/latest reads
+  // a daily-cached payload populated by the scheduler's
+  // _check_release_update job. When the cached latest tag parses
+  // higher than the running version, reveal a small "→ vX.Y.Z"
+  // suffix next to the brand-version pill. Click opens the GitHub
+  // release page in a new tab via the static href in base.html.
+  // Polled once at page load — release availability changes on the
+  // order of days, no need for repeat checks per session.
+  async function checkSelfUpdate() {
+    const el = document.getElementById('brand-update-suffix');
+    if (!el) return;
+    try {
+      const r = await api('GET', '/api/release/latest');
+      if (r && r.update_available && r.latest) {
+        el.textContent = `→ ${r.latest}`;
+        if (r.html_url) el.href = r.html_url;
+        el.title = `motif ${r.latest} is available `
+          + `(running ${r.current}). Click to view release notes.`;
+        el.hidden = false;
+      } else {
+        el.hidden = true;
+      }
+    } catch (_) {
+      el.hidden = true;
+    }
+  }
+
+  // v1.13.88: pre-populate the topbar badges from localStorage cache
+  // BEFORE the first /api/stats response lands. Eliminates the
+  // "pills disappear after click" gap (the user's repro) where the
+  // badge HTML defaults to `hidden` and only un-hides after a
+  // potentially-slow stats response. The cache is updated in
+  // refreshTopbarStatus on every successful tick, so it tracks
+  // reality with a max ~1 poll lag. If the count actually changed
+  // since the last tick (e.g. a fail was acked), the next /api/stats
+  // response corrects the badge — flicker is at most one wrong
+  // value, not "pill disappears for seconds."
+  function prepopulateBadgesFromCache() {
+    let cached;
+    try {
+      cached = JSON.parse(localStorage.getItem('motif:topbar_counts') || '{}');
+    } catch (_) { return; }
+    const setBadge = (badgeId, countId, n) => {
+      if (!n || n <= 0) return;
+      const badge = document.getElementById(badgeId);
+      const count = document.getElementById(countId);
+      if (badge) badge.hidden = false;
+      if (count) count.textContent = String(n);
+    };
+    setBadge('topbar-updates-badge',  'topbar-updates-count',  cached.upd);
+    setBadge('topbar-failures-badge', 'topbar-failures-count', cached.fail);
+    setBadge('topbar-drops-badge',    'topbar-drops-count',    cached.drop);
+    setBadge('topbar-repush-badge',   'topbar-repush-count',   cached.repush);  // v1.24.40
+    setBadge('topbar-await-badge',    'topbar-await-count',    cached.awaiting);  // v1.24.43
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    highlightNav();
+    initHelpMode();
+    prepopulateBadgesFromCache();
+    refreshTopbarStatus().catch(() => {});
+    checkSelfUpdate().catch(()=>{});
+
+    // v1.14.53: deleted the v1.11.73 #topbar-status click handler.
+    // Comment claimed `data-failed-link` was toggled by
+    // refreshTopbarStatus based on q.failed > 0 — but no JS sets
+    // the attribute (v1.12.118 retired the setter when the topbar
+    // dot/text widget was replaced; the comment at app.js:267
+    // confirms). The handler has been a no-op listener for ~40
+    // versions. AUDIT_FRONTEND.md M2.
+
+    // v1.11.40: relaxed from 15s → 30s. /api/stats is now cached
+    // 1s server-side (v1.11.37) and event-driven refreshes fire
+    // immediately on sync/refresh button clicks, so background
+    // polling can be less aggressive without losing responsiveness.
+    // v1.12.81: dropped from 30s → 10s. Pre-fix the topbar's UPD /
+    // FAIL badges and idle-dot color could sit stale for up to 30s
+    // after a sync wrote new pending_updates rows or a worker job
+    // finished. The new cadence matches the /queue page's job poll
+    // so users watching LOGS no longer see "refresh job done" and
+    // then wait another half-minute for the topbar to catch up.
+    // Tripled traffic but the response is small (one cached query
+    // bundle) and the per-action `setTimeout(refreshTopbarStatus,
+    // 1100)` calls remain so explicit clicks still feel immediate.
+    setInterval(refreshTopbarStatus, 10000);
+
+    // v1.12.108: when the ops mini-bar transitions running → idle
+    // (or vice versa), force a stats refresh right away. Pre-fix
+    // the legacy "REFRESHING TV SHOWS…" text + yellow dot lingered
+    // for up to 10s after the sync actually finished because they
+    // were driven by /api/stats's own poll cadence — meanwhile
+    // the ops mini-bar disappeared on the next ops poll (1s).
+    // Same lag in reverse on sync start. Tying the two state
+    // surfaces together makes them appear/disappear together.
+    window.addEventListener('motif:ops-state-changed', () => {
+      refreshTopbarStatus().catch(() => {});
+    });
+
+    // v1.23.71: intercept library tab clicks for in-place switching. Only when
+    // already on a library page (#library-tab present); plain left-clicks only —
+    // modified clicks (open-in-new-tab etc.), DASH/LOGS/SETTINGS, and non-library
+    // pages all fall through to a normal full navigation.
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest && e.target.closest('.nav a[data-nav]');
+      if (!a) return;
+      const tab = a.dataset.nav;
+      if (['movies', 'tv', 'anime', 'collections'].indexOf(tab) === -1) return;
+      const tabEl = document.getElementById('library-tab');
+      if (!tabEl) return;
+      if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      // v1.23.73 (code review): clicking the tab you're already on was a full
+      // refetch + a duplicate history entry — make it a no-op (filters persist
+      // in memory, matching the old full-nav-restores-from-sessionStorage path).
+      if (tab === tabEl.value) { e.preventDefault(); return; }
+      e.preventDefault();
+      switchLibraryTab(a.getAttribute('href')).catch(() => {
+        window.location.href = a.href;
+      });
+    });
+    window.addEventListener('popstate', () => {
+      if (!document.getElementById('library-tab')) return;
+      const tab = (location.pathname.replace(/^\/+/, '') || '');
+      // v1.23.73 (code review): defensive — a non-library location on a
+      // library-DOM popstate (cross-document boundaries make this ~unreachable,
+      // but reload is strictly safer than the prior silent no-op).
+      if (['movies', 'tv', 'anime', 'collections'].indexOf(tab) === -1) {
+        window.location.reload(); return;
+      }
+      // a deep-link target (pills/filters in the query) needs the full init to
+      // re-apply them — only fast-swap a bare tab path; else reload for fidelity.
+      if (location.search) { window.location.reload(); return; }
+      switchLibraryTab(location.pathname, false).catch(() => window.location.reload());
+    });
+
+    bindDashboard();
+    // v1.14.41: bindBrowse() removed along with the rest of the
+    // browse.html / loadItems / browseState dead code (audit M1).
+    // v1.15.97: bindDialog() removed along with openItemDialog —
+    // both were doubly-dead (no #item-dlg in any template + no
+    // external call sites). See the v1.15.97 marker above
+    // openInfoDialog for the full archaeology.
+    bindQueue();
+    bindCoverage();
+    bindSettings();
+    bindLibraries();
+    bindDryRunBanner();
+    // v1.24.48: all five topbar badges cycle through every impacted tab (incl.
+    // collections) via the one shared bindBadgeCycle (FAIL + UPD converged here).
+    bindBadgeCycle('topbar-failures-badge', 'failTabs', 'attn_pills=fail');
+    bindBadgeCycle('topbar-updates-badge', 'updTabs', 'attn_pills=update');
+    bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped');
+    bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush');
+    bindBadgeCycle('topbar-await-badge', 'awaitTabs', 'attn_pills=await');
+    bindSettingsTabs();
+    bindImportPanel();
+    bindConfigSaves();
+    bindScans();
+    // v1.14.61: bindPending() call removed — JS surface deleted.
+    // v1.19.87: bindOverrideDialog() call removed — dead override-dlg.
+    bindLibrary();
+    // v1.13.11: saved filter presets — only meaningful on the library
+    // pages where #library-presets-select exists. Bind unconditionally
+    // (the function no-ops when the elements are absent).
+    bindLibraryPresets();
+    bindUploadDialog();
+    bindManualUrlDialog();
+    bindInfoDialog();
+
+    // TMDB test key handler
+    const tmdbBtn = document.getElementById('tmdb-test-btn');
+    if (tmdbBtn) {
+      // v1.16.3: auto-dismiss the result text after a short
+      // window so it doesn't sit there forever. the user on
+      // v1.16.2: "can we make the credentials valid text
+      // disappear after a bit like the other text we have."
+      // Same auto-clear pattern the bulk-probe summary uses
+      // (5s for done, 8s for done-with-detail). Errors stick
+      // around 8s so the user has more time to read the
+      // failure message; success clears at 5s.
+      let tmdbResultTimer = null;
+      const clearTmdbResult = (after) => {
+        if (tmdbResultTimer) clearTimeout(tmdbResultTimer);
+        tmdbResultTimer = setTimeout(() => {
+          const r = document.getElementById('tmdb-test-result');
+          if (!r) return;
+          r.textContent = '';
+          // v1.19.81: reset to bare .form-status (drops any
+          // form-status-ok/fail tone), matching the op-status
+          // dismiss shape.
+          r.className = 'form-status';
+        }, after);
+      };
+      tmdbBtn.addEventListener('click', async () => {
+        const result = document.getElementById('tmdb-test-result');
+        const input = document.querySelector('[data-cfg-field="plex.tmdb_api_key"]');
+        const key = input && input.value && input.value !== '***' ? input.value : null;
+        if (tmdbResultTimer) clearTimeout(tmdbResultTimer);
+        result.textContent = '... testing';
+        // v1.19.81: tone via .form-status-ok/fail classes (shared
+        // palette) instead of inline style.color. Reset to bare
+        // .form-status on each click before applying the new tone.
+        result.className = 'form-status';
+        try {
+          const body = key ? { api_key: key } : {};
+          const r = await api('POST', '/api/tmdb/test', body);
+          if (r.ok) {
+            result.textContent = '✓ ' + r.message;
+            result.classList.add('form-status-ok');
+            clearTmdbResult(5000);
+          } else {
+            result.textContent = '✗ ' + r.message;
+            result.classList.add('form-status-fail');
+            clearTmdbResult(8000);
+          }
+        } catch (e) {
+          result.textContent = '✗ ' + e.message;
+          result.classList.add('form-status-fail');
+          clearTmdbResult(8000);
+        }
+      });
+    }
+
+    // v1.16.0 / renamed v1.16.2: TVDB-bridge rebuild button.
+    // Loads the diagnostic stats on settings-page render, then
+    // wires the // REBUILD BRIDGE button to POST + watch the op.
+    // Mirrors the v1.15.139 bulk-probe-tdb watcher pattern.
+    // Endpoint URL still /api/admin/tvdb-bridge/rebuild for
+    // stability — see hydrateTvdbBridgeStats comment.
+    if (document.getElementById('tvdb-bridge-section')) {
+      hydrateTvdbBridgeStats().catch(() => {});
+      document.getElementById('tvdb-bridge-rebuild-btn')
+        ?.addEventListener('click', async (e) => {
+          const btn = e.currentTarget;
+          const result = document.getElementById('tvdb-bridge-result');
+          const orig = btn.textContent;
+          if (!confirm(
+              'REBUILD TVDB BRIDGE\n\n'
+              + 'Walks every stranded plex_items row (theme_id NULL '
+              + 'with a TVDB GUID + Plex-served theme) and links '
+              + 'each to motif\'s themes table via the TMDB external-'
+              + 'id /find endpoint.\n\n'
+              + 'Affects most TV-library rows — Plex\'s default TV '
+              + 'Series agent prefers TVDB GUIDs, as do the anime '
+              + 'agents.\n\n'
+              + 'Rate-limited 5 req/sec — a 2000-row backfill takes '
+              + 'about 7 minutes. Cancellable from // LIVE OPS.\n\n'
+              + 'Proceed?')) return;
+          btn.disabled = true;
+          btn.textContent = '// STARTING…';
+          result.textContent = '';
+          // v1.19.81: clear any prior form-status-ok tone on restart.
+          result.className = 'form-status';
+          try {
+            await api('POST', '/api/admin/tvdb-bridge/rebuild');
+            watchTvdbBridgeCompletion(btn, orig, result);
+          } catch (err) {
+            const msg = (err && err.message) ? err.message : 'unknown error';
+            alert('TVDB BRIDGE failed to start: ' + msg);
+            btn.disabled = false;
+            btn.textContent = orig;
+          }
+        });
+    }
+
+    loadDashboard().catch(console.error);
+    // v1.13.75: one-time backfill banner. Fires only on the dashboard
+    // page (the element only exists there); cheap GET that returns
+    // {count: N}. Banner stays hidden when N=0 so the API call is
+    // a no-op in the steady state.
+    loadBackfillBanner().catch(console.error);
+    loadCoverage().catch(console.error);
+    loadQueue().catch(console.error);
+    loadTokens().catch(console.error);
+    loadLibraries().catch(console.error);
+    loadConfigIntoForms().catch(console.error);
+    bindSyncProbe();
+    bindReprobePlexThemes();
+    bindBulkProbeTdb();
+    bindReprobeTdbFailures();
+    bindProbePlexThemes();
+    bindTestCookies();
+    bindTestNotification();
+    bindTestPlex();
+    bindDatabaseBackup();
+    loadCacheGauge().catch(()=>{});
+    // v1.14.61: loadPending() call removed — JS surface deleted.
+    loadLibrary().catch(console.error);
+
+    // v1.14.85: ?info_open=<tmdb_id>&info_mt=<movie|tv>&info_section=<sid>
+    // deep-link auto-opens the INFO dialog after the library
+    // hydrates. The /queue REPROBE error events' OPEN ROW
+    // button uses this so closing the dialog leaves the user
+    // on the library page (not back on /queue) and they can
+    // take follow-up actions via the SOURCE menu. Only fires
+    // on library pages where loadLibrary actually runs.
+    try {
+      const path = window.location.pathname;
+      if (path === '/movies' || path === '/tv' || path === '/anime') {
+        const sp = new URLSearchParams(window.location.search);
+        const infoOpen = sp.get('info_open');
+        const infoMt = sp.get('info_mt');
+        const infoSection = sp.get('info_section') || undefined;
+        if (infoOpen && infoMt) {
+          // Defer past the loadLibrary tbody render so the
+          // dialog opens over a populated library, not a
+          // loading shell. 600ms is the same delay other
+          // post-action loadLibrary callers use.
+          setTimeout(() => {
+            openInfoDialog(infoMt, infoOpen, infoSection)
+              .catch(console.error);
+          }, 600);
+        }
+      }
+    } catch (_) { /* URLSearchParams not supported — skip */ }
+
+    // Auto-refresh on relevant pages
+    const path = window.location.pathname;
+    // v1.11.40: relaxed polling intervals across all pages. Each page
+    // already re-fetches eagerly after relevant user actions; the
+    // background poll just keeps stats fresh while the page sits
+    // open. Halving poll frequency cuts steady-state DB load.
+    if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 30000);
+    if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 10000);
+    // v1.14.61: removed `/pending` poll interval — route deleted.
+    if (path === '/movies' || path === '/tv' || path === '/anime') {
+      // v1.10.7: skip the background tick when the user is interacting
+      // with the page so the table doesn't redraw out from under them.
+      // The rapid-poll path already has the same guard.
+      setInterval(() => {
+        const ae = document.activeElement;
+        const typingInSearch = ae && ae.id === 'library-search';
+        const dialogOpen = !!document.querySelector('dialog[open]');
+        const sel = window.getSelection && window.getSelection();
+        const hasTextSelection = !!(sel && sel.toString().length > 0);
+        if (typingInSearch || dialogOpen || hasTextSelection) return;
+        loadLibrary().catch(() => {});
+      }, 30000);
+      // v1.22.36: stuck-row reconciler. The 30s reload above AND the 2s
+      // rapid-poll both skip on a text selection / open dialog (the v1.10.7
+      // guard) — so a stray selection or an open row-menu freezes a row whose
+      // download/place already finished (the user's "DL/PL chip stuck flashing,
+      // never see PL, stuck until I manually refresh"). This watcher fires
+      // loadLibrary ONLY when a rendered row still claims job_in_flight while
+      // the backend op-queue has gone idle (anyMutatingOpActive=false) — the
+      // exact stale-frontend condition — and deliberately bypasses the
+      // interaction guards, since a demonstrably-stale row should win over a
+      // stray selection. loadLibrary's tbody.dataset.lastHash skip makes it a
+      // no-op when nothing actually changed. In normal operation an idle
+      // backend means no row legitimately has a live job, so the condition is
+      // never true and this does nothing until the pathology occurs.
+      setInterval(() => {
+        if (document.visibilityState !== 'visible') return;
+        const q = window.__motif_queue || {};
+        const staleInFlight = !q.anyMutatingOpActive
+          && (libraryState.items || []).some((it) => !!it.job_in_flight);
+        if (staleInFlight) loadLibrary().catch(() => {});
+      }, 6000);
+    }
+  });
+})();

@@ -1,0 +1,77 @@
+# motif runtime dependencies
+# Pinned major versions to keep behavior stable across rebuilds.
+# Update intentionally — yt-dlp in particular benefits from frequent updates
+# to keep up with YouTube's anti-bot changes; we let pip resolve a recent patch.
+
+# v1.24.42 (security audit 2026-06-25): bumped 0.115.* → 0.138.* so the
+# transitive starlette pin can reach the FIXED 1.3.1. fastapi 0.115.* capped
+# starlette at <0.47, below every fix for a cluster of starlette advisories
+# (CVE-2025-54121 upload-spool event-loop block, CVE-2025-62727 FileResponse
+# Range O(n²), CVE-2026-54283 urlencoded limit bypass, PYSEC-2026-161 host
+# desync, + others). For motif these are all admin-only DoS behind Authentik
+# (not remote/RCE), but a clean fix is cheap. starlette pinned explicitly below
+# so the security floor is enforced regardless of fastapi's own range.
+fastapi==0.138.*
+starlette>=1.3.1
+uvicorn[standard]==0.32.*
+httpx==0.27.*
+apscheduler==3.10.*
+jinja2==3.1.*
+# v1.21.17 (security audit): floor at 0.0.18 so a fresh resolve can't land
+# on a pre-CVE-2024-53981 (multipart boundary-parsing DoS) build. The bare
+# 0.0.* wildcard would technically permit a vulnerable minimum.
+# v1.24.42 (security audit 2026-06-25): floor bumped 0.0.18 → 0.0.31 — clears
+# CVE-2026-53538/53539/53540 (querystring parser-differential + O(n²) CPU DoS +
+# negative Content-Length buffering). Admin-only for motif, hygiene.
+python-multipart>=0.0.31,<0.1
+bcrypt==4.2.*
+pyyaml==6.0.*
+
+# v1.13.0 (Phase B): pure-Python git client for the differential
+# ThemerrDB sync path (sync.source="git"). Pulls only the delta
+# from LizardByte/ThemerrDB's database branch instead of the full
+# 16 MB tarball every run. No system git binary required.
+# v1.24.42 (security audit 2026-06-25): floor bumped 1.2.* → >=1.2.6 — clears
+# CVE-2026-42305/42563/47712/47734 (checkout path-validation RCE, merge-driver
+# shell injection, format-patch traversal, thin-pack memory-exhaustion). All
+# NON-APPLICABLE to motif (Windows-only / server-side / merge-only; motif is a
+# read-only Linux fetch client vs the trusted ThemerrDB repo) — patched anyway.
+dulwich>=1.2.6,<1.3
+
+# yt-dlp updates often (sometimes weekly) to stay ahead of YouTube changes.
+# We pin to a recent stable but the Dockerfile rebuilds rebuild against the
+# latest patch by default. Users who hit YouTube extractor breakage can rebuild.
+# v1.15.16: floor bumped 2025.1.0 → 2026.3.17 (the version that fixed several
+# YouTube anti-bot regressions reported by users on older 2025.x). The
+# motif startup log now prints the actual installed version so operators
+# can tell what's running without exec-ing into the container.
+# Quarterly review: bump this floor to current latest stable on each
+# major motif release so the documented minimum stays aligned with what's
+# tested. Latest checked: 2026.3.17 (re-verified 2026-06-06 in v1.22.24
+# against PyPI + GitHub releases — still the most recent stable release,
+# no newer build exists, no bump needed).
+# v1.24.42 (security audit 2026-06-25): floor bumped 2026.3.17 → 2026.6.9 — the
+# release that fixes CVE-2026-50023/50574/50019 + GHSA-69qj-pvh9-c5wg (dangerous
+# output-filename write, aria2c/curl manifest writes, cookie leak, --exec
+# injection). motif neutralizes all four already (fixed outtmpl with no metadata
+# interpolation + the default native downloader + no --exec hook), but the floor
+# bump documents the patched minimum and covers a future opts change.
+yt-dlp>=2026.6.9
+
+# v1.17.0: Apprise — unified notification library spanning Discord,
+# Slack, Telegram, Pushover, Gotify, Matrix, email, generic webhooks,
+# and 100+ other services. motif embeds Apprise for in-process
+# dispatch (URLs configured in /settings → NOTIFICATIONS). Homelab
+# users can also point motif at an external Apprise API container
+# (caronc/apprise-api) via the `apprise_external_url` setting —
+# both sinks can coexist. Apprise ships its own service-specific
+# transport handlers so motif doesn't need per-service deps.
+# Quarterly review like yt-dlp — apprise ships service updates as
+# new services are added and transport URLs evolve.
+# v1.18.45: floor bumped 1.7.0 → 1.10.0 (latest stable as of
+# 2026-04-26). Three minor releases worth of new service support
+# + transport-URL evolution; staying on the floor means motif's
+# installed apprise has all the latest service handlers.
+# v1.22.24: floor bumped 1.10.0 → 1.11.0 (latest stable as of
+# 2026-05-29) on the quarterly review.
+apprise>=1.11.0

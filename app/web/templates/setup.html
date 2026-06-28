@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Initial setup{% endblock %}
+{% block content %}
+<section class="auth-card">
+  <div class="auth-card-head">
+    <span class="auth-glyph">▰</span>
+    <h1 class="auth-title">FIRST RUN</h1>
+  </div>
+  <p class="muted auth-lede">
+    No admin account exists yet. Create one to continue.
+    This is a one-time prompt — once set, the form is gone.
+  </p>
+
+  {% if error %}
+  <div class="alert alert-error">! {{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/setup" class="auth-form">
+    <label class="auth-label">USERNAME
+      <input class="input" name="username" required minlength="1" maxlength="64"
+             autocomplete="username" autofocus />
+    </label>
+    <label class="auth-label">PASSWORD
+      <input class="input" name="password" type="password" required minlength="8" maxlength="128"
+             autocomplete="new-password" />
+      <span class="muted hint">8+ chars, no upper limit on length</span>
+    </label>
+    <label class="auth-label">CONFIRM
+      <input class="input" name="password_confirm" type="password" required minlength="8" maxlength="128"
+             autocomplete="new-password" />
+    </label>
+    <button type="submit" class="btn">// CREATE ADMIN ACCOUNT</button>
+  </form>
+
+  <p class="muted auth-foot">
+    Already running behind Authentik? Set <code>MOTIF_TRUST_FORWARD_AUTH=true</code>
+    after this completes — but you still need a local admin in case forward auth is ever disabled.
+  </p>
+</section>
+{% endblock %}

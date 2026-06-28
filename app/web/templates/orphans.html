@@ -1,0 +1,508 @@
+{% extends "base.html" %}
+{% block title %}Orphan Scan{% endblock %}
+{% block content %}
+{# v1.18.40: operator dashboard for the v1.18.37 orphan scanner.
+   Hits /api/admin/orphan-scan, renders findings as a summary
+   strip + per-row table. Per-row action buttons reuse motif's
+   existing endpoints (RE-PUSH via /replace, LET PLEX SERVE via
+   /unplace, PURGE via /forget) so the page is a thin wrapper
+   around action surfaces that already exist elsewhere in the
+   UI. No new backend mutation paths. #}
+<section class="hero">
+  <h1 class="title">// ORPHAN SCAN</h1>
+  <p class="muted">drift between motif's tracking and Plex's /themes state · plex_upload placements only · read-only diagnostic</p>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// SCAN</h2>
+    <div class="chips chips-inline">
+      <button type="button" id="orphans-run" class="btn lib-source-themerrdb">// RUN SCAN</button>
+      <span id="orphans-status" class="muted small" style="margin-left:1ch;"></span>
+    </div>
+  </header>
+  <div id="orphans-summary" class="muted small" style="padding:0.5rem 0 1rem 0;">
+    Click <strong>RUN SCAN</strong> to enumerate plex_upload placements + cross-check Plex's /themes state.
+  </div>
+</section>
+
+<section class="block" id="orphans-results-block" style="display:none;">
+  <header class="block-head">
+    <h2 class="block-title">// FINDINGS</h2>
+    <div class="chips chips-inline" id="orphans-drift-chips">
+      {# Filled dynamically by JS — one chip per drift_type with a count. #}
+    </div>
+  </header>
+  {# v1.18.42: visible "showing N of M" status so chip clicks
+     produce immediate feedback even when the filtered row set
+     looks identical to the unfiltered one (the {ok: 10} case —
+     ALL and OK chips both show the same 10 rows, but the
+     status line proves the filter applied). #}
+  <div id="orphans-filter-status" class="muted small" style="padding:0.25rem 0 0.5rem 0;"></div>
+  <div class="jobs-scroll">
+    <table class="table table-tight">
+      <thead>
+        <tr>
+          <th>TITLE</th>
+          <th>ID</th>
+          <th>RK</th>
+          <th>DRIFT</th>
+          <th>DETAILS</th>
+          <th>ENTRIES</th>
+          <th>ACTION</th>
+        </tr>
+      </thead>
+      <tbody id="orphans-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+<script>
+  (function () {
+    const runBtn = document.getElementById('orphans-run');
+    const statusEl = document.getElementById('orphans-status');
+    const summaryEl = document.getElementById('orphans-summary');
+    const chipsEl = document.getElementById('orphans-drift-chips');
+    const tbodyEl = document.getElementById('orphans-tbody');
+    const resultsBlock = document.getElementById('orphans-results-block');
+    const filterStatusEl = document.getElementById('orphans-filter-status');
+    // Filter state — null = show all; otherwise show only matching drift_type.
+    let activeDriftFilter = null;
+    let lastFindings = [];
+
+    // v1.18.40: drift_type → tone class mapping. Mirrors the
+    // SOURCE-menu lib-source-X vocab (themerrdb = green = healthy;
+    // user = violet = needs attention; danger = red = serious).
+    const DRIFT_TONE = {
+      'ok': 'lib-source-themerrdb',
+      'rk_lookup_failed': 'btn-danger',
+      'plex_fetch_failed': 'btn-danger',
+      'no_plex_entries': 'btn-warn',
+      'motif_hash_unknown': 'btn-warn',
+      'motif_entry_missing': 'btn-warn',
+      'motif_not_selected': 'lib-source-user',
+      'nothing_selected': 'lib-source-user',
+      // v1.18.43: orphan_sidecar_on_disk — plex_upload row
+      // has a leftover theme.<ext> at the media folder from a
+      // pre-v1.18.36 SWITCH file→api that didn't clean up.
+      // Amber: cleanup needed but not actively breaking anything
+      // (Plex's API path is healthy).
+      'orphan_sidecar_on_disk': 'btn-warn',
+    };
+
+    function htmlEscape(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function renderSummary(data) {
+      const total = data.total || 0;
+      const ts = new Date(data.scanned_at).toLocaleString();
+      summaryEl.innerHTML =
+        `Scanned <strong>${total}</strong> plex_upload placement(s) at ${ts}. ` +
+        `Click a drift chip to filter; click again to clear.`;
+    }
+
+    function renderChips(summary) {
+      // v1.22.84: reset a filter whose drift type vanished from the
+      // data (last filtered row dropped via placement_gone / fresh
+      // scan) — pre-fix the chip row rebuilt WITHOUT that type's chip
+      // while the filter stayed set, so no chip rendered active and
+      // the table dead-ended on "No findings for filter X" with no
+      // visible control to recover.
+      if (activeDriftFilter != null
+          && !(activeDriftFilter in summary)) {
+        activeDriftFilter = null;
+      }
+      chipsEl.innerHTML = '';
+      const allBtn = document.createElement('button');
+      allBtn.type = 'button';
+      allBtn.className = 'chip' + (activeDriftFilter == null ? ' chip-active' : '');
+      allBtn.textContent = 'ALL';
+      allBtn.addEventListener('click', () => {
+        activeDriftFilter = null;
+        renderChips(summary);
+        renderTable();
+      });
+      chipsEl.appendChild(allBtn);
+      // Stable order: ok first, then alphabetical.
+      const driftTypes = Object.keys(summary).sort((a, b) => {
+        if (a === 'ok') return -1;
+        if (b === 'ok') return 1;
+        return a.localeCompare(b);
+      });
+      for (const dt of driftTypes) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        // v1.18.42: apply the tone class so per-drift chips
+        // visually classify by severity (green=ok, amber=warn,
+        // red=danger). Pre-fix the toneClass was computed but
+        // not applied — all chips rendered identically.
+        const toneClass = DRIFT_TONE[dt] || '';
+        const isActive = activeDriftFilter === dt;
+        const classes = ['chip'];
+        if (toneClass) classes.push(toneClass);
+        if (isActive) classes.push('chip-active');
+        btn.className = classes.join(' ');
+        btn.textContent = `${dt} (${summary[dt]})`;
+        btn.addEventListener('click', () => {
+          activeDriftFilter = isActive ? null : dt;
+          renderChips(summary);
+          renderTable();
+        });
+        chipsEl.appendChild(btn);
+      }
+    }
+
+    function actionButtons(f) {
+      // Per-row action buttons reuse existing motif endpoints.
+      // v1.18.40: limit to the actions that make sense per drift_type.
+      const mt = f.media_type;
+      const id = f.tmdb_id;
+      const sec = f.section_id;
+      // v1.22.81: edition is part of the finding's identity (a two-
+      // edition plex_upload title produced identical-keyed rows:
+      // PROBE patched the wrong one, RE-PUSH re-placed every edition).
+      const ek = f.edition_key || '';
+      const ekAttr = `data-ek="${htmlEscape(ek)}"`;
+      const out = [];
+      // RE-PUSH (API) — re-uploads motif's canonical, re-selects
+      // motif's entry. Useful for motif_entry_missing / nothing_selected.
+      if (['motif_entry_missing', 'nothing_selected', 'motif_not_selected', 'no_plex_entries'].includes(f.drift_type)) {
+        out.push(`<button type="button" class="btn btn-tiny btn-warn lib-source-themerrdb"
+                    data-act="repush" data-mt="${mt}" data-id="${id}"
+                    data-sec="${htmlEscape(sec)}" ${ekAttr}
+                    data-rk="${htmlEscape(f.rk || '')}">// RE-PUSH</button>`);
+      }
+      // LET PLEX SERVE — clear motif's selection, re-upload trick on fallback.
+      // Useful for motif_not_selected (user already wants Plex's theme).
+      if (['ok', 'motif_not_selected'].includes(f.drift_type)) {
+        out.push(`<button type="button" class="btn btn-tiny btn-warn lib-source-plex"
+                    data-act="lps" data-mt="${mt}" data-id="${id}" data-sec="${htmlEscape(sec)}" ${ekAttr}>// LET PLEX SERVE</button>`);
+      }
+      // PURGE — drops motif's tracking + canonical. Useful for orphans
+      // motif probably shouldn't be tracking anymore.
+      if (['rk_lookup_failed'].includes(f.drift_type)) {
+        out.push(`<button type="button" class="btn btn-tiny btn-danger"
+                    data-act="purge" data-mt="${mt}" data-id="${id}" data-sec="${htmlEscape(sec)}" ${ekAttr}>× PURGE</button>`);
+      }
+      // v1.18.43: DELETE SIDECAR — for orphan_sidecar_on_disk
+      // rows. Removes the leftover theme.<ext> at the Plex
+      // media folder without touching Plex's API state. Path
+      // shown in the tooltip for transparency.
+      if (f.drift_type === 'orphan_sidecar_on_disk' && f.orphan_sidecar_path) {
+        const pathTitle = htmlEscape(f.orphan_sidecar_path);
+        out.push(`<button type="button" class="btn btn-tiny btn-danger"
+                    data-act="delete-sidecar"
+                    data-mt="${mt}" data-id="${id}" data-sec="${htmlEscape(sec)}" ${ekAttr}
+                    title="${pathTitle}">× DELETE SIDECAR</button>`);
+      }
+      // PROBE — refetch the current state for THIS row only.
+      // v1.22.59: needs mt/id/sec (the per-item endpoint's key) — the
+      // old data-rk-only button fell back to a full rescan.
+      out.push(`<button type="button" class="btn btn-tiny"
+                  data-act="probe" data-mt="${mt}" data-id="${id}"
+                  data-sec="${htmlEscape(sec)}" ${ekAttr}>// PROBE</button>`);
+      return out.join(' ');
+    }
+
+    function renderTable() {
+      const rows = activeDriftFilter
+        ? lastFindings.filter(f => f.drift_type === activeDriftFilter)
+        : lastFindings;
+      // v1.18.42: status line proves the filter applied even
+      // when row count is identical to unfiltered.
+      const totalRows = lastFindings.length;
+      const filterLabel = activeDriftFilter
+        ? `drift_type = <strong>${htmlEscape(activeDriftFilter)}</strong>`
+        : `<strong>all</strong> drift types`;
+      filterStatusEl.innerHTML =
+        `Showing <strong>${rows.length}</strong> of <strong>${totalRows}</strong> rows · filter: ${filterLabel}`;
+      if (!rows.length) {
+        tbodyEl.innerHTML = `<tr><td colspan="7" class="muted">No findings${activeDriftFilter ? ' for filter ' + activeDriftFilter : ''}.</td></tr>`;
+        return;
+      }
+      tbodyEl.innerHTML = rows.map(f => {
+        const titleStr = f.title + (f.year ? ` (${f.year})` : '');
+        const idStr = `${f.media_type}/${f.tmdb_id}`;
+        const sectionStr = f.section_id ? ` · sec ${htmlEscape(f.section_id)}` : '';
+        const toneCls = DRIFT_TONE[f.drift_type] || '';
+        return `
+          <tr>
+            <td><strong>${htmlEscape(titleStr)}</strong></td>
+            <td class="muted small">${htmlEscape(idStr)}${sectionStr}</td>
+            <td class="muted small">${htmlEscape(f.rk || '—')}</td>
+            <td><span class="chip ${toneCls}">${htmlEscape(f.drift_type)}</span></td>
+            <td class="small">${htmlEscape(f.details)}</td>
+            <td class="muted small">${f.entries_count}</td>
+            <td>${actionButtons(f)}</td>
+          </tr>`;
+      }).join('');
+    }
+
+    // v1.21.24: the scan is now a server-side background op. RUN SCAN POSTs
+    // /start (returns immediately), then we poll /status for live progress +
+    // findings. This survives navigating away + back (server keeps the
+    // state) instead of the old one-shot GET whose result died with the tab.
+    let pollTimer = null;
+
+    function stopPolling() {
+      if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+    }
+
+    function renderDone(st) {
+      lastFindings = st.findings || [];
+      renderSummary({ total: st.total != null ? st.total : lastFindings.length,
+                      scanned_at: st.scanned_at });
+      renderChips(st.summary || {});
+      renderTable();
+      resultsBlock.style.display = '';
+      statusEl.textContent = `done · ${lastFindings.length} rows`;
+    }
+
+    async function pollStatus() {
+      stopPolling();
+      let st;
+      try {
+        const r = await fetch('/api/admin/orphan-scan/status');
+        if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
+        st = await r.json();
+      } catch (e) {
+        statusEl.textContent = `error: ${e.message}`;
+        runBtn.disabled = false;
+        return;
+      }
+      if (st.status === 'running') {
+        runBtn.disabled = true;
+        const total = st.total || 0;
+        statusEl.textContent = total ? `scanning… ${st.done || 0} / ${total}` : 'scanning…';
+        pollTimer = setTimeout(pollStatus, 1500);
+      } else if (st.status === 'done') {
+        runBtn.disabled = false;
+        renderDone(st);
+      } else if (st.status === 'failed') {
+        runBtn.disabled = false;
+        statusEl.textContent = `error: ${st.error || 'scan failed'}`;
+        summaryEl.innerHTML = `<span style="color: var(--red);">scan failed: ${htmlEscape(st.error || '')}</span>`;
+      } else {
+        runBtn.disabled = false;
+      }
+    }
+
+    async function runScan() {
+      runBtn.disabled = true;
+      statusEl.textContent = 'starting…';
+      try {
+        const r = await fetch('/api/admin/orphan-scan/start', { method: 'POST' });
+        if (!r.ok) throw new Error(`${r.status}: ${r.statusText}`);
+        await r.json();
+      } catch (e) {
+        statusEl.textContent = `error: ${e.message}`;
+        summaryEl.innerHTML = `<span style="color: var(--red);">scan failed to start: ${htmlEscape(e.message)}</span>`;
+        runBtn.disabled = false;
+        return;
+      }
+      pollStatus();
+    }
+
+    runBtn.addEventListener('click', runScan);
+
+    // v1.22.59: client-side summary recompute — counts by drift_type
+    // from lastFindings, so a single-row reprobe can refresh the chips
+    // without a server round-trip (mirrors core/orphan_scan.summarize).
+    function summarizeClient() {
+      const out = {};
+      for (const f of lastFindings) {
+        out[f.drift_type] = (out[f.drift_type] || 0) + 1;
+      }
+      return out;
+    }
+
+    // v1.22.59: re-probe ONE row via /api/admin/orphan-scan/item and
+    // patch it into lastFindings in place. Pre-fix the per-row PROBE
+    // button (and every post-action refresh) re-ran the FULL library
+    // scan — the user: "the reprobe action makes it do a full rescan; is
+    // it possible that reprobe only checks the specific item being
+    // reprobed." placement_gone (e.g. after PURGE / LET PLEX SERVE
+    // removed the placement) drops the row instead.
+    async function reprobeRow(mt, id, sec, ek) {
+      // v1.22.81: thread the edition so the server probes + patches
+      // THIS edition's finding. null/undefined = legacy (old cached
+      // findings without edition_key).
+      const _ekq = (ek != null)
+        ? `&edition_key=${encodeURIComponent(ek)}` : '';
+      const url = `/api/admin/orphan-scan/item`
+        + `?media_type=${encodeURIComponent(mt)}`
+        + `&tmdb_id=${encodeURIComponent(id)}`
+        + `&section_id=${encodeURIComponent(sec || '')}` + _ekq;
+      const r = await fetch(url, { method: 'POST' });
+      if (!r.ok) {
+        let detail = '';
+        try {
+          const j = await r.json();
+          detail = j.detail || JSON.stringify(j);
+        } catch (_) { detail = `HTTP ${r.status}`; }
+        throw new Error(`HTTP ${r.status}: ${detail}`);
+      }
+      const body = await r.json();
+      const matches = (f) => String(f.media_type) === String(mt)
+        && String(f.tmdb_id) === String(id)
+        && String(f.section_id || '') === String(sec || '')
+        && (ek == null
+            || String(f.edition_key || '') === String(ek || ''));
+      if (body.placement_gone) {
+        lastFindings = lastFindings.filter(f => !matches(f));
+      } else {
+        const idx = lastFindings.findIndex(matches);
+        if (idx >= 0) lastFindings[idx] = body.finding;
+        else lastFindings.push(body.finding);
+      }
+      renderChips(summarizeClient());
+      renderTable();
+      statusEl.textContent = `row re-probed · ${lastFindings.length} rows`;
+    }
+
+    // On load, restore an in-flight or last-completed scan from the server
+    // so navigating away + back doesn't lose progress or the last result.
+    pollStatus();
+
+    // Action buttons (event delegation) — wire to existing endpoints.
+    tbodyEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const mt = btn.dataset.mt;
+      const id = btn.dataset.id;
+      const sec = btn.dataset.sec;
+      const rk = btn.dataset.rk;
+      const ek = btn.dataset.ek;
+      btn.disabled = true;
+      const origText = btn.textContent;
+      btn.textContent = '…';
+      // v1.18.48: action handler now checks the HTTP response
+      // (`r.ok`) instead of treating any non-throwing fetch as
+      // success. Pre-fix a backend 500 would complete the await
+      // normally + the button would show ✓ + a re-scan would
+      // fire, leaving the operator unable to tell that the
+      // action had actually failed. fetch() only throws on
+      // network errors, so non-2xx HTTP statuses MUST be
+      // checked explicitly. Same class-9-silent-failure shape
+      // surfaced multiple times in the v1.17.13 audit.
+      try {
+        let r;
+        let body = null;
+        if (act === 'repush') {
+          // v1.22.81: rating_key scopes /replace to THIS edition
+          // (v1.21.69) — the dead data-rk read finally has a writer;
+          // pre-fix RE-PUSH triggered the legacy un-scoped replace
+          // that re-placed every edition.
+          const _rpq = rk
+            ? `?rating_key=${encodeURIComponent(rk)}` : '';
+          r = await fetch(`/api/items/${mt}/${id}/replace${_rpq}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ kind: 'api' }),
+          });
+        } else if (act === 'lps') {
+          const url = sec
+            ? `/api/items/${mt}/${id}/unplace?section_id=${encodeURIComponent(sec)}`
+            : `/api/items/${mt}/${id}/unplace`;
+          r = await fetch(url, { method: 'POST' });
+        } else if (act === 'purge') {
+          if (!confirm('PURGE will delete motif\'s canonical AND tracking for this row. Continue?')) {
+            btn.disabled = false;
+            btn.textContent = origText;
+            return;
+          }
+          const url = sec
+            ? `/api/items/${mt}/${id}/forget?section_id=${encodeURIComponent(sec)}`
+            : `/api/items/${mt}/${id}/forget`;
+          r = await fetch(url, { method: 'POST' });
+        } else if (act === 'delete-sidecar') {
+          // v1.18.43: unlink orphan theme.<ext> at the Plex
+          // media folder. Server-side re-resolves folder_path
+          // from plex_items + walks host→container candidates
+          // so the client doesn't need to pass the path.
+          if (!confirm('Delete the orphan theme.<ext> sidecar at the Plex media folder for this row?')) {
+            btn.disabled = false;
+            btn.textContent = origText;
+            return;
+          }
+          const url = `/api/admin/delete-orphan-sidecar`
+            + `?media_type=${encodeURIComponent(mt)}`
+            + `&tmdb_id=${encodeURIComponent(id)}`
+            + `&section_id=${encodeURIComponent(sec)}`;
+          r = await fetch(url, { method: 'POST' });
+        } else if (act === 'probe') {
+          // v1.22.59: re-probe THIS row only. Pre-fix this re-ran the
+          // full library scan ("the per-rk filter isn't worth a
+          // separate endpoint" — it is now, at library scale).
+          await reprobeRow(mt, id, sec, ek);
+          return;
+        }
+        if (r && !r.ok) {
+          // v1.18.48: non-2xx surfaces as alert + FAIL label
+          // (mirrors the v1.17.13 visible-failure pattern).
+          let detail = '';
+          try {
+            const j = await r.json();
+            detail = j.detail || j.error || JSON.stringify(j);
+          } catch (_) {
+            detail = await r.text().catch(() => '') || `HTTP ${r.status}`;
+          }
+          throw new Error(`HTTP ${r.status}: ${detail}`);
+        }
+        // v1.18.48: delete-sidecar's idempotent path returns
+        // ok=true / deleted=false when no sidecar was at the
+        // folder (e.g., already removed in another tab, or the
+        // path resolved differently). Surface that explicitly
+        // so the operator sees "nothing was deleted" rather
+        // than a generic ✓ that misrepresents the outcome.
+        if (act === 'delete-sidecar' && r) {
+          try {
+            body = await r.json();
+          } catch (_) {
+            body = null;
+          }
+          if (body && body.deleted === false) {
+            btn.textContent = 'NO-OP';
+            setTimeout(() => reprobeRow(mt, id, sec, ek).catch((err) => {
+              statusEl.textContent = `re-probe failed: ${err.message}`;
+              // v1.22.84: re-arm the button — pre-fix the NO-OP glyph
+              // sat disabled on a row whose displayed state was stale.
+              btn.textContent = origText;
+              btn.disabled = false;
+            }), 1500);
+            return;
+          }
+        }
+        // v1.22.84: RE-PUSH only ENQUEUES a place job (the worker
+        // claims it on its ~5s loop) — the 1.5s reprobe always saw
+        // pre-job Plex state, re-rendered the same drift row, and
+        // the action read as broken (it succeeded ~5-10s later,
+        // invisibly). Accurate verb + a delay past the worker's
+        // claim-and-upload window. LPS/PURGE/DELETE-SIDECAR are
+        // synchronous server-side, so 1.5s stays right for them.
+        const _isAsyncAct = act === 'repush';
+        btn.textContent = _isAsyncAct ? '✓ QUEUED' : '✓';
+        // v1.22.59: re-probe just the acted-on row after a beat so its
+        // new state shows up — pre-fix this re-ran the FULL scan after
+        // every action, which crawls at library scale.
+        setTimeout(() => reprobeRow(mt, id, sec, ek).catch((err) => {
+          statusEl.textContent = `re-probe failed: ${err.message}`;
+          // v1.22.84: re-arm the button — pre-fix the success glyph
+          // sat disabled on a row whose displayed state was stale,
+          // and the only recovery was spotting the small status line.
+          btn.textContent = origText;
+          btn.disabled = false;
+        }), _isAsyncAct ? 12000 : 1500);
+      } catch (e) {
+        btn.textContent = 'FAIL';
+        alert(`Action ${act} failed: ${e.message}`);
+        btn.disabled = false;
+      }
+    });
+  })();
+</script>
+{% endblock %}

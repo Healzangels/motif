@@ -1,0 +1,1829 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+{# v1.13.60: settings page holistic style pass.
+
+   Unified patterns across every panel:
+     - <h2 class="block-title">// PANEL</h2>             primary panel header
+     - <p class="form-subhead">// SUBSECTION</p>         subsection separator inside a panel
+     - <label class="form-label">                        every field
+         <div class="form-label-row">                    label-text + (optional) env-badge
+         <input class="input">                           the control
+         <div class="form-input-actions">                inline buttons (CLEAR, TEST, etc.)
+         <p class="form-hint">                           description (concise, music-themed flair where it fits)
+     - <label class="form-label form-checkbox">          for boolean toggles
+     - <div class="form-actions">                        save button + status, bottom of every form
+
+   Copy: short, directive, light music metaphors ("track", "tempo",
+   "score", "intro", "conductor") where they fit naturally. No inline
+   styles on hints/paragraphs. #}
+
+<section class="hero">
+  <h1 class="title">SETTINGS</h1>
+  <p class="muted">configuration · persisted to <code>/config/motif.yaml</code> · ENV vars win where present</p>
+</section>
+
+<nav class="tabs" role="tablist" id="settings-tabs">
+  <button class="tab tab-active" data-tab="paths" role="tab">PATHS</button>
+  <button class="tab" data-tab="plex" role="tab">PLEX</button>
+  <button class="tab" data-tab="downloads" role="tab">DOWNLOADS</button>
+  <button class="tab" data-tab="matching" role="tab">MATCHING</button>
+  <button class="tab" data-tab="schedule" role="tab">SCHEDULE</button>
+  <!-- v1.15.68: IMPORT moved between SCHEDULE and RUNTIME per
+       the user's request — groups data-operations adjacent
+       (SCHEDULE controls when motif syncs, IMPORT is a one-off
+       data ingestion). Was last tab in v1.15.66 introduction. -->
+  <button class="tab" data-tab="import" role="tab">IMPORT</button>
+  <button class="tab" data-tab="runtime" role="tab">RUNTIME</button>
+  {# v1.18.47: DIAGNOSTICS — read-only operator dashboards.
+     Currently houses // ORPHAN SCAN; future read-only diagnostics
+     (TVDB bridge stats, sync delta reports, etc.) can land here.
+     Placed between RUNTIME and NOTIFICATIONS — both are
+     "admin-operations" tabs but DIAGNOSTICS specifically points
+     at read-only inspection while NOTIFICATIONS configures
+     write-out behavior. #}
+  <button class="tab" data-tab="diagnostics" role="tab">DIAGNOSTICS</button>
+  {# v1.23.15: DATABASE — back up / restore motif.db. Sits with the
+     admin-operations tabs (RUNTIME / DIAGNOSTICS) since it's an
+     operator maintenance surface, not user-facing config. #}
+  <button class="tab" data-tab="database" role="tab">DATABASE</button>
+  <!-- v1.17.0: NOTIFICATIONS — Apprise-backed alerts for sync /
+       bulk-action / cookies / disk-low / worker-restart lifecycle
+       events. Placed between RUNTIME and TOKENS so admin-config
+       (paths/plex/downloads/matching/schedule/import/runtime/
+       notifications) groups before account-config (tokens/
+       password/homepage). -->
+  <button class="tab" data-tab="notifications" role="tab">NOTIFICATIONS</button>
+  <button class="tab" data-tab="tokens" role="tab">TOKENS</button>
+  <button class="tab" data-tab="password" role="tab">PASSWORD</button>
+  <button class="tab" data-tab="homepage" role="tab">HOMEPAGE</button>
+</nav>
+
+<!-- ============================ PATHS ============================ -->
+<section class="block tab-panel" data-panel="paths">
+  <header class="block-head">
+    <h2 class="block-title">// PATHS</h2>
+    <span class="muted small">where motif lays down its tracks</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="paths">
+      <label class="field-row">
+        <span class="field-name">THEMES DIRECTORY
+          <span class="form-env-badge" data-env-badge="paths.themes_dir"{% if "paths.themes_dir" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="paths.themes_dir"
+                 placeholder="/data/media/themes" autocomplete="off" />
+          <p class="form-hint">
+            Container path where motif stores downloaded themes. One subdirectory
+            per Plex section is auto-created (<code>movies/</code>,
+            <code>movies-4k/</code>, <code>tv-shows/</code>, <code>anime/</code>).
+            <strong>Must share a filesystem with your Plex media folders</strong>
+            for hardlinks to work — typically <code>/data/media/themes</code>.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">COOKIES FILE
+          <span class="form-env-badge" data-env-badge="paths.cookies_file"{% if "paths.cookies_file" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="paths.cookies_file"
+                 placeholder="/config/cookies.txt" autocomplete="off" />
+          {# v1.15.8: cookies validation surface — a structured 5-step check
+             (file present, parses, has YT auth cookies, not expired, yt-dlp
+             loads them OK) rendered as an inline checklist. #}
+          <span class="form-input-actions">
+            <button class="btn btn-tiny" id="test-cookies-btn" type="button"
+                    title="Verify cookies.txt is parseable + contains valid YouTube auth cookies + yt-dlp can load them.">// TEST COOKIES</button>
+            <span class="form-status" id="test-cookies-status"></span>
+          </span>
+          <ul class="cookies-test-results" id="test-cookies-results" style="display:none"></ul>
+          <p class="form-hint">
+            Netscape-format <code>cookies.txt</code> exported from your browser.
+            Lets yt-dlp sign in — bypasses bot rate limits and unlocks age-
+            restricted videos. Drop at
+            <code>/mnt/user/appdata/motif/cookies.txt</code> on the host.
+            Without this, syncs may fail with <code>cookies_expired</code> /
+            <code>age_restricted</code>.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">MIN FREE DISK (MB)
+          <span class="form-env-badge" data-env-badge="paths.min_free_disk_mb"{% if "paths.min_free_disk_mb" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="number" min="0" step="50"
+                 data-cfg-field="paths.min_free_disk_mb"
+                 placeholder="500" autocomplete="off" />
+          <p class="form-hint">
+            Pre-download free-space guard. If <code>themes_dir</code>'s
+            filesystem dips below this many MB, downloads pause with a clear
+            "low disk" reason and the topbar shows an amber DISK pill — instead
+            of yt-dlp/ffmpeg silently spamming I/O errors. Job stays queued and
+            resumes once you free space. <code>0</code> disables.
+          </p>
+        </span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="paths">// SAVE PATHS</button>
+      <span class="form-status" data-save-status="paths"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PLEX ============================ -->
+<!-- v1.13.49: three labeled groups — // CONNECTION (URL + TOKEN),
+     // TMDB INTEGRATION (API key — TheMovieDB credential, not Plex),
+     and // LIBRARY SCOPE (section filters + post-place sync toggle).
+     v1.13.60: holistic style pass — every label wraps form-label-row,
+     hint copy tightened, music flair where it fits. -->
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PLEX SERVER</h2>
+    <span class="muted small">connection + TMDB + library scope</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="plex">
+      <p class="form-subhead">// CONNECTION</p>
+
+      <label class="field-row">
+        <span class="field-name">PLEX URL
+          <span class="form-env-badge" data-env-badge="plex.url"{% if "plex.url" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="plex.url"
+                 placeholder="http://192.168.1.10:32400" autocomplete="off" />
+          <p class="form-hint">
+            URL motif uses to reach Plex. Use the LAN IP — not <code>localhost</code>.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">PLEX TOKEN
+          <span class="form-env-badge" data-env-badge="plex.token"{% if "plex.token" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="password" data-cfg-field="plex.token"
+                 placeholder="(set)" autocomplete="off" />
+          <span class="form-input-actions">
+            <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.token">// CLEAR TOKEN</button>
+          </span>
+          <p class="form-hint">
+            Find at <a href="https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/"
+                       target="_blank" rel="noopener">support.plex.tv → finding-an-authentication-token</a>.
+            Empty value PRESERVES the current token; click CLEAR TOKEN to wipe.
+          </p>
+        </span>
+      </label>
+
+      <p class="form-subhead">// TMDB INTEGRATION</p>
+
+      <label class="field-row">
+        <span class="field-name">TMDB API KEY
+          <span class="form-env-badge" data-env-badge="plex.tmdb_api_key"{% if "plex.tmdb_api_key" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="password" data-cfg-field="plex.tmdb_api_key"
+                 placeholder="(optional)" autocomplete="off" />
+          <span class="form-input-actions">
+            <button type="button" class="btn btn-tiny" id="tmdb-test-btn">// TEST KEY</button>
+            <button type="button" class="btn btn-tiny btn-warn" data-cfg-clear="plex.tmdb_api_key">// CLEAR KEY</button>
+            {# v1.19.81 (settings uniformity audit): muted-small +
+               inline style.color → .form-status, so TEST KEY shares
+               the form-status-ok/fail tone palette its sibling test
+               buttons (TEST COOKIES / PROBE TRANSPORT / RUN PROBE)
+               already use. JS sets the tone via classList now. #}
+            <span class="form-status" id="tmdb-test-result"></span>
+          </span>
+          <p class="form-hint">
+            Optional. Resolves orphan theme.mp3 files during scans when no
+            .nfo sidecar exists. Without a key, unresolved orphans get a
+            synthetic ID. Free at
+            <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>
+            — request a v3 API Key, paste here. Empty value preserves the
+            existing key.
+          </p>
+        </span>
+      </label>
+
+      {# v1.16.0 / renamed v1.16.2 (label) + v1.24.93 (internals):
+         TVDB bridge — fills the linkage gap for plex_items rows
+         where Plex gave only a guid_tvdb (no guid_tmdb). This is
+         most of a typical TV library: Plex's default TV Series
+         agent (TheTVDB Scraper) prefers TVDB GUIDs, as do the anime
+         agents. Without bridging, those rows show up as "P only"
+         with no TDB linkage and can't participate in DOWNLOAD TDB
+         BACKUP / REPLACE TDB / REVERT actions.
+         v1.16.2 renamed the user-facing label to "TVDB BRIDGE" — the
+         feature was never anime-specific; the old "HAMA bridge" name
+         was a misnomer (99.7% of stranded rows are TheTVDB-scraper
+         TV, not the HAMA anime agent). v1.24.93 finished the rename
+         through the internals: op kind (tvdb_bridge), op_id
+         (tvdb-bridge), the route, and the runtime_settings key are
+         all TVDB-named now. #}
+      {# v1.19.81 (settings uniformity audit): // TVDB BRIDGE was a
+         fake `form-label` carrying the // prefix inside a
+         form-label-text — but // is reserved for block-title +
+         form-subhead, and this block is an action+stats surface,
+         not a labelled field. Restructured to a form-subhead
+         subsection (peer of // CONNECTION / // TMDB INTEGRATION in
+         this same panel) + a plain wrapper div that keeps the
+         id="tvdb-bridge-section" gate the JS binds on. Result span
+         migrated muted-small+inline-color → .form-status so it
+         shares the form-status-ok/fail tone palette. #}
+      <p class="form-subhead">// TVDB BRIDGE</p>
+      <div id="tvdb-bridge-section" class="control-group">
+        {# v1.22.55: bridge stats + action consolidated onto the canonical
+           control-row — status cluster left, button right — replacing two
+           stacked form-input-actions rows. #}
+        <div class="control-row">
+          <span class="muted small" id="tvdb-bridge-stats">
+            Stranded rows: <span data-tvdb-stranded>?</span>
+            · last rebuild: <span data-tvdb-last-run>—</span>
+          </span>
+          <span class="control-actions">
+            <span class="form-status" id="tvdb-bridge-result"></span>
+            <button type="button" class="btn btn-tiny btn-warn" id="tvdb-bridge-rebuild-btn">// REBUILD BRIDGE</button>
+          </span>
+        </div>
+        <p class="form-hint">
+          <strong>What this does:</strong> Plex's default TV agent
+          (TheTVDB Scraper) and the anime agents give Plex rows
+          a TVDB GUID but no TMDB GUID. motif's themes table is
+          keyed by TMDB (because ThemerrDB uses TMDB), so those
+          rows can't link up automatically. The bridge calls TMDB's
+          <code>/find?external_id=&lt;tvdb&gt;</code> endpoint to
+          resolve each TVDB→TMDB, then links the Plex row to
+          motif's matching themes record. Once linked, the row
+          participates in DOWNLOAD TDB BACKUP / REPLACE TDB /
+          REVERT actions; pre-bridging it's stuck as P-only.
+          Requires the TMDB API key above. Rate-limited 5 req/sec
+          — a 2000-row backfill takes about 7 minutes. Cancellable
+          from // LIVE OPS.
+        </p>
+        <p class="form-hint">
+          <strong>How to read the results:</strong>
+          <code>linked</code> = the bridge connected the row to a
+          themes record (the success case).
+          <code>unmappable</code> = TMDB had no record for that
+          TVDB ID (e.g., very recent or obscure show — nothing to
+          do).
+          <code>no_record</code> = TMDB resolved fine but
+          ThemerrDB doesn't track that title — also nothing motif
+          can do.
+          <code>errors</code> = transient API failures; safe to
+          re-run.
+          A high <code>no_record</code> ratio is normal for
+          libraries with niche / non-mainstream shows; ThemerrDB
+          focuses on widely-themed titles. If <code>linked</code>
+          stays at 0 across rebuilds, the bridge isn't finding
+          overlap between your Plex library and ThemerrDB — that's
+          a correct outcome, not a malfunction.
+        </p>
+        <p class="form-hint">
+          Run REBUILD BRIDGE occasionally as you add new shows
+          (an auto-incremental path in plex_enum bridges up to 100
+          new rows per pass once you've done one manual rebuild).
+        </p>
+      </div>
+
+      {# v1.15.24: LIBRARY SCOPE inputs auto-hide unless an env
+         override is actively driving them. For interactive
+         operators who've enumerated sections + toggled MGD per-
+         section in LIBRARY SECTIONS below, these comma-separated
+         text fields are dead UI (sections.py:177 notes the env-
+         var rules apply only on FIRST DISCOVERY of a section).
+         For headless / Compose-driven deploys with
+         MOTIF_PLEX_SECTION_INCLUDE / _EXCLUDE set, the inputs
+         still surface so the operator sees what's locking scope.
+         the user: "whats the point to these since they're set in
+         the libraries section below?" #}
+      {% if library_scope_inputs_visible() %}
+      <p class="form-subhead">// LIBRARY SCOPE</p>
+
+      <label class="field-row">
+        <span class="field-name">SECTION INCLUDE (whitelist)</span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field-list="plex.section_include"
+                 placeholder="Movies, 4K Movies, TV Shows, Anime" autocomplete="off" />
+          <p class="form-hint">
+            Env-driven scope (MOTIF_PLEX_SECTION_INCLUDE). Applied at
+            first discovery of a section; per-section MGD toggles in
+            the LIBRARY SECTIONS table below are the day-to-day
+            mechanism after that.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">SECTION EXCLUDE</span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field-list="plex.section_exclude"
+                 placeholder="Home Movies, Music Videos" autocomplete="off" />
+          <p class="form-hint">
+            Env-driven scope (MOTIF_PLEX_SECTION_EXCLUDE). Same
+            first-discovery semantics as INCLUDE above.
+          </p>
+        </span>
+      </label>
+      {% endif %}
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="plex.analyze_after_placement" />
+        {# v1.13.71: setting label `REFRESH PLEX AFTER PLACING` →
+           `PLEX RE-SCAN AFTER PLACING`. Disambiguates from the
+           user-triggered // REFRESH PLEX action: this setting
+           controls a per-folder metadata nudge that fires after
+           every successful place, not the section-enumeration
+           sweep. Three-verb taxonomy now: SYNC (TDB) / REFRESH
+           (section enum) / RE-SCAN (per-folder nudge). Config
+           key (plex.analyze_after_placement) unchanged. #}
+        <span class="form-label-text">PLEX RE-SCAN AFTER PLACING</span>
+        <p class="form-hint">
+          When checked, motif nudges Plex to re-scan an item's metadata after
+          dropping a theme.mp3 (immediate refresh + retries at +10s, +30s,
+          +90s) so Plex's local-media-assets agent picks up the new track
+          without a manual click. <strong>Recommended</strong>.
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="plex">// SAVE PLEX</button>
+      <span class="form-status" data-save-status="plex"></span>
+      {# v1.24.21: TEST CONNECTION — connects with the saved URL+token and
+         surfaces the server name/version (or the error) inline, so bad config
+         fails fast at save time. Mirrors the TEST NOTIFICATION / TEST COOKIES
+         buttons. Uses CURRENTLY-SAVED config — save first to test a new value. #}
+      <button class="btn btn-tiny" id="test-plex-btn" type="button"
+              title="Connect to Plex with the saved URL + token and report the server identity.">// TEST CONNECTION</button>
+      <span class="form-status" id="test-plex-status"></span>
+    </div>
+  </div>
+</section>
+
+{# v1.18.26: DEFAULT PLACEMENT METHOD block. Lives in its own
+   subsection (vs nesting in PLEX SERVER) because the config key
+   namespace (placement.*) doesn't match the plex tab's save
+   collector (which only picks up data-cfg-field^="plex."). The
+   v1.17.2 multi-SAVE-buttons-per-tab pattern applies here:
+   separate SAVE PLACEMENT button + status, PATCH targets the
+   placement section. Backend honored the config key and
+   MOTIF_DEFAULT_PLACEMENT_METHOD env override since v1.18.23
+   — this is the on-page UI. Two options matching the PUSH TO
+   PLEX (FILE)/(API) menu split: 'file' lays a sidecar hardlink
+   (legacy themerr-plex parity); 'api' POSTs audio to
+   /library/metadata so Plex stores the theme in its metadata
+   bundle (no sidecar). Collections IGNORE this — they have no
+   folder and always use 'api'. The per-job kind payload from
+   the PLACE menu still wins; this only governs auto-place from
+   sync downloads + scheduled retries. #}
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// DEFAULT PLACEMENT METHOD</h2>
+    {# v1.18.57: muted subtitle added for consistency — 16 of 18
+       settings sections carry one. Pre-fix DEFAULT PLACEMENT
+       METHOD + (separately) API TOKENS were the only two
+       without; TOKENS replaces the subtitle slot with a // NEW
+       TOKEN action button, which is a documented secondary
+       pattern. This section had no replacement element + no
+       block-intro paragraph, so the header read as bare. #}
+    <span class="muted small">hardlink to disk or upload via the Plex API</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="placement">
+      <label class="field-row">
+        <span class="field-name">PLACEMENT METHOD
+          <span class="form-env-badge"
+                data-env-badge="placement.default_method"
+                {% if "placement.default_method" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <select class="input" data-cfg-field="placement.default_method">
+            <option value="file">File (sidecar) — hardlink theme.mp3 next to the media</option>
+            <option value="api">API (metadata) — upload to Plex's metadata bundle, no sidecar</option>
+          </select>
+          <p class="form-hint">
+            How motif realizes auto-placements for movies and TV. Collections
+            ignore this and always upload via API (no media folder exists).
+            The PLACE menu's PUSH TO PLEX (FILE) / (API) items override this
+            per-row regardless of the default. <strong>File</strong> is the
+            legacy themerr-plex-compatible behavior.
+          </p>
+        </span>
+      </label>
+    </div>
+    {# v1.19.81 (settings uniformity audit): form-actions moved OUT
+       of form-grid to be a sibling after it — matches every other
+       section. Pre-fix it was nested inside form-grid, so the
+       grid's gap (24px) stacked on the actions' own margin-top
+       (24px) → a ~48px gap above SAVE PLACEMENT vs ~24px elsewhere. #}
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="placement">// SAVE PLACEMENT</button>
+      <span class="form-status" data-save-status="placement"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ LIBRARY SECTIONS (within PLEX tab) ============================ -->
+<!-- v1.13.63: dropped the inline `// SYNC PLEX` button from this
+     header. Dashboard now owns the global "scan every managed
+     section" affordance (when auto_enum_after_sync is off);
+     per-library tabs own the scoped one (`// SYNC MOVIES`,
+     `// SYNC 4K TV SHOWS`, etc.). Settings page is for managing
+     section gating + role flags only. -->
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// LIBRARY SECTIONS</h2>
+    <span class="muted small">enable / disable + role assignments</span>
+  </header>
+  <div class="block-body block-body-flush">
+    <p class="form-hint block-intro">
+      Plex sections motif knows about. Toggle MGD per section to enable or
+      disable management — disabled sections are skipped in sync, scans, and
+      coverage views.
+    </p>
+    <div class="lib-legend">
+      <span class="muted small">ROLE KEY:</span>
+      <span class="lib-legend-item"><span class="lib-flag-pill is-active lib-flag-pill-anime" aria-hidden="true">A</span> anime — feeds the ANIME tab</span>
+      <span class="lib-legend-item"><span class="lib-flag-pill is-active lib-flag-pill-4k" aria-hidden="true">4K</span> 4K library — feeds the 4K toggle on its tab</span>
+      <span class="lib-legend-item"><span class="muted small">neither = standard</span></span>
+      <span class="lib-legend-item"><span class="muted small">both selected = anime 4K</span></span>
+    </div>
+    <table class="table libraries-table">
+      <thead>
+        <tr>
+          <th class="lib-col-id">ID</th>
+          <th class="lib-col-section">SECTION</th>
+          <th class="lib-col-type">TYPE</th>
+          <th class="lib-col-mgd">MGD</th>
+          <th class="lib-col-role">ROLE</th>
+          <th class="lib-locations">LOCATIONS</th>
+          <th class="lib-col-actions">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="libraries-movies-body">
+        <tr><td colspan="7" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+    <table class="table libraries-table libraries-table-tv">
+      <thead>
+        <tr>
+          <th class="lib-col-id">ID</th>
+          <th class="lib-col-section">TV / SHOW SECTION</th>
+          <th class="lib-col-type">TYPE</th>
+          <th class="lib-col-mgd">MGD</th>
+          <th class="lib-col-role">ROLE</th>
+          <th class="lib-locations">LOCATIONS</th>
+          <th class="lib-col-actions">ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="libraries-tv-body">
+        <tr><td colspan="7" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+    <div class="form-actions form-actions-libraries">
+      {# v1.19.81 (settings uniformity audit): scoped the bare // SAVE
+         label → // SAVE SECTIONS so it names its scope like every
+         other save button (// SAVE PATHS … // SAVE EVENTS). The
+         live label is JS-driven (updateLibrariesSaveButton); this
+         is just the SSR default. Status span dropped its lone
+         `muted small` combo — every other save-status is bare
+         .form-status. #}
+      <button class="btn btn-warn" id="libraries-save-btn" type="button" disabled>// SAVE SECTIONS</button>
+      <span class="form-status" id="libraries-save-status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ REPROBE PLEX THEMES (within PLEX tab) ============================ -->
+<!-- v1.13.38: admin tool to backfill plex_independent_theme for sidecar-
+     bearing rows. Surfaced separately so the explanation sits next to the
+     trigger button, not buried in a tooltip. -->
+<section class="block tab-panel" data-panel="plex" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// REPROBE PLEX THEMES</h2>
+    <span class="muted small">backfill the +P composite indicator</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Checks whether Plex <em>also</em> has its own theme (Plex Pass cloud,
+      themerr-plex embed) hiding behind motif's sidecar. The result drives
+      the small <code>+P</code> dot on the SRC pill so you can see which
+      placements could be removed without losing the track entirely.
+    </p>
+    <p class="form-hint">
+      <strong>// HOW IT WORKS</strong> — for each row, motif fetches the first
+      2&nbsp;KB of the theme Plex is currently serving (a Range request — no
+      transcoding) and compares it to the local <code>theme.mp3</code>
+      prefix. Match → Plex serves the sidecar. Differ → Plex serves an
+      independent track and the row gets the <code>+P</code> dot. Read-only,
+      ~100&nbsp;ms per row, 6 in parallel, safe to cancel mid-run.
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="reprobe-plex-themes-btn" type="button">// REPROBE PLEX THEMES</button>
+      <span class="form-status" id="reprobe-plex-themes-status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ BULK PROBE TDB URLS (within DOWNLOADS tab) ============================ -->
+<!-- v1.14.29: bulk yt-dlp --simulate sweep across every theme row's
+     currently-effective URL. Pre-flight safety net for LET PLEX SERVE
+     so dead TDB URLs (video removed/private/age/geo) get red-pilled
+     BEFORE the user takes a destructive action. 24h cooldown so
+     back-to-back runs are no-ops. -->
+<section class="block tab-panel" data-panel="downloads" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PROBE TDB URLS</h2>
+    <span class="muted small">verify recovery URLs are alive</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Sweeps every theme row's currently-effective YouTube URL (your
+      override if set, otherwise ThemerrDB's URL) via
+      <code>yt-dlp --simulate</code> — no audio is downloaded, just
+      a metadata probe. Dead URLs (removed, private, age-restricted,
+      geo-blocked) get marked red so the row's TDB ✗ pill fires
+      <em>before</em> // LET PLEX SERVE has a chance to be destructive
+      on a row whose recovery path is already gone.
+    </p>
+    <p class="form-hint">
+      <strong>// COOLDOWN</strong> — rows probed within the last 24 h
+      are skipped, so re-running back-to-back is a no-op. Concurrency
+      is capped at 1 to keep YouTube from rate-limiting motif's IP.
+      Cookies-aware: when <code>cookies.txt</code> is present in
+      <code>/config</code>, the probe uses it (avoids
+      <code>cookies_expired</code> false-positives on age-gated
+      URLs).
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="bulk-probe-tdb-btn" type="button">// PROBE TDB URLS</button>
+      <span class="form-status" id="bulk-probe-tdb-status"></span>
+    </div>
+    <hr class="form-hint-divider" />
+    <p class="form-hint">
+      <strong>// REPROBE FAILURES</strong> — recovery action that
+      rechecks every row currently marked failed (TDB ✗) and
+      <em>bypasses</em> the 24 h cooldown. Use after fixing a config
+      issue that mass-red-pilled rows (e.g. cookies were missing,
+      rate-limit was too aggressive, network was flaky) — alive
+      results clear the failure_kind so the row's TDB ✗ pill
+      drops back to clean.
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="reprobe-tdb-failures-btn" type="button">// REPROBE FAILURES</button>
+      <span class="form-status" id="reprobe-tdb-failures-status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ DOWNLOADS ============================ -->
+<section class="block tab-panel" data-panel="downloads" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// DOWNLOAD TUNING</h2>
+    <span class="muted small">set the tempo for YouTube downloads</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="downloads">
+      <label class="field-row">
+        <span class="field-name">RATE PER HOUR</span>
+        <span class="field-control">
+          <input class="input" type="number" min="1" max="600" step="1"
+                 data-cfg-field="downloads.rate_per_hour" />
+          <p class="form-hint">
+            Max downloads per hour. <code>30</code> is conservative; fresh
+            cookies sustain <code>60–120</code>. Above 200/hr risks YouTube
+            bot detection.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">CONCURRENCY</span>
+        <span class="field-control">
+          <input class="input" type="number" min="1" max="8" step="1"
+                 data-cfg-field="downloads.concurrency" />
+          <p class="form-hint">
+            Parallel downloads. <code>1</code> is safest. Don't increase
+            unless you understand the bot-detection risk.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">AUDIO QUALITY (LAME -V)</span>
+        <span class="field-control">
+          <input class="input" type="number" min="0" max="9" step="1"
+                 data-cfg-field="downloads.audio_quality" />
+          <p class="form-hint">
+            <code>0</code> = ~245 kbps VBR (~5 MB/track). <code>9</code> =
+            ~65 kbps (~1 MB/track). For 6,000 themes that's 30 GB to 6 GB.
+          </p>
+        </span>
+      </label>
+
+      <p class="form-subhead">// REGIONAL BYPASS</p>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="downloads.geo_bypass" />
+        <span class="form-label-text">GEO BYPASS (X-FORWARDED-FOR)</span>
+        <p class="form-hint">
+          Injects fake <code>X-Forwarded-For</code> headers.
+          <strong class="warn">YouTube generally ignores XFF for rights-
+          holder blocks</strong>, so this rarely fixes "blocked in your
+          country on copyright grounds" errors. Cheap to enable; helps
+          non-YouTube extractors that respect XFF.
+        </p>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">GEO BYPASS COUNTRY
+          <span class="form-env-badge" data-env-badge="downloads.geo_bypass_country"{% if "downloads.geo_bypass_country" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" maxlength="2"
+                 data-cfg-field="downloads.geo_bypass_country"
+                 placeholder="US" autocomplete="off" />
+          <p class="form-hint">
+            Optional 2-letter ISO code (<code>US</code>, <code>GB</code>,
+            <code>DE</code>) for the fake XFF lookup. Empty = yt-dlp picks
+            one. Only effective when GEO BYPASS is on.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">PROXY URL
+          <span class="form-env-badge" data-env-badge="downloads.proxy_url"{% if "downloads.proxy_url" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="password"
+                 data-cfg-field="downloads.proxy_url"
+                 placeholder="socks5://user:pass@host:1080" autocomplete="off" />
+          <span class="form-input-actions">
+            <button type="button" class="btn btn-tiny btn-warn"
+                    data-cfg-clear="downloads.proxy_url">// CLEAR PROXY</button>
+          </span>
+          <p class="form-hint">
+            HTTP / SOCKS proxy yt-dlp routes through.
+            <strong>This is what actually solves YouTube content blocks</strong>
+            — it changes the source IP YouTube sees. Schemes:
+            <code>http://</code>, <code>https://</code>, <code>socks5://</code>,
+            <code>socks5h://</code>, <code>socks4://</code>. Common patterns: a
+            commercial VPN with proxy mode, a residential-proxy provider, or
+            your own SOCKS server tunneled to a friend's network. Value is
+            masked; empty save preserves it. Click CLEAR PROXY to wipe.
+          </p>
+        </span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="downloads">// SAVE DOWNLOADS</button>
+      <span class="form-status" data-save-status="downloads"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ MATCHING ============================ -->
+<section class="block tab-panel" data-panel="matching" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// FOLDER MATCHING</h2>
+    <span class="muted small">how titles map to your Plex score</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="matching">
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="matching.strict_edition" />
+        <span class="form-label-text">STRICT EDITION MATCH</span>
+        <p class="form-hint">
+          When checked, edition tags ("Theatrical", "Director's Cut") must
+          match exactly to place a theme. When unchecked, motif places into
+          any matching title+year folder regardless of edition.
+        </p>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">PLUS-MODE</span>
+        <span class="field-control">
+          <select class="input" data-cfg-field="matching.plus_mode">
+            <option value="separator">separator — treat + as word break</option>
+            <option value="literal">literal — treat + as part of word</option>
+          </select>
+          <p class="form-hint">
+            How <code>+</code> in titles is handled. <code>separator</code>
+            matches "X+Y" against folders named "X Y"; <code>literal</code>
+            requires the <code>+</code> in the folder name. <code>separator</code>
+            is the safer default for most Plex layouts.
+          </p>
+        </span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="matching">// SAVE MATCHING</button>
+      <span class="form-status" data-save-status="matching"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ SCHEDULE → SYNC TIMING ============================ -->
+<!-- v1.13.39: SCHEDULE tab broken into three blocks ordered top-to-bottom
+     by question being answered: WHEN sync runs, WHICH transport powers it,
+     WHAT happens after a download. -->
+<section class="block tab-panel" data-panel="schedule" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC TIMING</h2>
+    <span class="muted small">the conductor's baton — when motif takes its daily ThemerrDB pass</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="sync">
+      <label class="field-row">
+        <span class="field-name">CRON EXPRESSION (UTC)</span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="sync.cron"
+                 placeholder="0 13 * * *" autocomplete="off" />
+          <p class="form-hint">
+            5-field cron: <code>minute hour day month dow</code>. Default
+            <code>0 13 * * *</code> runs daily at 13:00 UTC, an hour after
+            ThemerrDB's daily push. <strong class="warn">// RESTART REQUIRED</strong>
+            (the scheduler reads this once at startup).
+          </p>
+        </span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="sync">// SAVE TIMING</button>
+      <span class="form-status" data-save-status="sync"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ SCHEDULE → AUTOMATION ============================ -->
+<section class="block tab-panel" data-panel="schedule" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// AUTOMATION</h2>
+    <span class="muted small">what motif does on its own — the closed loop</span>
+  </header>
+  <div class="block-body">
+    {# v1.21.12: the three "what motif does automatically" toggles
+       grouped here (were split across SYNC TIMING + PLACEMENT MODE).
+       They span two config sections (sync + placement); the SAVE
+       AUTOMATION button PATCHes both sections in one call. #}
+    <div class="form-grid form-grid-tight" data-config-form="automation">
+      {# v1.20.27: env override MOTIF_AUTO_DOWNLOAD_NEW_THEMES. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="sync.auto_download_new_themes_for_unthemed_rows" />
+        <span class="form-label-text">AUTO-DOWNLOAD NEW THEMES (UNTHEMED ROWS)</span>
+        <p class="form-hint">
+          When motif finds a theme for a row you have nothing for
+          (SRC=—), download it immediately instead of waiting for you to
+          act. Applies to BOTH discovery paths — a ThemerrDB sync
+          publishing a theme for an unthemed row, AND a Plex refresh
+          adding a new item that already has a ThemerrDB theme — whether
+          the sync/refresh is <strong>scheduled OR manually kicked
+          off</strong> (v1.21.11). <strong>OFF (default)</strong> surfaces a blue
+          <code>!UPD</code> prompt / a THEME AVAILABLE notification so you
+          act manually; <strong>ON</strong> auto-acquires silently. Only
+          affects unthemed rows — rows that already have a theme
+          (U / A / M / P) always prompt regardless, so an existing theme is
+          never silently overwritten.
+        </p>
+      </label>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="placement.auto_place" />
+        <span class="form-label-text">AUTO-PLACE AFTER DOWNLOAD</span>
+        <p class="form-hint">
+          When checked (default), every successful download immediately
+          places the theme into Plex's media folder. When unchecked, themes
+          download but stay in motif's staging tree until you click
+          // PUSH TO PLEX from the row's // SOURCE menu.
+        </p>
+      </label>
+
+      {# v1.24.32: the two halves of the hourly auto-restore sweep, toggled
+         independently per the user's call. Both default ON. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="placement.auto_restore_sidecar" />
+        <span class="form-label-text">AUTO-RESTORE MISSING SIDECARS <span class="muted small">(on)</span></span>
+        <p class="form-hint">
+          When checked (default), motif's hourly sweep automatically re-places a
+          <code>theme.mp3</code> it owns whose copy went missing from the Plex
+          media folder — most often a movie/show <strong>removed and re-added in
+          Plex</strong> (a new rating_key, the old folder wiped), or a Radarr/
+          Sonarr folder churn. Re-hardlinks from motif's own canonical. Uncheck
+          to leave those rows for a manual // PLACE.
+        </p>
+      </label>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="placement.auto_restore_plex_upload" />
+        <span class="form-label-text">AUTO RE-PUSH MISSING UPLOADS <span class="muted small">(on)</span></span>
+        <p class="form-hint">
+          When checked (default), the same sweep automatically re-uploads a theme
+          to Plex (via the API) when its uploaded rating_key was destroyed by a
+          delete + re-add — the rows that show the orange <code>RP</code> badge.
+          Uncheck if you'd rather re-push those by hand: the row keeps showing
+          <code>RP</code> and you click // PLACE when ready (detection + badge are
+          unaffected, only the automatic re-upload pauses).
+        </p>
+      </label>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="sync.auto_enum_after_sync" />
+        {# v1.13.70: setting label AUTO-SYNC PLEX → AUTO-REFRESH PLEX
+           to match the holistic verb pass. Config key
+           (sync.auto_enum_after_sync) unchanged. #}
+        <span class="form-label-text">AUTO-REFRESH PLEX AFTER SYNC</span>
+        <p class="form-hint">
+          After every ThemerrDB sync, run a full Plex enumeration to pick up
+          Plex-side changes (new titles, folder moves, manual sidecar
+          adds/removes, theme-claim re-verification). This applies to
+          <strong>both</strong> the scheduled (cron) sync AND a manually-kicked
+          // SYNC THEMERRDB click. <strong>Recommended ON</strong> for daily
+          cron syncs; <strong>OFF</strong> if you prefer manual
+          // REFRESH PLEX clicks.
+        </p>
+      </label>
+
+      {# v1.21.19: cron-only sub-toggle. Nested under the main toggle — it
+         only has an effect when the main toggle above is OFF. #}
+      <label class="form-label form-checkbox form-checkbox-sub">
+        <input type="checkbox" data-cfg-field="sync.auto_enum_after_cron_sync" />
+        <span class="form-label-text">…BUT ONLY AFTER THE SCHEDULED SYNC</span>
+        <p class="form-hint">
+          Only matters when the toggle above is <strong>off</strong>. Re-enables
+          the post-sync Plex refresh for the <strong>scheduled (cron)</strong>
+          sync alone — so the daily sync keeps self-healing while your manual
+          // SYNC THEMERRDB clicks stay refresh-free. (When the toggle above is
+          on, that already covers cron, so this has no additional effect.)
+        </p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="sync placement">// SAVE AUTOMATION</button>
+      <span class="form-status" data-save-status="sync placement"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ SCHEDULE → SYNC TRANSPORT ============================ -->
+<section class="block tab-panel" data-panel="schedule" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SYNC TRANSPORT</h2>
+    <span class="muted small">how motif fetches the ThemerrDB tree</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid form-grid-tight" data-config-form="sync">
+      <label class="field-row">
+        <span class="field-name">SYNC SOURCE
+          <span class="form-env-badge" data-env-badge="sync.source"{% if "sync.source" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <select class="input" data-cfg-field="sync.source">
+            <option value="remote">REMOTE — per-item HTTP (default, battle-tested)</option>
+            <option value="database">DATABASE — single-tarball snapshot (fast, opt-in)</option>
+            <option value="git">GIT — incremental fetch + diff (fastest, opt-in)</option>
+          </select>
+          <p class="form-hint">
+            <strong>REMOTE</strong> walks gh-pages and fetches one JSON per item
+            (~10k requests, minutes on a fresh sync).
+            <strong>DATABASE</strong> pulls a single tarball (~1 request,
+            seconds; ETag-304s when unchanged).
+            <strong>GIT</strong> maintains a bare mirror via dulwich and
+            fetches deltas only — lowest bandwidth on busy days. On failure
+            motif cascades GIT → DATABASE → REMOTE.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">THEMERRDB URL
+          <span class="muted small">used by REMOTE</span>
+          <span class="form-env-badge" data-env-badge="sync.db_url"{% if "sync.db_url" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="sync.db_url"
+                 placeholder="https://app.lizardbyte.dev/ThemerrDB" autocomplete="off" />
+          <p class="form-hint">
+            Override only if you mirror ThemerrDB elsewhere.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">DATABASE SNAPSHOT URL
+          <span class="muted small">used by DATABASE</span>
+          <span class="form-env-badge" data-env-badge="sync.database_url"{% if "sync.database_url" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="sync.database_url"
+                 placeholder="https://codeload.github.com/LizardByte/ThemerrDB/tar.gz/database"
+                 autocomplete="off" />
+          <p class="form-hint">
+            Tarball endpoint. Override only for a private mirror.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">GIT MIRROR URL
+          <span class="muted small">used by GIT</span>
+          <span class="form-env-badge" data-env-badge="sync.git_url"{% if "sync.git_url" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="sync.git_url"
+                 placeholder="https://github.com/LizardByte/ThemerrDB.git"
+                 autocomplete="off" />
+          <p class="form-hint">
+            Standard HTTPS — no auth required for public repos.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">GIT BRANCH
+          <span class="muted small">used by GIT</span>
+          <span class="form-env-badge" data-env-badge="sync.git_branch"{% if "sync.git_branch" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="sync.git_branch"
+                 placeholder="database" autocomplete="off" />
+          <p class="form-hint">
+            Branch motif tracks. LizardByte publishes daily exports to
+            <code>database</code>.
+          </p>
+        </span>
+      </label>
+    </div>
+
+    <!-- v1.13.8 (Phase D): operational cache observability. Reports
+         the total + per-artifact size of <db_dir>/cache/. Hidden when
+         no cache exists yet (fresh install). -->
+    <div class="cache-gauge" id="cache-gauge" hidden>
+      <header class="cache-gauge-head">
+        <span class="cache-gauge-label">// CACHE</span>
+        <span class="muted small" id="cache-gauge-total">—</span>
+      </header>
+      <ul class="cache-gauge-list" id="cache-gauge-list"></ul>
+      <p class="form-hint">
+        Operational cache for the snapshot/git transports. Safe to delete;
+        motif rebuilds from scratch on next sync.
+      </p>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="sync">// SAVE TRANSPORT</button>
+      <span class="form-status" data-save-status="sync"></span>
+      <button class="btn btn-tiny" id="sync-probe-btn" type="button"
+              title="Test the configured SYNC SOURCE.">// PROBE TRANSPORT</button>
+      <span class="form-status" id="sync-probe-status"></span>
+    </div>
+  </div>
+</section>
+
+<!-- v1.21.12: // PLACEMENT MODE block removed — placement.auto_place
+     moved into the // AUTOMATION block above (the three automation
+     toggles now live together). The placement METHOD (hardlink/copy)
+     stays under PLEX → // DEFAULT PLACEMENT METHOD. -->
+
+<!-- ============================ RUNTIME ============================ -->
+<section class="block tab-panel" data-panel="runtime" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// RUNTIME MODE</h2>
+    <span class="muted small">how motif runs at runtime</span>
+  </header>
+  <div class="block-body">
+    {# v1.22.55: dry-run rebuilt on the canonical control-group — the old
+       .dry-run-state floated two column-stacked amber buttons to the far
+       right of a 22px display-font status (the user's redesign screenshot).
+       Now: label + live status pill left, the toggle pair right, hint
+       below — all inside the reading measure. #}
+    <div class="control-group">
+      <div class="control-row">
+        <span class="field-name">DRY-RUN MODE
+          <span class="pill" id="dry-run-current">…</span>
+        </span>
+        <span class="control-actions">
+          <button class="btn btn-warn" id="dry-run-on-btn" type="button">// ENABLE DRY-RUN</button>
+          <button class="btn btn-warn" id="dry-run-off-btn" type="button">// DISABLE</button>
+        </span>
+      </div>
+      <p class="form-hint">
+        When dry-run is ON, motif still syncs ThemerrDB and resolves matches
+        but skips actual downloads and file placements. Useful for an initial
+        test pass before committing real action. Persists across container
+        restarts.
+      </p>
+    </div>
+
+    <div class="form-grid" data-config-form="runtime">
+      <label class="field-row">
+        <span class="field-name">LOG LEVEL
+          <span class="form-env-badge" data-env-badge="runtime.log_level"{% if "runtime.log_level" not in env_overrides() %} style="display:none"{% endif %}>// ENV OVERRIDE</span>
+        </span>
+        <span class="field-control">
+          <select class="input" data-cfg-field="runtime.log_level">
+            <option value="DEBUG">DEBUG</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <p class="form-hint">
+            <strong class="warn">// RESTART REQUIRED</strong>. DEBUG is verbose;
+            INFO is the default.
+          </p>
+        </span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="runtime">// SAVE RUNTIME</button>
+      <span class="form-status" data-save-status="runtime"></span>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ NOTIFICATIONS ============================ -->
+<!-- v1.17.0: Apprise-backed notifications panel. Two sinks coexist —
+     in-process Apprise (URLs textarea) + external Apprise API
+     container (URL field). Per-event toggles below. The TEST
+     button POSTs /api/admin/test-notification and surfaces the
+     per-sink outcome inline. Mirrors the TEST COOKIES / TEST KEY
+     visual patterns (form-status + btn-tiny). -->
+{# v1.18.47: DIAGNOSTICS panel — read-only operator dashboards.
+   Currently houses // ORPHAN SCAN as a link-out to the
+   /admin/orphans page. Future read-only diagnostics can land
+   in additional blocks under the same panel. #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// ORPHAN SCAN</h2>
+    <span class="muted small">drift between motif's tracking and Plex's actual theme state</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Scans every <code>placement_kind='plex_upload'</code> row
+      and cross-checks against Plex's <code>/themes</code>
+      state. Surfaces eight drift types (motif's entry missing,
+      not selected, orphan sidecar on disk from pre-v1.18.36
+      SWITCH cleanups, etc.) with per-row action buttons
+      (RE-PUSH / LET PLEX SERVE / PURGE / DELETE SIDECAR /
+      PROBE) wired to motif's existing endpoints. Read-only
+      diagnostic — no automatic mutations.
+    </p>
+    {# v1.18.59: restructured from `form-grid > form-label` to
+       the canonical `form-hint + form-actions` pattern that
+       every other settings section uses for action buttons.
+       Pre-fix the form-label wrapper (which is meant for
+       labelled inputs) was forcing weird overlapping-border
+       artifacts around the link — the user's screenshot showed
+       broken visual outline boxes flanking the button. Now
+       the explanation paragraph + the action button follow
+       the same shape as PROBE TDB URLS / REPROBE FAILURES /
+       TVDB BRIDGE. #}
+    <p class="form-hint">
+      Opens the full orphan-scan dashboard with filterable
+      drift-type chips + per-row action surfaces.
+    </p>
+    <div class="form-actions">
+      <a class="btn btn-warn" href="/admin/orphans">// OPEN ORPHAN SCAN ▸</a>
+    </div>
+  </div>
+</section>
+
+{# v1.18.85: PROBE PLEX THEME API block — characterise Plex's
+   theme endpoint responses across the four P sub-flavors
+   (themerr-plex embed / user upload / Plex Pass cloud / sidecar)
+   so we can decide whether cloud themes are extractable as
+   local backups. Read-only diagnostic — no mutations. #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PROBE PLEX THEME API</h2>
+    <span class="muted small">map Plex's theme API for cloud-backup planning</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Resolves each title fragment (one per line) to a
+      <code>rating_key</code> via the local <code>plex_items</code>
+      table, then hits Plex's <code>/library/metadata/{rk}/themes</code>
+      to list theme entries + <code>/library/metadata/{rk}/file?url=&lt;entry-rk&gt;</code>
+      with a 4KB Range GET to capture status + headers + body
+      preview. Output is the raw JSON response — paste it back so
+      we can characterize how Plex Pass cloud themes differ from
+      themerr-plex embeds + user uploads.
+    </p>
+    <p class="form-hint">
+      Provide 2-3 known representatives of each P flavor (cloud,
+      themerr-plex, user-upload). Cap is 8 titles per call.
+      Diagnostic-only — never mutates anything.
+    </p>
+    <label class="field-row">
+      <span class="field-name">TITLE FRAGMENTS</span>
+      <span class="field-control">
+        <textarea class="input" id="probe-plex-themes-titles"
+                  rows="6"
+                  placeholder="Inception&#10;Stranger Things&#10;Apocalypse Hotel"></textarea>
+        <p class="form-hint">
+          One title fragment per line. Each resolves to the first
+          matching <code>plex_items.title</code> (exact-match preferred).
+        </p>
+      </span>
+    </label>
+    {# v1.18.87: compact-mode checkbox. The full probe payload
+       ran ~30KB+ (4KB body_preview_hex per entry + every response
+       header) which tripped chat-paste safety filters. Compact
+       mode truncates hex to ~10 bytes (magic-byte ID only) and
+       filters headers to content-type/content-length/location/
+       accept-ranges/content-range. Default checked since
+       chat-paste is the primary use case. #}
+    <label class="form-label form-checkbox">
+      <input type="checkbox" id="probe-plex-themes-compact" checked />
+      <span class="form-label-text">COMPACT MODE (chat-pasteable)</span>
+      <p class="form-hint">
+        Truncates per-entry hex preview to first ~10 bytes (enough
+        for magic-byte ID — <code>49 44 33</code> for MP3,
+        <code>7b 22</code> for JSON, etc.) + filters response
+        headers to the diagnostic-essentials whitelist. Uncheck
+        for full bytes when inspecting locally (e.g. piping to
+        a hex editor).
+      </p>
+    </label>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="probe-plex-themes-btn" type="button">// RUN PROBE</button>
+      {# v1.19.41: copy-to-clipboard for the probe JSON output.
+         Disabled until output arrives; JS un-disables in the
+         response handler. Lets the operator paste the full result
+         into a chat / issue without manually selecting the
+         multi-screen <pre> content. #}
+      <button class="btn btn-tiny" id="probe-plex-themes-copy-btn"
+              type="button" disabled
+              title="Copy the probe JSON to clipboard">// COPY JSON</button>
+      <span class="form-status" id="probe-plex-themes-status"></span>
+    </div>
+    {# v1.18.86: inline `style="max-height: 480px; overflow:auto;
+       margin-top: 12px"` moved into the #probe-plex-themes-output
+       CSS rule. `display:none` stays inline (canonical SSR-initial-
+       hidden pattern; JS toggles when output arrives). The
+       overflow:auto was redundant — .codeblock already provides
+       it. Audit caught the raw 480px/12px inline. #}
+    <pre id="probe-plex-themes-output" class="codeblock" style="display:none"></pre>
+  </div>
+</section>
+
+{# v1.23.15: DATABASE BACKUP — consistent VACUUM INTO snapshots of
+   motif.db written to /config/backups. the user asked for a settings
+   feature to back up the database. Create-now button + the list of
+   existing backups (download / delete per row) rendered by
+   bindDatabaseBackup() in app.js from /api/admin/database-backups. #}
+<section class="block tab-panel" data-panel="database" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// DATABASE BACKUP</h2>
+    <span class="muted small">consistent snapshots of motif.db, on your /config mount</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Writes a fully-consistent copy of <code>motif.db</code> (via
+      SQLite <code>VACUUM INTO</code> — safe to run live, never a
+      torn copy) to <code>/config/backups</code>. The database holds
+      all of motif's tracking: theme links, placements, overrides,
+      previous-URL snapshots, and your account. Snapshots survive
+      container restarts and sit alongside your other appdata so a
+      backup of <code>/config</code> captures them too. Download any
+      snapshot to keep an off-box copy.
+    </p>
+    <div class="form-actions">
+      <button type="button" class="btn btn-warn"
+              id="database-backup-create-btn">// CREATE BACKUP NOW</button>
+      <span class="form-status" id="database-backup-status"></span>
+    </div>
+    <p class="form-subhead">// EXISTING BACKUPS</p>
+    <div id="database-backup-list" class="backup-list">
+      <p class="form-hint muted small">loading…</p>
+    </div>
+  </div>
+</section>
+
+{# v1.23.16: scheduled backups + retention. enabled + retention take
+   effect on the next tick; the cron is read once at scheduler boot
+   (// RESTART REQUIRED), mirroring SYNC TIMING. #}
+<section class="block tab-panel" data-panel="database" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// SCHEDULED BACKUPS</h2>
+    <span class="muted small">automatic nightly snapshots, pruned to the newest few</span>
+  </header>
+  <div class="block-body">
+    <div class="form-grid" data-config-form="database_backup">
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="database_backup.enabled" />
+        <span class="form-label-text">ENABLE SCHEDULED BACKUPS</span>
+        <p class="form-hint">
+          When on, motif writes a snapshot on the schedule below and
+          prunes to the retention count. Toggling this (and retention)
+          takes effect on the next scheduled tick — no restart needed.
+          The // CREATE BACKUP NOW button above always works regardless.
+        </p>
+      </label>
+      <label class="field-row">
+        <span class="field-name">CRON EXPRESSION (UTC)</span>
+        <span class="field-control">
+          <input class="input" type="text" data-cfg-field="database_backup.cron"
+                 placeholder="0 4 * * *" autocomplete="off" />
+          <p class="form-hint">
+            5-field cron: <code>minute hour day month dow</code>. Default
+            <code>0 4 * * *</code> runs daily at 04:00 UTC.
+            <strong class="warn">// RESTART REQUIRED</strong>
+            (the scheduler reads this once at startup).
+          </p>
+        </span>
+      </label>
+      <label class="field-row">
+        <span class="field-name">RETENTION (KEEP NEWEST)</span>
+        <span class="field-control">
+          <input class="input" type="number" min="0" step="1"
+                 data-cfg-field="database_backup.retention" placeholder="7" />
+          <p class="form-hint">
+            After each scheduled backup, delete all but the newest N
+            snapshots. <code>0</code> keeps every backup (you prune
+            manually). Manual backups count toward the limit.
+          </p>
+        </span>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="database_backup">// SAVE SCHEDULE</button>
+      <span class="form-status" data-save-status="database_backup"></span>
+    </div>
+  </div>
+</section>
+
+{# v1.23.17: RESTORE. A restore STAGES the chosen snapshot; the swap
+   happens at the next container restart (clean — no open FDs, the
+   current db is safety-copied first). Per-snapshot RESTORE buttons
+   live in the backup list above; this card handles restore-from-file
+   (disaster recovery) + the pending-restore banner. #}
+<section class="block tab-panel" data-panel="database" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// RESTORE</h2>
+    <span class="muted small">replace the live database from a snapshot — applied on restart</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Restoring <strong class="warn">replaces ALL current data</strong>
+      — themes, placements, overrides, accounts — with the snapshot's.
+      motif validates the file (real database, integrity check, schema
+      not newer than this build), <strong>automatically backs up the
+      current database</strong>, then swaps it in on the next restart.
+      Use a // RESTORE button on a snapshot above, or upload an
+      off-box copy below.
+    </p>
+    {# pending-restore banner — shown by JS when a restore is staged. #}
+    <div id="database-restore-pending" class="restore-pending-banner" hidden>
+      <span class="restore-pending-text">
+        ⚠ A restore is staged. <strong>Restart the motif container</strong>
+        to apply it (the current database will be backed up first).
+      </span>
+      <button type="button" class="btn btn-tiny"
+              id="database-restore-cancel-btn">// CANCEL RESTORE</button>
+    </div>
+    <p class="form-subhead">// RESTORE FROM FILE</p>
+    <div class="form-actions restore-upload-row">
+      <input type="file" id="database-restore-file" accept=".db,.sqlite,.sqlite3"
+             class="input restore-file-input" />
+      <button type="button" class="btn btn-danger"
+              id="database-restore-upload-btn">// RESTORE FROM FILE</button>
+      <span class="form-status" id="database-restore-status"></span>
+    </div>
+    <p class="form-hint">
+      Pick a motif <code>.db</code> snapshot (e.g. one you downloaded
+      earlier). It's validated before anything is staged.
+    </p>
+  </div>
+</section>
+
+<section class="block tab-panel" data-panel="notifications" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// NOTIFICATIONS</h2>
+    <span class="muted small">apprise sinks for lifecycle events</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      motif uses <a href="https://github.com/caronc/apprise#supported-notifications" target="_blank" rel="noopener">Apprise</a>
+      to fan out alerts to Discord, Slack, Telegram, Pushover, Gotify,
+      Matrix, email, generic webhooks, and ~100 other services. Configure
+      one or both sinks below — either way, the per-event toggles
+      decide what fires.
+    </p>
+
+    <div class="form-grid" data-config-form="notifications">
+      <label class="field-row">
+        <span class="field-name">APPRISE URLS</span>
+        <span class="field-control">
+          <textarea class="input" rows="4"
+                    data-cfg-field-lines="notifications.apprise_urls"
+                    placeholder="discord://webhook_id/webhook_token&#10;pushover://user_key@app_token&#10;tgram://bot_token/chat_id"></textarea>
+          <p class="form-hint">
+            One Apprise URL per line. Each URL is a target — service
+            schema first, credentials after. Examples are in the
+            <a href="https://github.com/caronc/apprise/wiki" target="_blank" rel="noopener">Apprise wiki</a>.
+            Empty = embedded dispatch off. <span class="muted small">v1.17.3:
+            blank lines + leading/trailing whitespace are stripped on
+            save — the textarea reloads in a normalized form.</span>
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">EXTERNAL APPRISE API URL</span>
+        <span class="field-control">
+          <input class="input" type="text"
+                 data-cfg-field="notifications.apprise_external_url"
+                 placeholder="http://apprise-api.local:8000/notify/motif"
+                 autocomplete="off" />
+          <p class="form-hint">
+            Optional. Points at a <a href="https://github.com/caronc/apprise-api" target="_blank" rel="noopener">caronc/apprise-api</a>
+            container's <code>/notify/&lt;key&gt;</code> endpoint.
+            motif POSTs <code>{title, body, type}</code> — the external
+            service handles fan-out via its own configured URLs. Useful
+            if you already run an Apprise API for other homelab apps.
+            Both sinks can be populated; motif fires both paths.
+          </p>
+        </span>
+      </label>
+    </div>
+
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="notifications">// SAVE NOTIFICATIONS</button>
+      <span class="form-status" data-save-status="notifications"></span>
+      <button class="btn btn-tiny" id="test-notification-btn">// TEST NOTIFICATION</button>
+      <span class="form-status" id="test-notification-status"></span>
+    </div>
+
+    <header class="block-head block-head--divided">
+      <h2 class="block-title">// EVENTS</h2>
+      <span class="muted small">per-event toggles</span>
+    </header>
+    <p class="form-hint block-intro">
+      Aggregate / lifecycle events (default ON) keep noise down — one
+      ping per sync, one per bulk action, one per cookies-needed
+      transition. Per-row events (default OFF) can spam during big
+      libraries — enable selectively.
+    </p>
+    <div class="form-grid form-grid-tight" data-config-form="notifications">
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.sync_completed" />
+        <span class="form-label-text">✅ SYNC COMPLETED <span class="muted small">(on)</span></span>
+        <p class="form-hint">One message after each ThemerrDB sync — counts (new / updated / errors). The two toggles below optionally fold a New / Updated titles section into this same message.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.sync_failed" />
+        <span class="form-label-text">❌ SYNC FAILED <span class="muted small">(on)</span></span>
+        <p class="form-hint">Sync raised — error + recovery hint.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.bulk_action_completed" />
+        <span class="form-label-text">✅ BULK ACTION COMPLETED <span class="muted small">(on)</span></span>
+        <p class="form-hint">One summary after a bulk PROBE TDB or LET PLEX SERVE run. (Bulk download / adopt don't fire this — each placement surfaces via THEME ADDED instead.)</p>
+      </label>
+      {# v1.21.6: these two now add a "🎵 New:" / "🔄 Updated:"
+         titles section INSIDE the single SYNC COMPLETED message
+         (gated by each toggle) rather than firing their own
+         separate notification. Pre-fix a changed sync produced up
+         to 3 messages that repeated the same lists — the user:
+         "really want to get notifications cleaned up." #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.themes_added_by_sync" />
+        <span class="form-label-text">🎵 SYNC: LIST NEW TITLES <span class="muted small">(off)</span></span>
+        <p class="form-hint">Adds a <code>🎵 New:</code> section (sample-capped at 10) to the SYNC COMPLETED message listing newly-added themes that are in your Plex library. Needs SYNC COMPLETED on.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.themes_updated_by_sync" />
+        <span class="form-label-text">🔄 SYNC: LIST UPDATED TITLES <span class="muted small">(off)</span></span>
+        <p class="form-hint">Adds a <code>🔄 Updated:</code> section (sample-capped at 10) to the SYNC COMPLETED message listing already-tracked rows where ThemerrDB shipped an update. Needs SYNC COMPLETED on.</p>
+      </label>
+
+      <!-- v1.17.4: remaining 6 events from _DEFAULT_NOTIFY_EVENTS
+           with hook sites wired this tag. Per-event dedupe lives
+           in app/core/notify_dedupe.py — cadence noted inline so
+           operators know what to expect. -->
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.cookies_needed" />
+        <span class="form-label-text">🍪 COOKIES NEEDED <span class="muted small">(on)</span></span>
+        <p class="form-hint">YouTube cookies expired or missing. Fires when a download hits <code>FailureKind.COOKIES_EXPIRED</code>; rate-limited to once per 6 hours so a sync run hitting many cookie-failed rows pings once, not N times.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.disk_low" />
+        <span class="form-label-text">🗄️ DISK SPACE LOW <span class="muted small">(on)</span></span>
+        <p class="form-hint">Themes directory free space below <code>paths.min_free_disk_mb</code>. Rate-limited to once per 12 hours; downloads continue retrying hourly until disk frees up.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.worker_restarted" />
+        <span class="form-label-text">⚠️ WORKER RESTARTED <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires only when motif's boot zombie-sweep finds stuck-running jobs from a prior session — signals the previous shutdown was unclean (SIGKILL, OOM, container crash). Clean restarts don't ping.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_added" />
+        <span class="form-label-text">🎵 THEME ADDED <span class="muted small">(off)</span></span>
+        <p class="form-hint">Per-row notification when a place job successfully places a theme for the first time. No dedupe — opt-in is the dedupe. A bulk download of N rows will fire N notifications. v1.19.55: force-place dispatches (PUSH TO PLEX, REPLACE TDB, PROMOTE TO ACTIVE) now route through THEME PUSHED below, NOT this event — so THEME ADDED fires only on genuine first placements (sync-driven).</p>
+      </label>
+      {# v1.19.55: theme_pushed — fires on force-place dispatches
+         (PUSH TO PLEX / REPLACE TDB / PROMOTE TO ACTIVE /
+         cloud-backup re-upload). Distinct from theme_added
+         (genuine first placement). Same per-row, no-dedupe
+         opt-in stance as theme_added. 📤 emoji to distinguish
+         from 🎵 added / 🔄 sync update / 🗑️ deleted. Reason-
+         aware title variants surface the specific deploy
+         path. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_pushed" />
+        <span class="form-label-text">📤 THEME PUSHED <span class="muted small">(off)</span></span>
+        <p class="form-hint">Per-row notification when motif re-deploys an EXISTING theme (PUSH TO PLEX, REPLACE TDB, PROMOTE TO ACTIVE, force-place jobs). Distinct from THEME ADDED — the row already had the theme; this signals "Plex's serving state changed" not "new theme appeared." Title varies by reason: "Theme replaced via TDB" / "Theme promoted from backup" / "Cloud backup re-uploaded" / generic "Theme pushed to Plex". No dedupe — opt-in is the dedupe.</p>
+      </label>
+      {# v1.21.46: theme_backed_up — fires when a theme DOWNLOADS as a
+         backup (backup_only stamp, nothing placed) rather than going
+         live. Covers P-row bulk ACCEPT, DOWNLOAD TDB BACKUP, SET URL +
+         KEEP AS BACKUP, CSV import-as-backup. ON by default because the
+         landing was previously silent (theme_added/pushed are gated on
+         placement). Coalesced on a 60s window so a bulk collapses to one
+         summary; 💾 emoji distinguishes it from 🎵 added / 📤 pushed. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_backed_up" />
+        <span class="form-label-text">💾 THEME BACKED UP <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires when motif DOWNLOADS a theme as a backup instead of placing it — accepting a TDB update on a Plex-served (P) row, DOWNLOAD TDB BACKUP, SET URL + KEEP AS BACKUP, or a CSV import set to "download as backup." Your current theme keeps playing; the backup sits staged until the active theme is lost (then BACKUP READY TO DEPLOY fires). ON by default because the landing used to be silent. Coalesced on a 60s window — a bulk ACCEPT collapses to one "💾 N themes backed up" summary, but the first one still pings immediately.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_deleted" />
+        <span class="form-label-text">🗑️ THEME DELETED <span class="muted small">(off)</span></span>
+        <p class="form-hint">Per-row notification on UNMANAGE / FORGET / DELETE actions. No dedupe — opt-in is the dedupe. Useful for audit-trail surfaces.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.release_available" />
+        <span class="form-label-text">🆕 RELEASE UPDATE AVAILABLE <span class="muted small">(off)</span></span>
+        <p class="form-hint">Daily release-check found a new motif version on GitHub. Tag-deduped — each new release pings exactly once, even across motif process restarts.</p>
+      </label>
+      {# v1.18.80: backup_ready_to_deploy event — fires when Plex
+         stops serving its own theme on a row with user_overrides.
+         intent='backup'. Default ON because it's rare AND
+         actionable (the user's backup is now eligible to deploy
+         via // PROMOTE TO ACTIVE). #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.backup_ready_to_deploy" />
+        <span class="form-label-text">🎯 BACKUP READY TO DEPLOY <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires when Plex stops serving its own theme on a row with a <strong>backup</strong> override URL staged (intent='backup' in v1.18.77+). The user's backup is now the only candidate to serve. Notification body names the row + your override URL + tells you to click <code>// PROMOTE TO ACTIVE</code> on the row's INFO card to deploy. Motif never auto-deploys backups — the decision stays in your hands.</p>
+      </label>
+      {# v1.22.60: the v1.19.41 tier-1/tier-2 theme-lost kinds —
+         dispatched by the reaper since v1.19.41 but never present
+         in _DEFAULT_NOTIFY_EVENTS (or here), so dispatch dropped
+         them as unknown and the notifications were dead. ON by
+         default: rare, actionable, 24h-dedupe-limited. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_lost_backup_ready" />
+        <span class="form-label-text">💔 THEME LOST — BACKUP READY <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires when Plex stops serving a theme for a row where motif holds a <strong>staged backup</strong> (a backup-intent override or a cloud-theme backup file). The body names the row + tells you to click <code>// PROMOTE TO ACTIVE</code> on its INFO card to deploy — motif never auto-deploys. This is the primary payoff of <code>// BACKUP CLOUD THEMES</code>.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_lost_sidecar_available" />
+        <span class="form-label-text">💔 THEME LOST — STILL PLAYING <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires when Plex stops serving a theme but a <code>theme.&lt;ext&gt;</code> sidecar still exists at the media folder. The body points at <code>// ADOPT</code> on the row's INFO card to bring the sidecar under motif's management.</p>
+      </label>
+      {# v1.24.26: theme_auto_restored — the hourly restore sweep
+         re-deployed a motif-owned sidecar whose Plex theme.mp3 went
+         missing (the delete+re-add churn the v1.18.90 reaper silently
+         skipped as 'other_fallback'). ON by default: rare + the
+         operator wants to know motif touched Plex on their behalf. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.theme_auto_restored" />
+        <span class="form-label-text">🛠️ THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires when motif's hourly sweep finds a theme it placed has gone missing from its Plex folder — most often because the movie/show was <strong>removed and re-added in Plex</strong> (a new rating_key, the folder's <code>theme.mp3</code> wiped) — and <strong>re-deploys it automatically</strong> from motif's own backup. The body names the titles that were restored. This is a confirmation that motif self-healed; no action needed. <strong>On by default.</strong></p>
+      </label>
+      {# v1.18.90: plex_theme_lost event — fires when Plex stops
+         serving its own theme on a row AND motif has no fallback
+         (no user_override, no local_file, no placement). Default
+         OFF since the event is per-row and bulk Plex changes
+         could produce a burst; per-row dedup via notify_dedupe
+         with a 24h rate-limit caps the worst case even when
+         opted in. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.plex_theme_lost" />
+        <span class="form-label-text">💔 THEME LOST — NO FALLBACK <span class="muted small">(off)</span></span>
+        <p class="form-hint">Fires when Plex was serving a theme for a row but it's no longer available <strong>and motif has no fallback</strong> (no user URL, no upload, no local file). Common cause: the item was removed + re-added in Plex, breaking its theme cache (caught by the v1.18.89 stale-row reaper). Notification body explains the cause + names both action paths (<code>// SET URL</code> / <code>// UPLOAD MP3</code>) on the row's INFO card. Per-row dedup at 24h so bulk Plex changes can't flood. <strong>Off by default</strong> — opt in here.</p>
+      </label>
+      {# v1.21.5: new_tdb_theme_available — fires after a plex refresh
+         when a NEW Plex item matches a ThemerrDB theme but has no
+         theme in Plex or motif (SRC=—). Hooks the plex_enum side
+         (post-resolve sweep over newly-inserted rks), NOT the
+         resolve_theme_ids hot loop the v1.17.0 deferral was about.
+         Bulk-shaped (one digest per refresh) + per-(mt,tmdb) dedupe.
+         Default OFF — opt-in like the other theme_* events. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.new_tdb_theme_available" />
+        <span class="form-label-text">✨ THEME AVAILABLE TO ADD <span class="muted small">(off)</span></span>
+        <p class="form-hint">Fires after a Plex refresh when a <strong>newly-added</strong> Plex item matches a ThemerrDB theme but has no theme yet (no Plex theme, nothing in motif). Tells you that you <em>could</em> add a theme — open the row's <code>// MOTIF INFO</code> card and <code>// DOWNLOAD</code>. Only genuinely-new items fire (your existing themeless library stays surfaced via the in-app <code>// UPD</code> badge, not pushed). A batch import collapses into one digest; each title pings at most once. <strong>Off by default</strong> — opt in here.</p>
+      </label>
+    </div>
+    <!-- v1.17.2: dedicated SAVE EVENTS button below the toggles
+         block (the user: "make events have it's own save box
+         below"). Both buttons trigger the same notifications
+         PATCH — the backend handles partials idempotently — so
+         the split is purely a UX-grouping affordance: URLs +
+         sinks up top with their own SAVE, per-event toggles
+         here with their own SAVE. Status pings on either button
+         flash on BOTH adjacent status elements (per the
+         v1.17.2 bindConfigSaves querySelectorAll change). -->
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="notifications">// SAVE EVENTS</button>
+      <span class="form-status" data-save-status="notifications"></span>
+    </div>
+    <p class="form-hint">
+      Every notification event is now surfaced above. Each toggle
+      writes <code>notifications.events.&lt;kind&gt;</code> — the same
+      keys are also reachable via <code>/api/config</code> PATCH.
+    </p>
+  </div>
+</section>
+
+<!-- ============================ TOKENS ============================ -->
+<section class="block tab-panel" data-panel="tokens" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// API TOKENS</h2>
+    <button class="btn btn-tiny" id="new-token-btn">// NEW TOKEN</button>
+  </header>
+  <div class="block-body block-body-flush">
+    <p class="form-hint block-intro">
+      Backstage passes for scripted access. Read-scope feeds Homepage / dashboards;
+      admin-scope can mutate state.
+    </p>
+    <table class="table" id="tokens-table">
+      <thead>
+        <tr>
+          <th>NAME</th><th>SCOPE</th><th>PREFIX</th>
+          <th>CREATED</th><th>LAST USED</th><th>ACTIONS</th>
+        </tr>
+      </thead>
+      <tbody id="tokens-body">
+        <tr><td colspan="6" class="muted center">loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============================ PASSWORD ============================ -->
+<section class="block tab-panel" data-panel="password" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// CHANGE PASSWORD</h2>
+    <span class="muted small">tune your own credentials</span>
+  </header>
+  <div class="block-body">
+    <form id="password-form" class="form-grid">
+      <label class="field-row">
+        <span class="field-name">CURRENT PASSWORD</span>
+        <span class="field-control">
+          <input class="input" name="current_password" type="password" required autocomplete="current-password" />
+        </span>
+      </label>
+      <label class="field-row">
+        <span class="field-name">NEW PASSWORD</span>
+        <span class="field-control">
+          <input class="input" name="new_password" type="password" required minlength="8" maxlength="128"
+                 autocomplete="new-password" />
+          <p class="form-hint">8 to 128 characters.</p>
+        </span>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-warn">// UPDATE PASSWORD</button>
+        <span id="password-status" class="form-status"></span>
+      </div>
+    </form>
+  </div>
+</section>
+
+<!-- ============================ HOMEPAGE ============================ -->
+<section class="block tab-panel" data-panel="homepage" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// HOMEPAGE INTEGRATION</h2>
+    <span class="muted small">expose stats to your dashboard</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Create a <strong>read</strong>-scope token in the TOKENS tab, then point
+      Homepage's Custom API widget at the stats endpoint with the token in
+      the <code>Authorization</code> header (or <code>?api_key=</code> query
+      string):
+    </p>
+    <pre class="codeblock">widget:
+  type: customapi
+  url: https://motif.example.com/api/public/stats
+  refreshInterval: 30000
+  display: list
+  headers:
+    Authorization: Bearer thmr_YOUR_READ_TOKEN_HERE
+  mappings:
+    - field: movies_downloaded
+      label: Movies w/ themes
+      format: number
+    - field: tv_downloaded
+      label: TV w/ themes
+      format: number
+    - field: queue_pending
+      label: Queue
+      format: number
+    - field: storage_copies_bytes
+      label: Wasted on copies
+      format: bytes</pre>
+  </div>
+</section>
+
+<!-- ============================ IMPORT ============================ -->
+<!-- v1.15.66: bulk CSV import for user URLs. Pairs with the
+     per-library // EXPORT CSV button (which now emits a
+     Title,IMDB,Youtube_URL header). Preview-first workflow:
+     parse → match by IMDB (then title+year fallback for missing
+     IMDB) → categorize each row (CLEAN / CONFLICT / NO MATCH /
+     SKIPPED) → user resolves conflicts in-page → APPLY. No
+     orphan pending state; no new tone/flag column. -->
+<section class="block tab-panel" data-panel="import" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// IMPORT</h2>
+    <span class="muted small">bulk user-url CSV — round-trip from // EXPORT CSV</span>
+  </header>
+  <div class="block-body">
+    {# v1.15.71: concise intro re-added in the standard settings
+       block-intro style. the user's v1.15.70 ask: "lets provide
+       some clear information on the tip explaining the import
+       feature ... use the same style/format as our other
+       sections in settings." Two sentences max, plain English,
+       no narration. The v1.15.66 intro that was retired in
+       v1.15.69 was 4 lines of sub-clauses — this one is the
+       what + how + verify-link. #}
+    <p class="form-hint block-intro">
+      Bulk-apply user-provided YouTube URLs from a CSV. Round-trip
+      with any library tab's <code>// EXPORT CSV</code>: open the
+      file, fill in the <code>Youtube_URL</code> cells, drop it
+      back here. Preview shows what each row would do; nothing
+      writes until you click <code>// APPLY IMPORT</code>.
+    </p>
+    {# v1.19.25 (reverts v1.15.73): re-wrapped CSV FILE row in
+       a <label> so clicking anywhere on the row activates the
+       file picker. v1.15.73 removed the label after the user's
+       earlier complaint that clicking the heading opened the
+       file dialog as a footgun. v1.19.25 reverses that: the user
+       compared this to the theme upload modal (which uses a
+       <label> wrapper) and said "I like how the theme upload
+       functions/click area" — wants the same UX on /settings.
+       Two-axis preference flip across ~4 years; document both
+       directions so the next swap is informed. #}
+    <div class="form-grid">
+      {# v1.19.39: dropped `for="import-csv-file"` so the label
+         wraps the input via direct nesting only. DESIGN_SYSTEM.md
+         § 2 form layout (updated v1.19.36) says no `for=`
+         attribute when the input is a direct child — matches the
+         sibling shape at library.html:659 upload-dlg. Pre-fix the
+         settings file input carried `for=` while library's
+         didn't; the v1.19.36 doc update silently lied about
+         codebase consistency. v1.15.70/.73 banned `for=` here
+         because clicking label-text popped the picker before the
+         user read the hint; v1.19.25 reversed the wrap-direction
+         decision but v1.19.39 closes the leftover attribute. #}
+      <label class="field-row">
+        <span class="field-name">CSV FILE</span>
+        <span class="field-control">
+          <input class="input" id="import-csv-file" type="file" accept=".csv,text/csv" />
+        </span>
+      </label>
+      <div class="form-input-actions">
+        {# v1.19.25 (reverts v1.15.76): standard green .btn tone.
+           v1.15.76 colored this violet to group with the U-row
+           palette (since CSV imports populate user_overrides).
+           the user on v1.19.24: "can we also change the preview
+           import button back to the standard button color."
+           Drops the lib-source-user modifier — button reverts
+           to default green outlined. The intent grouping with
+           U-source is gone visually, but the page header +
+           muted intro paragraph still anchor the workflow's
+           identity. #}
+        <button class="btn btn-tiny" id="import-preview-btn"
+                type="button" disabled>// PREVIEW IMPORT</button>
+        <span class="muted small" id="import-preview-status"></span>
+      </div>
+    </div>
+
+    <div id="import-preview-results" style="display:none">
+      <header class="block-head" style="margin-top:var(--gap-6)">
+        <h3 class="block-title">// PREVIEW RESULTS</h3>
+        <span class="muted small" id="import-preview-summary">—</span>
+      </header>
+      <!-- v1.15.68: completion banner. After // APPLY IMPORT
+           lands successfully, hide the preview table and show
+           this prominent confirmation. the user's v1.15.67
+           feedback: "currently its hard to tell the action
+           happened and is completed successfully" — the inline
+           status text was easy to miss. // IMPORT ANOTHER
+           resets the file picker for a follow-up CSV. -->
+      <div id="import-apply-complete" class="apply-complete-banner" style="display:none">
+        <h3 class="apply-complete-title">// ✓ IMPORT COMPLETE</h3>
+        <p class="apply-complete-counts">
+          <strong id="import-complete-applied">0</strong> applied ·
+          <strong id="import-complete-skipped">0</strong> skipped<span
+            id="import-complete-errors-wrap" style="display:none"
+            > · <strong id="import-complete-errors">0</strong> errors</span>
+        </p>
+        <p class="form-hint">
+          User URLs were written to <code>user_overrides</code>; downloads
+          have been queued. Check the affected library tab (MOVIES /
+          TV SHOWS / ANIME) to verify the SRC pill flipped to <code>U</code>.
+        </p>
+        <button class="btn btn-tiny" id="import-complete-reset" type="button">// IMPORT ANOTHER</button>
+      </div>
+      <!-- v1.15.69: rebuilt to mirror library.html's .table layout.
+           The v1.15.66 markup used class="grid" + class="table-wrap"
+           which I'd invented — but .grid is `display: grid` in
+           app.css (a CSS Grid container), which OVERRIDES the
+           native `display: table` on a <table> element. Result:
+           the <thead> row's <th>s rendered as grid cells, all
+           squished onto one line below the master checkbox; the
+           <tbody> rows used different sizing so columns didn't
+           align with headers. the user: "rows below are smooshed
+           together. The - And the U are connected right next to
+           the imdb." Switching to .table + the library's column-
+           class pattern (.col-state for fixed-width checkbox col,
+           etc.) makes the import preview render with the same
+           polish as /movies, /tv, /anime.
+           The verbose hint paragraph + the master-checkbox
+           tooltip are gone — the user: "overly verbose and not
+           overly helpful." The bare checkbox with a short title
+           tooltip is enough now that columns actually align. -->
+      <table class="table table-tight" id="import-preview-table">
+        <thead>
+          <tr>
+            <th class="col-state" title="select / deselect all applicable rows">
+              <input type="checkbox" id="import-row-select-all" checked>
+            </th>
+            <th class="col-import-status">STATUS</th>
+            <th class="col-title">TITLE</th>
+            <th class="col-imdb">IMDB</th>
+            <th class="col-import-current">CURRENT</th>
+            <th class="col-import-url">IMPORTED URL</th>
+            <th class="col-import-action">ACTION</th>
+          </tr>
+        </thead>
+        <tbody id="import-preview-tbody"></tbody>
+      </table>
+      <div class="form-actions" style="margin-top:var(--gap-4)">
+        <button class="btn btn-tiny btn-warn" id="import-apply-btn" type="button">// APPLY IMPORT</button>
+        <span class="muted small" id="import-apply-status"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<dialog class="dlg" id="new-token-dlg">
+  {# v1.17.8: refactored to match the canonical dialog shell that
+     info-dlg / upload-dlg / manual-url-dlg use:
+     - <header class="dlg-head"> wrapping <h2 class="dlg-title">
+       (was a bare <h3> with no class)
+     - "// NEW API TOKEN" with the // prefix every other dialog
+       title carries
+     - .dlg-close lives INSIDE the header (was a direct child of
+       .dlg-body, triggering the .dlg-body > .dlg-close absolute-
+       corner variant — only consumer; retired this tag)
+     - // CANCEL button in form-actions (was missing — user could
+       only close via × glyph or Escape)
+     - Bare <label class="form-label"> instead of nested
+       form-label-row (settings-page convention — not needed in
+       dialog forms; matches the library-dialog convention) #}
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// NEW API TOKEN</h2>
+      <button class="dlg-close" data-close type="button" aria-label="Close dialog" title="Close">×</button>
+    </header>
+    <form id="new-token-form" class="form-grid form-grid-tight">
+      <label class="form-label">
+        <span class="form-label-text">NAME</span>
+        <input class="input" name="name" required maxlength="64" placeholder="e.g. homepage-dashboard" autofocus />
+      </label>
+      <label class="form-label">
+        <span class="form-label-text">SCOPE</span>
+        <select class="input" name="scope">
+          <option value="read" selected>read — stats &amp; browse only</option>
+          <option value="admin">admin — full access (re-download, override, sync)</option>
+        </select>
+      </label>
+      <div class="form-actions">
+        <button type="submit" class="btn btn-warn">// CREATE</button>
+        <button type="button" class="btn" data-close>// CANCEL</button>
+      </div>
+    </form>
+    <div id="new-token-result" class="new-token-result" style="display:none">
+      <h4 class="new-token-warn">SAVE THIS NOW — IT WON'T BE SHOWN AGAIN</h4>
+      <pre class="codeblock" id="new-token-value"></pre>
+      <p class="form-hint">
+        Use as <code>Authorization: Bearer &lt;token&gt;</code> or
+        <code>?api_key=&lt;token&gt;</code>.
+      </p>
+    </div>
+  </article>
+</dialog>
+{% endblock %}

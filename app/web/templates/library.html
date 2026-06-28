@@ -1,0 +1,1054 @@
+{% extends "base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+<section class="hero">
+  <div class="hero-row">
+    <h1 class="title">{{ title|upper }}</h1>
+    <div class="sync-actions">
+      {# v1.15.25: SSR the resolution toggle visibility. Pre-fix
+         (v1.10.5) the chip set was unconditionally hidden + JS
+         reveal post-/api/stats — flash on every library page
+         load. SSR computes the right initial state from
+         plex_sections so the HTML the browser receives is
+         already correct. JS adaptLibraryFourkToggle still runs
+         for live updates and is a no-op when SSR matched.
+         chip-active reflects the ?fourk URL param the route
+         handler already parses. #}
+      {% if tab == "collections" %}
+        {# v1.18.1: per-section toggles for the /collections tab.
+           Plex collections span every managed section (Movies, 4K
+           Movies, TV Shows, 4K TV Shows, Anime, Anime 4K, etc.) so
+           a binary STANDARD/4K toggle is meaningless. Render one
+           chip per managed section that has ≥1 collection
+           enumerated. JS binds via data-section-id; the active
+           state is reflected by chip-active mirroring the
+           ?section_id URL param the route handler parses out of
+           request.query_params.
+           v1.18.18: dropped the `// ALL` chip per the user —
+           collections only make sense scoped to ONE library at a
+           time. Default the first chip to active when no
+           ?section_id is set so the user always sees a populated
+           list rather than an empty/ambiguous "ALL" state. #}
+        {% set _sec = library_section_state(tab) %}
+        {% set _active_sec = request.query_params.get("section_id", "") %}
+        {% set _default_sec = _sec.sections[0].section_id if _sec.sections else "" %}
+        {% set _resolved_sec = _active_sec if _active_sec else _default_sec %}
+        <div class="chips" role="tablist" aria-label="section"{% if not _sec.show_chips %} style="display:none"{% endif %}>
+          {% for s in _sec.sections %}
+            <button class="chip{% if _resolved_sec == s.section_id %} chip-active{% endif %}"
+                    data-section-id="{{ s.section_id }}"
+                    title="Show collections from the '{{ s.label }}' section only.">{{ s.label|upper }}</button>
+          {% endfor %}
+        </div>
+      {% else %}
+        {% set _res = library_resolution_state(tab) %}
+        <div class="chips" role="tablist" aria-label="resolution"{% if not _res.show_chips %} style="display:none"{% endif %}>
+          {# v1.19.85: title= added when the // prefix was stripped —
+             the bare "4K" chip is terse enough that the a11y guard
+             (test_v1_15_120) needs an accessible name on it. Both
+             resolution chips get one for symmetry. #}
+          <button class="chip{% if not fourk %} chip-active{% endif %}" data-fourk="0"{% if not _res.has_standard %} style="display:none"{% endif %} title="Show standard-resolution items in this library.">STANDARD</button>
+          <button class="chip{% if fourk %} chip-active{% endif %}" data-fourk="1"{% if not _res.has_fourk %} style="display:none"{% endif %} title="Show 4K items in this library.">4K</button>
+        </div>
+      {% endif %}
+      {# v1.13.63: button label is scope-aware now — JS overwrites
+         on first refreshTopbarStatus tick to "// REFRESH <Library>"
+         based on the current tab + 4K variant.
+         v1.13.69: pre-render the label server-side from the URL's
+         `fourk` query so the first paint already reads correctly
+         instead of a bare static fallback that JS flips a tick
+         later.
+         v1.13.70: verb sync → refresh across every Plex-enum
+         surface (button labels, topbar, drawer, settings copy).
+         "// SYNC THEMERRDB" stays — that one IS a sync.
+         v1.13.77: also pre-render the disabled state from the
+         server-computed `pipeline_in_flight` so the button starts
+         locked when a global refresh (cascade or scan_all) is in
+         flight at page-load time. Pre-fix the button rendered
+         clickable for ~1s until the first /api/stats poll caught
+         up — long enough for a user navigating from dashboard
+         // REFRESH PLEX → /movies to hit it. Busy label matches
+         the JS busy state (// REFRESHING…). #}
+      <button class="btn" id="library-refresh-btn" type="button"
+              {% if pipeline_in_flight %}disabled{% endif %}>{% if pipeline_in_flight %}// REFRESHING…{% else %}// REFRESH {% if fourk and tab != "collections" %}4K {% endif %}{{ title|upper }}{% endif %}</button>
+    </div>
+  </div>
+  <p class="muted" id="library-subtitle">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>
+  <!-- v1.13.16 hero-area toolbar removed in v1.13.18 — the
+       filter-region bookmark + popover (A2) now lives inside the
+       filterbar so users see it where the filters actually live. -->
+</section>
+
+<input type="hidden" id="library-tab" value="{{ tab }}" />
+
+<!-- Pending-placements banner — present whenever motif has downloads
+     waiting for user approval (typically because a Plex-folder sidecar
+     would be overwritten). Click through to /pending. -->
+<!-- v1.12.41: pending-placements click-through banner removed
+     (the /pending tab is gone). Pending placements still get
+     surfaced via the row's PLACE menu PUSH TO PLEX action and
+     can be filtered via the TDB ↑ pill. -->
+
+<!-- Scan-needed hint — shown when motif has not yet enumerated Plex.
+     Without a scan, the missing-themes count would be comparing ThemerrDB
+     against nothing. Click the per-library // REFRESH button above to
+     populate (renamed from SYNC PLEX in v1.13.70). -->
+<div id="library-scan-hint" class="missing-banner missing-banner-cyan" style="display:none">
+  <span class="missing-banner-glyph">▸</span>
+  <span class="missing-banner-text">
+    no Plex scan on record yet — click <strong>// REFRESH</strong>
+    to enumerate this library so motif can compare it against ThemerrDB.
+  </span>
+</div>
+
+<!-- Missing-themes banner removed in v1.10.10 — the chip filters
+     (THEMERRDB / DOWNLOADED / IN PLEX FOLDER / READY TO PLACE) plus
+     the per-row actions (DOWNLOAD / RE-DL / ADOPT / REPLACE w/ TDB)
+     give the user direct paths to every action the banner offered.
+     The bulk-download endpoint /api/library/download-missing still
+     exists for scripted callers but no UI exposes it. -->
+
+
+<section class="filterbar">
+  <!-- v1.13.12: search field + inline ✕ clear. The button auto-hides
+       when the input is empty so the bar reads clean by default. -->
+  <div class="library-search-wrap">
+    <input type="text" id="library-search" placeholder="search title or imdb id…"
+           class="input" autocomplete="off" />
+    <button type="button" id="library-search-clear"
+            class="library-search-clear"
+            title="Clear search" aria-label="Clear search"
+            style="display:none">×</button>
+  </div>
+  <!-- v1.12.23: status row trimmed to its three semantic-view chips.
+       DOWNLOADED, PLACED, DL MISSING removed — they're now covered
+       by the dedicated DL pill row below (which mirrors the row's
+       DL column dot). The pill axes (TDB / SRC / DL / PL / LINK)
+       compose with status; selections within an axis OR, axes AND.
+       All pill filters run server-side (since v1.12.23) so total,
+       pagination, and sort all honor the active set. -->
+  <div class="chips" role="tablist">
+    <button class="chip chip-active" data-status="all" title="Every item in this tab.">ALL</button>
+    <button class="chip" data-status="has_theme" title="Items with any theme source.">THEMED</button>
+    <button class="chip" data-status="untracked" title="No theme anywhere.">UNTHEMED</button>
+  </div>
+
+  <!-- v1.22.95: the seven pill-filter axes collapse into a hidden
+       drawer (the user: "a lot of free open space that isn't used ...
+       by default the filter chips are hidden but there was a filter
+       button ... that would reveal the filters"). This toggle is the
+       reveal; the count badge keeps active-but-hidden filters
+       discoverable, and bindLibrary auto-opens the drawer when a
+       deep-link lands with axis filters applied. -->
+  <button type="button" class="library-filter-toggle"
+          id="library-filter-toggle" aria-expanded="false"
+          aria-controls="library-filter-drawer"
+          title="Show / hide the filter axes (TDB, SRC, ATTN, DL, PL, LINK, ED).">// FILTERS<span
+      class="library-filter-count" id="library-filter-count"
+      hidden></span><span class="library-filter-caret"
+      aria-hidden="true">▾</span></button>
+
+  <!-- v1.13.18 (A2): saved-filter presets collapsed to a single
+       bookmark icon next to the chips. Click toggles a small popup
+       listing saved filters; each list item applies on click and
+       has a × to delete. "// SAVE CURRENT" lives at the bottom of
+       the popup. The bookmark glyph fills (★) when an active
+       preset is applied so users can tell at a glance.
+       The // CLEAR ALL button is right next to it so "page tools"
+       stay grouped near the filters they affect. -->
+  <details class="library-presets-menu" id="library-presets-menu">
+    <summary class="library-presets-bookmark"
+             title="Saved filter presets" aria-label="Saved filter presets">
+      {# v1.23.14: inline SVG star, not a ☆/★ text glyph. The glyph's
+         ink sits ~1.2px low + ~0.5px left of its advance box (font-
+         dependent bearings), so flex-centering the line box still
+         left it visibly off (the user, twice: v1.22.98 + here). The
+         5-point star is radial-symmetric; the viewBox y-origin is
+         shifted -0.95 so the star's (top-heavy) bounding box centres
+         exactly in the square — measured ink centre 0,0 vs box
+         centre. Centres deterministically regardless of font. Fill
+         is driven by .has-active (JS toggles that class), not a
+         textContent swap. #}
+      <svg class="library-presets-star" viewBox="0 -0.95 24 24"
+           aria-hidden="true" focusable="false"><path d="M12 2 L14.35 8.76 L21.51 8.91 L15.8 13.24 L17.88 20.09 L12 16 L6.12 20.09 L8.2 13.24 L2.49 8.91 L9.65 8.76 Z"/></svg>
+    </summary>
+    <div class="library-presets-popup" id="library-presets-popup">
+      <header class="library-presets-popup-head muted small">// SAVED FILTERS</header>
+      <ul class="library-presets-popup-list" id="library-presets-list">
+        <li class="library-presets-popup-empty muted small">none yet</li>
+      </ul>
+      <footer class="library-presets-popup-foot">
+        <button type="button" class="library-presets-popup-save"
+                id="library-presets-save"
+                title="Snapshot the current filter combo as a preset.">// SAVE CURRENT</button>
+      </footer>
+    </div>
+  </details>
+  <button type="button" class="library-clear-all-btn"
+          id="library-clear-all"
+          title="Clear all filters, search, and sort.">// CLEAR ALL</button>
+
+  <!-- Pill filter rows. Order matches the row column order
+       (TDB, SRC, DL, PL, LINK) so the user's eye tracks naturally
+       between header and data. Each row is multi-select via the
+       same ALL / pill / CLEAR pattern.
+       v1.22.95: rows live inside a hidden-by-default drawer split
+       into the two semantic groups the old divider line encoded —
+       theme-axis (TDB / SRC / ATTN: what theme is associated) left,
+       file-axis (DL / PL / LINK / ED: how the file lives on disk)
+       right. Two columns reclaim the dead right half of the bar. -->
+  <div class="pill-filter-drawer" id="library-filter-drawer" hidden>
+  <div class="pill-filter-col" aria-label="theme-axis filters">
+  <div class="pill-filter-row" id="library-tdb-filter"
+       aria-label="TDB pill filter">
+    <span class="pill-filter-label muted small">TDB:</span>
+    <button type="button" class="pill-filter-clear" data-tdb-pill-all="1"
+            title="Select every TDB pill state.">ALL</button>
+    <button type="button" class="tdb-pill tdb-pill-yes tdb-pill-btn"
+            data-tdb-pill="tdb"
+            title="ThemerrDB tracks this title; URL is healthy.">TDB</button>
+    <button type="button" class="tdb-pill tdb-pill-update tdb-pill-btn"
+            data-tdb-pill="update"
+            title="Upstream URL changed.">TDB ↑</button>
+    <button type="button" class="tdb-pill tdb-pill-cookies tdb-pill-btn"
+            data-tdb-pill="cookies"
+            title="Source cookies needed (e.g. YouTube age-gated, SoundCloud Go+).">TDB ⚿</button>
+    <button type="button" class="tdb-pill tdb-pill-dead tdb-pill-btn"
+            data-tdb-pill="dead"
+            title="Upstream URL is broken. Use SET URL or UPLOAD MP3.">TDB ✗</button>
+    <button type="button" class="tdb-pill tdb-pill-dropped tdb-pill-btn"
+            data-tdb-pill="dropped"
+            title="ThemerrDB stopped tracking this title.">TDB ◌</button>
+    <button type="button" class="tdb-pill tdb-pill-empty tdb-pill-btn"
+            data-tdb-pill="empty"
+            title="ThemerrDB lists this title but has no theme video to download.">TDB ∅</button>
+    <button type="button" class="tdb-pill tdb-pill-no tdb-pill-btn"
+            data-tdb-pill="none"
+            title="No ThemerrDB record for this title.">no TDB</button>
+    <button type="button" class="pill-filter-clear" data-tdb-pill=""
+            title="Clear all TDB pill selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="SRC pill filter">
+    <span class="pill-filter-label muted small">SRC:</span>
+    <button type="button" class="pill-filter-clear" data-src-filter-all="1"
+            title="Select every SRC source.">ALL</button>
+    <button type="button" class="link-badge link-badge-themerrdb src-key-btn"
+            data-src-filter="T"
+            title="ThemerrDB-managed — motif fetches from upstream.">T</button>
+    <button type="button" class="link-badge link-badge-user src-key-btn"
+            data-src-filter="U"
+            title="User-provided — manual theme URL (YouTube, SoundCloud, Instagram, or Facebook) or MP3 upload.">U</button>
+    {# v1.18.50: SRC=A (adopted) and SRC=M (manual sidecar) both
+       require a media folder + an on-disk theme.<ext>. Collections
+       have neither — the v1.18.0 plex_upload placement_kind lives
+       in Plex's metadata store, no sidecar exists at any folder.
+       Both chips matched zero rows on /collections, dead UI.
+       SRC=P is left visible: themerr-plex CAN upload collection
+       themes via the same /library/metadata/{rk}/themes endpoint
+       motif uses, so P-source collections are rare but possible. #}
+    {% if tab != 'collections' %}
+    <button type="button" class="link-badge link-badge-adopt src-key-btn"
+            data-src-filter="A"
+            title="Adopted — motif claimed an existing Plex-folder theme.mp3.">A</button>
+    <button type="button" class="link-badge link-badge-manual src-key-btn"
+            data-src-filter="M"
+            title="Manual sidecar (not managed by motif).">M</button>
+    {% endif %}
+    <button type="button" class="link-badge link-badge-cloud src-key-btn"
+            data-src-filter="P"
+            title="Plex agent / cloud theme.">P</button>
+    {# v1.14.10: composite-+P filter — rows whose primary SRC letter
+       (T/U/A/M) is set AND Plex also serves its own theme via
+       cloud/embed/Pass (the yellow-dot indicator on the row chip).
+       Wire token is `Pp` rather than `+P` because URL form-encoding
+       turns `+` into a space and breaks the round-trip; the button
+       label keeps `+P` since that's how the indicator reads in the
+       row pill tooltip.
+       v1.23.12: tone demoted from amber (link-badge-cloud) to the
+       copy chip's muted grey (link-badge-copy) — two amber chips
+       side by side read as one unit; the amber corner dot from
+       link-badge-also-plex stays, matching the dot on actual row
+       chips (the user's call). #}
+    <button type="button"
+            class="link-badge link-badge-copy link-badge-also-plex src-key-btn"
+            data-src-filter="Pp"
+            title="Composite — primary SRC letter (T/U/A/M) is set AND Plex also serves its own theme (matches the yellow-dot indicator on the row chip).">+P</button>
+    <button type="button" class="link-badge src-key-btn src-key-btn-tdb-only"
+            data-tdb-only="1"
+            title="In TDB but not in Plex.">T</button>
+    <button type="button" class="link-badge src-key-btn src-key-btn-none"
+            data-src-filter="-"
+            title="No theme anywhere.">—</button>
+    <button type="button" class="pill-filter-clear" data-src-filter=""
+            title="Clear all SRC selections.">CLEAR</button>
+  </div>
+
+  {# v1.13.68: ATTN (attention) pill row. Mirrors the title-cell
+     `!`-glyph priority so users can filter on the same rows the
+     glyphs already advertise. Multi-select OR within axis. The
+     topbar's `N FAIL` pill click-through routes to ?attn_pills=fail
+     so the ⚠ chip lights up when the user lands here. Bulk actions
+     surface conditionally based on which chip(s) are active. #}
+  <div class="pill-filter-row" aria-label="ATTN pill filter">
+    {# v1.13.69: row label renamed `!:` → `STATUS:` per user
+       feedback. Single `!` glyph as a label didn't read as a
+       filter axis name (TDB / SRC / DL / PL / LINK all use words),
+       and the colon ended up visually misaligned from the rest of
+       the row labels.
+       v1.19.67: STATUS → ATTN. The page already had a different
+       chip-row above labeled `STATUS:` (ALL/THEMED/UNTHEMED at
+       line 124-130) — two filter rows sharing the word STATUS
+       was the single biggest first-glance confusion per the
+       v1.19.66 audit. ATTN matches the internal codebase
+       vocabulary (data-attn-pill, attn_pills URL param,
+       attn-pill CSS classes) and reads as a distinct axis name
+       at the same letter-weight as TDB / SRC / LINK. #}
+    <span class="pill-filter-label muted small">ATTN:</span>
+    <button type="button" class="pill-filter-clear" data-attn-pill-all="1"
+            title="Select every attention state.">ALL</button>
+    <button type="button" class="attn-pill attn-pill-fail attn-pill-btn"
+            data-attn-pill="fail"
+            title="Un-acked failure — TDB has the title but its theme URL is broken (and the failure hasn't been dismissed). Bulk action: // ACK FAILURES.">⚠</button>
+    {# v1.15.17: cookies-needed STATUS pill. Yellow ⚿ matches the
+       row pill + topbar chip tone. Filters to rows whose
+       failure_kind = 'cookies_expired' regardless of whether
+       cookies.txt is currently configured (the row stays in the
+       cookies-expired state until a probe / download runs against
+       it with cookies present).
+       v1.19.67: REMOVED from this row. The same cohort is
+       already reachable via the TDB axis ⚿ chip
+       (data-tdb-pill="cookies") at line 132+. Same SQL
+       (failure_kind='cookies_expired'), same rows. Keeping it
+       in TWO filter rows was pure duplication. Belongs in the
+       TDB axis since cookies-needed is fundamentally a TDB-
+       URL-state attribute. URL param `attn_pills=cookies`
+       still honored as a no-op for bookmark compat. #}
+    <button type="button" class="attn-pill attn-pill-update attn-pill-btn"
+            data-attn-pill="update"
+            title="Pending TDB update — upstream changed the theme URL since motif's last download. Bulk: // ACCEPT ALL UPDATES / // KEEP ALL CURRENT.">!</button>
+    <button type="button" class="attn-pill attn-pill-mismatch attn-pill-btn"
+            data-attn-pill="mismatch"
+            title="Mismatch — canonical content diverged from the placement file (SET URL / UPLOAD MP3 over an existing placement). Bulk: // REVERT MISMATCH.">!M</button>
+    <button type="button" class="attn-pill attn-pill-await attn-pill-btn"
+            data-attn-pill="await"
+            title="Awaiting placement — canonical downloaded, no Plex placement yet. Bulk: // PUSH TO PLEX.">!P</button>
+    <button type="button" class="attn-pill attn-pill-broken attn-pill-btn"
+            data-attn-pill="broken"
+            title="Canonical missing — motif's local file was deleted but the Plex copy is intact. Bulk: // RESTORE FROM PLEX.">↺</button>
+    {# v1.23.7: restorable previous-URL snapshot — the post-PURGE
+       zombie state (the snapshot deliberately survives PURGE per
+       v1.12.64 so REVERT stays one click away). the user: no way to
+       find rows in this state. #}
+    <button type="button" class="attn-pill attn-pill-restore attn-pill-btn"
+            data-attn-pill="restore"
+            title="Restorable — the theme is gone (PURGE / UNMANAGE) but a previous URL snapshot survives. RESTORE in the SOURCE menu brings it back; CLEAR URL wipes it for a true clean slate.">↩</button>
+    {# v1.24.40: re-push needed. Same row set as the LINK RP badge / the orange
+       ⟳ title glyph — RP surfaces on the attention axis (like the FAIL chip) so
+       a re-add that orphaned an uploaded theme is discoverable without hunting.
+       Shares _LIB_STALE_PU_SQL with link_pills=rp, so the two chips never drift. #}
+    <button type="button" class="attn-pill attn-pill-repush attn-pill-btn"
+            data-attn-pill="repush"
+            title="Re-push needed — motif uploaded this theme to Plex, but the item was removed + re-added, so Plex no longer serves it (its rating_key was destroyed). // PLACE to re-upload from motif's copy.">⟳</button>
+    <button type="button" class="pill-filter-clear" data-attn-pill=""
+            title="Clear all ATTN selections.">CLEAR</button>
+  </div>
+
+  </div>
+  <div class="pill-filter-col" aria-label="file-axis filters">
+  <div class="pill-filter-row" aria-label="DL pill filter">
+    <span class="pill-filter-label muted small">DL:</span>
+    <button type="button" class="pill-filter-clear" data-dl-pill-all="1"
+            title="Select every DL state.">ALL</button>
+    <!-- v1.13.4: ordering matches PL's [on / await / broken / off]
+         pattern — red broken comes BEFORE gray off so the user's eye
+         sweeps green→red→gray (most important on the left) instead
+         of green→gray→red. Mismatch DL pill stays out (per v1.12.81;
+         content divergence lives on the LINK row). -->
+    <button type="button" class="state-pill-btn state-pill-btn-on"
+            data-dl-pill="on"
+            title="Motif has a downloaded canonical for this row.">●</button>
+    <button type="button" class="state-pill-btn state-pill-btn-broken"
+            data-dl-pill="broken"
+            title="Canonical missing on disk (Plex copy intact).">●</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-dl-pill="off"
+            title="No downloaded canonical.">●</button>
+    <button type="button" class="pill-filter-clear" data-dl-pill=""
+            title="Clear all DL selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="PL pill filter">
+    <span class="pill-filter-label muted small">PL:</span>
+    <button type="button" class="pill-filter-clear" data-pl-pill-all="1"
+            title="Select every PL state.">ALL</button>
+    {# v1.18.30: PL='on' tooltip widened back to "theme is placed
+       at Plex" — covers both sidecar AND plex_upload rows. The
+       v1.18.25 cyan PL=pushed FILTER chip was removed (it
+       resolved to the literal same SQL `placement_kind =
+       'plex_upload'` as the cyan LINK=PU chip — clicking either
+       always yielded the identical row set, so the chip was
+       dead UI weight). The cyan per-row PL DOT survives (it's
+       a separate concern — visual identity for plex_upload rows
+       in the table without forcing the user to scan the LINK
+       column). To filter to plex_upload rows specifically: use
+       LINK=PU. #}
+    <button type="button" class="state-pill-btn state-pill-btn-on"
+            data-pl-pill="on"
+            title="Theme is placed at Plex (sidecar or API push).">●</button>
+    <!-- v1.12.70: amber 'await' state — canonical exists in motif's
+         downloads but no placement row. Surfaces post-DEL rows that
+         need a PUSH TO PLEX (or PURGE) to leave the awaiting state. -->
+    <button type="button" class="state-pill-btn state-pill-btn-await"
+            data-pl-pill="await"
+            title="Downloaded, awaiting placement.">●</button>
+    <!-- v1.12.81: broken filter — placement row exists but theme.mp3
+         is missing from the Plex folder (Plex deleted it, file moved
+         manually, etc.). Symmetry with DL=broken on the canonical
+         side; same red palette so users can spot the inverse case. -->
+    <button type="button" class="state-pill-btn state-pill-btn-broken"
+            data-pl-pill="broken"
+            title="Placement file missing from Plex folder.">●</button>
+    <button type="button" class="state-pill-btn state-pill-btn-off"
+            data-pl-pill="off"
+            title="Not placed in the Plex folder.">●</button>
+    <button type="button" class="pill-filter-clear" data-pl-pill=""
+            title="Clear all PL selections.">CLEAR</button>
+  </div>
+
+  <div class="pill-filter-row" aria-label="LINK pill filter">
+    <span class="pill-filter-label muted small">LINK:</span>
+    <button type="button" class="pill-filter-clear" data-link-pill-all="1"
+            title="Select every LINK state.">ALL</button>
+    {# v1.18.50: extend the v1.18.49 dead-chip hide. HL / C / M are
+       filesystem-placement states; collections have no media folder
+       (the v1.18.0 plex_upload placement_kind is the only one that
+       applies), so all three chips match zero rows on /collections.
+       Same intent as PS — keep the LINK row meaningful by hiding
+       chips whose filter axis can't fire on this tab. The only
+       LINK states reachable on /collections are PU (pushed via
+       API) and — (no placement). Per the user: "let's take a
+       wider scope for impossible filters in the collections
+       section." #}
+    {% if tab != 'collections' %}
+    <button type="button" class="link-glyph link-glyph-hardlink"
+            data-link-pill="hl"
+            title="Hardlink — canonical and Plex-folder file share an inode.">HL</button>
+    <button type="button" class="link-glyph link-glyph-copy"
+            data-link-pill="c"
+            title="Copy — uses extra disk; cross-filesystem fallback.">C</button>
+    <button type="button" class="link-glyph link-glyph-mismatch"
+            data-link-pill="m"
+            title="Mismatch — canonical differs from Plex copy.">M</button>
+    {% endif %}
+    {# v1.19.66: PS chip removed. Originally (v1.14.43) the chip
+       surfaced the LET-PLEX-SERVE state (motif has canonical +
+       no placement + Plex serves). v1.19.61 stamped backup_only
+       on that state, making it paint BU instead — PS became
+       vestigial. v1.19.64 widened PS to cover pure-P rows but
+       produced wall-to-wall amber chips on the user's library
+       (5,240 of 5,500 themed rows). Removed in v1.19.66 — the
+       same "Plex serves + no backup" cohort is reachable via
+       SRC=P chip + LINK=— chip (axis-AND combination). URL
+       param `link_pills=ps` is preserved as a no-op in api.py
+       so existing bookmarks return an empty set instead of
+       500ing. #}
+    {# v1.18.22: PU = Pushed filter chip. Matches rows where
+       motif uploaded the theme to Plex's metadata via API
+       (placement_kind='plex_upload'). Today this fires on
+       collection rows; a future tag will let users opt
+       movie/TV rows into the same placement path. Tooltip
+       distinguishes from PS so users know motif IS the source
+       (not Plex's own embed/cloud theme). #}
+    <button type="button" class="link-glyph link-glyph-pu"
+            data-link-pill="pu"
+            title="Pushed — motif uploaded the theme to Plex via API. Plex serves it from its metadata store (no sidecar at the media folder).">PU</button>
+    {# v1.24.28: RP = re-push needed filter chip. Matches stale plex_upload
+       rows whose uploaded rating_key was destroyed by a Plex delete+re-add
+       (placement_kind='plex_upload' AND theme_present=0). The theme is gone
+       from Plex; motif still has the canonical → PLACE re-uploads. #}
+    <button type="button" class="link-glyph link-glyph-repush"
+            data-link-pill="rp"
+            title="Re-push needed — motif uploaded this theme to Plex, but the item was removed + re-added, so Plex no longer serves it. PLACE to re-upload from motif's copy.">RP</button>
+    {# v1.19.43: B = cloud-themes-backup filter chip. Matches rows
+       where the v1.19.42 walker staged Plex's own cloud theme
+       (source_kind='plex_cloud'). Distinct from BK in plumbing (no
+       BK chip exists today; BK was always reachable only via the
+       LINK badge on a row, not as a filter axis). Lemon tone
+       matches the row's link-glyph-b. Discoverability: pure-P rows
+       currently render LINK=— so a distinct chip is the signal
+       users will look for when scanning "where are my cloud
+       backups?". The filter accepts `link_pills=b` and SQL-matches
+       on lf.source_kind = 'plex_cloud'. #}
+    {# v1.19.75: badge label BP → PB. Reordered to read as
+       "<scope> Backup" — Plex Backup. data-link-pill='b'
+       kept for deep-link URL stability. #}
+    <button type="button" class="link-glyph link-glyph-b"
+            data-link-pill="b"
+            title="Plex Backup — motif's copy of the theme Plex was serving for this row, staged as insurance against Plex Pass loss.">PB</button>
+    {# v1.19.90: TB = ThemerrDB Backup (source_kind='themerrdb' +
+       backup_only — the DOWNLOAD TDB BACKUP flow). Split out of UB
+       so the three backup chips read by source: PB=plex_cloud,
+       TB=themerrdb, UB=user. Pale-green chip (link_pills=tb). #}
+    <button type="button" class="link-glyph link-glyph-tb"
+            data-link-pill="tb"
+            title="ThemerrDB Backup — motif downloaded the ThemerrDB theme but left Plex serving. PROMOTE TO ACTIVE to deploy.">TB</button>
+    {# v1.20.17: AB = Adopted Backup (source_kind='adopt' + backup_only).
+       Split out of UB so the four backup chips read by source:
+       PB=plex_cloud, TB=themerrdb, AB=adopt, UB=user. Pale-cyan chip
+       in the SRC=A (adopt) family (link_pills=ab). #}
+    <button type="button" class="link-glyph link-glyph-ab"
+            data-link-pill="ab"
+            title="Adopted Backup — motif adopted a sidecar but left Plex serving. PROMOTE TO ACTIVE to deploy.">AB</button>
+    {# v1.19.50: BK = user-explicit backup-only (source_kind ∈
+       ('url','upload','adopt') + backup_only stamp; v1.19.90 split
+       'themerrdb' out to the TB chip above).
+       The badge was added in v1.19.21 but a filter chip was
+       never created — the user's audit found "BK is no one of
+       the sortable filters anywhere." Complementary to B (which
+       is plex_cloud-source backup_only). Both share the
+       backup_only stamp + no placement; source_kind is the
+       discriminator.
+       v1.19.63: badge label BK → BU (Backup User). Color
+       switched blue → violet-bright via the .link-glyph-bk CSS
+       rule so BU sits in the user-content family alongside
+       SRC=U (violet). data-link-pill='bk' kept for URL
+       stability.
+       v1.19.75: BU → UB. Reordered to read as "<scope>
+       Backup" — User Backup. Tooltip trimmed to the HL/C/M/PU
+       one-sentence style (the v1.19.63 wall of provenance
+       reasoning was overly verbose for a chip tooltip). #}
+    <button type="button" class="link-glyph link-glyph-bk"
+            data-link-pill="bk"
+            title="User Backup — motif has the file ready but not placed in the Plex folder. PUSH TO PLEX to install.">UB</button>
+    <!-- v1.13.9: glyph reverted to the em-dash but the button shape
+         is now square (state-pill-btn-square) instead of the round
+         dot used by the on/await/broken filters above. The square
+         silhouette is the actual visual cue for "no placement";
+         the dash sits inside it. -->
+    {# v1.19.66: em-dash chip semantic restored after PS chip
+       removal. The em-dash now paints on rows that don't paint
+       a more specific LINK chip (HL/C/PU/M/UB/PB) — covers
+       pure-P rows + truly-empty rows + the rare lpsState case.
+       The largest LINK cohort. Combine with SRC=P chip to
+       isolate "Plex serves + no motif backup" candidates (the
+       former PS workflow). Combine with SRC=— to isolate
+       genuinely-empty rows. #}
+    <button type="button" class="state-pill-btn state-pill-btn-square state-pill-btn-off"
+            data-link-pill="none"
+            title="No LINK badge — no motif placement and no backup. Common state on Plex-served rows. Combine with SRC=P chip to filter to 'Plex serves + no backup' (backup candidates).">—</button>
+    <button type="button" class="pill-filter-clear" data-link-pill=""
+            title="Clear all LINK selections.">CLEAR</button>
+  </div>
+
+  <!-- v1.12.45: EDITION row moved to the bottom (after LINK) so
+       the file-state group (DL, PL, LINK) stays uninterrupted.
+       Label shortened "EDITION:" -> "ED:" so it fits the same
+       label-column width as TDB/SRC/DL/PL/LINK without expanding
+       the column. -->
+  {# v1.19.76: hide the EDITION row entirely on /collections per
+     the v1.18.50 dead-chip precedent. Collection rows' folder_path
+     never contains `{edition-` patterns — both ED=has and ED=none
+     would match a degenerate subset. the user's v1.18.50 principle:
+     "wider scope for impossible filters in the collections
+     section." #}
+  {% if tab != 'collections' %}
+  <div class="pill-filter-row" aria-label="EDITION pill filter">
+    <span class="pill-filter-label muted small">ED:</span>
+    <button type="button" class="pill-filter-clear" data-ed-pill-all="1"
+            title="Select every EDITION state.">ALL</button>
+    <button type="button" class="ed-pill-btn ed-pill-btn-on"
+            data-ed-pill="has"
+            title="Has a Plex edition tag (Director's Cut, IMAX, etc).">ED</button>
+    <!-- v1.13.9: square shape (state-pill-btn-square) with the
+         em-dash glyph mirrors the LINK row's "no placement" filter
+         so the two "no-state" filters scan the same way. -->
+    <button type="button" class="state-pill-btn state-pill-btn-square state-pill-btn-off"
+            data-ed-pill="none"
+            title="No edition tag.">—</button>
+    <button type="button" class="pill-filter-clear" data-ed-pill=""
+            title="Clear all EDITION selections.">CLEAR</button>
+  </div>
+  {% else %}
+  {# v1.23.57: collections have no editions, so the ED row is dropped — but that
+     left the file-axis column one row shorter, shrinking the whole filter panel
+     and making it jump size when switching between a library tab and collections
+     (the user). This spacer reserves the ED row's height so both panels match. #}
+  <div class="pill-filter-row pill-filter-spacer" aria-hidden="true"></div>
+  {% endif %}
+  </div>
+  </div>
+
+  <!-- v1.13.16 (A1): PRESET / SAVE / DELETE / CLEAR ALL moved up to
+       the hero-area toolbar (see top of file). Pill-row removed for
+       a cleaner filter stack. To revert: paste the v1.13.13 row back
+       here AND remove the .library-toolbar block above. The element
+       IDs are unchanged so all JS bindings work either way. -->
+</section>
+
+<!-- Bulk-action bar — appears when ≥1 row is selected via the per-row
+     checkbox or the table-header select-all. v1.10.49: ADOPT SELECTED
+     covers sidecar-only rows; both actions skip rows where the action
+     can't apply (non-themed for download, non-sidecar for adopt). -->
+<div id="library-bulk-bar" class="missing-banner missing-banner-green" style="display:none">
+  <span class="missing-banner-glyph">▸</span>
+  <span class="missing-banner-text">
+    <span id="library-bulk-count-wrap"><strong id="library-selected-count">0</strong> selected</span>
+    <span class="muted small" id="library-bulk-detail"></span>
+  </span>
+  {# v1.13.74: bulk-action bar reordered into color-grouped runs
+     so the user reads the toolbar left-to-right by intensity:
+     green (neutral / source-fetch) → blue (update review)
+     → amber (Plex-touching) → red (failure ack)
+     → magenta (export). Adjacency rules:
+     - // KEEP ALL CURRENT pairs with // ACCEPT ALL UPDATES (both
+       only visible on the update-filter view); kept adjacent.
+     - // ADOPT SELECTED sits beside // DOWNLOAD FROM TDB as the
+       alternate "fetch source" action.
+     Each button's CSS class is unchanged — only DOM order moves. #}
+
+  {# Greens — neutral / select / source-fetch family. #}
+  <button class="btn btn-tiny" id="library-select-all-filtered-btn" type="button"
+          title="Select every filtered row across all pages.">// SELECT ALL FILTERED</button>
+  <button class="btn btn-tiny" id="library-clear-selection-btn" type="button"
+          title="Clear selection.">// CLEAR</button>
+  <button class="btn btn-tiny lib-source-themerrdb" id="library-download-selected-btn" type="button"
+          title="Download selected from ThemerrDB.">// DOWNLOAD FROM TDB</button>
+  {# v1.15.4: bulk TDB BACKUP — for P-only selections where Plex
+     serves its own theme + a TDB source is available. Downloads
+     to motif's /themes/ but does NOT place into the Plex folder
+     so Plex keeps serving its own theme; motif has its own
+     canonical sitting ready as a backup (one-click PUSH TO PLEX
+     to deploy if Plex's theme ever goes away). Uses the existing
+     /api/library/download-batch endpoint with `place: false`. #}
+  <button class="btn btn-tiny lib-source-themerrdb" id="library-tdb-backup-btn" type="button" style="display:none"
+          title="Download selected P-source rows from ThemerrDB into motif's /themes/. Plex keeps serving its own theme; motif gets a backup ready to push if Plex's ever goes away.">// DOWNLOAD TDB BACKUP</button>
+  {# v1.19.43: bulk DOWNLOAD PLEX BACKUP. Visible when the
+     selection contains ≥1 pure-P row WITHOUT a downloaded
+     canonical. Distinct from DOWNLOAD TDB BACKUP: that flow
+     uses ThemerrDB as the source (only works when TDB has the
+     title); this flow grabs bytes from Plex's own cloud catalog
+     via the v1.19.42 walker (works on rows TDB doesn't track —
+     the anime cohort: 100% C1 per the 2026-05-26 probe).
+     v1.19.48: tone retoned green → plex-amber so at-a-glance
+     the user reads "this is a Plex-touching action" (mirrors
+     LET PLEX SERVE / PUSH TO PLEX). Label renamed to mirror the
+     DOWNLOAD TDB BACKUP shape for cross-button consistency. #}
+  <button class="btn btn-tiny btn-plex" id="library-cloud-backup-btn" type="button" style="display:none"
+          title="Download Plex's cloud themes for selected P-source rows as a backup via the v1.19.42 walker. Insurance against Plex Pass loss or catalog drops.">// DOWNLOAD PLEX BACKUP</button>
+  <button class="btn btn-tiny lib-source-adopt" id="library-adopt-selected-btn" type="button"
+          title="Adopt selected sidecars.">// ADOPT SELECTED</button>
+  {# Blue — pending-update review. KEEP ALL CURRENT pairs here
+     (default-green visually, but lives next to ACCEPT ALL UPDATES
+     because both are only visible on the update filter view).
+     v1.12.55: bulk update actions. Visible only when the user
+     is on the blue-↑-pill click-through (tdb_pills=update),
+     which is what the topbar UPD badge routes to. Both call
+     server-side bulk endpoints so the action is one HTTP
+     round-trip regardless of how many pending updates exist. #}
+  <button class="btn btn-tiny btn-info" id="library-accept-all-updates-btn" type="button" style="display:none"
+          title="Accept all pending TDB updates.">// ACCEPT ALL UPDATES</button>
+  {# v1.19.72: tooltip mentions the v1.19.71 new_theme_available
+     dismissal so the user knows ONE click marks every newly-
+     discovered TDB theme as declined (including SRC=— rows
+     that won't auto-prompt again). #}
+  <button class="btn btn-tiny" id="library-decline-all-updates-btn" type="button" style="display:none"
+          title="Dismiss all pending updates — including newly-discovered ThemerrDB themes on unthemed rows. Won't re-prompt until TDB updates again.">// KEEP ALL CURRENT</button>
+
+  {# v1.13.73: REVERT MISMATCH retoned from btn-warn (amber) to
+     lib-source-themerrdb (green-bright + green-deep border, the
+     same family as the T link-badge). The action restores the
+     ThemerrDB canonical, so it shares its color with
+     // DOWNLOAD FROM TDB and the per-row T SRC chip. Visual
+     handoff: a row showing M (mismatch) reverted via this bulk
+     action lands at T, and the button color previews that.
+     v1.14.16: position moved to between KEEP ALL CURRENT and
+     PUSH TO PLEX so the rows of bulk actions read in priority
+     order when multiple ATTN chips are active simultaneously
+     (UPDATE pair → MISMATCH → PLEX-touching → ACK). #}
+  <button class="btn btn-tiny lib-source-themerrdb" id="library-revert-mismatch-btn" type="button" style="display:none"
+          title="Revert selected mismatched rows to the ThemerrDB version.">// REVERT MISMATCH</button>
+
+  {# Ambers — Plex-touching. v1.13.33: bulk PUSH TO PLEX visible
+     when ≥1 selected rows are downloaded-but-not-placed (DL=on +
+     PL=await), walks each selection through the per-row /replace
+     endpoint. v1.13.68 / v1.13.72: RESTORE FROM PLEX repopulates
+     motif's canonical from the intact Plex copy on canonical-
+     missing rows; shares btn-plex amber with PUSH TO PLEX so both
+     read as Plex-family. #}
+  <button class="btn btn-tiny btn-plex" id="library-push-selected-btn" type="button" style="display:none"
+          title="Push downloaded-but-not-placed selections into Plex.">// PUSH TO PLEX</button>
+  <button class="btn btn-tiny btn-plex" id="library-restore-from-plex-btn" type="button" style="display:none"
+          title="Restore canonical from the intact Plex copy on selected rows.">// RESTORE FROM PLEX</button>
+  {# v1.14.27: bulk LET PLEX SERVE for the +P composite filter.
+     Visible when the +P SRC pill is active OR when the selection
+     contains ≥1 +P composite rows. Iterates the per-row /unplace
+     endpoint — deletes Plex-folder placement, keeps motif's
+     canonical so PUSH TO PLEX recovers in one click. #}
+  <button class="btn btn-tiny btn-plex" id="library-let-plex-serve-btn" type="button" style="display:none"
+          title="Delete the placement file at the Plex folder for selected +P composite rows. Motif's canonical stays for one-click recovery via PUSH TO PLEX.">// LET PLEX SERVE</button>
+  {# v1.15.46: bulk ADOPT + LET PLEX SERVE — mirrors the per-row
+     SOURCE-menu action (v1.14.47) for M+P composite rows (sidecar
+     exists at the Plex folder that motif didn't place AND Plex
+     serves its own independent theme). the user's prompt scenario:
+     14 M-source + red TDB rows selected — TDB URL is dead so
+     re-downloading won't work; best path is adopt the sidecar
+     (motif claims ownership) then unplace (file leaves the Plex
+     folder, motif keeps canonical for one-click recovery). Bulk
+     button surfaces the per-row combo when the selection contains
+     ≥1 such row. Visibility gate matches the per-row gate at
+     app.js:6619 — plex_local_theme=1 + !placed +
+     plex_independent_theme=1 + rating_key. Click handler iterates
+     per row (mirrors // ADOPT SELECTED) — chains adopt then
+     unplace, fail-fast on adopt so a failed claim doesn't leave
+     a half-unplaced row. #}
+  <button class="btn btn-tiny btn-plex" id="library-adopt-and-lps-btn" type="button" style="display:none"
+          title="For selected M+P composite rows: ADOPT the sidecar (motif claims ownership), then DELETE it from the Plex folder. Motif's canonical stays at /themes/ — PUSH TO PLEX recovers. Plex's own theme (cloud / embed) becomes the only one served.">// ADOPT + LET PLEX SERVE</button>
+
+  {# v1.15.60: bulk PROBE TDB on selected. Visible when ≥1
+     selected row is TDB-trackable. Posts to the existing
+     /api/admin/bulk-probe-tdb endpoint with the selected
+     {media_type, tmdb_id} items so the probe is scoped to
+     the user's selection (skips the global 24h cooldown via
+     the endpoint's existing scope_items support). btn-info
+     (cyan) matches the per-row INFO PROBE button color
+     family so the operator reads them as the same action. #}
+  <button class="btn btn-tiny btn-info" id="library-bulk-probe-tdb-btn" type="button" style="display:none"
+          title="Probe ThemerrDB URLs for the selected rows — re-checks each row's TDB URL via yt-dlp --simulate and updates the row's TDB pill (alive / dead / cookies-needed). Bypasses the 24h cooldown so failed rows can be re-tested immediately.">// PROBE TDB SELECTED</button>
+
+  {# Red — failure ack. v1.13.73: ACK FAILURES retoned from
+     btn-warn (amber) to btn-danger (red) so the bulk-action
+     color matches the red ⚠ STATUS chip + the title-cell's
+     red title-glyph-fail glyph that the action targets. ACK
+     isn't destructive, so the "danger" semantic is a slight
+     stretch — but visually the red palette is the single source
+     of truth for un-acked failures, and the bulk button now
+     lives in that family. #}
+  <button class="btn btn-tiny btn-danger" id="library-ack-selected-btn" type="button" style="display:none"
+          title="Acknowledge selected failures.">// ACK SELECTED</button>
+
+  {# Magenta — read-only export. Anchored last so a destructive
+     mis-click is unlikely (and the v1.13.72 magenta makes it
+     visually distinct from every state-changing button). #}
+  <button class="btn btn-tiny btn-export" id="library-export-csv-btn" type="button"
+          title="Export selection to CSV.">// EXPORT CSV</button>
+
+  {# v1.17.18: bulk-bar overflow menu. Pre-fix the bar fell back
+     to horizontal scroll when buttons exceeded the container
+     width (v1.17.6) — buttons clipped at the right edge with no
+     visual cue, and operators had to scroll-discover the cut-off
+     actions. The new `// MORE ▾` panel collects overflow buttons
+     into a dropdown so the bar's constant height contract
+     survives without hiding actions off-edge.
+     The JS layout function `_layoutBulkBar()` measures the bar's
+     scrollWidth-vs-clientWidth and shifts rightmost visible
+     buttons (lowest priority by DOM order) into the panel until
+     the bar fits. Reuses the .row-menu / .row-menu-panel CSS
+     primitive — same shape the per-row SOURCE / PLACE / REMOVE
+     menus use. #}
+  <details class="row-menu" id="library-bulk-overflow-menu" style="display:none">
+    <summary class="btn btn-tiny" data-bulk-overflow-toggle
+             title="Additional bulk actions that didn't fit in the bar.">// MORE ▾</summary>
+    <div class="row-menu-panel" data-bulk-overflow-panel></div>
+  </details>
+</div>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span></h2>
+    <!-- v1.12.74: chip + pager grouped right so // NEEDS WORK
+         sits inline with the pager instead of floating in the
+         empty middle of the block-head. -->
+    <div class="block-head-actions">
+      <!-- v1.12.68: quick-access "needs work" sort. Re-orders the
+           current filtered list by attention priority — failures
+           first, then pending updates, then post-DEL await
+           placements, then mismatches, then everything else.
+           Click toggles between the user's prior column sort and
+           this attention sort; the active state is reflected by
+           the chip-active class. -->
+      {# v1.23.49: LEGEND toggle moved inline next to NEEDS WORK (was its own
+         full row). Shown only in help mode; clicking it drops the chip-decode
+         panel below the header. #}
+      <button type="button" class="chip library-legend-pill" id="library-legend-toggle"
+              aria-expanded="false" title="Show what the row chips mean"><span class="library-legend-caret" aria-hidden="true">&#9656;</span>// LEGEND</button>
+      <button class="chip" id="library-sort-attention-btn" type="button"
+              title="Sort by attention priority. Click again to undo.">NEEDS WORK</button>
+      <div class="pager" id="library-pager"></div>
+    </div>
+  </header>
+  {# v1.23.45: in-context LEGEND — every chip on THIS tab decoded right above the
+     rows, with the full reference one click away in // GLOSSARY. Collapsible;
+     open/closed persisted via initHelpMode. v1.23.53: always available (the
+     toggle reuses .chip and is no longer body.help-mode gated). Collections
+     drops the chips it can't have (A/M sidecar SRC, HL folder LINK). Chip
+     classes are shared with the v1.23.44 glossary. #}
+  <div class="library-legend-panel" id="library-legend">
+    <div class="library-legend-body">
+      {# v1.23.68: TDB axis decode — reuses the real .tdb-pill tdb-pill-* row
+         classes (v1.23.56 reuse-don't-mirror). #}
+      <div class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">TDB — upstream status</h3>
+        <div class="help-gloss-grid help-gloss-grid-wide">
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-yes">TDB</span><span class="help-gloss-def">Tracked / healthy</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-update">TDB ↑</span><span class="help-gloss-def">Upstream URL changed</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-cookies">TDB ⚿</span><span class="help-gloss-def">Cookies needed</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-dead">TDB ✗</span><span class="help-gloss-def">Upstream URL broken</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-dropped">TDB ◌</span><span class="help-gloss-def">ThemerrDB dropped it</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-empty">TDB ∅</span><span class="help-gloss-def">Listed, no theme video</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-no">no TDB</span><span class="help-gloss-def">Untracked</span></div>
+        </div>
+      </div>
+      <div class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">SRC — source</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb">T</span><span class="help-gloss-def">ThemerrDB-managed</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-user">U</span><span class="help-gloss-def">User URL / upload</span></div>
+          {% if tab != "collections" %}
+          <div class="help-gloss-row"><span class="link-badge link-badge-adopt">A</span><span class="help-gloss-def">Adopted sidecar</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-manual">M</span><span class="help-gloss-def">Manual sidecar — ADOPT</span></div>
+          {% endif %}
+          <div class="help-gloss-row"><span class="link-badge link-badge-cloud">P</span><span class="help-gloss-def">Plex agent / cloud</span></div>
+          <div class="help-gloss-row"><span class="link-badge gc-none">–</span><span class="help-gloss-def">No theme</span></div>
+        </div>
+      </div>
+      <div class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">LINK — stored / backed up</h3>
+        <div class="help-gloss-grid">
+          {% if tab != "collections" %}
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-hardlink">HL</span><span class="help-gloss-def">Hardlink (no extra disk)</span></div>
+          {% endif %}
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-pu">PU</span><span class="help-gloss-def">Pushed to Plex (API)</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-repush">RP</span><span class="help-gloss-def">Re-push needed (re-add wiped it)</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-b">PB</span><span class="help-gloss-def">Plex Backup (insurance)</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-tb">TB</span><span class="help-gloss-def">TDB Backup — PROMOTE</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-bk">UB</span><span class="help-gloss-def">User Backup — PUSH</span></div>
+        </div>
+      </div>
+      <div class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">DL / PL — file &amp; placement</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-on"></span><span class="help-gloss-def">on — present / placed</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-await"></span><span class="help-gloss-def">await — not placed yet</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-broken"></span><span class="help-gloss-def">broken — file missing</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-off"></span><span class="help-gloss-def">off — none</span></div>
+        </div>
+      </div>
+      <div class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">FLAGS — attention</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-fail">&#9888;</span><span class="help-gloss-def">Failure — view &amp; ACK</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-update">!</span><span class="help-gloss-def">ThemerrDB update</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-broken">&#8634;</span><span class="help-gloss-def">Canonical missing</span></div>
+          {# v1.24.40: ⟳ re-push needed — the orange title glyph + ATTN chip. #}
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-repush">&#10227;</span><span class="help-gloss-def">Re-push needed — // PLACE</span></div>
+        </div>
+      </div>
+      <p class="library-legend-foot">full reference in <button type="button" class="library-legend-gloss-link" id="library-legend-gloss">// GLOSSARY</button></p>
+    </div>
+  </div>
+  <table class="table" id="library-table">
+    <thead>
+      <tr>
+        <th class="col-state"><input type="checkbox" id="library-select-all" title="select all on this page (click again to deselect all)" /></th>
+        <th class="col-title col-sort" data-sort="title"><span class="th-stack">TITLE<span class="sort-indicator"></span></span></th>
+        {# v1.15.53: ED hoisted out of the title cell into its own
+           column. Pre-fix the {edition-...} tag rendered inline as
+           a yellow pill on the title (`Director's Cut`, `IMAX`,
+           etc.); promoting it to a dedicated sortable column lets
+           the operator group multi-edition titles together by
+           variant + matches the ED filter row's label. the user:
+           "Edition can also be shortened to ED to match the
+           existing filter." #}
+        <th class="col-edition col-sort" data-sort="edition"><span class="th-stack">ED<span class="sort-indicator"></span></span></th>
+        <th class="col-year col-sort" data-sort="year"><span class="th-stack">YEAR<span class="sort-indicator"></span></span></th>
+        {# v1.13.67: dedicated TDB column. Pre-fix the TDB pill +
+           section-name tag rode along inside the title cell as flex
+           siblings (v1.13.55 layout). Promoting to a separate
+           column gives consistent spacing + a sort caret.
+           v1.15.53: column reordered to live AFTER YEAR (between
+           YEAR and SRC) per the user's layout request. Section name
+           ([Movies] / [Anime] / etc.) dropped from the cell — the
+           tab nav already identifies the active library. #}
+        <th class="col-tdb col-sort" data-sort="tdb"><span class="th-stack">TDB<span class="sort-indicator"></span></span></th>
+        <th class="col-state col-sort" data-sort="src"><span class="th-stack">SRC<span class="sort-indicator"></span></span></th>
+        <th class="col-state col-sort" data-sort="dl"><span class="th-stack">DL<span class="sort-indicator"></span></span></th>
+        <th class="col-state col-sort" data-sort="pl"><span class="th-stack">PL<span class="sort-indicator"></span></span></th>
+        <th class="col-state col-sort" data-sort="link"><span class="th-stack">LINK<span class="sort-indicator"></span></span></th>
+        <th class="col-imdb col-sort" data-sort="imdb"><span class="th-stack">IMDB<span class="sort-indicator"></span></span></th>
+        {# v1.23.6: ACTIONS' vestigial sort-indicator removed — it
+           existed only to height-match the old stacked-carat
+           headers; the inline layout self-aligns, and a fixed-width
+           carat slot here would ghost-offset the centered label. #}
+        <th class="col-actions"><span class="th-stack">ACTIONS</span></th>
+      </tr>
+    </thead>
+    <tbody id="library-body">
+      <tr><td colspan="11" class="muted center">loading…</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<dialog class="dlg" id="upload-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      <h2 class="dlg-title">// UPLOAD THEME</h2>
+      <button class="dlg-close" id="upload-dlg-close" type="button" aria-label="Close dialog" title="Close">×</button>
+    </header>
+    <div class="dlg-meta" id="upload-dlg-meta"></div>
+    <form id="upload-form" enctype="multipart/form-data">
+      <input type="hidden" id="upload-rk" />
+      <label class="form-label">
+        <span class="form-label-text">// MP3 FILE</span>
+        <input class="input" type="file" id="upload-file" accept="audio/mpeg,audio/mp3,.mp3" required />
+        {# v1.19.40: hint rewritten. The pre-v1.19.40 copy described
+           only the orphan case ("ThemerrDB doesn't track this title")
+           but UPLOAD MP3 is reachable from every row's SOURCE menu
+           since v1.12.39 — for T/A/U/M/P rows the upload REPLACES
+           whatever's currently set + flips SRC to U. Audit finding
+           #15 from the post-v1.19.32 deep audit pass. #}
+        <p class="form-hint">
+          Drop a theme MP3 for this Plex item. Motif lands the file
+          as a manual upload (SRC flips to U), places it at the Plex
+          folder, and triggers a refresh — overrides whatever's
+          currently set (ThemerrDB / sidecar / Plex agent). On P-rows
+          (Plex serving its own theme), check <strong>KEEP AS BACKUP</strong>
+          below to stage the MP3 without disturbing Plex's serving copy.
+          Maximum 50 MiB.
+        </p>
+      </label>
+      {# v1.15.75: download-only checkbox. Same intent as the
+         manual-url dialog — let P-row users land a backup MP3
+         in their DL location without disturbing Plex's serving
+         theme. JS toggles visibility via the dlg dataset; the
+         form posts the field as `download_only` and the
+         backend skips the place enqueue when set. #}
+      {# v1.18.86: align with manual-url-dlg's v1.18.77 KEEP AS BACKUP
+         rename. The two dialogs do conceptually the same thing on the
+         same P-row state (download as backup, Plex keeps serving) —
+         pre-v1.18.86 the upload-dlg still read "DOWNLOAD ONLY" and
+         referenced PUSH TO PLEX while the manual-url-dlg referenced
+         // PROMOTE TO ACTIVE. Design audit caught the divergence. #}
+      <label class="form-label form-checkbox" id="upload-download-only-row"
+             style="display:none">
+        <input type="checkbox" id="upload-download-only" />
+        <span class="form-label-text">KEEP AS BACKUP (Plex keeps serving)</span>
+        <p class="form-hint">
+          Stamp this MP3 as a <strong>backup</strong> — motif lands
+          it in your DL location but does NOT push to Plex. Plex
+          continues to serve its own theme. Use <code>// PROMOTE TO
+          ACTIVE</code> from the row's INFO card later to deploy
+          the backup. Leave unchecked to have motif's MP3 replace
+          Plex's theme immediately.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// UPLOAD &amp; PLACE</button>
+        <button class="btn" type="button" id="upload-cancel">// CANCEL</button>
+        <span class="form-status" id="upload-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
+
+{# v1.19.87: the override-dlg (// MANUAL THEME URL OVERRIDE) was
+   removed — it was dead code (nothing emitted data-act=open-override
+   so it could never open). The live SET URL dialog is manual-url-dlg
+   below, which carries the live preview + KEEP AS BACKUP checkbox. #}
+
+<!-- v1.14.83: info-dlg promoted to base.html so the OPEN ROW
+     buttons rendered on /queue's REPROBE error events can
+     trigger it cross-page. The library.html-local definition
+     is retired; openInfoDialog still finds the same #info-dlg
+     id from base.html. -->
+{# info-dlg moved to base.html in v1.14.83 #}
+
+<dialog class="dlg" id="manual-url-dlg">
+  <article class="dlg-body">
+    <header class="dlg-head">
+      {# v1.14.0: same widening as the override dialog above. #}
+      <h2 class="dlg-title">// MANUAL THEME URL</h2>
+      <button class="dlg-close" id="manual-url-dlg-close" type="button" aria-label="Close dialog" title="Close">×</button>
+    </header>
+    <div class="dlg-meta" id="manual-url-dlg-meta"></div>
+    <form id="manual-url-form">
+      <input type="hidden" id="manual-url-rk" />
+      <label class="form-label">
+        <span class="form-label-text">// THEME URL</span>
+        <input class="input" type="url" id="manual-url-input"
+               placeholder="https://www.youtube.com/watch?v=… · soundcloud.com/… · instagram.com/reel/… · facebook.com/…/videos/…"
+               required autocomplete="off" />
+        <p class="form-hint">
+          Paste a YouTube, SoundCloud, Instagram, or Facebook URL and motif will download it
+          as the theme for this Plex item. The URL is recorded as a
+          manual override that ThemerrDB syncs won't touch. You can
+          replace it later via the same dialog.
+        </p>
+        <p id="manual-url-match-hint" class="form-hint form-hint-warn"
+           style="display:none"></p>
+        <!-- v1.12.97: live YouTube preview. As the user types/pastes a
+             URL, the JS extracts the video id and shows a thumbnail +
+             oembed-fetched title so they can confirm the right video
+             before submitting. The preview block stays empty until a
+             valid YouTube ID is detected; on detection it appears
+             inline beneath the input. -->
+        <div id="manual-url-preview" class="manual-url-preview" hidden>
+          <a id="manual-url-preview-link" href="#" target="_blank"
+             rel="noopener" class="manual-url-preview-link">
+            <img id="manual-url-preview-thumb" alt=""
+                 class="manual-url-preview-thumb" />
+          </a>
+          <div class="manual-url-preview-meta">
+            <span id="manual-url-preview-title"
+                  class="manual-url-preview-title muted small">
+              loading title…
+            </span>
+            <span id="manual-url-preview-vid"
+                  class="manual-url-preview-vid muted small"></span>
+          </div>
+        </div>
+      </label>
+      {# v1.15.75: download-only checkbox. the user: "if it's a P
+         row then let's offer an additional action ... only
+         download and put in the DL location but not place
+         basically create a backup file in DL but allow plex to
+         continue to server the theme." Shown for every row but
+         only meaningful on P / +P rows where Plex is already
+         serving — JS toggles its visibility via the dlg
+         dataset. When checked the manual-url endpoint passes
+         force_place=false to the download job so the worker
+         lands the file in local_files without placing it. #}
+      {# v1.18.77: renamed from "DOWNLOAD ONLY" to "KEEP AS BACKUP".
+         Pre-v1.18.77 the checkbox was ambiguous — "download only"
+         could read as "skip the URL set" or "skip the placement"
+         depending on context. v1.18.77 makes the intent explicit
+         (user_overrides.intent='backup') and the label states the
+         downstream behavior ("Plex serves; motif holds a safety
+         net"). #}
+      {# v1.18.86: drop the `// ` prefix from the checkbox label.
+         Per DESIGN_SYSTEM §3 the `// ` prefix belongs on buttons +
+         section titles only; every other checkbox label in
+         settings.html + library.html honors that. The v1.18.77
+         rename slipped the prefix onto a checkbox label. #}
+      <label class="form-label form-checkbox" id="manual-url-download-only-row"
+             style="display:none">
+        <input type="checkbox" id="manual-url-download-only" />
+        <span class="form-label-text">KEEP AS BACKUP (Plex keeps serving)</span>
+        <p class="form-hint">
+          Stamp this URL as a <strong>backup</strong> — motif
+          downloads it but does NOT push to Plex. Plex continues
+          to serve its own theme. Use <code>// PROMOTE TO ACTIVE</code>
+          from the row's INFO card later to deploy the backup
+          (e.g. if Plex's theme disappears). Leave unchecked to
+          have motif's URL replace Plex's theme immediately.
+        </p>
+      </label>
+      <div class="form-actions">
+        <button class="btn btn-warn" type="submit">// SAVE &amp; DOWNLOAD</button>
+        <button class="btn" type="button" id="manual-url-cancel">// CANCEL</button>
+        <span class="form-status" id="manual-url-status"></span>
+      </div>
+    </form>
+  </article>
+</dialog>
+{% endblock %}

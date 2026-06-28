@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="referrer" content="no-referrer" />
+  <title>{% block title %}Motif{% endblock %} · motif</title>
+  {# v1.13.86: serve favicon locally instead of cross-origin
+     to github raw. Pre-fix the href pointed at
+     `raw.githubusercontent.com/healzangels/motif/main/unraid/icon.png`
+     — but the `main` branch was deleted in v1.13.74-prep when
+     the branch model was reset to release/nightly. Result: favicon
+     404'd. Local serve also dodges the cross-origin / referrer
+     awkwardness and works offline. Cache-busted via motif_version. #}
+  <link rel="icon" type="image/png" href="/static/icon.png?v={{ motif_version }}" />
+  <link rel="apple-touch-icon" type="image/png" href="/static/icon.png?v={{ motif_version }}" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css?v={{ motif_version }}" />
+  <link rel="stylesheet" href="/static/ops.css?v={{ motif_version }}" />
+  {# v1.15.64: SSR settings-tab. Reads window.location.hash pre-paint
+     and stamps <html data-settings-tab="X"> so the matching panel
+     is visible on first paint when /settings#hash is deep-linked.
+     Pre-fix: settings.html opens with PATHS visible (no inline
+     display:none) + every other panel inline style="display:none",
+     and app.js's bindSettingsTabs swaps them post-paint. On a
+     /settings#tokens nav that produced a visible PATHS flash. The
+     companion CSS rules live in app.css (.tab-panel SSR block).
+     v1.15.65: panel-name allowlist (not just `/^[a-z]+$/`). Pre-fix
+     `/settings#blah` would stamp the attribute, the CSS rule then
+     hid every panel via !important, and bindSettingsTabs's
+     `valid.includes(initial)` skipped showTab → blank settings
+     page. The allowlist is duplicated from settings.html
+     (data-panel) + app.css (SSR rules); tests
+     test_v1_15_65_*panels_match guard against drift. #}
+  <script>
+    (function () {
+      if (window.location.pathname !== '/settings') return;
+      var h = (window.location.hash || '').replace(/^#/, '');
+      var panels = ['paths', 'plex', 'downloads', 'matching',
+                    'schedule', 'runtime', 'diagnostics', 'database',
+                    'notifications', 'tokens', 'password',
+                    'homepage', 'import'];
+      if (panels.indexOf(h) >= 0) {
+        document.documentElement.setAttribute('data-settings-tab', h);
+      }
+    })();
+  </script>
+  {# v1.24.65: apply customized per-library colors (PLEX dashboard cards + active
+     nav-tab underline) pre-paint on EVERY page — the nav lives in base.html, so
+     the override can't wait for the dashboard-only customize JS. Reads
+     localStorage 'motif:dashColors' written by the // LIBRARY COLORS panel; unset
+     keys fall back to the :root token defaults (no flash). Each value is hex-
+     validated before use. #}
+  <script>
+    (function () {
+      try {
+        var c = JSON.parse(localStorage.getItem('motif:dashColors') || '{}');
+        var r = document.documentElement;
+        var m = { movies: '--dash-movies-color', tv: '--dash-tv-color',
+                  anime: '--dash-anime-color', collections: '--dash-collections-color' };
+        for (var k in m) {
+          if (Object.prototype.hasOwnProperty.call(m, k)
+              && /^#[0-9a-fA-F]{6}$/.test(c[k] || '')) {
+            r.style.setProperty(m[k], c[k]);
+          }
+        }
+      } catch (e) { /* malformed / disabled localStorage → token defaults */ }
+    })();
+  </script>
+  <script defer src="/static/app.js?v={{ motif_version }}"></script>
+  <script defer src="/static/ops.js?v={{ motif_version }}"></script>
+  <script defer src="/static/dashboard-customize.js?v={{ motif_version }}"></script>
+</head>
+<body>
+  <div class="scanlines" aria-hidden="true"></div>
+  {% if request.state.principal is defined and request.state.principal.is_authenticated %}
+  {# v1.15.22: SSR topbar + banner state. Same flash-bug class as
+     v1.15.21 nav availability — pre-fix the banners + topbar
+     chips were hidden by default and revealed by JS after
+     /api/stats landed. SSR delivers the right initial visibility
+     so HTML the browser receives is already correct. JS-side
+     refresh continues to update on the next poll and is a
+     no-op when SSR matched. #}
+  {% set _ssr_top = topbar_ssr_state() %}
+  <div id="dry-run-banner" class="dry-run-banner"{% if not _ssr_top.dry_run %} style="display:none"{% endif %}>
+    <span class="dry-run-mark">⚠</span>
+    <span class="dry-run-text">DRY-RUN ACTIVE — no themes downloaded, no files placed, no Plex calls. Sync still runs.</span>
+    <button class="btn btn-tiny" id="dry-run-disable-btn" type="button">// DISABLE</button>
+  </div>
+  <div id="paths-banner" class="paths-banner"{% if _ssr_top.paths_ready %} style="display:none"{% endif %}>
+    <span class="paths-banner-mark">!</span>
+    <span class="paths-banner-text">CONFIGURE THEMES DIRECTORY — motif can sync ThemerrDB but cannot download or place files until you set <strong>themes_dir</strong> in <a href="/settings#paths">/settings</a>.</span>
+  </div>
+  <header class="topbar">
+    <a href="/" class="brand">
+      {# v1.24.95: brand-mark is a 3-bar VU-meter equalizer (was a static bar
+         glyph) — ambient "now playing" motion; decorative, the brand-name
+         carries the accessible label. #}
+      <span class="brand-mark" aria-hidden="true"><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i></span>
+      <span class="brand-name">motif</span>
+      <span class="brand-version">v{{ motif_version }}</span>
+      <!-- v1.13.8 (#8): self-update suffix populated by app.js on
+           load from /api/release/latest. Hidden by default; reveals
+           with → vX.Y.Z when the latest GitHub stable release is
+           newer than what's currently running. Click opens the
+           release page in a new tab. -->
+      <a class="brand-update" id="brand-update-suffix"
+         href="https://github.com/Healzangels/motif/releases/latest"
+         target="_blank" rel="noopener" hidden
+         title="A newer motif release is available. Click to view release notes."></a>
+    </a>
+    {# v1.15.21: SSR tab availability — pre-fix MOVIES/TV/ANIME
+       hardcoded style="display:none" + JS reveal post-/api/stats
+       caused a visible flash on every cross-page nav. Computing
+       at template-render time means the HTML the browser receives
+       already has the right visibility. JS-side applyTabAvailability
+       still runs (cached + live updates) and is a no-op when the
+       SSR matched — belt + braces. #}
+    {% set _nav_ta = nav_tab_availability() %}
+    <nav class="nav">
+      <a href="/" data-nav="dashboard">DASH</a>
+      <a href="/movies" data-nav="movies"{% if not _nav_ta.movies %} style="display:none"{% endif %}>MOVIES</a>
+      <a href="/tv" data-nav="tv"{% if not _nav_ta.tv %} style="display:none"{% endif %}>TV SHOWS</a>
+      <a href="/anime" data-nav="anime"{% if not _nav_ta.anime %} style="display:none"{% endif %}>ANIME</a>
+      {# v1.18.0: COLLECTIONS tab. Always-visible (no nav_tab_availability
+         gate yet — collections live within parent sections, so any user
+         with a managed section has collections eligible to show up).
+         If we add a "managed sections include collections" probe later,
+         it would flow through nav_tab_availability the same way as the
+         primary tabs. #}
+      <a href="/collections" data-nav="collections">COLLECTIONS</a>
+      <a href="/queue" data-nav="queue">LOGS</a>
+      <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
+    </nav>
+    <div class="topbar-status" id="topbar-status">
+      <!-- v1.12.106: unified op-pill vocabulary (cf. ops.css).
+           UPD / FAIL / OPS now read consistently — same shape,
+           tone-keyed colors, same hover/click behavior. Mini-bar
+           shows live progress when a sync is running and replaces
+           the old spinning dot for that state. -->
+      {# v1.13.79: deep-link migrated from tdb_pills=update to
+         attn_pills=update so right-click → open-in-new-tab lands
+         on the same blue ! ATTN chip the JS-driven UPD click
+         lights up. Mirrors the v1.13.68 migration for the FAIL
+         pill (which moved from status=failures to attn_pills=fail). #}
+      <a href="/movies?attn_pills=update" class="op-pill op-tone-upd" id="topbar-updates-badge"
+         hidden
+         title="Upstream URL changed for one or more themes.">
+        <span class="op-pill-count" id="topbar-updates-count">0</span>
+        <span class="op-pill-label">UPD</span>
+      </a>
+      {# v1.15.22: SSR-driven hidden + count text. _ssr_top is set
+         above (banner block). Each chip reads its own count and
+         hides itself when 0. JS continues to update on the next
+         /api/stats poll. #}
+      {# v1.19.68: FAIL pill href repointed from ?tdb_pills=dead
+         (dead-URL-only subset) to ?attn_pills=fail (union of every
+         failure_kind incl. cookies_expired). Pre-fix the FAIL
+         pulse count said N but clicking surfaced fewer rows
+         because the count was the union and the click filter
+         was a subset. Now click-through matches the count
+         exactly + matches what ACK FAILURES bulk action acks. #}
+      <a href="/movies?attn_pills=fail" class="op-pill op-tone-fail" id="topbar-failures-badge"
+         {% if not _ssr_top.failures_count %}hidden{% endif %}
+         title="One or more themes need attention — failure_kind is set and unacked (includes cookies-needed rows).">
+        <span class="op-pill-count" id="topbar-failures-count">{{ _ssr_top.failures_count }}</span>
+        <span class="op-pill-label">FAIL</span>
+      </a>
+      {# v1.15.17 introduced a separate COOKIES badge with biscuit-
+         brown tone to surface cookies-needed rows distinctly from
+         the dead-URL FAIL pulse. Original design rationale:
+         cookies-needed is operator-actionable (drop a file) while
+         FAIL = "true dead URL, no immediate fix available."
+         v1.19.68 removed the separate badge. Cookies-needed is
+         still a failure_kind ('cookies_expired') so it counts
+         toward the FAIL pulse + shows the red ⚠ title-cell glyph
+         + gets covered by // ACK FAILURES bulk action — the same
+         attention treatment as any other failure. The yellow ⚿
+         row pill (TDB column) + the yellow ⚿ TDB-axis filter
+         chip still let the operator identify + filter to
+         cookies-needed rows when they want to. Two yellow ⚿
+         surfaces (row pill + filter chip) is the right amount;
+         a third (this topbar badge) was overkill alert noise. #}
+      <!-- v1.13.1 (Phase C): DROP badge — count of themes ThemerrDB
+           stopped publishing. Click filters the library to the gray
+           TDB◌ pill so the user can ACK DROP / CONVERT TO MANUAL
+           through them in bulk. -->
+      <a href="/movies?tdb_pills=dropped" class="op-pill op-tone-drop" id="topbar-drops-badge"
+         {% if not _ssr_top.drops_count %}hidden{% endif %}
+         title="TDB stopped tracking one or more themes.">
+        <span class="op-pill-count" id="topbar-drops-count">{{ _ssr_top.drops_count }}</span>
+        <span class="op-pill-label">DROP</span>
+      </a>
+      {# v1.24.40: RE-PUSH badge — proactive surfacing of genuinely-dead
+         uploaded themes (a Plex delete+re-add destroyed the rating_key motif
+         uploaded to, so Plex no longer serves it). Mirrors the FAIL/UPD/DROP
+         op-pills: hidden at 0, click → ?attn_pills=repush (the new ⟳ ATTN chip,
+         same row set as the RP LINK badge). the user wanted RP discoverable
+         without hunting, like the TDB Fail indicator. #}
+      <a href="/movies?attn_pills=repush" class="op-pill op-tone-repush" id="topbar-repush-badge"
+         {% if not _ssr_top.repush_count %}hidden{% endif %}
+         title="One or more uploaded themes need a re-push — Plex removed + re-added the item, destroying the rating_key motif uploaded to. // PLACE to re-upload from motif's copy.">
+        <span class="op-pill-count" id="topbar-repush-count">{{ _ssr_top.repush_count }}</span>
+        <span class="op-pill-label">RE-PUSH</span>
+      </a>
+      {# v1.24.43: AWAIT badge — proactive surfacing of !P rows (a theme is
+         downloaded but not deployed to Plex: canonical present, no placement,
+         Plex not self-serving). Mirrors the RE-PUSH badge: hidden at 0, click →
+         ?attn_pills=await (same row set as the !P ATTN chip). the user wanted these
+         surfaced like FAIL instead of having to filter to find them. #}
+      <a href="/movies?attn_pills=await" class="op-pill op-tone-await" id="topbar-await-badge"
+         {% if not _ssr_top.awaiting_count %}hidden{% endif %}
+         title="One or more themes are downloaded but not deployed to Plex — // PLACE to deploy, or leave staged as a backup while Plex serves its own.">
+        <span class="op-pill-count" id="topbar-await-count">{{ _ssr_top.awaiting_count }}</span>
+        <span class="op-pill-label">AWAIT</span>
+      </a>
+      <!-- v1.13.11: DISK warning pill — surfaced when free space on
+           themes_dir's filesystem dips below paths.min_free_disk_mb.
+           Downloads are being blocked transiently while this is
+           visible. Click jumps to /settings#paths so the operator
+           can review the threshold or free space. -->
+      <a href="/settings#paths" class="op-pill op-tone-warn" id="topbar-disk-badge"
+         {% if not _ssr_top.disk_low %}hidden{% endif %}
+         title="Low disk — downloads paused until space frees up.">
+        <span class="op-pill-count" id="topbar-disk-free">{{ _ssr_top.disk_free_mb if _ssr_top.disk_free_mb is not none else 0 }}</span>
+        <span class="op-pill-label">DISK</span>
+      </a>
+      {# v1.15.55: SSR the op-mini visibility + content so the
+         topbar live-ops bar persists across tab navs. Pre-fix the
+         element started hidden on every page load + ops.js
+         revealed it after the first /api/progress poll (50ms-1s
+         latency); on every nav to /movies/tv/anime/settings the
+         bar disappeared then reappeared. JS still owns live
+         updates — SSR just provides a non-flashing starting
+         frame. Bar is indeterminate at SSR-time (we don't bake
+         the percent) so JS will refine pct on the next poll
+         without a visible jump. #}
+      <a href="#"
+         class="op-mini{% if _ssr_top.op_running %} op-tone-{{ _ssr_top.op_tone }} op-mini-indet{% endif %}"
+         id="op-mini"
+         {% if not _ssr_top.op_running %}hidden{% endif %}
+         data-ops-trigger
+         title="Click to expand live ops">
+        {%- if _ssr_top.op_running -%}
+          <span class="op-mini-label">{{ _ssr_top.op_label }}</span>
+          <span class="op-mini-bar"><span class="op-mini-bar-fill" style="width:100%"></span></span>
+          <span class="op-mini-pct"></span>
+        {%- endif -%}
+      </a>
+      <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden
+         data-ops-trigger title="Multiple ops running — click to expand all"></a>
+      <!-- v1.12.118: idle pill replaces the legacy green dot + IDLE
+           text. Same visual family as the active op-mini bar; no
+           dot-to-bar flip when an op finishes. Click opens the ops
+           drawer so users can see "last 5 ops" history.
+           v1.15.78: mirror the v1.15.55 op-mini SSR gate — hide the
+           IDLE pill at SSR-time when `_ssr_top.op_running` is true.
+           Pre-fix the IDLE pill rendered unconditionally and JS
+           hid it after the first /api/progress poll; on every nav
+           with a running op the user saw a brief IDLE flash before
+           JS reconciled. the user: "when clicking between tabs and a
+           job is running in the status bar idle is briefly
+           displayed before disappearing." JS still owns live
+           updates — SSR just provides a non-flashing starting
+           frame, same pattern as op-mini. -->
+      <a href="#" class="op-pill op-pill-idle" id="op-status-idle"
+         {% if _ssr_top.op_running %}hidden{% endif %}
+         data-ops-trigger title="No active ops — click to view recent history">
+        <span class="op-pill-label">IDLE</span>
+      </a>
+      {# v1.23.49: HELP toggle grouped at the right with the logout control
+         (was floating at the LEFT of the cluster, crammed against IDLE).
+         v1.23.52: IDLE / // HELP / logout are spaced evenly by the single
+         .topbar-status flex gap — no ad-hoc margins. #}
+      {# v1.23.76: // HELP → a compact `?` glyph (cyan on hover, full-cyan fill
+         when active) to reclaim topbar room. The title carries the meaning. #}
+      {# v1.23.81: aria-label so screen readers announce the action — the visible
+         glyph is a bare `?` (v1.23.76) with no accessible name otherwise. #}
+      <button type="button" class="help-toggle" id="help-toggle" aria-pressed="false"
+              aria-label="Toggle help mode"
+              title="Toggle help mode — decode the chips and reveal hints">?</button>
+      <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
+    </div>
+  </header>
+
+  {# v1.23.44: help-mode bar — shown only when body.help-mode is set. A quiet
+     pointer to the full reference so a new user knows where to look. #}
+  <div class="help-mode-bar" id="help-mode-bar">
+    <span class="help-mode-bar-msg">help mode on — extra explanations are showing · open the chip reference&nbsp;→</span>
+    <button type="button" class="btn btn-tiny" id="help-glossary-open">// GLOSSARY</button>
+    <button type="button" class="help-mode-bar-off" id="help-mode-off"
+            title="Turn help mode off" aria-label="Turn help mode off">×</button>
+  </div>
+
+  {# v1.23.44: GLOSSARY — the full chip vocabulary, one durable reference.
+     Colors mirror the row chips (same palette tokens). Native <dialog>: ESC +
+     backdrop close; data-close buttons wired in app.js initHelpMode(). #}
+  <dialog class="dlg help-glossary-dlg" id="help-glossary">
+    <article class="dlg-body">
+      <header class="dlg-head">
+        <h2 class="dlg-title">// GLOSSARY — WHAT THE CHIPS MEAN</h2>
+        <button class="dlg-close" type="button" data-close aria-label="Close">×</button>
+      </header>
+      <p class="help-text">Every status chip on a library row, decoded. The colors here match what you see on the row.</p>
+
+      {# v1.23.68: TDB axis — the upstream-status pills on the left of each row.
+         Reuses the real .tdb-pill tdb-pill-* row classes (per the v1.23.56
+         reuse-don't-mirror rule) so the decode chips are identical to the row. #}
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// TDB — ThemerrDB upstream status</h3>
+        <div class="help-gloss-grid help-gloss-grid-wide">
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-yes">TDB</span><span class="help-gloss-def">Tracked — ThemerrDB has this title and its URL is healthy.</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-update">TDB ↑</span><span class="help-gloss-def">Update — upstream changed its URL. ACCEPT UPDATE to re-download, or KEEP CURRENT.</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-cookies">TDB ⚿</span><span class="help-gloss-def">Cookies needed — the source is gated (age-restricted YouTube, SoundCloud Go+). Add cookies.txt.</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-dead">TDB ✗</span><span class="help-gloss-def">Dead — the upstream URL is broken. Use SET URL or UPLOAD MP3.</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-dropped">TDB ◌</span><span class="help-gloss-def">Dropped — ThemerrDB stopped tracking this title.</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-empty">TDB ∅</span><span class="help-gloss-def">No theme video — ThemerrDB lists this title but has no URL to download. Use SET URL or UPLOAD MP3.</span></div>
+          <div class="help-gloss-row"><span class="tdb-pill tdb-pill-no">no TDB</span><span class="help-gloss-def">Untracked — no ThemerrDB record for this title.</span></div>
+        </div>
+      </section>
+
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// SRC — where the theme comes from</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb">T</span><span class="help-gloss-def">ThemerrDB-managed — motif fetches it from upstream (IMDb / TMDB).</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-user">U</span><span class="help-gloss-def">User — a manual theme URL (YouTube / SoundCloud / Instagram / Facebook) or an uploaded MP3.</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-adopt">A</span><span class="help-gloss-def">Adopted — motif claimed a theme.mp3 already in the Plex folder (no ThemerrDB link).</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-manual">M</span><span class="help-gloss-def">Manual sidecar — a loose theme.mp3 motif doesn't manage yet. Click ADOPT to take it over.</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-cloud">P</span><span class="help-gloss-def">Plex agent / cloud — Plex serves its own theme (Plex Pass cloud or the themerr-plex embed).</span></div>
+          <div class="help-gloss-row"><span class="link-badge gc-none">–</span><span class="help-gloss-def">No theme — nothing placed, or ThemerrDB dropped the entry.</span></div>
+        </div>
+      </section>
+
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// LINK — how it's stored &amp; backed up</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-hardlink">HL</span><span class="help-gloss-def">Hardlink — shares the canonical file's inode, so it costs no extra disk.</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-copy">C</span><span class="help-gloss-def">Copy — a cross-filesystem fallback when a hardlink isn't possible (uses extra disk).</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-pu">PU</span><span class="help-gloss-def">Pushed — motif uploaded the theme to Plex via its API; served with no folder sidecar.</span></div>
+          {# v1.24.40: RP — re-push needed. #}
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-repush">RP</span><span class="help-gloss-def">Re-push needed — a Plex delete + re-add destroyed the rating_key motif uploaded to, so Plex no longer serves it. PLACE to re-upload from motif's copy.</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-mismatch">M</span><span class="help-gloss-def">Mismatch — the canonical file no longer matches Plex's copy. Open INFO to REVERT or KEEP.</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-b">PB</span><span class="help-gloss-def">Plex Backup — motif's saved copy of a Plex cloud theme; insurance against losing Plex Pass.</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-tb">TB</span><span class="help-gloss-def">ThemerrDB Backup — downloaded but Plex is still serving. PROMOTE TO ACTIVE to deploy.</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-ab">AB</span><span class="help-gloss-def">Adopted Backup — adopted a sidecar but left Plex serving. PROMOTE TO ACTIVE to deploy.</span></div>
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-bk">UB</span><span class="help-gloss-def">User Backup — your file is ready but not placed. PUSH TO PLEX to install it.</span></div>
+          <div class="help-gloss-row"><span class="link-badge gc-none">—</span><span class="help-gloss-def">No placement and no backup. Common on Plex-served (P) rows.</span></div>
+        </div>
+      </section>
+
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// DL &amp; PL — file and placement state</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-on"></span><span class="help-gloss-def"><b>on</b> — DL: the canonical file is on disk · PL: the theme is placed at Plex.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-await"></span><span class="help-gloss-def"><b>await</b> — downloaded, but not placed in the Plex folder yet.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-broken"></span><span class="help-gloss-def"><b>broken</b> — the file is missing where it should be (deleted out from under motif).</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-dot gd-off"></span><span class="help-gloss-def"><b>off</b> — none.</span></div>
+        </div>
+      </section>
+
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// FLAGS — needs your attention</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-fail">&#9888;</span><span class="help-gloss-def">Failure — the theme couldn't download or place. Click the row to view it and ACK.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-update">!</span><span class="help-gloss-def">Update — ThemerrDB now has a different URL. ACCEPT UPDATE to re-download, or KEEP CURRENT.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-broken">&#8634;</span><span class="help-gloss-def">Restorable — the canonical file is gone but Plex's copy is intact. RESTORE FROM PLEX.</span></div>
+          {# v1.24.40: ⟳ re-push needed flag (orange title glyph + ATTN chip). #}
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-repush">&#10227;</span><span class="help-gloss-def">Re-push needed — Plex dropped the uploaded theme (re-add destroyed its rating_key). PLACE to re-upload.</span></div>
+        </div>
+      </section>
+
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// TOPBAR — the status pills up top</h3>
+        <div class="help-gloss-grid help-gloss-grid-wide">
+          <div class="help-gloss-row"><span class="help-gloss-chip gc-upd">UPD</span><span class="help-gloss-def">Pending ThemerrDB updates — click to filter to them.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-chip gc-fail">FAIL</span><span class="help-gloss-def">Un-acked failures across the library.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-chip gc-none">DROP</span><span class="help-gloss-def">Themes ThemerrDB stopped tracking.</span></div>
+          {# v1.24.40: RE-PUSH topbar badge. #}
+          <div class="help-gloss-row"><span class="help-gloss-chip gc-repush">RE-PUSH</span><span class="help-gloss-def">Uploaded themes Plex dropped (re-add destroyed the rating_key) — click to PLACE them again.</span></div>
+          {# v1.24.43: AWAIT topbar badge. #}
+          <div class="help-gloss-row"><span class="help-gloss-chip gc-await">AWAIT</span><span class="help-gloss-def">Themes downloaded but not deployed to Plex — click to PLACE them, or leave staged as a backup.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-chip gc-disk">DISK</span><span class="help-gloss-def">Low free disk — downloads are paused until space frees up.</span></div>
+        </div>
+      </section>
+
+      <div class="form-actions">
+        <button type="button" class="btn" data-close>// CLOSE</button>
+      </div>
+    </article>
+  </dialog>
+
+  <!-- v1.12.106: ops side-drawer. Hidden by default; opens on click
+       of the topbar mini-bar or any element with [data-ops-trigger].
+       Renders one card per running op + a tail of recent finishes. -->
+  <div id="ops-drawer" class="ops-drawer" hidden aria-hidden="true">
+    <div class="ops-drawer-scrim"></div>
+    <aside class="ops-drawer-panel" role="dialog" aria-label="Live ops">
+      <header class="ops-drawer-head">
+        <h2 class="ops-drawer-title">// LIVE OPS</h2>
+        <button class="ops-drawer-close" type="button" aria-label="Close">×</button>
+      </header>
+      <div class="ops-drawer-body" id="ops-drawer-body">
+        <div class="ops-drawer-empty">// loading…</div>
+      </div>
+    </aside>
+  </div>
+  {% endif %}
+
+  <main class="content">
+    {% block content %}{% endblock %}
+  </main>
+
+  {# v1.14.83: info-dlg promoted from library.html so the OPEN ROW
+     buttons on /queue's REPROBE error events (and any future
+     cross-page caller) can trigger openInfoDialog regardless of
+     which page the user is on. The dialog stays hidden until
+     showModal() fires; zero render cost when unused. #}
+  <dialog class="dlg" id="info-dlg">
+    <article class="dlg-body">
+      <header class="dlg-head">
+        <h2 class="dlg-title">// MOTIF INFO</h2>
+        <button class="dlg-close" id="info-dlg-close" type="button" aria-label="Close dialog" title="Close">×</button>
+      </header>
+      <div id="info-dlg-body">
+        <p class="muted">loading…</p>
+      </div>
+    </article>
+  </dialog>
+
+  <footer class="footer">
+    <span class="muted">motif · homelab theme orchestration · </span>
+    <a class="muted" href="/healthz">healthz</a>
+  </footer>
+</body>
+</html>

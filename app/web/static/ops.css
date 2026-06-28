@@ -1,0 +1,1057 @@
+/* v1.12.106: unified status / progress vocabulary.
+ *
+ * Three primitives:
+ *   .op-pill      — clickable count badge (FAIL / UPD / OPS)
+ *   .op-mini-bar  — inline topbar progress strip when an op is live
+ *   .op-card      — full-detail card inside the drawer
+ *
+ * Tone tokens (extend the existing color palette):
+ *   --tone-tdb    green  — ThemerrDB ops (matches SRC=T / SYNC button)
+ *   --tone-plex   amber  — Plex ops (matches SRC=P / PUSH TO PLEX)
+ *   --tone-queue  cyan   — download / place / scan queue ops
+ *   --tone-fail   red    — failures
+ *   --tone-upd    blue   — pending updates
+ *   --tone-warn   amber  — disk-low / overflow warnings
+ *
+ * v1.19.88: tone realignment. Pre-fix tdb=cyan + plex=green, which
+ * was swapped vs the source-letter palette everywhere else (SRC=T is
+ * green, SRC=P is amber, SRC=A is cyan). THEMERRDB SYNC now reads
+ * green like its button + row pill; PLEX REFRESH reads amber like
+ * PUSH TO PLEX; the download/place queues get their own cyan
+ * --tone-queue so they stay distinct from Plex's amber. --tone-warn
+ * stays amber for the genuine warnings that still use it (the
+ * disk-low badge + the "+N ops" overflow pill).
+ *
+ * Each primitive accepts a tone via .op-tone-{name} so all
+ * indicators read consistently.
+ */
+
+:root {
+  --tone-tdb: var(--green-bright);
+  --tone-plex: var(--amber);
+  --tone-queue: var(--cyan);
+  --tone-fail: var(--red);
+  --tone-upd: var(--blue);
+  --tone-warn: var(--amber);
+  /* v1.15.17: dedicated tone for the COOKIES topbar chip + STATUS
+     filter pill. Pre-fix the cookies-needed surface shared --amber
+     with Plex-side ops, making it read as "Plex problem" instead of
+     "auth credential needed".
+     v1.15.43: yellow → biscuit brown (`--brown`). v1.15.17's yellow
+     was still too close to the Plex amber per the user.
+     v1.15.121: brown → `--lemon` (#f5dd2b clean lemon gold). Brown
+     was perceptually muddy + the user wanted yellow back — but a
+     cooler/greener yellow than v1.15.17's so it no longer clusters
+     with the amber siblings (await, broken). Full color history
+     in app.css :root --lemon definition. */
+  --tone-cookies: var(--lemon);
+}
+
+/* v1.20.46: keyboard focus ring for the ops interactive elements.
+   app.css's universal `:focus { outline: none }` strips the UA ring
+   app-wide; the app.css `:focus-visible` allow-list restores it ONLY
+   for app.css primitives and never listed these ops controls — so
+   keyboard users tabbing onto the topbar UPD/FAIL/DROP/DISK pills
+   (real <a>), the drawer × close, or an op-card // CANCEL button got
+   zero visible focus. These are the genuinely tabbable ops controls
+   (the op-card-expandable / detail-collapse spans are mouse-click-only,
+   no tabindex, so they can't receive :focus-visible). Matches the
+   app.css ring: 2px solid cyan, 2px offset. */
+.op-pill:focus-visible,
+.ops-drawer-close:focus-visible,
+.op-card-cancel:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* ── op-pill ──────────────────────────────────────────────────── */
+
+.op-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  border: 1px solid var(--line-bright);
+  background: var(--bg-elev);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  cursor: pointer;
+  text-decoration: none;
+  /* v1.17.8: migrated to motion tokens (v1.15.110 promised this
+     across the codebase but ops.css was missed). 0.15s ≈
+     --motion-normal (120ms). The slight 30ms compression is
+     imperceptible + buys consistency. */
+  transition: border-color var(--motion-normal) ease, color var(--motion-normal) ease,
+              box-shadow var(--motion-normal) ease, background var(--motion-normal) ease;
+}
+
+.op-pill:hover {
+  text-decoration: none;
+  background: var(--bg-elev-2);
+}
+
+.op-pill .op-pill-count {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-pill .op-pill-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  opacity: 0.75;
+}
+
+.op-pill[hidden] { display: none !important; }
+
+/* Tone variants — colored border + matching glow on hover. */
+.op-pill.op-tone-fail     { border-color: rgba(var(--red-rgb), 0.5); color: var(--tone-fail); animation: op-pill-fail-pulse 2.4s ease-in-out infinite; }
+.op-pill.op-tone-fail:hover     { box-shadow: 0 0 10px rgba(var(--red-rgb), 0.35); }
+.op-pill.op-tone-upd      { border-color: rgba(var(--blue-rgb), 0.5); color: var(--tone-upd); }
+.op-pill.op-tone-upd:hover      { box-shadow: 0 0 10px rgba(var(--blue-rgb), 0.35); }
+/* v1.19.88: tdb border cyan→green, plex border green→amber to track
+   the realigned --tone-tdb / --tone-plex text colors. */
+.op-pill.op-tone-tdb      { border-color: rgba(var(--green-rgb), 0.5); color: var(--tone-tdb); }
+.op-pill.op-tone-tdb:hover      { box-shadow: 0 0 10px rgba(var(--green-rgb), 0.35); }
+.op-pill.op-tone-plex     { border-color: rgba(var(--amber-rgb), 0.5); color: var(--tone-plex); }
+.op-pill.op-tone-plex:hover     { box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.35); }
+.op-pill.op-tone-warn     { border-color: rgba(var(--amber-rgb), 0.5); color: var(--tone-warn); }
+.op-pill.op-tone-warn:hover     { box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.35); }
+/* v1.19.88: queue tone (cyan) for download/place/scan ops — distinct
+   from Plex amber. (op-pills don't currently use it, but the tone is
+   defined here so the family stays complete for the op-mini below.) */
+.op-pill.op-tone-queue    { border-color: rgba(var(--cyan-rgb), 0.5); color: var(--tone-queue); }
+.op-pill.op-tone-queue:hover    { box-shadow: 0 0 10px rgba(var(--cyan-rgb), 0.35); }
+/* v1.15.17: cookies tone for the topbar // X COOKIES chip. Yellow
+   border + text, no pulse animation (cookies-needed is operator-
+   actionable but not as urgent as a true FAIL — leave the
+   attention-grabbing pulse to the FAIL chip). */
+/* v1.13.1 (Phase C): muted gray for the DROP badge. Distinct from
+   the red FAIL pulse (drops aren't broken — TDB just stopped
+   publishing) and from the green idle pill (drops are something to
+   review, not pure idle). */
+.op-pill.op-tone-drop     { border-color: rgba(var(--grey-rgb),0.45); color: var(--fg-mute); }
+.op-pill.op-tone-drop:hover     { box-shadow: 0 0 10px rgba(var(--grey-rgb),0.30); }
+/* v1.24.40: RE-PUSH badge — orange, sharing the RP glyph/chip tone so the
+   topbar badge, the ⟳ ATTN chip, and the RP LINK badge read as one color. */
+.op-pill.op-tone-repush   { border-color: rgba(var(--orange-rgb),0.5); color: var(--orange); }
+.op-pill.op-tone-repush:hover   { box-shadow: 0 0 10px rgba(var(--orange-rgb),0.35); }
+/* v1.24.43: AWAIT badge — amber, sharing the !P await glyph/chip tone so the
+   topbar badge and the !P ATTN chip read as one color. */
+.op-pill.op-tone-await    { border-color: rgba(var(--amber-rgb),0.5); color: var(--amber); }
+.op-pill.op-tone-await:hover    { box-shadow: 0 0 10px rgba(var(--amber-rgb),0.35); }
+
+/* v1.12.118: the always-visible "// IDLE" pill that anchors the
+ * topbar status slot when no ops are running. Same visual family as
+ * the FAIL/UPD/active op-pills — no dot-to-bar flip when an op
+ * finishes; the idle pill simply unhides as the mini-bar disappears. */
+.op-pill.op-pill-idle {
+  border-color: rgba(var(--green-rgb), 0.35);
+  color: var(--green);
+  cursor: pointer;
+}
+.op-pill.op-pill-idle:hover {
+  box-shadow: 0 0 10px rgba(var(--green-rgb), 0.30);
+}
+.op-pill.op-pill-idle.op-pill-offline {
+  border-color: rgba(var(--red-rgb), 0.5);
+  color: var(--red);
+  animation: op-pill-fail-pulse 2.4s ease-in-out infinite;
+}
+/* v1.12.121 (Phase A): sticky FALLBACK tint on the idle pill. Set
+   when the most-recent tdb_sync had to fall back to the slow remote
+   path — usually because GitHub codeload was unreachable. Cleared
+   automatically by the next successful snapshot run. Warn (amber)
+   tone; not red, because the data is still fresh, just acquired
+   the slow way. */
+.op-pill.op-pill-idle.op-pill-fallback {
+  border-color: rgba(var(--orange-rgb), 0.55);
+  color: var(--orange);
+}
+.op-pill.op-pill-idle.op-pill-fallback:hover {
+  box-shadow: 0 0 10px rgba(var(--orange-rgb), 0.30);
+}
+.op-pill.op-pill-idle[hidden] { display: none !important; }
+
+@keyframes op-pill-fail-pulse {
+  0%, 100% { box-shadow: 0 0 0 rgba(var(--red-rgb), 0); }
+  50%      { box-shadow: 0 0 10px rgba(var(--red-rgb), 0.40); }
+}
+
+/* ── op-mini-bar ──────────────────────────────────────────────── */
+
+/* Topbar live indicator that replaces the spinning dot when ANY
+ * op is running. Compact: stage label + thin progress strip + pct.
+ * Click → opens the drawer. */
+.op-mini {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-2);
+  height: 22px;
+  padding: 0 10px;
+  border-radius: 11px;
+  border: 1px solid var(--line-bright);
+  background: var(--bg-elev);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  cursor: pointer;
+  text-decoration: none;
+  /* v1.13.13: tint label + pct inherit by op tone. Pre-fix the
+     mini-bar text was hardcoded to a near-white --text, which read
+     as a flash of "system white" against the cyan/green/amber
+     palette of the rest of the topbar. Each tone now overrides
+     below so the text matches the bar fill. */
+  color: var(--tone-tdb);
+}
+.op-mini[hidden] { display: none !important; }
+.op-mini:hover { background: var(--bg-elev-2); }
+.op-mini.op-tone-plex { color: var(--tone-plex); }
+/* v1.19.88: queue ops (download/place/scan) — renamed from
+   op-tone-warn (no op-mini renders the warn tone anymore; warn is
+   now only the op-pill disk/overflow warnings). */
+.op-mini.op-tone-queue { color: var(--tone-queue); }
+
+.op-mini .op-mini-label {
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* v1.13.13: explicit currentColor so any future override on .op-mini
+     cascades cleanly without a re-declaration here. */
+  color: currentColor;
+}
+
+.op-mini .op-mini-bar {
+  position: relative;
+  width: 90px;
+  height: 4px;
+  background: var(--line);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.op-mini .op-mini-bar-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  background: linear-gradient(
+    90deg, transparent 0%, var(--tone-tdb) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: op-mini-shimmer 2.2s linear infinite;
+  /* v1.15.136: width transition 0.6s cubic-bezier → 1s linear.
+     the user: "the status bar that fills while waiting … its
+     movement feels a bit jumpy and not as smooth and clean as
+     it could." Root cause: the 0.6s transition completes inside
+     the 1s poll interval, so the bar moves for 0.6s then sits
+     still 0.4s — visible "snap → settle → snap" rhythm. The
+     cubic-bezier ALSO decelerated at the end of each segment,
+     creating accelerate→decelerate→accelerate across polls.
+     Matching the duration to the poll cadence (1s) + linear
+     easing makes the bar advance at constant velocity, so when
+     one transition ends the next poll's transition starts
+     immediately from the current visual value — continuous
+     motion instead of stutter. */
+  transition: width 1s linear;
+}
+
+.op-mini.op-tone-plex .op-mini-bar-fill {
+  background: linear-gradient(
+    90deg, transparent 0%, var(--tone-plex) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: op-mini-shimmer 2.2s linear infinite;
+}
+
+.op-mini.op-tone-queue .op-mini-bar-fill {
+  background: linear-gradient(
+    90deg, transparent 0%, var(--tone-queue) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: op-mini-shimmer 2.2s linear infinite;
+}
+
+/* v1.12.109: indeterminate variant for queue ops where stage_total
+ * isn't known. Bar is a continuous shimmer at full width; the mini
+ * pct hides since "X%" of an unknown total reads as noise. */
+.op-mini.op-mini-indet .op-mini-bar-fill {
+  width: 100% !important;
+}
+
+.op-mini .op-mini-pct {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+  min-width: 30px;
+  text-align: right;
+}
+
+@keyframes op-mini-shimmer {
+  0%   { background-position: 200% 0%; }
+  100% { background-position: -100% 0%; }
+}
+
+/* ── legacy-surface suppression while ops mini-bar is live ──────
+ *
+ * v1.12.108: when any op is running we own the topbar's status
+ * surface — the legacy yellow dot, REFRESHING/SYNCING text, and
+ * per-tab .nav-busy::after pulse are redundant with (and lag
+ * behind) the op-mini's live progress strip. ops.js sets
+ * body[data-ops-running="1"] when ≥1 op is active; CSS hides the
+ * legacy bits while that holds. As soon as ops finishes the
+ * attribute clears and the legacy UI returns to its idle state.
+ */
+body[data-ops-running="1"] #topbar-idle-dot,
+body[data-ops-running="1"] .nav a.nav-busy::after,
+body[data-ops-running="1"] #topbar-status-text {
+  display: none !important;
+}
+
+/* ── ops-drawer ───────────────────────────────────────────────── */
+
+.ops-drawer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  pointer-events: none;
+}
+
+.ops-drawer[hidden] { display: none !important; }
+
+.ops-drawer-scrim {
+  position: absolute;
+  inset: 0;
+  background: rgba(var(--black-rgb), 0.45);
+  opacity: 0;
+  /* v1.17.8: deliberately NOT migrated to --motion-* tokens.
+     The drawer scrim + panel are a paired animation tuned for
+     snappy-but-readable drawer entry: 220ms scrim fade-in +
+     280ms panel slide-in with cubic-bezier(0.4, 0, 0.2, 1)
+     overshoot. --motion-slow (400ms) feels sluggish for this
+     interaction; --motion-normal (120ms) is too snappy + drops
+     the perception of "panel is sliding in" (it just appears).
+     Documented as an intentional outlier per the v1.15.110
+     style guide's "deliberate timing" rationale. */
+  transition: opacity 0.22s ease;
+  pointer-events: auto;
+}
+
+.ops-drawer.is-open .ops-drawer-scrim { opacity: 1; }
+
+.ops-drawer-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 380px;
+  max-width: 92vw;
+  background: var(--bg-elev);
+  /* v1.23.33: match the .dlg (// MOTIF INFO card) glow for platform-wide
+     uniformity — green-deep edge + the IDENTICAL `0 0 40px rgba(green,0.15)`
+     ambient glow, with a leftward dark drop suited to a right-pinned panel
+     (the card's drop is downward). Was a neutral border + dark drop only. */
+  border-left: 1px solid var(--green-deep);
+  box-shadow: 0 0 40px rgba(var(--green-rgb), 0.15),
+              -8px 0 60px rgba(var(--black-rgb), 0.6);
+  transform: translateX(100%);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.ops-drawer.is-open .ops-drawer-panel { transform: translateX(0); }
+
+/* v1.20.41: accordion expand. The panel never resizes; a clicked card
+   grows DOWNWARD in place (its run log renders inside it, below its own
+   content — see .op-card-detail), pushing the cards below it down.
+   Nothing moves sideways and no other card changes. A right-pinned
+   fixed-width panel has no room to grow a card leftward without widening
+   the whole panel (which read as "everything expands"), so down it is. */
+
+.ops-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* v1.17.8: class-based selector for the ops-drawer title. Pre-fix
+   used `.ops-drawer-head h2` descendant selector — works, but
+   brittle (if the element type changes, breaks) + leaves the
+   `<h2>` bare with no class, breaking parity with every other
+   <h2> in motif (which carries .block-title / .dlg-title /
+   .ops-drawer-title etc). v1.15.110-style motion tokens also
+   apply: was raw `font-size: 13px`, now uses `var(--t-small)`
+   so any future scale adjustment flows through here too. */
+.ops-drawer-title {
+  margin: 0;
+  font-size: var(--t-small);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--green-bright);
+}
+
+.ops-drawer-close {
+  background: none;
+  border: 0;
+  color: var(--fg);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 6px;
+  opacity: 0.7;
+}
+/* v1.23.49: red on hover (the user: match the info-card + glossary × close). */
+.ops-drawer-close:hover { opacity: 1; color: var(--red); }
+
+.ops-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  /* v1.21.30: reserve the drawer's own scrollbar gutter so expanding a card
+     (which adds the scrollbar on Windows/classic-scrollbar systems) doesn't
+     eat width and reflow the drawer content sideways on click. */
+  scrollbar-gutter: stable;
+  padding: 14px 16px 24px;
+}
+
+.ops-drawer-empty {
+  text-align: center;
+  padding: 36px 12px;
+  color: var(--fg);
+  opacity: 0.55;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+
+/* ── op-card ──────────────────────────────────────────────────── */
+
+.op-card {
+  position: relative;
+  border: 1px solid var(--line-bright);
+  border-radius: 8px;
+  padding: 14px 14px 12px;
+  margin-bottom: 14px;
+  background: linear-gradient(
+    180deg, rgba(var(--white-rgb), 0.015), rgba(var(--black-rgb), 0.06));
+  /* v1.17.8: motion-token migration. 0.2s + 0.25s both round to
+     --motion-normal (120ms) — the 5-30ms drift between them was
+     invisible. */
+  transition: border-color var(--motion-normal) ease, box-shadow var(--motion-normal) ease;
+}
+
+/* v1.13.17: compact variant for finished cards in the // LAST OPS
+   tail. Pre-fix every finished card rendered the full live-op
+   layout (timeline strip, sparkline, frozen activity feed) which
+   ate ~120px each. The compact variant trims padding + margin to
+   match the trimmed-down content, making the LAST OPS pile a
+   scannable summary instead of a wall of stale state. */
+.op-card-compact {
+  padding: 10px 14px 8px;
+  margin-bottom: var(--gap-2);
+  opacity: 0.92;
+}
+.op-card-compact .op-card-stage { margin-bottom: 0; }
+
+/* v1.19.88: each tone sets --ot (color) + --ot-rgb (triple) ONCE;
+   every tone-colored sub-element below (inset, breathe, counter,
+   bar-fill, timeline, sparkline) reads them — so a card's identity
+   lives in one place per tone instead of being re-hardcoded in ~8
+   scattered rules (which is how the cyan/green got swapped vs the
+   rest of the app pre-fix). */
+.op-card.op-tone-tdb   { --ot: var(--green-bright); --ot-rgb: var(--green-rgb); box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
+.op-card.op-tone-plex  { --ot: var(--amber);        --ot-rgb: var(--amber-rgb); box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
+.op-card.op-tone-queue { --ot: var(--cyan);         --ot-rgb: var(--cyan-rgb);  box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
+.op-card.op-tone-fail  { --ot: var(--red);          --ot-rgb: var(--red-rgb);   box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.30); }
+
+.op-card.op-status-running { animation: op-card-breathe 3.2s ease-in-out infinite; }
+.op-card.op-status-cancelling { opacity: 0.75; }
+.op-card.op-status-done    { border-color: rgba(var(--green-rgb), 0.30); }
+.op-card.op-status-failed  { border-color: rgba(var(--red-rgb), 0.40); }
+.op-card.op-status-cancelled { border-color: rgba(var(--amber-rgb), 0.30); opacity: 0.85; }
+
+/* v1.19.88: one tone-parameterized breathe keyframe (reads the
+   card's --ot-rgb) replaces the cyan-default + green-plex pair, so a
+   running card breathes in its own tone — green TDB, amber Plex,
+   cyan queue. Falls back to cyan for any toneless card. */
+@keyframes op-card-breathe {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb, var(--cyan-rgb)), 0.18), 0 0 0 rgba(var(--ot-rgb, var(--cyan-rgb)), 0); }
+  50%      { box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb, var(--cyan-rgb)), 0.30), 0 0 16px rgba(var(--ot-rgb, var(--cyan-rgb)), 0.10); }
+}
+
+.op-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.op-card-kind {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  opacity: 0.6;
+}
+
+.op-card-status {
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  opacity: 0.75;
+  margin-left: auto;
+}
+/* v1.23.43: a discoverable expand affordance. Pre-tag an op-card grew a
+   RUN INSIGHT panel on click with NO visual hint it was interactive (the user:
+   "to a new user they wouldn't know that's possible"). The caret sits left of
+   the // KIND label and rotates 90deg when the card is expanded. Only rendered
+   on real (non-synthetic) cards — synthetic queue rows don't expand. */
+.op-card-caret {
+  font-size: 9px;
+  color: var(--green);
+  opacity: 0.55;
+  transition: transform var(--motion-fast) ease;
+}
+.op-card.op-card-expanded .op-card-caret { transform: rotate(90deg); opacity: 0.85; }
+.op-card.op-status-done    .op-card-status { color: var(--green); }
+.op-card.op-status-failed  .op-card-status { color: var(--red); }
+.op-card.op-status-cancelled .op-card-status { color: var(--amber); }
+.op-card.op-status-cancelling .op-card-status { color: var(--amber); }
+/* v1.21.25: PENDING badge had no tone (default muted only) while every
+   other terminal/active status did — give it the queue cyan so a waiting
+   card reads as queued, consistent with the other status colors. */
+.op-card.op-status-pending .op-card-status { color: var(--cyan); }
+
+.op-card-stage {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+  margin: var(--gap-1) 0 var(--gap-2);
+  font-variant-numeric: tabular-nums;
+}
+
+.op-card-counter {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gap-2);
+  margin: 4px 0 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-card-counter-current {
+  font-size: 22px;
+  font-weight: 600;
+  /* v1.19.88: tone via --ot (was per-tone cyan/green overrides). */
+  color: var(--ot, var(--green-bright));
+  letter-spacing: 0.02em;
+}
+
+.op-card-counter-total {
+  font-size: 13px;
+  opacity: 0.55;
+}
+
+/* v1.18.51: counter % chip — sits to the right of the N/N pair
+   so the drawer card reads "3,000 / 4,162  73%" at a glance.
+   Mirrors the topbar mini-bar's `.op-mini-pct` (sibling of
+   `.op-mini-bar`) for visual continuity across surfaces.
+   Tone follows .op-card-counter-current via the parent .op-tone-*
+   selector so a TDB sync card shows cyan and a Plex enum card
+   shows green. the user's repro: "any section that displays a %
+   in the status bar [should show] a similar % in the drawer
+   view." */
+.op-card-counter-pct {
+  font-size: 13px;
+  font-weight: 500;
+  opacity: 0.75;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  /* v1.19.88: tone via --ot (was per-tone cyan/green overrides). */
+  color: var(--ot, var(--green-bright));
+}
+
+.op-card-bar {
+  position: relative;
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: var(--gap-2) 0;
+}
+
+.op-card-bar-fill {
+  position: absolute;
+  inset: 0;
+  width: 0%;
+  border-radius: 3px;
+  /* v1.19.88: tone gradient via the card's --ot/--ot-rgb (was two
+     per-tone rules hardcoding cyan/green). */
+  background: linear-gradient(90deg, rgba(var(--ot-rgb, var(--cyan-rgb)), 0.4), var(--ot, var(--cyan)));
+  /* v1.15.136: width transition tuned for the 1s op-progress
+     poll cadence — see .op-mini-bar-fill above for the full
+     rationale. Same change applied here so the topbar mini-bar
+     and the drawer's per-op cards move in lockstep (they're
+     fed by the same poll). */
+  transition: width 1s linear;
+}
+
+/* v1.12.124: indeterminate-bar variant for queue ops where the
+   forward total isn't known. Shimmer overlay slides across; the
+   numeric "N / M" counter is hidden so we don't lie about progress.
+   Mirrors the op-mini-indet treatment in the topbar mini-bar. */
+/* v1.19.88: indet shimmer now tints to the card's --ot (was a fixed
+   cyan default + an orange op-tone-warn override). Queue ops are cyan
+   via --tone-queue, so the indet bar reads cyan for them; the old
+   warn-orange override is gone with the warn→queue migration. */
+.op-card-bar.op-card-bar-indet .op-card-bar-fill {
+  width: 100%;
+  background-size: 200% 100%;
+  background-image: linear-gradient(
+    90deg,
+    rgba(var(--white-rgb), 0.04) 0%,
+    rgba(var(--white-rgb), 0.18) 45%,
+    rgba(var(--white-rgb), 0.04) 100%
+  ),
+  linear-gradient(90deg, var(--line), var(--ot, var(--cyan)));
+  animation: op-mini-shimmer 2.2s linear infinite;
+}
+
+.op-card-meta {
+  display: flex;
+  gap: 14px;
+  margin: 6px 0 10px;
+  font-size: 11px;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-card-meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--gap-1);
+}
+
+.op-card-meta-label {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  opacity: 0.6;
+  text-transform: uppercase;
+}
+
+/* v1.15.112: explicit rules for two op-card descendants
+   previously allowlisted as silent gaps (v1.15.89 lint).
+   `.op-card-meta-value` is also used as a JS selector hook
+   (ops.js:718's surgical-update querySelector), so the class
+   earns a CSS rule beyond pure styling. Tabular-nums via the
+   parent .op-card-meta cascade gives consistent column
+   alignment for the rate/ETA/elapsed/error values; the only
+   own property here is font-variant-numeric: inherit to make
+   the inheritance explicit (load-bearing if someone later
+   adds a different font-variant to a sibling). */
+.op-card-meta-value {
+  font-variant-numeric: inherit;
+}
+
+/* v1.15.112: was inline style="margin-top:10px;text-align:
+   center;opacity:0.6" at ops.js:585. Promoted so the cancel-
+   note presentation lives with the rest of the op-card rules
+   and a future "softer warning band" variant has a real
+   anchor. Mirrors the inline values exactly. */
+.op-card-cancel-note {
+  margin-top: var(--gap-2);
+  text-align: center;
+  opacity: 0.6;
+}
+
+/* ── stage timeline ───────────────────────────────────────────── */
+
+.op-card-timeline {
+  display: flex;
+  /* v1.13.24: gap matches op-card-timeline-labels (6px) so the
+     labels stay column-aligned with the bar segments above. */
+  gap: 6px;
+  margin: 10px 0;
+}
+
+.op-card-timeline-step {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--line);
+  /* v1.17.8: 0.4s → --motion-slow (exact match). */
+  transition: background var(--motion-slow) ease;
+  position: relative;
+}
+
+.op-card-timeline-step.is-done {
+  background: var(--green-deep);
+}
+.op-card-timeline-step.is-current {
+  /* v1.19.88: tone via --ot (was cyan default + green-plex override). */
+  background: var(--ot, var(--cyan));
+  animation: op-step-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes op-step-pulse {
+  0%, 100% { opacity: 0.65; }
+  50%      { opacity: 1; }
+}
+
+/* v1.13.12: each label takes an equal flex slot mirroring the
+   bar widths above (which use flex:1 + gap:4px), with hard
+   truncation as a safety net for any future label longer than
+   the slot width. Pre-fix the row used justify-content:
+   space-between with natural-width labels, which let long
+   labels collide and overflow on narrow drawers.
+   v1.13.24: bumped font 9 → 10.5px, dropped letter-spacing
+   from 0.06em (which was eating slot width on 4-5 char labels),
+   raised opacity 0.55 → 0.7, and added breathing room above
+   so the labels don't crowd the bar above. Slot width grew
+   the cell gap 4 → 6px to match. Result: APPLY/SNAP/EXTR/PRUN
+   read at a glance instead of being on the verge of ellipsis. */
+.op-card-timeline-labels {
+  display: flex;
+  gap: 6px;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  opacity: 0.7;
+  margin-top: 7px;
+  text-transform: uppercase;
+}
+.op-card-timeline-labels > span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* v1.20.22: only steps that carry a DISTINCT long-form get the help
+   cursor + tooltip. Pre-fix every label had cursor:help but the title
+   fell back to the label itself, so hovering showed a "?" that just
+   repeated the visible text — "looks like it'd tell me more, does
+   nothing." The expanded run view (click the card) is now where the
+   full step context lives. */
+.op-card-timeline-labels > span.has-help { cursor: help; }
+
+/* ── v1.20.41: expanded run view (in-card accordion) ──────────── */
+/* Real op_progress cards are click-to-expand; synthesized queue cards
+   (download_queue etc.) have no run window so they're not expandable. */
+.op-card-expandable { cursor: pointer; }
+/* The expanded card grows downward; a faint outline marks it as open.
+   v1.23.49: the outline uses the card's OWN tone (--ot-rgb, set per
+   op-tone-*) instead of a hardcoded green, so it matches the inner border
+   (the user: an amber PLEX card had a green outer outline). Falls back to green
+   for any untoned card. */
+.op-card-expanded {
+  outline: 1px solid rgba(var(--ot-rgb, var(--green-rgb)), 0.35);
+  outline-offset: 1px;
+}
+.op-card-main { min-width: 0; }
+/* v1.20.41: the run log sits BELOW the card's content, separated by a
+   top rule — the card's own accordion section. */
+.op-card-detail {
+  margin-top: var(--gap-3);
+  border-top: 1px dashed var(--line);
+  padding-top: var(--gap-3);
+}
+.op-card-detail-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--green);
+  opacity: 0.85;
+  margin-bottom: 9px;
+}
+.op-card-detail-collapse {
+  cursor: pointer;
+  opacity: 0.6;
+  letter-spacing: 0.1em;
+}
+.op-card-detail-collapse:hover { opacity: 1; color: var(--green-bright); }
+.op-card-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-1) var(--gap-4);
+  margin-bottom: 10px;
+  font-size: 11px;
+  opacity: 0.85;
+}
+.op-card-detail-meta b { color: var(--fg); font-weight: 600; }
+.op-card-runlog {
+  max-height: 320px;
+  overflow-y: auto;
+  border-top: 1px dashed var(--line);
+  padding-top: var(--gap-2);
+  font-size: 11px;
+}
+.op-card-runlog-item {
+  display: flex;
+  gap: var(--gap-2);
+  padding: 2px 0;
+  line-height: 1.5;
+}
+.op-card-runlog-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.45;
+  min-width: 56px;
+  flex-shrink: 0;
+}
+.op-card-runlog-comp {
+  opacity: 0.5;
+  min-width: 62px;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+.op-card-runlog-msg { flex: 1; min-width: 0; word-break: break-word; }
+.op-card-runlog-item.lvl-warning .op-card-runlog-msg { color: var(--amber); }
+.op-card-runlog-item.lvl-error .op-card-runlog-msg { color: var(--red); }
+.op-card-runlog-empty,
+.op-card-runlog-loading { opacity: 0.5; padding: 6px 0; }
+
+/* ── v1.21.27: RUN INSIGHT (stage waterfall + stats + throughput) ─ */
+.op-insight-section { margin-bottom: var(--gap-4); }
+.op-insight-section:last-child { margin-bottom: 0; }
+.op-insight-head {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+  margin-bottom: var(--gap-2);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.op-insight-head-aux { opacity: 0.6; letter-spacing: 0.08em; }
+
+/* stage waterfall — where the run's time went */
+.op-wf { display: flex; flex-direction: column; gap: 5px; }
+.op-wf-row { display: flex; align-items: center; gap: var(--gap-2); }
+.op-wf-label {
+  width: 64px;
+  flex-shrink: 0;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  opacity: 0.8;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.op-wf-track {
+  flex: 1;
+  height: 9px;
+  background: rgba(var(--line-rgb), 0.6);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.op-wf-bar {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  opacity: 0.85;
+  /* v1.21.27: grow-in so the breakdown reads as a little animation */
+  transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.op-wf-dur {
+  width: 40px;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  text-align: right;
+}
+.op-wf-live .op-wf-bar { animation: op-card-breathe 2.4s ease-in-out infinite; }
+
+/* stat readout — done_summary + peak/avg as big glanceable numbers */
+.op-insight-stats { display: flex; flex-wrap: wrap; gap: var(--gap-2) var(--gap-5); }
+.op-stat { display: flex; flex-direction: column; gap: 1px; }
+.op-stat-value {
+  font-size: 17px;
+  line-height: 1;
+  color: var(--fg);
+  font-variant-numeric: tabular-nums;
+}
+.op-stat-label {
+  font-size: 8px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+.op-stat-bad .op-stat-value { color: var(--red); }
+
+/* throughput chart — the live sparkline, blown up */
+.op-tpchart {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 44px;
+  padding: 2px 0;
+}
+.op-tpchart-bar {
+  flex: 1;
+  min-width: 1px;
+  border-radius: 1px 1px 0 0;
+  opacity: 0.7;
+}
+
+/* tie the insight visuals to the card's tone identity */
+.op-card.op-tone-tdb   .op-wf-bar, .op-card.op-tone-tdb   .op-tpchart-bar { background: var(--tone-tdb); }
+.op-card.op-tone-plex  .op-wf-bar, .op-card.op-tone-plex  .op-tpchart-bar { background: var(--tone-plex); }
+.op-card.op-tone-queue .op-wf-bar, .op-card.op-tone-queue .op-tpchart-bar { background: var(--tone-queue); }
+
+/* ── activity feed ────────────────────────────────────────────── */
+
+.op-card-activity {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--line);
+  font-size: 11px;
+}
+
+.op-card-activity-item {
+  display: flex;
+  gap: var(--gap-2);
+  padding: 3px 0;
+  opacity: 0;
+  animation: op-activity-in 0.4s ease forwards;
+}
+.op-card-activity-item:nth-child(1) { opacity: 1; }
+.op-card-activity-item:nth-child(2) { opacity: 0.75; }
+.op-card-activity-item:nth-child(3) { opacity: 0.55; }
+.op-card-activity-item:nth-child(4) { opacity: 0.40; }
+.op-card-activity-item:nth-child(5) { opacity: 0.25; }
+
+.op-card-activity-time {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.5;
+  min-width: 40px;
+}
+
+.op-card-activity-msg {
+  flex: 1;
+  word-break: break-word;
+}
+
+@keyframes op-activity-in {
+  from { transform: translateX(-4px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+
+/* ── sparkline ────────────────────────────────────────────────── */
+
+.op-card-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+  height: 16px;
+  margin: var(--gap-1) 0;
+}
+
+.op-card-spark-bar {
+  flex: 1;
+  min-width: 2px;
+  /* v1.19.88: tone via --ot (was cyan default + green-plex override). */
+  background: var(--ot, var(--cyan));
+  opacity: 0.6;
+  border-radius: 1px;
+  /* v1.17.8: 0.3s sits between --motion-normal (120ms) and
+     --motion-slow (400ms); 0.3s feels closer to slow for a
+     height transition (height changes are perceptually slower
+     than color shifts) — use --motion-slow as the next-up
+     bucket. */
+  transition: height var(--motion-slow) ease;
+}
+
+/* ── cancel button ────────────────────────────────────────────── */
+
+.op-card-cancel {
+  margin-top: 10px;
+  width: 100%;
+  height: 28px;
+  border: 1px solid rgba(var(--red-rgb), 0.45);
+  background: rgba(var(--red-rgb), 0.06);
+  color: var(--red);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.15em;
+  border-radius: 4px;
+  cursor: pointer;
+  /* v1.17.8: 0.15s → --motion-normal (120ms). */
+  transition: background var(--motion-normal) ease, box-shadow var(--motion-normal) ease;
+}
+
+.op-card-cancel:hover:not(:disabled) {
+  background: rgba(var(--red-rgb), 0.14);
+  box-shadow: 0 0 14px rgba(var(--red-rgb), 0.25);
+}
+
+.op-card-cancel:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── error message line on failed/cancelled cards ─────────────── */
+
+.op-card-error {
+  margin-top: var(--gap-2);
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(var(--red-rgb), 0.08);
+  border-left: 2px solid var(--red);
+  font-size: 11px;
+  color: var(--red);
+  word-break: break-word;
+}
+
+/* v1.12.126 (Phase A.5): green-tone "no changes" callout on the
+   op-card for a 304-short-circuit sync. Symmetric to op-card-
+   fallback (warn) and op-card-error (red) — same shape, calm tone. */
+.op-card-nochanges {
+  margin-top: var(--gap-2);
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(var(--green-rgb), 0.08);
+  border-left: 2px solid var(--green);
+  font-size: 11px;
+  color: var(--green);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.op-card-nochanges-mark {
+  font-weight: 700;
+}
+.op-card-nochanges-text {
+  flex: 1;
+  word-break: break-word;
+}
+
+/* v1.12.121 (Phase A): warn-tone fallback callout on the op-card.
+   Surfaces "the snapshot path failed and we ran the slow remote
+   path" without escalating to error styling — the data is still
+   fresh, just acquired more expensively. */
+.op-card-fallback {
+  margin-top: var(--gap-2);
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(var(--orange-rgb), 0.08);
+  border-left: 2px solid var(--orange);
+  font-size: 11px;
+  color: var(--orange);
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.op-card-fallback-mark {
+  font-weight: 700;
+}
+.op-card-fallback-text {
+  flex: 1;
+  word-break: break-word;
+}

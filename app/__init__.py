@@ -1,0 +1,1680 @@
+"""motif — automated theme orchestration for Plex via ThemerrDB."""
+# Bump this BEFORE creating each git tag — it drives the topbar
+# brand display + the GitHub release-check comparison.
+# v1.13.79: bump-before-tag protocol added to CLAUDE.md (was
+# silently drifting from the latest tag through v1.13.74-78).
+# v1.15.0: rolled over from the v1.14.x line (closed at v1.14.99
+# with 99 tags). v1.15.0 cut after a 3-agent code audit (silent
+# failures, recent regressions, test-coverage gaps). The two
+# real bugs found were fixed pre-cut: a missing index in the
+# v46→v47 schema migration, and two silent PlexClient.close
+# swallows in the reprobe handler. Both noted in the v1.15.0
+# journal entry as the reason for the cut.
+# v1.19.0: rolled over from the v1.18.x line (closed at v1.18.99
+# with 99 tags). Same 3-agent audit protocol as v1.15.0. ZERO
+# real bugs found this time — v1.18.97/98/99 had just closed
+# the class-9 silent-fails catalog the night before the cut, so
+# the audit was inheriting a freshly-audited tree. Every recent
+# defensive surface (perJobBusy v1.18.93, plex_rejected lockout
+# v1.18.94, op_progress synth v1.18.95, body fail-fast v1.18.96,
+# the three breadcrumb fixes) carried both source pins and
+# behavioral tests. Cleanest rollover this project has had.
+# v1.20.0: rolled over from the v1.19.x line (closed at v1.19.99
+# with 99 tags). Same 3-agent audit protocol (silent-fails /
+# recent-regressions / coverage). ONE real bug found + fixed
+# pre-cut: a v1.19.98 SRC-axis mirror-drift miss — selectedEligible
+# Updates (app.js) still used the bare `SRC!='-'` predicate without
+# the new_theme_available exception, hiding the bulk bar for selected
+# SRC=— new-theme rows. Fixed at the altitude level: extracted
+# pendingUpdateActionable() so the predicate can't drift across its
+# 5 bulk-bar/accept sites again. Plus two coalescer hardenings
+# (stuck-ACTIVE reset, _dispatch_batch breadcrumb) + the
+# previously-only-source-pinned sidecar fallback got behavioral
+# coverage. The accepted ceiling/timeout trade-offs (v1.19.94/99)
+# were re-flagged + consciously kept.
+# v1.21.0: rolled over from the v1.20.x line, cut EARLY (at v1.20.67, not
+# the usual .99 close) to carry the recovery_v55 sunset the user flagged.
+# The 18 one-shot boot recovery walkers (v1.18.0 FK-cascade data-loss
+# recovery + the override / adopt / placement / sha256 backfills) logged
+# 16 INFO "marker already set — skipping" lines on EVERY boot once their
+# runtime_settings markers were set — pure noise on every current install.
+# v1.21.0 DISCONNECTS them from the startup path (main.py) while RETAINING
+# recovery_v55.py + its tests as an archived, callable safety net: re-wire
+# a specific walker if a historical bug class is ever re-introduced; full
+# file deletion is deferred to a real v1.21.x .99 line-close. No fresh
+# 3-agent audit this cut — the v1.20.x tree was heavily audited the same
+# session across the .59-.67 arc (deferred-audit batch + shelf triage).
+# v1.22.0: rolled over at the v1.21.x .99 line-close after a fresh 3-agent
+# audit (silent-fails / recent-regressions / coverage) of the v1.21.81-99
+# per-edition theme-isolation arc. ONE real regression found + fixed pre-cut:
+# SET URL on a TAGGED edition wrote the override at edition_key but enqueued an
+# edition-less download, so the v1.21.92 edition-scoped override read resolved
+# at '' → ignored the user's URL (api_manual_url now threads edition_key). Plus
+# cold-path breadcrumbs (the v1.21.95 LPS shared-edition no-op, edition-diag
+# OSError, edition_key_for_rating_key rk-miss) and the #1 coverage gap closed
+# (worker._do_relink cross-edition source-pull, was source-pinned only).
+# Remaining coverage follow-ups (bounded by the v1.21.94 lint + v1.21.99 unit
+# test): behavioral tests for plex_enum.reconcile_placement_paths' edition JOIN
+# and the plex_upload over-ceiling restore endpoint.
+# v1.22.1: code-review follow-ups on the v1.22.0 cut (3 findings rolled in).
+# (1) SET URL's pre-enqueue download-cancel was title-wide while the enqueue
+# it precedes is per-edition (v1.22.0) — a SET URL on one edition/section
+# cancelled a sibling's pending download. Scoped it to the row's section +
+# edition with the same COALESCE(json_extract payload edition_key) shape the
+# re-download cancel uses (v1.21.82) — the one site that arc missed. (2) The
+# v1.22.0 edition_key_for_rating_key rk-miss WARNING was unconditional but the
+# fn runs per-row in the bulk-download loop → warn-once-then-debug (v1.17.11
+# hot-path rule). (3) the v1.22.0 test version-pin used the narrower "1.2
+# prefix → widened to "1." to match every sibling pin (survives major rollover).
+# v1.22.2: root-caused the recurring "LET PLEX SERVE does nothing" on Watchmen
+# editions to a JS rating_key omission — NOT a backend edition-scoping bug (the
+# in-container worklist matched the midnight placement when given the right rk).
+# The purge-revert-to-plex SOURCE-menu item shipped WITHOUT rk: it.rating_key
+# (its adopt-and-let-plex-serve sibling had it), so letPlexServeFlow re-derived
+# the row via an ambiguous (mt,id,section) .find() → first edition → a sibling
+# with no placement → placements_total:0. Added the rk to the menu item + flow,
+# resolved the row by clicked rk, and edition-scoped the adopt+LPS unplace too.
+# v1.22.3: DOWNLOAD PLEX BACKUP wrote the captured bytes with
+# abs_path.write_bytes() — an in-place open('wb') that TRUNCATES the existing
+# canonical theme.mp3, needing WRITE on that file. On the user's Unraid the
+# themerrdb canonical isn't writable by the container user, so the overwrite
+# EACCES'd (rk=417813/417795 PermissionError) — surfaced to the UI as the WRONG
+# "Plex wouldn't serve those bytes" (Plex served them fine: http 200, 2.9MB).
+# Now writes a temp sibling + os.replace (dir-write only), matching placement's
+# atomic pattern; edition-scoped the sha256 dedup guard; reworded the JS error.
+# v1.22.4: runtime PUID/PGID support + boot writability probe. The Watchmen/Hokum
+# permission saga root-caused to motif being the only container pinned to uid 99
+# (baked USER, no PUID handling) on a uid-1000 *arr/Plex stack — a template reset
+# to --user 99:100 silently broke every write to the 1000-owned shfs share. New
+# entrypoint (docker-entrypoint.sh) adopts PUID/PGID like linuxserver images +
+# gosu-drops; Unraid template + README/compose switched from hardcoded --user to
+# PUID/PGID env. main._probe_writability test-writes config_dir/themes_dir at boot
+# and logs a loud uid-vs-owner WARNING instead of crash-looping a download.
+# v1.22.5: entrypoint honors UMASK (default 022) alongside PUID/PGID, matching
+# the Unraid/linuxserver convention. Unraid best practice is UMASK=002 (group-
+# writable dirs 775 / files 664) so a 99:100 stack (Sonarr/Radarr/Plex) shares
+# the /data tree WITHOUT 777. the user's stack is PUID 99 PGID 100 UMASK 002; this
+# lets motif be a first-class citizen of that model with appdata staying 99:100.
+# v1.22.6: entrypoint validates PUID/PGID are numeric. A template slip that
+# passed the literal "PGID" into the value field made gosu fail ("unable to
+# find group PGID") and crash-LOOP the container; now a non-numeric PUID/PGID
+# falls back to the default (99/100) + a loud ERROR so motif still boots and the
+# operator can fix the env var, instead of a dead container.
+# v1.22.7: editions code-review fixes (3 verified data-loss/drift findings from
+# the 5-agent audit). (1) INFO-card LET PLEX SERVE (purge-and-ack) built its
+# unplace with section_id only → backend section-wide DELETE nuked EVERY
+# edition's placement (the v1.22.2 bleed at the 3rd LPS site); now threads the
+# clicked rating_key. (2) REVERT's pre-enqueue download-cancel was title-wide
+# while its enqueue is per-edition+section → cancelled sibling editions' pending
+# downloads; now section+edition scoped (mirrors v1.22.1 SET URL). (3) the
+# api_item INFO '' read-fallback was ungated while the unplace WRITE gates on
+# single-edition → card claimed "placed" on editions LPS withholds; now gated to
+# match (the user's Watchmen "card says placed, LPS does 0/0").
+# v1.22.8: sync clears undecided pending_updates that propose a TDB theme the
+# upstream no longer has — the title is still in TDB but its youtube_url went
+# NULL, so an 'upstream_changed'/'new_theme_available' pending points at a
+# removed theme and lingers as an un-actionable NEEDS WORK / !UPD prompt
+# (the user's anime: Witch Hat Atelier, The Beginning After the End). Complements
+# the v1.20.16 dropped-TITLE cleanup; urls_match (the legit U==TDB convert
+# prompt) is deliberately left alone. Found in the NEEDS-WORK DB dig.
+# v1.22.9: urls_match blue TDB↑ pill now honors a GLOBAL ('' section)
+# user override. _has_user_override_sql gated the urls_match no-op branch
+# on a strict section match (uo.section_id = pi.section_id), but a user
+# override can be global (section_id='') — the legacy/cross-section shape
+# SRC=U already honors via its own COALESCE(per-section, '') fallback. So a
+# row in section N with its override at '' rendered a GREEN TDB pill (the
+# urls_match branch failed _has_user_override) while SRC said U and NEEDS
+# WORK ranked it — sort/pill drift. the user's anime (Berserk: The Golden Age
+# Arc tmdb 211057, Fate/Strange Fake 229858: plex_items+local+placement at
+# section '3', override+urls_match pending at ''). Added the '' fallback to
+# the shared helper so all 11 urls_match sites (row pill, tdb_pills=update /
+# =tdb filters) surface the blue ↑ "you could swap U→T" accurately. the user:
+# "if the user uploaded theme is the same as a possible themerrdb theme you
+# could be using then it should be a blue pill tdb."
+# v1.22.10: NEEDS WORK (attention) sort now mirrors the pill's actionable
+# gate. the user's v1.22.9 follow-up: The Beginning After the End / Witch Hat
+# Atelier ranked at the TOP of NEEDS WORK while showing a GREEN pill — their
+# pending is a no-op (upstream_changed whose TDB theme lost its youtube_url:
+# real_diff false → pill correctly green), but the attention sort's priority-2
+# branch gated only on decision=pending + a-pending-exists + presence, NONE of
+# the pill's actionability gate, so it ranked the green-pill row NEEDS WORK
+# anyway (same sort-vs-pill drift class as v1.19.86 priority-3). Extracted the
+# pill's gate into _pending_update_actionable_sql and pointed ALL 12 surfaces
+# at it — the 2 pill columns, tdb_pills=update/=tdb filters, attn_pills=update
+# filter, 7 count subqueries, AND the attention sort — so the sort can't drift
+# from the pill again. Behavior-preserving refactor (the gate logic was already
+# identical at every inline site); the only semantic change is the sort gaining
+# the gate it never had. The url-less stale pendings ALSO get swept by the
+# v1.22.8 sync sweep — this read-path fix makes the row honest the instant the
+# pill goes green, independent of sync timing.
+# v1.22.11: user-uploaded MP3 INFO cards stop posing as URL-sourced. the user's
+# LotR "Sam Takes a Step" upload (green TDB pill, playing an uploaded file)
+# showed the TDB URL as "applied url", the TDB video id, a YouTube thumbnail +
+# "watch on YouTube" link, and a no-op REVERT hint — all because isUrlSourced
+# grouped 'upload' with themerrdb/url, so currentUrl fell back to t.youtube_url
+# when no override existed. currentUrl drives the applied-url row, the video-id
+# row, the thumbnail/watch link (ytUrl/ytId), and the revert comparison. Now
+# 'upload' is file-sourced like M/A (currentUrl '' → applied-url '—', no
+# thumbnail/watch, video-id '—') + an upload-specific revert hint replaces the
+# URL-centric no-op wording. The "themerrdb url" row + the "downloaded …
+# source_video_id=" provenance row still show what TDB offers + where the
+# uploaded bytes came from. Completes the v1.19.59 fix (that tag corrected only
+# the playback-source LABEL, not the URL/thumbnail/revert fields).
+# v1.22.12: stop flagging new_theme_available on pure SRC=P rows. the user (after
+# a sync found ~38 new anime themes): a wall of Plex-served anime lit up the blue
+# TDB↑ pill / !UPD glyph / UPD badge / NEEDS WORK. v1.19.71 surfaced "TDB just
+# published a theme" across SRC=—/P/U/A/M so the operator could take over, but
+# anime is ~100% Plex-served + TDB's catalog keeps growing → every sync floods
+# the attention surfaces with rows motif doesn't manage, burying the ones it
+# does. Now the new_theme_available branch of _pending_update_actionable_sql ANDs
+# _not_p_row (read: silences pure-P rows everywhere — pill/glyph/UPD/NEEDS WORK/
+# filters/counts — including ones detected by prior syncs) + sync skips WRITING
+# new_theme for pure-P rows (detection: `elif plex_supplies and not has_content`).
+# SRC=—/U/A/M still surface (they pass _not_p_row). Theme stays discoverable; the
+# operator can DOWNLOAD TDB per-row from the SOURCE menu to take over.
+# v1.22.13: center the lone "CURRENT = PROPOSED" tile in the // THEMERRDB MATCH
+# INFO-card panel (the urls_match single-tile diff). .diff-tiles-single was
+# `grid-template-columns: 1fr 1fr` — a 2-col grid holding one tile, so it parked
+# in the LEFT column (the user's My Ribdiculous Reincarnation screenshot). Now a
+# single capped track (minmax(0, 360px)) + justify-content:center. CSS-only.
+# v1.22.14: two code-review fixes on the v1.22.9-12 work. (1) The NEEDS WORK
+# attention sort priority-2 PRESENCE gate was missing the new_theme_available
+# escape its four sibling surfaces carry — v1.22.10 unified the ACTIONABLE
+# sub-gate onto the sort but left the PRESENCE sub-gate to drift, so a SRC=—
+# row sync just found a new TDB theme for showed the blue ↑ pill + UPD count +
+# both update filters yet sank to ELSE 7 (bottom of NEEDS WORK) instead of
+# priority-2 — the exact sort-vs-pill class v1.22.10 set out to kill. Added the
+# escape to the sort's presence gate. (2) v1.22.11 special-cased the revert hint
+# on the literal lfSource==='upload'; generalized to isFileSourced (upload/
+# adopt/plex_cloud) so adopt/plex_cloud rows stop hitting the URL-centric
+# "re-apply the current URL" wording, AND added a live-revert guard so the card
+# no longer claims "unavailable" when a user-kind previous URL genuinely differs
+# (has_previous_url ignores source_kind → REVERT is live in the menu). Plus test
+# hardening: a behavioral sort test for (1), an isFileSourced/live-revert pin for
+# (2), and the two fixed-window helper-body pins re-anchored on the next def.
+# v1.22.15: host→container path translation on two Unraid-broken filesystem
+# checks the audit found. (#1) worker.py over-ceiling sidecar fallback did
+# Path(folder_path)/"theme.mp3" + mkdir(parents=True) on Plex's RAW host path
+# (/mnt/user/... on the user's Unraid) — mkdir CREATED a phantom container-local
+# tree Plex never serves, then logged success, so the >10MB theme silently went
+# nowhere. (#4) plex_enum.py theme-lost reaper Tier-2 sidecar_fs check used the
+# same raw Path().exists() — ALWAYS False on Unraid — mis-tiering a recoverable
+# on-disk sidecar to no_fallback and firing the wrong "theme lost, no recovery"
+# alert. Both now route through _candidate_local_paths like every sibling
+# sidecar check; if no container dir resolves, #1 logs + falls through to the
+# loud terminal-fail instead of a silent phantom write.
+# v1.22.16: action-layer audit fixes. (#2 DATA-LOSS) bulk ACCEPT ALL deleted
+# user_overrides SECTION-WIDE — one edition's accept wiped EVERY edition's
+# override for the title (the per-row api_accept_update was edition-scoped in
+# v1.21.87; the bulk path was missed). Scoped the override fetch/DELETE + both
+# enqueues to the row's edition, tracking the global-'' retarget like the per-
+# row path. (#5 SILENT FAILURE) api_accept_update discarded _enqueue_download's
+# return; a 0-enqueue (no included Plex section owns the item) left the row
+# "accepted" with the override deleted + no download + no rollback, behind
+# HTTP 200 — now captures the count, warns, and returns enqueued_sections.
+# (#6 CONTRACT) backup_cloud_theme promised "never raises" but the section-
+# subdir resolve caught only RuntimeError — a sqlite OperationalError
+# ("database is locked") escaped and aborted the whole bulk-backup batch; now
+# any resolve error lands in the return dict so the loop skips one + continues.
+# v1.22.17: HAMA/anime theme_id-linkage (audit cluster B). Four sync DETECTION
+# sites keyed strictly on plex_items.guid_tmdb — but HAMA/AniDB anime (the bulk
+# of the user's library) resolve to TVDB GUIDs, so guid_tmdb stays NULL while
+# resolve_theme_ids links plex_items.theme_id (the v1.15.142 _enqueue_download
+# pattern). So every theme_id-only row was silently excluded from: in_plex
+# (new_count + the new_theme_available prompt), has_sidecar (M-row content),
+# _plex_supplies_theme (the v1.22.12 pure-P SUPPRESSION precondition), and the
+# end-of-sync prune's plex-presence check (which would reap a live HAMA prompt).
+# Each now ALSO matches via theme_id linkage as an OR (superset — the guid_tmdb
+# path is preserved, so nothing that matched before regresses). Net: when
+# theme_id is linked (post-resolve / orphan-promotion / re-detection) a HAMA
+# M/U/A row finally gets its prompt, a HAMA pure-P row stays suppressed, and a
+# live HAMA prompt survives the prune.
+# v1.22.18: worker placement-path edition-scope cluster (audit MED #8-#11).
+# (#8) _do_place's post-place plex_items "hint" UPDATE (local_theme_file=1 /
+# has_theme on a skipped place) was section-scoped but NOT edition-scoped, so a
+# skipped place on one edition stamped EVERY sibling edition's row in the
+# section (same tmdb_id, distinct {edition-X} folders) — now edition-scoped when
+# the job named an edition. (#9) _do_place's pre-place +P capture read the raw
+# pi["has_theme"]=1, ignoring the stale-cache override that demotes
+# cached_has_theme when verified_ok=0 (Plex's /theme 404s — the claim is a lie);
+# it stamped plex_independent_theme=1 on a broken-theme row → a phantom +P dot.
+# Now gates on cached_has_theme + a COALESCE(verified_ok,1)<>0 SQL guard. (#10)
+# _do_relink's success UPDATE (placement_kind='hardlink') omitted edition_key
+# though the sibling DELETE includes it — media_folder is per-edition distinct
+# for sidecars but plex_upload editions share media_folder='' (PK now fully
+# pinned). (#11) _do_place's successful-place mismatch-clear keyed on
+# place_edition_key (REQUESTED) while the placements INSERT in the same txn used
+# placed_edition_key (PHYSICAL landing) — they split when a place lands in a
+# different edition's folder than asked; both now key on placed_edition_key.
+# v1.22.19: INFO-card no-op pending suppression in the edition-first branch
+# (audit MED #7, contract-drift class). v1.12.119 added a no-op suppression to
+# api_item's pending resolution — when a pending's new_youtube_url already ==
+# the row's applied URL, accepting would just re-download the same URL, so the
+# card hides it (the row pill hides it too). v1.21.68 later added the EDITION-
+# FIRST resolution branch (rating_key → _info_edition) but never carried the
+# suppression, so for any edition-resolved row (the common path, rk sent) a
+# no-op pending surfaced a PROPOSED CHANGE in the INFO card that the row pill
+# suppresses — a card-vs-pill disagreement. Mirrored the suppression into the
+# edition-first branch; 'urls_match' stays exempt (the U→T flip is meaningful
+# even when URLs match). (The audit's clear_override "partial-args" item was
+# skipped — that endpoint's UI surface was removed in v1.15.97, so it's
+# unreachable defensive API surface, not a live bug.)
+# v1.22.20: plex.py get_item_paths non-200 breadcrumb (audit class-9, the
+# confirmable slice of the plex.py log-level findings). get_item_paths backs the
+# placement pipeline's media-folder lookup; its early return on a non-200 status
+# (`if r is None or r.status_code != 200: return []`) was SILENT — a Plex 404 /
+# 500 / auth response lost the media folder with no log, so a placement quietly
+# skipped the item. The adjacent malformed-JSON branch already got a WARNING in
+# v1.17.9, and _get only logs TRANSPORT errors (None), never HTTP error
+# STATUSES, so this was the last silent []-return in the folder lookup. Split
+# the None branch (already logged by _get) from the non-200 branch and added a
+# WARNING to the latter. (The audit's other LOW plex.py log-level hints didn't
+# map to a concrete silent-swallow — the theme-mutation paths already WARN per
+# the v1.15.107 sweep — and the cloud_theme_backup "force-backup" item is a
+# feature-add, not a bug: backup_cloud_theme has no force param + the identical-
+# bytes dedup-skip is correct. Both left for the original audit detail.)
+# v1.22.21: download-failure rollback is edition-scoped (edition-audit data-
+# loss). A 4-agent sweep of every mutation on the edition-PK tables surfaced
+# this: ACCEPT UPDATE / REVERT eagerly delete the clicked edition's override +
+# flip its pending decision, stamp a `rollback` recipe, and queue the download;
+# on TERMINAL download failure worker._run_rollback_safe undoes the prep — but
+# the recipe dropped edition_key, so the re-pend hit the section with no edition
+# filter (resetting a sibling edition's decision) and the override-restore
+# INSERT omitted the edition_key column → defaulted to '' → a NON-'' edition's
+# user URL was deleted by the endpoint then RESTORED ONTO THE STANDARD row,
+# clobbering its override and losing the real one. The endpoints
+# (api_accept_update, api_accept_all_updates, api_revert) now stamp
+# rollback['edition_key']; _run_rollback_safe threads it into both WHEREs + both
+# INSERT column lists. Default '' keeps old in-flight jobs at standard scope.
+# v1.22.22: three section-keyed-without-edition bleeds (edition audit). (#3)
+# api_unplace_item's plex_items flag flip (local_theme_file=0 / verified_ok=NULL)
+# used the section-wide pi_where while its placements DELETE + local_files UPDATE
+# were already edition-scoped — LPS on one edition dropped a sibling edition's
+# SRC pill (M/A→P/–) until the next plex_enum; now scoped to the clicked
+# rating_key (the plex_items PK, exact even for orphans). (#1) api_manual_url
+# (SET URL) urls_match path cleared + re-inserted pending_updates for the whole
+# section, wiping a sibling edition's per-edition accepted/declined decision
+# (v1.21.81); the DELETE + re-INSERT now carry _edition_key. (#4)
+# scanner._classify_and_record's `theme_id = ?` disjunct is title-wide (themes
+# keyed by media_type+tmdb_id), so a sidecar found in ONE edition's folder
+# flipped local_theme_file=1 on EVERY edition's row; the theme_id branch is now
+# edition-scoped to the scanned folder's edition (the folder_path branch was
+# already edition-specific). #3/#4 self-heal on the next plex_enum but showed a
+# transient wrong SRC pill; #1 is a genuine per-edition decision wipe.
+# v1.22.23: _drop_motif_tracking spares sibling editions (edition audit LOW #9).
+# PURGE/FORGET/UNMANAGE clear motif's per-title decisions (user_overrides +
+# pending_updates) via _drop_motif_tracking when they reach the last file-
+# bearing section. That helper deleted TITLE-GLOBALLY, so on a multi-edition
+# title, purging the last file-bearing edition also wiped a sibling edition's
+# OWN per-edition override/decision (e.g. a pure-P "Director's Cut" with a
+# manual URL). Added an acted_edition param: when an edition-scoped action
+# (rating_key present) calls it, scope to `edition_key = '' OR edition_key =
+# <acted>` — still clearing the title-global '' decisions (the v1.12.57 clean-
+# slate: a stale '' override re-applies on next download) + the acted edition's,
+# but SPARING other editions. UNMANAGE + FORGET last_section pass their resolved
+# edition; DELETE (whole-title nuke) + the legacy global branches keep the full
+# title-wide wipe. (The other 4 LOW edition-audit items are non-actionable:
+# #8 accept's no-section else-branch is the by-design context-less fan-out with
+# no edition to scope to; #5/#6/#7 are one-shot marker/loss-pattern-gated
+# recovery walkers that already ran or recover from the now-impossible v1.18.0
+# cascade — fixing them churns dead code.)
+# v1.22.24: quarterly dependency-floor review. apprise floor bumped 1.10.0 →
+# 1.11.0 (latest stable, released 2026-05-29 — new service handlers +
+# transport-URL evolution). yt-dlp floor left at 2026.3.17: re-verified against
+# PyPI + GitHub releases on 2026-06-06, still the most recent stable (no newer
+# build exists), so no bump. CLAUDE.md "Last bumped" notes refreshed for both.
+# v1.22.25: edition-correctness hardening for two re-triggerable recovery
+# walkers (edition-audit LOW #5/#7). Both are one-shot, runtime_settings-marker-
+# gated (an operator can clear the marker to re-run); their placements joins were
+# section-only, so on a multi-edition title they bled across siblings. #7
+# maybe_clear_plex_upload_indep_flag cleared +P (plex_independent_theme) on EVERY
+# edition's row when ANY edition had a plex_upload — now the join carries
+# p.edition_key = pi.edition_key. #5 maybe_cleanup_duplicate_placements deleted a
+# missing-file hardlink if a plex_upload existed in the same SECTION (even a
+# different edition) — now the self-join carries pu.edition_key = p.edition_key.
+# Unreachable on a normal install (marker already set) but correct if re-run on a
+# multi-edition library. (#6 maybe_recover_post_v55_data_loss left as-is: gated
+# by _detect_loss_pattern which only the now-impossible v1.18.0 cascade produces,
+# so it can't fire even via manual re-run — hardening its multi-column rebuild
+# edition-derivation is disproportionate for provably-dead code.)
+# v1.22.27: revert v1.22.26 (the Phase 1 edition-backfill admin endpoint +
+# editions.py find/apply helpers + tests). the user manually re-keyed the ~5
+# LotR/Hobbit mis-keyed titles, so the backfill tool is moot — removed the extra
+# admin surface rather than carry a dead-but-harmless endpoint. The v1.22.26 tag
+# stays as history; the forward path (_do_place writes folder-derived
+# edition_key, v1.21.55) and the v1.21.68/.93 '' fallback already keep new state
+# correct, so nothing depended on the backfill.
+# v1.22.28: close the last DEFERRED coverage follow-up noted in the v1.22.0
+# rollover — a behavioral test for reconcile_placement_paths' v1.21.94 edition
+# JOIN (it was only guarded by the v1.21.94 edition-blind lint + a v1.21.99 unit
+# test). Pins end-to-end that a stale '' (standard) placement reconciles to ITS
+# OWN edition's folder, not cross-producing onto a sibling edition's {edition-X}
+# folder (the pre-fix wrong-edition write), + a control that a correctly-placed
+# edition isn't spuriously "moved". Test-only; no production change. (The
+# over-ceiling-restore half of that follow-up already had test_v1_21_99.)
+# v1.22.29: full-codebase audit batch 1 — two HIGH silent-data-loss fixes from
+# the 8-agent sweep. (plex.py) enumerate_section_items /
+# enumerate_collections_for_section broke pagination on `container_size <
+# page_size` BEFORE the authoritative total_size check, so a short page
+# mid-section (Plex's X-Plex-Container-Size is advisory) truncated the section →
+# the v1.18.89 reaper deleted the "missing" plex_items rows (moderate truncation
+# slips under its 20% guard). total_size is now primary; the short-page break is
+# the total_size-unavailable fallback. (sync.py) _fetch_index + the snapshot
+# index counted ONLY transport/parse errors as a failed page — a page that 200s
+# with `[]` (CDN stale-empty) or a non-list body passed silently →
+# index_incomplete=False → the full-walk drop sweep mis-stamped live themes as
+# TDB-dropped (the v1.21.38 class through the 200-with-bad-body door). Now a
+# non-list/empty body counts as failed (errs SAFE).
+# v1.22.30: full-codebase audit batch 2 — worker job-loop integrity (Tag B).
+# (downloader) a pre-existing theme.mp3 was returned as a SUCCESSFUL download
+# even when 0-byte (prior crash mid-ffmpeg/OOM) → broken theme hardlinked behind
+# a green ✓; now size-checked + stale 0-byte removed/re-downloaded. (worker) the
+# table-wide running→pending zombie-reclaim ran at the top of EVERY thread's
+# run() — _supervised re-enters run() on any mid-life thread crash, so a
+# restarting thread reset every live sibling's in-flight job → duplicate
+# download/place race; moved to _reclaim_orphan_jobs, run ONCE pre-spawn (aged
+# orphans still caught by the scheduler stuck-job sweep). (worker) TokenBucket
+# rate=0 (env/yaml bypassing the /settings ≥1 check) → ZeroDivisionError killed
+# the download thread on its 2nd acquire; _fill_rate floored at 1/period.
+# (worker) an unknown job_type went through the retry ladder, burning the attempt
+# budget on a job no handler can run; now terminal (no retry).
+# v1.22.31: full-codebase audit batch 3 — backend hardening (Tags C/G/D).
+# (api adopt-from-plex) atomic temp-then-os.replace so a double-FS-failure no
+# longer leaves the row with no canonical file; + 409 instead of fake ok:True
+# when 0 sections adopt. (api clear-override) SELECT+DELETE+audit wrapped in one
+# transaction (was autocommit → a failed audit left a deleted override with no
+# trail). (api delete-item) empty-dir rmdir swallow gets a breadcrumb. (api
+# probe-themes) up to 10 synchronous Plex calls moved off the event loop via
+# run_in_threadpool (v1.21.20 block class). (notify) _send_embedded/_send_external
+# failure reasons logged WARNING not DEBUG so a silent channel is diagnosable.
+# v1.22.32: full-codebase audit batch 4 — reaper false "theme lost" (Tag E).
+# plex_enum's still_p survivor check (gating the plex_theme_lost notification)
+# INNER JOIN'd themes on pi.theme_id, so a SURVIVING sibling Plex still themes
+# (has_theme=1) but motif never linked (theme_id NULL — a multi-edition rk, or a
+# HAMA match TDB didn't cover) was invisible → the reaper fired a FALSE "theme
+# lost" while Plex was still serving the title on that sibling. Now mirrors the
+# candidate set's COALESCE: also matches survivors by plex_items.guid_tmdb
+# directly (theme_id link optional), with the show↔tv media_type swap.
+# v1.22.33: full-codebase audit batch 5 — scheduler/orphan-scan resilience
+# (Tag H, 2 reachable items). (scheduler) _enqueue_sync ran its "don't
+# double-enqueue" SELECT + INSERT in autocommit → two enqueuers racing (cron vs
+# manual /api/sync/now) could both pass + both insert; now one BEGIN IMMEDIATE
+# txn. (orphan_scan) one rk's unexpected get_themes raise aborted the whole
+# diagnostic sweep (every later placement unscanned); now a per-row guard +
+# progress-cb guard. The other 3 Tag-H candidates were refuted (tmdb
+# negative-cache already implemented; _stuck_job_sweep lexical ISO compare is
+# correct; placement partial-temp self-heals via the pre-clean).
+# v1.22.34: full-codebase audit batch 6 — frontend feedback (Tag I). (app.js)
+# DOWNLOAD PLEX BACKUP's .then() handled only res.ok truthy → a 200 with
+# {ok:false} left the optimistic placeholder hanging with no alert; now an else
+# clears it + alerts. (app.js) a 0-enqueued bulk download showed only a fleeting
+# "0 QUEUED" → now an explicit alert. The third candidate (bulk-LPS finishWatcher
+# hidden-tab edge) left as-is — delicate stateful watcher with a 30-min timeout
+# backstop; a timing fix risks premature button-reset under queue backlog.
+# v1.22.35: settings design — uniform reading measure. Each section drifted
+# between a full-width intro paragraph + save row and a 720px form (the user's
+# "full page vs half page text"). New --measure-form token (720px) shared by
+# .block-intro + .form-grid + the standard .form-actions save row, so every
+# section is one tidy left-aligned column; wide-content (.block-body-flush)
+# tables opt out. Nested-in-form save rows lose their double-gap; two inline
+# margin overrides folded into shared rules. CSS-led, no markup churn beyond
+# dropping the inline styles. Guard: test_v1_22_35_settings_measure.
+# v1.22.36: library stuck-row reconciler. A download/place would finish but the
+# row's DL/PL chip stayed frozen (pulsing) until a manual page refresh — the 2s
+# rapid-poll AND the 30s background reload both skip on a text selection / open
+# dialog (the v1.10.7 interaction guard), so a stray selection or open row-menu
+# froze the row indefinitely. New 6s watcher fires loadLibrary ONLY when a
+# rendered row still claims job_in_flight while the backend op-queue has gone
+# idle (the exact stale-frontend condition), bypassing the guards; hash-skip
+# makes it a no-op otherwise. No-op in normal operation.
+# v1.22.37: status-bar progress bars now reach 100% at completion. Pre-fix a
+# finished op left the running set the instant it hit the final count, so the
+# card DROPPED its bar (showLiveSections=false) and the topbar mini-bar switched
+# to idle — the 100% frame never rendered (the user: "bars jump from some % to
+# done without ever hitting 100%"). Now pctOf returns 100 on done; finished
+# real-bar cards render a full 100% bar; and the mini-bar holds a 100% DONE
+# flash for ~1.5s (mirroring the ✓ DONE button flash) before going idle. The
+# per-phase bar reset was left as-is per the user's scope choice.
+# v1.22.38: holistic-audit batch — multi-edition unplace data loss (frontend).
+# The per-row DEL ("Remove from Plex folder") + bulk ADOPT+LET-PLEX-SERVE sent
+# /unplace with section_id only; the backend's "absent rating_key = section-wide
+# fan-out" branch then physically unlinked EVERY edition's theme.mp3 in the
+# section. DEL on Theatrical nuked Extended/Sam. Both app.js sites now thread the
+# row's rating_key (same class the LPS sites fixed in v1.21.61/.93; these two
+# were missed). unplaceTheme gained a ratingKey param.
+# v1.22.39: holistic-audit batch — HAMA guid_tmdb-NULL theme_id-linkage misses
+# (the 5th + 6th sites of the v1.22.17/.32 class). (sync) the url_changed
+# has_sidecar check keyed on guid_tmdb ONLY → a HAMA/anime M-row (guid_tmdb NULL,
+# theme_id-linked) re-downloaded TDB bytes OVER the user's manual sidecar every
+# cron sync; now matches via theme_id linkage like the is_new twin. (plex_enum)
+# the reaper Tier-2 sidecar_db check keyed on guid_tmdb ONLY → a HAMA survivor
+# mis-tiered to no_fallback ("theme lost, no recovery"); now LEFT JOIN themes +
+# OR theme_id, mirroring the v1.22.32 still_p fix.
+# v1.22.40: holistic-audit batch — destroy-then-fail FS ordering (atomic).
+# (worker _do_download) on a source_video_id change should_unlink unlinked the
+# staged theme.mp3 BEFORE the re-download — which frequently FAILS (the new URL
+# points at a dead/private video) — leaving the row with no canonical on disk.
+# Now rename-aside + restore-on-failure + drop-on-success. (placement
+# force_overwrite) unlinked the existing theme BEFORE the place, so a place I/O
+# error left the folder themeless; now place atomically first (temp+os.replace),
+# then remove any differently-named leftover.
+# v1.22.41 (audit SECURITY): events.py scrubber didn't redact URL credentials
+# buried in list/nested-list/list-string detail values — only top-level dict
+# values + dict-in-list were covered. A `{"urls": ["https://user:pass@host"]}`
+# or `{"a": [["https://user:pass@host"]]}` leaked creds into the events table.
+# Extracted a shape-aware _scrub_value helper that recurses to any depth.
+# v1.22.42 (audit): three async endpoints did synchronous Plex round-trips (and
+# a 50MB read) directly on the event loop, freezing every concurrent request:
+# api_set_override_intent PROMOTE (get_themes + read_bytes + upload, inside the
+# txn), api_unplace_item LPS restore loop (per-placement get_themes/delete/
+# re-upload), and the _teardown_plex_api_artifacts_for_placements helper called
+# from forget + delete. All blocking calls now run via run_in_threadpool.
+# v1.22.43 (audit): fake-success + transient-error-poisons-cache. api_override
+# SET URL dropped _enqueue_download's count + returned ok:True even on a
+# 0-enqueue (override saved, no theme fetched, green toast) — now surfaced.
+# tmdb _lookup_by_tvdb/_lookup_by_imdb returned None on a transient non-200 →
+# cached as a 7-day NEGATIVE, silently killing HAMA resolution for a week — now
+# raise TMDBError like _search. notify.dispatch_coalesced dropped the
+# leading-edge single if _arm_coalesce_timer raised — now falls through to send.
+# v1.22.44 (audit, plausible-finding follow-ups): F2 ops.js cancel handlers reset
+# the button on a failed (non-2xx) cancel with NO poll/message → silent stale
+# button; now always force a reconciling poll. W6 scheduler stuck-job-sweep
+# last_error claimed "will retry per backoff schedule" but sets status='failed'
+# terminally — corrected. (W3/S5 refuted, S4 deferred — see journal.)
+# v1.22.45: sync_completed notification groups the New + Updated lists under
+# Plex-section sub-headers (Movies / 4K Movies / TV Shows / Anime / Anime
+# Movies …) so the operator can tell which library each theme belongs to at a
+# glance. updated_titles now carries media_type+tmdb_id; the New-list EXISTS
+# gate widened to pi.theme_id so HAMA/anime new themes are listed, not just
+# counted (guid_tmdb-blind class).
+# v1.22.46 (Tires repro): is_new SRC=— auto-download never fired with the toggle
+# ON. _enqueue_download's section-ownership query (v1.15.142 HAMA rewrite) matched
+# ONLY via pi.theme_id linkage, but during a sync's batch processing a brand-new
+# theme's pi.theme_id isn't linked yet (resolve_theme_ids runs after the batches)
+# → 0 sections → silent no-enqueue; the post-sync enum then missed it too (the
+# sync's own resolve pre-linked theme_id, so not "newly_linked"). Now matches
+# guid_tmdb OR theme_id (the canonical pattern) so new themes enqueue before the
+# link forms while HAMA/anime (guid_tmdb NULL) keep working.
+# v1.22.47 (the user's orphan-with-imdb question): resolve_theme_ids now matches a
+# REAL ThemerrDB theme by imdb_id. The only imdb pass filtered
+# upstream_source='plex_orphan' — re-bonding to a synthetic orphan but never a
+# real theme — so an imdb-only Plex row (guid_tmdb NULL) whose real theme existed
+# fell to the fragile title+year fallback and orphaned on a title/year mismatch.
+# New sql_imdb_real pass (real themes, imdb_id) runs after tmdb, before the orphan
+# re-bond + title; gated theme_id IS NULL (only links unlinked rows).
+# v1.22.48 (the user's orphan-with-imdb question, diagnose-first): read-only admin
+# diagnostic GET /api/admin/diagnostics/orphan-imdb — counts plex_orphan themes
+# carrying an imdb_id + bounded/cached TMDB /find probes to report how many would
+# RESOLVE to a real tmdb_id (net-new vs would-merge) vs. titles TMDB lacks. Gates
+# whether an imdb→tmdb de-orphan walker is worth building. No data changes.
+# v1.22.49 (the user's prod diagnostic: ~98% of imdb-bearing orphans resolve): the
+# de-orphan walker. app/core/deorphan.py resolves each plex_orphan theme's imdb →
+# real tmdb via TMDB and RE-KEYS the synthetic negative tmdb_id to the real one
+# across themes + local_files + placements + pending_updates + user_overrides
+# (FK-deferred, mirroring sync._upsert_theme's promotion). Skips collisions; keeps
+# upstream_source='plex_orphan' (theme is still manual, not from TDB). POST
+# /api/admin/deorphan-imdb?dry_run= (default true). Idempotent + per-row safe.
+# v1.22.50 (the user's prod run hit 1 persistent error on 'Hokum'): de-orphan
+# walker hardening. (a) pre-delete FK-invalid leftover child rows at the target
+# tmdb before the re-key (the exact UNIQUE-conflict the sync-promotion already
+# guards against — clash2 confirms no real theme is there, so they're junk);
+# (b) class-8 retry on `database is locked`; (c) record the REAL per-row outcome
+# in samples + surface the error reason (the label was set optimistically pre-txn
+# so an errored row mislabeled as "rekeyed").
+# v1.22.51 (the user's 'Hokum' FK error): previous_urls is a 5TH table FK'd to
+# themes(media_type,tmdb_id) that neither the de-orphan re-key NOR
+# sync._upsert_theme's orphan promotion moved — an orphan carrying a REVERT/
+# url-change history row failed the re-key with FOREIGN KEY constraint failed at
+# COMMIT. Both paths now DELETE-at-target + UPDATE previous_urls alongside the
+# other four child tables. Latent in the promotion since previous_urls landed.
+# v1.22.52 (forward-fix + relabel): _create_orphan_theme resolves imdb→tmdb via
+# TMDB BEFORE minting a synthetic negative id (549/555 of the user's orphans were
+# real titles minted synthetic only because no resolver ran here) — new manual/
+# adopted themes key to their real identity from birth; all failure modes fall
+# back to the synthetic mint. Cloud-backup orphan mints now stamp guid_imdb so
+# minted rows stay resolvable. INFO card renders upstream 'plex_orphan' as
+# "local (manual / adopted — not from themerrdb)" instead of the internal jargon.
+# v1.22.53 (the user: "the 8 collisions — should we fix?"): read-only diagnostic
+# GET /api/admin/diagnostics/orphan-collisions — per skipped collision, reports
+# what the orphan + target theme records each hold (children counts across the 5
+# FK'd tables) and which record the library row links to, with a per-row hint
+# (SPLIT TRACKING / empty duplicate / etc). Gates the merge decision. No writes.
+# v1.22.54 (the user: "my override wins"): collision merge. merge_orphan_collisions
+# consolidates each duplicate orphan into its real-tmdb record: user_overrides +
+# local_files ORPHAN WINS on same-slot collision (the user's deliberate choice is
+# authoritative — restores the U-row state; TDB stays one ACCEPT away via the
+# normal prompt); placements latest-placed_at wins; pending_updates/previous_urls
+# target wins. Moved rows get theme_id re-pointed; plex_items + scan_findings
+# re-point BEFORE the husk delete (both FKs ON DELETE SET NULL). POST
+# /api/admin/deorphan-merge-collisions?dry_run= (default true). Idempotent.
+# v1.23.50: glossary + legend chip colors audited against the real row chips.
+# the user: the HL (hardlink) icon showed grey in the // GLOSSARY + in-context
+# LEGEND, but a hardlink on a row is GREEN. The audit found the hand-set
+# gc-*/gg-* palette (v1.23.43) wrong in many places — HL grey (→green), SRC M
+# red (→magenta), SRC P lemon (→amber), LINK M amber (→red), TB green-bright
+# (→green-pale), C sharing HL's class, AB/PB/UB borrowing their primary's shade,
+# and the ! / ↺ flags both cyan (→blue / amber). Every gc-/gd-/gg- color now
+# mirrors its real .link-badge-* / .link-glyph-* / .state-pill-btn-* /
+# .title-glyph-* counterpart EXACTLY; a drift guard (test_v1_23_50) pins each so
+# they can't diverge again. CSS + glossary-markup only.
+# v1.23.51: the // LEGEND toggle (next to NEEDS WORK) now mirrors its sibling
+# .chip instead of being a green-tinted filled box with tighter padding —
+# the user's deploy screenshot: it "looks off" rendering as a different species of
+# control beside the transparent NEEDS WORK chip. Now transparent + dim +
+# outlined (+ appearance:none to kill any native-button chrome), with the green
+# accent reserved for the open/active state. Joins the shared :focus-visible
+# keyboard-outline group too. CSS-only.
+# v1.23.52: // HELP topbar toggle unifies on green + the IDLE/HELP/logout trio
+# is evenly spaced. the user (deploy): HELP was cyan on hover but a green fill when
+# active — "unify on one" → hover is now green too (cyan stays reserved for
+# info/update semantics). And the trio was unevenly spaced (help margin-left 8px
+# → 16px to IDLE; logout margin-left 14px → 22px to HELP); both ad-hoc margins
+# dropped so the single .topbar-status gap spaces all three evenly + pulls
+# help+logout closer. CSS-only.
+# v1.23.53: the chip LEGEND toggle — robust render + always available. the user
+# reported it as an unstyled white box for a 3rd deploy running: the cause is a
+# stale/partial-cache app.css missing the new .library-legend-pill rule, so the
+# button fell back to the native UA button (white) AND lost its help-mode display
+# gate. Fix is cache-proof: the toggle now carries the long-standing .chip class
+# in the markup, so it renders as a proper outlined chip from ANY cached
+# stylesheet; the pill rule is slimmed to just the caret + open accent. Also
+# un-gated from help mode entirely (toggle + panel) so the chip legend shows on
+# every library page (the user: "should display if help is pressed or isn't").
+# v1.23.54: code-review follow-ups on the v1.23.50-53 UI cluster (self-review,
+# all low-severity, no functional/data bugs). (1) an OPEN legend toggle's green
+# label reverted to dim on hover — .chip:hover (color:--fg) is equal-specificity
+# and later in source than .library-legend-pill.open, so an explicit .open:hover
+# rule now holds the green. (2) two stale comments (base.html help-toggle margin,
+# library.html legend help-gate) corrected. (3) strengthened the v1.23.50 drift
+# guard to also pin each chip's BORDER color token (was color-only — a wrong
+# border -rgb token could have drifted silently). CSS + comments + test only.
+# v1.23.55: legend/glossary SRC + LINK chips now mirror the real row chip's
+# faint BACKGROUND tint too — the v1.23.50 audit pinned color + border but missed
+# the fill, so the decode chips read as hollow outlines while the actual row
+# chips (.link-badge-* / .link-glyph-*) are subtly filled (the user: "src colors
+# don't match"). Added the exact rgba tint to gc-u/a/m/p + gc-hl/c/mm/pu/pb/tb/
+# ab/ub (T + – stay fill-less, matching their rows). The drift guard now pins all
+# three color axes — color, border, background.
+# v1.23.56: STOP the parallel gc-* palette for the glossary/legend SRC + LINK
+# chips — reuse the real row classes (.link-badge link-badge-* / .link-glyph-*)
+# in the markup instead. The parallel palette drifted on every color axis (.50
+# color, .54 border, .55 fill) AND its recolors were invisible behind a stale
+# cached app.css, so the legend showed OLD colors while the years-stable
+# link-badge-* did not (the user: "the T is not the same green"). Reuse = identical
+# to the row by construction + immune to asset staleness. Dots/flags stay gc-.
+# v1.23.57: collections filter panel reserves the ED row's height. Collections
+# have no editions so the ED filter row is dropped, but that left the file-axis
+# column (DL/PL/LINK/ED) one row shorter — the whole filter panel shrank and
+# jumped size when switching between a library tab and collections (the user). A
+# .pill-filter-spacer (min-height 22px = one ED chip row) holds the ED row's place
+# on collections so both panels are the same height. CSS + one template branch.
+# v1.23.58: align the glossary/legend chip-row definitions into a column. Since
+# the decode chips reuse the real row classes (v1.23.56) they have varying widths,
+# leaving the def text ragged. .help-gloss-grid is now a 2-col (auto 1fr) grid +
+# the rows are display:contents, so the chip column sizes to the widest chip per
+# section and every definition lines up — chips keep their natural row-identical
+# size (the user's fixed-width-wrapper follow-up, done CSS-only). CSS only.
+# v1.23.59: the v1.23.57 collections filter spacer was 22px (the standalone
+# .ed-pill-btn height), but inside a .pill-filter-row every chip is 20px (the
+# v1.12.48 shared height) — so collections rendered ~2px taller than the library
+# filter panel (the user: "ever so slightly larger"). Spacer min-height 22px → 20px
+# so the panels match exactly. CSS one-liner.
+# v1.23.60: align the glossary/legend "no theme" – / "no placement" — dashes with
+# the other SRC/LINK chips. They used help-gloss-chip gc-none whose box differs
+# from the link-badge letter chips, so the dash glyph sat off the column (the user).
+# Now they carry .link-badge (same box as T/U/A/M/P) + gc-none (muted color), so
+# the dash centers in an identical box and lines up. Topbar DROP keeps help-gloss-
+# chip (it aligns with the other topbar pills). Markup only.
+# v1.23.61: code-review follow-up — the glossary/legend LINK chips reused only the
+# .link-glyph-* MODIFIER, but the real rows use base+modifier
+# (class="link-glyph link-glyph-*"). Inert today (the base only adds inherited
+# font-family + an inert text-align) but it deviated from the "byte-identical to
+# the row" invariant the v1.23.56 reuse rests on, and no test pinned it. Added the
+# .link-glyph base to all LINK decode chips so they're truly identical to the rows;
+# drift guard now pins base+modifier. (SRC chips already carried the base
+# .link-badge.) Markup + test only.
+# v1.23.62: holistic-audit safe-batch. (#1/#10) /api/tmdb/test +
+# /api/admin/test-notification ran a synchronous network call (TMDB httpx /
+# Apprise send) directly in the async body, freezing the event loop — now
+# offloaded via run_in_threadpool + the v1.22.58 lint extended to catch the two
+# method names (the PlexClient-only derivation missed them). (#6) GET /api/config
+# + config validation masked/checked git_url + database_url but not db_url, the
+# 3rd credential-capable sync URL → cleartext leak, now covered. (#5/#15) a
+# user-cancelled sync (_JobCancelled) was caught by the worker's broad except →
+# spurious "Sync failed" notification + held auto-downloads released and run
+# anyway; now caught first + re-raised. (#8) three dispatched theme-loss/backup
+# event kinds were missing from notify._EVENT_NOTIFY_TYPE → neutral 'info'; the
+# two loss tiers now warn. (#18) the payload-parse warn-once was a process-wide
+# bool muting every handler after the first corrupt payload — now per call-site.
+# v1.23.63: holistic-audit cluster E — check-then-insert atomicity. Three enqueue
+# paths ran a dedup-SELECT + INSERT in plain autocommit, so a manual action racing
+# the cron (or two concurrent requests) could both pass the "already queued?" gate
+# and double-insert. (#7) /api/sync/now now mirrors the cron _enqueue_sync (v1.22.33)
+# one-BEGIN-IMMEDIATE guard. (#16) bulk download-batch + download-missing wrap each
+# _enqueue_download in a PER-ITEM transaction (atomic dedup, short lock holds — not a
+# whole-batch hold that would starve the worker across a large bulk). (#19) decline-all
+# wraps each _set_pending_update_decision in a per-row transaction, consistent with
+# accept-all. (#17 — accept-all's single BEGIN IMMEDIATE over its 167-line edition-
+# scoped loop, a PLAUSIBLE lock-hold on a very large bulk — DEFERRED: narrowing it
+# needs restructuring that heavily-audited loop into per-row txns; the regression risk
+# to a real user data path outweighs a rare lock stall on a single-tenant homelab.)
+# v1.23.64: holistic-audit cluster F — reaper/enumeration data-loss. (#2/#3,
+# plex.py) an EMPTY Metadata page returned mid-section (transient under load /
+# mid-rescan) while totalSize indicated more items broke the pagination walk
+# "successfully" with a TRUNCATED list + NO error → the v1.18.89 reaper treated
+# the short set as authoritative and DELETED the unseen plex_items rows (the
+# v1.22.29 short-page class through the empty-page door). Now raises
+# PlexParseError so plex_enum counts a section error + skips the reaper. (#12,
+# plex_enum.py) the still_p survivor check that SUPPRESSES a theme-lost
+# notification had no plex_sections.included gate, so a stale has_theme=1 row in
+# a DISABLED section masked a genuine loss in a managed section — now joins
+# plex_sections AND included=1. (#11, plex_enum.py) a transient Apprise dispatch
+# failure on a theme-lost notification was unrecoverable (the reaper already
+# DELETED the source row → no future enum re-detects the loss to retry); now also
+# persists a durable events row so the loss is surfaced in the LOGS UI even when
+# the push fails. (#14 — a snapshot tarball truncated to only the movies/ subtree
+# passing _extract's any-subdir sanity check, then index('tv_shows') returning
+# ([],0) as a fake-success — DEFERRED to its own tag: it's MEDIUM/fake-success
+# (no rows deleted; the media_types_seen gate already blocks the catastrophic
+# mass-drop), rare-trigger, self-heals on the next good sync, and the correct fix
+# (require all three subtrees) entangles with broad snapshot-test-fixture churn —
+# no fixture ships movie_collections — that would risk this clean reaper diff.)
+# v1.23.65: holistic-audit cluster G — edition-scope bleeds (the v1.21.5x-9x /
+# v1.22.x per-edition isolation arc's last three audit-found gaps). (#9, api.py)
+# the shared _teardown_plex_api_artifacts_for_placements helper resolved the Plex
+# rating_key by (theme_id|guid, section_id) edition-BLIND, so PURGE/DELETE on one
+# edition of a section-sharing multi-edition title (LotR/Watchmen) ran
+# delete_theme against an ARBITRARY sibling's rk → cleared Plex's serving theme
+# for the wrong edition; now each placement resolves its rk by its own
+# edition_key (both callers SELECT it; mirrors the inline v1.21.69 fix). (#13,
+# plex_enum.py) the has_plex_upload lookup that clears the +P observation joined
+# placements without edition_key — the "collection-only" note went stale
+# (worker.py:3583 writes plex_upload for movie/TV on the API-upload path), so one
+# edition's plex_upload cleared SRC=P on a sibling that IS independently Plex-
+# served; now joins on p.edition_key = pi.edition_key. (#4, api.py) DOWNLOAD
+# MISSING LEFT JOINed local_files edition-blind, so a multi-edition title whose
+# standard edition is themed hid a themeless sibling from the missing-set; now
+# carries pi.edition_key through the DISTINCT + join + per-edition enqueue.
+# v1.23.66: INFO-card section uniformity. Three card sections (.diff-section /
+# THEMERRDB MATCH, .recovery-section / TRY THIS NEXT, .history-section / HISTORY)
+# hardcoded an 18px/14px divider + 10px head margin — pre-token drift the
+# v1.15.114 migration skipped because the values don't match a gap token — so they
+# sat ~2px tighter than the .dlg-section peers (--gap-5=20 / --gap-4=16 / --gap-2=8)
+# stacked in the SAME card. Tokenized all three to match .dlg-section so every
+# section shares one spacing rhythm. The per-section header color-coding (diff
+# blue / recovery amber / history cyan) is intentional + preserved — spacing only.
+# v1.23.67: snapshot-tarball truncation guard (deferred audit #14). A codeload
+# tarball truncated to only movies/ (tv_shows/ + movie_collections/ absent — an
+# interrupted/edge-corrupt download that still extracts without a TarError)
+# passed _extract's any()-subdir sanity check, then index('tv_shows') hit
+# `pages.json missing → return [], 0` (failed_pages=0) so the run reported SUCCESS
+# having synced ZERO tv/collection themes (silent fake-success; the v1.22.*
+# media_types_seen gate only stopped the catastrophic mass-drop, not the
+# zero-sync). _extract now requires EVERY subtree's pages.json → a truncated
+# snapshot raises _SnapshotError + run_sync falls through to the git/remote tier.
+# The test fixture builder (_build_database_tarball) now backfills all three
+# canonical subtrees so minimal fixtures still satisfy the gate.
+# v1.23.68: glossary + legend gain the TDB axis + a fixed chip rail. (1) Added a
+# // TDB section (TDB / TDB↑ / TDB⚠ / TDB✗ / TDB◌ / no TDB) to both the GLOSSARY
+# (base.html) and the in-context LEGEND (library.html), reusing the real
+# .tdb-pill tdb-pill-* row classes (v1.23.56 reuse-don't-mirror) so the decode
+# chips are identical to the row. (2) .help-gloss-grid's first column was `auto`,
+# so each section auto-sized its own chip rail — the 9px DL/PL dots left their
+# definitions ~11px left of the wider SRC/LINK chips' definitions (the user: "the
+# DL/PL dots are not lined up"). Pinned the rail to a fixed 26px so every
+# section's definition column lands at the same x; the wide text-pill sections
+# (TDB + the topbar UPD/FAIL/DROP/DISK pills) opt into .help-gloss-grid-wide. The
+# row TDB pill's margin-left:6px is zeroed in the grid so it sits flush.
+# v1.23.69: fresh silent-bug audit (multi-agent + hand-verified). (HIGH, api.py)
+# the PATCH /api/config keep-on-`***`-marker guard covered git_url + database_url
+# but not db_url — v1.23.62 added db_url to the GET userinfo MASK without the
+# symmetric write guard, so a standard settings SAVE round-trip wrote the masked
+# `https://***@host` literally over a real db_url credential (then remote-tier
+# syncs 401'd). Added db_url to the guard tuple. (MED, api.py) two enqueue
+# endpoints ran a jobs-table dedup SELECT + INSERT in autocommit (jobs has no
+# UNIQUE) so two concurrent clicks double-enqueued — api_relink_all + the
+# per-section api_libraries_section_refresh (whose twin api_library_refresh was
+# already wrapped); both now BEGIN IMMEDIATE, mirroring v1.23.63. (The audit also
+# swept class-9 silent-catches, async event-loop blocks, and edition-scope/data-
+# loss — all CLEAN. The scan/decide-finding enqueues share the race shape but
+# dedup against a worker-stamped field, not the jobs table, so a plain wrap won't
+# serialize them — deferred as LOW + worker-re-checked.)
+# v1.23.70: diagnostic timing on /api/library for the tab-switch-lag report
+# (the user: switching between library tabs / collections sometimes feels slow).
+# Diagnosed first rather than optimizing the regression-risky browse query blind:
+# WAL is on (so it's NOT reader-vs-writer lock wait), and tab switching is a full
+# page navigation (re-downloads/re-parses app.js + re-inits before the fetch even
+# fires). _library_main_query now records its own duration — a WARNING when it
+# crosses ~750ms, and a query_ms field echoed in the response so the per-request
+# cost is visible in devtools' Network tab during a real tab switch. Read-only;
+# comes back out once the bottleneck (query vs full-nav re-parse) is characterized.
+# v1.23.71: client-side library tab switching. The nav tab links were <a href>
+# full-page navigations, so every switch re-downloaded/re-parsed the ~18k-line
+# app.js + re-ran all init before loadLibrary fired (the user's "~1s loading on tab
+# switch"; the /api/library query itself is ≤160ms, measured v1.23.70).
+# switchLibraryTab (app.js) now swaps the tab in place: fetch the new tab's
+# server-rendered HTML, swap only the per-tab fragments (the toolbar chips +
+# legend — the server stays the source of truth), re-bind the swapped chips (the
+# chip bindings were extracted into a re-callable bindLibraryToolbarChips),
+# re-hydrate libraryState, loadLibrary(). PROGRESSIVE ENHANCEMENT: the <a href>
+# still works and ANY error falls back to a full navigation, so this can never
+# regress nav. Back/forward handled via pushState + popstate (a deep-link target
+# with query pills reloads for fidelity). Needs browser verification on deploy
+# (no JS harness here). Known v1 limit: the filter drawer isn't swapped, so the
+# non-collections-only ED filter row persists across a switch until a full reload.
+# v1.23.72: close the two LOW enqueue races deferred from the v1.23.69 audit.
+# api_trigger_scan + api_decide_finding(/bulk) ran a dedup check + INSERT INTO
+# jobs in autocommit (jobs has no UNIQUE), and dedup'd against a WORKER-stamped
+# field (scan_runs.status / scan_findings.adopted_at) the request hasn't changed
+# yet — so even a plain transaction wrap couldn't serialize them (both still
+# pass the check + insert). Added a JOBS-table dedup (existing pending/running
+# job for the same target) inside a BEGIN IMMEDIATE at each site, mirroring
+# api_sync_now / api_relink_all: scan now also 409s when a scan job is pending;
+# decide single/bulk skip a finding that already has a pending/running 'adopt'
+# job (matched via json_extract(payload,'$.finding_id')). The bulk uses a per-row
+# transaction (short locks, mirrors v1.23.63 decline-all). The worker's _do_adopt
+# already re-checks adopted_at, so this just stops the duplicate JOB being made.
+# v1.23.90 (the user: "anime numbers don't match, 1,244 vs 1,341"): the dashboard
+# classified anime-section FILMS (media_type='movie' in an is_anime=1 section —
+# anime movies / OVAs) inconsistently with the library tabs. The library is a
+# clean partition (movies tab = is_anime=0 movies; anime tab = is_anime=1 movie
+# +show; v1.19.28), but three dashboard sources each split differently: the
+# // ANIME THEMED card (/api/coverage/plex `anime` array) was media_type='show'
+# ONLY (1,244), the // PLEX ANIME card (/api/sections/coverage section totals)
+# counted EVERY row in anime sections incl. collections (1,341), and _stats_sync
+# (SSR) was show-only for anime + un-gated for movies (anime films counted on
+# the MOVIES card). Now all three match the library partition: movies aggregates
+# gate is_anime=0, anime aggregates take media_type IN ('show','movie'), and the
+# // PLEX ANIME card sources from /api/coverage/plex's anime array (which already
+# returns the shape, v1.15.47) like its PLEX MOVIES/TV siblings instead of the
+# collection-contaminated section-totals sum. Anime films move MOVIES→ANIME (the
+# 97-row gap); the PLEX LIBRARY total is unchanged. renderPlexAnimeCard retired.
+# v1.24.0: rolled over at the v1.23.x .99 line-close after a fresh 3-agent audit
+# (silent-fails / recent-regressions / coverage) of the v1.23.89-99 arc (split-
+# EXISTS sync flush, the anime-count library partition, the bulk-download
+# notification-wording fix, and the silent-failure sweep — collections-enum
+# empty-page truncation guard, fresh 0-byte download guard, two event-loop
+# offloads, two edition-scoped reads, two LOW error-masks). Regressions + coverage
+# came back CLEAN (the api_coverage_plex offload proven byte-identical, every
+# session behavior behaviorally tested). ONE real bug found + fixed pre-cut:
+# _detect_and_stamp_drops_git probed survivorship with `read_json(path) is not
+# None`, but read_json returns None for BOTH a missing tree path AND a present-
+# but-malformed blob — so a momentarily-corrupt ThemerrDB entry read as "gone" →
+# false tdb_dropped_at stamp + pending_update deletion, and commit_sync_ok
+# advances the git baseline so the next run diffs from the new head and it never
+# self-corrects (data-loss class). New _GitMirror.path_exists_in_tree probes blob
+# EXISTENCE regardless of JSON validity → a corrupt survivor counts as present,
+# never dropped (fails SAFE). Plus the LOW fold-in: the broad drop-detection
+# `except: "drop detection failed"` split into per-phase try/except (detection /
+# baseline-advance / compaction / event-log) so a baseline or compaction failure
+# isn't mislabeled — the v1.22.74 advance-only-after-detection ordering + v1.23.80
+# compact-only-after-HEAD-retired gate preserved. Two LOW items consciously
+# DEFERRED to v1.24.x: the first-ever-anime-theme in_plex notification-count timing
+# (cosmetic — download side covered; delicate flush/resolve ordering) and the
+# api_admin_hama_gap event-loop offload (admin-rare; clean run_in_threadpool wrap).
+# v1.24.1: bugs/silent-failures review follow-ups (Tag A, 2 HIGH + 1 MED). (HIGH,
+# class 9) adopt_finding swallowed any _do_adopt failure + UNCONDITIONALLY stamped
+# adopted_at, so a transient blip (db locked / sidecar gone / ENOSPC) became a
+# permanent fake-"adopted" the worker marked DONE and the idempotence + jobs-dedup
+# guards then blocked from ever retrying — now re-raises into the worker's bounded
+# _mark_failed path, leaving adopted_at NULL (re-decidable). (MED) _do_adopt's
+# local_files/placements writes used INSERT OR REPLACE → a re-adopt silently NULLed
+# the health columns (canonical_present / theme_present / *_health_checked_at) that
+# drive the NEEDS WORK / DL / PL sorts; now ON CONFLICT DO UPDATE, the v1.23.99
+# _do_keep fix applied to adopt. (HIGH, class 12) api_stats offloaded its heavy SQL
+# but ran _disk_status_for_stats (shutil.disk_usage → statvfs) inline in the async
+# body — a stalled Unraid/NFS mount would freeze the event loop; now off-loaded via
+# run_in_threadpool (the AST lint can't see it: nested def). CSS token-cleanup is
+# the separate Tag B.
+# v1.24.2: review Tag B — CSS token discipline (no behavior change). The library
+# anime role-pill (.lib-flag-pill-anime) hand-mirrored a parallel pink (#ff7ab8 /
+# 255,92,168 / 255,122,184) that drifted from the canonical --magenta its sibling
+# .stat-plex-anime card already uses — the gc-* palette-drift class; now on the
+# token. Plus the LOW polish bundle: .apply-complete-banner raw lime
+# rgba(0,255,0,.04)→var(--bg-tint-green); .lib-flag-pill-4k color #ffce6b→
+# var(--amber-bright); .sync-hist-transport-database tint→rgba(var(--magenta-rgb));
+# dead var(--bg,#000) fallback→var(--bg); and a new --grey-rgb token replacing ~7
+# raw rgba(180,180,180,…) muted-metadata sites (app.css + ops.css).
+# v1.24.3: orphan scan probes the placement's OWN plex_rating_key. the user's prod
+# scan flagged 7 plex_upload rows (motif_entry_missing / no_plex_entries /
+# rk_lookup_failed) that RE-PUSH never cleared. They're MULTI-EDITION titles
+# (Amadeus +Director's Cut, Star Wars ×4 cuts, Avatar +Extended, LotR/Hobbit
+# Theatrical+Extended) whose '' placement targets a NAMED edition's rk (verified
+# serving, ok=1). scan_one_placement re-resolved the rk from plex_items by the
+# placement's '' edition_key — probing the wrong edition, or none in that section
+# (→ rk_lookup_failed) — instead of the rk the placement actually used. Now it
+# probes placements.plex_rating_key directly; plex_items resolution stays as the
+# folder_path source + the legacy fallback for rk-less placements. Diagnostic-only
+# fix (read path); the deeper ''-as-falsy edition mis-keying that created those
+# placements is the still-deferred multi-edition cleanup.
+# v1.24.4: backfill (the user's pick over the riskier place-path fix) — re-key the
+# mislabeled plex_upload placements. orphan_scan.rekey_mislabeled_placements re-labels
+# each plex_upload placement whose edition_key disagrees with the edition of its own
+# plex_rating_key (per plex_items) to the rk's true edition — the ''-as-falsy residue
+# (placement keyed '' but rk is Amadeus's Director's Cut etc.). Tracking-only +
+# non-destructive: never touches Plex or the on-disk theme, leaves the '' local_files
+# row (reached via the IN(edition,'') fallback), skips re-keys whose target PK slot is
+# occupied + rks not in plex_items. New admin endpoint POST
+# /api/admin/placements/rekey-mislabeled (dry-run default; ?apply=true writes), off the
+# event loop. The deeper place-path ''-scoping bug stays deferred (changes auto-theming
+# on multi-edition titles — the HOLD'd arc).
+# v1.24.5: /code-review follow-ups on the v1.24.3/.4 orphan-scan arc (6 findings).
+# (MED) scan_one_placement's orphan_sidecar check + DELETE SIDECAR target now use
+# the folder of the rk we actually PROBE (placement_rk's plex_items folder via a
+# LEFT JOIN), not the edition-resolved rk_row — for a mislabeled placement they
+# diverged and stated the wrong-edition folder (the live Amadeus symptom). (MED)
+# rekey_mislabeled_placements dedups intra-batch target PKs into conflicts so two
+# re-keys landing on one PK can't collide on the 2nd UPDATE + abort the txn. (LOW)
+# log_event moved AFTER the write txn commits (its flusher writes on its own conn +
+# no WAL → logging inside BEGIN IMMEDIATE could drop the audit batch). (LOW) the
+# rekey endpoint catches IntegrityError/OperationalError → {ok:false,reason} instead
+# of an opaque 500. (LOW) the placement_rk lookup asserts media_folder='' (the
+# plex_upload PK invariant). Plus the two back-to-back edition guards merged.
+# v1.24.6: api_admin_hama_gap event-loop offload (deferred from the v1.24.0 rollover).
+# The /api/admin/diagnostics/hama-gap handler ran ~13 sync conn.execute (6 COUNT(*) +
+# 6 sample SELECTs + a runtime read) directly in its async body — a class-12 block
+# (sqlite isn't in the AST lint's tracked set, so it slipped the guard). The whole body
+# is now a nested def offloaded via run_in_threadpool, mirroring api_coverage_plex
+# (v1.23.96) + the v1.24.1 stats disk offload. Byte-identical behavior (the v1.15.143
+# behavioral test is unchanged); _require_admin stays in the async body.
+# v1.24.7: edition-audit finding (HIGH, latent crash). api_unplace_item's LET PLEX
+# SERVE / UNPLACE restore loop reads pr["edition_key"] (the v1.22.76 per-edition
+# local_files fix), but its three placement worklist SELECTs only fetched
+# media_folder/placement_kind/section_id — never edition_key. With row_factory=Row,
+# pr["edition_key"] raises IndexError, so the whole Plex-API restore loop threw on any
+# plex_upload LPS/UNPLACE with Plex enabled (prod config). No test exercised the
+# plex-enabled restore path, so the v1.22.76 source pins (which checked the READ)
+# missed it. Added edition_key to all three SELECTs; pinned both sides of the contract.
+# v1.24.8: edition-audit finding (MED) — the reaper's theme-lost fallback classifier
+# was edition-blind. The lost-theme candidate set is per-edition (DISTINCT folder_path)
+# and the notification names the specific lost edition, but the four-way tier classifier
+# (backup_signal / sidecar_db / other_fallback in plex_enum.py) matched a fallback by
+# (media_type, tmdb_id) with NO edition filter — so on a multi-edition title that fully
+# lost its Plex theme, a SIBLING edition's backup/sidecar got advertised as the lost
+# edition's (operator told to PROMOTE/ADOPT the wrong file). Each classifier now scopes
+# to `edition_key IN (this_edition, '')` (prefer this edition, allow the shared ''
+# standard so a named loss with only a '' backup still recovers, but EXCLUDE other named
+# siblings). The dedupe key gained the edition so two editions losing their theme in one
+# 24h window each notify. still_p (the title-wide "still themed anywhere?" suppressor)
+# is unchanged by design (v1.22.32). Read-only/notification-only — no data mutation.
+# v1.24.9: INFO-card honesty — a backup-only row's downloaded URL was rendered
+# under the "applied url" label. the user's SpongeBob SquarePants repro: SRC=P (Plex
+# serving its own theme) + a TB ThemerrDB backup, yet the card showed
+# "applied url ... themerrdb" as if that theme were playing. The label was driven
+# purely by source_kind (isUrlSourced = themerrdb/url) and never consulted
+# last_place_attempt_reason='backup_only' — the very flag stamped when motif
+# downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
+# line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0:30 preview stay — they correctly previewed the staged backup). Returns to
+# "applied url" the moment PROMOTE TO ACTIVE flips the reason off backup_only.
+# JS-only label change; no data path touched.
+# v1.24.10: INFO-card consistency — synthesize a baseline "how it got here"
+# HISTORY line. The per-row events table is pruned after 30 days
+# (_prune_events), so an auto-themed row nobody has touched loses its HISTORY
+# section entirely once its download/place events age out (the user's A Knight of
+# the Seven Kingdoms diagnostic: themed May 20, events gone by ~June 21). Every
+# row motif owns a local_files row for now renders a single durable origin line
+# derived from stored provenance (source_kind via _humanSourceKind + provenance
+# + the new downloaded_at, falling back to motif_added_at) — none of which is
+# pruned. renderRowHistory gained a `baseline` param: it shows real events when
+# present, else the synthesized row (no CLEAR — nothing stored to clear), else ''
+# (pure-P / SRC=— rows with no motif file stay sectionless as before). Backup-only
+# rows tag the line "· backup (deferring to Plex)" so it doesn't read as applied
+# (mirrors v1.24.9). api_item now also returns local_files.downloaded_at. The
+# history degrades gracefully: detailed timeline → one-line origin after prune.
+# v1.24.11: self-review cleanup of the v1.24.9/.10 INFO-card arc.
+#   1. (dead code) v1.24.10 added a `downloaded_at` column to
+#      _library_main_query (the library LIST query) — but api_item builds
+#      data.local_file from `SELECT * FROM local_files`, which already
+#      surfaces downloaded_at (and last_place_attempt_reason) as native
+#      columns. The explicit column was never read by the INFO card; removed.
+#      Both contract tests now pin the REAL path (`SELECT * FROM local_files`)
+#      instead of a string that happened to live in the unrelated list query.
+#   2. (consistency) the synthesized ORIGIN row's date now formats via the
+#      card-wide fmt.timeAuto (pre-formatted in openInfoDialog) so it reads
+#      `MMM DD, YYYY, HH:MM` like the motif-added / themerrdb-added dates,
+#      not renderRowHistory's bare toLocaleString.
+#   3. (waste) renderRowHistory only builds the per-event rows when events
+#      exist (`hasEvents ? events.map(...) : ''`) — the synthesized branch no
+#      longer maps over an empty array.
+#   Behavioral tests tightened (assert the ORIGIN date + the full summary
+#   note). Pure JS/test/comment cleanup; no behavior change for users.
+# v1.24.11: self-review cleanup of the v1.24.9/.10 INFO-card arc — see above.
+# v1.24.12: full security review remediation (the user-selected items).
+#   1. Forward-auth FAILS CLOSED: _resolve_principal no longer trusts the
+#      X-Authentik-Username header on an EMPTY forward_auth_allowed_ips (the
+#      old "legacy permissive" path was an admin-bypass footgun on a directly-
+#      reachable port). Header trusted only when the allowlist is set AND the
+#      client IP matches; else fall through to token/session/anonymous. Not
+#      live in the deploy (trust_forward_auth=False) but removes the footgun.
+#      Boot warning reworded to describe the fail-closed behavior. New
+#      tests/conftest.py gives the suite an allowlisted 127.0.0.1 peer so the
+#      162 forward-auth tests keep authenticating.
+#   2. section_id (the /collections filter) gains an in-function isdigit()
+#      guard — route-pinned to ^[0-9]*$ already, so defense-in-depth only.
+#   3. events scrubber redacts `…/webhooks/<id>/<token>` (Discord/Slack path
+#      secret) — unreachable today, last-line defense.
+#   Deliberately NOT done (the user's call): CSP / X-Frame-Options headers.
+# v1.24.13: holistic-review fixes — lock-scope / atomicity batch (Wave 1 of 4).
+#   #2 api_unmanage_item held the BEGIN IMMEDIATE write lock across a per-row
+#      folder_has_theme_sidecar() /data walk; the re-stat is now precomputed
+#      off-loop (run_in_threadpool) before the txn, the in-txn loop only UPDATEs.
+#   #4 _do_adopt's 4-statement write cluster (local_files+placements+acks+
+#      plex_items) ran in autocommit → an inline-adopt crash mid-cluster left a
+#      tracked canonical with no placement (no worker retry on that path). Now
+#      wrapped in one transaction().
+#   #6 _retry_pending_placements did a non-atomic dedup-SELECT-then-INSERT →
+#      a concurrent enqueue raced it into a duplicate place job. Now one
+#      BEGIN IMMEDIATE around check+insert (mirrors _enqueue_sync v1.22.33).
+#   #7 api_admin_delete_orphan_sidecar ran find_theme_sidecar_path (/data scan)
+#      on the event loop (v1.23.96 offloaded the unlink but missed the scan).
+# v1.24.14: holistic-review sync data-loss (wave 2/4).
+#   #3 git-differential sync advanced the MOTIF_LAST_SYNC baseline even when a
+#      changed path's read_json() returned None (a `continue`+errors+=1, not a
+#      raise, so it slipped the v1.22.74 advance-only-on-success guard) -> that
+#      add/modify was permanently dropped (next run diffs from the new HEAD).
+#      commit_sync_ok now also gates on stats.errors==0 (clean in pure-git mode)
+#      + breadcrumbs when read failures hold the baseline back.
+#   #5 remote-tier _fetch_index trusted a 200-with-bad-body pages.json -> a
+#      silent green zero-theme sync of a whole media type. Now raises on a
+#      non-dict body + warns on a zero-page catalog (snapshot tier got this
+#      in v1.23.67).
+# v1.24.15: holistic-review LOW cleanup (wave 3/4 — safe items).
+#   #9 deorphan merge: unconditional non-dry breadcrumb + amplifier abort cap
+#      (v1.18.10 class) on the DELETE-heavy collision-merge walker.
+#   #10 sync drop stamp + companion pending_updates DELETE now in one txn.
+#   #11 op_progress RUNTIME stuck-sweep (progress.sweep_stuck + 15-min job) —
+#      a raised finish_progress left an op 409-locked until restart.
+#   #12 corrected the inaccurate bulk cloud-backup gate comment.
+#   Deferred (the user): #1 migration idempotency (17 boot-critical migrations,
+#      weak suite coverage, not live on v67) + #8 PROMOTE lock decomposition.
+# v1.24.16: sync summary headline scoped to "no CATALOG changes" (was bare
+#   "no changes"). The headline reflects only the ThemerrDB catalog diff; the
+#   post-sync plex_enum (separate jobs, run AFTER the summary dispatch) can
+#   auto-theme a newly-seen UNTHEMED Plex row from a PRE-EXISTING catalog
+#   theme -> a theme_added card lands right after a "no changes" summary,
+#   reading as a contradiction (the user's DragonHeart repro). Wording-only.
+# v1.24.17: edition sweep #2 — libKey (bulk-selection identity) collapsed a
+#   multi-edition title's editions into ONE key (mt:theme_tmdb), so multi-
+#   selecting a multi-edition title checked both rows but fed every bulk action
+#   (DOWNLOAD/PUSH/REVERT/LPS/ADOPT/ACCEPT) only ONE edition (the last), silently
+#   dropping the rest. Appended rating_key (unique per edition) to libKey.
+#   Plus the read-only read-path bleeds from the same sweep: #3 coverage
+#   plex_items->placements JOINs (per-section + collections) gained
+#   `p.edition_key = pi.edition_key` (two-placed-edition titles double-counted);
+#   #4 api_recovery_options' INFO-card `local` query now scopes to the clicked
+#   rating_key's edition (prefer-then-'' like the audio endpoint) so "RESOLVED
+#   VIA {source}" can't show a sibling's source; #5 /api/coverage/plex `placed`
+#   EXISTS (movies/tv/anime/collections) gained edition_key so a placed sibling
+#   no longer marks a genuinely-unthemed edition as placed (hiding it from
+#   "ready to add"). (Held: #1 worker _do_place ''-scoping — separate confirm.)
+# v1.24.18: edition sweep #1 (the held carve-out, now confirmed) — worker
+#   cached_rk resolution gated edition scope on TRUTHINESS. _do_place (hardlink
+#   FILE path) + _do_place_collection (API-upload, also movie/TV kind='api')
+#   resolved the rk they operate on via `_ed_clause = " AND pi.edition_key = ?"
+#   if place_edition_key else ""` — so a TAGGED edition scoped, but the STANDARD
+#   '' edition fell to the UNSCOPED LIMIT 1 and grabbed an arbitrary sibling
+#   (theme into the wrong folder + wrong-rk refresh + split-brain re-enqueue).
+#   '' is a REAL edition: scope by PRESENCE, always. Plus a ''-ONLY unscoped
+#   fallback (the carve-out) so a default-'' payload on a TAGGED-only title
+#   still resolves rather than no-op'ing; TAGGED payloads stay strict (no
+#   sibling grab, v1.21.66). Behavioral discriminators on both helpers + source
+#   pins on both gates.
+# v1.24.19: plex_enum (Plex section refresh) status-bar accuracy, from the
+#   status-bar review. (1) The LIVE OPS drawer card head was the generic
+#   "// PLEX REFRESH" for every refresh — full scan, single /movies, and
+#   collections-only all read identically. run_plex_enum now stamps
+#   detail.scope_label ("All libraries" / "Movies" / "Movies (items only)" /
+#   "Movies collections") and ops.js appends it to the card kind so the head
+#   says WHAT is refreshing (per-section stage_label still names the live
+#   section). (2) When Plex returns no totalSize the fetch bar stays
+#   indeterminate AND the N/N counter is hidden, so the climbing received count
+#   was invisible and the fetch read as stuck — the fetch callback now pushes
+#   the running count onto the activity feed when total is unknown.
+# v1.24.20: heartbeat-aware fast-reclaim of orphaned sync/plex_enum jobs.
+#   A hung/dead sync left its jobs row in status='running' until the 120min
+#   runtime backstop, pinning themerrdb_sync_in_flight>0 and wedging the
+#   dashboard SYNC button disabled — with "no ops running", because the
+#   op_progress stale-sweep had already emptied the LIVE OPS drawer (the user's
+#   repro: button stuck at "// SYNCING THEMERRDB…" long after the sync finished,
+#   up to 2h). _stuck_job_sweep now reclaims a running sync/plex_enum job within
+#   minutes once its op_progress heartbeat is stale/terminal/missing; a healthy
+#   long sync keeps its heartbeat fresh and is untouched (120min backstop intact).
+# v1.24.21: operability (holistic-review Thread 2). (1) /healthz was an
+#   unconditional 200 — the Docker healthcheck meant nothing. Now a real
+#   LIVENESS check: DB reachable + (when main.py wires them onto app.state)
+#   worker threads + scheduler alive → 200, else 503. Deliberately does NOT
+#   ping Plex (external dep down must not make Docker kill us). Sync handler →
+#   threadpool, so the blocking DB read is safe + lint-exempt. (2) Plex TEST
+#   CONNECTION button on /settings → PLEX: connects with the saved URL+token and
+#   surfaces the server name/version (or a clean error) so bad config fails fast
+#   at save time, not hours later in a sync. New PlexClient.get_server_info +
+#   /api/admin/test-plex, mirroring TEST NOTIFICATION/COOKIES.
+# v1.24.22: migration-chain structural guards (holistic-review Thread 1, the
+#   verified-real gap). The 66 forward-only _migrate_vN_to_vM had no end-to-end
+#   test. Added STRUCTURE-only guards (zero migration-internal edits — the
+#   catastrophic-risk zone stays untouched): fresh init lands at v67 with the
+#   core tables; the dispatch chain is contiguous 1->66 + matches
+#   CURRENT_SCHEMA_VERSION + every defined migration is wired (catches a
+#   forgotten version bump / unwired migration); init_db is idempotent (re-run
+#   is a clean no-op, no duplicate version row). Deliberately NO full-chain
+#   replay test — old migrations rebuild tables to their THEN-current shape, so
+#   replaying on a v67 DB is a false crash, not a bug.
+# v1.24.23: code-review fixes for the v1.24.18-21 batch (self-review, recall).
+#   (#1 HIGH regression in v1.24.20) the heartbeat reaper false-killed a HEALTHY
+#   slow git clone: a first-run/oversized-mirror dulwich clone is one blocking
+#   call that emits no op_progress heartbeat, so a >15min clone tripped the
+#   stale-heartbeat reclaim mid-flight. Now the reaper only reclaims a sync/
+#   plex_enum job when its op is TERMINAL or MISSING (the actual orphaned-job
+#   signal — the user's "no ops running" repro); a still-running op is left alone
+#   regardless of heartbeat freshness. (#3) /healthz now uses get_conn (closes +
+#   busy_timeout) instead of a raw sqlite3.connect(timeout=2.0) that leaked the
+#   connection and could false-503 under a heavy-write window.
+# v1.24.24: code-review finding #2 — the v1.24.18 STANDARD ('') place fallback
+#   grabbed an ARBITRARY tagged sibling (unscoped LIMIT 1) when no '' row existed
+#   but 2+ tagged editions did (LotR: Theatrical/Extended/Sam) → theme hardlinked
+#   into the wrong folder + wrong-rk refresh (cached_folder_path bypasses
+#   find_target_folder). Now the fallback fires ONLY when there's EXACTLY ONE
+#   candidate; when ambiguous it leaves cached_rk/cached_folder_path None so
+#   find_target_folder cleanly no-matches the tagged folders under strict_edition.
+#   The single-tagged-folder case still lands (v1.24.18 intent preserved). Both
+#   _do_place + _do_place_collection gated; behavioral guards verified to fail on
+#   the old arbitrary-pick.
+# v1.24.25: resolve_theme_ids re-links a re-added orphan-backed movie by title.
+#   A non-TDB movie themed via SET URL gets a synthetic plex_orphan theme; when
+#   Plex deletes+re-adds the item (new rating_key) the new plex_items row could
+#   only re-bond via guid_imdb (the sole orphan pass), so a guid-less item (a
+#   stage musical — the user's "Avenue Q") matched NO pass (sql_title excludes
+#   orphans) → theme_id stayed NULL → the surviving canonical + user_override
+#   went invisible (SRC=—, no DL to restore). Added a LAST resolve pass
+#   (sql_title_orphan): title_norm+year → plex_orphan when theme_id IS NULL,
+#   after every real-theme pass so real matches always win. A plex_enum refresh
+#   now re-links it; the canonical (in /config/themes, untouched by the Plex
+#   delete) is then PUSH-able again.
+# v1.24.26: auto-restore a motif-owned sidecar whose Plex theme.mp3 went missing
+#   + a theme_auto_restored notification. The v1.25-era follow-up to v1.24.25:
+#   once a re-added title re-links, motif should also REDEPLOY its theme without
+#   the operator noticing the gap. New hourly scheduler sweep
+#   (_restore_lost_placements) finds placements stamped theme_present=0 (the
+#   sidecar is CONFIRMED gone by verify_placement_health) that are motif-owned
+#   non-plex_upload sidecars with a surviving local_files canonical + a LIVE
+#   plex_items folder + no in-flight place job + no permanent-skip reason,
+#   RE-STATs each media_folder/theme.mp3 for authority (a stale stamp or mount
+#   blip can't trigger a spurious re-place), re-enqueues a place job from the
+#   backup, and fires theme_auto_restored (ON by default, warning-level) so the
+#   operator knows motif self-healed the delete+re-add case the v1.18.90 reaper
+#   silently skipped as 'other_fallback'.
+# v1.24.27: year-LESS orphan re-link (Avenue Q, the data-confirmed sequel to
+#   v1.24.25). the user's prod diagnostic showed the re-added Avenue Q came back
+#   from Plex with year='' (folder "Avenue Q ()") — so v1.24.25's title+year
+#   orphan pass couldn't match the surviving plex_orphan theme's year='2003'
+#   (and the row had no guids) → stranded at theme_id=NULL, canonical+override
+#   invisible (SRC=—, no DL). New resolve pass sql_title_orphan_yearless: when a
+#   row has NO usable year (NULL or '') AND exactly ONE plex_orphan theme shares
+#   its title_norm, bond by title alone (the v1.24.18 exactly-one gate keeps
+#   remakes safe; a row that DOES carry a year still requires the year to match
+#   via sql_title_orphan, preserving the Wonka 1971-vs-2023 guard). Runs LAST,
+#   after the year-matching orphan pass, so a precise match always wins first.
+# v1.24.28: stale plex_upload detection + honest "RE-PUSH" display. A theme
+#   deployed via plex_upload (POST to a Plex rating_key's metadata) showed as
+#   placed (PL/PU) forever even after a Plex delete+re-add destroyed that rk —
+#   verify_placement_health excluded plex_upload from its sidecar stat, so
+#   theme_present stayed NULL (the user's Avenue Q: uploaded to rk 660896, re-added
+#   as 714864, nothing serving, yet PL/PU). New health pass stamps plex_upload
+#   theme_present=1 if plex_rating_key is still a live plex_items row else 0
+#   (guarded on plex_rating_key IS NOT NULL; self-healing on re-push). The
+#   library read nulls media_folder + placement_kind for a stale plex_upload (so
+#   every placed/SRC/PL read treats it not-placed → SRC='-') + sets needs_repush,
+#   driving a distinct orange RP LINK badge + filter chip. Re-push stays manual
+#   (the user's call); auto-restore for plex_upload is a planned follow-up.
+# v1.24.29: auto re-PUSH a stale plex_upload (the v1.24.28 follow-up the user chose
+#   to build). _restore_lost_placements (the v1.24.26 sidecar auto-restore sweep)
+#   gains a plex_upload branch: a placement stamped theme_present=0 whose uploaded
+#   rating_key is re-verified dead AND whose theme now has a LIVE bonded
+#   plex_items row (post-v1.24.27 re-link, a current rk to upload to) re-pushes
+#   via the same place-job + theme_auto_restored path. Same skip-reason +
+#   per-edition in-flight dedup gating as the sidecar branch; no FS stat (the SQL
+#   rk-liveness gate is the authority). Closes the Avenue Q arc: a delete+re-added
+#   plex_upload now self-heals end-to-end (re-link → honest RP state → auto
+#   re-push) within an hour.
+# v1.24.30: backfill themes.title_norm so the whole orphan cohort can re-link.
+#   The v1.24.27 prod diagnostic found ~340 plex_orphan themes with
+#   title_norm=NULL — 4 of the 5 orphan-creation paths (adopt ×2, bulk import,
+#   the collection SET-URL) never stamped it (only the v1.24.x movie SET-URL did,
+#   which is why Avenue Q had it). The v1.24.25/.27 title re-link passes match
+#   t.title_norm = plex_items.title_norm, and NULL = anything is FALSE in SQL, so
+#   those orphans could NEVER self-recover on a Plex delete+re-add. resolve_theme
+#   _ids now backfills title_norm = normalize_title(title) on any theme missing it
+#   BEFORE its title-match passes (the single chokepoint that consumes title_norm)
+#   — every refresh self-heals the whole cohort + any future NULL, no restart,
+#   idempotent. Closes the orphan-recovery gap the Avenue Q arc surfaced.
+# v1.24.31: uniform YouTube notification thumbnails. The Discord theme
+#   notifications showed variable-size cards (the user: "some large some small")
+#   because Discord auto-embedded the raw YouTube watch URL — its rich card
+#   sizes to the source (landscape for videos, tall portrait for Shorts). Gave
+#   YouTube the v1.22.94 Facebook treatment: _render_url_lines wraps the URL in
+#   <...> to suppress the auto-embed, attachment_thumb_url returns the
+#   deterministic mqdefault.jpg, and notify._prepare_attachment normalizes it to
+#   the uniform 400x224 canvas (ytimg.com added to the attachment CDN allowlist).
+# v1.24.32: independent toggles for the two auto-restore branches. the user
+#   wanted settings switches to enable/disable the auto-recovery behaviors;
+#   chose separate sidecar vs plex_upload re-push. New PlacementConfig fields
+#   auto_restore_sidecar / auto_restore_plex_upload (both default ON = the
+#   v1.24.26/.29 behavior) gate the two branches of _restore_lost_placements
+#   (getattr-default True so an older yaml stays always-on). Two settings
+#   toggles + the existing save()+reload() path makes them live without a
+#   restart. Detection + the RP badge are unaffected when a toggle is OFF.
+# v1.24.33: RP rows get a distinct, sortable re-push attention glyph. A stale
+#   plex_upload (RP) reads as downloaded-but-unplaced, so it tripped the generic
+#   amber "!" awaiting-placement glyph — looked like an ATTN icon + no way to
+#   find them (the user). New orange ⟳ title glyph (matching the RP LINK badge),
+#   checked before awaitingApproval, that LINKS to link_pills=rp so one click
+#   surfaces every row needing a re-push. Unambiguous + findable.
+# v1.24.34: ensure-coverage backfill for historical edition_key='' canonicals.
+#   the user's Two Towers 409 ("no local file to replace from"): a pre-edition-
+#   aware theme has its canonical at '' while the live Plex rows are tagged
+#   (theatrical/extended), so the edition-scoped push + v1.24.28-29 RP
+#   auto-recovery can't find a canonical for the tagged edition. Prod diagnostic:
+#   31 such titles (LotR, SW fan-edits, Watchmen, director's cuts). the user chose
+#   ensure-coverage (the theme is identical across editions): new marker-gated
+#   one-shot walker maybe_backfill_edition_canonicals creates a per-edition
+#   local_files row sharing the '' canonical for every live non-'' edition that
+#   lacks one, so each becomes push-able + auto-restorable; the normal retry sweep
+#   then places them. Idempotent, amplifier-sweep guarded, marker-once (respects a
+#   later UNMANAGE), re-wired into boot.
+# v1.24.35: code-review fixes #1-#3 (the v1.24.25-34 review). #1: the
+#   auto-restore sweep enqueued place jobs with no `kind`, so a stale
+#   plex_upload re-deployed as a SIDECAR (worker fell to default_method='file')
+#   instead of re-uploading; now the payload carries kind='api' for plex_upload
+#   and 'file' for sidecar. #2: neither branch checked the canonical exists —
+#   a CONFIRMED-missing canonical (canonical_present=0) raised in the worker
+#   without a skip-reason stamp → a doomed place re-enqueued + a false
+#   "restored" notification every hour; now gated on canonical_present!=0. #3:
+#   YouTube notifications suppressed the auto-embed unconditionally, so a row
+#   with no parseable video_id (no thumb) showed NO image; now only suppress
+#   when a thumb is actually available.
+# v1.24.36: code-review fix #4 (sort-vs-render drift for RP rows). A stale
+#   plex_upload (RP) renders PL='await' (amber) + the orange RP LINK badge
+#   because the read path nulls media_folder/placement_kind — but the PL/LINK
+#   ORDER-BY CASEs read the RAW placement_kind/theme_present, so it sorted as
+#   red-'broken' (PL) / lumped with PU (LINK), contradicting the chip it paints
+#   (the v1.23.24/.25 "rank by the chip you paint" invariant). Now _LIB_STALE_PU_SQL
+#   pins the stale state to the await rank (PL=3) and a dedicated first rank (LINK=-1).
+# v1.24.37: code-review fix #8 (perf). The v1.24.30 title_norm backfill pre-pass
+#   probed `SELECT ... FROM themes WHERE title_norm IS NULL` at the end of EVERY
+#   enum + sync — a full ~50K-row themes SCAN, since idx_themes_title_norm is
+#   partial (WHERE title_norm IS NOT NULL) and excludes the NULL rows. The whole
+#   NULL cohort is plex_orphan (real themes get title_norm from sync), so scoping
+#   the probe to upstream_source='plex_orphan' rides idx_themes_orphan: SCAN →
+#   SEARCH. Future-NULL self-heal unchanged.
+# v1.24.38: code-review fix #6. theme_auto_restored fired at ENQUEUE in the
+#   scheduler's _restore_lost_placements sweep — claiming "restored" before the
+#   place jobs ran, so a place that later failed still pinged success. Now the
+#   sweep only enqueues (payload tagged reason='auto_restore'); the worker fires
+#   theme_auto_restored from _do_place / _do_place_collection on outcome.placed
+#   (the place actually landing), coalesced so a Plex-re-add burst still
+#   collapses to one summary. New coalesced formatters in notify_content.py.
+# v1.24.39: code-review fix #5 (defense-in-depth). verify_placement_health's
+#   plex_upload staleness pass UPDATE'd theme_present=0 for every uploaded rk not
+#   in plex_items — unbounded. A failed/aborted enum that left plex_items EMPTY
+#   would false-flip EVERY upload to RP → a mass v1.24.29 auto re-push storm. Now
+#   the 0-stamp is skipped when plex_items is empty (a real library with uploads
+#   always has items; a genuine mass re-add leaves plex_items FULL). The
+#   confirmed-present 1-stamp is always applied. Partial under-population stays
+#   bounded upstream by the v1.18.89 reaper's seen_rks gate + 20%/50-row cap.
+# v1.24.40: RP (re-push needed) discoverability + accuracy. (a) Tightened
+#   _LIB_STALE_PU_SQL to require the uploaded rk is genuinely DEAD (no live
+#   plex_items row) — a re-linked/self-healed stamp (the user's Two Towers, rk
+#   714913 live + has_theme=1) no longer false-reads RP. (b) New ⟳ ATTN filter
+#   chip (attn_pills=repush) reusing the SAME predicate as link_pills=rp — one
+#   source of truth, two entry points. (c) New topbar RE-PUSH count badge
+#   (mirrors FAIL/UPD/DROP) so a genuine re-push surfaces without hunting.
+#   Legend + glossary updated.
+# v1.24.41: code-review of v1.24.40 — RE-PUSH badge count/render parity. (#1)
+#   _REPUSH_COUNT_SQL counted FROM placements while the library renders FROM
+#   plex_items, so a stale plex_upload whose item was REMOVED (no live plex_items
+#   row) inflated the badge but never rendered (un-clickable). Rebuilt the count
+#   as a mini-render (plex_items-anchored, WHERE _LIB_STALE_PU_SQL) so count ==
+#   rendered RP rows. (#2) added a tab_hint so the badge routes to the owning tab
+#   (collections — the likely RP source — instead of a static empty /movies).
+#   (#3) the attention/NEEDS WORK sort bucketed bare theme_present=0 as urgent
+#   with no rk-liveness gate — a live-rk stale plex_upload topped NEEDS WORK
+#   looking placed; now reuses _LIB_STALE_PU_SQL. (#4) added the
+#   plex_rating_key IS NOT NULL guard to _LIB_STALE_PU_SQL (matches the count).
+# v1.24.42: security audit (2026-06-25, pip-audit + ffmpeg CVE review). Bumped
+#   dependency floors to patched minimums: fastapi 0.115.*→0.138.* + explicit
+#   starlette>=1.3.1 (0.115 capped starlette below every fix); yt-dlp→2026.6.9;
+#   dulwich→>=1.2.6; python-multipart→>=0.0.31. Added a Dockerfile build-time
+#   ffmpeg-version guard (fail on a pre-trixie/bookworm ffmpeg unpatched for
+#   CVE-2026-8461 "PixelSmash"). For motif all the flagged CVEs were admin-only
+#   DoS behind Authentik, non-applicable (Windows-only / server-side / read-only
+#   fetch client), or already neutralized (fixed yt-dlp outtmpl, no external
+#   downloaders/--exec) — this is hygiene + makes the patched minimums explicit.
+# v1.24.43: AWAIT topbar badge. the user wanted downloaded-but-not-placed (!P)
+#   rows — e.g. the v1.24.34 edition-coverage backups — surfaced proactively like
+#   FAIL instead of having to filter to ATTN=!P. Mirrors the v1.24.40 RE-PUSH
+#   badge: a count (_AWAIT_COUNT_SQL) + tab_hint routing to the owning tab, hidden
+#   at 0. _LIB_AWAIT_SQL is the single predicate shared by the attn_pills=await
+#   FILTER and the badge COUNT, so they can't drift (the v1.24.41 lesson).
+# v1.24.44: topbar badges cycle through EVERY impacted tab (incl. collections).
+#   the user: a "7 AWAIT" badge (6 movies + 1 collection) always landed on /movies
+#   — the collection was unreachable. RE-PUSH + AWAIT carried only a single
+#   tab_hint (LIMIT 1); DROP had a breakdown but no cycle binding. Added per-tab
+#   breakdown queries (_REPUSH/_AWAIT_TAB_BREAKDOWN_SQL) + a shared bindBadgeCycle
+#   JS binder for DROP/RE-PUSH/AWAIT, and widened the cycle regex to include
+#   /collections so being on the collections tab finds its position. FAIL/UPD
+#   already cycled.
+# v1.24.45: over-ceiling collection theme — auto-downscale + surface. the user's
+#   Middle-Earth Collection theme (12.5MB) exceeded Plex's ~10MB upload ceiling →
+#   HTTP 500, and collections have NO sidecar fallback (no folder), so it
+#   terminal-failed silently. _do_place_collection now re-encodes an over-ceiling
+#   theme down to fit (ffmpeg, duration-aware bitrate) before upload so it
+#   deploys; if it still can't fit (theme too long / no ffmpeg) it stamps a
+#   distinct plex_rejected:over_ceiling reason (kept under the plex_rejected:
+#   prefix so the scheduler retry-skip gate is unchanged) + a red ⊘ row glyph.
+# v1.24.46: code-review follow-ups on the v1.24.43-45 arc.
+#   (#1) The AWAIT badge counted over-ceiling collection rows that v1.24.45
+#   simultaneously marks ⊘ "too large, can't place" — one doomed row got two
+#   contradictory surfaces, and clicking AWAIT→PLACE re-enqueued the doomed
+#   upload. _LIB_AWAIT_SQL now excludes plex_rejected:over_ceiling (NULL-safe IS
+#   NOT), so the actionable count/filter agrees with the glyph.
+#   (#2) _do_place_collection accepted a downscale that was smaller than the
+#   ORIGINAL but still over the ceiling, then uploaded it for a guaranteed 500.
+#   The gate now requires the re-encode to actually FIT the ceiling; a measured
+#   still-over re-encode short-circuits to over_ceiling without the doomed POST.
+#   (#6) _downscale_audio_to_fit's multi-line docstring → # comments (CLAUDE.md).
+# v1.24.47: LOW cleanup pass — remaining v1.24.43-45 review findings.
+#   (#7) The topbar cycle badges' breakdown (GROUP BY type,is_anime,is_4k,
+#   media_type) could emit two rows that collapse to the same {tab, fourk} — an
+#   anime-section AND a movie-section collection both route to 'collections' — so
+#   the cycle saw a duplicate destination and a click "advancing to the next"
+#   landed on the URL you were already on (a dead click). New shared
+#   _breakdown_tabs() dedups by (tab, fourk); _breakdown_tab_hint() derives the
+#   owning tab from breakdown[0]. Applied to the bindBadgeCycle family
+#   (drops / repush / await), replacing 3 hand-mirrored comprehensions.
+#   (#5) Those helpers fold the separate per-badge LIMIT-1 tab_hint queries
+#   (_REPUSH/_AWAIT_TAB_HINT_SQL) into the breakdown the badge already runs —
+#   2 redundant plex_items-anchored scans off the /api/stats + SSR hot path.
+#   (#8) Marker: an over-ceiling collection's UPLOADED bytes intentionally differ
+#   from the canonical on disk (file_sha256 unchanged) — for future reconcile.
+# v1.24.48: review #9 — converge the topbar badge cycle binders. FAIL + UPD kept
+#   their own bindFailureBadgeCycle / bindUpdatesBadgeCycle copies while DROP /
+#   RE-PUSH / AWAIT used the shared bindBadgeCycle, so the cycle logic + the
+#   /collections tab regex lived in THREE places — the next library-tab axis
+#   change would have to touch all three or a badge silently fails to cycle to the
+#   new tab (the v1.24.44 bug class). FAIL + UPD now call the one shared
+#   bindBadgeCycle too; behavior unchanged, one implementation. ALSO measured the
+#   review #4 SSR concern on the prod DB: the full 5-subquery topbar frame is
+#   ~37ms (repush+await ~14ms+~11ms) — NOT the historical 20s — so left it as-is
+#   (a TTL cache would shave an imperceptible 37ms onto a perf-sensitive path).
+# v1.24.49: stamp the running version on the first boot log line ("motif vX.Y.Z
+#   starting") so a pasted `docker logs` snippet carries it — the version showed
+#   only in the UI topbar before, so logs alone couldn't tell which build emitted
+#   them (the user's ask while diagnosing the worker-startup lines).
+# v1.24.50: migration crash-loop hardening (additive class). init_db stamps
+#   schema_version per-step but executescript autocommits, so a crash (kill -9 /
+#   OOM / power-loss) between a column's commit and the version stamp left the
+#   column present + version behind → boot re-ran the migration → a bare ALTER ADD
+#   COLUMN raised "duplicate column name" forever. New idempotent _add_column
+#   helper (PRAGMA table_info guard) now backs all 15 reachable (v21+) ADD COLUMN
+#   migrations; v27→v28 audit_events CREATE gained IF NOT EXISTS. New
+#   test_v1_24_50 migration-chain guard: fresh→v67, recent-chain re-run, per-
+#   migration additive-crash-loop check (future-proofs a new bare ADD COLUMN), the
+#   v17-21 fresh-start wall, + the helper. Destructive/table-rebuild migrations
+#   (DROP COLUMN / CREATE-new→DROP→RENAME) at ancient versions (v26-31, no live DB)
+#   are a separate harder class, deferred; the practically-reachable recent window
+#   is verified clean.
+# v1.24.51: migration crash-loop hardening (destructive class — completes the
+#   arc, the user: "do both"). Audited every reachable (v21+) destructive/rebuild
+#   migration: all but ONE were already crash-safe — v26→v27 + the v30+ inline
+#   table rebuilds are BEGIN/COMMIT-atomic (v1.22.66), v54→v55/v57→v58/v59→v60 use
+#   the idempotent _widen_check_constraint helper (v1.19.73/74), v52→v53's DROP
+#   COLUMN is table_info-guarded. The gap: v29→v30 backfilled previous_urls from
+#   themes.previous_youtube_url then DROPped it in one executescript (autocommits
+#   each statement) → a crash after the DROP re-ran the INSERT...SELECT against the
+#   dropped column → "no such column" crash-loop. Now gated on the source column
+#   (mirrors v52→v53), each DROP independent so a crash between the two completes.
+#   test_v1_24_51: behavioral forward + crash-loop re-run + between-drops, plus a
+#   structural guard that the inline rebuilds keep their BEGIN/COMMIT atomicity.
+# v1.24.52: dashboard RECENTLY ADDED carousel (the user liked the sibling
+#   Missing-Trailer-Downloader dashboard). A poster strip of the titles motif
+#   most recently placed a theme on → click a poster opens the same INFO card a
+#   library row does. Two new endpoints: GET /api/recently-placed (distinct
+#   recently-placed titles, newest first, plex_items 'show'→'tv') and GET
+#   /api/plex/art/{rk} — a same-origin Plex poster proxy (token in the
+#   X-Plex-Token header server-side, never the URL; rating_key must be all-digits
+#   to block path-injection; off the event loop via run_in_threadpool). Frontend:
+#   loadRecentlyAdded() builds cards via DOM APIs (XSS-safe) with a content-hash
+#   to skip the 30s-poll rebuild; CRT-palette CSS on motif tokens. First of a
+#   dashboard-enhancement arc (services panel + stats table + 3 donuts to follow).
+# v1.24.53: dashboard SERVICES panel (dashboard-enhancement arc, #2 of 4). A
+#   pinned bottom strip of status cards for motif's external dependencies: Plex
+#   (online + round-trip latency + friendly name/version via a short-timeout GET /
+#   probe — the token in the X-Plex-Token header) and yt-dlp (running version).
+#   New GET /api/services (off the event loop via run_in_threadpool); loadServices()
+#   renders DOM-API cards on motif tokens (green/red/mute status dot). Remaining
+#   arc: general-statistics table + 3 coverage donuts.
+# v1.24.54: carousel polish (the user feedback after v1.24.52/53 landed live).
+#   (bug) Clicking a COLLECTION poster opened a broken INFO card —
+#   /api/recently-placed returned tmdb_id from pi.guid_tmdb, which is NULL for
+#   collections (no real TMDB id), so openInfoDialog called
+#   /api/items/collection/null → 422. Now reads the synthetic placements.tmdb_id
+#   (the id the /collections row + info card use); movies/shows unaffected.
+#   (feat) RECENTLY ADDED gained an // auto-scroll toggle (the reference's "Auto
+#   Scroll"): slowly advances the strip, pauses on hover, loops, persisted in
+#   localStorage. Off by default.
+# v1.24.55: SOURCE BREAKDOWN → a 3-up donut row (Total / Movies / TV), replacing
+#   the prior single + collections pies (the user: "replace our existing 2 with the
+#   three new ones · keep the SRC distribution, just 3-up"). Same T/A/U/M/P/– SRC
+#   buckets; each donut scopes the same /api/stats theme_sources feed by
+#   media_type and the three SHARE one legend-toggle (hide a letter → hidden on
+#   all three). TV folds anime in (theme_sources carries no anime split); the
+#   standalone collections source donut is dropped. _renderSourcePie reused;
+#   renderTotal/Movies/Tv + renderAllSourcePies replace renderTheme/Collections.
+# v1.24.56: // GENERAL STATISTICS — per-library source-split table adopted from
+#   the Missing-Trailer-Downloader dashboard the user asked to mirror ("general
+#   Statistics better" + clarified the panel he wanted was the stats table, not
+#   services). Each library (Total / Movies / TV / Anime / Collections) × [LOCAL
+#   (T/A/U/M, motif owns the theme file) | PLEX (P, Plex-Pass served) | MISSING
+#   (–) | COVERAGE %], on motif's SRC axis — no genre-skip column (motif has no
+#   genre-skip concept). Pivots the SAME /api/stats theme_sources feed the donuts
+#   use; theme_sources now carries ps.is_anime so the ANIME row splits from TV
+#   (plex_items.media_type is 'show' for both — the split lives on the section).
+#   The donuts ignore is_anime (aggregate by letter), so the feed change is
+#   additive. renderGeneralStats() pivots client-side; JS-revealed on data.
+# v1.24.57: RECENTLY ADDED carousel polish (the user). (1) media-type glyph
+#   (▶/▭/▦, reused from the coverage cards) ahead of the year in each card's
+#   meta line. (2) .recent-title gets a fixed 2-line min-height so 1-line and
+#   2-line titles occupy the same height — the year/date row then aligns across
+#   every card. (3) auto-scroll defaults ON (unset localStorage reads as enabled;
+#   only an explicit uncheck persists '0') AND the "not scrolling" bug fixed:
+#   .recent-strip's scroll-snap-type re-snapped every 1px increment back to
+#   offset 0, so the strip never moved with the toggle on — scroll-snap removed.
+# v1.24.59: SOURCE BREAKDOWN donut toggles independent again (the user: "make the
+#   toggle independent of one another"). v1.24.55 shared one hidden-set across
+#   Total / Movies / TV (a legend click hid the letter on all three); now each
+#   donut owns its own Set + localStorage key and a click hides the letter on
+#   JUST that donut. Movies/TV seed once from the legacy shared key so the deploy
+#   doesn't visually jump, then diverge. Click delegate discriminates by the
+#   enclosing .source-pie-col id and re-renders only the clicked donut.
+# v1.24.58: carousel meta layout follow-ups (the user). Title + info centered
+#   under the poster (was left-aligned). Year rendered in (brackets) like a
+#   normal movie/show year; year and placed-date on their OWN lines (dropped the
+#   "·" separator). Title forced to a single ellipsised line (the mixed
+#   1-line/2-line look read ragged) — which also aligns the meta without the
+#   v1.24.57 2-line reserve. Bigger posters (116→150px) + wider gap (gap-5) so
+#   fewer show at once with more spacing.
+# v1.24.60: code-review cleanup of the v1.24.55-59 donut churn (no behavior
+#   change). Dropped dead plumbing the shared→independent refactor left: the
+#   _pieState.{total,movies,tv}_rows fields + the lastRowsKey stash (written,
+#   never read — the click handler re-renders from all_rows); the summaryId/sumEl
+#   summary branch in _renderSourcePie + its unitNoun opts (no renderer passed
+#   summaryId once the -summary spans were dropped). Refreshed the stale
+#   collections-pie WHY-comment at the render call site.
+# v1.24.61: carousel auto-scroll fixes (the user). (1) Still off by default for him
+#   — his prefs carried an explicit '0' persisted during the v1.24.54-56
+#   broken-scroll phase, which beat the v1.24.57 default-ON. Versioned the
+#   localStorage key (motif:recentAutoScroll → ...2) so that stale '0' is ignored
+#   → unset → ON. (2) Hide the horizontal scrollbar while auto-scrolling via a
+#   toggled .recent-strip-autoscroll class (scrollbar-width:none + ::-webkit-
+#   scrollbar display:none); overflow-x stays auto so scrollLeft still drives it.
+# v1.24.62: make the RECENTLY ADDED carousel + SERVICES panel hideable via the
+#   existing // customize layout feature (the user: "the option to hide a section").
+#   They sit OUTSIDE #dash-sections as fixed strips, so they were the only
+#   non-hideable sections. Marked data-dash-pinned → a hide-only toggle (no
+#   reorder; they keep their fixed top/bottom position) that shares the same
+#   dashboard_layout persistence. dashboard-customize.js: pinnedSections/isPinnedId
+#   helpers; applyLayout keeps + applies pinned hidden state; rebuildLayoutFromDOM
+#   preserves pinned entries; inject/removePinnedControls + onPinnedToggleClick.
+#   CSS reveals a hidden pinned section (dimmed) in customize mode so it can be
+#   toggled back on.
+# v1.24.63: carousel media-type icons → Feather-style inline SVG line icons
+#   (film for movies, tv-with-antenna for TV, stacked-cards for collections),
+#   replacing the ▶/▭/▦ glyphs (the user preferred these). The film + tv icons match
+#   the Missing-Trailer-Downloader carousel; rendered in currentColor so they pick
+#   up the muted meta tone. _recentTypeGlyph → _recentTypeIcon (returns a fixed
+#   SVG constant, set via innerHTML — injection-safe). Dashboard coverage-card
+#   glyphs (▶/▭/✦/▦) are unchanged — different surface, not asked for.
+# v1.24.64: carousel auto-scroll also pauses while a modal dialog is open (the
+#   INFO card, or any confirm) — the strip shouldn't drift behind it (the user).
+#   The tick() guard adds `document.querySelector('dialog[open]')` (the codebase
+#   idiom for "a native modal is showing") alongside the existing hover-pause;
+#   the 30ms poll resumes scrolling once the dialog closes.
+# v1.24.65: customizable per-library accent colors (the user). The PLEX dashboard
+#   card colors (movies/tv/anime/collections) AND the active nav-tab underline
+#   now resolve from 4 CSS vars (--dash-{movies,tv,anime,collections}-color)
+#   defaulting to the existing tokens. // customize layout grows a // LIBRARY
+#   COLORS panel (4 color pickers + // RESET COLORS); overrides persist in
+#   localStorage 'motif:dashColors' and apply pre-paint on EVERY page via a
+#   base.html head script (so the nav underline is colored everywhere, no flash).
+#   The active library tab's underline now matches its card color (anime pink,
+#   collections red, …) — DASH/LOGS/SETTINGS keep the default green.
+# v1.24.66: (1) dashboard stat-card glyphs (MOVIES/TV/ANIME/COLLECTIONS THEMED +
+#   PLEX rows) → Feather-style SVG line icons matching the carousel (film / tv /
+#   sparkle-for-anime / stacked-cards), via a new media_glyph() Jinja macro;
+#   replaces the ▶/▭/✦/▦ unicode set. (2) Carousel horizontal scrollbar is now
+#   visibly styled (slim, on-palette) when auto-scroll is OFF — so manual scroll
+#   is obviously available (the user) — and still hidden while auto-scrolling.
+# v1.24.67: PER-SECTION COVERAGE + GENERAL STATISTICS now sit side by side as a
+#   2-up .dash-pair flex row (the user: "double wide instead of 1 row each") —
+#   two compact tables that each waste horizontal space at full width. The
+#   wrapper is a single customize unit (keeps the section-coverage layout key so
+#   an existing saved layout positions the pair); each inner .block keeps its id
+#   for JS reveal + flexes to fill the row if its sibling is hidden, and wraps to
+#   stacked below ~700px. The standalone GENERAL STATISTICS section was removed.
+# v1.24.68: SOURCE BREAKDOWN restyled to match the reference's TRAILER COVERAGE
+#   (the user: "their own little block instead of one large bar · same sort of
+#   selectors"). Each donut is now its OWN card (.source-pie-col: border + grid,
+#   donut beside its legend); the outer section is borderless (plain label + the
+#   3 cards, cards wrap via auto-fit minmax(320px)). Legend → one selector per
+#   row with the value group right-aligned as "count (pct%)" + 1-decimal pct,
+#   mirroring "Local Trailer  4271 (29.0%)". Stale "hide it on all three"
+#   subtitle fixed (toggles are per-chart since v1.24.59).
+# v1.24.69: the STATISTICS pair (PER-SECTION COVERAGE + GENERAL STATISTICS) now
+#   stretches to equal height (.dash-pair align-items: stretch) so the two cards
+#   are the same size even when one table has more rows (the user) — the shorter
+#   table sits at the top of its card.
+# v1.24.70: (1) SWITCH PLACEMENT notifications no longer read as new themes —
+#   reason='user_switch_placement' now gets its own title ("📤 Placement
+#   switched — …") + "via SWITCH PLACEMENT" body label, instead of the generic
+#   "Theme pushed to Plex" (the user: switch-to-API actions looked like new
+#   themes). (2) The auto-scroll checkbox tick is muted (accent-color
+#   --green-deep) — the bright --green stood out too much for a minor toggle.
+# v1.24.71: don't offer REPLACE TDB when ThemerrDB has no theme video. A title
+#   can be TDB-TRACKED (upstream_source set) yet have themes.youtube_url empty
+#   (TDB catalogs it but has no theme yet — the user's Daredevil: Born Again).
+#   REPLACE TDB was gated on isThemerrDb but not it.youtube_url, so it appeared +
+#   409'd "ThemerrDB record has no youtube_url". Added the same it.youtube_url
+#   gate DOWNLOAD TDB BACKUP already uses. Backend still validates (defense).
+# v1.24.72: REPLACE TDB now survives a STALE accepted_update on overridden rows.
+#   accepted_update is a sticky historical flag (an upstream TDB update was
+#   accepted once). The gate's bare !accepted_update kept suppressing REPLACE TDB
+#   even after the user later overrode the accepted theme with a user URL (SRC=U)
+#   — the user's Super Mario Galaxy had no REPLACE TDB despite a valid TDB url. The
+#   no-op concern only holds while the accepted TDB is still active (SRC=T), which
+#   the placement clause already excludes; relaxed to
+#   (!accepted_update || srcLetter !== 'T'). Mirror + node harness kept in sync.
+# v1.24.73: distinct TDB pill for a tracked-but-themeless record. The green TDB
+#   pill is the row-render FALLTHROUGH — it fired whenever upstream_source was set,
+#   even when themes.youtube_url is empty (TDB lists the title but has no theme
+#   video). That read as "healthy theme available" while v1.24.71 correctly hid
+#   REPLACE TDB on the same row — the user: confusing. Added a muted "TDB ∅" pill
+#   gated on the SAME !it.youtube_url the REPLACE TDB gate uses, so pill + action
+#   agree. New .tdb-pill-empty CSS (dashed/muted) + legend gloss in both decoders.
+# v1.24.74: re-sync the TEST-ONLY menu-actions mirror (lib/menu-actions.js) with
+#   the live app.js renderLibraryRow gates — it's not loaded by any template, so
+#   drift silently under-tested the real UI. REPLACE TDB had lost 3 clauses
+#   (it.youtube_url v1.24.71, tdbActionPendingOk v1.20.2, !lpsHasCanonical
+#   v1.14.46); the audit also caught stale redl (!isOrphan v1.17.17), revert
+#   (src='M' RESTORE branch v1.12.81) and purge (orphanHasPurgeableState v1.18.8)
+#   gates. Rejected delegating app.js → computeMenuActions (the mirror is a
+#   deliberate subset; full superset rewrite would be high-risk on the row menus)
+#   in favor of a clause-set drift lint (test_v1_24_74_menu_actions_mirror_drift)
+#   + new node-harness behavioral cases.
+# v1.24.75: TDB ∅ filter chip — surface tracked-but-themeless rows. Even though
+#   only ~6 rows are in this state (verified on prod), the user wants every TDB pill
+#   state filterable. New `empty` bucket across all layers (template chip, JS
+#   computeTdbPill + ALL set + URL parser, server _pset + SQL branch). The green
+#   `tdb` filter is tightened to REQUIRE a non-empty youtube_url so green ⊎ empty
+#   is a clean partition (matches the v1.24.73 pill render). Daredevil now filters
+#   under TDB ∅ instead of green TDB.
+# v1.24.76: TDB legend/glossary up-to-date pass. Audit of the row-pill render vs
+#   the // GLOSSARY (base.html) + in-context LEGEND (library.html) + filter chips
+#   found the cookies state still decoded as the OLD "TDB ⚠" in all 3 surfaces
+#   while the pill itself renders "TDB ⚿" (the v1.15.17 squared-key glyph) —
+#   synced them to ⚿. New render↔decode glyph-consistency lint guards the whole
+#   TDB axis. (∅ already covered v1.24.73/75; ATTN ⊘ toobig is render-only by
+#   design; LINK condensed-legend subset left as-is.)
+# v1.24.77: dashboard customize-mode layout fixes + GENERAL STATISTICS fill.
+#   (1) // LIBRARY COLORS panel detached from the PLEX cards on reorder — it's a
+#   standalone sibling injected before [data-dash-section="plex-coverage"];
+#   repositionColorPanel() now re-pins it before the plex section from
+#   rebuildLayoutFromDOM (the post-reorder chokepoint). (2) The STATISTICS
+#   .dash-pair rendered as "a single large row and a small row" in customize mode
+#   — the injected .dash-section-controls bar was a flex sibling of the two
+#   columns; it now gets flex:0 0 100% so it owns row 1 and the cols wrap below
+#   side-by-side. (3) GENERAL STATISTICS left bottom whitespace in the equal-height
+#   pair — .dash-pair-col is now a flex column with the table flex:1 so the shorter
+#   table's rows distribute the surplus height and fill the card.
+# v1.24.78: dashboard customize audit follow-ups (review after v1.24.77).
+#   (1) Grid analogue of the v1.24.77 dash-pair fix: the stat-card .grid sections
+#   (top-stats/plex-coverage/operations/activity/storage) carry data-dash-section
+#   on the .grid + keep display:grid while editing, so the injected controls bar
+#   landed in the first grid CELL and shoved the cards into a ragged row (the user's
+#   PLEX LIBRARY control box wedged left of the cards). Added grid-column:1/-1 so
+#   it spans full width like the dash-pair flex:0 0 100%. (2) saveLayout() nulled
+#   SAVE_TIMER without clearTimeout → exitCustomize's immediate flush during an
+#   armed 300ms debounce fired a redundant duplicate PUT; now clears it first.
+#   Audit also swept every sibling-walk + the save/sanitize/restore round-trip —
+#   no other live bugs (onArrowMove was the only single-step walk; persistence is
+#   sound; the `copies` card-vs-section id overlap is benign separate namespaces).
+# v1.24.79: dashboard data fixes (from the dashboard audit). (1) ADDED TODAY /
+#   ADDED THIS WEEK + the 30-day download-insight queries string-compared an
+#   ISO-'T' timestamp (placed_at/created_at = 'YYYY-MM-DDTHH:MM:SS+00:00') against
+#   datetime('now',...) ('YYYY-MM-DD HH:MM:SS', space sep); 'T'>' ' over-counted
+#   any same-date-earlier-time row (prod ADDED THIS WEEK 15 vs true 14). Wrapped
+#   the column in datetime() at all 6 sites. (2) PER-SECTION COVERAGE labeled the
+#   Collections row 'MOVIES / STD' (no collections branch in typeLabel) → now
+#   'COLLECTIONS' with no suffix. Bigger audit findings (per-section totals fold
+#   collections in / FAILURE BREAKDOWN drill hardcodes /movies) reported separately.
+# v1.24.80: PER-SECTION COVERAGE excludes collection items (the user chose this).
+#   Collections live as media_type='collection' plex_items INSIDE the movie/show
+#   sections but have their own tab + a synthetic Collections row; counting them
+#   in each section's TOTAL inflated it (Movies 11.5k vs the /movies tab's 10.5k)
+#   AND double-counted them against the Collections row (per-section grand total >
+#   general-stats total). The per-section query now joins `AND pi.media_type !=
+#   'collection'`, so each section row matches its drill-down tab + the axis no
+#   longer double-counts.
+# v1.24.81: FAILURE BREAKDOWN bars drill into the owning tab. Pre-fix every
+#   failure-kind bar hardcoded /movies?status=failures, but the library's
+#   status=failures filter is media-type-scoped to its tab, so an anime/TV-only
+#   failure kind landed on an EMPTY movies view (same class as the v1.12.11 topbar
+#   FAIL fix). /api/dashboard/insights now buckets failures by (kind, tab) and
+#   returns, per kind, the cross-library total + the tab owning the most; the JS
+#   routes the bar to r.tab. (4K-section edge stays at the tab's STD default.)
+# v1.24.82: dashboard LOW-severity polish (audit follow-up, last of the 3 the user
+#   OK'd). (1) Carousel autoscroll tick bails on document.hidden (no idle-tab
+#   scroll churn) + reads hover live via :hover instead of a `paused` flag that
+#   could stick true if a 30s poll re-rendered the strip mid-hover. (2) PER-SECTION
+#   COVERAGE THEMED/UNTHEMED cells are now click-through filters (status=has_theme
+#   / untracked), mirroring the failures+pending cells. SERVICES-panel re-paint
+#   left as-is (latency changes every poll — documented no-hash by design).
+# v1.24.83: movie/show poster on the // MOTIF INFO card (the user — MTDP-style
+#   flare). A poster hero sits beside the title/scope block, sourced from the
+#   existing /api/plex/art/{rk} Plex proxy the dashboard carousel already uses.
+#   posterRk prefers the clicked edition's rating_key, else a placement's
+#   plex_rating_key (for the 2-arg openInfoDialog callers). The <img> is removed
+#   on 404 / non-digit rk so the hero collapses to just the meta (no broken box).
+# v1.24.84: code-review cleanup of v1.24.83 — drop the redundant `width: 120px`
+#   on .info-poster (flex: 0 0 120px already pins the box; the width was dead).
+#   No visual change. The xhigh /code-review found no real bugs in the poster
+#   feature (no race — listener attaches before the async error event; posterRk
+#   /^\d+$/-gated + encodeURIComponent'd, no XSS; nesting breaks no post-render
+#   query). This was its one cosmetic finding.
+# v1.24.85: FIX the v1.24.84 regression — the poster blew up to full card width.
+#   A flex item's min-width defaults to `auto` = the <img>'s intrinsic width
+#   (~1000px for a full-res Plex poster), which OVERRIDES flex-basis. The v1.24.84
+#   "redundant width" code-review cleanup was WRONG: width was capping that
+#   auto-min. Restored width:120px + added min-width:0 (kills the intrinsic
+#   floor) so the poster is pinned to 120px regardless of image size. Comment +
+#   test now mark both as load-bearing so a future cleanup can't drop them again.
+# v1.24.86: INFO card — moved the metadata grid INTO the poster hero column.
+#   the user: the hero had wasted space beside the poster + below the title (the
+#   .dlg-grid rendered full-width BELOW the hero). Nested .dlg-grid inside
+#   .info-hero-meta so the fields fill the column beside the poster — the
+#   standard poster+info-column media-detail layout (Plex/Radarr-style). The
+#   theme thumbnail + recovery/history sections stay full-width below the hero.
+#   (motif has no TMDB overview/genres to fill it MTDP-style — raw_json is empty.)
+# v1.24.87: move the poster to the RIGHT of the metadata grid. v1.24.86 put it
+#   left of the grid, but the poster is short (120px / 2:3) and the grid is tall,
+#   so a tall empty strip stranded under the poster (the user: "lots of white space
+#   in the left column — move the poster to the right where the original design
+#   already had white space"). The dlg-grid is `140px 1fr` with short values, so
+#   the right of every row was already empty; making the poster the LAST hero
+#   child fills that existing dead space instead of creating a new gap.
+# v1.24.88: SAVED FILTERS popup — fix the lingering :hover highlight. The popup
+#   is an overflow:hidden + radius + box-shadow absolute overlay dropping over
+#   the results table, and its row-hover fill is semi-transparent (rgba cyan
+#   0.08). Without its own compositing layer Chrome left stale alpha tiles — the
+#   highlight "lasted long after hovering away, sometimes appearing after already
+#   hovering away" (the user). Promoted the popup with transform:translateZ(0) so
+#   its paint is self-contained and mouseleave clears the fill cleanly.
+# v1.24.89: INFO card cover layout, option A (the user picked from rendered
+#   mockups). v1.24.86/.87 put the metadata grid beside the poster (left, then
+#   right); both stranded a strip next to the fixed-size cover because the grid
+#   height swings ~5→~20 rows. Option A = the "first version" geometry: cover
+#   top-LEFT, title + scope chip + a one-line playback-source HEADLINE beside it
+#   (fills the strip so it isn't bare), full detail grid full-width BELOW the
+#   hero as a sibling. The playback line moved out of the grid into the headline.
+# v1.24.90: INFO card cover layout, option B (the user wants to A/B compare vs A).
+#   A bigger cover (180px, was 120) on the LEFT with the metadata as a column
+#   beside it — title + scope chip + playback headline + the full .dlg-grid all
+#   nested in .info-hero-meta (grid is no longer the full-width sibling A used).
+#   The Plex / Letterboxd "media detail" look; the bigger cover reads as art so
+#   leftover whitespace feels intentional. Option A is preserved at tag v1.24.89
+#   (image healzangels/motif:v1.24.89) for a one-line image-tag swap-back.
+# v1.24.91: INFO card — Esc-close no longer leaves a focus ring on the opener.
+#   A native <dialog> restores focus to whatever opened it (a dashboard carousel
+#   card is a <button>); Esc is a keyboard interaction so :focus-visible matches
+#   on the restored element and it kept a clicked-looking outline. The X-button
+#   path is a mouse interaction (no ring). The info-dlg `close` listener now
+#   blurs the restored opener (rAF, skipped if focus moved into another dialog)
+#   so Esc matches the X. Layout-independent of the v1.24.89/90 A/B comparison.
+# v1.24.92: INFO card cover layout back to option A — the user compared A (v1.24.89)
+#   vs B (v1.24.90) live and kept A. Reverted the cover/grid to A's geometry:
+#   cover top-LEFT (120px), title + scope chip + playback headline beside it,
+#   the full .dlg-grid full-width BELOW the hero as a sibling. Option B (bigger
+#   180px cover + grid nested in the meta column) is preserved at tag v1.24.90.
+#   The v1.24.91 Esc-close focus fix is layout-independent and carries forward.
+# v1.24.93: finish the HAMA → TVDB rename (the user audit). v1.16.2 had renamed
+#   only the USER-FACING label to "TVDB BRIDGE" (the "HAMA bridge" name was a
+#   misnomer — 99.7% of stranded rows are TheTVDB-scraper TV, not the HAMA anime
+#   agent; PROJECT_HISTORY §L), but kept the internal ids "for stability".
+#   v1.24.93 renames the internals everywhere they're active: op kind
+#   hama_bridge → tvdb_bridge (schema v68 migration rebuilds op_progress's CHECK
+#   + re-keys stored kind/op_id + the runtime_settings timestamp), op_id
+#   hama-bridge → tvdb-bridge, routes /api/admin/hama-bridge/rebuild →
+#   /tvdb-bridge/rebuild and /diagnostics/hama-gap → /diagnostics/tvdb-gap,
+#   functions, the ops.js/app.js maps, comments, CLAUDE.md, and 6 test files.
+#   Remaining "hama" is intentional archaeology: historical db.py migrations +
+#   the v68 rename source, this changelog, and tests asserting HAMA's ABSENCE.
+# v1.24.94: dashboard sync line no longer shifts the page on async load. The
+#   "Next sync … · Last run …" line (#dash-sync-line) populates from /api/stats;
+#   it was display:none until then, so revealing it pushed the whole dashboard
+#   down (the user: "it shifts all the dashboards down which looks weird"). Now
+#   visibility:hidden + min-height:1lh reserves the row from first paint; JS
+#   flips visibility:visible once filled — no layout shift.
+# v1.24.95: record/music design animations (the user — aesthetic pass). The motif
+#   icon is already a vinyl record, so: a spinning record-spinner loader replaces
+#   the bare "loading…" in the INFO card (reusable recordLoaderHtml helper); the
+#   login screen gets a slow concentric groove-ripple background behind the card;
+#   and the topbar ▰▰▰ brand-mark becomes a 3-bar VU-meter equalizer. All
+#   subtle/slow + infinite, so the existing prefers-reduced-motion rule disables
+#   them; bases chosen for sane reduced-motion rest states. Bonus flourishes
+#   (needle-drop on PLACE, spindle play-button, login spin-up) deferred to a
+#   fast-follow.
+# 0.50.0: fresh release baseline. The git history was consolidated to a single
+#   commit and the operator's name/email scrubbed from the public repo (prior
+#   internal version was 1.24.95). Versioning restarts at 0.50.0; the entries
+#   above are kept as in-code archaeology (also in docs/PROJECT_HISTORY.md).
+__version__ = "0.50.0"

@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+*.swp
+.DS_Store
+
+# Local-only Claude context — never push (see CLAUDE.md § Session journaling)
+docs/SESSION_JOURNAL.md
+
+# v1.15.44: agent-written audit artifacts. They're scratch output from
+# multi-agent code-audit cycles (silent-failure / concurrency / etc) —
+# valuable as local working notes but not for the repo. AUDIT_*.md
+# catches new ones; the two pre-convention files are listed by name.
+docs/AUDIT_*.md
+docs/CODEBASE_AUDIT.md
+docs/INFO_CARD_AUDIT.md
+
+# v1.21.17 (security audit): guardrail against committing real secrets if
+# motif is ever run from this source checkout (prod keeps these in the
+# /config volume, so nothing here today — belt-and-suspenders). The YouTube
+# cookie jar, the config file (carries the Plex token), and the SQLite DB
+# (carries session + api-token hashes) must never be tracked.
+cookies.txt
+motif.yaml
+motif.yml
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+.env.*
+!.env.example
+*.pem
+*.key
+
+# 0.50.0: local-only list of personal strings (homelab IP, hostname, etc.) the
+# secrets-leak guard scans tracked source for. Kept OUT of the repo so the guard
+# names nothing public; absent on a fresh clone / CI (guard is a no-op there).
+tests/personal_strings.local

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+{# v1.22.56: LOGS reworked from a side-by-side split (two .split-half
+   panes) into a single full-width panel with a JOBS / EVENT STREAM
+   toggle — mirrors the library STANDARD/4K resolution toggle
+   (.chips role=tablist). The horizontal-scroll machinery the split
+   layout needed (.jobs-scroll-x + .scroll-chevron-wrap + the chevron
+   fade pseudos) is GONE: the full-width jobs grid fits its columns
+   with fluid widths + ellipsis truncation, so there's nothing to
+   scroll sideways. `initial_logview` is SSR'd from the /queue deep-
+   link params (?status -> jobs, ?since/?level/?component -> events)
+   so dashboard links land on the right panel with no first-paint
+   flash. #}
+{% set view = initial_logview | default('jobs') %}
+<section class="hero">
+  <h1 class="title">LOGS</h1>
+  <p class="muted">job queue + event stream · toggle the view · cancel from the ACTION column</p>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <div class="chips log-toggle" role="tablist" aria-label="log view">
+      <button class="chip{% if view == 'jobs' %} chip-active{% endif %}" role="tab"
+              data-logview="jobs" aria-selected="{{ 'true' if view == 'jobs' else 'false' }}">// JOBS</button>
+      <button class="chip{% if view == 'events' %} chip-active{% endif %}" role="tab"
+              data-logview="events" aria-selected="{{ 'true' if view == 'events' else 'false' }}">// EVENT STREAM</button>
+    </div>
+    <span class="muted live-indicator" data-logview-for="events"{% if view != 'events' %} hidden{% endif %}><span class="dot dot-pulse"></span> live</span>
+  </header>
+
+  {# ── JOBS view ─────────────────────────────────────────── #}
+  <div class="log-panel{% if view == 'jobs' %} is-active{% endif %}" data-logpanel="jobs">
+    {# v1.22.89: SSR the active filter chip from ?status= deep-links —
+       the panel toggle above went flash-free in v1.22.56 but this row
+       hardcoded ALL active, so /queue?status=failed painted ALL for a
+       frame before app.js flipped it. Same allowlist as the JS. #}
+    {% set jf = initial_jobfilter | default('all') %}
+    <div class="chips chips-inline chips-bar">
+      <button class="chip{% if jf == 'all' %} chip-active{% endif %}" data-jobfilter="all">ALL</button>
+      <button class="chip{% if jf == 'pending' %} chip-active{% endif %}" data-jobfilter="pending">PENDING</button>
+      <button class="chip{% if jf == 'running' %} chip-active{% endif %}" data-jobfilter="running">RUNNING</button>
+      <button class="chip{% if jf == 'failed' %} chip-active{% endif %}" data-jobfilter="failed">FAILED</button>
+      <button class="chip{% if jf == 'cancelled' %} chip-active{% endif %}" data-jobfilter="cancelled">CANCELLED</button>
+      <button class="chip{% if jf == 'done' %} chip-active{% endif %}" data-jobfilter="done">DONE</button>
+      <!-- v1.12.76: // CLEAR FAILED button removed. Per-row ACK FAILURE
+           (v1.12.74) cancels the matching failed download job, so the
+           bulk LOGS button was redundant. The /api/jobs/clear-failed
+           endpoint stays for scripts/external callers. -->
+    </div>
+    {# v1.22.56: full-width grid — header row + a vertical-scroll body.
+       No horizontal scroll wrapper; the .jobs-grid-row columns are
+       fluid (fr-based) so they always fit the panel width and truncate
+       long values with an ellipsis (full text on hover via title=). #}
+    <div class="jobs-grid">
+      <div class="jobs-grid-row jobs-grid-header">
+        <span>ID</span><span>TYPE</span><span>ITEM</span>
+        <span>STATE</span><span>TIME</span><span>NOTE</span>
+        <span>ACTION</span>
+      </div>
+      <div class="jobs-scroll-y">
+        <ol id="jobs-body" class="jobs-list">
+          <li class="jobs-list-empty muted center">loading…</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+
+  {# ── EVENT STREAM view ─────────────────────────────────── #}
+  <div class="log-panel{% if view == 'events' %} is-active{% endif %}" data-logpanel="events">
+    <div class="chips chips-inline chips-bar">
+      <button class="chip chip-active" data-evfilter="0" title="Show all events">ALL</button>
+      <button class="chip" data-evfilter="3600" title="Events from the last hour">1H</button>
+      <button class="chip" data-evfilter="86400" title="Events from the last 24 hours">24H</button>
+      <button class="chip" data-evfilter="604800" title="Events from the last 7 days">7D</button>
+    </div>
+    <ol class="event-stream event-stream-tall" id="event-stream-full"></ol>
+  </div>
+</section>
+{% endblock %}
