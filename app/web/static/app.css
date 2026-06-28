@@ -1452,8 +1452,9 @@ body.help-mode .settings-help-about { display: block; }
   cursor: pointer;
   letter-spacing: 0.06em;
 }
+/* v0.50.22: hover is JUST the text colour — the user found the background tint
+   flashing as the cursor crossed rows. No bg change, only the cyan text. */
 .library-presets-popup-list .library-presets-popup-apply:hover {
-  background: rgba(var(--cyan-rgb), 0.08);
   color: var(--cyan);
 }
 .library-presets-popup-list .library-presets-popup-apply.is-active {
@@ -3490,8 +3491,8 @@ body.auth-page .auth-card { margin: 0; }
 .login-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
 .login-ripple {
   position: absolute; left: 50%; top: 50%;
-  /* v0.50.20: scaled up with the larger record so the pulses radiate across it. */
-  width: 64vmin; height: 64vmin; margin: -32vmin 0 0 -32vmin;
+  /* v0.50.20/.22: scaled with the record so the pulses radiate across it. */
+  width: 52vmin; height: 52vmin; margin: -26vmin 0 0 -26vmin;
   border: 1px solid rgba(var(--green-rgb), 0.45);
   border-radius: 50%;
   opacity: 0;
@@ -3530,10 +3531,12 @@ body.auth-page .auth-card { margin: 0; }
    the spin → it rests as a static record. */
 .login-record {
   position: absolute; left: 50%; top: 50%;
-  /* v0.50.20: 78vmin → 118vmin so the ~460px card reads as a record's small
-     centre LABEL (≈1/3 the record diameter), not a giant hub. Overflows the
-     content box; .login-bg overflow:hidden clips it to a centred record face. */
-  width: 118vmin; height: 118vmin; margin: -59vmin 0 0 -59vmin;
+  /* v0.50.20: enlarged from 78vmin so the ~460px card reads as a record's small
+     centre LABEL, not a giant hub. v0.50.22: 118vmin → 88vmin — 118 overflowed
+     the content height (≈viewport − footer) so the record was clipped top/bottom
+     (the user: "can't see the whole record"). 88vmin keeps the WHOLE circle in
+     frame in any window orientation while staying clearly larger than the old 78. */
+  width: 88vmin; height: 88vmin; margin: -44vmin 0 0 -44vmin;
   opacity: 0.13;
 }
 .login-record .rec-grooves { animation-duration: 16s; }

@@ -1859,4 +1859,10 @@
 #   literal HTML space on LEGEND, no glossary-only +2px) so LEGEND + GLOSSARY sit
 #   the same distance from their labels. Both still ► closed / ▾ open. library.html
 #   + base.html + app.css.
-__version__ = "0.50.21"
+# 0.50.22: two the-user UI fixes. (1) login record was clipped after v0.50.20's
+#   118vmin enlarge (overflowed the content height) → 88vmin so the WHOLE record
+#   is in frame in any orientation, still larger than the old 78vmin; ripples
+#   64→52vmin to match. (2) SAVED FILTERS dropdown rows: hover is now JUST the
+#   cyan text colour (dropped the rgba bg tint that the user saw "flashing" as the
+#   cursor crossed rows). app.css only.
+__version__ = "0.50.22"
