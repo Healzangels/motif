@@ -1749,4 +1749,16 @@
 #   the raw drift_type still drives filtering, the DRIFT_TONE map, and the
 #   per-type action set. (The underlying re-push false-flag + LotR dead-rk are
 #   separate fixes, planned next.) Template-only.
-__version__ = "0.50.9"
+# 0.50.10: Fix A — ORPHAN SCAN no longer false-flags over-ceiling re-encoded
+#   uploads (the user's '10' 24MB + '10 Cloverfield Lane' 10.7MB themes). They're
+#   re-encoded to ~8.5MB to fit Plex's ~10MB upload ceiling, so the uploaded blob's
+#   hash differs from the canonical's BY DESIGN (v1.24.47) and the canonical hash
+#   is never a Plex entry → perpetual motif_entry_missing that RE-PUSH can't clear.
+#   Scoped much smaller than the original plan once the data showed
+#   verify_placement_health is rk-based + EXCLUDES plex_upload (so the LIBRARY was
+#   already correct) — the false-flag lived ONLY in the read-only scanner. Fix:
+#   scan_one_placement classifies a row OK when motif's canonical is over the
+#   ceiling AND Plex has a SELECTED upload:// entry (Plex serves the re-encode).
+#   No schema / worker / verify change; no AWAIT/RE-PUSH SQL touch (the co-display
+#   source is the dead-rk LotR, handled by Fix B next). orphan_scan.py only.
+__version__ = "0.50.10"

@@ -47,6 +47,24 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+# v0.50.10: Plex's theme-upload size ceiling (mirrors
+# worker._PLEX_THEME_UPLOAD_CEILING_MB). A theme over this is deployed as a
+# smaller RE-ENCODED upload (worker._downscale_audio_to_fit), so its hash
+# deliberately differs from the canonical's — the canonical hash will NEVER be a
+# Plex entry (the v1.24.47 contract). The scanner uses this to avoid a false
+# motif_entry_missing on over-ceiling themes Plex IS serving via the re-encode.
+_UPLOAD_CEILING_BYTES = 10 * 1024 * 1024
+
+
+def _over_ceiling(canonical_path: str | None) -> bool:
+    """True if motif's canonical theme exceeds Plex's upload ceiling."""
+    if not canonical_path:
+        return False
+    try:
+        return Path(canonical_path).stat().st_size >= _UPLOAD_CEILING_BYTES
+    except OSError:
+        return False
+
 
 def _hash_file(path: Path) -> str | None:
     """SHA-1 of file contents (matches Plex's theme-store hash
@@ -349,11 +367,14 @@ def scan_one_placement(
     motif_entry_present = False
     motif_entry_selected = False
     any_selected = False
+    selected_upload_present = False  # v0.50.10: a selected upload:// entry
     for e in entries:
         ratingKey = str(e.get("ratingKey", ""))
         sel = bool(e.get("selected"))
         if sel:
             any_selected = True
+            if ratingKey.startswith("upload://"):
+                selected_upload_present = True
         if motif_hash and ratingKey.endswith(f"/{motif_hash}"):
             motif_entry_present = True
             if sel:
@@ -378,11 +399,25 @@ def scan_one_placement(
             "selection state can't be verified"
         )
     elif not motif_entry_present:
-        drift_type = "motif_entry_missing"
-        details = (
-            f"motif's hash {motif_hash[:8]}… not present "
-            f"in Plex's {len(entries)} entries"
-        )
+        # v0.50.10: an over-ceiling theme (> Plex's ~10MB upload limit) deploys
+        # as a smaller RE-ENCODED upload whose hash differs from the canonical's
+        # by design — so the canonical hash will never be a Plex entry. When the
+        # canonical is over the ceiling AND Plex has a SELECTED upload:// entry,
+        # Plex is serving motif's re-encoded theme: that's OK, not missing. (Plex
+        # serving its OWN metadata:// theme instead leaves selected_upload_present
+        # False → still flagged, correctly.)
+        if selected_upload_present and _over_ceiling(motif_canonical):
+            drift_type = "ok"
+            details = (
+                "over-ceiling theme — Plex serves motif's re-encoded "
+                "upload (canonical hash differs by design)"
+            )
+        else:
+            drift_type = "motif_entry_missing"
+            details = (
+                f"motif's hash {motif_hash[:8]}… not present "
+                f"in Plex's {len(entries)} entries"
+            )
     elif not motif_entry_selected and any_selected:
         drift_type = "motif_not_selected"
         details = (
