@@ -45,3 +45,18 @@ def test_stats_readout_uses_the_helper_and_chart_header_agrees():
     assert "const { peak, avg } = _throughputStats(op);" in OPS
     # chart header rides the same max the bars normalize to (no separate sanePeak)
     assert "peak ${max.toFixed(0)}" in OPS
+
+
+def test_every_rate_display_routes_through_the_capped_buffer():
+    # The 1.0s dt floor caps `rate` at the SOURCE, so the fix covers every drawer
+    # section at once — but only because they all read op.detail.throughput[].rate.
+    # Guard that invariant: every smoothedRate() CALL (live rate pill + ETA) reads
+    # the throughput buffer; a call with a different arg, or an ad-hoc count/elapsed
+    # rate elsewhere, could surface an inflated number a future change wouldn't notice.
+    call_sites = OPS.count("smoothedRate(") - 1  # minus the function definition
+    assert call_sites >= 1
+    assert OPS.count("smoothedRate(op.detail && op.detail.throughput)") == call_sites
+    # the only live items/sec pill text derives from that (capped) smoothedRate
+    assert "${rate.toFixed(1)}/s" in OPS
+    # and avg/s is wall-clock, never an items/tiny-elapsed spike
+    assert "const avg = elapsedS > 0 ? processed / elapsedS : 0;" in OPS
