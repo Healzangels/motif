@@ -2007,4 +2007,12 @@
 #   (fmtNum) to match STATS peak/s — was max.toFixed(0) ("12703") beside "12,703".
 #   ops.js only. (Deferred unchanged: cloud_themes_backup + sync counters,
 #   plex_enum waterfall segmentation → next.)
-__version__ = "0.50.42"
+# 0.50.43: plex_enum RUN INSIGHT waterfall — break out a 'health' stage (audit D4).
+#   The post-loop tail ran reconcile_placement_paths + both stat-every-theme.mp3
+#   health passes (placement + canonical) under one 'reconcile' bar; on a slow
+#   Unraid/NFS mount the health stats can dominate the tail yet read as folder-
+#   rename time. Now transitions enumerate → reconcile → health (post-loop,
+#   forward-only — no per-section strip bouncing). plex_enum.py stage transition +
+#   ops.js STAGE_TIMELINE health step. (Deferred unchanged: cloud_themes_backup +
+#   sync remote-fetch counters — genuine-accuracy-with-risk, parked.)
+__version__ = "0.50.43"

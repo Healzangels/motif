@@ -53,6 +53,11 @@
         long: 'Walk every managed Plex section and upsert one plex_items row per item (ratingKey, has_theme, local_theme_file, folder_path).' },
       { key: 'reconcile', label: 'Reconcile',
         long: 'Re-link motif rows to plex_items, HEAD-verify ambiguous theme claims, refresh theme_id, sweep stale state.' },
+      // v0.50.43: the stat-every-theme.mp3 passes (placement + canonical health)
+      // are their own waterfall bar — on a slow mount they can dominate the tail
+      // and were previously hidden inside the 'reconcile' bar.
+      { key: 'health', label: 'Health',
+        long: 'Stat each placement + canonical theme.mp3 on disk to flag broken (missing-file) rows for the NEEDS WORK / PL / DL sort buckets.' },
     ],
     // v1.13.43: REPROBE PLEX THEMES. Single read-only stage that
     // walks every sidecar-bearing row and prefix-byte compares

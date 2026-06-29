@@ -627,6 +627,17 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
         relinked = reconcile_placement_paths(db_path)
         stats["relinked"] = relinked
 
+        # v0.50.43: distinct 'health' stage so the RUN INSIGHT waterfall breaks the
+        # two stat-every-theme.mp3 passes (placement + canonical) out of the
+        # 'reconcile' bar. On a slow Unraid/NFS mount these stats can dominate the
+        # tail; lumped under 'reconcile' they read as folder-rename time. A
+        # post-loop, forward-only transition — no per-section bouncing.
+        op_progress.update_progress(
+            db_path, "plex_enum",
+            stage="health",
+            stage_label="Verifying theme files on disk",
+            activity="Checking placement + canonical theme.mp3 on disk",
+        )
         # v1.23.25: stamp placement health so a broken placement (theme.mp3
         # gone from the Plex folder) ranks at the top of NEEDS WORK and groups
         # in the PL=broken sort bucket — the live red dot is a per-render stat
