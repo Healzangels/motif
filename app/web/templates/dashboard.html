@@ -33,6 +33,14 @@
 {%- macro ssr_pct(num, denom) -%}
 {%- if num is not none and denom -%}{{ (num / denom * 100) | round | int }}%{%- else -%}—{%- endif -%}
 {%- endmacro -%}
+{# v0.50.46: bare percent (no sign, 0 fallback) for SSR-baking the coverage
+   bar-fill width inline — so the bar paints filled on first load instead of
+   waiting for the async coverage poll (the user: "bar shows up late"). Reduced-
+   motion users keep this static width; motion users get it reset to 0 + climbed
+   by dashCountUp in lockstep with the % count-up. #}
+{%- macro ssr_pct_width(num, denom) -%}
+{%- if num is not none and denom -%}{{ (num / denom * 100) | round | int }}{%- else -%}0{%- endif -%}
+{%- endmacro -%}
 <section class="hero">
   <div class="hero-row">
     <h1 class="title">DASHBOARD</h1>
@@ -208,7 +216,7 @@
     </header>
     <div class="stat-num" id="cov-movies-pct">{{ ssr_pct(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}</div>
     <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="movies"></span>
+      <span class="bar-fill" data-bar-fill="movies" style="width: {{ ssr_pct_width(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}%"></span>
     </div>
     <footer class="stat-foot">
       <span><b id="cov-movies-themed">{{ ssr_num(_ssr_dash.plex_movies_with_theme) }}</b> of <b id="cov-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</b> themed</span>
@@ -227,7 +235,7 @@
     </header>
     <div class="stat-num" id="cov-tv-pct">{{ ssr_pct(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}</div>
     <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="tv"></span>
+      <span class="bar-fill" data-bar-fill="tv" style="width: {{ ssr_pct_width(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}%"></span>
     </div>
     <footer class="stat-foot">
       <span><b id="cov-tv-themed">{{ ssr_num(_ssr_dash.plex_tv_with_theme) }}</b> of <b id="cov-tv-total">{{ ssr_num(_ssr_dash.plex_tv_total) }}</b> themed</span>
@@ -244,7 +252,7 @@
     </header>
     <div class="stat-num" id="cov-anime-pct">{{ ssr_pct(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}</div>
     <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="anime"></span>
+      <span class="bar-fill" data-bar-fill="anime" style="width: {{ ssr_pct_width(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}%"></span>
     </div>
     <footer class="stat-foot">
       <span><b id="cov-anime-themed">{{ ssr_num(_ssr_dash.plex_anime_with_theme) }}</b> of <b id="cov-anime-total">{{ ssr_num(_ssr_dash.plex_anime_total) }}</b> themed</span>
@@ -261,7 +269,7 @@
     </header>
     <div class="stat-num" id="cov-collections-pct">{{ ssr_pct(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}</div>
     <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="collections"></span>
+      <span class="bar-fill" data-bar-fill="collections" style="width: {{ ssr_pct_width(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}%"></span>
     </div>
     <footer class="stat-foot">
       <span><b id="cov-collections-themed">{{ ssr_num(_ssr_dash.plex_collections_with_theme) }}</b> of <b id="cov-collections-total">{{ ssr_num(_ssr_dash.plex_collections_total) }}</b> themed</span>
@@ -283,6 +291,11 @@
         if (el && /\d/.test(el.textContent)) {
           el.dataset.countup = el.textContent;
           el.textContent = '0%';
+          // v0.50.46: reset the SSR-baked bar to 0 (transition off so it doesn't
+          // animate the reset) — dashCountUp climbs it in lockstep with the %
+          // instead of it filling late when the coverage poll lands.
+          var bar = document.querySelector('[data-bar-fill="' + k + '"]');
+          if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
         }
       });
     } catch (e) { /* leave the SSR values untouched on any error */ }

@@ -33,7 +33,9 @@ def test_dashcountup_climbs_and_clears():
     assert "function dashCountUp()" in DASH or "function dashCountUp()" in APP_JS
     assert "function dashCountUp()" in APP_JS
     i = APP_JS.index("function dashCountUp()")
-    body = APP_JS[i:i + 900]
+    # v0.50.46: widened 900→1500 — the bar-fill lockstep drive added lines before
+    # the removeAttribute gate-clear.
+    body = APP_JS[i:i + 1500]
     assert "data-countup" in body or "dataset.countup" in body
     assert "requestAnimationFrame" in body
     # rounds each displayed frame (no float artifacts) + clears the gate at the end.

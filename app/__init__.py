@@ -2031,4 +2031,12 @@
 #   (fetched, incl errors), so each movie→tv→collection boundary jumped backward by
 #   the prior type's error count; now the base is a running `completed` total
 #   (_remote_done). api.py + sync.py. Closes the drawer-numbers audit.
-__version__ = "0.50.45"
+# 0.50.46: dashboard COVERAGE bar-fill no longer lags the % count-up. The bar was
+#   only written by setCov when the async coverage poll landed, so it filled
+#   visibly late after the % had already climbed (the user). Now mirrors the
+#   v0.50.6 % pattern: SSR-bake the bar width inline (reduced-motion = already
+#   displayed), pre-paint reset to 0 for motion users, dashCountUp drives the bar
+#   in lockstep with the % (transition off during the rAF, restored after), and
+#   setCov defers the bar write while the climb is in flight. dashboard.html +
+#   app.js (+ ssr_pct_width macro).
+__version__ = "0.50.46"

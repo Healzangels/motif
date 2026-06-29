@@ -4152,7 +4152,10 @@
       // dashboard.html pre-paint reset) so the live poll doesn't clobber the climb.
       if (pctEl && !pctEl.dataset.countup) pctEl.textContent = totalN ? `${Math.round(themed / totalN * 100)}%` : '—';
       const bar = $(`[data-bar-fill="${key}"]`);
-      if (bar) bar.style.width = `${totalN ? (themed / totalN * 100) : 0}%`;
+      // v0.50.46: defer to the count-up climb while data-countup is pending (mirror
+      // the pct guard above) so the live poll doesn't snap the bar ahead of the
+      // synchronized fill. After the climb clears data-countup this writes normally.
+      if (bar && !(pctEl && pctEl.dataset.countup)) bar.style.width = `${totalN ? (themed / totalN * 100) : 0}%`;
       const themedEl = document.getElementById(`cov-${key}-themed`);
       if (themedEl) themedEl.textContent = fmt.num(themed);
       const totalEl = document.getElementById(`cov-${key}-total`);
@@ -18826,6 +18829,13 @@
         const target = parseInt(raw, 10);
         const suffix = /%$/.test(raw) ? '%' : '';
         if (!isFinite(target)) { el.textContent = raw; el.removeAttribute('data-countup'); return; }
+        // v0.50.46: drive the matching coverage bar-fill in lockstep with the %
+        // climb so it no longer fills late when the coverage poll lands (the user).
+        // transition off during the rAF climb so the bar tracks the eased value
+        // exactly; restored at the end so the live poll's later updates animate.
+        const m = el.id && el.id.match(/^cov-(.+)-pct$/);
+        const bar = m ? $(`[data-bar-fill="${m[1]}"]`) : null;
+        if (bar) bar.style.transition = 'none';
         let start = null;
         const dur = 1100;
         const step = (ts) => {
@@ -18833,8 +18843,12 @@
           const p = Math.min(1, (ts - start) / dur);
           const eased = 1 - Math.pow(1 - p, 3);
           el.textContent = Math.round(target * eased) + suffix;
+          if (bar) bar.style.width = `${target * eased}%`;
           if (p < 1) { requestAnimationFrame(step); }
-          else { el.textContent = raw; el.removeAttribute('data-countup'); }
+          else {
+            el.textContent = raw; el.removeAttribute('data-countup');
+            if (bar) { bar.style.width = `${target}%`; bar.style.transition = ''; }
+          }
         };
         requestAnimationFrame(step);
       });

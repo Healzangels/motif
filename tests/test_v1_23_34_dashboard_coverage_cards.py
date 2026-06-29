@@ -152,7 +152,8 @@ def test_ssr_has_separate_tv_and_anime_ready_aggregates():
 
 
 def test_js_setcov_writes_pct_bar_and_foot():
-    body = APP_JS[APP_JS.index("const setCov = (key, themed, totalN, ready)"):][:900]
+    # v0.50.46: widened 900→1200 — the bar-write count-up-defer guard added lines.
+    body = APP_JS[APP_JS.index("const setCov = (key, themed, totalN, ready)"):][:1200]
     assert "cov-${key}-pct" in body
     assert '[data-bar-fill="${key}"]' in body
     assert "themed / totalN * 100" in body

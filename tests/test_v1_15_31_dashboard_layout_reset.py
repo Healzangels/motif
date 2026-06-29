@@ -311,7 +311,8 @@ def test_js_hydrates_coverage_bars_from_themed_over_total():
     selects `[data-bar-fill="${key}"]` for movies/tv/collections."""
     src = APP_JS.read_text()
     anchor = src.index("const setCov = (key, themed, totalN, ready)")
-    block = src[anchor:anchor + 900]
+    # v0.50.46: widened 900→1200 — the bar-write count-up-defer guard added lines.
+    block = src[anchor:anchor + 1200]
     assert '[data-bar-fill="${key}"]' in block
     assert "themed / totalN * 100" in block
     # The reverted downloaded/total bar formula is gone.
@@ -345,7 +346,8 @@ def test_js_hydrates_coverage_foot_stats():
     add). Replaces the old tdb-*-in-library / -themed writes."""
     src = APP_JS.read_text()
     anchor = src.index("const setCov = (key, themed, totalN, ready)")
-    block = src[anchor:anchor + 900]
+    # v0.50.46: widened 900→1200 — the bar-write count-up-defer guard added lines.
+    block = src[anchor:anchor + 1200]
     assert "cov-${key}-themed" in block
     assert "cov-${key}-total" in block
     assert "cov-${key}-ready" in block
