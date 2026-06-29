@@ -2067,4 +2067,13 @@
 #   tab one line, the nav wraps as a group). Phone (≤600px) keeps a single-row
 #   horizontal-scroll nav (flex-wrap:nowrap) instead of a tall multi-row stack.
 #   app.css only.
-__version__ = "0.50.49"
+# 0.50.50: mobile library + dialog fixes (the user, 480px). (1) row TITLES were
+#   blank on every row (and any window < ~1440px): #library-table is
+#   table-layout:fixed and .col-title is the only no-width column, so once the fixed
+#   columns summed past the available width col-title collapsed to 0. Added a table
+#   min-width:1440px — it keeps full width + scrolls in .table-scroll, col-title
+#   always has room; desktop unchanged (width:100% wins ≥1440px so col-title still
+#   absorbs slack). (2) the // RESULTS pager spilled next/last off the edge → the
+#   block-head + block-head-actions + pager flex-wrap on a phone. (3) the row INFO
+#   card + other .dlg modals go full-screen (100vw/100dvh) on a phone. app.css only.
+__version__ = "0.50.50"

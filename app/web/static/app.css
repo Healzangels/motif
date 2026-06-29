@@ -1912,7 +1912,14 @@ body.help-mode .settings-help-about { display: block; }
    pixel widths from .col-state / .col-year / .col-imdb /
    .col-actions. Other admin tables (dashboard, settings,
    libraries) keep table-layout: auto. */
-#library-table { table-layout: fixed; }
+/* v0.50.50: min-width so the table-layout:fixed table never squeezes .col-title
+   (the only no-width column) to 0 — below ~1440px wide the fixed columns summed
+   past the available width and the TITLE column collapsed, so every row's title
+   was invisible (the user, on mobile + any narrow window). With min-width the
+   table keeps its full width and scrolls in .table-scroll; col-title holds ~180px.
+   Desktop is unchanged: at >=1440px width:100% wins, so col-title still absorbs
+   the slack exactly as before. */
+#library-table { table-layout: fixed; min-width: 1440px; }
 /* v0.50.48: the fixed-width results table (~1000px of columns, incl the 320px
    ACTIONS cell) is wider than a phone viewport. This wrapper gives it its own
    horizontal scroll context so it's SWIPEABLE — body's overflow-x:hidden was
@@ -5072,6 +5079,22 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
      viewport; drop the floor so the two cards stack flush. */
   .dash-pair-col { min-width: 0; }
+
+  /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
+     pager itself wrap instead of spilling the next/last buttons off the edge. */
+  .block-head { flex-wrap: wrap; gap: var(--gap-2); }
+  .block-head-actions { flex-wrap: wrap; }
+  .pager { flex-wrap: wrap; }
+
+  /* v0.50.50: dialogs (// MOTIF INFO, upload, manual URL) go full-screen on a
+     phone — the row INFO card especially needs the whole viewport. */
+  .dlg {
+    width: 100vw; max-width: none;
+    height: 100vh; height: 100dvh; max-height: none;
+    margin: 0; border-width: 0; border-radius: 0;
+    overflow-y: auto;
+  }
+  .dlg-body { padding: var(--gap-4); }
 }
 
 /* v1.12.71: TRY THIS NEXT recovery section in the INFO card.
