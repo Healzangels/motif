@@ -616,7 +616,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 }
 .title {
   font-family: var(--font-display);
-  font-size: var(--t-huge);
+  /* v0.50.48: clamp the hero title so it scales down on a narrow viewport
+     instead of overflowing (64px "DASHBOARD" spilled past a ~390px phone).
+     Desktop is unchanged: 12vw hits the 64px ceiling at >=533px wide. */
+  font-size: clamp(34px, 12vw, var(--t-huge));
   font-weight: 400;
   letter-spacing: 0.05em;
   color: var(--green-bright);
@@ -1902,6 +1905,12 @@ body.help-mode .settings-help-about { display: block; }
    .col-actions. Other admin tables (dashboard, settings,
    libraries) keep table-layout: auto. */
 #library-table { table-layout: fixed; }
+/* v0.50.48: the fixed-width results table (~1000px of columns, incl the 320px
+   ACTIONS cell) is wider than a phone viewport. This wrapper gives it its own
+   horizontal scroll context so it's SWIPEABLE — body's overflow-x:hidden was
+   clipping it, leaving ACTIONS unreachable on mobile. No-op on desktop (the
+   table fits, so no scrollbar appears). */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 .table th {
   text-align: left;
   padding: 10px 14px;
@@ -5033,6 +5042,26 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 @media (max-width: 600px) {
   .diff-tiles, .diff-tiles-single { grid-template-columns: 1fr; }
   .diff-arrow { transform: rotate(90deg); padding: var(--gap-2) 0; }
+
+  /* v0.50.48: mobile foundation pass. The UI is desktop-first; these phone-tier
+     overrides reclaim horizontal space + stop the worst overflow offenders so the
+     app is usable on a ~390px phone. Surface-specific refinement (table column
+     priority, drawers, charts) iterates from here. */
+  /* Topbar: reclaim the 28px side padding + big gap so the brand | nav | status
+     grid has room; let the 7 nav tabs scroll instead of forcing the bar wider. */
+  .topbar { padding: 10px 12px; gap: var(--gap-3); }
+  .nav { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .nav::-webkit-scrollbar { height: 0; }
+  /* Hero: actions span the full width under the title (the row already wraps). */
+  .hero-row { gap: var(--gap-3); }
+  .sync-actions { width: 100%; }
+  #library-refresh-btn { min-width: 0; flex: 1 1 100%; }
+  /* Library toolbar: the search box no longer reserves 240px+ — it spans the row
+     so the chips + // FILTERS sit on their own line below it. */
+  .library-search-wrap { min-width: 0; flex-basis: 100%; max-width: none; }
+  /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
+     viewport; drop the floor so the two cards stack flush. */
+  .dash-pair-col { min-width: 0; }
 }
 
 /* v1.12.71: TRY THIS NEXT recovery section in the INFO card.

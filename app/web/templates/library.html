@@ -849,6 +849,11 @@
       <p class="library-legend-foot">full reference in <button type="button" class="library-legend-gloss-link" id="library-legend-gloss">// GLOSSARY</button></p>
     </div>
   </div>
+  {# v0.50.48: horizontal-scroll wrapper so the fixed-width results table
+     (table-layout:fixed, ~1000px of columns incl the 320px ACTIONS cell)
+     is SWIPEABLE on a narrow viewport instead of clipped by body's
+     overflow-x:hidden — the ACTIONS column was unreachable on mobile. #}
+  <div class="table-scroll">
   <table class="table" id="library-table">
     <thead>
       <tr>
@@ -889,6 +894,7 @@
       <tr><td colspan="11" class="muted center">loading…</td></tr>
     </tbody>
   </table>
+  </div>{# /.table-scroll #}
 </section>
 
 <dialog class="dlg" id="upload-dlg">

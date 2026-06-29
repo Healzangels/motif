@@ -2048,4 +2048,14 @@
 #   UPDATE now re-guards the non-terminal status. (B2) the per-row loop is wrapped in
 #   one transaction so the sweep stays all-or-nothing like the old bulk UPDATE.
 #   progress.py + ops.js (stale renderTimeline comment 'reconcile'→'health').
-__version__ = "0.50.47"
+# 0.50.48: mobile foundation pass (#1 of an iterative mobile arc). The UI was
+#   desktop-first with no phone tier, so a ~390px viewport overflowed. (a) the
+#   fixed-width results table (~1000px of columns) is now in a .table-scroll
+#   horizontal-scroll wrapper so the ACTIONS cell is swipeable instead of clipped
+#   by body's overflow-x:hidden; (b) the 64px hero .title now clamps (clamp(34px,
+#   12vw, 64px) — desktop unchanged ≥533px); (c) the existing @media(max-width:600px)
+#   block gained phone overrides: topbar padding/gap shrink + nav horizontal-scroll,
+#   refresh button + search go full-width, dash-pair-col drops its 340px floor.
+#   library.html + app.css. Per-surface refinement (table columns, drawers, charts,
+#   settings) iterates from screenshots.
+__version__ = "0.50.48"
