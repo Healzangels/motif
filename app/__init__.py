@@ -2083,4 +2083,8 @@
 #   Form params) so the extra field is ignored. (The other 3 console "password
 #   field not in a form" warnings are masked CONFIG secrets — plex token / tmdb key
 #   / proxy URL — intentionally not credential forms; left as-is.) settings.html.
-__version__ = "0.50.51"
+# 0.50.52: settings tab bar (13 tabs) scrolls as a single compact row on a phone
+#   instead of wrapping into a ragged multi-row block that read as "one big list
+#   stacked on itself" (the user) — same single-row horizontal-scroll treatment as
+#   the topbar nav. app.css only.
+__version__ = "0.50.52"
