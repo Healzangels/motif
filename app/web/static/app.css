@@ -1912,14 +1912,15 @@ body.help-mode .settings-help-about { display: block; }
    pixel widths from .col-state / .col-year / .col-imdb /
    .col-actions. Other admin tables (dashboard, settings,
    libraries) keep table-layout: auto. */
-/* v0.50.50: min-width so the table-layout:fixed table never squeezes .col-title
-   (the only no-width column) to 0 — below ~1440px wide the fixed columns summed
-   past the available width and the TITLE column collapsed, so every row's title
-   was invisible (the user, on mobile + any narrow window). With min-width the
-   table keeps its full width and scrolls in .table-scroll; col-title holds ~180px.
-   Desktop is unchanged: at >=1440px width:100% wins, so col-title still absorbs
-   the slack exactly as before. */
-#library-table { table-layout: fixed; min-width: 1440px; }
+/* v0.50.50: .col-title is the only no-width column under table-layout:fixed, so
+   when the fixed columns sum past the available width it collapses to 0 and the
+   titles vanish. v0.50.53: the min-width that fixes that is scoped to the phone
+   breakpoint ONLY (see @media max-width:600px) — as a BASE rule it forced the
+   table to >=1440px on the DESKTOP too, overflowing .table-scroll and clipping
+   the ACTIONS column on any narrower-than-1440 window (the user's regression).
+   On desktop the table is width:100% and fits its container, col-title absorbs
+   the slack as it always did. */
+#library-table { table-layout: fixed; }
 /* v0.50.48: the fixed-width results table (~1000px of columns, incl the 320px
    ACTIONS cell) is wider than a phone viewport. This wrapper gives it its own
    horizontal scroll context so it's SWIPEABLE — body's overflow-x:hidden was
@@ -5079,6 +5080,11 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
      viewport; drop the floor so the two cards stack flush. */
   .dash-pair-col { min-width: 0; }
+
+  /* v0.50.53: phone-only min-width so the results table keeps its full width and
+     swipes in .table-scroll (col-title stays ~180px instead of collapsing to 0).
+     Scoped here — as a base rule it clipped ACTIONS on narrow DESKTOP windows. */
+  #library-table { min-width: 1440px; }
 
   /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
      pager itself wrap instead of spilling the next/last buttons off the edge. */

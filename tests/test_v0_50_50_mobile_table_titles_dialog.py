@@ -21,7 +21,14 @@ CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 
 def test_table_min_width_keeps_the_title_column_from_collapsing():
-    assert "#library-table { table-layout: fixed; min-width: 1440px; }" in CSS
+    # v0.50.53: the min-width lives in the phone breakpoint, not the base rule
+    # (as a base rule it clipped ACTIONS on narrow desktop windows).
+    assert "#library-table { table-layout: fixed; }" in CSS
+    block = re.search(r"@media \(max-width: 600px\) \{.*?\n\}", CSS, re.S).group(0)
+    assert "#library-table { min-width: 1440px; }" in block
+    # the base rule must NOT carry a min-width (the regression)
+    base = CSS[CSS.index("#library-table { table-layout: fixed; }"):]
+    assert "min-width" not in base.split("\n")[0]
 
 
 def _phone_block() -> str:

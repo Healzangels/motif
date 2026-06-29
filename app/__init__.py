@@ -2087,4 +2087,11 @@
 #   instead of wrapping into a ragged multi-row block that read as "one big list
 #   stacked on itself" (the user) — same single-row horizontal-scroll treatment as
 #   the topbar nav. app.css only.
-__version__ = "0.50.52"
+# 0.50.53: REGRESSION FIX — the v0.50.50 `#library-table { min-width: 1440px }`
+#   was a BASE rule, so it forced the results table to >=1440px on the DESKTOP too,
+#   overflowing .table-scroll and clipping the ACTIONS column on any window/panel
+#   narrower than 1440px (the user). Scoped the min-width to the @media(max-width:
+#   600px) phone block — desktop is back to width:100% (fits its container, no
+#   horizontal scroll, col-title absorbs slack); phone still gets the min-width so
+#   titles stay visible while swiping. app.css only.
+__version__ = "0.50.53"
