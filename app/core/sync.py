@@ -3818,6 +3818,14 @@ def run_sync(db_path, base_url: str, *,
             # detection).
             index_incomplete = False
             errored_by_mt: dict[str, set[int]] = {}
+            # v0.50.45: running total of items COMPLETED (fetched, incl errors)
+            # across prior media types — the per-type processed_total stamp adds
+            # `completed` to this. Pre-fix the base was stats.X_seen (FLUSHED, so
+            # excludes fetch errors), but the stamp added `completed` (fetched), so
+            # at each movie→tv→collection boundary the op-wide counter jumped
+            # backward by the prior type's fetch-error count. Now base == sum of
+            # prior `completed`, so the counter stays monotonic across types.
+            _remote_done = 0
             for media_type, media_path in media_iter:
                 stage_key = f"index_{media_type}"
                 op_progress.update_progress(
@@ -3934,16 +3942,13 @@ def run_sync(db_path, base_url: str, *,
                     last_log = time.monotonic()
                     last_ui = time.monotonic()
                     total = len(futures)
-                    # v1.18.0: 3-way base: 0 for movies, movies for
-                    # tv, movies+tv for collections (sync runs them
-                    # in that order — see media_iter above).
-                    if media_type == "movie":
-                        media_processed_base = 0
-                    elif media_type == "tv":
-                        media_processed_base = stats.movies_seen
-                    else:  # collection
-                        media_processed_base = (
-                            stats.movies_seen + stats.tv_seen)
+                    # v1.18.0: 3-way base so the op-wide processed_total spans all
+                    # media types. v0.50.45: base is the running `completed` total
+                    # (see _remote_done above), NOT stats.X_seen — the seen counts
+                    # exclude fetch errors while the stamp adds `completed` (incl
+                    # errors), so the old stats base jumped the counter backward at
+                    # each media-type boundary by the prior type's error count.
+                    media_processed_base = _remote_done
                     for fut in as_completed(futures):
                         if _cancel_check():
                             ex.shutdown(cancel_futures=True)
@@ -4030,6 +4035,10 @@ def run_sync(db_path, base_url: str, *,
                         stats=stats,
                     )
                     batch.clear()
+                # v0.50.45: carry this media type's `completed` (fetched, incl
+                # errors) into the base for the next type so processed_total stays
+                # monotonic across the movie→tv→collection boundaries.
+                _remote_done += completed
 
         # v1.13.1 (Phase C): drop detection. Stamp tdb_dropped_at on
         # themes whose upstream JSON disappeared between syncs. The

@@ -4852,6 +4852,11 @@ def _cloud_themes_backup_run(
         with PlexClient(
             cfg, plus_mode=settings.plus_equiv_mode,
         ) as plex, get_conn(db_path) as conn:
+            # v0.50.45: last walk processed count, carried into the download
+            # stage's processed_total so the op-wide counter (+ RUN INSIGHT avg/s)
+            # stays monotonic instead of resetting walk-count→0 at the boundary.
+            walked_count = [0]
+
             def _on_walk_progress(evt: dict) -> None:
                 phase = evt.get("phase")
                 if phase == "start":
@@ -4866,6 +4871,7 @@ def _cloud_themes_backup_run(
                     )
                 elif phase == "batch":
                     processed = evt.get("processed", 0)
+                    walked_count[0] = processed
                     c1 = evt.get("c1_count", 0)
                     op_progress.update_progress(
                         db_path, OP_ID,
@@ -4918,8 +4924,11 @@ def _cloud_themes_backup_run(
                 ),
                 stage_current=0,
                 stage_total=len(targets),
-                processed_total=0,
-                processed_est=len(targets),
+                # v0.50.45: carry the walk count forward (was a hard 0, which
+                # jumped the op-wide counter backward walk-count→0 at the
+                # walk→download boundary). stage_current stays per-stage.
+                processed_total=walked_count[0],
+                processed_est=walked_count[0] + len(targets),
                 activity=(
                     f"Walk complete — {len(targets)} C1 target(s) "
                     f"to download"
@@ -4952,7 +4961,7 @@ def _cloud_themes_backup_run(
                     op_progress.update_progress(
                         db_path, OP_ID,
                         stage_current=i,
-                        processed_total=i,
+                        processed_total=walked_count[0] + i,
                         activity=(
                             f"No swap needed: {target['title']!r} "
                             f"(identical to existing backup)"
@@ -4994,7 +5003,7 @@ def _cloud_themes_backup_run(
                     op_progress.update_progress(
                         db_path, OP_ID,
                         stage_current=i,
-                        processed_total=i,
+                        processed_total=walked_count[0] + i,
                         activity=(
                             f"Backed up {target['title']!r} "
                             f"({result['bytes_written']} bytes)"
@@ -5009,7 +5018,7 @@ def _cloud_themes_backup_run(
                     op_progress.update_progress(
                         db_path, OP_ID,
                         stage_current=i,
-                        processed_total=i,
+                        processed_total=walked_count[0] + i,
                         error_count=len(errors),
                         activity=(
                             f"Failed: {target['title']!r} "

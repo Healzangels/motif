@@ -2022,4 +2022,13 @@
 #   boundaries it stacks between — the dashboard "centering looks off" (the user).
 #   .dash-pair gutter + .dash-pair-col flex basis now use --gap-4 so every row's
 #   center boundary lands at the same x. app.css only.
-__version__ = "0.50.44"
+# 0.50.45: drawer processed_total monotonic across stage boundaries (audit D2+D3,
+#   same class as v0.50.41 bulk_lps). (D2) cloud_themes_backup: the walk stage
+#   climbed processed_total to the candidate count (~3,883) then the download stage
+#   reset it to 0; now the walk count is carried forward (walked_count[0] + i).
+#   (D3) sync remote/snapshot per-item fetch: the per-media-type base was
+#   stats.X_seen (FLUSHED, excl fetch errors) while the stamp added `completed`
+#   (fetched, incl errors), so each movie→tv→collection boundary jumped backward by
+#   the prior type's error count; now the base is a running `completed` total
+#   (_remote_done). api.py + sync.py. Closes the drawer-numbers audit.
+__version__ = "0.50.45"

@@ -27,7 +27,9 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 def test_worker_stamps_outcome_before_finish():
     fn_idx = API_PY.index("def _cloud_themes_backup_run(")
-    fn = API_PY[fn_idx:fn_idx + 12000]
+    # v0.50.45: widened 12000→13000 — the walk-count carry-forward added lines
+    # ahead of the backup_outcome stamp, pushing final_status past the old window.
+    fn = API_PY[fn_idx:fn_idx + 13000]
     assert 'set_detail_field(' in fn
     assert '"backup_outcome"' in fn
     # the stamp must precede finish_progress (waitForOp returns the
