@@ -2119,4 +2119,12 @@
 #   live in the filter-chip buttons above the table, so the unscoped `in file` check
 #   passed regardless of the legend rows; both tests now scope to the legend body.
 #   base.html + 2 tests only.
-__version__ = "0.50.56"
+# 0.50.57: full CRT motion — removed the prefers-reduced-motion gating entirely (the
+#   user's call). On Windows (which commonly reports reduce) the v1.15.134 universal
+#   CSS clamp had frozen the brand-mark equalizer + every looping animation to a static
+#   frame ("the wave on top not doing anything"). Removed all three gates: the @media
+#   clamp in app.css, the CRT power-off flourish skip in base.html, and the dashboard
+#   count-up skip in dashboard.html. The full vibe (equalizer / pulses / ripples / hero
+#   wave / power on-off / donut draw-in / count-up) now plays for everyone regardless of
+#   the OS setting. New guard test pins the removal; old test_v1_15_134 deleted.
+__version__ = "0.50.57"

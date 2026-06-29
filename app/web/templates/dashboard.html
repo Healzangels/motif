@@ -285,7 +285,8 @@
 <script>
   (function () {
     try {
-      if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+      // v0.50.57: the count-up always animates now (was skipped under reduced-motion
+      // — the user wants full CRT motion regardless of the OS setting).
       ['movies', 'tv', 'anime', 'collections'].forEach(function (k) {
         var el = document.getElementById('cov-' + k + '-pct');
         if (el && /\d/.test(el.textContent)) {

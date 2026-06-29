@@ -30,8 +30,8 @@ def test_power_off_overlay_and_logout_wiring():
     assert "querySelector('a.topbar-logout')" in BASE
     assert "off.classList.add('playing')" in BASE
     assert "link.getAttribute('href')" in BASE
-    # reduced-motion: skip the flourish + go straight to logout.
-    assert "prefers-reduced-motion: reduce" in BASE
+    # v0.50.57: the flourish always plays — no reduced-motion skip (full CRT motion).
+    assert "prefers-reduced-motion: reduce" not in BASE
 
 
 def test_power_off_css_collapses_and_is_inert_at_rest():

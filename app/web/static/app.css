@@ -6595,28 +6595,11 @@ body.dash-customize-mode .dash-customize-link:hover {
   text-shadow: 0 0 6px rgba(var(--amber-bright-rgb),0.4);
 }
 
-/* v1.15.134: respect prefers-reduced-motion. Motif has ~12
-   infinite pulse / blink / breathe animations across the
-   topbar brand-mark, dot-pulse, fail-pulse, dry-run-pulse,
-   state-pill-pulse, op-pill-fail-pulse, op-card-breathe,
-   etc. For users with motion sensitivity
-   (vestibular triggers, ADHD focus impact, motion-induced
-   headaches), persistent looping animations are an
-   accessibility issue WCAG calls out specifically.
-   The rule kills only INFINITE animations (the pulses/blinks)
-   by clamping iteration-count to 1 and duration to 0.01ms.
-   Finite transitions (hover/focus color shifts) stay intact
-   since they're brief and user-initiated — the v1.15.110 motion
-   tokens already keep these short. The `scroll-behavior: auto`
-   override disables smooth-scroll for users who find it
-   disorienting. */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    scroll-behavior: auto !important;
-  }
-}
+/* v0.50.57: the v1.15.134 prefers-reduced-motion clamp was REMOVED — the user wants
+   the full CRT motion (equalizer / pulses / ripples / hero wave / power on-off /
+   donut draw-in) to play for everyone regardless of the OS reduced-motion setting.
+   On Windows (which commonly reports reduce) the clamp had frozen the brand-mark
+   equalizer to a static bar. See the JS gates removed in base.html + dashboard.html. */
 
 /* v1.24.52: RECENTLY ADDED carousel (dashboard). Horizontal poster strip; each
    .recent-card is a button → opens the same INFO dialog a library row does. */

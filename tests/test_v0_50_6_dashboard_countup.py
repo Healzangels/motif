@@ -22,11 +22,11 @@ DASH = (REPO / "app" / "web" / "templates" / "dashboard.html").read_text()
 
 
 def test_inline_prepaint_reset_in_template():
-    """The pre-paint reset stashes SSR value + zeroes the text, and bails for
-    reduced-motion."""
+    """The pre-paint reset stashes SSR value + zeroes the text. v0.50.57: the
+    count-up animates for everyone now — no reduced-motion bail (full CRT motion)."""
     assert "el.dataset.countup = el.textContent" in DASH
     assert "el.textContent = '0%'" in DASH
-    assert "prefers-reduced-motion: reduce" in DASH
+    assert "prefers-reduced-motion: reduce" not in DASH
 
 
 def test_dashcountup_climbs_and_clears():
