@@ -2058,4 +2058,13 @@
 #   refresh button + search go full-width, dash-pair-col drops its 340px floor.
 #   library.html + app.css. Per-surface refinement (table columns, drawers, charts,
 #   settings) iterates from screenshots.
-__version__ = "0.50.48"
+# 0.50.49: topbar mobile fixes (the user, ~927px). (1) the IDLE / // HELP / logout
+#   status cluster spilled off the clipped right edge — the topbar grid (brand |
+#   nav | status) was forced wider than the viewport by the nav's 7-tab min-content;
+#   .nav now flex-wraps within its 1fr column + min-width:0 so it shrinks instead of
+#   shoving the status off. (2) "TV SHOWS" wrapped to two lines, which top-aligned
+#   the single-line tabs so they floated up; .nav a is now white-space:nowrap (each
+#   tab one line, the nav wraps as a group). Phone (≤600px) keeps a single-row
+#   horizontal-scroll nav (flex-wrap:nowrap) instead of a tall multi-row stack.
+#   app.css only.
+__version__ = "0.50.49"

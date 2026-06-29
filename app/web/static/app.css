@@ -447,7 +447,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   box-shadow: 0 0 8px rgba(var(--cyan-rgb), 0.25);
 }
 
-.nav { display: flex; gap: 0; }
+/* v0.50.49: flex-wrap + min-width:0 so the nav (the topbar grid's 1fr column)
+   wraps WITHIN its column instead of forcing the grid wider than the viewport —
+   pre-fix the 7 tabs' min-content pushed the brand|nav|status grid past a ~927px
+   width and the IDLE/logout status cluster spilled off the clipped right edge. */
+.nav { display: flex; gap: 0; flex-wrap: wrap; min-width: 0; }
 .nav a {
   padding: var(--gap-2) var(--gap-4);
   font-size: var(--t-small);
@@ -455,6 +459,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   letter-spacing: 0.15em;
   color: var(--fg-dim);
   border-right: 1px solid var(--line);
+  /* v0.50.49: each tab stays on ONE line — "TV SHOWS" was wrapping to two,
+     which (flex align-items:stretch) top-aligned the single-line tabs so they
+     floated up out of line (the user). */
+  white-space: nowrap;
 }
 .nav a:first-child { border-left: 1px solid var(--line); }
 .nav a:hover { color: var(--green); background: var(--bg-elev); text-shadow: none; }
@@ -5050,7 +5058,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Topbar: reclaim the 28px side padding + big gap so the brand | nav | status
      grid has room; let the 7 nav tabs scroll instead of forcing the bar wider. */
   .topbar { padding: 10px 12px; gap: var(--gap-3); }
-  .nav { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* On a phone, scroll the nav as a single compact row rather than letting the
+     base flex-wrap stack the 7 tabs into a tall multi-row block. */
+  .nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .nav::-webkit-scrollbar { height: 0; }
   /* Hero: actions span the full width under the title (the row already wraps). */
   .hero-row { gap: var(--gap-3); }
