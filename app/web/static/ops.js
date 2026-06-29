@@ -480,7 +480,7 @@
     // v1.21.25: a DONE op marks the WHOLE strip green. Pre-fix this all-done
     // branch was effectively dead code: every timelined kind finishes ON its
     // last stage (still set + present in the strip — tdb_sync='prune',
-    // plex_enum='reconcile', reprobe='probe'), so currentIdx>=0 always won
+    // plex_enum='health' (v0.50.43), reprobe='probe'), so currentIdx>=0 always won
     // and the last step stayed `is-current` (amber, pulsing) on a completed
     // card. Check it FIRST so the whole strip goes green.
     // v1.21.26: gate strictly on status==='done', NOT "anything not running".

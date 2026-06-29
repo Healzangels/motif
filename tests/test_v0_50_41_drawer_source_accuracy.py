@@ -45,8 +45,9 @@ def test_finalize_is_a_noop_when_no_stage_open():
 
 def test_both_stale_sweeps_finalize_per_row():
     src = (REPO / "app" / "core" / "progress.py").read_text()
-    # both reset_stale_on_boot + sweep_stuck route the reaped row through the finalizer
-    assert src.count('_finalize_stale_detail(r["detail_json"], now)') == 2
+    # both reset_stale_on_boot + sweep_stuck route the reaped row through the
+    # finalizer, closing the stage at the row's last-progress time (v0.50.47).
+    assert src.count('_finalize_stale_detail(r["detail_json"], r["updated_at"])') == 2
     # the old bulk UPDATE-without-detail form is gone from both
     assert "WHERE status IN ('pending', 'running', 'cancelling')\",\n            (now, now)," not in src
 

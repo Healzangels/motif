@@ -376,17 +376,22 @@ def finish_progress(
         )
 
 
-def _finalize_stale_detail(detail_json: str | None, now: str) -> str:
+def _finalize_stale_detail(detail_json: str | None, stage_close_at: str) -> str:
     """v0.50.41: close the in-flight stage timing + drop the internal _stage_*
     trackers for a stale op being reaped to 'failed', mirroring finish_progress's
     teardown. Without this the crashed op's final (often longest) stage is never
     appended to stage_timings — the RUN INSIGHT waterfall silently undershoots the
-    real RAN — and the internal _stage_* keys leak into the 'finished' detail_json."""
+    real RAN — and the internal _stage_* keys leak into the 'finished' detail_json.
+
+    v0.50.47: close the stage at the op's LAST-PROGRESS time (its updated_at), NOT
+    the reap time. sweep_stuck reaps 90 min after an op stalls; closing at the reap
+    `now` recorded the final stage as ~90 min of pure idle, letting it dwarf the
+    waterfall — the opposite of the accuracy this teardown exists for."""
     try:
         detail = json.loads(detail_json or "{}")
     except (TypeError, ValueError):
         detail = {}
-    _close_stage_timing(detail, now)
+    _close_stage_timing(detail, stage_close_at)
     detail.pop("_stage_started", None)
     detail.pop("_stage_key", None)
     detail.pop("_stage_label", None)
@@ -421,17 +426,27 @@ def reset_stale_on_boot(db_path: Path) -> int:
     with get_conn(db_path) as conn:
         # v0.50.41: per-row so each reaped op's in-flight stage timing is closed
         # (see _finalize_stale_detail) instead of a bulk UPDATE that drops it.
+        # v0.50.47: fetch updated_at to close the stage at last-progress (not reap)
+        # time; status-guard the UPDATE so a concurrently-finishing op isn't stomped
+        # back to 'failed'; one transaction so the sweep stays all-or-nothing like
+        # the original bulk UPDATE was.
         rows = conn.execute(
-            "SELECT op_id, detail_json FROM op_progress "
+            "SELECT op_id, updated_at, detail_json FROM op_progress "
             "WHERE status IN ('pending', 'running', 'cancelling')",
         ).fetchall()
-        for r in rows:
-            conn.execute(
-                "UPDATE op_progress SET status = 'failed', "
-                "  finished_at = COALESCE(finished_at, ?), updated_at = ?, "
-                "  detail_json = ? WHERE op_id = ?",
-                (now, now, _finalize_stale_detail(r["detail_json"], now), r["op_id"]),
-            )
+        if rows:
+            with transaction(conn):
+                for r in rows:
+                    conn.execute(
+                        "UPDATE op_progress SET status = 'failed', "
+                        "  finished_at = COALESCE(finished_at, ?), updated_at = ?, "
+                        "  detail_json = ? "
+                        "WHERE op_id = ? "
+                        "  AND status IN ('pending', 'running', 'cancelling')",
+                        (now, now,
+                         _finalize_stale_detail(r["detail_json"], r["updated_at"]),
+                         r["op_id"]),
+                    )
         return len(rows)
 
 
@@ -459,19 +474,29 @@ def sweep_stuck(db_path: Path, max_idle_minutes: int = 90) -> int:
         # v0.50.41: per-row so each reaped op's in-flight stage timing is closed
         # (same as reset_stale_on_boot) — a finish_progress that raised mid-teardown
         # otherwise leaves the final stage dropped + the _stage_* keys leaked.
+        # v0.50.47: close the stage at updated_at (not the reap `now`, which is up to
+        # max_idle_minutes later); status-guard the UPDATE — this runs while workers
+        # are LIVE, so a row that finishes between the SELECT and its UPDATE must not
+        # be stomped back to 'failed'; one transaction keeps the sweep atomic.
         rows = conn.execute(
-            "SELECT op_id, detail_json FROM op_progress "
+            "SELECT op_id, updated_at, detail_json FROM op_progress "
             "WHERE status IN ('pending', 'running', 'cancelling') "
             "  AND updated_at < ?",
             (cutoff,),
         ).fetchall()
-        for r in rows:
-            conn.execute(
-                "UPDATE op_progress SET status = 'failed', "
-                "  finished_at = COALESCE(finished_at, ?), updated_at = ?, "
-                "  detail_json = ? WHERE op_id = ?",
-                (now, now, _finalize_stale_detail(r["detail_json"], now), r["op_id"]),
-            )
+        if rows:
+            with transaction(conn):
+                for r in rows:
+                    conn.execute(
+                        "UPDATE op_progress SET status = 'failed', "
+                        "  finished_at = COALESCE(finished_at, ?), updated_at = ?, "
+                        "  detail_json = ? "
+                        "WHERE op_id = ? "
+                        "  AND status IN ('pending', 'running', 'cancelling')",
+                        (now, now,
+                         _finalize_stale_detail(r["detail_json"], r["updated_at"]),
+                         r["op_id"]),
+                    )
         return len(rows)
 
 

@@ -2039,4 +2039,13 @@
 #   in lockstep with the % (transition off during the rAF, restored after), and
 #   setCov defers the bar write while the climb is in flight. dashboard.html +
 #   app.js (+ ssr_pct_width macro).
-__version__ = "0.50.46"
+# 0.50.47: code-review fixes for the v0.50.41 stale-sweep rewrite. (A1) the reaped
+#   op's in-flight stage was closed at the REAP time, so a sweep_stuck reap (90 min
+#   after a stall) recorded the final stage as ~90 min of idle and dwarfed the RUN
+#   INSIGHT waterfall; now closed at the row's updated_at (last progress). (B1) the
+#   per-row UPDATE matched op_id only — sweep_stuck runs while workers are LIVE, so a
+#   row finishing between the SELECT and its UPDATE got stomped back to 'failed'; the
+#   UPDATE now re-guards the non-terminal status. (B2) the per-row loop is wrapped in
+#   one transaction so the sweep stays all-or-nothing like the old bulk UPDATE.
+#   progress.py + ops.js (stale renderTimeline comment 'reconcile'→'health').
+__version__ = "0.50.47"
