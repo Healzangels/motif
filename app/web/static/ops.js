@@ -360,6 +360,13 @@
     return Number(n).toLocaleString();
   }
 
+  // v0.50.40: magnitude-aware rate text for the live RATE pill — 1 decimal only
+  // below 10/s (where it's meaningful), comma-grouped integer above, matching the
+  // RUN INSIGHT peak/avg readout (so "10000.0/s" reads "10,000/s").
+  function fmtRate(rate) {
+    return rate < 10 ? rate.toFixed(1) : fmtNum(Math.round(rate));
+  }
+
   function fmtDuration(seconds) {
     if (!isFinite(seconds) || seconds < 0) return '—';
     if (seconds < 60) return `${Math.round(seconds)}s`;
@@ -711,15 +718,21 @@
   function _renderInsightStats(op) {
     const d = op.detail || {};
     const stats = [];
+    // v0.50.40: skip the done_summary completion stats on a CANCELLED op — some
+    // workers (cloud_themes_backup) stamp done_summary right before cancelling, so a
+    // "N backed up · M skipped" readout reads as complete while the headline says
+    // "Cancelled". The headline already conveys the partial state.
     const ds = d.done_summary;
-    if (Array.isArray(ds)) {
+    if (Array.isArray(ds) && op.status !== 'cancelled') {
       ds.filter((p) => p && p.l != null && p.v != null)
         .forEach((p) => stats.push({ label: p.l, value: fmtNum(p.v) }));
     }
     if ((d.throughput || []).length || op.started_at) {
       const { peak, avg } = _throughputStats(op);
-      if (peak > 0) stats.push({ label: 'peak/s', value: peak.toFixed(0) });
-      if (avg > 0) stats.push({ label: 'avg/s', value: avg.toFixed(0) });
+      // v0.50.40: comma-group peak/avg so they match done_summary's fmtNum (was
+      // "10,514 items · 207301 avg/s" — grouped + un-grouped side by side).
+      if (peak > 0) stats.push({ label: 'peak/s', value: fmtNum(Math.round(peak)) });
+      if (avg > 0) stats.push({ label: 'avg/s', value: fmtNum(Math.round(avg)) });
     }
     if ((op.error_count || 0) > 0) {
       stats.push({ label: 'errors', value: fmtNum(op.error_count), bad: true });
@@ -871,9 +884,13 @@
           // the bar at the last running-%. Single-job / indeterminate ops never
           // had a meaningful %, so they still show no bar.
           if (!showLiveSections) {
-            return _useRealBar(op)
-              ? `<div class="op-card-bar"><div class="op-card-bar-fill" style="width:100%"></div></div>`
-              : '';
+            // v0.50.40: only a genuinely-DONE op snaps to 100% — a cancelled / failed
+            // real-bar op (a download stopped at 40%, an enum that failed at 12/200)
+            // freezes at its last % so the bar doesn't falsely read as complete (the
+            // headline already states the status).
+            if (!_useRealBar(op)) return '';
+            const finPct = op.status === 'done' ? 100 : Math.round(pctOf(op) || 0);
+            return `<div class="op-card-bar"><div class="op-card-bar-fill" style="width:${finPct}%"></div></div>`;
           }
           // v1.15.2: shared helper — was inlined as
           // `hasRealPct || op.stage_total > 1`. Same rule, but
@@ -917,7 +934,7 @@
           ${(showLiveSections && rate > 0) ? `
             <span class="op-card-meta-item" data-meta-key="rate">
               <span class="op-card-meta-label">RATE</span>
-              <span class="op-card-meta-value">${rate.toFixed(1)}/s</span>
+              <span class="op-card-meta-value">${fmtRate(rate)}/s</span>
             </span>` : ''}
           ${(etaSec != null && isLive) ? `
             <span class="op-card-meta-item" data-meta-key="eta">
@@ -1123,7 +1140,7 @@
         `.op-card-meta-item[data-meta-key="${key}"] .op-card-meta-value`);
       if (item && item.textContent !== want) item.textContent = want;
     };
-    if (rate > 0) metaUpdate('rate', `${rate.toFixed(1)}/s`);
+    if (rate > 0) metaUpdate('rate', `${fmtRate(rate)}/s`);
     if (etaSec != null && isLive) metaUpdate('eta', fmtDuration(etaSec));
     if (elapsed != null) metaUpdate('elapsed', fmtDuration(elapsed));
     if ((op.error_count || 0) > 0) metaUpdate('errors', fmtNum(op.error_count));

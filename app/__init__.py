@@ -1979,4 +1979,13 @@
 #   links); gate the red "dead" tag on a non-empty themerrdb url; reword the backup
 #   tooltip so it's accurate on already-placed rows (no PROMOTE-TO-ACTIVE no-op).
 #   progress.py + ops.js + app.js.
-__version__ = "0.50.39"
+# 0.50.40: Live Ops drawer-display accuracy (audit, frontend half). (1) A cancelled/
+#   failed real-bar op no longer snaps its progress bar to 100% — it freezes at its
+#   last % (download stopped at 40%, enum failed at 12/200) so a stopped op doesn't
+#   read as complete; only status==='done' → 100%. (2) The RUN INSIGHT done_summary
+#   STATS block is skipped on a CANCELLED op (cloud_themes_backup stamps it pre-cancel,
+#   so it read as complete while the headline said "Cancelled"). (3) peak/s + avg/s
+#   are comma-grouped (fmtNum) to match done_summary (was "10,514 items · 207301
+#   avg/s"). (4) the live RATE pill is magnitude-aware (fmtRate: 1 decimal under 10/s,
+#   grouped integer above). ops.js only. (Backend data-accuracy half → next tag.)
+__version__ = "0.50.40"

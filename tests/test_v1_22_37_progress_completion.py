@@ -32,13 +32,16 @@ def test_pctof_snaps_to_100_on_done():
 
 
 def test_finished_card_renders_full_bar():
-    # The done-card branch (where the live counter/bar were dropped) now
-    # renders a 100% bar for real-bar ops.
+    # The done-card branch (where the live counter/bar were dropped) renders a
+    # full bar for a real-bar op — but v0.50.40 only snaps to 100% when
+    # status==='done'; a cancelled/failed op freezes at its last % instead.
     assert "if (!showLiveSections) {" in OPS_JS, (
-        "v1.22.37: the finished-card branch must render a 100% bar, not drop it")
+        "v1.22.37: the finished-card branch must render a bar, not drop it")
     i = OPS_JS.index("if (!showLiveSections) {")
-    block = OPS_JS[i:i + 300]
-    assert "_useRealBar(op)" in block and "width:100%" in block
+    block = OPS_JS[i:i + 700]
+    assert "_useRealBar(op)" in block
+    assert "op.status === 'done' ? 100 : Math.round(pctOf(op) || 0)" in block, (
+        "v0.50.40: done → 100%, cancelled/failed → frozen pctOf (not a false 100%)")
 
 
 def test_minibar_done_flash_state_and_timer():

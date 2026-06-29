@@ -57,6 +57,7 @@ def test_every_rate_display_routes_through_the_capped_buffer():
     assert call_sites >= 1
     assert OPS.count("smoothedRate(op.detail && op.detail.throughput)") == call_sites
     # the only live items/sec pill text derives from that (capped) smoothedRate
-    assert "${rate.toFixed(1)}/s" in OPS
+    # (v0.50.40: via fmtRate — magnitude-aware, derived from the same `rate`)
+    assert "${fmtRate(rate)}/s" in OPS
     # and avg/s is wall-clock, never an items/tiny-elapsed spike
     assert "const avg = elapsedS > 0 ? processed / elapsedS : 0;" in OPS
