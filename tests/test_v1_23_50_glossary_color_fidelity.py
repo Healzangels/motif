@@ -87,8 +87,12 @@ def test_glossary_src_link_chips_reuse_real_row_classes():
 
 
 def test_legend_src_link_chips_reuse_real_row_classes():
+    # v0.50.56: scope to the legend body — several of these class strings also live
+    # in the SRC/LINK filter-chip buttons above the table, so an unscoped file check
+    # wouldn't actually guard the legend decode rows.
+    legend = LIBRARY_HTML[LIBRARY_HTML.index("library-legend-body"):LIBRARY_HTML.index("library-legend-foot")]
     for cls in SRC_REAL + LINK_REAL_LEGEND:
-        assert f'class="{cls}"' in LIBRARY_HTML, f"legend chip must reuse {cls}"
+        assert f'class="{cls}"' in legend, f"legend chip must reuse {cls}"
 
 
 def test_no_parallel_gc_palette_for_src_link():

@@ -2111,4 +2111,12 @@
 #   real row hues (pinned by test_v1_23_50 FLAG_PAIRS, the v1.23.56 anti-drift rule);
 #   the // FLAGS headers + gg-* pattern are unchanged (no restyle). app.css + 2
 #   templates + tests only.
-__version__ = "0.50.55"
+# 0.50.56: v0.50.55 code-review follow-ups (2 self-found gaps). (1) Glossary now
+#   decodes the faded link-badge-themerrdb-only "T" — a ThemerrDB-tracked title NOT
+#   in your Plex library (TDB-only browse / not-in-Plex filter); the v0.50.55 "decode
+#   every chip" pass had missed this de-emphasized SRC variant. (2) The legend
+#   completeness guards were non-guarding for LINK C/M/AB — those class strings also
+#   live in the filter-chip buttons above the table, so the unscoped `in file` check
+#   passed regardless of the legend rows; both tests now scope to the legend body.
+#   base.html + 2 tests only.
+__version__ = "0.50.56"

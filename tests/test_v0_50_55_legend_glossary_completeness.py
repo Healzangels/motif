@@ -46,11 +46,26 @@ def test_glossary_decodes_the_plex_also_serves_dot():
     assert "link-badge link-badge-themerrdb link-badge-also-plex" in GLOSS_HTML
 
 
+def test_glossary_decodes_the_themerrdb_only_faded_t():
+    # v0.50.56: the faded T — tracked upstream but NOT in your Plex library (TDB-only
+    # browse / not-in-Plex filter). Reachable + visually distinct, so "every SRC chip"
+    # only holds with this decoded. Reuses the real row class.
+    assert "link-badge link-badge-themerrdb-only" in GLOSS_HTML
+
+
+def _legend_body() -> str:
+    # v0.50.56: the LINK class strings also live in the LINK filter-chip buttons
+    # above the table, so an unscoped `in BASE_HTML` would pass even if the legend
+    # decode rows were deleted — it must be scoped to the legend body to guard them.
+    return BASE_HTML[BASE_HTML.index("library-legend-body"):BASE_HTML.index("library-legend-foot")]
+
+
 def test_legend_adds_common_link_and_attn_chips():
     # lean set the user chose: LINK C/M/AB + the !M/!P attention chips.
+    legend = _legend_body()
     for cls in ("link-glyph-copy", "link-glyph-mismatch", "link-glyph-ab",
                 "gg-mismatch", "gg-await"):
-        assert cls in BASE_HTML, f"in-context legend missing {cls}"
+        assert cls in legend, f"in-context legend missing {cls}"
 
 
 def test_new_attn_labels_match_the_filter_chip_labels():

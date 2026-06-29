@@ -368,6 +368,11 @@
         <h3 class="help-gloss-sec-t">// SRC — where the theme comes from</h3>
         <div class="help-gloss-grid">
           <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb">T</span><span class="help-gloss-def">ThemerrDB-managed — motif fetches it from upstream (IMDb / TMDB).</span></div>
+          {# v0.50.56: the faded T — a ThemerrDB-tracked title that ISN'T in your Plex
+             library (TDB-only browse / not-in-Plex filter). Reuses the real
+             link-badge-themerrdb-only class (de-emphasized green) so the decode
+             matches the dimmer row chip. #}
+          <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb-only">T</span><span class="help-gloss-def">ThemerrDB-only — tracked upstream but not in your Plex library (shown when browsing TDB-only / filtering to not-in-Plex rows).</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-user">U</span><span class="help-gloss-def">User — a manual theme URL (YouTube / SoundCloud / Instagram / Facebook) or an uploaded MP3.</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-adopt">A</span><span class="help-gloss-def">Adopted — motif claimed a theme.mp3 already in the Plex folder (no ThemerrDB link).</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-manual">M</span><span class="help-gloss-def">Manual sidecar — a loose theme.mp3 motif doesn't manage yet. Click ADOPT to take it over.</span></div>
