@@ -372,6 +372,11 @@
           <div class="help-gloss-row"><span class="link-badge link-badge-adopt">A</span><span class="help-gloss-def">Adopted — motif claimed a theme.mp3 already in the Plex folder (no ThemerrDB link).</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-manual">M</span><span class="help-gloss-def">Manual sidecar — a loose theme.mp3 motif doesn't manage yet. Click ADOPT to take it over.</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-cloud">P</span><span class="help-gloss-def">Plex agent / cloud — Plex serves its own theme (Plex Pass cloud or the themerr-plex embed).</span></div>
+          {# v0.50.55: the composite "Plex also serves" dot — fires on a T/U/A/M row
+             that ALSO has an independent Plex cloud/embed theme. Reuses the real
+             link-badge-also-plex class (the ::after corner-dot) so the decode is
+             identical to the row. #}
+          <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb link-badge-also-plex">T</span><span class="help-gloss-def">…with a corner dot — a managed theme (T / U / A / M) that Plex <em>also</em> serves its own theme for. The dot marks the composite state.</span></div>
           <div class="help-gloss-row"><span class="link-badge gc-none">–</span><span class="help-gloss-def">No theme — nothing placed, or ThemerrDB dropped the entry.</span></div>
         </div>
       </section>
@@ -408,9 +413,18 @@
         <div class="help-gloss-grid">
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-fail">&#9888;</span><span class="help-gloss-def">Failure — the theme couldn't download or place. Click the row to view it and ACK.</span></div>
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-update">!</span><span class="help-gloss-def">Update — ThemerrDB now has a different URL. ACCEPT UPDATE to re-download, or KEEP CURRENT.</span></div>
+          {# v0.50.55: the rest of the ATTN axis — labels match the ATTN: filter chips
+             (!M / !P / ↩) so the decode is unambiguous (the row's title glyph renders
+             a bare ! for several of these). #}
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-mismatch">!M</span><span class="help-gloss-def">Mismatch — the canonical file diverged from Plex's copy (SET URL / UPLOAD MP3 over a placement). Open INFO to REVERT or KEEP.</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-await">!P</span><span class="help-gloss-def">Awaiting placement — downloaded, but not placed in the Plex folder yet. PUSH TO PLEX.</span></div>
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-broken">&#8634;</span><span class="help-gloss-def">Restorable — the canonical file is gone but Plex's copy is intact. RESTORE FROM PLEX.</span></div>
+          {# v0.50.55: ↩ distinct from ↺ — a previous-URL snapshot that survives PURGE/UNMANAGE. #}
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-restore">&#8617;</span><span class="help-gloss-def">Restorable snapshot — the theme was PURGED / UNMANAGED but a previous-URL snapshot survives. RESTORE from the SOURCE menu.</span></div>
           {# v1.24.40: ⟳ re-push needed flag (orange title glyph + ATTN chip). #}
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-repush">&#10227;</span><span class="help-gloss-def">Re-push needed — Plex dropped the uploaded theme (re-add destroyed its rating_key). PLACE to re-upload.</span></div>
+          {# v0.50.55: ⊘ too-big — a title-only flag (no ATTN filter chip), collections. #}
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-toobig">&#8856;</span><span class="help-gloss-def">Too large for Plex — the theme exceeds Plex's ~10 MB ceiling even compressed, and a collection can't fall back to a sidecar. SET URL to a smaller source.</span></div>
         </div>
       </section>
 

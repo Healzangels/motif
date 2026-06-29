@@ -1315,6 +1315,14 @@ body.help-mode .help-mode-bar { display: flex; }
 .gg-update { color: var(--blue); }
 .gg-broken { color: var(--amber); }
 .gg-repush { color: var(--orange); } /* v1.24.40: ⟳ re-push needed */
+/* v0.50.55: the rest of the ATTN axis, completing the FLAGS decode. Each mirrors
+   the real row class (pinned by test_v1_23_50 FLAG_PAIRS so it can't drift):
+   !M mismatch=orange (.attn-pill-mismatch), !P await=amber (.title-glyph-await),
+   ↩ restorable-snapshot=cyan (.attn-pill-restore), ⊘ too-big=red (.title-glyph-toobig). */
+.gg-mismatch { color: var(--orange); }
+.gg-await { color: var(--amber); }
+.gg-restore { color: var(--cyan); }
+.gg-toobig { color: var(--red); }
 
 /* v1.23.45: in-context library LEGEND. Hidden until help mode is on, then it
    sits above the rows decoding that tab's chips. Reuses the glossary chip

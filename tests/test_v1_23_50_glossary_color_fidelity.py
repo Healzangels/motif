@@ -53,9 +53,12 @@ LINK_REAL_GLOSSARY = [
     "link-glyph link-glyph-ab", "link-glyph link-glyph-bk",
 ]
 # the compact in-tab legend (library.html) decodes the common subset.
+# v0.50.55: + copy / mismatch / ab — the legend claims "every chip on THIS tab".
 LINK_REAL_LEGEND = [
-    "link-glyph link-glyph-hardlink", "link-glyph link-glyph-pu",
-    "link-glyph link-glyph-b", "link-glyph link-glyph-tb", "link-glyph link-glyph-bk",
+    "link-glyph link-glyph-hardlink", "link-glyph link-glyph-copy",
+    "link-glyph link-glyph-pu", "link-glyph link-glyph-mismatch",
+    "link-glyph link-glyph-b", "link-glyph link-glyph-tb",
+    "link-glyph link-glyph-ab", "link-glyph link-glyph-bk",
 ]
 
 DOT_PAIRS = [
@@ -64,10 +67,17 @@ DOT_PAIRS = [
     (".gd-broken", ".state-pill-btn-broken"),
     (".gd-off", ".state-pill-btn-off"),
 ]
+# v0.50.55: the FLAGS decode completes the ATTN axis. Each new gg-* mirrors the
+# real row class it borrows its hue from — pinned here so it can't drift like the
+# v1.23.50 update/broken cyan regression did.
 FLAG_PAIRS = [
     (".gg-fail", ".title-glyph-fail"),
     (".gg-update", ".title-glyph-update"),
     (".gg-broken", ".title-glyph-broken"),
+    (".gg-mismatch", ".attn-pill-mismatch"),
+    (".gg-await", ".title-glyph-await"),
+    (".gg-restore", ".attn-pill-restore"),
+    (".gg-toobig", ".title-glyph-toobig"),
 ]
 
 

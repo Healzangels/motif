@@ -2102,4 +2102,13 @@
 #   ≤1080px pins #library-table min-width:1080 so TITLE holds ~150px while the table
 #   swipes (replaces the v0.50.53 phone min-width:1440 — ~25% less phone scroll).
 #   Desktop >1280px is unchanged. app.css only. Scoped to #library-table.
-__version__ = "0.50.54"
+# 0.50.55: legend + glossary completeness audit. Every chip the row renders is now
+#   decoded. // GLOSSARY (full reference) gains the rest of the ATTN axis — !M
+#   mismatch, !P awaiting-placement, ↩ restorable-snapshot (distinct from ↺), ⊘
+#   too-big — plus the "Plex also serves" composite SRC corner-dot
+#   (link-badge-also-plex). The in-context LEGEND (kept lean) gains LINK C / M / AB
+#   and the !M / !P attention chips. New gg-mismatch/await/restore/toobig mirror the
+#   real row hues (pinned by test_v1_23_50 FLAG_PAIRS, the v1.23.56 anti-drift rule);
+#   the // FLAGS headers + gg-* pattern are unchanged (no restyle). app.css + 2
+#   templates + tests only.
+__version__ = "0.50.55"

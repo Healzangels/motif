@@ -819,11 +819,21 @@
         <div class="help-gloss-grid">
           {% if tab != "collections" %}
           <div class="help-gloss-row"><span class="link-glyph link-glyph-hardlink">HL</span><span class="help-gloss-def">Hardlink (no extra disk)</span></div>
+          {# v0.50.55: C — cross-FS copy fallback (uses extra disk). Sidecar-only, so
+             collections (plex_upload, no folder) never show it — gate with HL. #}
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-copy">C</span><span class="help-gloss-def">Copy (cross-FS fallback)</span></div>
           {% endif %}
           <div class="help-gloss-row"><span class="link-glyph link-glyph-pu">PU</span><span class="help-gloss-def">Pushed to Plex (API)</span></div>
           <div class="help-gloss-row"><span class="link-glyph link-glyph-repush">RP</span><span class="help-gloss-def">Re-push needed (re-add wiped it)</span></div>
+          {# v0.50.55: M — canonical diverged from Plex's copy. Reachable on any tab. #}
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-mismatch">M</span><span class="help-gloss-def">Mismatch — INFO to REVERT / KEEP</span></div>
           <div class="help-gloss-row"><span class="link-glyph link-glyph-b">PB</span><span class="help-gloss-def">Plex Backup (insurance)</span></div>
           <div class="help-gloss-row"><span class="link-glyph link-glyph-tb">TB</span><span class="help-gloss-def">TDB Backup — PROMOTE</span></div>
+          {% if tab != "collections" %}
+          {# v0.50.55: AB — adopted a sidecar but left Plex serving. Adoption needs a
+             folder sidecar, so collections never show it — gate like HL. #}
+          <div class="help-gloss-row"><span class="link-glyph link-glyph-ab">AB</span><span class="help-gloss-def">Adopted Backup — PROMOTE</span></div>
+          {% endif %}
           <div class="help-gloss-row"><span class="link-glyph link-glyph-bk">UB</span><span class="help-gloss-def">User Backup — PUSH</span></div>
         </div>
       </div>
@@ -841,6 +851,11 @@
         <div class="help-gloss-grid">
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-fail">&#9888;</span><span class="help-gloss-def">Failure — view &amp; ACK</span></div>
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-update">!</span><span class="help-gloss-def">ThemerrDB update</span></div>
+          {# v0.50.55: !M / !P — labels match the ATTN: filter chips (the title glyph
+             renders a bare ! for both). The full set (↩ snapshot, ⊘ too-big) lives
+             in // GLOSSARY. #}
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-mismatch">!M</span><span class="help-gloss-def">Mismatch — REVERT / KEEP</span></div>
+          <div class="help-gloss-row"><span class="help-gloss-glyph gg-await">!P</span><span class="help-gloss-def">Awaiting placement</span></div>
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-broken">&#8634;</span><span class="help-gloss-def">Canonical missing</span></div>
           {# v1.24.40: ⟳ re-push needed — the orange title glyph + ATTN chip. #}
           <div class="help-gloss-row"><span class="help-gloss-glyph gg-repush">&#10227;</span><span class="help-gloss-def">Re-push needed — // PLACE</span></div>
