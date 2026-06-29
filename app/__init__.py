@@ -1988,4 +1988,14 @@
 #   are comma-grouped (fmtNum) to match done_summary (was "10,514 items · 207301
 #   avg/s"). (4) the live RATE pill is magnitude-aware (fmtRate: 1 decimal under 10/s,
 #   grouped integer above). ops.js only. (Backend data-accuracy half → next tag.)
-__version__ = "0.50.40"
+# 0.50.41: Live Ops drawer accuracy (audit, backend half). (1) reset_stale_on_boot +
+#   sweep_stuck flipped a stale op to 'failed' with a raw bulk UPDATE that never
+#   closed the in-flight stage timing — so a crashed op's final (often longest) stage
+#   was dropped from the RUN INSIGHT waterfall + the internal _stage_* keys leaked
+#   into the finished detail. Both now go per-row through a shared _finalize_stale_
+#   detail (mirrors finish_progress). (2) bulk_lps reset processed_total to u_done at
+#   the unplace stage, so the op-wide 'items processed' counter (+ avg/s) jumped
+#   backward n_to_probe→0 at the probe→unplace boundary; now carries it forward.
+#   progress.py + api.py. (Deferred, noted: cloud_themes_backup walk→download counter,
+#   sync remote-fetch boundary, plex_enum waterfall finer segmentation.)
+__version__ = "0.50.41"

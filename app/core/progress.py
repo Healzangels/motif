@@ -376,6 +376,23 @@ def finish_progress(
         )
 
 
+def _finalize_stale_detail(detail_json: str | None, now: str) -> str:
+    """v0.50.41: close the in-flight stage timing + drop the internal _stage_*
+    trackers for a stale op being reaped to 'failed', mirroring finish_progress's
+    teardown. Without this the crashed op's final (often longest) stage is never
+    appended to stage_timings — the RUN INSIGHT waterfall silently undershoots the
+    real RAN — and the internal _stage_* keys leak into the 'finished' detail_json."""
+    try:
+        detail = json.loads(detail_json or "{}")
+    except (TypeError, ValueError):
+        detail = {}
+    _close_stage_timing(detail, now)
+    detail.pop("_stage_started", None)
+    detail.pop("_stage_key", None)
+    detail.pop("_stage_label", None)
+    return json.dumps(detail)
+
+
 def reset_stale_on_boot(db_path: Path) -> int:
     """v1.21.47: flip every non-terminal op_progress row to 'failed' at
     startup; returns the count reclaimed.
@@ -402,14 +419,20 @@ def reset_stale_on_boot(db_path: Path) -> int:
     leaves no non-terminal rows, so this no-ops."""
     now = now_iso()
     with get_conn(db_path) as conn:
-        cur = conn.execute(
-            "UPDATE op_progress SET status = 'failed', "
-            "  finished_at = COALESCE(finished_at, ?), "
-            "  updated_at = ? "
+        # v0.50.41: per-row so each reaped op's in-flight stage timing is closed
+        # (see _finalize_stale_detail) instead of a bulk UPDATE that drops it.
+        rows = conn.execute(
+            "SELECT op_id, detail_json FROM op_progress "
             "WHERE status IN ('pending', 'running', 'cancelling')",
-            (now, now),
-        )
-        return cur.rowcount
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "UPDATE op_progress SET status = 'failed', "
+                "  finished_at = COALESCE(finished_at, ?), updated_at = ?, "
+                "  detail_json = ? WHERE op_id = ?",
+                (now, now, _finalize_stale_detail(r["detail_json"], now), r["op_id"]),
+            )
+        return len(rows)
 
 
 def sweep_stuck(db_path: Path, max_idle_minutes: int = 90) -> int:
@@ -433,14 +456,23 @@ def sweep_stuck(db_path: Path, max_idle_minutes: int = 90) -> int:
               - timedelta(minutes=max_idle_minutes)).isoformat(timespec="seconds")
     now = now_iso()
     with get_conn(db_path) as conn:
-        cur = conn.execute(
-            "UPDATE op_progress SET status = 'failed', "
-            "  finished_at = COALESCE(finished_at, ?), updated_at = ? "
+        # v0.50.41: per-row so each reaped op's in-flight stage timing is closed
+        # (same as reset_stale_on_boot) — a finish_progress that raised mid-teardown
+        # otherwise leaves the final stage dropped + the _stage_* keys leaked.
+        rows = conn.execute(
+            "SELECT op_id, detail_json FROM op_progress "
             "WHERE status IN ('pending', 'running', 'cancelling') "
             "  AND updated_at < ?",
-            (now, now, cutoff),
-        )
-        return cur.rowcount
+            (cutoff,),
+        ).fetchall()
+        for r in rows:
+            conn.execute(
+                "UPDATE op_progress SET status = 'failed', "
+                "  finished_at = COALESCE(finished_at, ?), updated_at = ?, "
+                "  detail_json = ? WHERE op_id = ?",
+                (now, now, _finalize_stale_detail(r["detail_json"], now), r["op_id"]),
+            )
+        return len(rows)
 
 
 def set_detail_field(db_path: Path, op_id: str, key: str, value: Any) -> None:

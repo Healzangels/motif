@@ -5635,7 +5635,11 @@ def _bulk_lps_run(
             if u_done % 5 == 0 or u_done == n_targets:
                 op_progress.update_progress(
                     db_path, OP_ID,
-                    stage_current=u_done, processed_total=u_done,
+                    # v0.50.41: carry the probe stage's count forward so the op-wide
+                    # 'items processed' counter (+ RUN INSIGHT avg/s) stays monotonic
+                    # — was processed_total=u_done, which jumped backward n_to_probe→0
+                    # at the probe→unplace boundary. stage_current stays per-stage.
+                    stage_current=u_done, processed_total=n_to_probe + u_done,
                     activity=(
                         f"{u_done}/{n_targets} unplace processed — "
                         f"unplaced={n_unplaced}, "
