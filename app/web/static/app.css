@@ -1018,7 +1018,12 @@ a.stat-card-link:hover .stat-foot::after { opacity: 1; }
 .dash-pair {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--gap-6);
+  /* v0.50.44: gutter is --gap-4 to match every grid-stats row's gutter (.grid is
+     gap-4). Pre-fix this used --gap-6 (24px) while the 4-card PLEX row above + the
+     2-card ADDED row below use 16px, so this 2-column split sat 4px off the column
+     boundaries it stacks between — the dashboard "centering looks off" (the user).
+     Same token everywhere → every row's center boundary lands at the same x. */
+  gap: var(--gap-4);
   /* v1.24.69: stretch so the two cards are equal height even when one table has
      more rows (the user: GENERAL STATISTICS the same size as PER-SECTION COVERAGE).
      The shorter table sits at the top of its card. */
@@ -1026,7 +1031,7 @@ a.stat-card-link:hover .stat-foot::after { opacity: 1; }
   margin-bottom: var(--gap-6);
 }
 .dash-pair-col {
-  flex: 1 1 calc(50% - (var(--gap-6) / 2));
+  flex: 1 1 calc(50% - (var(--gap-4) / 2));
   min-width: 340px;
   margin-bottom: 0;  /* the wrapper owns the bottom spacing */
   /* v1.24.77: flex column so the inner table grows to the stretched

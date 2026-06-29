@@ -2015,4 +2015,11 @@
 #   forward-only — no per-section strip bouncing). plex_enum.py stage transition +
 #   ops.js STAGE_TIMELINE health step. (Deferred unchanged: cloud_themes_backup +
 #   sync remote-fetch counters — genuine-accuracy-with-risk, parked.)
-__version__ = "0.50.43"
+# 0.50.44: dashboard column gutters align across every row. The PER-SECTION
+#   COVERAGE | GENERAL STATISTICS .dash-pair used --gap-6 (24px) while every
+#   grid-stats row (4-card PLEX LIBRARY above, 2-card ADDED below) uses the .grid
+#   default --gap-4 (16px), so the pair's 2-column split sat 4px off the column
+#   boundaries it stacks between — the dashboard "centering looks off" (the user).
+#   .dash-pair gutter + .dash-pair-col flex basis now use --gap-4 so every row's
+#   center boundary lands at the same x. app.css only.
+__version__ = "0.50.44"
