@@ -30,8 +30,10 @@ def test_done_summary_stats_skipped_on_cancelled():
 
 
 def test_peak_avg_comma_grouped_like_done_summary():
-    assert "stats.push({ label: 'peak/s', value: fmtNum(Math.round(peak)) })" in OPS
-    assert "stats.push({ label: 'avg/s', value: fmtNum(Math.round(avg)) })" in OPS
+    # v0.50.42 widened these pushes with a hint tooltip; pin the grouping intent
+    # (value via fmtNum) rather than the exact one-line literal.
+    assert "label: 'peak/s', value: fmtNum(Math.round(peak))" in OPS
+    assert "label: 'avg/s', value: fmtNum(Math.round(avg))" in OPS
     # the old un-grouped toFixed(0) STATS values are gone
     assert "value: peak.toFixed(0)" not in OPS
     assert "value: avg.toFixed(0)" not in OPS

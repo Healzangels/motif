@@ -1998,4 +1998,13 @@
 #   backward n_to_probe→0 at the probe→unplace boundary; now carries it forward.
 #   progress.py + api.py. (Deferred, noted: cloud_themes_backup walk→download counter,
 #   sync remote-fetch boundary, plex_enum waterfall finer segmentation.)
-__version__ = "0.50.41"
+# 0.50.42: Live Ops drawer clarity (audit, soft-clarity trio). (1) ETA over an hour
+#   buckets to ">1h" (new fmtEta) — a projection that far out is rate-noise, so a
+#   precise "7h 23m" was false precision; measured ELAPSED/RAN keep fmtDuration.
+#   (2) the live RATE pill (recent ~10s smoothed, drives ETA) and STATS avg/s
+#   (whole-run) legitimately differ; tooltips on each + on peak/s say so, so they
+#   no longer read as a contradiction. (3) THROUGHPUT chart-header peak comma-grouped
+#   (fmtNum) to match STATS peak/s — was max.toFixed(0) ("12703") beside "12,703".
+#   ops.js only. (Deferred unchanged: cloud_themes_backup + sync counters,
+#   plex_enum waterfall segmentation → next.)
+__version__ = "0.50.42"

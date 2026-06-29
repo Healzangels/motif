@@ -374,6 +374,16 @@
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
   }
 
+  // v0.50.42: ETA-specific formatter. A projection over an hour out is dominated
+  // by rate noise (a slow early sample makes remaining/rate balloon), so a precise
+  // "7h 23m" reads as false precision — bucket anything past an hour as ">1h".
+  // ELAPSED / RAN stay on fmtDuration (those are measured, not projected).
+  function fmtEta(seconds) {
+    if (!isFinite(seconds) || seconds < 0) return '—';
+    if (seconds > 3600) return '>1h';
+    return fmtDuration(seconds);
+  }
+
   function fmtClock(iso) {
     if (!iso) return '';
     try {
@@ -731,8 +741,13 @@
       const { peak, avg } = _throughputStats(op);
       // v0.50.40: comma-group peak/avg so they match done_summary's fmtNum (was
       // "10,514 items · 207301 avg/s" — grouped + un-grouped side by side).
-      if (peak > 0) stats.push({ label: 'peak/s', value: fmtNum(Math.round(peak)) });
-      if (avg > 0) stats.push({ label: 'avg/s', value: fmtNum(Math.round(avg)) });
+      // v0.50.42: hint tooltips disambiguate these whole-run figures from the live
+      // RATE pill (recent ~10s smoothed) — they legitimately differ when the rate
+      // ramps or stalls, which read as a contradiction without the labels.
+      if (peak > 0) stats.push({ label: 'peak/s', value: fmtNum(Math.round(peak)),
+        hint: 'Highest single 1s throughput sample across the whole run.' });
+      if (avg > 0) stats.push({ label: 'avg/s', value: fmtNum(Math.round(avg)),
+        hint: 'Whole-run average: items processed ÷ elapsed. Differs from the live RATE pill, which is the recent (~10s) rate.' });
     }
     if ((op.error_count || 0) > 0) {
       stats.push({ label: 'errors', value: fmtNum(op.error_count), bad: true });
@@ -741,7 +756,7 @@
     return `<div class="op-insight-section">
       <div class="op-insight-head">STATS</div>
       <div class="op-insight-stats">${stats.map((s) => `
-        <div class="op-stat${s.bad ? ' op-stat-bad' : ''}">
+        <div class="op-stat${s.bad ? ' op-stat-bad' : ''}"${s.hint ? ` title="${esc(s.hint)}"` : ''}>
           <span class="op-stat-value">${esc(s.value)}</span>
           <span class="op-stat-label">${esc(s.label)}</span>
         </div>`).join('')}</div>
@@ -761,8 +776,10 @@
     // v0.50.39: bar heights + the headline peak both ride the raw per-sample max,
     // which is now the sane peak too (progress.py floors dt at 1.0s, so no sample
     // is an inflated sub-second burst). Bars, tooltips, and header agree.
+    // v0.50.42: comma-group the header peak (fmtNum) so it matches the STATS peak/s
+    // readout — was max.toFixed(0) ("12703") next to STATS' grouped "12,703".
     return `<div class="op-insight-section">
-      <div class="op-insight-head">THROUGHPUT <span class="op-insight-head-aux">items/sec · peak ${max.toFixed(0)}</span></div>
+      <div class="op-insight-head">THROUGHPUT <span class="op-insight-head-aux">items/sec · peak ${fmtNum(Math.round(max))}</span></div>
       <div class="op-tpchart">${bars}</div>
     </div>`;
   }
@@ -932,14 +949,15 @@
         })()}
         <div class="op-card-meta">
           ${(showLiveSections && rate > 0) ? `
-            <span class="op-card-meta-item" data-meta-key="rate">
+            <span class="op-card-meta-item" data-meta-key="rate"
+                  title="Recent throughput (smoothed over the last ~10s) — drives the ETA. The whole-run average is in RUN INSIGHT → STATS (avg/s), which can differ when the rate ramps or stalls.">
               <span class="op-card-meta-label">RATE</span>
               <span class="op-card-meta-value">${fmtRate(rate)}/s</span>
             </span>` : ''}
           ${(etaSec != null && isLive) ? `
             <span class="op-card-meta-item" data-meta-key="eta">
               <span class="op-card-meta-label">ETA</span>
-              <span class="op-card-meta-value">${esc(fmtDuration(etaSec))}</span>
+              <span class="op-card-meta-value">${esc(fmtEta(etaSec))}</span>
             </span>` : ''}
           ${(() => {
             // v1.14.21: hide the ELAPSED meta-row when the op is
@@ -1141,7 +1159,7 @@
       if (item && item.textContent !== want) item.textContent = want;
     };
     if (rate > 0) metaUpdate('rate', `${fmtRate(rate)}/s`);
-    if (etaSec != null && isLive) metaUpdate('eta', fmtDuration(etaSec));
+    if (etaSec != null && isLive) metaUpdate('eta', fmtEta(etaSec));
     if (elapsed != null) metaUpdate('elapsed', fmtDuration(elapsed));
     if ((op.error_count || 0) > 0) metaUpdate('errors', fmtNum(op.error_count));
 

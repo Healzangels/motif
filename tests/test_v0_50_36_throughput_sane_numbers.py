@@ -43,8 +43,9 @@ def test_peak_is_max_sample_rate_now_that_rate_is_sane():
 
 def test_stats_readout_uses_the_helper_and_chart_header_agrees():
     assert "const { peak, avg } = _throughputStats(op);" in OPS
-    # chart header rides the same max the bars normalize to (no separate sanePeak)
-    assert "peak ${max.toFixed(0)}" in OPS
+    # chart header rides the same max the bars normalize to (no separate sanePeak).
+    # v0.50.42: comma-grouped (fmtNum) to match the STATS peak/s readout.
+    assert "peak ${fmtNum(Math.round(max))}" in OPS
 
 
 def test_every_rate_display_routes_through_the_capped_buffer():
