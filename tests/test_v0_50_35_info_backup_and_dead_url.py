@@ -20,8 +20,9 @@ JS = (Path(__file__).resolve().parent.parent / "app" / "web" / "static" / "app.j
 
 
 def test_dead_tdb_url_renders_red():
-    # the dead flag is the shared dead-set + not-pending guard
-    assert "const tdbUrlDead = !_pendingTdbUrl" in JS
+    # the dead flag is the shared dead-set + not-pending guard, and v0.50.40 also
+    # requires a non-empty tdbUrl so the tag never sits next to an em-dash.
+    assert "const tdbUrlDead = !!tdbUrl && !_pendingTdbUrl" in JS
     assert "TDB_DEAD_FAILURES_GLOBAL.has(t.failure_kind)" in JS
     # the url link colour switches to red when dead, green otherwise
     assert "linkOrDash(tdbUrl, tdbUrlDead ? 'var(--red)' : 'var(--green-bright)')" in JS
@@ -35,8 +36,8 @@ def test_compact_backup_line_on_rows_with_a_local_file():
     # backup-only rows already relabel applied→backup, so the compact line skips them
     assert "const backupBlock = (hasBackupFile && !lfIsBackupOnly)" in JS
     assert "✓ theme.mp3 on disk" in JS
-    # reconstruct the YouTube source URL from source_video_id (skip fb/ig/sc ids)
-    assert "!/^(fb-|ig-|sc-)/.test(lf.source_video_id)" in JS
+    # v0.50.40: only link a real 11-char YouTube id (not 'recovered'/fb-/ig-/sc-/sha)
+    assert "/^[A-Za-z0-9_-]{11}$/.test(lf.source_video_id || '')" in JS
     assert "https://www.youtube.com/watch?v=${lf.source_video_id}" in JS
     # rendered in the dl grid, right after the downloaded row
     assert "${dlBlock}\n        ${backupBlock}" in JS

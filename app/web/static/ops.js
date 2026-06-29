@@ -689,12 +689,12 @@
     </div>`;
   }
 
-  // v0.50.36: honest throughput numbers. The per-sample rate (delta/dt, floored at
-  // 0.001s in progress.py) explodes when a fast batch advances processed_total in a
-  // sub-second burst — the user saw 400000 peak/s + 207301 avg/s on a 10,514-item /
-  // 77s run that really averaged ~136/s. avg/s = total processed / wall-clock
-  // elapsed; peak/s = the busiest WHOLE-SECOND window (reconstruct items per sample
-  // as rate×dt, bucket by second, take the max) — truthful, not a 1ms micro-burst.
+  // v0.50.36: honest throughput numbers (the user saw 400000 peak/s + 207301 avg/s
+  // on a 10,514-item/77s run that really averaged ~136/s). avg/s = total processed /
+  // wall-clock elapsed. v0.50.39: peak/s = max sample rate — now correct because the
+  // per-sample rate is itself sane (progress.py floors dt at 1.0s, so a sub-second
+  // burst can no longer produce a ~400000/s sample). This same fix makes the live
+  // items/sec pill, the ETA, and the sparkline bars/tooltips sane too.
   function _throughputStats(op) {
     const tp = (op.detail && op.detail.throughput) || [];
     const elapsedS = op.started_at
@@ -702,20 +702,7 @@
       : 0;
     const processed = op.processed_total || op.stage_current || 0;
     const avg = elapsedS > 0 ? processed / elapsedS : 0;
-    let peak = 0;
-    if (tp.length) {
-      const buckets = new Map();
-      let prevTs = null;
-      for (const x of tp) {
-        const ts = new Date(x.ts).getTime();
-        if (!Number.isFinite(ts)) continue;
-        const dt = (prevTs != null) ? Math.max((ts - prevTs) / 1000, 0.001) : 1;
-        const sec = Math.floor(ts / 1000);
-        buckets.set(sec, (buckets.get(sec) || 0) + (x.rate || 0) * dt);
-        prevTs = ts;
-      }
-      if (buckets.size) peak = Math.max(...buckets.values());
-    }
+    const peak = tp.length ? Math.max(0, ...tp.map((x) => x.rate || 0)) : 0;
     return { peak, avg };
   }
 
@@ -758,12 +745,11 @@
       const h = Math.max(2, Math.round(((x.rate || 0) / max) * 40));
       return `<span class="op-tpchart-bar" style="height:${h}px" title="${(x.rate || 0).toFixed(1)}/s"></span>`;
     }).join('');
-    // v0.50.36: bar heights stay relative to the raw max (sparkline shape), but the
-    // headline "peak" reports the sane busiest-whole-second value, not a sub-second
-    // rate spike (see _throughputStats).
-    const sanePeak = _throughputStats(op).peak;
+    // v0.50.39: bar heights + the headline peak both ride the raw per-sample max,
+    // which is now the sane peak too (progress.py floors dt at 1.0s, so no sample
+    // is an inflated sub-second burst). Bars, tooltips, and header agree.
     return `<div class="op-insight-section">
-      <div class="op-insight-head">THROUGHPUT <span class="op-insight-head-aux">items/sec · peak ${sanePeak.toFixed(0)}</span></div>
+      <div class="op-insight-head">THROUGHPUT <span class="op-insight-head-aux">items/sec · peak ${max.toFixed(0)}</span></div>
       <div class="op-tpchart">${bars}</div>
     </div>`;
   }

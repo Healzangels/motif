@@ -1968,4 +1968,15 @@
 #   "make the Anime icon the same as the TV icon in both sections" — the // ANIME
 #   THEMED coverage card + the // PLEX ANIME card). Folded anime into the tv branch
 #   of the media_glyph() macro; the old 4-point sparkle is retired. dashboard.html.
-__version__ = "0.50.38"
+# 0.50.39: post-code-review hardening of the v0.50.34-38 batch. (1) THROUGHPUT root
+#   cause: progress.py floored the rate sample's dt at 0.001s, so a sub-second upsert
+#   burst produced rate≈400000/s that leaked into RUN INSIGHT peak/avg, the live
+#   items/sec pill, the ETA + the sparkline; floor at 1.0s instead so `rate` is a sane
+#   items/sec everywhere, and simplify ops.js _throughputStats peak back to max(rate)
+#   (the buggy renderer-side bucket reconstruction — wrong on the first sample +
+#   sparse gaps — is gone). (2) INFO card: only link a backup YouTube URL for a real
+#   11-char video id (not the 'recovered' sentinel / sha-hash / fb-ig-sc ids → dead
+#   links); gate the red "dead" tag on a non-empty themerrdb url; reword the backup
+#   tooltip so it's accurate on already-placed rows (no PROMOTE-TO-ACTIVE no-op).
+#   progress.py + ops.js + app.js.
+__version__ = "0.50.39"

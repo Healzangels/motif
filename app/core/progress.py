@@ -253,6 +253,15 @@ def update_progress(
             activity_buf.appendleft({"ts": now, "msg": activity})
         # Throughput sample whenever processed_total advances. Rate
         # in items/sec; UI smooths across the buffer.
+        # v0.50.39: floor dt at 1.0s, not 0.001s. A fast batch (e.g. a 10k-row
+        # upsert) can advance processed_total twice within a millisecond, and the
+        # old 0.001s floor turned that into rate≈400000/s — which then polluted the
+        # RUN INSIGHT peak/avg, the live items/sec pill, the ETA, AND the sparkline
+        # (the user: "400000 peak/s · 207301 avg/s" on a 10,514-item/77s run that
+        # really averaged ~136/s). Flooring at 1.0s caps a sub-second burst at its
+        # delta (items-in-≈1s) instead of extrapolating it to an impossible rate, so
+        # `rate` is a sane items/sec everywhere it's consumed. Genuine ≥1s gaps are
+        # unaffected (dt is exact).
         if (processed_total is not None
                 and processed_total > (row["processed_total"] or 0)):
             try:
@@ -260,7 +269,7 @@ def update_progress(
                 prev_ts = datetime.fromisoformat(
                     row["updated_at"].replace("Z", "+00:00"))
                 now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
-                dt = max((now_dt - prev_ts).total_seconds(), 0.001)
+                dt = max((now_dt - prev_ts).total_seconds(), 1.0)
                 delta = processed_total - (row["processed_total"] or 0)
                 throughput_buf.append({"ts": now,
                                        "rate": round(delta / dt, 3)})

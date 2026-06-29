@@ -15918,7 +15918,10 @@
     // renders RED so it reads as dead at a glance (the user). A pending NEW TDB URL
     // means upstream already fixed it, so that's never "dead". Reverts to green
     // automatically when a reprobe clears t.failure_kind (PROBE TDB URL / mark live).
-    const tdbUrlDead = !_pendingTdbUrl
+    // v0.50.40: require a non-empty tdbUrl — a dead failure_kind can sit on a row
+    // with NO ThemerrDB url (e.g. a bulk-imported U-row whose user-override URL is
+    // the one that died), and a red "dead" tag next to an em-dash reads wrong.
+    const tdbUrlDead = !!tdbUrl && !_pendingTdbUrl
       && !!(t.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(t.failure_kind));
     const tdbUrlLink = linkOrDash(tdbUrl, tdbUrlDead ? 'var(--red)' : 'var(--green-bright)');
     const tdbDeadTag = tdbUrlDead
@@ -16104,12 +16107,20 @@
     // compact line, NOT a second full url field. Backup-only rows already surface
     // it, so skip them here to avoid a duplicate.
     const hasBackupFile = !!(lf && lf.file_path);
-    const backupSourceUrl = (hasBackupFile && lf.source_video_id
-      && !/^(fb-|ig-|sc-)/.test(lf.source_video_id))
+    // v0.50.40: only link a YouTube watch URL when source_video_id is a real 11-char
+    // YT id — NOT the 'recovered' sentinel, an fb-/ig-/sc- prefixed id, or a sha-hash
+    // (adopt / cloud-backup), all of which would render a dead watch?v= link. Mirrors
+    // the ytId guard above (which already strips 'recovered' + those prefixes).
+    const backupSourceUrl = (hasBackupFile
+      && /^[A-Za-z0-9_-]{11}$/.test(lf.source_video_id || ''))
         ? `https://www.youtube.com/watch?v=${lf.source_video_id}`
         : '';
+    // v0.50.40: tooltip is accurate for a PLACED row too (the file IS the live theme
+    // here, not a staged backup awaiting PROMOTE — which only applies to backup-only
+    // rows, excluded below). It states the recoverable-copy fact without implying a
+    // PROMOTE action that would be a no-op on an already-active row.
     const backupBlock = (hasBackupFile && !lfIsBackupOnly)
-      ? `<dt>backup</dt><dd class="muted small" title="A recoverable theme.mp3 is staged in the themes directory — // PROMOTE TO ACTIVE (or re-place) can redeploy it.">✓ theme.mp3 on disk${backupSourceUrl ? ' · ' + linkOrDash(backupSourceUrl) : ''}</dd>`
+      ? `<dt>backup</dt><dd class="muted small" title="A copy of this theme is on disk in the themes directory — recoverable / re-placeable if Plex ever loses it.">✓ theme.mp3 on disk${backupSourceUrl ? ' · ' + linkOrDash(backupSourceUrl) : ''}</dd>`
       : '';
     // v1.12.90: in-card audio player. The INFO dialog now serves
     // the canonical theme.mp3 via /api/items/{mt}/{tmdb}/theme.mp3
