@@ -1578,6 +1578,13 @@
   </header>
   <div class="block-body">
     <form id="password-form" class="form-grid">
+      {# v0.50.51: hidden username field — satisfies Chrome's "password forms
+         should have a (hidden) username field" accessibility check and lets a
+         password manager associate the credential. The /api/admin/password
+         endpoint reads only current_password / new_password (typed Form params),
+         so this extra field is ignored by FastAPI. #}
+      <input type="text" name="username" autocomplete="username"
+             aria-hidden="true" tabindex="-1" hidden />
       <label class="field-row">
         <span class="field-name">CURRENT PASSWORD</span>
         <span class="field-control">

@@ -2076,4 +2076,11 @@
 #   absorbs slack). (2) the // RESULTS pager spilled next/last off the edge → the
 #   block-head + block-head-actions + pager flex-wrap on a phone. (3) the row INFO
 #   card + other .dlg modals go full-screen (100vw/100dvh) on a phone. app.css only.
-__version__ = "0.50.50"
+# 0.50.51: settings // CHANGE PASSWORD form gains a hidden autocomplete=username
+#   field — clears Chrome's "password forms should have a (hidden) username field"
+#   a11y console warning + lets a password manager associate the credential. The
+#   /api/admin/password endpoint reads only current_password/new_password (typed
+#   Form params) so the extra field is ignored. (The other 3 console "password
+#   field not in a form" warnings are masked CONFIG secrets — plex token / tmdb key
+#   / proxy URL — intentionally not credential forms; left as-is.) settings.html.
+__version__ = "0.50.51"
