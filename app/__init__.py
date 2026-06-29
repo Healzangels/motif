@@ -2094,4 +2094,12 @@
 #   600px) phone block — desktop is back to width:100% (fits its container, no
 #   horizontal scroll, col-title absorbs slack); phone still gets the min-width so
 #   titles stay visible while swiping. app.css only.
-__version__ = "0.50.53"
+# 0.50.54: results-table column-priority for narrow viewports. Below full-desktop
+#   width the fixed columns (ACTIONS 320 + ED 160 + IMDB 120 + …) summed past the
+#   viewport and squeezed the no-width TITLE column (the squish/blank-title band).
+#   ≤1280px hides the two lowest-value columns — ED (an empty pill for ~all rows)
+#   and IMDB (raw tt id) — so TITLE keeps its room with NO scroll down to ~1080px;
+#   ≤1080px pins #library-table min-width:1080 so TITLE holds ~150px while the table
+#   swipes (replaces the v0.50.53 phone min-width:1440 — ~25% less phone scroll).
+#   Desktop >1280px is unchanged. app.css only. Scoped to #library-table.
+__version__ = "0.50.54"

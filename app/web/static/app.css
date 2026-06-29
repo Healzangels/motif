@@ -1927,6 +1927,21 @@ body.help-mode .settings-help-about { display: block; }
    clipping it, leaving ACTIONS unreachable on mobile. No-op on desktop (the
    table fits, so no scrollbar appears). */
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* v0.50.54: column-priority for the results table. Below full-desktop width the
+   fixed columns (ACTIONS 320 + ED 160 + IMDB 120 + …) summed past the viewport
+   and squeezed the no-width TITLE column. Drop the two lowest-value columns — ED
+   (an empty pill for ~all rows) and IMDB (the raw tt id) — so TITLE keeps its
+   room. Scoped to #library-table so other tables are untouched. */
+@media (max-width: 1280px) {
+  #library-table th.col-edition, #library-table td.col-edition,
+  #library-table th.col-imdb, #library-table td.col-imdb { display: none; }
+}
+@media (max-width: 1080px) {
+  /* below ~1080 even the trimmed table can't give TITLE room without scrolling,
+     so pin a width and let .table-scroll swipe — TITLE holds ~150px. Replaces the
+     old phone-only min-width:1440 (now ~25% less horizontal scroll on a phone). */
+  #library-table { min-width: 1080px; }
+}
 .table th {
   text-align: left;
   padding: 10px 14px;
@@ -5080,11 +5095,6 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
      viewport; drop the floor so the two cards stack flush. */
   .dash-pair-col { min-width: 0; }
-
-  /* v0.50.53: phone-only min-width so the results table keeps its full width and
-     swipes in .table-scroll (col-title stays ~180px instead of collapsing to 0).
-     Scoped here — as a base rule it clipped ACTIONS on narrow DESKTOP windows. */
-  #library-table { min-width: 1440px; }
 
   /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
      pager itself wrap instead of spilling the next/last buttons off the edge. */
