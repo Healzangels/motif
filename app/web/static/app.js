@@ -15698,7 +15698,9 @@
   function renderBareInfoCard(it) {
     const title = htmlEscape(it.plex_title || '—');
     const yr = it.year ? ` (${htmlEscape(it.year)})` : '';
-    const mt = it.plex_media_type || '';
+    // v0.50.65: no `|| ''` — the `=== 'show'`/`=== 'collection'` checks and
+    // the `mt || '—'` render fallback all behave identically on undefined.
+    const mt = it.plex_media_type;
     const imdb = it.guid_imdb
       ? `<a href="https://www.imdb.com/title/${htmlEscape(it.guid_imdb)}" target="_blank" rel="noopener">${htmlEscape(it.guid_imdb)}</a>`
       : '<span class="muted">—</span>';
@@ -15736,6 +15738,13 @@
   function openBareInfoDialog(rk) {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
+    // v0.50.65: bump the shared seq so an in-flight openInfoDialog fetch
+    // (from a prior themed-row ⓘ click, still awaiting /api/items) self-
+    // aborts on its `_seq !== _myToken` check instead of resolving and
+    // clobbering this synchronously-painted bare card with the WRONG row.
+    // The bare path is otherwise invisible to the v1.17.20 seq guard
+    // (audit race #7) because it never awaits.
+    openInfoDialog._seq = (openInfoDialog._seq || 0) + 1;
     const body = document.getElementById('info-dlg-body');
     const it = (libraryState.items || []).find((row) => String(row.rating_key) === String(rk));
     if (!it) {

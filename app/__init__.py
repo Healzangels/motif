@@ -2187,4 +2187,13 @@
 #   Bare card reuses the full card's .info-hero/.dlg-grid/.dlg-section classes so a
 #   themed and an untemed row read as the same surface; ends with a "no theme yet — add
 #   one from the SOURCE menu" call to action. JS-only.
-__version__ = "0.50.64"
+# 0.50.65: code-review follow-ups for v0.50.64. (1) CONFIRMED race (found by 2 finders):
+#   openBareInfoDialog painted #info-dlg-body synchronously but never bumped
+#   openInfoDialog._seq, so an in-flight full-card fetch (from a prior themed-row ⓘ click)
+#   passed its own `_seq !== _myToken` guard and clobbered the bare card with the WRONG
+#   row — exactly the v1.17.20 audit-race-#7 the seq guard exists to prevent, sidestepped
+#   by the new synchronous path. Fixed: bump openInfoDialog._seq at the top of
+#   openBareInfoDialog so any pending fetch self-aborts. (2) LOW cleanup: dropped the dead
+#   `|| ''` from `const mt = it.plex_media_type` in renderBareInfoCard (the ===-checks and
+#   the `mt || '—'` render fallback behave identically on undefined). JS-only.
+__version__ = "0.50.65"
