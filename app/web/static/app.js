@@ -15711,8 +15711,19 @@
     const editionRow = it.plex_edition_title
       ? `<dt>edition</dt><dd>${htmlEscape(it.plex_edition_title)}</dd>`
       : '';
+    // v0.50.66: Plex poster hero — same /api/plex/art proxy + numeric-rk
+    // guard as the full card (openInfoDialog ~16483), built client-side
+    // from the row's rating_key so an untemed row shows its cover like a
+    // themed one. The img error handler (attached in openBareInfoDialog)
+    // collapses the hero to just the meta on 404 / non-art.
+    const posterRk = String(it.rating_key || '');
+    const posterImgHtml = /^\d+$/.test(posterRk)
+      ? `<img class="info-poster" loading="lazy" alt=""`
+        + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
+      : '';
     return `
       <div class="info-hero">
+        ${posterImgHtml}
         <div class="info-hero-meta">
           <h3 class="info-title">${title}${yr}</h3>
           <p class="info-hero-playback muted small">no theme — Plex metadata only</p>
@@ -15751,6 +15762,10 @@
       body.innerHTML = `<p class="accent-red">Row not found — refresh the library and try again.</p>`;
     } else {
       body.innerHTML = renderBareInfoCard(it);
+      // v0.50.66: mirror the full card's poster-error collapse — remove the
+      // <img> on 404 / non-art so the hero falls back to just the meta.
+      body.querySelector('.info-poster')
+        ?.addEventListener('error', (ev) => ev.target.remove());
     }
     showModalNoFocusRing(dlg);
   }

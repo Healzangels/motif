@@ -2196,4 +2196,13 @@
 #   openBareInfoDialog so any pending fetch self-aborts. (2) LOW cleanup: dropped the dead
 #   `|| ''` from `const mt = it.plex_media_type` in renderBareInfoCard (the ===-checks and
 #   the `mt || '—'` render fallback behave identically on undefined). JS-only.
-__version__ = "0.50.65"
+# 0.50.66: bare INFO card now shows the Plex poster like a themed item. the user:
+#   "could we include the content's poster from Plex like a themed item." The full card
+#   (openInfoDialog) already builds a poster-left hero from `/api/plex/art/{rk}` (numeric-
+#   rk-guarded same-origin proxy, v1.24.52); the bare card already carries the row's
+#   rating_key, so renderBareInfoCard builds the IDENTICAL <img class="info-poster"> as
+#   the first hero child — fully client-side, no new data/round-trip. openBareInfoDialog
+#   attaches the same post-paint error handler (remove the img on 404/non-art → hero
+#   collapses to just the meta), so a row whose Plex art is missing degrades gracefully.
+#   JS-only.
+__version__ = "0.50.66"
