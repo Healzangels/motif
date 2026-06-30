@@ -7,6 +7,7 @@ honour the opt-out. Pins the wiring across all the surfaces so it can't silently
 drift.
 """
 from __future__ import annotations
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -56,3 +57,21 @@ def test_js_binds_visuals_toggles():
     assert "function bindVisualsToggles()" in JS
     assert "bindVisualsToggles();" in JS
     assert "motif:visuals" in JS
+
+
+def _viz_map(text):
+    # field -> viz-no-* class, as written in a `key: 'viz-no-...'` object literal
+    return dict(re.findall(r"(\w+):\s*'(viz-no-[a-z-]+)'", text))
+
+
+def test_viz_field_class_maps_agree_across_all_sites():
+    """v0.50.63 (code-review): the field->class map is hand-duplicated in base.html
+    (pre-paint), app.js (bindVisualsToggles CLS), and settings.html (data-viz-field).
+    Pin that they AGREE, not just that each exists — a rename in one copy would
+    otherwise leave a class stamped that nothing toggles back (phantom-guard, v1.18.81)."""
+    base_map = _viz_map(BASE)   # base.html pre-paint `m`
+    js_map = _viz_map(JS)   # app.js bindVisualsToggles `CLS`
+    assert len(base_map) == 5, base_map
+    assert base_map == js_map, f"base.html {base_map} != app.js {js_map}"
+    fields = set(re.findall(r'data-viz-field="(\w+)"', SETTINGS))
+    assert fields == set(base_map.keys()), f"settings data-viz-field {fields} != map keys"

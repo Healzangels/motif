@@ -4789,6 +4789,12 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   transition: color var(--motion-fast), border-color var(--motion-fast);
 }
 .tab:hover { color: var(--green); }
+/* v0.50.63: .tabs is overflow-x:auto (v0.50.61, so the 14 tabs never orphan a
+   row) — and overflow-x:auto forces overflow-y:auto per spec, making .tabs a
+   dual-axis clip box (the v0.50.58 .table-scroll lesson). .tabs has no vertical
+   padding, so an outset keyboard focus ring (outline-offset:2px) got its top +
+   bottom clipped. Draw the tab's ring INSET so it stays inside the clip box. */
+#settings-tabs .tab:focus-visible { outline-offset: -2px; }
 .tab-active {
   color: var(--green-bright);
   border-bottom-color: var(--green);

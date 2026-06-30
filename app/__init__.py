@@ -2166,4 +2166,12 @@
 #   multiply-blended into nothing on the dark UI. Now a SOLID 1px dark line per 3px at
 #   0.5 alpha / 0.6 opacity so the CRT scanlines actually read on bright content
 #   (text/posters) and the VISUALS toggle has a visible effect. CSS-only.
-__version__ = "0.50.62"
+# 0.50.63: code-review follow-ups for the VISUALS arc. (1) CONFIRMED regression: the
+#   v0.50.61 .tabs { overflow-x:auto } reintroduced the dual-axis clip trap (the
+#   v0.50.58 .table-scroll lesson — overflow-x:auto forces overflow-y:auto), clipping
+#   the settings tabs' keyboard :focus-visible ring (outline-offset:2px, .tabs has no
+#   vertical padding). Fixed: the tab ring draws INSET (#settings-tabs .tab:focus-visible
+#   outline-offset:-2px) so it stays inside the clip box. (2) Added a drift-guard test:
+#   the VISUALS field->class map is hand-duplicated in base.html / app.js / settings.html,
+#   so pin that the 3 maps AGREE (phantom-guard, v1.18.81), not just that each exists.
+__version__ = "0.50.63"
