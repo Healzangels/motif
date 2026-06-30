@@ -10948,8 +10948,16 @@
     }
 
     const acts = [];
-    if (themed && themeId !== null && themeId !== undefined) {
+    // v0.50.64: every row gets an ⓘ so users can inspect ANY row, not
+    // just themed ones. Themed rows (theme_tmdb present) open the full
+    // ThemerrDB record card via api_item; untracked/untemed rows have no
+    // record to fetch, so they open a bare card built CLIENT-SIDE from
+    // the cached /api/library row (Plex metadata only — no backend
+    // round-trip). The click handler routes on the presence of data-id.
+    if (themed) {
       acts.push(`<button class="btn btn-tiny row-info-btn" data-act="info" data-mt="${themeMt}" data-id="${themeId}" data-section-id="${htmlEscape(it.section_id || '')}" data-rk="${htmlEscape(it.rating_key || '')}" title="ThemerrDB record details">ⓘ</button>`);
+    } else {
+      acts.push(`<button class="btn btn-tiny row-info-btn" data-act="info" data-rk="${htmlEscape(it.rating_key || '')}" title="Row details">ⓘ</button>`);
     }
     acts.push(menuButtonHtml('SOURCE', sourceItems));
     acts.push(menuButtonHtml('PLACE', placeItems));
@@ -14921,6 +14929,9 @@
     _lib?.addEventListener('mouseover', (e) => {
       const btn = e.target.closest('button[data-act="info"]');
       if (!btn || btn.contains(e.relatedTarget)) return;
+      // v0.50.64: bare-row ⓘ buttons (no theme) carry no data-id and
+      // render client-side from cached row data — nothing to prefetch.
+      if (!btn.dataset.id) return;
       const sid = btn.dataset.sectionId
                || btn.closest('tr')?.dataset.sectionId
                || undefined;
@@ -15307,10 +15318,17 @@
         // dialog with Esc. Same pattern used elsewhere where a
         // click hands focus off to a modal.
         btn.blur();
+        // v0.50.64: rows without a theme have no data-id (no theme_tmdb)
+        // and no api_item record; route them to the client-side bare card
+        // keyed on rating_key. Themed rows keep the full record card.
         // v1.21.68: forward the row's rating_key so the INFO card scopes
         // its download/placement/override/edition-tag to THIS edition.
-        openInfoDialog(btn.dataset.mt, btn.dataset.id, sid,
-                       btn.dataset.rk || undefined).catch(console.error);
+        if (btn.dataset.id) {
+          openInfoDialog(btn.dataset.mt, btn.dataset.id, sid,
+                         btn.dataset.rk || undefined).catch(console.error);
+        } else {
+          openBareInfoDialog(btn.dataset.rk);
+        }
       } else if (act === 'unplace') {
         await unplaceTheme(btn.dataset.mt, btn.dataset.id,
                            btn.dataset.title || '',
@@ -15669,6 +15687,63 @@
       </svg>
       <p class="muted small">${htmlEscape(label || 'loading…')}</p>
     </div>`;
+  }
+
+  // v0.50.64: bare INFO card for rows with NO theme (no theme_tmdb).
+  // There's no api_item record to fetch, so the card renders entirely
+  // CLIENT-SIDE from the cached /api/library row (which already carries
+  // every field shown here — title/year/section/edition/ids/folder/rk).
+  // Reuses the full card's .info-hero / .dlg-grid / .dlg-section classes
+  // so a themed and an untemed row's cards read as the same surface.
+  function renderBareInfoCard(it) {
+    const title = htmlEscape(it.plex_title || '—');
+    const yr = it.year ? ` (${htmlEscape(it.year)})` : '';
+    const mt = it.plex_media_type || '';
+    const imdb = it.guid_imdb
+      ? `<a href="https://www.imdb.com/title/${htmlEscape(it.guid_imdb)}" target="_blank" rel="noopener">${htmlEscape(it.guid_imdb)}</a>`
+      : '<span class="muted">—</span>';
+    const tmdbPath = mt === 'show' ? 'tv' : mt === 'collection' ? 'collection' : 'movie';
+    const tmdb = it.guid_tmdb
+      ? `<a href="https://www.themoviedb.org/${tmdbPath}/${htmlEscape(it.guid_tmdb)}" target="_blank" rel="noopener">${htmlEscape(it.guid_tmdb)}</a>`
+      : '<span class="muted">—</span>';
+    const editionRow = it.plex_edition_title
+      ? `<dt>edition</dt><dd>${htmlEscape(it.plex_edition_title)}</dd>`
+      : '';
+    return `
+      <div class="info-hero">
+        <div class="info-hero-meta">
+          <h3 class="info-title">${title}${yr}</h3>
+          <p class="info-hero-playback muted small">no theme — Plex metadata only</p>
+        </div>
+      </div>
+      <dl class="dlg-grid">
+        <dt>type</dt><dd>${htmlEscape(mt || '—')}</dd>
+        <dt>section</dt><dd>${htmlEscape(it.section_title || it.section_id || '—')}</dd>
+        ${editionRow}
+        <dt>imdb</dt><dd>${imdb}</dd>
+        <dt>tmdb</dt><dd>${tmdb}</dd>
+        <dt>folder</dt><dd class="muted small">${it.folder_path ? htmlEscape(it.folder_path) : '—'}</dd>
+        <dt>rating key</dt><dd class="muted small">${htmlEscape(it.rating_key || '—')}</dd>
+      </dl>
+      <div class="dlg-section">
+        <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3).</p>
+      </div>`;
+  }
+
+  // v0.50.64: open the bare card. Looks the row up by rating_key in the
+  // visible-page cache (libraryState.items is the deduped array set at
+  // loadLibrary time) and renders synchronously — no fetch, no seq guard.
+  function openBareInfoDialog(rk) {
+    const dlg = document.getElementById('info-dlg');
+    if (!dlg) return;
+    const body = document.getElementById('info-dlg-body');
+    const it = (libraryState.items || []).find((row) => String(row.rating_key) === String(rk));
+    if (!it) {
+      body.innerHTML = `<p class="accent-red">Row not found — refresh the library and try again.</p>`;
+    } else {
+      body.innerHTML = renderBareInfoCard(it);
+    }
+    showModalNoFocusRing(dlg);
   }
 
   async function openInfoDialog(mediaType, tmdbId, sectionId, ratingKey) {

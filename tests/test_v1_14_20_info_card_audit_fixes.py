@@ -246,7 +246,12 @@ def test_themerrdb_added_edited_hidden_for_plex_orphan_rows():
     anchor would land on the wrong template."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
     # Anchor on the unique imdb row.
-    body_anchor = js.index("<dt>imdb</dt><dd>${imdb}</dd>")
+    # v0.50.64: scope to the FULL card (openInfoDialog) first — the
+    # universal bare card (renderBareInfoCard) also emits a
+    # `<dt>imdb</dt><dd>${imdb}</dd>` row earlier in the file, so a bare
+    # js.index() now lands on the bare card (which has no plex_orphan gate).
+    card = js.index("async function openInfoDialog(")
+    body_anchor = js.index("<dt>imdb</dt><dd>${imdb}</dd>", card)
     # Window covers the dlg-grid through the closing </dl>.
     block_end = js.index("</dl>", body_anchor)
     block = js[body_anchor:block_end]

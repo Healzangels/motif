@@ -15,15 +15,23 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 
+# v0.50.64: scope to the FULL card (openInfoDialog). The universal bare
+# card (renderBareInfoCard) reuses .info-hero / .info-hero-meta / .dlg-grid
+# (posterless) and is defined EARLIER in the file, so a bare APP_JS.index()
+# now lands on it. These are full-card layout guards — anchor past the bare
+# card so they keep testing openInfoDialog's poster-left hero.
+_CARD = APP_JS.index('async function openInfoDialog(')
+
+
 def test_poster_is_first_hero_child():
-    i_hero = APP_JS.index('<div class="info-hero">')
+    i_hero = APP_JS.index('<div class="info-hero">', _CARD)
     i_poster = APP_JS.index('${posterImgHtml}', i_hero)
     i_meta = APP_JS.index('<div class="info-hero-meta">', i_hero)
     assert i_hero < i_poster < i_meta
 
 
 def test_grid_is_full_width_sibling_after_hero():
-    i_hero = APP_JS.index('<div class="info-hero">')
+    i_hero = APP_JS.index('<div class="info-hero">', _CARD)
     # the meta + hero <div>s both close BEFORE the grid opens (grid un-nested).
     i_close = APP_JS.index('</div>\n      </div>', i_hero)
     i_grid = APP_JS.index('<dl class="dlg-grid">', i_hero)

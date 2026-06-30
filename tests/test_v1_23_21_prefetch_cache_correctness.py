@@ -39,7 +39,11 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 def test_hover_uses_relatedtarget_boundary_check():
     i = APP_JS.index("_lib?.addEventListener('mouseover'")
-    block = APP_JS[i:i + 700]
+    # v0.50.64: window widened 700→1000. The universal bare-card guard
+    # (`if (!btn.dataset.id) return`) grew the mouseover handler, pushing
+    # the mouseout handler's relatedTarget check to offset ~807 — the old
+    # 700 window clipped it, dropping the count from 2 to 1.
+    block = APP_JS[i:i + 1000]
     # both mouseover + mouseout must ignore inner-node churn via
     # btn.contains(e.relatedTarget) — else the 150ms rest never fires.
     assert block.count("btn.contains(e.relatedTarget)") == 2, (

@@ -2174,4 +2174,17 @@
 #   outline-offset:-2px) so it stays inside the clip box. (2) Added a drift-guard test:
 #   the VISUALS field->class map is hand-duplicated in base.html / app.js / settings.html,
 #   so pin that the 3 maps AGREE (phantom-guard, v1.18.81), not just that each exists.
-__version__ = "0.50.63"
+# 0.50.64: universal row INFO card. Pre-tag only THEMED rows (theme_tmdb present) got
+#   an ⓘ → the full ThemerrDB record card. the user: "give every row an info button so
+#   users can see more info about ANY row." Now every row renders an ⓘ. Themed rows keep
+#   the full api_item card; rows with NO theme have no record to fetch, so they open a
+#   BARE card built entirely CLIENT-SIDE from the cached /api/library row (title/year/
+#   section/edition/imdb+tmdb ids/folder/rating_key — all already on the row payload, no
+#   backend round-trip, no new endpoint, no async surface). The click handler routes on
+#   presence of data-id: present → openInfoDialog (full), absent → openBareInfoDialog
+#   (looks the row up by rating_key in libraryState.items, renders renderBareInfoCard
+#   synchronously). Hover-prefetch skips bare buttons (no data-id → nothing to fetch).
+#   Bare card reuses the full card's .info-hero/.dlg-grid/.dlg-section classes so a
+#   themed and an untemed row read as the same surface; ends with a "no theme yet — add
+#   one from the SOURCE menu" call to action. JS-only.
+__version__ = "0.50.64"
