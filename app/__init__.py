@@ -2161,4 +2161,9 @@
 #   (2) Settings tabs: the 14th tab (VISUALS) wrapped to its own row — tightened tab
 #   padding (18→12px) so all 14 fit one line, and made .tabs a single nowrap row
 #   (scroll if a narrow window can't fit them) so a tab never orphans below again.
-__version__ = "0.50.61"
+# 0.50.62: scanline overlay was imperceptible (the user) — both dark color stops sat
+#   at 3px (zero-width band), so the line was a 1px gradient sliver at 0.18a×0.4opacity,
+#   multiply-blended into nothing on the dark UI. Now a SOLID 1px dark line per 3px at
+#   0.5 alpha / 0.6 opacity so the CRT scanlines actually read on bright content
+#   (text/posters) and the VISUALS toggle has a visible effect. CSS-only.
+__version__ = "0.50.62"

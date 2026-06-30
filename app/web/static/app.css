@@ -284,13 +284,19 @@ input[type="checkbox"] {
 
 .scanlines {
   position: fixed; inset: 0; pointer-events: none; z-index: 1;
+  /* v0.50.62: the prior scanline was imperceptible — both dark color stops sat at
+     3px (a ZERO-width solid band), so the "line" was only a 1px GRADIENT sliver at
+     0.18 alpha × 0.4 opacity, which multiply-blended into near-nothing on the dark
+     UI. Now a SOLID 1px dark line every 3px at a strength that actually reads on the
+     bright content (green text, posters) so the CRT effect — and its VISUALS toggle
+     — is perceptible. Dial the 0.5 alpha / 0.6 opacity to taste. */
   background: repeating-linear-gradient(
     180deg,
     transparent 0px, transparent 2px,
-    rgba(var(--black-rgb), 0.18) 3px, rgba(var(--black-rgb), 0.18) 3px
+    rgba(var(--black-rgb), 0.5) 2px, rgba(var(--black-rgb), 0.5) 3px
   );
   mix-blend-mode: multiply;
-  opacity: 0.4;
+  opacity: 0.6;
 }
 
 /* v0.50.7: CRT power-on flicker — a quick, gentle "screen turns on" sweep
