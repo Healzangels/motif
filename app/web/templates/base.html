@@ -282,7 +282,7 @@
          id="op-mini"
          {% if not _ssr_top.op_running %}hidden{% endif %}
          data-ops-trigger
-         title="Click to expand live ops">
+         title="Click to expand live ops.">
         {%- if _ssr_top.op_running -%}
           <span class="op-mini-label">{{ _ssr_top.op_label }}</span>
           <span class="op-mini-bar"><span class="op-mini-bar-fill" style="width:100%"></span></span>
@@ -290,7 +290,7 @@
         {%- endif -%}
       </a>
       <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden
-         data-ops-trigger title="Multiple ops running — click to expand all"></a>
+         data-ops-trigger title="Multiple ops running — click to expand all."></a>
       <!-- v1.12.118: idle pill replaces the legacy green dot + IDLE
            text. Same visual family as the active op-mini bar; no
            dot-to-bar flip when an op finishes. Click opens the ops
@@ -307,7 +307,7 @@
            frame, same pattern as op-mini. -->
       <a href="#" class="op-pill op-pill-idle" id="op-status-idle"
          {% if _ssr_top.op_running %}hidden{% endif %}
-         data-ops-trigger title="No active ops — click to view recent history">
+         data-ops-trigger title="No active ops — click to view recent history.">
         <span class="op-pill-label">IDLE</span>
       </a>
       {# v1.23.49: HELP toggle grouped at the right with the logout control
@@ -320,7 +320,7 @@
          glyph is a bare `?` (v1.23.76) with no accessible name otherwise. #}
       <button type="button" class="help-toggle" id="help-toggle" aria-pressed="false"
               aria-label="Toggle help mode"
-              title="Toggle help mode — decode the chips and reveal hints">?</button>
+              title="Toggle help mode — decode the chips and reveal hints.">?</button>
       <a href="/logout" class="topbar-logout" title="Sign out">⏻</a>
     </div>
   </header>

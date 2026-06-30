@@ -2448,7 +2448,7 @@
       const safeLetter = m.letter === '-' ? '–' : m.letter;
       return `<button type="button" class="source-legend-item ${hidden ? 'off' : ''}"
                       data-letter="${m.letter}"
-                      title="click to ${hidden ? 'show' : 'hide'} ${htmlEscape(m.name)}">
+                      title="Click to ${hidden ? 'show' : 'hide'} ${htmlEscape(m.name)}">
         <span class="source-legend-swatch source-legend-swatch-${m.cls}"></span>
         <span class="source-legend-letter source-pie-${m.cls}-text">${safeLetter}</span>
         <span class="source-legend-name">${htmlEscape(m.name)}</span>
@@ -4576,9 +4576,9 @@
       const ackableFail = !isOpProgress
                        && j.status === 'failed' && !j.acked_at;
       const actionCell = cancelling
-        ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" data-force="1" title="worker isn't responding to the cooperative cancel; mark cancelled directly">× FORCE</button>`
+        ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" data-force="1" title="Worker isn't responding to the cooperative cancel; mark cancelled directly.">× FORCE</button>`
         : (cancellable
-            ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" title="cancel this job (running jobs bail at the next safe yield)">× CANCEL</button>`
+            ? `<button class="btn btn-tiny btn-danger" data-act="cancel-job" data-job-id="${htmlEscape(j.id)}" title="Cancel this job (running jobs bail at the next safe yield).">× CANCEL</button>`
             : (ackableFail
                 ? `<button class="btn btn-tiny" data-act="ack-job-failure" data-job-id="${htmlEscape(j.id)}" data-mt="${htmlEscape(j.media_type)}" data-id="${htmlEscape(j.tmdb_id)}" title="Acknowledge this failure — clears the row's failure_kind + drops it from the topbar FAIL count. Job stays here for audit history (style flips to the green 'failed (acknowledged)' tone post-click).">// ACK FAILURE</button>`
                 : ''));
@@ -5090,7 +5090,7 @@
                    data-section-flag="anime"
                    data-section-id="${htmlEscape(s.section_id)}"
                    aria-pressed="${isAnime ? 'true' : 'false'}"
-                   title="anime library — feeds the ANIME tab">A</button>`
+                   title="Anime library — feeds the ANIME tab.">A</button>`
         : '';
       const fourkPill = `<button type="button"
                                   class="lib-flag-pill lib-flag-pill-4k${is4k ? ' is-active' : ''}"
@@ -5124,7 +5124,7 @@
           </td>
           <td class="lib-locations mono small" style="color:var(--fg-dim)">${locations}</td>
           <td class="lib-col-actions">
-            <button class="btn btn-tiny" data-section-refresh="${htmlEscape(s.section_id)}" title="re-enumerate just this section from Plex">// REFRESH</button>
+            <button class="btn btn-tiny" data-section-refresh="${htmlEscape(s.section_id)}" title="Re-enumerate just this section from Plex.">// REFRESH</button>
           </td>
         </tr>
       `;
@@ -5379,7 +5379,7 @@
           <td class="muted">${htmlEscape(fmt.time(t.created_at))}</td>
           <td class="muted">${t.last_used_at ? htmlEscape(fmt.time(t.last_used_at)) : '<span class="muted">never</span>'}</td>
           <td class="col-actions">
-            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}" title="Revoke this token (clients using it will start failing)">// REVOKE</button>`}
+            ${revoked ? '' : `<button class="btn btn-tiny btn-danger" data-revoke-token="${t.id}" title="Revoke this token (clients using it will start failing).">// REVOKE</button>`}
           </td>
         </tr>
       `;
@@ -5510,7 +5510,7 @@
       if (confirm('Enable dry-run? Pending downloads and placements will be simulated, not executed.')) setDryRun(true);
     });
     if (offBtn) offBtn.addEventListener('click', () => {
-      if (confirm('Disable dry-run? Real downloads and placements will resume immediately.')) setDryRun(false);
+      if (confirm('Disable dry-run? Real downloads and placements will resume.')) setDryRun(false);
     });
     if (cur) refreshDryRunState();
   }
@@ -5830,7 +5830,7 @@
         alert(`No ${kind} findings on this page to bulk-adopt.`);
         return;
       }
-      if (!confirm(`Adopt ${ids.length} ${label}? Each will be hardlinked into your themes_dir.`)) {
+      if (!confirm(`Adopt ${ids.length} ${label}? Each will be hardlinked into /themes.`)) {
         return;
       }
       try {
@@ -6000,10 +6000,10 @@
       // The v1.15.66 src-pill src-X class never existed in CSS — it
       // would just render as a plain inline span with no color.
       const SRC_BADGE = {
-        T: ['link-badge-themerrdb', 'motif manages from ThemerrDB'],
+        T: ['link-badge-themerrdb', 'Motif manages from ThemerrDB.'],
         U: ['link-badge-user', 'User-provided URL'],
-        A: ['link-badge-adopt', 'Adopted sidecar (no TDB link)'],
-        M: ['link-badge-manual', 'Manual sidecar (motif does not own)'],
+        A: ['link-badge-adopt', 'Adopted sidecar (no TDB link).'],
+        M: ['link-badge-manual', 'Manual sidecar (motif does not own).'],
         P: ['link-badge-cloud', 'Plex agent / cloud theme'],
       };
       function renderSrcBadge(letter) {
@@ -6058,9 +6058,9 @@
             <select class="input input-tiny" data-import-action
                     aria-label="Action for this row">
               <option value="replace" ${r.default_action === 'replace' ? 'selected' : ''}
-                      title="Apply the imported URL to this row">Apply</option>
+                      title="Apply the imported URL to this row.">Apply</option>
               <option value="skip" ${r.default_action === 'skip' ? 'selected' : ''}
-                      title="Don't apply — leave the row unchanged">Skip</option>
+                      title="Don't apply — leave the row unchanged.">Skip</option>
             </select>`;
         } else if (r.status === 'conflict') {
           const downloadOnlyOption = (r.current_src === 'P')
@@ -6094,7 +6094,7 @@
         // The badge was just visual noise on those rows.
         const showVerify = r.verify && r.status !== 'duplicate';
         const verifyBadge = showVerify
-          ? ' <span class="pill pill-warn small" title="Matched by title+year, not IMDB — verify before apply">VERIFY</span>'
+          ? ' <span class="pill pill-warn small" title="Matched by title+year, not IMDb — verify before apply.">VERIFY</span>'
           : '';
         // Current cell: src-letter badge + a small info button that
         // opens the standard // MOTIF INFO dialog for this row.
@@ -6121,7 +6121,7 @@
           ? `<button type="button" class="btn btn-tiny row-info-btn import-info-btn"
                     data-info-mt="${htmlEscape(r.theme_media_type)}"
                     data-info-tmdb="${htmlEscape(String(r.theme_tmdb_id))}"
-                    title="Open // MOTIF INFO for this row">ⓘ</button>`
+                    title="Open // MOTIF INFO for this row.">ⓘ</button>`
           : '';
         const currentInner = r.current_src
           ? `<span class="current-stack">${renderSrcBadge(r.current_src)}${infoBtn}</span>`
@@ -7556,7 +7556,7 @@
       btn.addEventListener('click', async () => {
         const path = btn.dataset.cfgClear;
         if (path !== 'plex.token') return;
-        if (!confirm('Clear Plex token? motif will lose Plex access until you set a new one.')) return;
+        if (!confirm('Clear Plex token? Motif will lose Plex access until you set a new one.')) return;
         try {
           await api('PATCH', '/api/config', { plex: { token: null } });
           await loadConfigIntoForms();
@@ -9072,11 +9072,11 @@
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
     let srcCell;
     if (placed && sourceKind === 'themerrdb') {
-      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="Motif manages from ThemerrDB.">T</span>';
     } else if (placed && sourceKind === 'adopt') {
-      srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link)">A</span>';
+      srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link).">A</span>';
     } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
-      srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL)">U</span>';
+      srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL).">U</span>';
     } else if (placed && sourceKind === 'plex_cloud') {
       // v1.21.8: mirror-drift fix. computeSrcLetter + _SRC_LETTER_SQL
       // (v1.20.65) classify a PLACED plex_cloud row as P, but this
@@ -9089,7 +9089,7 @@
       srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud theme">P</span>';
     } else if (placed && placedProv === 'auto') {
       // Legacy rows (source_kind NULL) — provenance='auto' === T.
-      srcCell = '<span class="link-badge link-badge-themerrdb" title="motif manages from ThemerrDB">T</span>';
+      srcCell = '<span class="link-badge link-badge-themerrdb" title="Motif manages from ThemerrDB.">T</span>';
     } else if (placed && placedProv === 'manual') {
       // Legacy fallback heuristic for rows without source_kind.
       const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId
@@ -9097,12 +9097,12 @@
         || svid.startsWith('fb-'));
       const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
       if (kind === 'adopt') {
-        srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link)">A</span>';
+        srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link).">A</span>';
       } else {
-        srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL)">U</span>';
+        srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL).">U</span>';
       }
     } else if (sidecarOnly) {
-      srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar (click ADOPT to manage)">M</span>';
+      srcCell = '<span class="link-badge link-badge-manual" title="Manual sidecar (click ADOPT to manage).">M</span>';
     } else if (it.plex_has_theme
                && (it.plex_theme_verified_ok === null
                    || it.plex_theme_verified_ok === undefined
@@ -9400,7 +9400,7 @@
       // to convey "ready to push" + the CTA.
       linkCell = '<span class="link-glyph link-glyph-bk" title="User Backup — motif has the file ready but not placed in the Plex folder. PUSH TO PLEX to install.">UB</span>';
     } else if (isMismatch && placed) {
-      linkCell = '<span class="link-glyph link-glyph-mismatch" title="Mismatch — canonical differs from Plex copy">M</span>';
+      linkCell = '<span class="link-glyph link-glyph-mismatch" title="Mismatch — canonical differs from Plex copy.">M</span>';
     } else if (it.placement_kind === 'hardlink') {
       // v1.19.66: removed the PS render branch that sat here.
       // PS was vestigial post-v1.19.61 — the LET-PLEX-SERVE
@@ -9414,7 +9414,7 @@
       // via SRC=P chip + LINK=— chip combination.
       linkCell = '<span class="link-glyph link-glyph-hardlink" title="Hardlink (shared inode)">HL</span>';
     } else if (it.placement_kind === 'copy') {
-      linkCell = '<span class="link-glyph link-glyph-copy" title="Copy (cross-FS fallback — uses extra disk)">C</span>';
+      linkCell = '<span class="link-glyph link-glyph-copy" title="Copy (cross-FS fallback — uses extra disk).">C</span>';
     } else if (it.placement_kind === 'plex_upload') {
       // v1.18.22: new PU = Pushed link state. motif uploaded the
       // audio bytes to Plex's metadata store via the
@@ -9545,7 +9545,7 @@
       // v1.11.62: motif's canonical was deleted but the placement
       // is still in the Plex folder. RESTORE FROM PLEX recovers.
       glyphHtml =
-        `<a class="title-glyph title-glyph-broken" title="Canonical missing — Plex copy intact (RESTORE FROM PLEX)" href="/${libraryState.tab}?status=dl_missing">↺</a>`;
+        `<a class="title-glyph title-glyph-broken" title="Canonical missing — Plex copy intact (RESTORE FROM PLEX)." href="/${libraryState.tab}?status=dl_missing">↺</a>`;
     }
     if (glyphHtml) titleGlyphs.push(glyphHtml);
 
@@ -9570,7 +9570,7 @@
       // the distinct pill + tooltip make that explicit.
       const pe = it.plex_edition_title;
       if (pe) {
-        return ` <span class="edition-pill edition-pill-meta" title="Plex metadata edition — not a folder {edition-} tag, so motif theming is one-per-item for this title">${htmlEscape(pe)}</span>`;
+        return ` <span class="edition-pill edition-pill-meta" title="Plex metadata edition — not a folder {edition-} tag, so motif theming is one-per-item for this title.">${htmlEscape(pe)}</span>`;
       }
       return '';
     })();
@@ -9671,7 +9671,7 @@
         if (window.__motif_cookies_present) {
           // Cookies are configured — the next download attempt should
           // succeed and clear the flag. Stay green.
-          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracked (cookies will refresh on next download)">TDB</span>';
+          return ' <span class="tdb-pill tdb-pill-yes" title="ThemerrDB tracked (cookies will refresh on next download).">TDB</span>';
         }
         // v1.15.17: glyph ⚠ → ⚿ (squared key, U+26BF). The amber ⚠
         // visually clustered with .tdb-pill-await / .tdb-pill-mismatch
@@ -11013,7 +11013,7 @@
         <td class="col-edition"></td>
         <td class="col-year">${htmlEscape(it.year || '')}</td>
         <td class="col-tdb"></td>
-        <td class="col-state"><span class="link-badge link-badge-themerrdb-only" title="ThemerrDB-tracked title; not in your Plex library">T</span></td>
+        <td class="col-state"><span class="link-badge link-badge-themerrdb-only" title="ThemerrDB-tracked title; not in your Plex library.">T</span></td>
         <td class="col-state"><span class="state-pill" title="not applicable"></span></td>
         <td class="col-state"><span class="state-pill" title="not applicable"></span></td>
         <td class="col-state"><span class="link-glyph link-glyph-none">—</span></td>
@@ -16109,7 +16109,7 @@
         )}</code>`
       : '';
     const dlBlock = lf
-      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="how motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP)">${htmlEscape(lf.provenance)}</span>${sourceKindHint}${sourceVidHint}</dd>`
+      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="How motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP).">${htmlEscape(lf.provenance)}</span>${sourceKindHint}${sourceVidHint}</dd>`
       : '';
     // v0.50.35: compact "a recoverable backup exists" line — the user wants to
     // know a backup is on disk for EVERY row (HL, placed, dead-url …), not just
@@ -16171,7 +16171,7 @@
             + `your browser doesn't support inline audio playback`
             + `</audio>`
             + ` <a href="${htmlEscape(src)}" download="theme.mp3"`
-            +   ` class="muted small" title="Download the canonical theme.mp3 — useful if the inline player can't decode the file">↓</a>`
+            +   ` class="muted small" title="Download the canonical theme.mp3 — useful if the inline player can't decode the file.">↓</a>`
             + `</dd>`;
         })()
       : '';

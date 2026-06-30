@@ -2138,4 +2138,11 @@
 #   right — both now scrollIntoView the active item (no-op on desktop). Cleared by
 #   the audit: column display:none (no JS cell-indexing), selector over-match,
 #   wrapper-div selectors, hidden username input, .title clamp (--t-huge==64px).
-__version__ = "0.50.58"
+# 0.50.59: hover/confirm text uniformity audit. Two-agent sweep of all ~247 title=
+#   tooltips + ~51 confirm() prompts against the de-facto convention. Both were
+#   already largely uniform; normalized the outliers (the user picked the 2 taste
+#   calls): add the missing terminal period to prose tooltips (match the 73%
+#   majority); brand "motif" lowercase mid-sentence, "Motif" sentence-initial;
+#   IMDB→IMDb; config-key themes_dir→/themes + drop redundant "immediately" in the
+#   dry-run confirm. ~39 strings across app.js + 4 templates. Text-only.
+__version__ = "0.50.59"
