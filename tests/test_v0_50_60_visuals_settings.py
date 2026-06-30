@@ -43,7 +43,7 @@ def test_css_hides_each_effect_and_collapses_hero():
     assert "html.viz-no-equalizer .brand-mark { display: none; }" in CSS
     assert "html.viz-no-hero-wave .hero::after { display: none; }" in CSS
     # the wave-off hero collapse (shift content up, no white band)
-    assert "html.viz-no-hero-wave .hero { min-height: 0; }" in CSS
+    assert "html.viz-no-hero-wave .hero { min-height: 130px; }" in CSS
 
 
 def test_visuals_deeplink_ssr_rules_present():

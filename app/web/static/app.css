@@ -591,9 +591,13 @@ html.viz-no-crt-on .crt-power-on { display: none; }
 html.viz-no-crt-off .crt-power-off { display: none; }
 html.viz-no-equalizer .brand-mark { display: none; }
 html.viz-no-hero-wave .hero::after { display: none; }
-/* hiding the wave collapses the v0.50.25 min-height so the first content block
-   shifts UP instead of leaving the empty band the wave used to fill. */
-html.viz-no-hero-wave .hero { min-height: 0; }
+/* v0.50.61: hiding the wave shrinks the v0.50.25 min-height to a tighter value
+   that is STILL cross-tab consistent (>= the tallest hero = the dashboard's 2-line
+   subtitle, ~127px) so content shifts up WITHOUT breaking the same-Y alignment
+   between tabs. min-height:0 (v0.50.60) let each hero size to its own content, so
+   the dashboard's 2-line subtitle pushed its first block lower than the library
+   tabs (the user). */
+html.viz-no-hero-wave .hero { min-height: 130px; }
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--gap-6); flex-wrap: wrap; }
 /* v0.50.19: keep the subtitle off the hero-row's action chips. On /collections
    the section selectors (MOVIES/4K/TV/ANIME + REFRESH) make .sync-actions wrap
@@ -4382,7 +4386,11 @@ body.auth-page .auth-card { margin: 0; }
 
 .tabs {
   display: flex;
-  flex-wrap: wrap;
+  /* v0.50.61: one row, never an orphaned tab on a 2nd line — scroll if the 14
+     tabs can't fit (they fit at desktop width with the tightened padding below;
+     a narrow window scrolls instead of wrapping). Mobile already did this. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
   gap: 0;
   margin: 0 0 var(--gap-6) 0;
   border-bottom: 1px solid var(--line);
@@ -4770,7 +4778,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-size: var(--t-small);
   font-weight: 500;
   letter-spacing: 0.12em;
-  padding: 12px 18px;
+  padding: 12px 12px;
   cursor: pointer;
   transition: color var(--motion-fast), border-color var(--motion-fast);
 }

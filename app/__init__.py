@@ -2153,4 +2153,12 @@
 #   min-height when the wave is off (content shifts up, no white band); the power
 #   on/off JS gates honour the opt-out. Tab registered across the 4 SSR sites
 #   (base allowlist + settings + app.css panel/underline rules).
-__version__ = "0.50.60"
+# 0.50.61: two v0.50.60 follow-ups. (1) HERO WAVE off no longer breaks cross-tab Y
+#   alignment: min-height:0 let each hero size to its own content, so the dashboard's
+#   2-line subtitle pushed // RECENTLY ADDED lower than the library search bar. Now a
+#   tighter-but-consistent min-height:130px (>= the tallest hero) keeps every tab's
+#   first block on the same Y while still shifting up ~20px from the 150px shown state.
+#   (2) Settings tabs: the 14th tab (VISUALS) wrapped to its own row — tightened tab
+#   padding (18→12px) so all 14 fit one line, and made .tabs a single nowrap row
+#   (scroll if a narrow window can't fit them) so a tab never orphans below again.
+__version__ = "0.50.61"
