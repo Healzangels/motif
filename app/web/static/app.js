@@ -5922,6 +5922,31 @@
     }
   }
 
+  // v0.50.60: Settings → VISUALS toggles. Per-browser CRT-effect opt-outs stored
+  // in localStorage 'motif:visuals' (same key base.html reads pre-paint). Live-
+  // apply (no SAVE) like the dashboard LIBRARY COLORS panel: flipping a checkbox
+  // writes the value + toggles the html.viz-no-<effect> class immediately.
+  function bindVisualsToggles() {
+    const inputs = document.querySelectorAll('[data-viz-field]');
+    if (!inputs.length) return;
+    const CLS = {
+      crtOn: 'viz-no-crt-on', crtOff: 'viz-no-crt-off', heroWave: 'viz-no-hero-wave',
+      scanlines: 'viz-no-scanlines', equalizer: 'viz-no-equalizer',
+    };
+    let vis = {};
+    try { vis = JSON.parse(localStorage.getItem('motif:visuals') || '{}'); } catch (e) { vis = {}; }
+    inputs.forEach((el) => {
+      const f = el.dataset.vizField;
+      if (!CLS[f]) return;
+      el.checked = vis[f] !== false;  // default ON (effect shown)
+      el.addEventListener('change', () => {
+        vis[f] = el.checked;
+        try { localStorage.setItem('motif:visuals', JSON.stringify(vis)); } catch (e) { /* private mode */ }
+        document.documentElement.classList.toggle(CLS[f], !el.checked);
+      });
+    });
+  }
+
   // v1.15.66: bulk user-URL import — preview + apply pair.
   // Drives the // IMPORT settings panel. File picker → POST to
   // /api/import/preview (parse + categorize) → render results
@@ -18713,6 +18738,7 @@
     bindBadgeCycle('topbar-drops-badge', 'dropTabs', 'tdb_pills=dropped');
     bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush');
     bindSettingsTabs();
+    bindVisualsToggles();
     bindImportPanel();
     bindConfigSaves();
     bindScans();

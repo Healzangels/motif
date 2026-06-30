@@ -41,7 +41,7 @@
       var panels = ['paths', 'plex', 'downloads', 'matching',
                     'schedule', 'runtime', 'diagnostics', 'database',
                     'notifications', 'tokens', 'password',
-                    'homepage', 'import'];
+                    'homepage', 'import', 'visuals'];
       if (panels.indexOf(h) >= 0) {
         document.documentElement.setAttribute('data-settings-tab', h);
       }
@@ -67,6 +67,27 @@
           }
         }
       } catch (e) { /* malformed / disabled localStorage → token defaults */ }
+    })();
+  </script>
+  {# v0.50.60: pre-paint CRT-effect toggles (Settings → VISUALS). Reads localStorage
+     'motif:visuals' and stamps html.viz-no-<effect> for each one the user turned
+     OFF, BEFORE first paint — so a disabled scanline/equalizer/hero-wave never
+     flashes on then vanish. Missing key / unset value = effect ON (the default).
+     The CSS rules + the power-on/off JS gates below read these classes. #}
+  <script>
+    (function () {
+      try {
+        var v = JSON.parse(localStorage.getItem('motif:visuals') || '{}');
+        var r = document.documentElement;
+        var m = { crtOn: 'viz-no-crt-on', crtOff: 'viz-no-crt-off',
+                  heroWave: 'viz-no-hero-wave', scanlines: 'viz-no-scanlines',
+                  equalizer: 'viz-no-equalizer' };
+        for (var k in m) {
+          if (Object.prototype.hasOwnProperty.call(m, k) && v[k] === false) {
+            r.classList.add(m[k]);
+          }
+        }
+      } catch (e) { /* malformed / disabled localStorage → all effects on */ }
     })();
   </script>
   <script defer src="/static/app.js?v={{ motif_version }}"></script>
@@ -103,7 +124,10 @@
           var nav = performance.getEntriesByType && performance.getEntriesByType('navigation')[0];
           if (nav && nav.type === 'reload') play = true;
         }
-        if (play) el.classList.add('playing');
+        // v0.50.60: honour the Settings → VISUALS opt-out (html.viz-no-crt-on).
+        if (play && !document.documentElement.classList.contains('viz-no-crt-on')) {
+          el.classList.add('playing');
+        }
       } catch (e) { /* no sessionStorage / perf API → skip */ }
     })();
     // v0.50.29: play the power-OFF flicker on logout, then navigate.
@@ -114,6 +138,8 @@
       link.addEventListener('click', function (ev) {
         // v0.50.57: the flourish always plays now (was skipped under reduced-motion
         // — the user wants full CRT motion regardless of the OS setting).
+        // v0.50.60: ...unless turned off in Settings → VISUALS — then just navigate.
+        if (document.documentElement.classList.contains('viz-no-crt-off')) return;
         ev.preventDefault();
         off.classList.add('playing');
         setTimeout(function () { window.location.href = link.getAttribute('href'); }, 420);

@@ -2145,4 +2145,12 @@
 #   majority); brand "motif" lowercase mid-sentence, "Motif" sentence-initial;
 #   IMDB→IMDb; config-key themes_dir→/themes + drop redundant "immediately" in the
 #   dry-run confirm. ~39 strings across app.js + 4 templates. Text-only.
-__version__ = "0.50.59"
+# 0.50.60: Settings → VISUALS — per-browser CRT-effect toggles. New settings tab
+#   with 5 live-apply switches (no SAVE; localStorage 'motif:visuals', same model as
+#   the dashboard LIBRARY COLORS panel): CRT power-on flash, power-off flash, hero
+#   wave bar, scanline overlay, topbar equalizer. base.html stamps html.viz-no-<fx>
+#   pre-paint so a disabled effect never flashes; CSS hides each + collapses the hero
+#   min-height when the wave is off (content shifts up, no white band); the power
+#   on/off JS gates honour the opt-out. Tab registered across the 4 SSR sites
+#   (base allowlist + settings + app.css panel/underline rules).
+__version__ = "0.50.60"

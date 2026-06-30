@@ -57,6 +57,9 @@
   <button class="tab" data-tab="tokens" role="tab">TOKENS</button>
   <button class="tab" data-tab="password" role="tab">PASSWORD</button>
   <button class="tab" data-tab="homepage" role="tab">HOMEPAGE</button>
+  {# v0.50.60: VISUALS — per-browser CRT-effect toggles (localStorage, live-apply
+     like the dashboard LIBRARY COLORS panel; not server config). #}
+  <button class="tab" data-tab="visuals" role="tab">VISUALS</button>
 </nav>
 
 <!-- ============================ PATHS ============================ -->
@@ -1640,6 +1643,54 @@
     - field: storage_copies_bytes
       label: Wasted on copies
       format: bytes</pre>
+  </div>
+</section>
+
+<!-- ============================ VISUALS ============================ -->
+{# v0.50.60: per-browser CRT-effect toggles. Unlike the config panels, these
+   persist to localStorage 'motif:visuals' and apply LIVE (no SAVE button) — same
+   model as the dashboard LIBRARY COLORS panel. base.html reads the same key
+   pre-paint and stamps html.viz-no-* classes; the toggles below just flip those
+   classes + the stored value on change. Checkboxes default `checked` (all effects
+   on); bindVisualsToggles() in app.js unchecks any the user disabled. #}
+<section class="block tab-panel" data-panel="visuals" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// VISUALS</h2>
+    <span class="muted small">CRT effects — saved per browser</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Turn motif's CRT flourishes on or off. These are saved to <strong>this
+      browser</strong> (not server config) and apply instantly — no SAVE needed.
+    </p>
+    <div class="form-grid form-grid-tight">
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-viz-field="crtOn" checked />
+        <span class="form-label-text">CRT POWER-ON FLASH</span>
+        <p class="form-hint">The screen-turns-on sweep after a login or a page refresh.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-viz-field="crtOff" checked />
+        <span class="form-label-text">CRT POWER-OFF FLASH</span>
+        <p class="form-hint">The tube-collapse flicker played on logout before it navigates away.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-viz-field="heroWave" checked />
+        <span class="form-label-text">HERO WAVE BAR</span>
+        <p class="form-hint">The flowing soundwave under each page title. Off also collapses the
+          extra hero height, so the first content block sits higher.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-viz-field="scanlines" checked />
+        <span class="form-label-text">SCANLINE OVERLAY</span>
+        <p class="form-hint">The faint CRT scanline texture drawn over the whole screen.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-viz-field="equalizer" checked />
+        <span class="form-label-text">TOPBAR EQUALIZER</span>
+        <p class="form-hint">The animated 5-band equalizer next to the motif wordmark.</p>
+      </label>
+    </div>
   </div>
 </section>
 
