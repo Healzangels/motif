@@ -2205,4 +2205,18 @@
 #   attaches the same post-paint error handler (remove the img on 404/non-art → hero
 #   collapses to just the meta), so a row whose Plex art is missing degrades gracefully.
 #   JS-only.
-__version__ = "0.50.66"
+# 0.50.67: hero-wave + mobile-nav pass (4 the-user asks). (1) Mobile: the top nav
+#   wrapped LOGS/SETTINGS to a 2nd row below ~927px — now a horizontal-scroll strip
+#   like the settings tabs (.nav nowrap+overflow-x scoped to <=1080px; inset focus
+#   ring for the dual-axis clip). (2) Mobile: the hero wave overlapped the
+#   Collections subtitle — .hero now RESERVES the wave's clearance as padding-bottom
+#   (border-box → no desktop growth, but guaranteed even when content overflows
+#   min-height), so the wave is uniform + non-overlapping across every tab/width.
+#   (3) Richer wave: a 2nd broader/slower sine scrolling the OTHER way (.hero::before)
+#   so the band cross-weaves instead of one obvious repeat. (4) The hero wave is now
+#   motif's "now working" indicator (bigger + more visible than the upper-left brand
+#   EQ): html.motif-busy (toggled from anyMutatingOpActive) speeds it up + brightens
+#   (green→green-bright) + grows it (scaleY), eased via transition. The brand EQ's
+#   reactivity (.brand-mark.is-active) was RETIRED → calm constant ambient drift now.
+#   CSS + 1 JS toggle line.
+__version__ = "0.50.67"

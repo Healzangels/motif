@@ -30,15 +30,16 @@ def test_idle_drift_is_slow():
     assert "animation: brand-eq-1 2.8s" in block
 
 
-def test_is_active_is_the_lively_syncing_state():
-    assert ".brand-mark.is-active .brand-bar { background: var(--amber-bright); }" in APP_CSS
-    # the lively rate (the old default) returns as the syncing override.
-    assert ".brand-mark.is-active .brand-bar:nth-child(1) { animation-duration: 0.85s; }" in APP_CSS
-    assert ".brand-mark.is-active .brand-bar:nth-child(3) { animation-duration: 0.7s; }" in APP_CSS
+def test_brand_mark_reactivity_retired_v0_50_67():
+    """v0.50.67: the brand EQ's activity reactivity was RETIRED — it stays a calm
+    ambient drift; the activity signal now drives the hero wave instead (the user
+    — "make that effect impact the hero bar"). The old `.brand-mark.is-active`
+    tempo/colour override rule no longer exists (test_v0_50_67 owns the hero side)."""
+    assert ".brand-mark.is-active .brand-bar {" not in APP_CSS
 
 
-def test_js_toggles_is_active_off_activity_signal():
-    """app.js drives .is-active from the existing anyMutatingOpActive signal."""
-    assert "classList.toggle('is-active', anyMutatingOpActive)" in APP_JS
-    # guarded so the chrome-less login page (no .brand-mark) is a no-op.
-    assert "document.querySelector('.brand-mark')" in APP_JS
+def test_js_drives_activity_signal_into_the_hero_not_the_brand_mark():
+    """v0.50.67: app.js toggles motif-busy on <html> off anyMutatingOpActive (CSS
+    speeds up the hero wave); it no longer toggles .is-active on the brand-mark."""
+    assert "document.documentElement.classList.toggle('motif-busy', anyMutatingOpActive)" in APP_JS
+    assert "_brandMark.classList.toggle('is-active'" not in APP_JS

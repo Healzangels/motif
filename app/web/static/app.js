@@ -1349,12 +1349,13 @@
         // cycle on the next tick anyway.
         setTimeout(() => loadLibrary().catch(() => {}), 200);
       }
-      // v0.50.4: reactive brand-mark EQ — slow idle drift normally, lively
-      // "sync bars" (brighter + faster, via .brand-mark.is-active in app.css)
-      // while any op runs. Ambient "now playing while motif works" indicator.
-      // No-op on chrome-less pages where .brand-mark is absent (login).
-      const _brandMark = document.querySelector('.brand-mark');
-      if (_brandMark) _brandMark.classList.toggle('is-active', anyMutatingOpActive);
+      // v0.50.67: the HERO WAVE is now motif's "now working" indicator (the
+      // user — bigger + more visible than the upper-left brand EQ). Toggle
+      // motif-busy on <html>; CSS (html.motif-busy .hero::after/::before) speeds
+      // up + brightens + grows the wave. Root-class toggle works on every page;
+      // a page with no .hero (login) just has nothing to style — harmless. The
+      // brand EQ stays a calm ambient drift now (its .is-active was retired).
+      document.documentElement.classList.toggle('motif-busy', anyMutatingOpActive);
       // v1.13.77: cascade-only signal for the dash SYNC THEMERRDB
       // lock. Pre-fix the lock used globalEnumPipeline, which
       // includes scan_all (manual REFRESH PLEX) — so clicking

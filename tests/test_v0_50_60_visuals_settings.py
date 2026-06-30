@@ -42,9 +42,12 @@ def test_crt_gates_honour_opt_out():
 def test_css_hides_each_effect_and_collapses_hero():
     assert "html.viz-no-scanlines .scanlines { display: none; }" in CSS
     assert "html.viz-no-equalizer .brand-mark { display: none; }" in CSS
-    assert "html.viz-no-hero-wave .hero::after { display: none; }" in CSS
-    # the wave-off hero collapse (shift content up, no white band)
-    assert "html.viz-no-hero-wave .hero { min-height: 130px; }" in CSS
+    # v0.50.67: both wave layers (::after primary + ::before secondary) hide.
+    assert "html.viz-no-hero-wave .hero::after," in CSS
+    assert "html.viz-no-hero-wave .hero::before { display: none; }" in CSS
+    # the wave-off hero collapse (shift content up, no white band) + reclaim the
+    # v0.50.67 reserved wave padding band.
+    assert "html.viz-no-hero-wave .hero { min-height: 130px; padding-bottom: 0; }" in CSS
 
 
 def test_visuals_deeplink_ssr_rules_present():

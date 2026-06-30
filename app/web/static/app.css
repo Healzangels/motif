@@ -398,26 +398,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   background: var(--amber);
   border-radius: 1px;
   transform-origin: bottom;
-  /* v0.50.4: SLOW ambient idle drift by default (the user — the v0.50.2 rate
-     "feels way too fast" at rest). The lively 0.7-1.5s rate is now the SYNCING
-     speed, applied via .brand-mark.is-active below (toggled by app.js's
-     anyMutatingOpActive). Same brand-eq-1..5 keyframes; only the tempo changes. */
+  /* v0.50.4: SLOW ambient idle drift (the user — the v0.50.2 rate "feels way too
+     fast" at rest). v0.50.67: this is now the ONLY tempo — the brand EQ stays a
+     calm constant drift; its activity reactivity (the old .brand-mark.is-active
+     speed-up/brighten) was RETIRED and moved to the hero wave, which is bigger +
+     more visible (the user — "make that effect impact the hero bar instead"). */
   animation: brand-eq-1 2.8s ease-in-out infinite;
 }
 .brand-mark .brand-bar:nth-child(2) { animation: brand-eq-2 4s ease-in-out infinite; }
 .brand-mark .brand-bar:nth-child(3) { animation: brand-eq-3 2.4s ease-in-out infinite; }
 .brand-mark .brand-bar:nth-child(4) { animation: brand-eq-4 4.4s ease-in-out infinite; }
 .brand-mark .brand-bar:nth-child(5) { animation: brand-eq-5 3.2s ease-in-out infinite; }
-/* v0.50.4: SYNCING — motif is working. The bands snap to the lively rate +
-   brighter amber: an ambient "now playing" activity indicator. Override only
-   the tempo/color (keyframe names + infinite iteration inherit from the base),
-   and .is-active outranks the base by specificity. */
-.brand-mark.is-active .brand-bar { background: var(--amber-bright); }
-.brand-mark.is-active .brand-bar:nth-child(1) { animation-duration: 0.85s; }
-.brand-mark.is-active .brand-bar:nth-child(2) { animation-duration: 1.3s; }
-.brand-mark.is-active .brand-bar:nth-child(3) { animation-duration: 0.7s; }
-.brand-mark.is-active .brand-bar:nth-child(4) { animation-duration: 1.5s; }
-.brand-mark.is-active .brand-bar:nth-child(5) { animation-duration: 1.05s; }
 @keyframes brand-eq-1 { 0%, 100% { transform: scaleY(0.30); } 25% { transform: scaleY(0.85); } 55% { transform: scaleY(0.45); } 80% { transform: scaleY(1); } }
 @keyframes brand-eq-2 { 0%, 100% { transform: scaleY(0.70); } 30% { transform: scaleY(0.25); } 60% { transform: scaleY(0.95); } }
 @keyframes brand-eq-3 { 0%, 100% { transform: scaleY(0.50); } 20% { transform: scaleY(1); } 50% { transform: scaleY(0.30); } 75% { transform: scaleY(0.72); } }
@@ -560,7 +551,15 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
    (dashboard has the extra sync line), so a floor that covers the 2-line case
    aligns them all. min-height (not height) so a hero that legitimately grows
    (e.g. the one-time backfill banner) still expands. TUNABLE — eyeball value. */
-.hero { margin-bottom: 36px; min-height: 150px; position: relative; isolation: isolate; }
+/* v0.50.67: padding-bottom RESERVES the wave's clearance band (the user — on
+   mobile/collections the chips + 2-line subtitle filled the hero down to the
+   bottom, so the bottom-anchored .hero::after wave cut THROUGH the subtitle).
+   On desktop the v0.50.25 min-height already left ~34px of empty space the wave
+   sat in; formalizing it as padding (border-box → counts inside min-height, so
+   NO desktop growth) guarantees the band even when content overflows min-height,
+   making the wave uniform + non-overlapping across every tab + width. 38px gives
+   the active (taller) wave headroom too. */
+.hero { margin-bottom: 36px; min-height: 150px; position: relative; isolation: isolate; padding-bottom: 38px; }
 /* v0.50.28: a flowing soundwave across the hero's lower band (the user — fills the
    empty space the v0.50.25 min-height opened up). The wave SHAPE is an SVG sine
    path used as a CSS mask; the COLOUR is var(--green) (token — no hardcoded hex),
@@ -583,10 +582,58 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   opacity: 0.18;
   pointer-events: none;
   animation: hero-wave 9s linear infinite;
+  /* v0.50.67: ease the idle→busy ramp (speed/brightness/height) so the wave
+     swells smoothly when motif starts working, not a jump-cut. */
+  transition: opacity var(--motion-normal), transform var(--motion-normal);
+}
+/* v0.50.67: a SECOND, broader, slower wave scrolling the OTHER way — the two
+   sines cross-weave (beat frequency) so the hero band reads organic + alive
+   instead of one obviously-repeating sine (the user — the single wave "gets a
+   bit boring"). Subtler (lower opacity) so it underlays the primary. Behind
+   content (z-index:-1), decorative, inert. */
+.hero::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -20px;
+  height: 48px;
+  z-index: -1;
+  background: var(--green);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='48'%3E%3Cpath d='M0 26 Q40 8 80 26 T160 26 T240 26 T320 26' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='48'%3E%3Cpath d='M0 26 Q40 8 80 26 T160 26 T240 26 T320 26' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center;
+  -webkit-mask-size: 320px 100%;
+  mask-size: 320px 100%;
+  opacity: 0.10;
+  pointer-events: none;
+  animation: hero-wave-2 14s linear infinite;
+  transition: opacity var(--motion-normal), transform var(--motion-normal);
 }
 @keyframes hero-wave {
   from { -webkit-mask-position: 0 center; mask-position: 0 center; }
   to { -webkit-mask-position: -240px center; mask-position: -240px center; }
+}
+/* scrolls RIGHT (opposite the primary) for the cross-weave. */
+@keyframes hero-wave-2 {
+  from { -webkit-mask-position: 0 center; mask-position: 0 center; }
+  to { -webkit-mask-position: 320px center; mask-position: 320px center; }
+}
+/* v0.50.67: the hero wave is now motif's primary "now working" indicator (the
+   user — make the activity effect "impact the hero bar as it's more visible +
+   more interesting", moved off the upper-left brand EQ which is now a calm
+   ambient drift). motif-busy is toggled on <html> from anyMutatingOpActive
+   (app.js). Busy = faster, brighter (green→green-bright + higher opacity), and
+   taller (scaleY, centered so it stays inside the reserved padding band). */
+html.motif-busy .hero::after {
+  background: var(--green-bright);
+  opacity: 0.40;
+  animation-duration: 3.6s;
+  transform: scaleY(1.25);
+}
+html.motif-busy .hero::before {
+  opacity: 0.24;
+  animation-duration: 6s;
+  transform: scaleY(1.18);
 }
 /* v0.50.60: Settings → VISUALS per-browser opt-outs. base.html stamps the
    html.viz-no-<effect> class pre-paint from localStorage 'motif:visuals' for each
@@ -596,14 +643,15 @@ html.viz-no-scanlines .scanlines { display: none; }
 html.viz-no-crt-on .crt-power-on { display: none; }
 html.viz-no-crt-off .crt-power-off { display: none; }
 html.viz-no-equalizer .brand-mark { display: none; }
-html.viz-no-hero-wave .hero::after { display: none; }
+html.viz-no-hero-wave .hero::after,
+html.viz-no-hero-wave .hero::before { display: none; }
 /* v0.50.61: hiding the wave shrinks the v0.50.25 min-height to a tighter value
    that is STILL cross-tab consistent (>= the tallest hero = the dashboard's 2-line
    subtitle, ~127px) so content shifts up WITHOUT breaking the same-Y alignment
    between tabs. min-height:0 (v0.50.60) let each hero size to its own content, so
    the dashboard's 2-line subtitle pushed its first block lower than the library
    tabs (the user). */
-html.viz-no-hero-wave .hero { min-height: 130px; }
+html.viz-no-hero-wave .hero { min-height: 130px; padding-bottom: 0; }
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--gap-6); flex-wrap: wrap; }
 /* v0.50.19: keep the subtitle off the hero-row's action chips. On /collections
    the section selectors (MOVIES/4K/TV/ANIME + REFRESH) make .sync-actions wrap
@@ -1974,6 +2022,16 @@ body.help-mode .settings-help-about { display: block; }
      desktop row dropdowns). On a phone a bottom-row menu may clip against the
      swipe box, an acceptable trade where horizontal scroll is unavoidable. */
   .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* v0.50.67: below ~927px the 7 tabs no longer fit the brand|nav|status grid's
+     1fr column, so the nav WRAPPED LOGS/SETTINGS to a 2nd row. The user wants a
+     horizontal-scroll strip like the settings tabs instead. nowrap + overflow-x
+     within the column (min-width:0 already lets it shrink). overflow-x:auto
+     forces overflow-y:auto (dual-axis trap, motif_overflow_dual_axis_clip) — but
+     the active tab's underline is a BORDER (in-box, safe) and .nav-attn is inline
+     (no vertical overflow); only the keyboard focus ring (outline-offset extends
+     OUTSIDE the box) needs insetting so the clip box doesn't crop it. */
+  .nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .nav a:focus-visible { outline-offset: -2px; }
 }
 .table th {
   text-align: left;
