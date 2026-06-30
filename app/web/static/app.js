@@ -7584,19 +7584,11 @@
   }
 
 
-  // ---- Pending (staged-but-not-placed) ----
-  // v1.14.61: deleted ~170 lines of pending-page JS surface
-  // (pendingState / loadPending / pendingApprove / pendingDiscard
-  // / pendingItemsForKeys / renderPendingTable / bindPending).
-  // The /pending route was removed in v1.12.41; v1.14.56 removed
-  // the orphan templates/pending.html. The JS scaffold + 4 server
-  // endpoints (/api/pending, /api/pending/count, /api/pending/place,
-  // /api/pending/discard) survived the cleanup with zero callers.
-  // Audit follow-up after v1.14.59 caught the dead surface.
-  // The DOMContentLoaded calls (bindPending, loadPending) + the
-  // /pending poll-interval + the highlightNav `/pending` map entry
-  // are also removed below. The 4 server endpoints get deleted
-  // in api.py — see the v1.14.61 marker on the api_pending def.
+  // ---- Pending (staged-but-not-placed) — REMOVED ----
+  // v1.14.61: the /pending page and its whole surface are gone — the route
+  // (v1.12.41), template (v1.14.56), ~170 lines of JS, and the 4 /api/pending*
+  // server endpoints were all removed. Nothing remains here; this tombstone
+  // exists only so a future reader doesn't go hunting for the dead surface.
 
   // ---- Library (unified Plex-items browse) ----
 

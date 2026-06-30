@@ -2161,12 +2161,6 @@ class _GitMirrorError(RuntimeError):
     path."""
 
 
-class _GitMirrorUnchanged(Exception):
-    """Fetch returned no new commits — branch HEAD on the remote is
-    identical to our last successful sync. NOT a failure: caller
-    should skip the upsert pipeline and proceed to prune sweeps."""
-
-
 # Hard-coded ceilings on the bare repo. Catches a repo that has
 # grown unreasonably large (fetched megabytes of binary blobs we
 # don't actually want) before it fills disk.
@@ -2249,7 +2243,7 @@ class _GitMirror:
 
     def acquire(self, _client_unused=None) -> None:
         """Clone (first run) or fetch (subsequent). On fetch with no
-        new commits, raises _GitMirrorUnchanged via internal flag.
+        new commits, sets the _unchanged flag (read via is_unchanged()).
 
         The httpx client param is accepted-but-ignored for parity with
         _DatabaseSnapshot.acquire's signature; dulwich uses its own

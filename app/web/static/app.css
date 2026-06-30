@@ -5722,15 +5722,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    the per-row glyphs read as the same axis. The legend entries
    are buttons; clicking one toggles its slice off (dimmed +
    excluded from the center total). */
-.source-breakdown-body {
-  display: grid;
-  grid-template-columns: 220px 1fr;
-  gap: var(--gap-6);
-  align-items: center;
-  padding: 18px;
-}
 @media (max-width: 700px) {
-  .source-breakdown-body { grid-template-columns: 1fr; }
   .source-breakdown-chart { justify-self: center; }
 }
 .source-breakdown-chart { display: flex; justify-content: center; }

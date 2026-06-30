@@ -17,10 +17,10 @@ corresponding env var is also set, the UI value won't take effect until
 the env var is unset and the container restarted. The UI surfaces this
 condition to the user with a "// ENV OVERRIDE" badge.
 
-Atomic writes: tempfile-then-rename guarantees the file is never
-half-written even if power dies mid-save. fcntl-based locking guarantees
-two motif processes (which shouldn't happen, but might during a
-container restart) don't both clobber the same file.
+Atomic writes: tempfile-then-rename (os.replace) guarantees the file is
+never half-written even if power dies mid-save — a reader sees either the
+old or the new file, never a torn one. Writers within the process are
+serialized by a re-entrant lock (see save()).
 
 This module is the ONLY module that touches /config/motif.yaml. All
 reads and writes go through ConfigFile.load() / ConfigFile.save().
@@ -28,7 +28,6 @@ reads and writes go through ConfigFile.load() / ConfigFile.save().
 from __future__ import annotations
 
 import dataclasses
-import fcntl
 import logging
 import os
 import tempfile
@@ -780,7 +779,8 @@ class ConfigFile:
     Concurrency model:
       - Per-process re-entrant lock around load/save (rare but possible
         under FastAPI's threadpool dispatch)
-      - fcntl exclusive lock on the file itself during save
+      - the write itself is a tempfile + atomic os.replace, so a reader
+        never sees a torn file even mid-save
       - load is a normal file read; if save is in progress we just wait
         on the per-process lock, which is held briefly
     """
@@ -826,8 +826,8 @@ class ConfigFile:
 
     def save(self, cfg: MotifConfig, *, updated_by: str = "system") -> None:
         """Atomic save: write a temp file in the same directory, fsync,
-        rename over the target. fcntl-lock the target during the rename
-        in case another process is reading."""
+        rename over the target (os.replace is atomic, so a concurrent
+        reader sees either the old or the new file, never a torn one)."""
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             data = _serialize(cfg, updated_by=updated_by)
