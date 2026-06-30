@@ -1929,12 +1929,16 @@ body.help-mode .settings-help-about { display: block; }
    On desktop the table is width:100% and fits its container, col-title absorbs
    the slack as it always did. */
 #library-table { table-layout: fixed; }
-/* v0.50.48: the fixed-width results table (~1000px of columns, incl the 320px
-   ACTIONS cell) is wider than a phone viewport. This wrapper gives it its own
-   horizontal scroll context so it's SWIPEABLE — body's overflow-x:hidden was
-   clipping it, leaving ACTIONS unreachable on mobile. No-op on desktop (the
-   table fits, so no scrollbar appears). */
-.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* v0.50.48: wrapper that gives the fixed-width results table its own horizontal
+   scroll context so it's SWIPEABLE on a narrow viewport instead of clipped by
+   body's overflow-x:hidden (ACTIONS was unreachable on mobile).
+   v0.50.58: the `overflow-x: auto` is SCOPED to <=1080px (see the @media below) —
+   as a BASE rule it made .table-scroll a dual-axis auto clip box at EVERY width
+   (overflow-x:auto forces overflow-y:auto per spec), which clipped the per-row
+   // SOURCE/PLACE/REMOVE dropdowns (position:absolute, rendered inline in the
+   cell) on the bottom rows on DESKTOP. Above 1080 the table fits (border-box,
+   fixed cols ~1070px), so no scroll context is needed and the menus overlay
+   freely; the wrapper stays a plain div there. */
 /* v0.50.54: column-priority for the results table. Below full-desktop width the
    fixed columns (ACTIONS 320 + ED 160 + IMDB 120 + …) summed past the viewport
    and squeezed the no-width TITLE column. Drop the two lowest-value columns — ED
@@ -1949,6 +1953,11 @@ body.help-mode .settings-help-about { display: block; }
      so pin a width and let .table-scroll swipe — TITLE holds ~150px. Replaces the
      old phone-only min-width:1440 (now ~25% less horizontal scroll on a phone). */
   #library-table { min-width: 1080px; }
+  /* v0.50.58: only at <=1080 does the table actually exceed the viewport — give
+     it the swipe context HERE, not as a base rule (the base rule clipped the
+     desktop row dropdowns). On a phone a bottom-row menu may clip against the
+     swipe box, an acceptable trade where horizontal scroll is unavoidable. */
+  .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 }
 .table th {
   text-align: left;

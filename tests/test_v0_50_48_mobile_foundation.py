@@ -26,8 +26,15 @@ def test_results_table_has_horizontal_scroll_wrapper():
     i_close_table = LIB.index("</table>", i_table)
     i_close_wrap = LIB.index("</div>", i_close_table)
     assert i_close_table < i_close_wrap
-    # and the CSS gives it its own scroll context
+    # and the CSS gives it its own scroll context — v0.50.58: SCOPED to the
+    # <=1080 breakpoint (where the table actually overflows), not a base rule
+    # (a base rule clipped the desktop row dropdowns).
     assert ".table-scroll { overflow-x: auto;" in CSS
+    i_media = CSS.index("@media (max-width: 1080px)")
+    assert CSS.index(".table-scroll { overflow-x: auto;") > i_media, (
+        "v0.50.58: .table-scroll overflow must live in the <=1080 block, not as a "
+        "base rule (base rule = dual-axis clip box that clipped row menus on desktop)"
+    )
 
 
 def test_hero_title_clamps_so_it_scales_on_narrow_viewports():

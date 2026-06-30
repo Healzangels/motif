@@ -457,7 +457,14 @@
     // switching left every visited tab's underline lit.
     document.querySelectorAll('.nav a.active').forEach((x) => x.classList.remove('active'));
     const a = document.querySelector(`.nav a[data-nav="${k}"]`);
-    if (a) a.classList.add('active');
+    if (a) {
+      a.classList.add('active');
+      // v0.50.58: on a phone the .nav is an overflow-x scroll strip pinned left,
+      // so on a right-side tab (QUEUE/LOGS/SETTINGS) you couldn't see your active
+      // tab highlighted. Reveal it. No-op on desktop (nav wraps, doesn't scroll);
+      // block:nearest keeps the sticky topbar from jumping the page.
+      if (a.scrollIntoView) a.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
   }
 
   // ---- Topbar status ----
@@ -5874,6 +5881,14 @@
       document.querySelectorAll('.tab-panel').forEach((p) => {
         p.style.display = p.dataset.panel === name ? '' : 'none';
       });
+      // v0.50.58: on a phone the .tabs strip is an overflow-x scroll row pinned
+      // left, so a deep-linked / right-side tab activated off-screen looked like
+      // nothing was selected. Bring the active tab into view. No-op on desktop
+      // (the strip doesn't scroll there); block:nearest avoids a vertical jump.
+      const active = Array.from(tabs).find((t) => t.dataset.tab === name);
+      if (active && active.scrollIntoView) {
+        active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
       // v1.15.64: keep <html data-settings-tab="X"> in sync with the
       // active tab so the SSR CSS rules (app.css .tab-panel block) and
       // JS inline-style writes agree. Without this, the CSS !important

@@ -2127,4 +2127,15 @@
 #   count-up skip in dashboard.html. The full vibe (equalizer / pulses / ripples / hero
 #   wave / power on-off / donut draw-in / count-up) now plays for everyone regardless of
 #   the OS setting. New guard test pins the removal; old test_v1_15_134 deleted.
-__version__ = "0.50.57"
+# 0.50.58: mobile-arc (v0.50.48..54) silent-bug audit follow-ups (3-finder sweep).
+#   (1) CONFIRMED desktop regression: .table-scroll { overflow-x: auto } as a BASE
+#   rule made it a dual-axis clip box at every width (overflow-x:auto forces
+#   overflow-y:auto), clipping the per-row // SOURCE/PLACE/REMOVE dropdowns
+#   (position:absolute, inline in the cell) on the bottom rows on DESKTOP. Scoped
+#   the overflow to <=1080 (where min-width:1080 actually forces the table past the
+#   viewport); above that the wrapper is a plain div + menus overlay freely.
+#   (2)+(3) mobile nav + settings-tabs scroll strips hid the active tab off-screen
+#   right — both now scrollIntoView the active item (no-op on desktop). Cleared by
+#   the audit: column display:none (no JS cell-indexing), selector over-match,
+#   wrapper-div selectors, hidden username input, .title clamp (--t-huge==64px).
+__version__ = "0.50.58"
