@@ -296,8 +296,7 @@ input[type="checkbox"] {
 /* v0.50.7: CRT power-on flicker — a quick, gentle "screen turns on" sweep
    played ONCE per tab session (base.html adds .playing on the first load via
    sessionStorage). A full-viewport overlay that rests invisible (opacity:0)
-   and never blocks input. The global prefers-reduced-motion clamp shortens it
-   to near-instant, so motion-sensitive users get no flash. */
+   and never blocks input. */
 .crt-power-on {
   position: fixed; inset: 0; z-index: 9999;
   pointer-events: none;
@@ -317,9 +316,8 @@ input[type="checkbox"] {
 
 /* v0.50.29: CRT power-OFF — the classic "tube collapses" flicker on logout (the
    user). The overlay fades the screen to black while a bright scanline flashes,
-   thins, and collapses to the centre. app.js plays it then navigates to /logout;
-   under reduced-motion app.js skips it and navigates immediately, so this never
-   needs the global clamp. Rests display:none so it's fully inert. */
+   thins, and collapses to the centre. app.js plays it then navigates to /logout.
+   Rests display:none so it's fully inert. */
 .crt-power-off {
   position: fixed; inset: 0; z-index: 99999;
   pointer-events: none;
@@ -373,16 +371,14 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 }
 /* v1.24.95: the brand-mark is an equalizer (was a blinking ▰▰▰ glyph) —
    ambient "now playing" motion that ties the record loader + login ripples
-   into one music-themed language. Amber kept (the brand accent). The global
-   prefers-reduced-motion rule kills the infinite pulse; fill-mode:none means
-   the bars then rest at the un-transformed base = full height.
+   into one music-themed language. Amber kept (the brand accent).
    v0.50.2: 5-band synth spectrum analyzer (the user — "look more like a synth +
    move in a more synth like manner"). The v1.24.95 single brand-eq made all
    bars trace ONE sine wave, phase-shifted — too uniform. Now five bands, each
    its own irregular multi-peak keyframe at its own duration, so they never
    sync up — the lively, independent bounce of a graphic-EQ / spectrum
-   analyzer. Each keyframe keeps the un-transformed base = full height so the
-   reduced-motion clamp still rests them as full bars (no fill-mode:forwards). */
+   analyzer. Each keyframe keeps the un-transformed base = full height
+   (no fill-mode:forwards). */
 .brand-mark {
   display: inline-flex;
   align-items: flex-end;
@@ -399,8 +395,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   /* v0.50.4: SLOW ambient idle drift by default (the user — the v0.50.2 rate
      "feels way too fast" at rest). The lively 0.7-1.5s rate is now the SYNCING
      speed, applied via .brand-mark.is-active below (toggled by app.js's
-     anyMutatingOpActive). Same brand-eq-1..5 keyframes; only the tempo changes,
-     so the reduced-motion clamp still rests every band at full height. */
+     anyMutatingOpActive). Same brand-eq-1..5 keyframes; only the tempo changes. */
   animation: brand-eq-1 2.8s ease-in-out infinite;
 }
 .brand-mark .brand-bar:nth-child(2) { animation: brand-eq-2 4s ease-in-out infinite; }
@@ -564,8 +559,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
    empty space the v0.50.25 min-height opened up). The wave SHAPE is an SVG sine
    path used as a CSS mask; the COLOUR is var(--green) (token — no hardcoded hex),
    masked through it. It scrolls via mask-position for a music-wave flow. z-index:-1
-   (the .hero is its own stacking context) keeps it BEHIND the title/subtitle. The
-   v6173 prefers-reduced-motion clamp stops the scroll → it rests as a static wave.
+   (the .hero is its own stacking context) keeps it BEHIND the title/subtitle.
    Decorative pseudo-element (no DOM, inert to a11y); pointer-events:none. */
 .hero::after {
   content: '';
@@ -3654,9 +3648,7 @@ body.auth-page .auth-card { margin: 0; }
 
 /* v1.24.95: login groove-ripple background — concentric rings radiate slowly
    from screen centre, echoing the record icon's grooves (the "sound coming off
-   the record"). A full-viewport layer BEHIND the auth-card. Base opacity:0 so
-   the prefers-reduced-motion clamp (kills the infinite animation) leaves them
-   invisible rather than frozen as solid rings. */
+   the record"). A full-viewport layer BEHIND the auth-card; base opacity:0. */
 /* v0.50.20: absolute (was fixed) so it fills the content area, not the whole
    viewport — its centre then coincides with the auth-card's centre. */
 .login-bg { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
@@ -3679,8 +3671,7 @@ body.auth-page .auth-card { margin: 0; }
 /* v1.24.95: record-spinner loading state — the motif icon (a vinyl record:
    concentric grooves + centre spindle) spins as the load indicator. Replaces
    bare "loading…" text (the caption stays under it). Slow ~1.8s/rev = turntable
-   feel, not a frantic gif. reduced-motion stops the spin (fill-mode none → rests
-   un-rotated as a static record). Strokes via classes (CSS vars don't resolve in
+   feel, not a frantic gif. Strokes via classes (CSS vars don't resolve in
    SVG presentation attributes). */
 .record-loader { display: flex; flex-direction: column; align-items: center; gap: var(--gap-2); padding: var(--gap-4) 0; }
 .record-spinner { width: 52px; height: 52px; display: block; }
@@ -3698,8 +3689,7 @@ body.auth-page .auth-card { margin: 0; }
    elsewhere). Reuses .record-spinner's .rec-* strokes (login.html carries both
    classes); this only rescales it to fill the viewport, dims it to a backdrop,
    and slows the spin to a 16s turntable idle. Lives inside .login-bg (fixed,
-   z-index:0) so it sits behind the card. reduced-motion: the v6173 clamp stops
-   the spin → it rests as a static record. */
+   z-index:0) so it sits behind the card. */
 .login-record {
   position: absolute; left: 50%; top: 50%;
   /* v0.50.20: enlarged from 78vmin so the ~460px card reads as a record's small
@@ -5763,8 +5753,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    on the pie's FIRST render only (app.js adds .pie-drawin to the persistent
    slices <g> once; later poll/legend re-renders rebuild the inner circles but
    don't restart this one-shot animation on the group). transform-box/origin
-   center so it pivots on the donut hub, not the SVG corner. No fill-mode, so
-   the v1.15.134 reduced-motion clamp rests it at the natural final state. */
+   center so it pivots on the donut hub, not the SVG corner. */
 .pie-drawin {
   transform-box: fill-box;
   transform-origin: center;
