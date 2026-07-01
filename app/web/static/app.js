@@ -5771,7 +5771,12 @@
         const r = await api('GET', '/api/dry-run');
         // v1.22.55: status renders as a standard .pill (settings redesign) —
         // tone via class, not inline style.color.
-        cur.textContent = r.dry_run ? 'DRY-RUN — no real action' : 'LIVE — real downloads + placements';
+        // v0.50.81: the LIVE label parallels DRY-RUN's length ("... real action" vs
+        // "... no real action") so the pill + toggle buttons stay on ONE row at the
+        // 720px reading measure in BOTH states (the user — the old "real downloads +
+        // placements" was wide enough to wrap the buttons below only when live). The
+        // full "downloads + placements" detail already lives in the hint right below.
+        cur.textContent = r.dry_run ? 'DRY-RUN — no real action' : 'LIVE — real action';
         cur.className = r.dry_run ? 'pill pill-warn' : 'pill';
         cur.style.color = '';
         if (onBtn) onBtn.disabled = !!r.dry_run;

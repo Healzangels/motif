@@ -2345,4 +2345,11 @@
 #   normalize branch, rewrote the settings help copy to say WHEN literal matters (so 'C++' /
 #   'Disney+' isn't collapsed to 'C' / 'Disney'). No behavior change for any reachable mode.
 #   normalize.py + settings.html + test_v1_13_82 (dropped word test, added enum guard).
-__version__ = "0.50.80"
+# 0.50.81: RUNTIME → DRY-RUN MODE status pill no longer shifts the row between states (the
+#   user). The live label was "LIVE — real downloads + placements" — wide enough that, at
+#   the 720px settings reading measure, the pill + toggle buttons overflowed and flex-wrap
+#   dropped the buttons to a 2nd line (only when live), so the label sat "weirdly above".
+#   Tightened it to "LIVE — real action" (parallels "DRY-RUN — no real action") so BOTH
+#   states fit on one row identically; the downloads+placements detail already lives in the
+#   hint right below. app.js one-liner + guard in test_v1_22_55.
+__version__ = "0.50.81"

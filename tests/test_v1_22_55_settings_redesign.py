@@ -102,6 +102,16 @@ def test_dry_run_status_rendered_as_pill():
     assert "'pill pill-danger'" in JS or '"pill pill-danger"' in JS
 
 
+def test_dry_run_labels_stay_short_so_the_row_never_wraps():
+    """v0.50.81: the LIVE + DRY-RUN status labels are tight parallels ("... real
+    action" / "... no real action") so the pill + toggle buttons stay on ONE row at
+    the 720px reading measure in BOTH states (the user). The old wide "real downloads
+    + placements" form wrapped the buttons below only when live — that regressed the
+    layout consistency and must not come back (the detail lives in the hint)."""
+    assert "'LIVE — real action'" in JS
+    assert "real downloads + placements" not in JS
+
+
 def test_no_form_label_row_in_tab_panel_markup():
     """No active <div class="form-label-row"> survives in the settings
     markup — every scalar field migrated to .field-row. (The class
