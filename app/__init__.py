@@ -2284,4 +2284,15 @@
 #   desktop, resizing down; mobile 2-per-row, the lone odd chart full-width). '–' (No
 #   theme) is seeded into every donut's hidden set once (idempotent marker) so it's
 #   unchecked by default without resetting other toggles. app.js + dashboard.html + CSS.
-__version__ = "0.50.74"
+# 0.50.75: code-review fixes on the 0.50.72-74 batch (xhigh). (1) CONFIRMED bug — the
+#   hero wave could get STUCK busy forever: ops.js adds `motif-busy` out-of-band on an
+#   optimistic click (v0.50.68) without touching _waveDisplayed, so if that click never
+#   became a real op, refreshTopbar's _rampWaveLevel(0) hit the `displayed === target`
+#   early-return (both already 0) and skipped the classList.remove — pre-v0.50.73's
+#   unconditional toggle('motif-busy', heroBusy) had cleared it. Fix: the terminal branch
+#   now AUTHORITATIVELY clears the class + attr when target<=0 even if already at 0. New
+#   behavioral test locks it (idle-reconcile clears the stuck class). (2) Cleanups: folded
+#   the parallel _keyById lookup into _SOURCE_DONUTS (each spec now carries its storage
+#   `key` — one source of truth, no drift); refreshed two stale comments referencing the
+#   removed renderTotal/Movies/Tv wrappers. app.js + test_v0_50_73.
+__version__ = "0.50.75"

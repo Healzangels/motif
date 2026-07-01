@@ -659,7 +659,20 @@
     const root = document.documentElement;
     if (_waveRampTimer) { clearTimeout(_waveRampTimer); _waveRampTimer = null; }
     const step = () => {
-      if (_waveDisplayed === target) return;
+      if (_waveDisplayed === target) {
+        // v0.50.75 (code-review): at the terminal IDLE level, still ENFORCE the
+        // idle DOM even though we're already at 0 — ops.js adds motif-busy out-of-
+        // band on click (v0.50.68) without touching _waveDisplayed, so an
+        // optimistic-only click that never becomes a real op must be cleared HERE.
+        // Pre-fix the `displayed === target` early-return skipped the remove →
+        // the wave stuck busy forever. (target>0 already has the class from the
+        // ramp-up, so only the idle case needs the reconcile.)
+        if (target <= 0) {
+          root.classList.remove('motif-busy');
+          root.removeAttribute('data-busy-level');
+        }
+        return;
+      }
       _waveDisplayed += target > _waveDisplayed ? 1 : -1;
       if (_waveDisplayed <= 0) {
         _waveDisplayed = 0;
@@ -2443,10 +2456,9 @@
   })();
 
   // v1.18.20: internal renderer accepting per-donut element IDs + an optional
-  // mediaTypeFilter. v1.24.55: wrapped by renderTotalSourcePie (no filter),
-  // renderMoviesSourcePie ('movie') and renderTvSourcePie ('show'); all three
-  // share the same slice/legend logic — cumulative-percentage dasharrays,
-  // per-letter buckets, click-to-hide legend.
+  // scope predicate. v0.50.74: driven by the _SOURCE_DONUTS table (total/movies/
+  // tv/anime), each donut passing its scopeFn; all share the same slice/legend
+  // logic — cumulative-percentage dasharrays, per-letter buckets, click-to-hide.
   function _renderSourcePie(rows, opts) {
     const {
       blockId, slicesId, legendId, centerNumId,
@@ -2562,13 +2574,14 @@
   // set are colocated here so renderAllSourcePies (visibility) + the legend handler
   // (re-render one) share one source of truth.
   const _SOURCE_DONUTS = [
-    { id: 'total', scopeFn: null, hiddenSet: _totalPieHidden, cache: 'total_key' },
+    { id: 'total', scopeFn: null, hiddenSet: _totalPieHidden, cache: 'total_key',
+      key: _SOURCE_PIE_HIDE_KEY },
     { id: 'movies', scopeFn: (r) => r.media_type === 'movie' && !r.is_anime,
-      hiddenSet: _moviesPieHidden, cache: 'movies_key' },
+      hiddenSet: _moviesPieHidden, cache: 'movies_key', key: _MOVIES_PIE_HIDE_KEY },
     { id: 'tv', scopeFn: (r) => r.media_type === 'show' && !r.is_anime,
-      hiddenSet: _tvPieHidden, cache: 'tv_key' },
+      hiddenSet: _tvPieHidden, cache: 'tv_key', key: _TV_PIE_HIDE_KEY },
     { id: 'anime', scopeFn: (r) => !!r.is_anime,
-      hiddenSet: _animePieHidden, cache: 'anime_key' },
+      hiddenSet: _animePieHidden, cache: 'anime_key', key: _ANIME_PIE_HIDE_KEY },
   ];
   function _renderOneDonut(d, rows) {
     _renderSourcePie(rows, {
@@ -2674,17 +2687,15 @@
     const letter = btn.dataset.letter;
     if (!letter) return;
     const col = btn.closest('.source-pie-col');
-    // v0.50.74: map col id → its donut spec (Total/Movies/TV/Anime) + storage key.
-    const _keyById = {
-      total: _SOURCE_PIE_HIDE_KEY, movies: _MOVIES_PIE_HIDE_KEY,
-      tv: _TV_PIE_HIDE_KEY, anime: _ANIME_PIE_HIDE_KEY,
-    };
+    // v0.50.74/75: map the clicked col id → its donut spec (Total/Movies/TV/Anime);
+    // the spec carries everything (hiddenSet, storage key, cache) — one source of
+    // truth, no parallel lookup table to drift.
     const donutId = col ? (col.id.match(/^source-pie-(\w+)-col$/) || [])[1] : '';
     const d = _SOURCE_DONUTS.find((x) => x.id === donutId);
     if (!d) return;
     if (d.hiddenSet.has(letter)) d.hiddenSet.delete(letter);
     else d.hiddenSet.add(letter);
-    _persistHiddenSet(_keyById[donutId], d.hiddenSet);
+    _persistHiddenSet(d.key, d.hiddenSet);
     _pieState[d.cache] = '';  // re-render only the clicked donut
     _renderOneDonut(d, _pieState.all_rows || []);
   });

@@ -45,7 +45,7 @@ def _ramp_src() -> str:
     return APP_JS[start:end]
 
 
-def _run_ramp(target_calls):
+def _run_ramp(target_calls, ret="_seq.join(',')"):
     quickjs = pytest.importorskip("quickjs")
     ctx = quickjs.Context()
     # Mock DOM (records data-busy-level history) + synchronous setTimeout so the
@@ -63,7 +63,7 @@ def _run_ramp(target_calls):
         "function clearTimeout(){}\n"
         + _ramp_src() + "\n"
         + target_calls + "\n"
-        "_seq.join(',');"
+        + ret + ";"
     )
     return ctx.eval(harness)
 
@@ -83,3 +83,15 @@ def test_ramp_down_steps_through_levels_to_idle():
 def test_no_ramp_when_already_at_target():
     seq = _run_ramp("_waveDisplayed = 2; _rampWaveLevel(2);")
     assert seq == ""  # no attribute writes when displayed already == target
+
+
+def test_idle_reconcile_clears_stuck_busy_class_when_already_at_zero():
+    # v0.50.75 (code-review): ops.js can add 'motif-busy' out-of-band (optimistic
+    # click) WITHOUT bumping _waveDisplayed. If that op then fizzles, refreshTopbar
+    # calls _rampWaveLevel(0) while _waveDisplayed is already 0 — the terminal
+    # branch must still authoritatively clear the class + attr, or the wave stays
+    # busy forever. (Pre-fix the early-return skipped the clear.)
+    cls = _run_ramp("_cls = true; _waveDisplayed = 0; _rampWaveLevel(0);", ret="_cls")
+    assert cls is False  # stuck busy class was removed
+    seq = _run_ramp("_cls = true; _waveDisplayed = 0; _rampWaveLevel(0);")
+    assert seq == "idle"  # removeAttribute fired even though displayed already == 0
