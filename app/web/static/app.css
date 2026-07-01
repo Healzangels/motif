@@ -6916,11 +6916,28 @@ body.dash-customize-mode .dash-customize-link:hover {
    v1.24.68: each donut is its OWN card (the user: "their own little block instead
    of one large bar") with the donut beside its legend, mirroring the reference's
    TRAILER COVERAGE cards. auto-fit so cards wrap to fewer-per-row when narrow. */
+/* v0.50.74: the donut row fills its arena by VISIBLE count (JS sets data-visible +
+   hides empty-scope cols) — 4→1 across desktop, each resizing down, instead of the
+   old auto-fit that wrapped at a 320px floor (the user: "dynamically fill their
+   arena depending on how many charts you are displaying"). */
 .source-pie-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: repeat(4, 1fr);
   gap: var(--gap-5);
   align-items: start;
+}
+.source-pie-row[data-visible="1"] { grid-template-columns: 1fr; }
+.source-pie-row[data-visible="2"] { grid-template-columns: repeat(2, 1fr); }
+.source-pie-row[data-visible="3"] { grid-template-columns: repeat(3, 1fr); }
+.source-pie-row[data-visible="4"] { grid-template-columns: repeat(4, 1fr); }
+/* v0.50.74: mobile — 2 per row (2 stacks of 2 for four); a lone odd chart (the
+   last visible when the count is odd, e.g. 3) spans full width (the user). */
+@media (max-width: 760px) {
+  .source-pie-row,
+  .source-pie-row[data-visible="3"],
+  .source-pie-row[data-visible="4"] { grid-template-columns: repeat(2, 1fr); }
+  .source-pie-row[data-visible="1"] { grid-template-columns: 1fr; }
+  .source-pie-row[data-visible="3"] .source-pie-col.is-last-visible { grid-column: 1 / -1; }
 }
 .source-pie-col {
   display: grid;

@@ -46,8 +46,10 @@ def test_outer_section_is_borderless_but_header_keeps_the_bar():
 
 
 def test_cards_wrap_responsively():
-    row = _rule(".source-pie-row {")
-    assert "repeat(auto-fit, minmax(320px, 1fr))" in row
+    # v0.50.74: the row now fills by VISIBLE count (data-visible drives the grid;
+    # empty-scope donuts are hidden) instead of an auto-fit floor that wrapped.
+    assert '.source-pie-row[data-visible="4"] { grid-template-columns:' in APP_CSS
+    assert "repeat(auto-fit, minmax(320px, 1fr))" not in APP_CSS
 
 
 # ── reference-style selectors (1 per row, count + (pct%)) ────────────────────

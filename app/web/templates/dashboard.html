@@ -657,7 +657,9 @@
     <h2 class="block-title">// SOURCE BREAKDOWN</h2>
     <span class="muted small">by library · click a legend item to hide it</span>
   </header>
-  <div class="source-pie-row">
+  {# v0.50.74: data-visible seeds the grid column count pre-JS; renderAllSourcePies
+     corrects it (+ hides empty-scope cols) on the first /api/stats tick. #}
+  <div class="source-pie-row" data-visible="4">
     <div class="source-pie-col" id="source-pie-total-col">
       <div class="source-pie-col-label">// TOTAL</div>
       <div class="source-breakdown-chart">
@@ -696,6 +698,21 @@
         </svg>
       </div>
       <div class="source-breakdown-legend" id="source-pie-tv-legend"></div>
+    </div>
+    {# v0.50.74: 4th donut — ANIME (split off TV via is_anime). renderAllSourcePies
+       hides this col when there's no anime library so the row fills with the rest. #}
+    <div class="source-pie-col" id="source-pie-anime-col">
+      <div class="source-pie-col-label">// ANIME</div>
+      <div class="source-breakdown-chart">
+        <svg viewBox="0 0 42 42" aria-label="theme source distribution — anime">
+          <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
+          <g id="source-pie-anime-slices"></g>
+          <text x="21" y="20" class="source-pie-center-num" text-anchor="middle"
+                id="source-pie-anime-num">—</text>
+          <text x="21" y="25" class="source-pie-center-label" text-anchor="middle">anime</text>
+        </svg>
+      </div>
+      <div class="source-breakdown-legend" id="source-pie-anime-legend"></div>
     </div>
   </div>
 </section>

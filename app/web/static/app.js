@@ -2399,6 +2399,8 @@
   // carries to all three on first load, then they diverge.
   const _MOVIES_PIE_HIDE_KEY = 'motif:dash:src-hide-movies';
   const _TV_PIE_HIDE_KEY = 'motif:dash:src-hide-tv';
+  // v0.50.74: 4th donut for ANIME (the user), split off TV via is_anime.
+  const _ANIME_PIE_HIDE_KEY = 'motif:dash:src-hide-anime';
   function _loadHiddenSet(key) {
     try {
       const raw = localStorage.getItem(key);
@@ -2423,6 +2425,22 @@
   let _totalPieHidden = _loadHiddenSet(_SOURCE_PIE_HIDE_KEY);
   let _moviesPieHidden = _seedIndependentSet(_MOVIES_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY);
   let _tvPieHidden = _seedIndependentSet(_TV_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY);
+  let _animePieHidden = _loadHiddenSet(_ANIME_PIE_HIDE_KEY);
+  // v0.50.74: no-theme (–) UNCHECKED by default on every donut (the user — the –
+  // wedge dominates + isn't actionable at a glance). One-time per browser: add '–'
+  // to each donut's hidden set (idempotent via a marker) so it applies to existing
+  // users too WITHOUT resetting their other letter toggles; a user who then re-
+  // enables '–' keeps it (the marker stops us re-hiding it next load).
+  (function _defaultHideNoTheme() {
+    const MARK = 'motif:dash:src-hide-notheme-applied';
+    try {
+      if (localStorage.getItem(MARK)) return;
+      [[_SOURCE_PIE_HIDE_KEY, _totalPieHidden], [_MOVIES_PIE_HIDE_KEY, _moviesPieHidden],
+       [_TV_PIE_HIDE_KEY, _tvPieHidden], [_ANIME_PIE_HIDE_KEY, _animePieHidden]]
+        .forEach(([k, s]) => { s.add('-'); _persistHiddenSet(k, s); });
+      localStorage.setItem(MARK, '1');
+    } catch (_) { /* disabled storage → the sets just won't persist */ }
+  })();
 
   // v1.18.20: internal renderer accepting per-donut element IDs + an optional
   // mediaTypeFilter. v1.24.55: wrapped by renderTotalSourcePie (no filter),
@@ -2432,7 +2450,10 @@
   function _renderSourcePie(rows, opts) {
     const {
       blockId, slicesId, legendId, centerNumId,
-      mediaTypeFilter, lastKeyKey,
+      // v0.50.74: scopeFn (predicate) replaced the string mediaTypeFilter so a
+      // donut can scope on is_anime (TV = show & !anime, ANIME = is_anime), not
+      // just media_type. null = all rows (Total).
+      scopeFn, lastKeyKey,
       // v1.24.59: each donut passes its OWN hidden-set (independent toggles).
       hiddenSet,
     } = opts;
@@ -2442,9 +2463,7 @@
     const centerNum = document.getElementById(centerNumId);
     if (!block || !slicesEl || !legendEl || !centerNum) return;
 
-    const scopedRows = mediaTypeFilter
-      ? rows.filter((r) => r.media_type === mediaTypeFilter)
-      : rows;
+    const scopedRows = scopeFn ? rows.filter(scopeFn) : rows;
 
     // Aggregate per-letter across media types — the legend can
     // be filtered later if a media-type split is wanted; for v1
@@ -2532,32 +2551,30 @@
     total_key: '',
     movies_key: '',
     tv_key: '',
+    anime_key: '',  // v0.50.74: 4th donut
   };
 
-  // v1.24.55: three source donuts — Total (all), Movies, TV (= plex_items 'show',
-  // which folds anime in; theme_sources carries no anime split). Each scopes the
-  // SAME theme_sources feed by media_type. v1.24.59: each donut filters through
-  // its OWN hidden-set (independent toggles). The old single + collections pies
-  // were replaced (the user: "replace our existing 2 with the three new ones").
-  function renderTotalSourcePie(rows) {
+  // v1.24.55 / v0.50.74: FOUR source donuts — Total (all), Movies, TV, Anime. Each
+  // scopes the SAME theme_sources feed (which carries media_type + is_anime since
+  // v1.24.56). Movies + TV EXCLUDE anime (is_anime) so it doesn't double-count in
+  // both TV and Anime — matching the library tabs' split. v1.24.59: each donut has
+  // its OWN hidden-set (independent toggles). The scope predicate + col id + hidden
+  // set are colocated here so renderAllSourcePies (visibility) + the legend handler
+  // (re-render one) share one source of truth.
+  const _SOURCE_DONUTS = [
+    { id: 'total', scopeFn: null, hiddenSet: _totalPieHidden, cache: 'total_key' },
+    { id: 'movies', scopeFn: (r) => r.media_type === 'movie' && !r.is_anime,
+      hiddenSet: _moviesPieHidden, cache: 'movies_key' },
+    { id: 'tv', scopeFn: (r) => r.media_type === 'show' && !r.is_anime,
+      hiddenSet: _tvPieHidden, cache: 'tv_key' },
+    { id: 'anime', scopeFn: (r) => !!r.is_anime,
+      hiddenSet: _animePieHidden, cache: 'anime_key' },
+  ];
+  function _renderOneDonut(d, rows) {
     _renderSourcePie(rows, {
-      blockId: 'source-pie-total-col', slicesId: 'source-pie-total-slices',
-      legendId: 'source-pie-total-legend', centerNumId: 'source-pie-total-num',
-      mediaTypeFilter: null, lastKeyKey: 'total_key', hiddenSet: _totalPieHidden,
-    });
-  }
-  function renderMoviesSourcePie(rows) {
-    _renderSourcePie(rows, {
-      blockId: 'source-pie-movies-col', slicesId: 'source-pie-movies-slices',
-      legendId: 'source-pie-movies-legend', centerNumId: 'source-pie-movies-num',
-      mediaTypeFilter: 'movie', lastKeyKey: 'movies_key', hiddenSet: _moviesPieHidden,
-    });
-  }
-  function renderTvSourcePie(rows) {
-    _renderSourcePie(rows, {
-      blockId: 'source-pie-tv-col', slicesId: 'source-pie-tv-slices',
-      legendId: 'source-pie-tv-legend', centerNumId: 'source-pie-tv-num',
-      mediaTypeFilter: 'show', lastKeyKey: 'tv_key', hiddenSet: _tvPieHidden,
+      blockId: `source-pie-${d.id}-col`, slicesId: `source-pie-${d.id}-slices`,
+      legendId: `source-pie-${d.id}-legend`, centerNumId: `source-pie-${d.id}-num`,
+      scopeFn: d.scopeFn, lastKeyKey: d.cache, hiddenSet: d.hiddenSet,
     });
   }
   function renderAllSourcePies(rows) {
@@ -2566,9 +2583,29 @@
     if (section) {
       section.style.display = rows.some((r) => (r.count || 0) > 0) ? '' : 'none';
     }
-    renderTotalSourcePie(rows);
-    renderMoviesSourcePie(rows);
-    renderTvSourcePie(rows);
+    // v0.50.74: dynamically fill the arena — a donut with 0 items in its scope is
+    // hidden, and .source-pie-row[data-visible=N] drives the grid so the survivors
+    // grow to fill the row (4→1 across desktop; 2-per-row on mobile). Total always
+    // shows when the section does (it's the whole feed).
+    let visible = 0;
+    let lastVisibleCol = null;
+    for (const d of _SOURCE_DONUTS) {
+      const scoped = d.scopeFn ? rows.filter(d.scopeFn) : rows;
+      const total = scoped.reduce((a, r) => a + (r.count || 0), 0);
+      const show = d.id === 'total' || total > 0;
+      const col = document.getElementById(`source-pie-${d.id}-col`);
+      if (col) {
+        col.style.display = show ? '' : 'none';
+        col.classList.remove('is-last-visible');
+      }
+      if (show) { visible += 1; if (col) lastVisibleCol = col; _renderOneDonut(d, rows); }
+    }
+    // v0.50.74: mark the last VISIBLE col so mobile can make it full-width when the
+    // visible count is odd (the CSS `:last-of-type` can't skip the display:none
+    // siblings). data-visible drives the desktop N-across grid.
+    if (lastVisibleCol) lastVisibleCol.classList.add('is-last-visible');
+    const row = document.querySelector('#source-breakdown-block .source-pie-row');
+    if (row) row.setAttribute('data-visible', String(visible));
   }
 
   // v1.24.56: // GENERAL STATISTICS — per-library source split. Pivots the same
@@ -2637,17 +2674,19 @@
     const letter = btn.dataset.letter;
     if (!letter) return;
     const col = btn.closest('.source-pie-col');
-    const which = {
-      'source-pie-total-col':  { set: _totalPieHidden,  key: _SOURCE_PIE_HIDE_KEY, cache: 'total_key',  render: renderTotalSourcePie },
-      'source-pie-movies-col': { set: _moviesPieHidden, key: _MOVIES_PIE_HIDE_KEY, cache: 'movies_key', render: renderMoviesSourcePie },
-      'source-pie-tv-col':     { set: _tvPieHidden,     key: _TV_PIE_HIDE_KEY,     cache: 'tv_key',     render: renderTvSourcePie },
-    }[col ? col.id : ''];
-    if (!which) return;
-    if (which.set.has(letter)) which.set.delete(letter);
-    else which.set.add(letter);
-    _persistHiddenSet(which.key, which.set);
-    _pieState[which.cache] = '';  // re-render only the clicked donut
-    which.render(_pieState.all_rows || []);
+    // v0.50.74: map col id → its donut spec (Total/Movies/TV/Anime) + storage key.
+    const _keyById = {
+      total: _SOURCE_PIE_HIDE_KEY, movies: _MOVIES_PIE_HIDE_KEY,
+      tv: _TV_PIE_HIDE_KEY, anime: _ANIME_PIE_HIDE_KEY,
+    };
+    const donutId = col ? (col.id.match(/^source-pie-(\w+)-col$/) || [])[1] : '';
+    const d = _SOURCE_DONUTS.find((x) => x.id === donutId);
+    if (!d) return;
+    if (d.hiddenSet.has(letter)) d.hiddenSet.delete(letter);
+    else d.hiddenSet.add(letter);
+    _persistHiddenSet(_keyById[donutId], d.hiddenSet);
+    _pieState[d.cache] = '';  // re-render only the clicked donut
+    _renderOneDonut(d, _pieState.all_rows || []);
   });
 
   // v1.12.67: render the per-section coverage table on the

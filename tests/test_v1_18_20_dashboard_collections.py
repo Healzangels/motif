@@ -132,18 +132,18 @@ def test_js_renders_plex_collections_card_from_coverage():
     assert "setCov('collections'" in js
 
 
-def test_js_renders_three_source_pies():
-    """v1.24.55: three renderers (Total / Movies / TV) replace the single +
-    collections pair; the collections renderer is gone."""
+def test_js_renders_four_source_pies():
+    """v1.24.55: 3 donuts (Total/Movies/TV); v0.50.74: + Anime, driven by the
+    _SOURCE_DONUTS table (each with its own scope predicate). Collections pie gone."""
     js = APP_JS.read_text()
-    assert "function renderTotalSourcePie" in js
-    assert "function renderMoviesSourcePie" in js
-    assert "function renderTvSourcePie" in js
+    assert "const _SOURCE_DONUTS = [" in js
+    for did in ("total", "movies", "tv", "anime"):
+        assert f"id: '{did}'," in js
     assert "function renderCollectionsSourcePie" not in js
-    movies = js[js.index("function renderMoviesSourcePie"):][:600]
-    assert "mediaTypeFilter: 'movie'" in movies
-    tv = js[js.index("function renderTvSourcePie"):][:600]
-    assert "mediaTypeFilter: 'show'" in tv
+    # Movies + TV scope by media_type AND exclude anime (is_anime is its own donut).
+    assert "(r) => r.media_type === 'movie' && !r.is_anime," in js
+    assert "(r) => r.media_type === 'show' && !r.is_anime," in js
+    assert "scopeFn: (r) => !!r.is_anime," in js
 
 
 def test_js_pie_legend_toggle_rerenders_only_clicked_donut():
@@ -154,7 +154,8 @@ def test_js_pie_legend_toggle_rerenders_only_clicked_donut():
     idx = js.index(".source-legend-item")
     block = js[idx:idx + 1500]
     assert "closest('.source-pie-col')" in block
-    assert "which.render(" in block
+    # v0.50.74: re-renders only the clicked donut via _renderOneDonut, not the row.
+    assert "_renderOneDonut(d," in block
     assert "renderAllSourcePies(" not in block
 
 

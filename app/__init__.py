@@ -2275,4 +2275,13 @@
 #   level toward it one at a time (~380ms/step), so idle→L4 swells over ~1.5s + winds
 #   down the same way, instead of snapping. _waveDisplayed inits from the DOM so a nav-
 #   restored level (v0.50.71) still snaps (no ramp-from-idle on load). app.js only.
-__version__ = "0.50.73"
+# 0.50.74: SOURCE BREAKDOWN — 4th ANIME donut + dynamic fill-the-arena layout + no-theme
+#   off by default (the user, 3 asks). ANIME splits off TV via is_anime (theme_sources
+#   carries it since v1.24.56); Movies + TV now EXCLUDE anime so it can't double-count.
+#   The 4 donuts are table-driven (_SOURCE_DONUTS, each with its own scope predicate +
+#   hidden set). renderAllSourcePies hides a donut whose scope has 0 items + sets
+#   .source-pie-row[data-visible=N]; CSS makes the survivors FILL the row (4→1 across
+#   desktop, resizing down; mobile 2-per-row, the lone odd chart full-width). '–' (No
+#   theme) is seeded into every donut's hidden set once (idempotent marker) so it's
+#   unchecked by default without resetting other toggles. app.js + dashboard.html + CSS.
+__version__ = "0.50.74"

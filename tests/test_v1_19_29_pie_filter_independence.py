@@ -39,15 +39,13 @@ def test_movies_tv_seed_from_legacy_key_once():
     assert "_seedIndependentSet(_TV_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY)" in APP_JS
 
 
-def test_each_renderer_routes_its_own_set():
-    for fn, expected in (
-        ("renderTotalSourcePie", "_totalPieHidden"),
-        ("renderMoviesSourcePie", "_moviesPieHidden"),
-        ("renderTvSourcePie", "_tvPieHidden"),
-    ):
-        idx = APP_JS.index(f"function {fn}(rows)")
-        body = APP_JS[idx:APP_JS.index("\n  }", idx)]
-        assert f"hiddenSet: {expected}" in body, f"{fn} must use {expected}"
+def test_each_donut_spec_routes_its_own_set():
+    # v0.50.74: the 4 donuts (Total/Movies/TV/Anime) live in _SOURCE_DONUTS, each
+    # carrying its OWN hiddenSet; _renderOneDonut forwards d.hiddenSet. Independence
+    # preserved, just table-driven instead of 3 hand-written wrappers.
+    for hidden in ("_totalPieHidden", "_moviesPieHidden", "_tvPieHidden", "_animePieHidden"):
+        assert f"hiddenSet: {hidden}" in APP_JS, f"a donut must route {hidden}"
+    assert "hiddenSet: d.hiddenSet," in APP_JS
 
 
 def test_render_helper_reads_hiddenset_from_opts():
@@ -65,9 +63,10 @@ def test_legend_click_toggles_only_the_clicked_donut():
         "    const btn = ev.target.closest('.source-legend-item');")
     handler = APP_JS[handler_idx:APP_JS.index("\n  });", handler_idx) + 5]
     assert "closest('.source-pie-col')" in handler
-    assert "source-pie-total-col" in handler
-    assert "source-pie-movies-col" in handler
-    assert "source-pie-tv-col" in handler
-    assert "which.render(" in handler
+    # v0.50.74: discriminate the clicked donut by its col id → its _SOURCE_DONUTS
+    # spec, then re-render ONLY it via _renderOneDonut.
+    assert "source-pie-(\\w+)-col" in handler
+    assert "_SOURCE_DONUTS.find(" in handler
+    assert "_renderOneDonut(d," in handler
     # the whole-row re-render is gone — only the clicked donut re-renders.
     assert "renderAllSourcePies(" not in handler
