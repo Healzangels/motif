@@ -6060,6 +6060,15 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 .form-actions {
   display: flex;
   align-items: center;
+  /* v0.50.87: was nowrap-by-default (no flex-wrap declared) — on a phone a save
+     button + its status span + a second button (e.g. // SAVE NOTIFICATIONS + //
+     TEST NOTIFICATION, // SAVE TRANSPORT + // PROBE TRANSPORT) together exceed
+     the viewport width, and with nowrap the excess just spills past the card's
+     edge instead of dropping to a second line (the user, on every save row that
+     carries a second button). Used everywhere in settings, so this one property
+     fixes the whole class of "second button unreachable on mobile" reports at
+     once; harmless on desktop, where there's always room on one line. */
+  flex-wrap: wrap;
   gap: var(--gap-4);
   margin-top: var(--gap-6);
   padding-top: 18px;

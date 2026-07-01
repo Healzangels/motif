@@ -458,6 +458,12 @@
       <span class="lib-legend-item"><span class="muted small">neither = standard</span></span>
       <span class="lib-legend-item"><span class="muted small">both selected = anime 4K</span></span>
     </div>
+    {# v0.50.87: 7-column tables (ID/SECTION/TYPE/MGD/ROLE/LOCATIONS/ACTIONS) had
+       no scroll context — spilled off-screen on mobile, taking the MGD/ROLE
+       checkboxes with them (the user). One .table-scroll per table (matches
+       library.html's convention); .libraries-table-tv's own margin-top still
+       applies since the wrapper carries no spacing of its own. #}
+    <div class="table-scroll">
     <table class="table libraries-table">
       <thead>
         <tr>
@@ -474,6 +480,8 @@
         <tr><td colspan="7" class="muted center">loading…</td></tr>
       </tbody>
     </table>
+    </div>{# /.table-scroll #}
+    <div class="table-scroll">
     <table class="table libraries-table libraries-table-tv">
       <thead>
         <tr>
@@ -490,6 +498,7 @@
         <tr><td colspan="7" class="muted center">loading…</td></tr>
       </tbody>
     </table>
+    </div>{# /.table-scroll #}
     <div class="form-actions form-actions-libraries">
       {# v1.19.81 (settings uniformity audit): scoped the bare // SAVE
          label → // SAVE SECTIONS so it names its scope like every
@@ -1562,6 +1571,10 @@
       Backstage passes for scripted access. Read-scope feeds Homepage / dashboards;
       admin-scope can mutate state.
     </p>
+    {# v0.50.87: 6-column table had no scroll context — it just spilled past the
+       card's edge on mobile (the user). Reuses the #library-table .table-scroll
+       pattern instead of clipping / inventing a new mechanism. #}
+    <div class="table-scroll">
     <table class="table" id="tokens-table">
       <thead>
         <tr>
@@ -1573,6 +1586,7 @@
         <tr><td colspan="6" class="muted center">loading…</td></tr>
       </tbody>
     </table>
+    </div>{# /.table-scroll #}
   </div>
 </section>
 

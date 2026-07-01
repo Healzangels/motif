@@ -2391,4 +2391,19 @@
 #   legend); min-width:0 + ellipsis on the legend name (general fix, harmless on desktop) +
 #   a mobile-only stack (donut above legend, not beside it) so the legend gets the full card
 #   width. app.css (4 spots) + library.html (toolgroup wrapper) + new test_v0_50_86.
-__version__ = "0.50.86"
+# 0.50.87: settings mobile overflow batch 2 + drop the eager sync-probe (the user, more
+#   on-device testing). (1) API TOKENS' 6-column table + (4) LIBRARY SECTIONS' two 7-column
+#   tables had no scroll context — spilled off-screen on mobile (LIBRARY SECTIONS taking the
+#   MGD/ROLE checkboxes with it). Both wrapped in .table-scroll — the SAME reusable class
+#   #library-table already uses, so zero new CSS, just two more consumers. (2) .form-actions
+#   (used by EVERY settings save-row with a second button — SAVE+TEST NOTIFICATION, SAVE+PROBE
+#   TRANSPORT, etc.) had no flex-wrap, so on a phone the combined width spilled past the card
+#   edge instead of dropping to a 2nd line; added flex-wrap:wrap once at the base rule, fixing
+#   every such row at once (harmless on desktop, always room there). (3) FUNCTIONAL BUG:
+#   // PROBE TRANSPORT auto-fired 800ms after EVERY settings-page load, not just when viewing
+#   // SYNC TRANSPORT — sync-probe-btn lives in the DOM for every tab (inactive panels are just
+#   display:none). No sibling probe (TEST COOKIES/PROBE PLEX THEMES/TEST NOTIFICATION/TEST
+#   PLEX) auto-fires; dropped the v1.13.2 auto-probe so it's click-to-run like the others.
+#   settings.html (3 table-scroll wraps) + app.css (.form-actions) + app.js (bindSyncProbe) +
+#   new test_v0_50_87.
+__version__ = "0.50.87"

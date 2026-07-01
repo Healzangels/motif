@@ -7746,11 +7746,17 @@
     });
   }
 
-  // v1.13.2 (#3): pre-flight transport probe wiring. Auto-fires
-  // once on settings load so the user sees today's reachability
-  // without clicking; click-to-rerun for manual re-test (handy
-  // after editing the URL fields). Uses CURRENTLY-SAVED config —
-  // user must save first if they want to probe a new value.
+  // v1.13.2 (#3): pre-flight transport probe wiring. click-to-run, like every
+  // sibling probe on this page (TEST COOKIES / PROBE PLEX THEMES / TEST
+  // NOTIFICATION / TEST PLEX) — none of THOSE fire automatically.
+  // v0.50.87: DROPPED the v1.13.2 auto-probe-on-load. `sync-probe-btn` lives in
+  // the DOM for every settings-page render regardless of which TAB is active
+  // (inactive panels are just display:none), so the 800ms setTimeout fired an
+  // external network round-trip on EVERY settings-page load / refresh — not
+  // only when the user was looking at // SYNC TRANSPORT (the user: "whenever
+  // you refresh the page or navigate to this section it automatically is
+  // running a probe transport which it doesn't need to do"). Uses CURRENTLY-
+  // SAVED config — user must save first if they want to probe a new value.
   function bindSyncProbe() {
     const btn = document.getElementById('sync-probe-btn');
     const status = document.getElementById('sync-probe-status');
@@ -7778,21 +7784,12 @@
       } finally {
         btn.disabled = false;
         btn.textContent = orig;
-        // v1.17.5: auto-dismiss the probe result after 6s. Pre-fix
-        // the result lingered for the entire settings session
-        // (and got reset on every page load via the auto-probe
-        // below, painting a stale-looking "reachable" timestamp
-        // even when the user wasn't actively testing). 6s is
-        // long enough for the auto-probe-on-load result to be
-        // read and then fade gracefully.
+        // v1.17.5: auto-dismiss the probe result after 6s, same as every
+        // sibling probe's finally block.
         _autoDismissOpStatus(status, 6000);
       }
     }
     btn.addEventListener('click', () => { runProbe().catch(()=>{}); });
-    // Auto-probe once on load. Small delay so /api/config has
-    // landed and the dropdown shows the actual current value
-    // before the result text appears.
-    setTimeout(() => { runProbe().catch(()=>{}); }, 800);
   }
 
   function bindConfigSaves() {
