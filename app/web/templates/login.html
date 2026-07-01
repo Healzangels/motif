@@ -28,7 +28,7 @@
    centred over the spinning record backdrop, so the login reads as the label at
    the record's centre. .auth-card-inner keeps the form inside the circle's safe
    centre zone (a round card clips its corners, so content can't run full-width). #}
-<section class="auth-card">
+<section class="auth-card{% if error %} auth-card-has-error{% endif %}">
   <div class="auth-card-inner">
     <div class="auth-card-head">
       <span class="auth-glyph">▰</span>

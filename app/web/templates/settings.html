@@ -1830,6 +1830,11 @@
            tooltip are gone — the user: "overly verbose and not
            overly helpful." The bare checkbox with a short title
            tooltip is enough now that columns actually align. -->
+      {# v0.50.88: 7-column table (STATUS/TITLE/IMDB/CURRENT/IMPORTED URL/
+         ACTION, several with fixed-px widths in app.css) had no scroll
+         context — same class of bug as the v0.50.87 TOKENS/LIBRARY SECTIONS
+         fix, just missed on this table then. Same .table-scroll wrapper. #}
+      <div class="table-scroll">
       <table class="table table-tight" id="import-preview-table">
         <thead>
           <tr>
@@ -1846,6 +1851,7 @@
         </thead>
         <tbody id="import-preview-tbody"></tbody>
       </table>
+      </div>{# /.table-scroll #}
       <div class="form-actions" style="margin-top:var(--gap-4)">
         <button class="btn btn-tiny btn-warn" id="import-apply-btn" type="button">// APPLY IMPORT</button>
         <span class="muted small" id="import-apply-status"></span>

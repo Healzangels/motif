@@ -2406,4 +2406,49 @@
 #   PLEX) auto-fires; dropped the v1.13.2 auto-probe so it's click-to-run like the others.
 #   settings.html (3 table-scroll wraps) + app.css (.form-actions) + app.js (bindSyncProbe) +
 #   new test_v0_50_87.
-__version__ = "0.50.87"
+__version__ = "0.50.88"
+# 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
+#   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
+#   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
+#   the WHOLE topbar (nav, ?/logout) past the viewport whenever a job ran —
+#   shrunk the mobile op-mini caps (ops.css), gave .topbar-status min-width:0
+#   + flex-wrap (crowded status cluster drops to a 2nd row instead of off-
+#   screen), and floored the nav grid column at 24px so it never fully
+#   vanishes. (2) LOGS: JOBS' fixed 180px ACTION column left ~9-27px per
+#   fluid column — unreadable; gave rows a 760px min-width + one shared
+#   horizontal scroll on .jobs-grid (header+body scroll together, no sticky
+#   involved so this doesn't resurrect the v1.22.56 sticky-thead bug). EVENT
+#   STREAM's fixed TIME/LEVEL/COMPONENT columns (~264px) left the message
+#   column a sliver that broke one character per line — stacked the message
+#   onto its own full-width row below a compact meta line instead. (3) LOGIN:
+#   the v0.50.86 min-height fix only grows .auth-card when content exceeds
+#   the floor, which no-error content never does — so the SAME circle with
+#   the error banner added (~74px more content) had its rectangle's corners
+#   (the SIGN IN button) poke past the chord and clip. New .auth-card-has-
+#   error modifier (login.html) grows ONLY the height (not width, so the
+#   error text's wrap — and thus how tall it is — doesn't change) to
+#   min(600px,150vw); verified via an ellipse-corner-containment check across
+#   320-600px viewports. (4) GLOSSARY: re-clicking // GLOSSARY while open
+#   called showModal() on an already-open <dialog>, which throws — the
+#   exception aborted before close() ran, leaving the button permanently
+#   .open/highlighted. Now toggles: open→close(), closed→showModal().
+#   (5) INFO CARD: .info-audio's bare width:100% claimed the whole <dd> row,
+#   wrapping the ↓ download link onto its own flush-left line below the play
+#   bar. .info-play-row flexes the two together; flex-basis:0 (not auto) on
+#   .info-audio so flex-wrap's line-assignment doesn't treat the native
+#   <audio controls>'s ~300px intrinsic width as unshrinkable and banish the
+#   icon to line 2 by itself. (6) SETTINGS: an audit swept every tab for the
+#   same class of bug fixed in v0.50.87 — found one more, the IMPORT preview
+#   table (7 columns, several fixed-px), missed by that pass; wrapped in the
+#   same .table-scroll. The PLEX-tab overflow reported this round matches
+#   what v0.50.87 already fixed (every screenshot this round still reads
+#   v0.50.86 — tested against the pre-fix build). (7) ACCESSIBILITY: closing
+#   over #ops-drawer's static aria-hidden="true" (base.html) was never
+#   cleared on open, so focusing any descendant (most commonly × close)
+#   while it was visible tripped Chrome's aria-hidden/focus-retention block.
+#   openDrawer/closeDrawer (ops.js) now toggle it in lockstep, blurring focus
+#   out first on close to avoid the same violation in reverse. Also reviewed:
+#   the settings "password field not in a form" DOM hints are benign (AJAX-
+#   saved, not native forms — no fix needed); the requestAnimationFrame/
+#   forced-reflow violations trace to bootstrap-autofill-overlay.js, a
+#   browser extension, not motif's code.

@@ -1062,3 +1062,17 @@ body[data-ops-running="1"] #topbar-status-text {
   flex: 1;
   word-break: break-word;
 }
+
+/* v0.50.88: mobile job-running topbar overflow. The op-mini pill's 220px
+   label cap + 90px bar + pct + padding add up to ~370px alone — nearly a
+   whole phone viewport — and .topbar's third grid column (.topbar-status)
+   has no shrink floor, so the ENTIRE topbar (nav, brand, ?/logout) got
+   pushed past the screen edge whenever a job was running (the user: "a job
+   running is causing the ? and logout button and the progress bar itself
+   to expand way out of bounds and span too far out"). Shrink the two
+   elastic pieces — the label's existing ellipsis (line ~213) still applies,
+   just at a smaller cap; full detail is one tap away in the ops drawer. */
+@media (max-width: 600px) {
+  .op-mini .op-mini-label { max-width: 80px; }
+  .op-mini .op-mini-bar { width: 40px; }
+}

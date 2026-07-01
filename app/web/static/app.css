@@ -3550,8 +3550,27 @@ body.help-mode .settings-help-about { display: block; }
 /* v1.12.90: in-card audio preview. Width-constrained so the native
    controls don't blow out the dialog grid; height matches the
    one-line text rows above so the layout doesn't jump when audio
-   loads metadata. */
-.info-audio { width: 100%; max-width: 480px; height: 32px; }
+   loads metadata.
+   v0.50.88: .info-audio's old bare `width:100%` claimed the FULL row
+   inside its <dd>, leaving the ↓ download link (an inline sibling, not
+   part of the audio control) no room — it wrapped to its own line,
+   flush-left with no spacing, looking disconnected from the player (the
+   user, mobile INFO card: "the download button below the play bar ...
+   looks out of place"). .info-play-row makes the <dd> a flex row instead:
+   the player shrinks to leave room for the icon so both sit on one
+   aligned line down to narrow phone widths, and even in the rare case
+   they DO wrap, flex-wrap keeps the gap consistent instead of a bare
+   flush-left glyph. */
+.info-play-row { display: flex; align-items: center; gap: var(--gap-2); flex-wrap: wrap; }
+/* flex-basis:0 (not auto) — flex-wrap decides which items share a line using
+   each item's UNSHRUNK hypothetical size, and <audio controls>'s native
+   intrinsic width (~300px in Chromium) alone exceeds most phone widths, so
+   with an `auto` basis the player always claimed its own line before the ↓
+   link was even considered, wrapping every time regardless of flex-shrink.
+   A 0 basis makes wrap-assignment size it as ~0 so the link joins the same
+   line, then flex-grow:1 hands the player whatever's left. */
+.info-audio { flex: 1 1 0; min-width: 0; max-width: 480px; height: 32px; }
+.info-play-row > a { flex-shrink: 0; }
 /* v1.15.144 / v1.16.1: source-thumbnail primitive — wrapper +
    img split.
    Used by the info card's YouTube + SoundCloud preview blocks
@@ -5207,7 +5226,21 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      priority, drawers, charts) iterates from here. */
   /* Topbar: reclaim the 28px side padding + big gap so the brand | nav | status
      grid has room; let the 7 nav tabs scroll instead of forcing the bar wider. */
-  .topbar { padding: 10px 12px; gap: var(--gap-3); }
+  .topbar { padding: 10px 12px; gap: var(--gap-3); grid-template-columns: auto minmax(24px, 1fr) auto; }
+  /* v0.50.88: .topbar-status is the grid's third `auto` column — with no
+     shrink floor it reported its full max-content width (every visible pill
+     + the op-mini job indicator) as the column's minimum, which could force
+     the whole topbar wider than the viewport. min-width:0 lets the COLUMN
+     shrink, but its flex children (op-mini, the "+N QUEUED" overflow pill,
+     FAIL/DROP/etc.) still don't fit on one line without wrapping — a plain
+     flex row with no wrap just renders the overflow past the box edge
+     instead of respecting it, which was still forcing the whole topbar (and
+     the page) wider than the viewport even after the op-mini mobile caps
+     below (confirmed by measuring .topbar-status's own scrollWidth exceeding
+     its clientWidth). flex-wrap lets a crowded status cluster spill onto a
+     second row inside the topbar instead of off the screen; justify-content
+     keeps it right-aligned on both rows like the single-row default. */
+  .topbar-status { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
   /* On a phone, scroll the nav as a single compact row rather than letting the
      base flex-wrap stack the 7 tabs into a tall multi-row block. */
   .nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
@@ -5249,6 +5282,46 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   }
   .tabs::-webkit-scrollbar { height: 0; }
   .tab { flex-shrink: 0; }
+
+  /* v0.50.88: LOGS/JOBS — the fixed 180px ACTION column + 6 fluid text
+     columns had no floor; on a phone every column shrank to single digits
+     of width and ellipsized down to 1-2 characters (the user: "you can't
+     read anything at all in jobs"). Give rows their natural min-width back
+     and let .jobs-grid (not .jobs-scroll-y, which owns the vertical scroll)
+     supply ONE shared horizontal scroll for header + body together — the
+     v1.22.56 rewrite made the header a plain non-sticky sibling specifically
+     to dodge the old sticky-thead desync bug; this doesn't resurrect that
+     since nothing here is position:sticky and there's still only one scroll
+     surface, not two independently-scrolling ones. */
+  .jobs-grid { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .jobs-grid-row { min-width: 760px; }
+  .jobs-scroll-y { width: max-content; }
+
+  /* v0.50.88: LOGS/EVENT STREAM — TIME(90px)+LEVEL(64px)+COMPONENT(110px)
+     alone ate ~264px of a ~350px mobile content width, leaving MESSAGE a
+     sliver so narrow every word broke one character per line (the user:
+     "you can't read anything at all ... in event stream"). Stack the
+     message on its own full-width row below a compact meta line instead —
+     .event-hint/.event-actions already use this same grid-column:1/-1
+     full-span trick for their own rows. */
+  .event-stream li { grid-template-columns: auto auto 1fr; row-gap: 2px; }
+  .event-msg { grid-column: 1 / -1; }
+
+  /* v0.50.88: the v0.50.86 min-height fix only grows .auth-card when CONTENT
+     exceeds the min(460px,92vw) floor — on mobile the no-error content
+     (~236px) never does, so the card stays a plain circle. The circular safe
+     zone at that circle's size (title+2 fields+button, no error) fits; the
+     SAME circle with the "! Invalid username or password" alert added
+     (~310px of content in a 70%-width column) does not — the rectangle's
+     bottom corners (the SIGN IN button) poke past the chord and get clipped
+     by .auth-card's overflow:hidden (the user: "password box is clipping the
+     circle ... if not worse when password is incorrect"). Measured against
+     an ellipse-corner-containment check across 320-600px viewports, growing
+     ONLY the height (not width — the column width, and thus how the error
+     text wraps, stays put) to min(600px,150vw) clears every width in that
+     range with margin. Scoped to the error state via .auth-card-has-error
+     (login.html) so the no-error circle is unaffected. */
+  .auth-card.auth-card-has-error { min-height: min(600px, 150vw); }
 
   /* v0.50.50: dialogs (// MOTIF INFO, upload, manual URL) go full-screen on a
      phone — the row INFO card especially needs the whole viewport. */

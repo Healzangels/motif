@@ -1994,6 +1994,10 @@
     const drawer = document.getElementById('ops-drawer');
     if (!drawer) return;
     drawer.hidden = false;
+    // v0.50.88: base.html's static aria-hidden="true" was never cleared on
+    // open, so focusing a descendant (e.g. × close) tripped Chrome's
+    // aria-hidden/focus-retention block. Clear it in lockstep with `hidden`.
+    drawer.removeAttribute('aria-hidden');
     // Force layout so the slide-in transition fires.
     void drawer.offsetWidth;
     drawer.classList.add('is-open');
@@ -2019,6 +2023,14 @@
     // v1.20.22: reset expand state so the drawer reopens collapsed.
     state.expandedOpIds.clear();
     document.documentElement.classList.remove('ops-drawer-locked');  // v1.21.30
+    // v0.50.88: re-hiding while a descendant (e.g. the just-clicked ×
+    // button) still has focus trips the SAME aria-hidden/focus warning
+    // openDrawer's removeAttribute above avoids on the way in — move focus
+    // out first, mirroring showModalNoFocusRing's blur-on-open pattern.
+    if (drawer.contains(document.activeElement)) {
+      document.activeElement.blur();
+    }
+    drawer.setAttribute('aria-hidden', 'true');
     drawer.classList.remove('is-open');
     state.drawerOpen = false;
     setTimeout(() => { drawer.hidden = true; }, 280);
