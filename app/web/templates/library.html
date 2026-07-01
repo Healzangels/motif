@@ -685,7 +685,10 @@
      is slow; filter LINK=HL, SELECT ALL, then switch). Iterates the same per-row
      /switch-placement endpoint the SOURCE-menu action uses (edition-scoped via
      rating_key), so no new backend. Reversible per-row via SWITCH TO SIDECAR. #}
-  <button class="btn btn-tiny btn-plex" id="library-switch-to-api-btn" type="button" style="display:none"
+  {# v0.50.84: cyan (lib-source-place_api) to match the per-row SWITCH TO API menu
+     item + the PU LINK chip — the placement kind it produces (the user: keep it
+     consistent with the PLACE row). #}
+  <button class="btn btn-tiny lib-source-place_api" id="library-switch-to-api-btn" type="button" style="display:none"
           title="Switch selected hardlink/copy sidecar placements to Plex API uploads — the theme.mp3 moves into Plex's metadata store. Reversible per-row via SWITCH TO SIDECAR.">// SWITCH TO API</button>
   {# v1.14.27: bulk LET PLEX SERVE for the +P composite filter.
      Visible when the +P SRC pill is active OR when the selection

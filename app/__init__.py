@@ -2365,4 +2365,8 @@
 #   scoped via rating_key) — no new backend, reuses the tested per-row teardown/upload path.
 #   Only file rows are candidates (the endpoint FLIPS file↔api, so a plex_upload row would
 #   flip back). library.html + app.js (bucket + visibility + handler) + new test_v0_50_83.
-__version__ = "0.50.83"
+# 0.50.84: recolor the // SWITCH TO API bulk button cyan (the user — match the PLACE row).
+#   Was amber btn-plex; now lib-source-place_api (cyan), the same class the per-row SWITCH
+#   TO API menu item + the PU LINK chip use — the placement kind the action produces. Mirrors
+#   the bulk ADOPT button's lib-source-adopt idiom. library.html one class swap + test.
+__version__ = "0.50.84"

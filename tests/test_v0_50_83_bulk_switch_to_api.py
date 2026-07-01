@@ -26,10 +26,13 @@ LIB = (REPO / "app" / "web" / "templates" / "library.html").read_text()
 def test_bulk_button_declared():
     assert 'id="library-switch-to-api-btn"' in LIB
     assert "// SWITCH TO API" in LIB
-    assert 'class="btn btn-tiny btn-plex"' in LIB  # Plex-family, like PUSH
-    # hidden until the selection has eligible rows.
     i = LIB.index('id="library-switch-to-api-btn"')
-    assert 'style="display:none"' in LIB[i - 120:i + 120]
+    tag = LIB[i - 160:i + 120]
+    # v0.50.84: cyan (lib-source-place_api) to match the per-row SWITCH TO API menu
+    # item + the PU LINK chip — the placement kind it produces (the user).
+    assert "lib-source-place_api" in tag
+    # hidden until the selection has eligible rows.
+    assert 'style="display:none"' in tag
 
 
 # ── JS wiring ──
