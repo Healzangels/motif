@@ -512,6 +512,9 @@
         <h2 class="ops-drawer-title">// LIVE OPS</h2>
         <button class="ops-drawer-close" type="button" aria-label="Close">×</button>
       </header>
+      {# v0.50.82: persistent hint — the ▸ expand affordance on each op card wasn't
+         obvious (the user). ops.js hides this when there are no ops to expand. #}
+      <p class="ops-drawer-hint" id="ops-drawer-hint">// click an op to expand its run detail</p>
       <div class="ops-drawer-body" id="ops-drawer-body">
         <div class="ops-drawer-empty">// loading…</div>
       </div>

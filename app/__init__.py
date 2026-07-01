@@ -2352,4 +2352,9 @@
 #   Tightened it to "LIVE — real action" (parallels "DRY-RUN — no real action") so BOTH
 #   states fit on one row identically; the downloads+placements detail already lives in the
 #   hint right below. app.js one-liner + guard in test_v1_22_55.
-__version__ = "0.50.81"
+# 0.50.82: LIVE OPS drawer — persistent expand hint (the user: the ▸ affordance on each
+#   op card wasn't obvious). A muted "// click an op to expand its run detail" line sits
+#   between the drawer head and the scrolling body (stays at the top); ops.js hides it when
+#   there are no active/finished cards to expand. base.html + ops.css + ops.js + guard in
+#   test_v1_20_22.
+__version__ = "0.50.82"

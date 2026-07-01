@@ -1302,6 +1302,9 @@
       .slice(0, 3);
     const body = document.getElementById('ops-drawer-body');
     if (!body) return;
+    // v0.50.82: the expand hint only makes sense when there's a card to expand.
+    const hint = document.getElementById('ops-drawer-hint');
+    if (hint) hint.style.display = (active.length || finished.length) ? '' : 'none';
 
     // v1.14.81: per-card render + per-card hash-skip. Pre-fix the
     // entire drawer body re-rendered every poll (1Hz when active),

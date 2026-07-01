@@ -158,6 +158,19 @@ def test_css_expand_rules_present():
     assert ".op-card-timeline-labels > span.has-help { cursor: help; }" in OPS_CSS
 
 
+def test_drawer_expand_hint_present_and_toggled():
+    """v0.50.82: a persistent hint makes the click-to-expand affordance discoverable
+    (the ▸ wasn't obvious — the user). It's hidden when there's nothing to expand."""
+    base = (REPO / "app" / "web" / "templates" / "base.html").read_text()
+    assert 'id="ops-drawer-hint"' in base
+    assert "click an op to expand" in base
+    # ops.js hides the hint when there are no active/finished cards.
+    assert ("hint.style.display = (active.length || finished.length) ? '' : 'none';"
+            in OPS_JS)
+    # the class is styled (real CSS rule, not an invented class).
+    assert ".ops-drawer-hint {" in OPS_CSS
+
+
 def test_v1_20_22_version_pin():
     init_py = (REPO / "app" / "__init__.py").read_text()
     assert '__version__ = "0.' in init_py

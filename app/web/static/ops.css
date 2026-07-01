@@ -391,6 +391,18 @@ body[data-ops-running="1"] #topbar-status-text {
   color: var(--green-bright);
 }
 
+/* v0.50.82: persistent expand hint — sits between the head and the scrolling body
+   so it stays visible at the top (the user: make it discoverable that op cards click
+   to expand). ops.js hides it when there are no cards to expand. */
+.ops-drawer-hint {
+  margin: 0;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--line);
+  color: var(--fg-mute);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+}
+
 .ops-drawer-close {
   background: none;
   border: 0;
