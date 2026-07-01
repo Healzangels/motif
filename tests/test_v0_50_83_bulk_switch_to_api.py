@@ -38,13 +38,18 @@ def test_bulk_button_declared():
 # ── JS wiring ──
 
 def test_count_bucket_predicate():
-    # themed + on a FILE sidecar (media_folder set, not plex_upload) + not in-flight.
+    # on a FILE sidecar (media_folder set, not plex_upload) + not in-flight + has a theme
+    # to target. v0.50.85: uses the per-row SWITCH gate (theme_tmdb present), NOT themedPred
+    # — no upstream_source/plex_orphan exclusion, so SRC=U-on-orphan rows count.
     assert "const switchToApiCount = effectiveCount(" in JS
     idx = JS.index("const switchToApiCount = effectiveCount(")
-    body = JS[idx:idx + 260]
+    body = JS[idx:idx + 320]
     assert "!it.job_in_flight && !!it.media_folder" in body
     assert "it.placement_kind !== 'plex_upload'" in body
-    assert "themedPred(it)" in body
+    assert "!!it.theme_media_type" in body
+    assert "it.theme_tmdb !== null && it.theme_tmdb !== undefined" in body
+    assert "themedPred(it)" not in body
+    assert "plex_orphan" not in body
 
 
 def test_button_visibility_gated_like_push():
@@ -60,10 +65,15 @@ def test_click_handler_loops_per_row_switch_placement_edition_scoped():
     # …reuses the per-row endpoint (no new backend), edition-scoped via rating_key.
     assert "`?rating_key=${encodeURIComponent(c.rk)}`" in JS
     assert "`/api/items/${c.mt}/${c.id}/switch-placement${_qs}`" in JS
-    # same candidate eligibility as the count.
+    # same candidate eligibility as the count (per-row gate: theme_tmdb present, no orphan
+    # exclusion — SRC=U-on-orphan rows switch too).
+    assert ("const hasTheme = it.theme_media_type\n"
+            "                         && it.theme_tmdb !== null\n"
+            "                         && it.theme_tmdb !== undefined;" in JS)
     assert ("const onFileSidecar = !it.job_in_flight\n"
             "                              && !!it.media_folder\n"
             "                              && it.placement_kind !== 'plex_upload';" in JS)
+    assert "if (onFileSidecar && hasTheme) {" in JS
     # confirmed before firing; progress label like the PUSH bulk button.
     assert "if (!confirm(lines.join('\\n'))) return;" in JS
     assert "`// SWITCHING ${i + 1}/${candidates.length}`" in JS
@@ -73,17 +83,17 @@ def test_click_handler_loops_per_row_switch_placement_edition_scoped():
 
 def _run(js_body):
     quickjs = pytest.importorskip("quickjs")
+    # v0.50.85: per-row SWITCH gate — file-placed + a theme to target, NO orphan exclusion.
     return json.loads(quickjs.Context().eval(
-        "function themedPred(it){ return it.theme_media_type"
-        " && it.theme_tmdb !== null && it.theme_tmdb !== undefined"
-        " && it.upstream_source !== 'plex_orphan'; }\n"
         "function eligible(it){ return !it.job_in_flight && !!it.media_folder"
-        " && it.placement_kind !== 'plex_upload' && themedPred(it); }\n"
+        " && it.placement_kind !== 'plex_upload'"
+        " && !!it.theme_media_type"
+        " && it.theme_tmdb !== null && it.theme_tmdb !== undefined; }\n"
         + js_body
     ))
 
 
-def test_eligibility_only_matches_file_sidecar_themed_rows():
+def test_eligibility_matches_any_file_sidecar_themed_row():
     rows = (
         "var rows = ["
         "{theme_media_type:'movie', theme_tmdb:1, media_folder:'/x', placement_kind:'hardlink'},"   # HL themed
@@ -92,10 +102,10 @@ def test_eligibility_only_matches_file_sidecar_themed_rows():
         "{theme_media_type:null, theme_tmdb:null, media_folder:'/x', placement_kind:'hardlink'},"    # unthemed
         "{theme_media_type:'movie', theme_tmdb:4, media_folder:'/x', placement_kind:'hardlink', job_in_flight:'place'},"  # busy
         "{theme_media_type:'movie', theme_tmdb:5, media_folder:null, placement_kind:null},"          # unplaced
-        "{theme_media_type:'movie', theme_tmdb:6, media_folder:'/x', placement_kind:'hardlink', upstream_source:'plex_orphan'}"  # orphan
+        "{theme_media_type:'movie', theme_tmdb:6, media_folder:'/x', placement_kind:'hardlink', upstream_source:'plex_orphan'}"  # SRC=U on an orphan
         "];\n"
     )
-    # coerce to strict booleans — JS `&&` returns the last operand (a falsy null for the
-    # unthemed row), which app.js consumes in a boolean `if`/count context.
+    # v0.50.85: the LAST row (SRC=U sitting on a plex_orphan theme) is now ELIGIBLE — the
+    # bug the user hit: it was wrongly excluded by themedPred's orphan arm.
     out = _run(rows + "JSON.stringify(rows.map(function(it){ return !!eligible(it); }));")
-    assert out == [True, True, False, False, False, False, False]
+    assert out == [True, True, False, False, False, False, True]

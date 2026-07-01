@@ -2369,4 +2369,11 @@
 #   Was amber btn-plex; now lib-source-place_api (cyan), the same class the per-row SWITCH
 #   TO API menu item + the PU LINK chip use — the placement kind the action produces. Mirrors
 #   the bulk ADOPT button's lib-source-adopt idiom. library.html one class swap + test.
-__version__ = "0.50.84"
+# 0.50.85: bulk SWITCH TO API now offers SRC=U (and any HL/copy) rows (the user — testing
+#   found U rows weren't presented/switchable). Cause: the v0.50.83 eligibility used
+#   themedPred, whose `upstream_source !== 'plex_orphan'` arm (a PUSH-specific exclusion)
+#   dropped SRC=U rows sitting on a plex_orphan theme (api.py:590 — an orphan row can carry
+#   a user URL). Fix: gate on the SAME condition the per-row SWITCH uses (theme_tmdb + theme_
+#   media_type present) — any SRC (T/U/A/M) that's HL/copy is now switchable. Count bucket +
+#   handler predicate both updated (kept identical) + test_v0_50_83 (orphan row now eligible).
+__version__ = "0.50.85"

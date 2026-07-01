@@ -11870,16 +11870,20 @@
               && it.placement_kind !== 'plex_upload'
               && themedPred(it)
     );
-    // v0.50.83: bulk SWITCH TO API — themed rows placed via a FILE sidecar (hardlink
+    // v0.50.83: bulk SWITCH TO API — ANY themed row placed via a FILE sidecar (hardlink
     // /copy: media_folder set, NOT the plex_upload sentinel media_folder=''), not in
     // flight. The per-row /switch-placement FLIPS file↔api, so we only offer rows
-    // currently on file — the flip then goes file→api (the user: bulk the HL→API
-    // switch instead of the per-row SOURCE menu). Mirrors the canonical `placed`
-    // predicate minus the plex_upload arm.
+    // currently on file — the flip then goes file→api (the user: bulk the HL/copy→API
+    // switch instead of the per-row SOURCE menu).
+    // v0.50.85: gate on the per-row SWITCH condition (theme_tmdb present) — NOT themedPred.
+    // themedPred's `upstream_source !== 'plex_orphan'` arm is PUSH-specific and wrongly
+    // dropped SRC=U rows sitting on a plex_orphan theme (api.py:590 — an orphan row can
+    // carry a user URL). Any SRC (T/U/A/M) that's HL/copy should be switchable (the user).
     const switchToApiCount = effectiveCount(
       (it) => !it.job_in_flight && !!it.media_folder
               && it.placement_kind !== 'plex_upload'
-              && themedPred(it)
+              && !!it.theme_media_type
+              && it.theme_tmdb !== null && it.theme_tmdb !== undefined
     );
     const revertCount = effectiveCount(
       (it) => it.mismatch_state === 'pending'
@@ -14000,14 +14004,15 @@
         : (libraryState.items || []);
       for (const it of source) {
         const key = libKey(it);
-        const themed = (it.theme_media_type
-                        && it.theme_tmdb !== null
-                        && it.theme_tmdb !== undefined
-                        && it.upstream_source !== 'plex_orphan');
+        // v0.50.85: match the per-row SWITCH gate (theme_tmdb present) — NOT the PUSH
+        // themed check; its plex_orphan exclusion wrongly dropped SRC=U rows on an orphan.
+        const hasTheme = it.theme_media_type
+                         && it.theme_tmdb !== null
+                         && it.theme_tmdb !== undefined;
         const onFileSidecar = !it.job_in_flight
                               && !!it.media_folder
                               && it.placement_kind !== 'plex_upload';
-        if (onFileSidecar && themed) {
+        if (onFileSidecar && hasTheme) {
           // rk scopes the flip to THIS edition (v1.21.69), matching the per-row btn.
           candidates.push({ mt: it.theme_media_type, id: it.theme_tmdb,
                             title: it.plex_title || '', rk: it.rating_key });
