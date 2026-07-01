@@ -50,7 +50,9 @@ def test_app_unions_optimistic_so_busy_isnt_stripped_in_the_gap():
     live, so the ~1.1s /api/stats gap doesn't flicker the wave off."""
     assert "window.motifOps.hasOptimistic()" in APP_JS
     assert "const heroBusy = anyMutatingOpActive || _optimisticBusy;" in APP_JS
-    assert "_root.classList.toggle('motif-busy', heroBusy);" in APP_JS
+    # v0.50.73: the busy state is driven through the ramp (target = level or 0),
+    # which owns the motif-busy class + data-busy-level.
+    assert "_rampWaveLevel(heroBusy ? _busyLevel : 0);" in APP_JS
 
 
 # ── 2. Intensity level scales with queue depth, capped (v0.50.71: at 4) ──
@@ -69,9 +71,10 @@ def test_busy_level_is_capped_at_4():
     # v0.50.71: 4 tiers now (>=6 → 4 for sync + refresh + a queue), still capped.
     assert ("const _busyLevel = _busyScore >= 6 ? 4\n"
             "        : _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;" in APP_JS)
-    # the level is published as a data attribute the CSS keys off.
-    assert "_root.setAttribute('data-busy-level', String(_busyLevel));" in APP_JS
-    assert "_root.removeAttribute('data-busy-level');" in APP_JS
+    # v0.50.73: the level reaches the DOM via the ramp (String(_waveDisplayed)),
+    # which sets data-busy-level per step + removes it at idle.
+    assert "root.setAttribute('data-busy-level', String(_waveDisplayed));" in APP_JS
+    assert "root.removeAttribute('data-busy-level');" in APP_JS
 
 
 def test_css_levels_escalate_monotonically_and_cap():

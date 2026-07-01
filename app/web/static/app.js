@@ -645,6 +645,35 @@
   // placeholder directly so the topbar mini-bar still surfaces
   // a // REFRESHING PLEX pill on click instead of waiting for
   // the next 10s /api/progress poll.
+  // v0.50.73: hero-wave intensity RAMP. _waveDisplayed chases the target level
+  // (set by refreshTopbarStatus) ONE step per ~380ms, so the wave swells + settles
+  // smoothly instead of spiking to L3/L4 the instant a burst of jobs is enqueued
+  // (the user — "should have a natural increase ... right now it jumps"). Init from
+  // the DOM so a nav-restored level (base.html v0.50.71) doesn't ramp from idle on
+  // load. The CSS opacity/scaleY transitions (v0.50.67) ease each step's brightness
+  // + height; only the discrete animation-duration steps per level.
+  let _waveDisplayed = (parseInt(
+    document.documentElement.getAttribute('data-busy-level'), 10) || 0);
+  let _waveRampTimer = null;
+  function _rampWaveLevel(target) {
+    const root = document.documentElement;
+    if (_waveRampTimer) { clearTimeout(_waveRampTimer); _waveRampTimer = null; }
+    const step = () => {
+      if (_waveDisplayed === target) return;
+      _waveDisplayed += target > _waveDisplayed ? 1 : -1;
+      if (_waveDisplayed <= 0) {
+        _waveDisplayed = 0;
+        root.classList.remove('motif-busy');
+        root.removeAttribute('data-busy-level');
+      } else {
+        root.classList.add('motif-busy');
+        root.setAttribute('data-busy-level', String(_waveDisplayed));
+      }
+      if (_waveDisplayed !== target) _waveRampTimer = setTimeout(step, 380);
+    };
+    step();
+  }
+
   // v1.12.118: legacy paintTopbarSyncing retired with the dot+text.
   // Click feedback is now handled by triggering motifOps.refresh()
   // immediately so the new op-mini bar appears within a tick, plus
@@ -1375,15 +1404,16 @@
       // via a more-visible SECOND wave layer, not just more speed.
       const _busyLevel = _busyScore >= 6 ? 4
         : _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;
-      const _root = document.documentElement;
-      _root.classList.toggle('motif-busy', heroBusy);
-      if (heroBusy) _root.setAttribute('data-busy-level', String(_busyLevel));
-      else _root.removeAttribute('data-busy-level');
-      // v0.50.71: persist the busy level PER-TAB so a page loaded DURING an
-      // active op paints the busy wave immediately (base.html restores it pre-
+      // v0.50.73: ease the wave toward its target level (one step at a time via
+      // _rampWaveLevel) instead of snapping — kicking off several jobs at once
+      // used to spike the wave straight to L3/L4, jarring (the user). 0 = idle.
+      _rampWaveLevel(heroBusy ? _busyLevel : 0);
+      // v0.50.71: persist the TARGET busy level PER-TAB so a page loaded DURING
+      // an active op paints the busy wave immediately (base.html restores it pre-
       // paint) instead of idle-then-flip on nav (the user — tv→dashboard showed
-      // the slow wave then jumped to fast). sessionStorage is the right scope
-      // (survives within-tab nav, not cross-tab — v1.18.84).
+      // the slow wave then jumped to fast). Restore SNAPS to the target (no ramp);
+      // the ramp is only for live changes within a page. sessionStorage is the
+      // right scope (survives within-tab nav, not cross-tab — v1.18.84).
       try {
         if (heroBusy) sessionStorage.setItem('motif:busy', String(_busyLevel));
         else sessionStorage.removeItem('motif:busy');

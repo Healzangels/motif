@@ -2269,4 +2269,10 @@
 #   "no catalog changes (6,201 ThemerrDB themes checked)" so it's clear the number
 #   grows with ThemerrDB, not with matches in the motif library. api.py + app.js +
 #   dashboard.html + worker.py.
-__version__ = "0.50.72"
+# 0.50.73: hero-wave intensity now RAMPS instead of spiking (the user — "should have a
+#   natural increase ... right now it jumps or spikes ... jarring when kicking off a few
+#   jobs"). refreshTopbarStatus sets a TARGET level; _rampWaveLevel steps the DISPLAYED
+#   level toward it one at a time (~380ms/step), so idle→L4 swells over ~1.5s + winds
+#   down the same way, instead of snapping. _waveDisplayed inits from the DOM so a nav-
+#   restored level (v0.50.71) still snaps (no ramp-from-idle on load). app.js only.
+__version__ = "0.50.73"

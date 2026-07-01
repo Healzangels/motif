@@ -106,7 +106,9 @@ def test_brand_eq_is_now_calm_no_reactivity():
 
 
 def test_js_toggles_motif_busy_on_root_from_activity_signal():
-    # v0.50.68: the toggle now keys off heroBusy (anyMutatingOpActive unioned with
-    # the click-time optimistic signal) on the cached root element.
-    assert "const _root = document.documentElement;" in APP_JS
-    assert "_root.classList.toggle('motif-busy', heroBusy);" in APP_JS
+    # v0.50.68: keys off heroBusy (anyMutatingOpActive ∪ the click-time optimistic
+    # signal). v0.50.73: driven through _rampWaveLevel, which adds/removes the
+    # motif-busy class on documentElement as it steps toward the target.
+    assert "_rampWaveLevel(heroBusy ? _busyLevel : 0);" in APP_JS
+    assert "root.classList.add('motif-busy');" in APP_JS
+    assert "root.classList.remove('motif-busy');" in APP_JS
