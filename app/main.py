@@ -318,6 +318,23 @@ def main() -> int:
     except Exception as e:
         log.warning("edition-coverage backfill skipped: %s", e)
 
+    # v0.50.90: auto-resolve imdb-bearing orphans on boot when a TMDB key is
+    # present. Orphans minted before a key was configured (or before the key
+    # resolved) otherwise stay "tmdb: orphan" forever — the de-orphan walker
+    # was manual-only (a hidden admin POST). Fire-and-forget on a daemon
+    # thread so boot isn't blocked by the TMDB round-trips; the walker is
+    # idempotent (re-keyed rows drop out of its selection) and no-ops fast
+    # when there's nothing to resolve. Defensive per class-9 — never block
+    # boot on it.
+    try:
+        from .core.deorphan import resolve_orphans_in_background
+        if settings.tmdb_api_key:
+            resolve_orphans_in_background(
+                settings.db_path, api_key=settings.tmdb_api_key,
+                trigger="boot")
+    except Exception as e:
+        log.warning("deorphan boot resolution skipped: %s", e)
+
     # v1.12.113: zombie running-job sweep. If a previous motif process
     # died mid-job (SIGKILL, OOM, container crash), jobs.status='running'
     # rows survive — but the worker thread that owned them is gone. Pre-fix

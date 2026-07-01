@@ -207,7 +207,9 @@
           <p class="form-hint">
             Optional. Resolves orphan theme.mp3 files during scans when no
             .nfo sidecar exists. Without a key, unresolved orphans get a
-            synthetic ID. Free at
+            synthetic ID. Adding a valid key re-resolves existing orphans
+            automatically in the background (any whose IMDB id TMDB
+            cross-references get their real TMDB id). Free at
             <a href="https://www.themoviedb.org/settings/api" target="_blank" rel="noopener">themoviedb.org/settings/api</a>
             — request a v3 API Key, paste here. Empty value preserves the
             existing key.

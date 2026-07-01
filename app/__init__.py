@@ -2427,7 +2427,20 @@
 #   straddled by a restart still runs; downloader truncation + tmdb search-confidence scoped with
 #   documenting comments (deliberate tradeoffs); orphaned /scans client JS surface (354 lines)
 #   removed. New test files test_v0_50_89_audit_batch{1..7}; several stale source-pins updated.
-__version__ = "0.50.89"
+# 0.50.90: auto-resolve imdb-bearing orphans when a TMDB key is present (the user:
+#   "my key is valid + TMDB has the movie but the row still shows tmdb: orphan").
+#   Root cause: the v1.22.49 de-orphan re-key walker was manual-only (a hidden
+#   admin POST defaulting to dry_run), so orphans minted BEFORE a key was
+#   configured never got re-keyed — a valid key didn't fix them retroactively.
+#   New deorphan.resolve_orphans_in_background() fires the NON-destructive re-key
+#   walker on a daemon thread (single-flight lock, no-ops fast when nothing to
+#   resolve) from three triggers: boot (key present), a config save that sets the
+#   TMDB key, and a TEST KEY that validates. The destructive collision-merge
+#   stays manual. settings.html hint now says orphans re-resolve automatically.
+#   NOTE: a specific row only resolves if TMDB's /find cross-references its IMDB
+#   id — rows TMDB doesn't link stay orphan (logged as no_tmdb_match). New
+#   test_v0_50_90_deorphan_autoresolve.
+__version__ = "0.50.90"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

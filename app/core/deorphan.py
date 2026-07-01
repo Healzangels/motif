@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import threading
 import time as _time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,11 @@ from .db import get_conn, transaction
 from .events import log_event
 
 log = logging.getLogger(__name__)
+
+# v0.50.90: single-flight guard for the auto-triggered background resolution
+# (boot + TMDB-key save/test). A non-blocking acquire means overlapping triggers
+# collapse to one run instead of stacking N concurrent TMDB sweeps.
+_RESOLVE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -237,6 +243,69 @@ def deorphan_imdb_resolvable(
                 f"{rep.no_tmdb_match} unresolved, {rep.errors} errors)."),
         )
     return rep
+
+
+def _has_resolvable_orphans(db_path: Path) -> bool:
+    """Cheap indexed check: is there at least one plex_orphan theme with a
+    synthetic negative tmdb_id AND an imdb_id? Lets every auto-trigger short-
+    circuit to a no-op when there's nothing to resolve."""
+    try:
+        with get_conn(db_path) as conn:
+            return conn.execute(
+                "SELECT 1 FROM themes WHERE upstream_source = 'plex_orphan' "
+                "  AND tmdb_id < 0 AND imdb_id IS NOT NULL AND imdb_id != '' "
+                "LIMIT 1"
+            ).fetchone() is not None
+    except Exception as e:  # noqa: BLE001
+        log.warning("deorphan: orphan-presence check failed: %s", e)
+        return False
+
+
+def resolve_orphans_in_background(
+    db_path: Path, *, api_key: str, trigger: str,
+) -> bool:
+    """v0.50.90: fire-and-forget the imdb→tmdb re-key walker on a daemon
+    thread. Called when a valid TMDB key lands (config save / TEST KEY) and
+    once per boot when a key is present, so orphans that were minted before a
+    key existed self-heal without a manual admin POST.
+
+    Non-destructive: runs ONLY the re-key walker (deorphan_imdb_resolvable),
+    never the destructive collision-merge (that stays manual). Single-flight
+    via _RESOLVE_LOCK so overlapping triggers don't stack. Returns True if a
+    run was actually started, False if it was skipped (no key, no orphans, or
+    a run already in flight)."""
+    if not api_key:
+        return False
+    if not _has_resolvable_orphans(db_path):
+        return False
+    if not _RESOLVE_LOCK.acquire(blocking=False):
+        log.info("deorphan: a resolution pass is already running; %s "
+                 "trigger skipped", trigger)
+        return False
+
+    def _work() -> None:
+        try:
+            from .tmdb import TMDBClient
+            rep = deorphan_imdb_resolvable(
+                db_path, TMDBClient(api_key, db_path), dry_run=False)
+            log.info(
+                "deorphan(%s): re-keyed %d/%d orphan(s) "
+                "(unresolved %d, collisions %d, errors %d)",
+                trigger, rep.rekeyed, rep.scanned, rep.no_tmdb_match,
+                rep.skipped_collision, rep.errors)
+        except Exception as e:  # noqa: BLE001
+            log.warning("deorphan background resolution failed (%s): %s",
+                        trigger, e)
+        finally:
+            _RESOLVE_LOCK.release()
+
+    t = threading.Thread(target=_work, name="deorphan-resolve", daemon=True)
+    try:
+        t.start()
+    except Exception:
+        _RESOLVE_LOCK.release()
+        raise
+    return True
 
 
 # v1.24.15 (holistic review): amplifier-sweep abort cap for the destructive

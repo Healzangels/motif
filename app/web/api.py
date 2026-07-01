@@ -9953,6 +9953,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   message=f"Config saved by {request.state.principal.username}",
                   detail={"changed_top_keys": sorted(body.keys())})
 
+        # v0.50.90: if this save set/changed the TMDB key, kick the background
+        # orphan re-key so a newly-configured key retroactively resolves the
+        # "tmdb: orphan" rows minted before it existed (the walker no-ops fast
+        # when there's nothing to resolve).
+        if (isinstance(body.get("plex"), dict)
+                and "tmdb_api_key" in body["plex"]
+                and settings.tmdb_api_key):
+            try:
+                from ..core.deorphan import resolve_orphans_in_background
+                resolve_orphans_in_background(
+                    db, api_key=settings.tmdb_api_key, trigger="config_save")
+            except Exception as e:
+                log.warning("deorphan trigger (config_save) skipped: %s", e)
+
         # Return the updated config with masking applied
         return await api_get_config(request)
 
@@ -10224,6 +10238,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (class-12 event-loop-block — the v1.22.58 lint missed it because the
         # blocking-method set is derived only from PlexClient).
         ok, msg = await run_in_threadpool(client.test_credentials)
+        # v0.50.90: a freshly-validated key can retroactively resolve orphans
+        # minted before a key existed. Fire the background re-key walker with
+        # the key that just tested valid (works even if it isn't saved yet).
+        if ok:
+            try:
+                from ..core.deorphan import resolve_orphans_in_background
+                resolve_orphans_in_background(db, api_key=key, trigger="tmdb_test")
+            except Exception as e:
+                log.warning("deorphan trigger (tmdb_test) skipped: %s", e)
         return {"ok": ok, "message": msg}
 
     # --- Storage waste / relink ---
