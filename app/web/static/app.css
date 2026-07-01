@@ -1,6 +1,51 @@
 /* motif · homelab terminal aesthetic
    phosphor green primary, amber accents, dark void background */
 
+/* v0.50.95: self-hosted fonts (latin subset), served same-origin from
+   /static/fonts. Replaces the external Google Fonts <link> (render-blocking +
+   display=swap → the top row FOUT-reflowed 30-85px on every navigation when the
+   font cache was cold, e.g. DevTools "Disable cache" — the user: "a filter on the
+   top row and a size change in the top bar"). Same-origin + preloaded (base.html)
+   → the branded font is painted on the first frame, no swap reflow. Also drops the
+   external Google dependency (privacy/offline) for a self-hosted, Authentik-gated
+   app. Only the weights actually used are bundled (VT323 400; JetBrains Mono
+   400/500/600/700 — 300 was requested from Google but never used in CSS). */
+@font-face {
+  font-family: 'VT323';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/static/fonts/vt323-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-400.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-500.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-600.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/static/fonts/jetbrains-mono-700.woff2') format('woff2');
+}
+
 :root {
   --bg: #0a0d0c;
   --bg-elev: #111614;

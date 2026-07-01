@@ -2501,7 +2501,23 @@
 #   accent guard strengthened from a substring check to a real standalone-rule +
 #   not-swallowed-by-@media assertion (the old guard passed on the broken CSS). CSS
 #   + test only.
-__version__ = "0.50.94"
+# 0.50.95: self-host the web fonts; drop external Google Fonts. Investigating the
+#   user's "navigating to LOGS I notice a filter on the top row + a size change in
+#   the top bar" (desktop, no job): rendered the real pages + measured — the topbar
+#   AND hero are pixel-identical across pages (no per-page layout change). The real
+#   cause is a FONT FOUT: all 3 families loaded from fonts.googleapis.com render-
+#   blocking + display=swap, so on any cold-cache nav (e.g. DevTools "Disable cache",
+#   which the user had on) the top row painted in the monospace fallback then
+#   REFLOWED when VT323/JetBrains Mono swapped in — measured 30-85px horizontally
+#   (hero title 242px VT323 vs 327px fallback; heights unchanged, which is why it
+#   read as subtle). Fix: bundle the latin woff2 (VT323 400; JetBrains Mono 400/500/
+#   600/700 — 300 requested-but-unused, dropped) in /static/fonts, @font-face in
+#   app.css, preload the 2 first-paint fonts in base.html (href byte-matches the src
+#   so no double-fetch), remove the Google <link>+preconnects. Same-origin+preloaded
+#   → branded font on the first frame, no swap reflow; also kills the external
+#   dependency (privacy/offline) for a self-hosted Authentik-gated app. New
+#   test_v0_50_95. base.html + app.css + 5 woff2, no JS.
+__version__ = "0.50.95"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

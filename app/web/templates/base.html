@@ -14,9 +14,14 @@
      awkwardness and works offline. Cache-busted via motif_version. #}
   <link rel="icon" type="image/png" href="/static/icon.png?v={{ motif_version }}" />
   <link rel="apple-touch-icon" type="image/png" href="/static/icon.png?v={{ motif_version }}" />
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=VT323&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  {# v0.50.95: fonts are self-hosted (@font-face in app.css, files in
+     /static/fonts) — no external Google Fonts fetch. Preload the two the first
+     paint needs (JetBrains Mono 400 = body, VT323 = brand/nav/hero) so the
+     branded font is ready before render → no FOUT reflow of the top row. hrefs
+     MUST match the @font-face src exactly (no ?v=) or the preload double-fetches.
+     crossorigin is required on font preloads even same-origin. #}
+  <link rel="preload" as="font" type="font/woff2" href="/static/fonts/jetbrains-mono-400.woff2" crossorigin>
+  <link rel="preload" as="font" type="font/woff2" href="/static/fonts/vt323-400.woff2" crossorigin>
   <link rel="stylesheet" href="/static/app.css?v={{ motif_version }}" />
   <link rel="stylesheet" href="/static/ops.css?v={{ motif_version }}" />
   {# v1.15.64: SSR settings-tab. Reads window.location.hash pre-paint
