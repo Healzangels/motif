@@ -655,13 +655,21 @@
          {% if not _ssr_dash.has_source_breakdown %}style="display:none"{% endif %}>
   <header class="block-head">
     <h2 class="block-title">// SOURCE BREAKDOWN</h2>
-    <span class="muted small">by library · click a legend item to hide it</span>
+    {# v0.50.77: the restore span is NESTED in the note so .block-head's space-between
+       keeps the whole note right-aligned (a sibling span would scatter the 3 children).
+       renderAllSourcePies fills it with a chip per hidden chart; empty → display:none. #}
+    <span class="muted small">by library · click a legend item to hide it<span
+          id="source-pie-restore" style="display:none"></span></span>
   </header>
   {# v0.50.74: data-visible seeds the grid column count pre-JS; renderAllSourcePies
      corrects it (+ hides empty-scope cols) on the first /api/stats tick. #}
   <div class="source-pie-row" data-visible="4">
     <div class="source-pie-col" id="source-pie-total-col">
-      <div class="source-pie-col-label">// TOTAL</div>
+      <div class="source-pie-col-label">
+        <span class="source-pie-col-name">// TOTAL</span>
+        <button type="button" class="source-pie-hide" data-donut="total"
+                title="Hide this chart" aria-label="Hide the TOTAL chart">// HIDE</button>
+      </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — total">
           <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
@@ -674,7 +682,11 @@
       <div class="source-breakdown-legend" id="source-pie-total-legend"></div>
     </div>
     <div class="source-pie-col" id="source-pie-movies-col">
-      <div class="source-pie-col-label">// MOVIES</div>
+      <div class="source-pie-col-label">
+        <span class="source-pie-col-name">// MOVIES</span>
+        <button type="button" class="source-pie-hide" data-donut="movies"
+                title="Hide this chart" aria-label="Hide the MOVIES chart">// HIDE</button>
+      </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — movies">
           <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
@@ -687,7 +699,11 @@
       <div class="source-breakdown-legend" id="source-pie-movies-legend"></div>
     </div>
     <div class="source-pie-col" id="source-pie-tv-col">
-      <div class="source-pie-col-label">// TV</div>
+      <div class="source-pie-col-label">
+        <span class="source-pie-col-name">// TV</span>
+        <button type="button" class="source-pie-hide" data-donut="tv"
+                title="Hide this chart" aria-label="Hide the TV chart">// HIDE</button>
+      </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — tv">
           <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>
@@ -702,7 +718,12 @@
     {# v0.50.74: 4th donut — ANIME (split off TV via is_anime). renderAllSourcePies
        hides this col when there's no anime library so the row fills with the rest. #}
     <div class="source-pie-col" id="source-pie-anime-col">
-      <div class="source-pie-col-label">// ANIME</div>
+      <div class="source-pie-col-label">
+        <span class="source-pie-col-name">// ANIME</span>
+        <button type="button" class="source-pie-hide" data-donut="anime"
+                title="Hide this chart (folds anime into the TV chart)"
+                aria-label="Hide the ANIME chart">// HIDE</button>
+      </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — anime">
           <circle class="source-pie-ring" cx="21" cy="21" r="15.915"></circle>

@@ -2475,6 +2475,12 @@
   let _moviesPieHidden = _seedIndependentSet(_MOVIES_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY);
   let _tvPieHidden = _seedIndependentSet(_TV_PIE_HIDE_KEY, _SOURCE_PIE_HIDE_KEY);
   let _animePieHidden = _loadHiddenSet(_ANIME_PIE_HIDE_KEY);
+  // v0.50.77: per-CHART hide (the user — each donut has its own // HIDE button so you
+  // can drop one/two/three and the survivors resize to fill the arena). A Set of the
+  // donut ids the user hid, persisted per-browser. Distinct from the per-donut
+  // hidden-LETTER sets above (which dim a legend wedge, not the whole chart).
+  const _CHART_HIDDEN_KEY = 'motif:dash:src-charts-hidden';
+  let _chartHidden = _loadHiddenSet(_CHART_HIDDEN_KEY);
   // v0.50.74: no-theme (–) UNCHECKED by default on every donut (the user — the –
   // wedge dominates + isn't actionable at a glance). One-time per browser: add '–'
   // to each donut's hidden set (idempotent via a marker) so it applies to existing
@@ -2619,12 +2625,50 @@
     { id: 'anime', scopeFn: (r) => !!r.is_anime,
       hiddenSet: _animePieHidden, cache: 'anime_key', key: _ANIME_PIE_HIDE_KEY },
   ];
+  // v0.50.77: when the ANIME chart isn't shown as its own donut — either the user
+  // hid it or there's no anime library — fold anime INTO the TV chart so it's still
+  // tracked there (the user: "if you didn't want to display anime as its own chart
+  // you could still track it in the TV chart, but if anime is showing then each just
+  // shows its given library"). Only the TV scope is dynamic; the others are static.
+  function _animeShown(rows) {
+    if (_chartHidden.has('anime')) return false;
+    return rows.reduce((a, r) => a + (r.is_anime ? (r.count || 0) : 0), 0) > 0;
+  }
+  function _scopeFor(d, rows) {
+    if (d.id !== 'tv') return d.scopeFn;
+    return _animeShown(rows)
+      ? (r) => r.media_type === 'show' && !r.is_anime      // anime split into its own
+      : (r) => r.media_type === 'show' || !!r.is_anime;    // anime folded into TV
+  }
+  function _donutHasData(d, rows) {
+    if (d.id === 'total') return rows.some((r) => (r.count || 0) > 0);
+    const sc = _scopeFor(d, rows);
+    return rows.filter(sc).reduce((a, r) => a + (r.count || 0), 0) > 0;
+  }
   function _renderOneDonut(d, rows) {
     _renderSourcePie(rows, {
       blockId: `source-pie-${d.id}-col`, slicesId: `source-pie-${d.id}-slices`,
       legendId: `source-pie-${d.id}-legend`, centerNumId: `source-pie-${d.id}-num`,
-      scopeFn: d.scopeFn, lastKeyKey: d.cache, hiddenSet: d.hiddenSet,
+      scopeFn: _scopeFor(d, rows), lastKeyKey: d.cache, hiddenSet: d.hiddenSet,
     });
+  }
+  // v0.50.77: the restore strip in the section header — a chip per USER-hidden chart
+  // (that still has data) so hidden charts can be brought back. Only user-hides get a
+  // chip; an empty-scope auto-hide has nothing to restore.
+  function _renderChartRestore(rows) {
+    const el = document.getElementById('source-pie-restore');
+    if (!el) return;
+    const hidden = _SOURCE_DONUTS.filter(
+      (d) => _chartHidden.has(d.id) && _donutHasData(d, rows));
+    const html = hidden.length
+      ? ' · show: ' + hidden.map((d) =>
+        `<button type="button" class="source-pie-restore-chip" data-donut="${d.id}">`
+        + `${d.id.toUpperCase()}</button>`).join(' ')
+      : '';
+    if (el.dataset.lastHtml === html) return;  // skip the DOM swap on unchanged polls
+    el.dataset.lastHtml = html;
+    el.innerHTML = html;
+    el.style.display = hidden.length ? '' : 'none';
   }
   function renderAllSourcePies(rows) {
     _pieState.all_rows = rows;
@@ -2632,16 +2676,22 @@
     if (section) {
       section.style.display = rows.some((r) => (r.count || 0) > 0) ? '' : 'none';
     }
-    // v0.50.74: dynamically fill the arena — a donut with 0 items in its scope is
-    // hidden, and .source-pie-row[data-visible=N] drives the grid so the survivors
-    // grow to fill the row (4→1 across desktop; 2-per-row on mobile). Total always
-    // shows when the section does (it's the whole feed).
+    // v0.50.74: dynamically fill the arena — a donut is hidden when its scope has 0
+    // items OR (v0.50.77) the user hid it via its // HIDE button; .source-pie-row
+    // [data-visible=N] drives the grid so the survivors grow to fill the row (4→1
+    // across desktop; 2-per-row on mobile).
+    // v0.50.77: relabel the TV card when anime is folded into it, so the merge reads.
+    const tvName = document.querySelector('#source-pie-tv-col .source-pie-col-name');
+    if (tvName) tvName.textContent = _animeShown(rows) ? '// TV' : '// TV + ANIME';
+    // safety: never let a corrupt/stale hidden-set blank the whole arena — if every
+    // chart with data is user-hidden, un-hide TOTAL so there's always one chart.
+    if (!_SOURCE_DONUTS.some((d) => !_chartHidden.has(d.id) && _donutHasData(d, rows))) {
+      _chartHidden.delete('total');
+    }
     let visible = 0;
     let lastVisibleCol = null;
     for (const d of _SOURCE_DONUTS) {
-      const scoped = d.scopeFn ? rows.filter(d.scopeFn) : rows;
-      const total = scoped.reduce((a, r) => a + (r.count || 0), 0);
-      const show = d.id === 'total' || total > 0;
+      const show = _donutHasData(d, rows) && !_chartHidden.has(d.id);
       const col = document.getElementById(`source-pie-${d.id}-col`);
       if (col) {
         col.style.display = show ? '' : 'none';
@@ -2655,6 +2705,7 @@
     if (lastVisibleCol) lastVisibleCol.classList.add('is-last-visible');
     const row = document.querySelector('#source-breakdown-block .source-pie-row');
     if (row) row.setAttribute('data-visible', String(visible));
+    _renderChartRestore(rows);
   }
 
   // v1.24.56: // GENERAL STATISTICS — per-library source split. Pivots the same
@@ -2734,6 +2785,31 @@
     _persistHiddenSet(d.key, d.hiddenSet);
     _pieState[d.cache] = '';  // re-render only the clicked donut
     _renderOneDonut(d, _pieState.all_rows || []);
+  });
+
+  // v0.50.77: per-chart // HIDE button (drop a donut from the arena) + the header
+  // restore chips (bring one back). Hiding a chart resizes the survivors; the LAST
+  // visible chart can't be hidden (there must always be one). A full re-render
+  // recomputes the arena, the anime→TV fold, and the restore strip.
+  document.addEventListener('click', (ev) => {
+    const hideBtn = ev.target.closest('.source-pie-hide');
+    const showChip = ev.target.closest('.source-pie-restore-chip');
+    if (!hideBtn && !showChip) return;
+    const rows = _pieState.all_rows || [];
+    if (hideBtn) {
+      const id = hideBtn.dataset.donut;
+      if (!id) return;
+      const visibleNow = _SOURCE_DONUTS.filter(
+        (d) => !_chartHidden.has(d.id) && _donutHasData(d, rows));
+      if (visibleNow.length <= 1) return;  // keep at least one chart
+      _chartHidden.add(id);
+    } else {
+      const id = showChip.dataset.donut;
+      if (!id) return;
+      _chartHidden.delete(id);
+    }
+    _persistHiddenSet(_CHART_HIDDEN_KEY, _chartHidden);
+    renderAllSourcePies(rows);
   });
 
   // v1.12.67: render the per-section coverage table on the

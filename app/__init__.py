@@ -2313,4 +2313,14 @@
 #   animation-delay + v0.50.71 class/attr restore). Removed the 8 discrete level rules +
 #   2 @keyframes + the motif-busy/data-busy-level class machinery. app.js + app.css +
 #   base.html + ops.js; rewrote the 6 wave test files for the continuous model.
-__version__ = "0.50.76"
+# 0.50.77: SOURCE BREAKDOWN — per-chart // HIDE + anime-folds-into-TV (the user). (1)
+#   Each donut card has its own // HIDE button; hiding one/two/three drops them from the
+#   arena and the survivors resize (the existing data-visible grid). The LAST visible
+#   chart can't be hidden; hidden charts get restore chips in the section header. Hidden
+#   set persisted per-browser (motif:dash:src-charts-hidden). (2) When the ANIME chart
+#   isn't shown (user-hid it or no anime library) its data folds INTO the TV chart (scope
+#   show||is_anime) and the card relabels "// TV + ANIME"; when anime IS shown each chart
+#   is just its own library (TV = show && !is_anime). _scopeFor makes only the TV scope
+#   dynamic; renderAllSourcePies + the render-skip key handle the re-render. app.js +
+#   dashboard.html + app.css + new test_v0_50_77.
+__version__ = "0.50.77"

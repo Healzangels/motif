@@ -61,8 +61,9 @@ def test_no_theme_hidden_by_default_once():
 def test_render_hides_empty_scope_and_sets_visible_count():
     idx = JS.index("function renderAllSourcePies(")
     body = JS[idx:JS.index("\n  function ", idx + 1)]
-    # a 0-item scope (non-total) is hidden; Total always shows.
-    assert "const show = d.id === 'total' || total > 0;" in body
+    # v0.50.77: a chart shows when its scope has data AND the user hasn't hidden it
+    # (the empty-scope auto-hide is now folded into _donutHasData).
+    assert "const show = _donutHasData(d, rows) && !_chartHidden.has(d.id);" in body
     assert "col.style.display = show ? '' : 'none';" in body
     # the visible count drives the grid; the last visible col is marked for the
     # mobile odd-full rule.
