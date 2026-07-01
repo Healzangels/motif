@@ -2250,4 +2250,14 @@
 #   snapping to 0. .hero::after (9s) + .hero::before (14s) each read their own var (0s
 #   fallback if JS off). Deterministic phase across all pages → nothing jumps; the two
 #   layers' cross-weave stays continuous too. base.html + CSS only.
-__version__ = "0.50.70"
+# 0.50.71: two hero-wave follow-ups. (1) NO idle→busy FLIP on nav: starting a refresh
+#   on /tv then going to /dashboard briefly painted the SLOW wave, then the poll flipped
+#   it fast (the user — "the change in how the wave looked"). Now app.js persists the
+#   busy level to sessionStorage (per-tab, v1.18.84 scope) and base.html restores
+#   motif-busy + data-busy-level PRE-PAINT, so a page loaded during active work paints
+#   busy immediately; the poll keeps it accurate + clears it (self-corrects if the op
+#   ended mid-nav). (2) RICHER LEVEL 4 (the user — "richer another level as a sync AND
+#   refresh is going on"): score >= 6 → L4; its richness comes mostly from the SECOND
+#   wave layer swelling (::before opacity 0.30→0.42) so the cross-weave reads fuller,
+#   not just faster. Still capped (no L5). base.html + app.js + CSS.
+__version__ = "0.50.71"

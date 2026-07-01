@@ -1369,11 +1369,25 @@
       const heroBusy = anyMutatingOpActive || _optimisticBusy;
       const _busyScore = (themerrdbBusy ? 1 : 0) + (plexEnumBusy ? 1 : 0)
         + (opProgressRunning ? 1 : 0) + perJobSum;
-      const _busyLevel = _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;
+      // v0.50.71: level 4 for heavy stacked activity (the user — "increase the
+      // wave richness another level as a sync AND refresh is going on and so
+      // forth"). Still capped (no 5) so it can't get frantic; L4 adds richness
+      // via a more-visible SECOND wave layer, not just more speed.
+      const _busyLevel = _busyScore >= 6 ? 4
+        : _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;
       const _root = document.documentElement;
       _root.classList.toggle('motif-busy', heroBusy);
       if (heroBusy) _root.setAttribute('data-busy-level', String(_busyLevel));
       else _root.removeAttribute('data-busy-level');
+      // v0.50.71: persist the busy level PER-TAB so a page loaded DURING an
+      // active op paints the busy wave immediately (base.html restores it pre-
+      // paint) instead of idle-then-flip on nav (the user — tv→dashboard showed
+      // the slow wave then jumped to fast). sessionStorage is the right scope
+      // (survives within-tab nav, not cross-tab — v1.18.84).
+      try {
+        if (heroBusy) sessionStorage.setItem('motif:busy', String(_busyLevel));
+        else sessionStorage.removeItem('motif:busy');
+      } catch (_storeErr) { /* private mode / disabled storage → skip restore hint */ }
       // v1.13.77: cascade-only signal for the dash SYNC THEMERRDB
       // lock. Pre-fix the lock used globalEnumPipeline, which
       // includes scan_all (manual REFRESH PLEX) — so clicking

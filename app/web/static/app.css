@@ -684,6 +684,21 @@ html.motif-busy[data-busy-level="3"] .hero::before {
   animation-duration: 4.5s;
   transform: scaleY(1.22);
 }
+/* v0.50.71: level 4 — heavy stacked activity (sync + refresh + a queue). Adds
+   RICHNESS, not franticness (the user — "richer another level ... but not so
+   intense it looks messy"): the primary is only marginally faster than L3, but
+   the SECOND layer jumps in presence (opacity 0.30→0.42) so the cross-weave reads
+   fuller + more textured. scaleY 1.32 stays inside the 38px reserved band. */
+html.motif-busy[data-busy-level="4"] .hero::after {
+  opacity: 0.55;
+  animation-duration: 2.5s;
+  transform: scaleY(1.32);
+}
+html.motif-busy[data-busy-level="4"] .hero::before {
+  opacity: 0.42;
+  animation-duration: 3.8s;
+  transform: scaleY(1.26);
+}
 /* v0.50.60: Settings → VISUALS per-browser opt-outs. base.html stamps the
    html.viz-no-<effect> class pre-paint from localStorage 'motif:visuals' for each
    effect the user turned off. CRT power on/off also gate in JS (so the flourish

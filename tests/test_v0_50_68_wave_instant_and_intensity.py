@@ -53,7 +53,7 @@ def test_app_unions_optimistic_so_busy_isnt_stripped_in_the_gap():
     assert "_root.classList.toggle('motif-busy', heroBusy);" in APP_JS
 
 
-# ── 2. Intensity level scales with queue depth, capped at 3 ──
+# ── 2. Intensity level scales with queue depth, capped (v0.50.71: at 4) ──
 
 def test_busy_score_counts_op_kinds_plus_queued_jobs():
     # distinct active op-kinds + the per-row job SUM (pending+running).
@@ -65,16 +65,18 @@ def test_busy_score_counts_op_kinds_plus_queued_jobs():
     assert "const perJobBusy = perJobSum > 0;" in APP_JS
 
 
-def test_busy_level_is_capped_at_3():
-    assert "const _busyLevel = _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;" in APP_JS
+def test_busy_level_is_capped_at_4():
+    # v0.50.71: 4 tiers now (>=6 → 4 for sync + refresh + a queue), still capped.
+    assert ("const _busyLevel = _busyScore >= 6 ? 4\n"
+            "        : _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;" in APP_JS)
     # the level is published as a data attribute the CSS keys off.
     assert "_root.setAttribute('data-busy-level', String(_busyLevel));" in APP_JS
     assert "_root.removeAttribute('data-busy-level');" in APP_JS
 
 
-def test_three_css_levels_escalate_monotonically_and_cap():
-    """L1 (base) < L2 < L3 on every axis: brighter (opacity up), faster (duration
-    down), taller (scaleY up). L3 is the ceiling — no level-4 rule exists."""
+def test_css_levels_escalate_monotonically_and_cap():
+    """L1 (base) < L2 < L3 < L4 on brightness (opacity up) + height (scaleY up).
+    v0.50.71 added L4 for heavy stacked activity; L4 is the ceiling — no level 5."""
     def vals(sel):
         r = _rule(APP_CSS, sel)
         op = float(re.search(r"opacity:\s*([\d.]+)", r).group(1))
@@ -84,19 +86,26 @@ def test_three_css_levels_escalate_monotonically_and_cap():
     l1 = vals("html.motif-busy .hero::after {")
     l2 = vals('html.motif-busy[data-busy-level="2"] .hero::after {')
     l3 = vals('html.motif-busy[data-busy-level="3"] .hero::after {')
-    # opacity (brightness) rises
-    assert l1[0] < l2[0] < l3[0]
-    # duration (speed) falls — faster as it intensifies
-    assert l1[1] > l2[1] > l3[1]
+    l4 = vals('html.motif-busy[data-busy-level="4"] .hero::after {')
+    # opacity (brightness) rises across all four
+    assert l1[0] < l2[0] < l3[0] < l4[0]
+    # duration (speed) falls monotonically — never SLOWER at a higher level
+    assert l1[1] > l2[1] > l3[1] > l4[1]
     # scaleY (height) rises
-    assert l1[2] < l2[2] < l3[2]
-    # capped: no level 4
-    assert '[data-busy-level="4"]' not in APP_CSS
+    assert l1[2] < l2[2] < l3[2] < l4[2]
+    # capped: no level 5
+    assert '[data-busy-level="5"]' not in APP_CSS
+    # v0.50.71: L4's richness comes largely from the SECOND layer swelling — its
+    # ::before opacity jumps more than the primary's, so the cross-weave reads
+    # fuller instead of just faster/messier.
+    b3 = vals('html.motif-busy[data-busy-level="3"] .hero::before {')
+    b4 = vals('html.motif-busy[data-busy-level="4"] .hero::before {')
+    assert b4[0] - b3[0] >= 0.10
 
 
-def test_level_3_stays_inside_the_reserved_band():
-    """L3's scaleY must not exceed the clearance the 38px padding band affords
-    (~1.35 max before the scaled wave would reach the subtitle)."""
-    r = _rule(APP_CSS, 'html.motif-busy[data-busy-level="3"] .hero::after {')
+def test_top_level_stays_inside_the_reserved_band():
+    """The tallest level's scaleY must not exceed the clearance the 38px band
+    affords (~1.35 max before the scaled wave would reach the subtitle)."""
+    r = _rule(APP_CSS, 'html.motif-busy[data-busy-level="4"] .hero::after {')
     sy = float(re.search(r"scaleY\(([\d.]+)\)", r).group(1))
     assert sy <= 1.35

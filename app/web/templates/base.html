@@ -107,6 +107,24 @@
       } catch (e) { /* no-op → animation-delay falls back to 0s */ }
     })();
   </script>
+  {# v0.50.71: restore the hero-wave BUSY level pre-paint from sessionStorage so a
+     page loaded DURING an active sync/refresh paints the fast wave IMMEDIATELY
+     instead of idle-then-flip on nav (the user — tv→dashboard showed the slow wave
+     then jumped to fast). app.js writes motif:busy = the level while work runs; the
+     poll then keeps it accurate + clears it (self-corrects within ~1s if the op
+     finished while on the previous page). #}
+  <script>
+    (function () {
+      try {
+        var b = sessionStorage.getItem('motif:busy');
+        if (b) {
+          var e = document.documentElement;
+          e.classList.add('motif-busy');
+          e.setAttribute('data-busy-level', b);
+        }
+      } catch (e) { /* no-op → wave starts idle, poll flips it busy */ }
+    })();
+  </script>
   <script defer src="/static/app.js?v={{ motif_version }}"></script>
   <script defer src="/static/ops.js?v={{ motif_version }}"></script>
   <script defer src="/static/dashboard-customize.js?v={{ motif_version }}"></script>
