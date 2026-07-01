@@ -667,8 +667,14 @@
     <div class="source-pie-col" id="source-pie-total-col">
       <div class="source-pie-col-label">
         <span class="source-pie-col-name">// TOTAL</span>
-        <button type="button" class="source-pie-hide" data-donut="total"
-                title="Hide this chart" aria-label="Hide the TOTAL chart">// HIDE</button>
+        <span class="source-pie-col-ctrls">
+          <button type="button" class="source-pie-move" data-donut="total" data-dir="-1"
+                  title="Move left" aria-label="Move TOTAL left">◀</button>
+          <button type="button" class="source-pie-move" data-donut="total" data-dir="1"
+                  title="Move right" aria-label="Move TOTAL right">▶</button>
+          <button type="button" class="source-pie-hide" data-donut="total"
+                  title="Hide this chart" aria-label="Hide the TOTAL chart">// HIDE</button>
+        </span>
       </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — total">
@@ -684,8 +690,14 @@
     <div class="source-pie-col" id="source-pie-movies-col">
       <div class="source-pie-col-label">
         <span class="source-pie-col-name">// MOVIES</span>
-        <button type="button" class="source-pie-hide" data-donut="movies"
-                title="Hide this chart" aria-label="Hide the MOVIES chart">// HIDE</button>
+        <span class="source-pie-col-ctrls">
+          <button type="button" class="source-pie-move" data-donut="movies" data-dir="-1"
+                  title="Move left" aria-label="Move MOVIES left">◀</button>
+          <button type="button" class="source-pie-move" data-donut="movies" data-dir="1"
+                  title="Move right" aria-label="Move MOVIES right">▶</button>
+          <button type="button" class="source-pie-hide" data-donut="movies"
+                  title="Hide this chart" aria-label="Hide the MOVIES chart">// HIDE</button>
+        </span>
       </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — movies">
@@ -701,8 +713,14 @@
     <div class="source-pie-col" id="source-pie-tv-col">
       <div class="source-pie-col-label">
         <span class="source-pie-col-name">// TV</span>
-        <button type="button" class="source-pie-hide" data-donut="tv"
-                title="Hide this chart" aria-label="Hide the TV chart">// HIDE</button>
+        <span class="source-pie-col-ctrls">
+          <button type="button" class="source-pie-move" data-donut="tv" data-dir="-1"
+                  title="Move left" aria-label="Move TV left">◀</button>
+          <button type="button" class="source-pie-move" data-donut="tv" data-dir="1"
+                  title="Move right" aria-label="Move TV right">▶</button>
+          <button type="button" class="source-pie-hide" data-donut="tv"
+                  title="Hide this chart" aria-label="Hide the TV chart">// HIDE</button>
+        </span>
       </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — tv">
@@ -720,9 +738,15 @@
     <div class="source-pie-col" id="source-pie-anime-col">
       <div class="source-pie-col-label">
         <span class="source-pie-col-name">// ANIME</span>
-        <button type="button" class="source-pie-hide" data-donut="anime"
-                title="Hide this chart (anime folds back into Movies + TV)"
-                aria-label="Hide the ANIME chart">// HIDE</button>
+        <span class="source-pie-col-ctrls">
+          <button type="button" class="source-pie-move" data-donut="anime" data-dir="-1"
+                  title="Move left" aria-label="Move ANIME left">◀</button>
+          <button type="button" class="source-pie-move" data-donut="anime" data-dir="1"
+                  title="Move right" aria-label="Move ANIME right">▶</button>
+          <button type="button" class="source-pie-hide" data-donut="anime"
+                  title="Hide this chart (anime folds back into Movies + TV)"
+                  aria-label="Hide the ANIME chart">// HIDE</button>
+        </span>
       </div>
       <div class="source-breakdown-chart">
         <svg viewBox="0 0 42 42" aria-label="theme source distribution — anime">

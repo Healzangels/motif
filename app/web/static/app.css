@@ -6909,10 +6909,24 @@ body.dash-customize-mode .dash-customize-link:hover {
 }
 /* v0.50.77: per-chart hide control — muted until hover so it doesn't compete with
    the label; hides just this donut (the survivors resize to fill the arena). */
-/* v0.50.77: the label text (its own span so JS can relabel TV → "// TV + ANIME"
-   without clobbering the // HIDE button); min-width:0 lets it shrink before the
-   button in the flex row rather than widening the card. */
+/* v0.50.77: the label text (its own span so JS can relabel it without clobbering the
+   controls); min-width:0 lets it shrink before the controls rather than widen the card. */
 .source-pie-col-name { min-width: 0; }
+/* v0.50.79: the per-chart control cluster — ◀ ▶ reorder + // HIDE, right-aligned. */
+.source-pie-col-ctrls { display: flex; align-items: center; gap: var(--gap-2); flex: none; }
+.source-pie-move {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--t-tiny);
+  line-height: 1;
+  padding: 0;
+  opacity: 0.5;
+  transition: opacity var(--motion-fast), color var(--motion-fast);
+}
+.source-pie-move:hover { opacity: 1; color: var(--fg); }
 .source-pie-hide {
   background: none;
   border: 0;

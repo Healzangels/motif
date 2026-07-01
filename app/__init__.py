@@ -2329,4 +2329,12 @@
 #   assumed. _scopeFor now drops the `&& !is_anime` filter on BOTH Movies + TV when anime
 #   isn't shown (reusing each donut's static scope for the shown case); the TV relabel is
 #   gone. app.js + dashboard.html (tooltip) + test_v0_50_77.
-__version__ = "0.50.78"
+# 0.50.79: REORDER the SOURCE BREAKDOWN pie charts (the user — "like the plex library
+#   items"). Each donut card gets ◀ ▶ buttons that swap it with the adjacent VISIBLE chart;
+#   the display order is persisted per-browser (motif:dash:src-charts-order) and applied by
+#   physically reordering the .source-pie-col elements (DOM order == visual order, so the
+#   is-last-visible / data-visible arena logic stays correct). renderAllSourcePies iterates
+#   _orderedDonuts() now. _loadChartOrder sanitizes stored order (dedup, drop unknown, append
+#   missing canonical); _reorderIds is the pure swap. app.js + dashboard.html + app.css +
+#   new test_v0_50_79.
+__version__ = "0.50.79"

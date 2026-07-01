@@ -2481,6 +2481,25 @@
   // hidden-LETTER sets above (which dim a legend wedge, not the whole chart).
   const _CHART_HIDDEN_KEY = 'motif:dash:src-charts-hidden';
   let _chartHidden = _loadHiddenSet(_CHART_HIDDEN_KEY);
+  // v0.50.79: per-chart REORDER (the user — like the PLEX LIBRARY cards' ◀ ▶). The
+  // display order of the donuts, persisted per-browser. _applyChartOrder physically
+  // moves the .source-pie-col elements so DOM order == visual order (the is-last-
+  // visible / data-visible logic stays correct); ◀ ▶ swap with the adjacent VISIBLE
+  // chart.
+  const _CHART_ORDER_KEY = 'motif:dash:src-charts-order';
+  const _CHART_IDS = ['total', 'movies', 'tv', 'anime'];
+  function _loadChartOrder() {
+    let saved = [];
+    try { saved = JSON.parse(localStorage.getItem(_CHART_ORDER_KEY)) || []; } catch (_) { /* disabled */ }
+    // keep known ids in saved order, then append any missing in canonical order, dedup.
+    const order = saved.filter((id) => _CHART_IDS.includes(id));
+    for (const id of _CHART_IDS) if (!order.includes(id)) order.push(id);
+    return order.filter((id, i) => order.indexOf(id) === i);
+  }
+  function _persistChartOrder() {
+    try { localStorage.setItem(_CHART_ORDER_KEY, JSON.stringify(_chartOrder)); } catch (_) { /* disabled */ }
+  }
+  let _chartOrder = _loadChartOrder();
   // v0.50.74: no-theme (–) UNCHECKED by default on every donut (the user — the –
   // wedge dominates + isn't actionable at a glance). One-time per browser: add '–'
   // to each donut's hidden set (idempotent via a marker) so it applies to existing
@@ -2672,6 +2691,46 @@
     el.innerHTML = html;
     el.style.display = hidden.length ? '' : 'none';
   }
+  // v0.50.79: donut specs in the user's chosen display order.
+  function _orderedDonuts() {
+    return _chartOrder.map((id) => _SOURCE_DONUTS.find((d) => d.id === id)).filter(Boolean);
+  }
+  // physically reorder the col elements to match _chartOrder (appendChild in order →
+  // DOM order == _chartOrder). Idempotent; called on load + after a move.
+  function _applyChartOrder() {
+    const row = document.querySelector('#source-breakdown-block .source-pie-row');
+    if (!row) return;
+    for (const id of _chartOrder) {
+      const col = document.getElementById(`source-pie-${id}-col`);
+      if (col) row.appendChild(col);
+    }
+  }
+  // pure order transform: swap `id` with its neighbor `dir` (-1 left / +1 right) in the
+  // VISIBLE sequence, expressed against the full order array. Returns a copy; unchanged
+  // at the edges.
+  function _reorderIds(order, visibleIds, id, dir) {
+    const vi = visibleIds.indexOf(id);
+    const ni = vi + dir;
+    if (vi < 0 || ni < 0 || ni >= visibleIds.length) return order.slice();
+    const neighbor = visibleIds[ni];
+    const next = order.slice();
+    const ai = next.indexOf(id), bi = next.indexOf(neighbor);
+    const t = next[ai]; next[ai] = next[bi]; next[bi] = t;
+    return next;
+  }
+  function _moveChart(id, dir) {
+    const rows = _pieState.all_rows || [];
+    const visibleIds = _chartOrder.filter((cid) => {
+      const d = _SOURCE_DONUTS.find((x) => x.id === cid);
+      return d && _donutHasData(d, rows) && !_chartHidden.has(cid);
+    });
+    const next = _reorderIds(_chartOrder, visibleIds, id, dir);
+    if (next.join() === _chartOrder.join()) return;  // no change (edge / not found)
+    _chartOrder = next;
+    _persistChartOrder();
+    _applyChartOrder();
+    renderAllSourcePies(rows);
+  }
   function renderAllSourcePies(rows) {
     _pieState.all_rows = rows;
     const section = document.getElementById('source-breakdown-block');
@@ -2690,7 +2749,7 @@
     }
     let visible = 0;
     let lastVisibleCol = null;
-    for (const d of _SOURCE_DONUTS) {
+    for (const d of _orderedDonuts()) {  // v0.50.79: display order (reorderable)
       const show = _donutHasData(d, rows) && !_chartHidden.has(d.id);
       const col = document.getElementById(`source-pie-${d.id}-col`);
       if (col) {
@@ -2792,6 +2851,13 @@
   // visible chart can't be hidden (there must always be one). A full re-render
   // recomputes the arena, the anime→TV fold, and the restore strip.
   document.addEventListener('click', (ev) => {
+    const moveBtn = ev.target.closest('.source-pie-move');
+    if (moveBtn) {  // v0.50.79: ◀ ▶ reorder — swap with the adjacent visible chart.
+      const id = moveBtn.dataset.donut;
+      const dir = parseInt(moveBtn.dataset.dir, 10);
+      if (id && (dir === 1 || dir === -1)) _moveChart(id, dir);
+      return;
+    }
     const hideBtn = ev.target.closest('.source-pie-hide');
     const showChip = ev.target.closest('.source-pie-restore-chip');
     if (!hideBtn && !showChip) return;
@@ -2811,6 +2877,9 @@
     _persistHiddenSet(_CHART_HIDDEN_KEY, _chartHidden);
     renderAllSourcePies(rows);
   });
+  // v0.50.79: apply the saved chart order once at load (before the first /api/stats
+  // render), so a reordered layout paints in the right order immediately.
+  if (document.querySelector('#source-breakdown-block .source-pie-row')) _applyChartOrder();
 
   // v1.12.67: render the per-section coverage table on the
   // dashboard. Hidden when only one section is managed (no
