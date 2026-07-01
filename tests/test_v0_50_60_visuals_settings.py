@@ -46,8 +46,9 @@ def test_css_hides_each_effect_and_collapses_hero():
     assert "html.viz-no-hero-wave .hero::after," in CSS
     assert "html.viz-no-hero-wave .hero::before { display: none; }" in CSS
     # the wave-off hero collapse (shift content up, no white band) + reclaim the
-    # v0.50.67 reserved wave padding band.
-    assert "html.viz-no-hero-wave .hero { min-height: 130px; padding-bottom: 0; }" in CSS
+    # v0.50.67 reserved wave padding band. v0.50.69: min-height is the shared
+    # --hero-content-zone token (keeps wave-off aligned with wave-on + across tabs).
+    assert "html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bottom: 0; }" in CSS
 
 
 def test_visuals_deeplink_ssr_rules_present():

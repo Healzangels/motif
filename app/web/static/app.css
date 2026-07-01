@@ -114,6 +114,20 @@
   --gap-6: 24px;
   --gap-7: 32px;
 
+  /* v0.50.69: the ONE source of truth for hero geometry, so the first content
+     block (library search bar / dashboard // RECENTLY ADDED / settings form) and
+     the hero wave sit on the SAME Y across EVERY tab — with AND without the wave
+     (the user: "this keeps coming up ... uniform professional clean look").
+     THE RULE: --hero-content-zone MUST be >= the TALLEST hero's content. The
+     tallest is the dashboard's 2-line subtitle: title (64px x line-height 0.9 =
+     57.6) + gap-5 (20) + subtitle line (~19.5) + gap-1 (4) + sync line (~18) =
+     ~119px. 126 leaves ~7px headroom. Both hero heights DERIVE from these two
+     tokens (wave-on = zone + band; wave-off = zone), so they can never drift out
+     of alignment again. If you add hero content taller than the zone, bump the
+     token — don't hand-edit the .hero min-heights. */
+  --hero-content-zone: 126px;
+  --hero-wave-band: 38px;
+
   /* v1.22.35: the canonical settings reading measure. Intro text, form
      fields, and the save-action row all share this width so each settings
      section reads as one tidy left-aligned column instead of stair-stepping
@@ -551,15 +565,17 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
    (dashboard has the extra sync line), so a floor that covers the 2-line case
    aligns them all. min-height (not height) so a hero that legitimately grows
    (e.g. the one-time backfill banner) still expands. TUNABLE — eyeball value. */
-/* v0.50.67: padding-bottom RESERVES the wave's clearance band (the user — on
-   mobile/collections the chips + 2-line subtitle filled the hero down to the
-   bottom, so the bottom-anchored .hero::after wave cut THROUGH the subtitle).
-   On desktop the v0.50.25 min-height already left ~34px of empty space the wave
-   sat in; formalizing it as padding (border-box → counts inside min-height, so
-   NO desktop growth) guarantees the band even when content overflows min-height,
-   making the wave uniform + non-overlapping across every tab + width. 38px gives
-   the active (taller) wave headroom too. */
-.hero { margin-bottom: 36px; min-height: 150px; position: relative; isolation: isolate; padding-bottom: 38px; }
+/* v0.50.67: padding-bottom RESERVES the wave's clearance band so the bottom-
+   anchored .hero::after wave never cuts through the subtitle (mobile/collections,
+   where the chips + 2-line subtitle fill the hero to the bottom).
+   v0.50.69: BOTH the height floor AND the band now derive from the --hero-content-
+   zone / --hero-wave-band tokens (see :root), so wave-on (zone + band) and wave-off
+   (zone) can never drift apart, and the floor is guaranteed >= the tallest hero's
+   content — which is what keeps the first content block AND the wave on the same Y
+   across every tab (the user, "keeps coming up"). The v0.50.68 bug was a bare
+   min-height:150 whose content-area (150 - 38 = 112) was SHORTER than the dashboard's
+   ~119px content, so the dashboard hero grew past the floor while the others didn't. */
+.hero { margin-bottom: 36px; min-height: calc(var(--hero-content-zone) + var(--hero-wave-band)); position: relative; isolation: isolate; padding-bottom: var(--hero-wave-band); }
 /* v0.50.28: a flowing soundwave across the hero's lower band (the user — fills the
    empty space the v0.50.25 min-height opened up). The wave SHAPE is an SVG sine
    path used as a CSS mask; the COLOUR is var(--green) (token — no hardcoded hex),
@@ -671,13 +687,12 @@ html.viz-no-crt-off .crt-power-off { display: none; }
 html.viz-no-equalizer .brand-mark { display: none; }
 html.viz-no-hero-wave .hero::after,
 html.viz-no-hero-wave .hero::before { display: none; }
-/* v0.50.61: hiding the wave shrinks the v0.50.25 min-height to a tighter value
-   that is STILL cross-tab consistent (>= the tallest hero = the dashboard's 2-line
-   subtitle, ~127px) so content shifts up WITHOUT breaking the same-Y alignment
-   between tabs. min-height:0 (v0.50.60) let each hero size to its own content, so
-   the dashboard's 2-line subtitle pushed its first block lower than the library
-   tabs (the user). */
-html.viz-no-hero-wave .hero { min-height: 130px; padding-bottom: 0; }
+/* v0.50.61 / v0.50.69: hiding the wave drops the hero to JUST the content zone
+   (no reserved wave band) — but it's the SAME --hero-content-zone token the wave-on
+   floor is built from, so wave-off stays cross-tab consistent AND consistent with
+   wave-on's content top (>= the tallest hero = the dashboard's 2-line subtitle).
+   Deriving both from one token is what stops this from drifting (the user). */
+html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bottom: 0; }
 .hero-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--gap-6); flex-wrap: wrap; }
 /* v0.50.19: keep the subtitle off the hero-row's action chips. On /collections
    the section selectors (MOVIES/4K/TV/ANIME + REFRESH) make .sync-actions wrap

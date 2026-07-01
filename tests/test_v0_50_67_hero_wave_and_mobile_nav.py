@@ -50,7 +50,9 @@ def test_mobile_nav_is_nowrap_horizontal_scroll_inside_media_query():
 
 def test_hero_reserves_padding_band_for_the_wave():
     h = _rule(".hero { margin-bottom")
-    assert "padding-bottom: 38px" in h
+    # v0.50.69: the band is the --hero-wave-band token (see test_v0_50_69 for the
+    # full derive-from-one-token rule that keeps every tab's hero aligned).
+    assert "padding-bottom: var(--hero-wave-band)" in h
     # when the wave is toggled OFF, the reserved band is reclaimed.
     off = _rule("html.viz-no-hero-wave .hero {")
     assert "padding-bottom: 0" in off

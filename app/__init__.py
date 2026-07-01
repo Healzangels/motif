@@ -2230,4 +2230,16 @@
 #   etc. count pending+running, so a deep download queue pushes it up). 3 CSS levels
 #   escalate opacity↑/duration↓/scaleY↑ monotonically; L3 scaleY 1.30 stays inside the
 #   38px reserved band. CSS + ops.js + app.js.
-__version__ = "0.50.68"
+# 0.50.69: durable hero-alignment RULE (the user — "keeps coming up"). The v0.50.67
+#   wave padding (border-box) shrank the hero content-area to 150-38=112px, SHORTER
+#   than the dashboard's ~119px 2-line-subtitle content, so the dashboard hero grew
+#   past the floor while the shorter library/settings heroes stayed at 150 → the first
+#   content block (search bar / RECENTLY ADDED / settings form) + the wave landed at
+#   DIFFERENT Y per tab. Fix: hero geometry now derives from TWO :root tokens —
+#   --hero-content-zone (126px, >= tallest hero content) + --hero-wave-band (38px).
+#   wave-on min-height = calc(zone + band), padding-bottom = band → content-area == zone
+#   >= tallest content, so EVERY tab renders the hero at one height. wave-off min-height
+#   = zone (same token) → uniform + consistent when hidden too. Both states derive from
+#   one token so they can't drift again. New test_v0_50_69 guards the rule (2 token-
+#   derived min-heights, zone >= 120). CSS-only.
+__version__ = "0.50.69"
