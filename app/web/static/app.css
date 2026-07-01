@@ -761,10 +761,12 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
   white-space: nowrap;
   flex-shrink: 0;
 }
+@media (hover: hover) {
 .btn:hover {
   background: rgba(var(--green-rgb), 0.08);
   border-color: var(--green);
   box-shadow: 0 0 12px rgba(var(--green-rgb), 0.2);
+}
 }
 .btn:active { transform: translateY(1px); }
 .btn-tiny {
@@ -780,12 +782,16 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    on idle ↔ busy (just disabled state), so the rendered label
    is constant and the natural content-width is stable too. */
 .btn-warn { color: var(--amber); border-color: var(--amber); }
+@media (hover: hover) {
 .btn-warn:hover { background: rgba(var(--amber-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.15); }
+}
 /* v1.11.96: btn-info = blue button variant for "informational
    actions" (ACCEPT UPDATE). Same family as .chip-info /
    .tdb-pill-update / .title-glyph-update. */
 .btn-info { color: var(--blue); border-color: var(--blue); }
+@media (hover: hover) {
 .btn-info:hover { background: rgba(var(--blue-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--blue-rgb), 0.15); }
+}
 /* v1.13.72: btn-plex = bulk-action variant for buttons that write
    to / read from Plex (// PUSH ALL TO PLEX, // RESTORE FROM PLEX).
    Same amber tone as the Plex P link-badge (.link-badge-cloud) so
@@ -793,7 +799,9 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    shares one color. Visually distinct from btn-info (ACCEPT
    UPDATE) which lives next to it on the bulk-action toolbar. */
 .btn-plex { color: var(--amber); border-color: var(--amber); }
+@media (hover: hover) {
 .btn-plex:hover { background: rgba(var(--amber-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.15); }
+}
 /* v1.13.72: btn-export = magenta variant for read-only data
    exports (// EXPORT CSV). Pre-fix EXPORT CSV used btn-info, the
    same tone as // ACCEPT ALL UPDATES — when both rendered together
@@ -802,7 +810,9 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    "this is a pure read action, won't change anything" intent reads
    at a glance. */
 .btn-export { color: var(--magenta); border-color: var(--magenta); }
+@media (hover: hover) {
 .btn-export:hover { background: rgba(var(--magenta-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--magenta-rgb), 0.15); }
+}
 /* v1.15.17: btn-cookies for the cookies-needed recovery actions
    (FIX COOKIES, ACK FAILURE on cookies_expired). Same tone as
    .tdb-pill-cookies, .attn-pill-cookies, .op-tone-cookies — all
@@ -811,7 +821,9 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    v1.15.43: yellow → biscuit brown so the cookies surfaces stop
    reading as Plex-related. */
 .btn-cookies { color: var(--lemon); border-color: var(--lemon); }
+@media (hover: hover) {
 .btn-cookies:hover { background: rgba(var(--lemon-rgb), 0.12); box-shadow: 0 0 10px rgba(var(--lemon-rgb), 0.25); }
+}
 
 /* v1.15.34: btn-magenta — used by MARK ALIVE recovery option.
    the user wanted the operator-override semantics distinguished
@@ -820,9 +832,13 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    ANIME's left-bar tone (semantically unrelated; same hue
    family is fine — they're never visually adjacent). */
 .btn-magenta { color: var(--magenta); border-color: var(--magenta); }
+@media (hover: hover) {
 .btn-magenta:hover { background: rgba(var(--magenta-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--magenta-rgb), 0.15); }
+}
 .btn-danger { color: var(--red); border-color: var(--red); }
+@media (hover: hover) {
 .btn-danger:hover { background: rgba(var(--red-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--red-rgb), 0.15); }
+}
 /* v1.19.86: PROMOTE TO ACTIVE tone-matches the row's backup badge
    so the deploy button reads as the same family as the badge the
    user clicked in from. UB (link-glyph-bk) is violet-bright; PB
@@ -830,15 +846,23 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    used for both pre-fix, which didn't tie PROMOTE to the badge a
    user was looking at. */
 .btn-promote-ub { color: var(--violet-bright); border-color: var(--violet-bright); }
+@media (hover: hover) {
 .btn-promote-ub:hover { background: rgba(var(--violet-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--violet-rgb), 0.15); }
+}
 .btn-promote-pb { color: var(--amber-bright); border-color: var(--amber-bright); }
+@media (hover: hover) {
 .btn-promote-pb:hover { background: rgba(var(--amber-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.15); }
+}
 /* v1.19.90: TB backup rows (themerrdb) promote in pale green. */
 .btn-promote-tb { color: var(--green-pale); border-color: var(--green-pale); }
+@media (hover: hover) {
 .btn-promote-tb:hover { background: rgba(var(--green-pale-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--green-pale-rgb), 0.15); }
+}
 /* v1.20.17: AB backup rows (adopt) promote in pale cyan. */
 .btn-promote-ab { color: var(--cyan-pale); border-color: var(--cyan-pale); }
+@media (hover: hover) {
 .btn-promote-ab:hover { background: rgba(var(--cyan-pale-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--cyan-pale-rgb), 0.15); }
+}
 /* v1.20.46: :disabled MUST be declared AFTER every tone :hover. CSS
    source-order breaks specificity ties — .btn:disabled and
    .btn-danger:hover are both (0,2,0), so whichever comes LAST wins.
@@ -934,48 +958,14 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
   outline-offset: 2px;
 }
 
-/* v0.50.91: touch devices EMULATE :hover — the hover state latches on tap and
-   stays until the next tap elsewhere, so every hover affordance reads as a
-   permanent "selected/pressed" look on mobile (the user: "buttons when you
-   press them continue to remain highlighted like they were selected"). Hover
-   is desktop-only polish here — the REAL selected state uses .*-active /
-   .chip-active / .has-active / .open classes, never :hover — so on pointers
-   with no hover we suppress the stuck cues: the fill, lift, glow, and
-   brighten. Base bg is transparent for every one of these primitives and none
-   carry a base transform/shadow/filter, so zeroing these is safe and leaves
-   the real state classes untouched. Mirrors the global :focus{outline:none}
-   approach (v1.15.131). */
-@media (hover: none) {
-  /* Group 1 — kill the latched fill / glow / brighten. Base bg is transparent
-     and none of these carry a base box-shadow/filter/text-shadow, so zeroing
-     is safe. NOTE: transform is intentionally NOT reset here — some of these
-     (.library-search-clear) use a base transform for layout; killing it would
-     shove them out of position. */
-  .btn:hover, .btn-tiny:hover, .btn-warn:hover, .btn-info:hover,
-  .btn-plex:hover, .btn-export:hover, .btn-cookies:hover, .btn-magenta:hover,
-  .btn-danger:hover, .btn-promote-ub:hover, .btn-promote-pb:hover,
-  .btn-promote-tb:hover, .btn-promote-ab:hover,
-  .chip:hover, .tab:hover, .library-legend-pill:hover,
-  .library-search-clear:hover, .library-clear-all-btn:hover,
-  .pill-filter-clear:hover, .src-key-btn:hover, .src-key-clear:hover,
-  .ed-pill-btn:hover, .state-pill-btn:hover, .tdb-pill-btn:hover,
-  .attn-pill-btn:hover, .lib-flag-pill:hover, .title-glyph:hover,
-  .dlg-close:hover, .source-legend-item:hover,
-  .source-pie-restore-chip:hover {
-    background: transparent;
-    box-shadow: none;
-    filter: none;
-    text-shadow: none;
-  }
-  /* .chip is the one primitive whose hover adds a translateY lift (base has no
-     transform), so zero it back flat. */
-  .chip:hover { transform: none; color: var(--fg-dim); border-color: var(--line-bright); }
-  /* Color/border-only shifters — restore each primitive's verified base pair so
-     a tapped button doesn't stay lit with the hover accent. */
-  .library-clear-all-btn:hover { color: var(--fg-mute); border-color: transparent; }
-  .library-search-clear:hover { color: var(--fg-mute); border-color: transparent; }
-  .pill-filter-clear:hover, .src-key-clear:hover { color: var(--fg-mute); border-color: var(--line); }
-}
+/* v0.50.93: the v0.50.91 @media(hover:none) RESET was removed — it
+   leaked (stripped variant-class bg/glow on tdb/attn pills + title-glyph,
+   missed color-only hovers like .tab/.dlg-close, and mismatched
+   .lib-flag-pill's specificity). The control-primitive :hover rules are
+   now GATED under @media (hover: hover) at their own locations, so a
+   touch device (hover:none) simply gets no hover — base + variant styling
+   shows untouched, nothing latches. Correct by construction, no base-value
+   coupling. Real selected state still uses .*-active/.open classes. */
 
 .link-tiny { font-size: var(--t-tiny); letter-spacing: 0.15em; text-transform: uppercase; color: var(--fg-dim); }
 .link-tiny:hover { color: var(--green); }
@@ -1477,7 +1467,9 @@ body.help-mode .help-mode-bar { display: flex; }
    hover — .chip:hover (color:--fg) is equal-specificity and later in source, so
    without it an OPEN toggle's label reverted to dim grey while hovered. */
 .library-legend-pill.open,
+@media (hover: hover) {
 .library-legend-pill.open:hover { color: var(--green); border-color: var(--green-deep); }
+}
 .library-legend-caret {
   font-size: 9px;
   /* v0.50.21: the gap lives here (one consistent margin) instead of a literal
@@ -1581,10 +1573,12 @@ body.help-mode .settings-help-about { display: block; }
   border-radius: 2px;
   transition: color var(--motion-normal) ease, border-color var(--motion-normal) ease, background var(--motion-normal) ease;
 }
+@media (hover: hover) {
 .library-search-clear:hover {
   color: var(--fg);
   border-color: var(--line);
   background: var(--bg);
+}
 }
 
 /* v1.13.18 (A2): saved filter presets collapsed to a single
@@ -1782,9 +1776,11 @@ body.help-mode .settings-help-about { display: block; }
   cursor: pointer;
   transition: color var(--motion-normal) ease, border-color var(--motion-normal) ease;
 }
+@media (hover: hover) {
 .library-clear-all-btn:hover {
   color: var(--cyan);
   border-color: var(--cyan);
+}
 }
 .input {
   flex: 1; min-width: 240px;
@@ -2018,7 +2014,9 @@ body.help-mode .settings-help-about { display: block; }
   padding: 10px 18px;
   font-size: var(--t-small);
 }
+@media (hover: hover) {
 .chip:hover { color: var(--fg); border-color: var(--green-deep); transform: translateY(-1px); box-shadow: 0 2px 8px rgba(var(--green-rgb), 0.12); }
+}
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(var(--green-rgb), 0.06); }
 /* v1.14.56: removed `.chip-warn` + `.chip-warn.chip-active` —
    no element ever carries `chip-warn` (no JS/template ref).
@@ -2549,9 +2547,11 @@ body.help-mode .settings-help-about { display: block; }
   transition: background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) ease;
   user-select: none;
 }
+@media (hover: hover) {
 .lib-flag-pill:hover:not(:disabled) {
   border-color: var(--fg);
   color: var(--fg);
+}
 }
 .lib-flag-pill:disabled {
   opacity: 0.45; cursor: not-allowed;
@@ -2851,7 +2851,9 @@ body.help-mode .settings-help-about { display: block; }
   font-family: var(--font-mono);
   letter-spacing: 0.1em;
 }
+@media (hover: hover) {
 .pill-filter-clear:hover { color: var(--fg); border-color: var(--cyan); }
+}
 /* DL / PL state pills as filter buttons. Mirrors the row's state
    dot (.state-pill.on / .state-pill.broken) but rendered as a
    button so it can be clicked. v1.12.25: explicit box-sizing so
@@ -2928,8 +2930,12 @@ body.help-mode .settings-help-about { display: block; }
   border-color: var(--line-bright);
   background: rgba(var(--grey-rgb),0.04);
 }
+@media (hover: hover) {
 .ed-pill-btn:hover { filter: brightness(1.25); }
+}
+@media (hover: hover) {
 .state-pill-btn:hover { filter: brightness(1.25); }
+}
 .state-pill-btn-active {
   box-shadow: 0 0 0 2px var(--cyan);
   filter: brightness(1.3);
@@ -2975,7 +2981,9 @@ body.help-mode .settings-help-about { display: block; }
   background: transparent;
   user-select: none;
 }
+@media (hover: hover) {
 .src-key-btn:hover { filter: brightness(1.25); }
+}
 .src-key-btn-active {
   box-shadow: 0 0 0 2px var(--cyan);
   filter: brightness(1.3);
@@ -3013,7 +3021,9 @@ body.help-mode .settings-help-about { display: block; }
   color: var(--fg-mute);
   font-family: var(--font-mono);
 }
+@media (hover: hover) {
 .src-key-clear:hover { color: var(--fg); border-color: var(--cyan); }
+}
 
 .lib-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
@@ -3154,7 +3164,9 @@ body.help-mode .settings-help-about { display: block; }
   font-family: var(--font-mono); font-size: 14px; line-height: 1;
   padding: 0 2px; transition: filter var(--motion-normal) ease;
 }
+@media (hover: hover) {
 .title-glyph:hover { filter: brightness(1.4); }
+}
 .title-glyph-fail    { color: var(--red);    text-shadow: 0 0 6px rgba(var(--red-rgb), 0.45); }
 /* v1.11.96: ↑ update glyph in blue. Was amber; moved to --blue so
    "ThemerrDB has a new URL for this row" reads as informational
@@ -3217,7 +3229,9 @@ body.help-mode .settings-help-about { display: block; }
   font-family: var(--font-mono);
   padding: 0 6px; line-height: 1;
 }
+@media (hover: hover) {
 .dlg-close:hover { color: var(--red); }
+}
 .dlg-meta { margin-bottom: 14px; font-size: var(--t-small); }
 
 /* ---- Pager ---- */
@@ -3836,19 +3850,22 @@ code {
    taller than a circle can hold without the poles' narrowing chords clipping the
    rows. So the setup variant degrades to a rounded-rect panel — the record
    SLEEVE to login's round LABEL — that sizes to its content, keeps the green
-   identity ring + glow, and never clips at any width. Scoped to .auth-card-setup
-   (comes after the base + @media rules, so it wins the equal-specificity
-   min-height/width/border-radius conflicts) so the login circle is untouched. */
-.auth-card-setup {
+   identity ring + glow, and never clips at any width. v0.50.93 (code review):
+   use the COMPOUND selector .auth-card.auth-card-setup (specificity 0,0,2,0) so
+   it wins the min-height/width/border-radius conflicts against the base +
+   @media .auth-card rules (0,0,1,0) by SPECIFICITY, not source order — a file
+   reorder can't silently revert the setup card to a clipping circle. Login
+   (no .auth-card-setup) stays a circle. */
+.auth-card.auth-card-setup {
   width: min(400px, 92vw);
   min-height: 0;
   border-radius: var(--radius);
   padding: var(--gap-6);
 }
-.auth-card-setup::after { inset: 9px; border-radius: var(--radius); }
+.auth-card.auth-card-setup::after { inset: 9px; border-radius: var(--radius); }
 /* the round card clamps its inner to a 70%-of-diameter safe square; the rect
    has real padding instead, so let the column fill it. */
-.auth-card-setup .auth-card-inner { width: 100%; max-width: none; }
+.auth-card.auth-card-setup .auth-card-inner { width: 100%; max-width: none; }
 .auth-card-head { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: var(--gap-3); }
 .auth-glyph { color: var(--amber); font-size: 18px; letter-spacing: 0.4em; }
 
@@ -4456,7 +4473,9 @@ body.auth-page .auth-card { margin: 0; }
      by the row-level pill render, so visual identity stays
      consistent. */
 }
+@media (hover: hover) {
 .tdb-pill-btn:hover { filter: brightness(1.25); }
+}
 .tdb-pill-btn-active {
   filter: brightness(1.3);
   box-shadow: 0 0 0 2px var(--cyan);
@@ -4550,7 +4569,9 @@ body.auth-page .auth-card { margin: 0; }
   font-family: var(--font-mono);
   user-select: none;
 }
+@media (hover: hover) {
 .attn-pill-btn:hover { filter: brightness(1.25); }
+}
 .attn-pill-btn-active {
   filter: brightness(1.3);
   box-shadow: 0 0 0 2px var(--cyan);
@@ -4992,7 +5013,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   cursor: pointer;
   transition: color var(--motion-fast), border-color var(--motion-fast);
 }
+@media (hover: hover) {
 .tab:hover { color: var(--green); }
+}
 /* v0.50.63: .tabs is overflow-x:auto (v0.50.61, so the 14 tabs never orphan a
    row) — and overflow-x:auto forces overflow-y:auto per spec, making .tabs a
    dual-axis clip box (the v0.50.58 .table-scroll lesson). .tabs has no vertical
@@ -6147,9 +6170,11 @@ html[data-settings-tab] #settings-tabs .tab:hover {
                     parent's shrink-to-fit and pushing the row past the card. */
   transition: background var(--motion-normal) ease, border-color var(--motion-normal) ease, opacity var(--motion-normal) ease;
 }
+@media (hover: hover) {
 .source-legend-item:hover {
   background: rgba(var(--white-rgb), 0.03);
   border-color: var(--line);
+}
 }
 .source-legend-item.off {
   opacity: 0.4;
@@ -7207,7 +7232,9 @@ body.dash-customize-mode .dash-customize-link:hover {
   padding: 0 var(--gap-2);
   transition: color var(--motion-fast), border-color var(--motion-fast);
 }
+@media (hover: hover) {
 .source-pie-restore-chip:hover { color: var(--fg); border-color: var(--fg-dim); }
+}
 .source-pie-col .source-breakdown-chart {
   grid-area: chart;
   width: 110px;

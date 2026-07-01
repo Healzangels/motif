@@ -46,8 +46,12 @@ SETTINGS = (REPO / "app" / "web" / "templates" / "settings.html").read_text()
 
 def _mobile_block(css: str) -> str:
     """The @media (max-width: 600px) block — same one the v0.50.48/86/87
-    mobile fixes all share. There's only one in each file; slice from its
-    opening brace to the matching top-level close by brace-counting."""
+    mobile fixes all share. Slice from its opening brace to the matching
+    top-level close by brace-counting. v0.50.93: returns '' when the file has
+    no such block (ops.css lost its mobile block when the dead op-mini caps
+    were removed — see below)."""
+    if "@media (max-width: 600px) {" not in css:
+        return ""
     i = css.index("@media (max-width: 600px) {")
     depth = 0
     j = i
@@ -67,9 +71,14 @@ MOBILE_OPS_CSS = _mobile_block(OPS_CSS)
 
 # ── 1. topbar overflow when a job is running ────────────────────────────
 
-def test_op_mini_label_and_bar_shrink_on_mobile():
-    assert ".op-mini .op-mini-label { max-width: 80px; }" in MOBILE_OPS_CSS
-    assert ".op-mini .op-mini-bar { width: 40px; }" in MOBILE_OPS_CSS
+def test_op_mini_shrinks_on_mobile():
+    # v0.50.93: the v0.50.88 ops.css caps (.op-mini-label max-width:80px /
+    # .op-mini-bar width:40px) were superseded by the v0.50.91 #op-mini
+    # full-width strip in app.css (ID selector wins), then removed as dead.
+    # The mobile op-mini sizing now lives on the strip in MOBILE_APP_CSS.
+    assert ".op-mini .op-mini-label { max-width: 80px; }" not in MOBILE_OPS_CSS
+    assert "#op-mini .op-mini-label { max-width: 55%; }" in MOBILE_APP_CSS
+    assert "#op-mini .op-mini-bar { width: 90px;" in MOBILE_APP_CSS
 
 
 def test_op_mini_desktop_rule_unchanged():

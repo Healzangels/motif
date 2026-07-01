@@ -2470,7 +2470,24 @@
 #   persisted variant to the fetched chips fragment BEFORE swapping it in
 #   (respecting availability via the server's display:none), so the first paint
 #   is already the right variant. app.js only. New test_v0_50_92_variant_flash.
-__version__ = "0.50.92"
+# 0.50.93: fix the v0.50.91 hover regressions (self code-review). The
+#   @media(hover:none) RESET was leaky: (a) `background: transparent` on the
+#   TDB/ATTN filter pills stripped their tinted variant-class bg on touch
+#   (regression); (b) `text-shadow: none` on .title-glyph stripped its
+#   state-variant glow on touch (regression); (c) color-only hovers (.tab,
+#   .dlg-close, .source-pie-restore-chip) were never reset so they stayed
+#   latched — incl. .tab, the primary mobile nav (the whole symptom); (d)
+#   .lib-flag-pill's real hover is :hover:not(:disabled), a specificity the
+#   reset missed. Replaced the reset with GATING: the ~29 control-primitive
+#   :hover rules are now wrapped in @media (hover: hover) at their own sites, so
+#   a touch device (hover:none) simply gets no hover — base + variant styling
+#   shows untouched, nothing latches. Correct by construction, no base-value
+#   coupling. Also (code review): .auth-card-setup → the compound selector
+#   .auth-card.auth-card-setup so it wins by specificity not source order; and
+#   removed the now-dead v0.50.88 ops.css op-mini caps (the #op-mini strip
+#   override supersedes them). CSS only. test_v0_50_91 hover tests rewritten to
+#   assert the gating. Touch behavior to be confirmed on-device.
+__version__ = "0.50.93"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

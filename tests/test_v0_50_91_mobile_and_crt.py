@@ -28,54 +28,50 @@ LOGIN_HTML = (REPO / "app" / "web" / "templates" / "login.html").read_text()
 # ── 1. touch hover-stick suppression ────────────────────────────────────
 
 
-def test_hover_none_block_exists_and_covers_key_controls():
-    assert "@media (hover: none)" in CSS
-    i = CSS.index("@media (hover: none)")
-    # capture the whole media block (brace-count)
-    depth = 0
-    end = i
-    for j in range(CSS.index("{", i), len(CSS)):
-        if CSS[j] == "{":
-            depth += 1
-        elif CSS[j] == "}":
-            depth -= 1
-            if depth == 0:
-                end = j
-                break
-    block = CSS[i:end + 1]
-    for sel in (".btn:hover", ".chip:hover", ".library-clear-all-btn:hover",
-                ".pill-filter-clear:hover", ".tab:hover"):
-        assert sel in block, f"hover-none block must neutralize {sel}"
+def _hover_is_gated(sel: str) -> bool:
+    """True if `sel { ... }` (a rule at line start) is immediately preceded by
+    `@media (hover: hover) {` — i.e. it only applies on hover-capable pointers,
+    so a touch device (hover:none) gets no hover and nothing latches."""
+    import re
+    m = re.search(r"(?m)^[ \t]*" + re.escape(sel) + r"[ \t]*\{", CSS)
+    if not m:
+        return False
+    before = CSS[:m.start()].rstrip()
+    return before.endswith("@media (hover: hover) {")
 
 
-def test_hover_none_does_not_zero_transform_globally():
-    """.library-search-clear uses a base transform for centering — the shared
-    reset must NOT set transform:none on it (only .chip, which has no base
-    transform, gets transform:none)."""
-    i = CSS.index("@media (hover: none)")
-    depth = 0
-    end = i
-    for j in range(CSS.index("{", i), len(CSS)):
-        if CSS[j] == "{":
-            depth += 1
-        elif CSS[j] == "}":
-            depth -= 1
-            if depth == 0:
-                end = j
-                break
-    block = CSS[i:end + 1]
-    # transform:none appears only on the .chip rule, never in the big shared
-    # selector group (which includes .library-search-clear).
-    assert "transform: none" in block  # for .chip
-    # the shared group's DECLARATION body (the {...} right after the big
-    # selector list, anchored on its last selector) must not carry transform.
-    anchor = block.index(".source-pie-restore-chip:hover")
-    decl_open = block.index("{", anchor)
-    shared_decl = block[decl_open:block.index("}", decl_open)]
-    assert "transform" not in shared_decl, (
-        "the shared hover-none group must not reset transform (would break "
-        ".library-search-clear's base translateY centering)"
+def test_control_hovers_are_gated_not_reset():
+    """v0.50.93: the leaky @media(hover:none) reset was replaced by gating the
+    control-primitive :hover rules under @media(hover:hover). On touch they
+    simply don't apply → base + variant styling shows, nothing latches."""
+    assert "@media (hover: none)" not in CSS, (
+        "the leaky hover:none reset block must be gone"
     )
+    for sel in (".btn:hover", ".chip:hover", ".tab:hover", ".dlg-close:hover",
+                ".title-glyph:hover", ".tdb-pill-btn:hover",
+                ".attn-pill-btn:hover", ".pill-filter-clear:hover",
+                ".library-clear-all-btn:hover",
+                ".source-pie-restore-chip:hover",
+                ".lib-flag-pill:hover:not(:disabled)"):
+        assert _hover_is_gated(sel), (
+            f"{sel} must be gated under @media (hover: hover) so it doesn't "
+            f"latch on touch"
+        )
+
+
+def test_gating_preserves_variant_styling():
+    """The regression the reset caused: it stripped the tinted variant bg /
+    state glow. Gating fixes this by construction — the pill/glyph :hover rules
+    change ONLY filter (base variant bg/glow untouched), and the gate means
+    touch never applies even that."""
+    import re
+    # the tinted variant classes still carry their base background (not gated,
+    # not stripped) — they're plain rules, not :hover.
+    assert re.search(r"\.tdb-pill-yes\s*\{[^}]*background", CSS)
+    assert re.search(r"\.attn-pill-fail\s*\{[^}]*background", CSS)
+    # the pill hover only brightens (gated); it never sets background:transparent.
+    m = re.search(r"(?m)^[ \t]*\.tdb-pill-btn:hover[ \t]*\{([^}]*)\}", CSS)
+    assert m and "filter" in m.group(1) and "background" not in m.group(1)
 
 
 # ── 2. login card no longer clips on small screens ──────────────────────
