@@ -598,6 +598,10 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   opacity: 0.18;
   pointer-events: none;
   animation: hero-wave 9s linear infinite;
+  /* v0.50.70: negative delay from the wall clock (base.html sets the var pre-
+     paint) so the wave resumes its continuous phase on every page load instead
+     of resetting to 0 — no flicker when changing sections. */
+  animation-delay: var(--hero-wave-delay, 0s);
   /* v0.50.67: ease the idle→busy ramp (speed/brightness/height) so the wave
      swells smoothly when motif starts working, not a jump-cut. */
   transition: opacity var(--motion-normal), transform var(--motion-normal);
@@ -623,6 +627,9 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   opacity: 0.10;
   pointer-events: none;
   animation: hero-wave-2 14s linear infinite;
+  /* v0.50.70: wall-clock phase sync (see .hero::after) — its own 14s var so the
+     two layers' cross-weave stays continuous across navigations too. */
+  animation-delay: var(--hero-wave-delay-2, 0s);
   transition: opacity var(--motion-normal), transform var(--motion-normal);
 }
 @keyframes hero-wave {

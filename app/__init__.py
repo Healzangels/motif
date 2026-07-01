@@ -2242,4 +2242,12 @@
 #   = zone (same token) → uniform + consistent when hidden too. Both states derive from
 #   one token so they can't drift again. New test_v0_50_69 guards the rule (2 token-
 #   derived min-heights, zone >= 120). CSS-only.
-__version__ = "0.50.69"
+# 0.50.70: hero wave no longer visibly RESETS when changing sections (the user —
+#   dashboard/logs/settings full-page reloads restarted the CSS animation at phase 0
+#   while the library tabs looked continuous → flicker). base.html sets negative
+#   animation-delay vars (--hero-wave-delay / -2) from Date.now() % duration, pre-paint,
+#   so each wave layer resumes its continuous wall-clock phase on every load instead of
+#   snapping to 0. .hero::after (9s) + .hero::before (14s) each read their own var (0s
+#   fallback if JS off). Deterministic phase across all pages → nothing jumps; the two
+#   layers' cross-weave stays continuous too. base.html + CSS only.
+__version__ = "0.50.70"

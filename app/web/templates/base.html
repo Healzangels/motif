@@ -90,6 +90,23 @@
       } catch (e) { /* malformed / disabled localStorage → all effects on */ }
     })();
   </script>
+  {# v0.50.70: phase-sync the hero wave to the WALL CLOCK so it never visibly
+     RESETS when changing sections (the user — dashboard/logs/settings are full-
+     page reloads that restarted the CSS animation at phase 0 while the library
+     tabs appeared continuous, reading as a flicker). A negative animation-delay
+     derived from Date.now() resumes each wave exactly where a continuously-
+     running one would be — identical across every page, so nothing jumps. Set on
+     documentElement BEFORE first paint (no phase-0 flash). Both layers (9s + 14s)
+     synced independently so their cross-weave stays continuous too. #}
+  <script>
+    (function () {
+      try {
+        var n = Date.now(), r = document.documentElement.style;
+        r.setProperty('--hero-wave-delay', '-' + (n % 9000) + 'ms');
+        r.setProperty('--hero-wave-delay-2', '-' + (n % 14000) + 'ms');
+      } catch (e) { /* no-op → animation-delay falls back to 0s */ }
+    })();
+  </script>
   <script defer src="/static/app.js?v={{ motif_version }}"></script>
   <script defer src="/static/ops.js?v={{ motif_version }}"></script>
   <script defer src="/static/dashboard-customize.js?v={{ motif_version }}"></script>
