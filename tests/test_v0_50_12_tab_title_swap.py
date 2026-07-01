@@ -24,7 +24,7 @@ def test_hero_title_is_h1_title_in_template():
 
 def test_switch_tab_swaps_the_hero_h1():
     i = APP_JS.index("async function switchLibraryTab(")
-    body = APP_JS[i:i + 3000]
+    body = APP_JS[i:i + 4500]  # v0.50.92: widened for the pre-swap variant block
     assert "doc.querySelector('.hero h1.title')" in body
     assert "document.querySelector('.hero h1.title')" in body
     # swapped by textContent like the subtitle right above it.

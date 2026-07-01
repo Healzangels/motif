@@ -2461,7 +2461,16 @@
 #   .auth-card-inner and the card degrades to the rounded-rect .auth-card-setup
 #   "sleeve" that sizes to content (login stays a circle; scoped to the
 #   modifier). New test_v0_50_91_mobile_and_crt.
-__version__ = "0.50.91"
+# 0.50.92: kill the STANDARD-chip flash on library tab switch (the user: nav to
+#   a tab last viewed in 4K briefly shows STANDARD before flipping to 4K). Root
+#   cause: switchLibraryTab fetches the bare nav href /movies (no ?fourk), so
+#   the server renders that fragment with STANDARD active; curChips.replaceWith
+#   paints it, THEN hydrateLibraryStateForTab reads motif:variant:<tab>='fourk'
+#   and the 4K chip lights up — one frame of STANDARD. Fix: pre-apply the
+#   persisted variant to the fetched chips fragment BEFORE swapping it in
+#   (respecting availability via the server's display:none), so the first paint
+#   is already the right variant. app.js only. New test_v0_50_92_variant_flash.
+__version__ = "0.50.92"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

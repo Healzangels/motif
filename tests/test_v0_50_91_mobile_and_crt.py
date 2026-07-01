@@ -164,7 +164,11 @@ def test_setup_wraps_content_in_inner_column_like_login():
     assert "auth-card-inner" in SETUP_HTML
     # the forward-auth foot must live INSIDE the inner wrapper, not as a
     # bare flex-row sibling of the form (which is what spilled off-screen).
-    inner_open = SETUP_HTML.index("auth-card-inner")
+    # v0.50.92 (code review): anchor on the real <div>, not the bare class
+    # string — setup.html's Jinja {# #} comment also mentions "auth-card-inner",
+    # and matching that let a regressed template (foot before the real wrapper)
+    # pass. index the opening tag itself.
+    inner_open = SETUP_HTML.index('<div class="auth-card-inner"')
     section_close = SETUP_HTML.index("</section>")
     foot = SETUP_HTML.index("auth-foot")
     inner_close = SETUP_HTML.rindex("</div>", inner_open, section_close)

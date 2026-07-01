@@ -8074,6 +8074,34 @@
     const newChips = doc.querySelector('.chips[role="tablist"][aria-label]');
     const curChips = document.querySelector('.chips[role="tablist"][aria-label]');
     if (!newChips || !curChips) throw new Error('toolbar chips not found');
+    // v0.50.92: pre-apply the persisted STANDARD/4K variant to the fetched
+    // chips BEFORE swapping them in, so switching (back) to a tab last viewed
+    // in 4K doesn't flash the server's default STANDARD chip for a frame — the
+    // nav link is a bare /tab with no ?fourk, so the server renders STANDARD
+    // active. hydrateLibraryStateForTab below independently computes the same
+    // variant for libraryState (URL param OR motif:variant:<tab>); this just
+    // makes the visible chip match on the first paint. Respect availability:
+    // the server hides an unavailable variant with style.display:none, so only
+    // retarget when the wanted chip is actually shown.
+    if (tab !== 'collections') {
+      let wantFourk = false;
+      if (url.searchParams.has('fourk')) {
+        const v = url.searchParams.get('fourk');
+        wantFourk = (v === '1' || v === 'true');
+      } else {
+        try { wantFourk = localStorage.getItem('motif:variant:' + tab) === 'fourk'; } catch (_) { /* private mode — fine */ }
+      }
+      const std = newChips.querySelector('[data-fourk="0"]');
+      const fk = newChips.querySelector('[data-fourk="1"]');
+      if (std && fk) {
+        const want = wantFourk ? fk : std;
+        const other = wantFourk ? std : fk;
+        if (want.style.display !== 'none') {
+          other.classList.remove('chip-active');
+          want.classList.add('chip-active');
+        }
+      }
+    }
     curChips.replaceWith(newChips);
     const newLeg = doc.querySelector('.library-legend-body');
     const curLeg = document.querySelector('.library-legend-body');
