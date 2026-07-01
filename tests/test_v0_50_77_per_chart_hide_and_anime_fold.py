@@ -63,18 +63,18 @@ def test_hide_click_guards_the_last_chart_and_persists():
     assert "_persistHiddenSet(_CHART_HIDDEN_KEY, _chartHidden);" in body
 
 
-def test_render_honors_user_hide_and_relabels_tv():
+def test_render_honors_user_hide():
     idx = JS.index("function renderAllSourcePies(")
     body = JS[idx:JS.index("\n  function ", idx + 1)]
     assert "const show = _donutHasData(d, rows) && !_chartHidden.has(d.id);" in body
-    # TV card relabels when anime is folded in.
-    assert "tvName.textContent = _animeShown(rows) ? '// TV' : '// TV + ANIME';" in body
+    # v0.50.78: the fold is silent — no "+ ANIME" relabel on any card.
+    assert "'// TV + ANIME'" not in JS
     # safety: a fully-hidden arena keeps TOTAL.
     assert "_chartHidden.delete('total');" in body
     assert "_renderChartRestore(rows);" in body
 
 
-# ── 3. Anime folds into TV (behavioral) ──
+# ── 3. Anime folds back into its NATIVE chart (behavioral) ──
 
 def _fold_src() -> str:
     start = JS.index("  function _animeShown(rows) {")
@@ -85,11 +85,15 @@ def _fold_src() -> str:
 def _run(js_body):
     quickjs = pytest.importorskip("quickjs")
     ctx = quickjs.Context()
+    # MOVIES/TV carry the static `&& !is_anime` scope _scopeFor reuses when anime shows.
     harness = (
         "var _chartHidden = new Set();\n"
         + _fold_src() + "\n"
-        + "var TV = { id: 'tv' };\n"
-        "function tvSum(rows){ return rows.filter(_scopeFor(TV, rows))"
+        + "var MOVIES = { id: 'movies', scopeFn: function(r){"
+        " return r.media_type === 'movie' && !r.is_anime; } };\n"
+        "var TV = { id: 'tv', scopeFn: function(r){"
+        " return r.media_type === 'show' && !r.is_anime; } };\n"
+        "function sumScope(d, rows){ return rows.filter(_scopeFor(d, rows))"
         ".reduce(function(a,r){ return a + (r.count||0); }, 0); }\n"
         + js_body + "\n"
     )
@@ -105,23 +109,24 @@ ROWS = (
 )
 
 
-def test_tv_excludes_anime_when_anime_shown():
-    # anime not hidden + anime rows exist → anime is its own chart → TV = plain shows.
-    out = _run(ROWS + "JSON.stringify([_animeShown(rows), tvSum(rows)]);")
-    assert out == [True, 10]
+def test_each_chart_is_its_own_library_when_anime_shown():
+    # anime not hidden + anime rows exist → anime is its own chart → Movies/TV exclude it.
+    out = _run(ROWS + "JSON.stringify([_animeShown(rows), sumScope(MOVIES, rows), sumScope(TV, rows)]);")
+    assert out == [True, 3, 10]
 
 
-def test_tv_absorbs_anime_when_anime_hidden():
-    # hide the anime chart → all anime (shows + the anime movie) fold into TV.
+def test_anime_folds_back_by_type_when_hidden():
+    # hide the anime chart → anime MOVIES rejoin Movies, anime SHOWS rejoin TV.
     out = _run(ROWS + "_chartHidden.add('anime');"
-               "JSON.stringify([_animeShown(rows), tvSum(rows)]);")
-    assert out == [False, 10 + 5 + 2]
+               "JSON.stringify([_animeShown(rows), sumScope(MOVIES, rows), sumScope(TV, rows)]);")
+    assert out == [False, 3 + 2, 10 + 5]
 
 
 def test_anime_not_shown_when_no_anime_library():
-    # no is_anime rows → _animeShown false → TV would absorb (nothing to absorb).
+    # no is_anime rows → _animeShown false → each type just holds its own (nothing to fold).
     out = _run(
-        "var rows = [{media_type:'show', is_anime:0, count:7}];\n"
-        "JSON.stringify([_animeShown(rows), tvSum(rows)]);"
+        "var rows = [{media_type:'show', is_anime:0, count:7},"
+        "{media_type:'movie', is_anime:0, count:4}];\n"
+        "JSON.stringify([_animeShown(rows), sumScope(MOVIES, rows), sumScope(TV, rows)]);"
     )
-    assert out == [False, 7]
+    assert out == [False, 4, 7]

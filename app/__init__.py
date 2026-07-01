@@ -2323,4 +2323,10 @@
 #   is just its own library (TV = show && !is_anime). _scopeFor makes only the TV scope
 #   dynamic; renderAllSourcePies + the render-skip key handle the re-render. app.js +
 #   dashboard.html + app.css + new test_v0_50_77.
-__version__ = "0.50.77"
+# 0.50.78: refine the anime fold (the user) — when the ANIME chart is hidden, anime folds
+#   back into its NATIVE chart by media_type: anime MOVIES → Movies, anime SHOWS → TV
+#   (v0.50.77 folded ALL anime into TV). No "+ ANIME" label on either card — it's just
+#   assumed. _scopeFor now drops the `&& !is_anime` filter on BOTH Movies + TV when anime
+#   isn't shown (reusing each donut's static scope for the shown case); the TV relabel is
+#   gone. app.js + dashboard.html (tooltip) + test_v0_50_77.
+__version__ = "0.50.78"

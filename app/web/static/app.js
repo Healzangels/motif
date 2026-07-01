@@ -2625,20 +2625,22 @@
     { id: 'anime', scopeFn: (r) => !!r.is_anime,
       hiddenSet: _animePieHidden, cache: 'anime_key', key: _ANIME_PIE_HIDE_KEY },
   ];
-  // v0.50.77: when the ANIME chart isn't shown as its own donut — either the user
-  // hid it or there's no anime library — fold anime INTO the TV chart so it's still
-  // tracked there (the user: "if you didn't want to display anime as its own chart
-  // you could still track it in the TV chart, but if anime is showing then each just
-  // shows its given library"). Only the TV scope is dynamic; the others are static.
+  // v0.50.77/78: when the ANIME chart isn't shown as its own donut — the user hid it
+  // or there's no anime library — anime folds back into its NATIVE chart so it's still
+  // tracked (the user): anime MOVIES → Movies, anime SHOWS → TV. No "+ ANIME" label —
+  // it's just assumed. When anime IS shown, Movies + TV exclude it (it's its own chart).
   function _animeShown(rows) {
     if (_chartHidden.has('anime')) return false;
     return rows.reduce((a, r) => a + (r.is_anime ? (r.count || 0) : 0), 0) > 0;
   }
   function _scopeFor(d, rows) {
-    if (d.id !== 'tv') return d.scopeFn;
-    return _animeShown(rows)
-      ? (r) => r.media_type === 'show' && !r.is_anime      // anime split into its own
-      : (r) => r.media_type === 'show' || !!r.is_anime;    // anime folded into TV
+    if (d.id !== 'movies' && d.id !== 'tv') return d.scopeFn;
+    // anime shown → its own chart, so Movies/TV keep their static `&& !is_anime` scope.
+    if (_animeShown(rows)) return d.scopeFn;
+    // anime folded → drop the !is_anime filter so each type reabsorbs its anime.
+    return d.id === 'movies'
+      ? (r) => r.media_type === 'movie'
+      : (r) => r.media_type === 'show';
   }
   function _donutHasData(d, rows) {
     if (d.id === 'total') return rows.some((r) => (r.count || 0) > 0);
@@ -2679,10 +2681,8 @@
     // v0.50.74: dynamically fill the arena — a donut is hidden when its scope has 0
     // items OR (v0.50.77) the user hid it via its // HIDE button; .source-pie-row
     // [data-visible=N] drives the grid so the survivors grow to fill the row (4→1
-    // across desktop; 2-per-row on mobile).
-    // v0.50.77: relabel the TV card when anime is folded into it, so the merge reads.
-    const tvName = document.querySelector('#source-pie-tv-col .source-pie-col-name');
-    if (tvName) tvName.textContent = _animeShown(rows) ? '// TV' : '// TV + ANIME';
+    // across desktop; 2-per-row on mobile). v0.50.78: when anime is folded, Movies/TV
+    // silently reabsorb their anime (via _scopeFor) — no "+ ANIME" label, it's assumed.
     // safety: never let a corrupt/stale hidden-set blank the whole arena — if every
     // chart with data is user-hidden, un-hide TOTAL so there's always one chart.
     if (!_SOURCE_DONUTS.some((d) => !_chartHidden.has(d.id) && _donutHasData(d, rows))) {
