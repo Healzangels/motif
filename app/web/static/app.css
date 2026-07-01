@@ -595,16 +595,18 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='48'%3E%3Cpath d='M0 24 Q30 6 60 24 T120 24 T180 24 T240 24' fill='none' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center;
   -webkit-mask-size: 240px 100%;
   mask-size: 240px 100%;
-  opacity: 0.18;
+  /* v0.50.76: the wave is driven by app.js's rAF loop (continuous-velocity model —
+     see _heroWaveTick). --hero-wave-x is a MONOTONIC scroll offset, so a speed change
+     alters the velocity but never jumps the position; --hero-wave-energy (0..1, eased)
+     scales brightness + height so intensity ramps like a gas pedal instead of snapping
+     between the old discrete data-busy-level steps. base.html seeds both pre-paint
+     (wall-clock phase + sessionStorage energy) so navigation never flickers. */
+  -webkit-mask-position: var(--hero-wave-x, 0px) center;
+  mask-position: var(--hero-wave-x, 0px) center;
+  opacity: calc(0.18 + 0.37 * var(--hero-wave-energy, 0));
+  transform: scaleY(calc(1 + 0.32 * var(--hero-wave-energy, 0)));
+  filter: brightness(calc(1 + 0.55 * var(--hero-wave-energy, 0)));
   pointer-events: none;
-  animation: hero-wave 9s linear infinite;
-  /* v0.50.70: negative delay from the wall clock (base.html sets the var pre-
-     paint) so the wave resumes its continuous phase on every page load instead
-     of resetting to 0 — no flicker when changing sections. */
-  animation-delay: var(--hero-wave-delay, 0s);
-  /* v0.50.67: ease the idle→busy ramp (speed/brightness/height) so the wave
-     swells smoothly when motif starts working, not a jump-cut. */
-  transition: opacity var(--motion-normal), transform var(--motion-normal);
 }
 /* v0.50.67: a SECOND, broader, slower wave scrolling the OTHER way — the two
    sines cross-weave (beat frequency) so the hero band reads organic + alive
@@ -624,81 +626,22 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='320' height='48'%3E%3Cpath d='M0 26 Q40 8 80 26 T160 26 T240 26 T320 26' fill='none' stroke='white' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") repeat-x left center;
   -webkit-mask-size: 320px 100%;
   mask-size: 320px 100%;
-  opacity: 0.10;
+  /* v0.50.76: rAF-driven (see .hero::after) — its own --hero-wave2-x phase (scrolls
+     the OTHER way for the cross-weave) sharing the eased --hero-wave-energy. */
+  -webkit-mask-position: var(--hero-wave2-x, 0px) center;
+  mask-position: var(--hero-wave2-x, 0px) center;
+  opacity: calc(0.10 + 0.32 * var(--hero-wave-energy, 0));
+  transform: scaleY(calc(1 + 0.26 * var(--hero-wave-energy, 0)));
   pointer-events: none;
-  animation: hero-wave-2 14s linear infinite;
-  /* v0.50.70: wall-clock phase sync (see .hero::after) — its own 14s var so the
-     two layers' cross-weave stays continuous across navigations too. */
-  animation-delay: var(--hero-wave-delay-2, 0s);
-  transition: opacity var(--motion-normal), transform var(--motion-normal);
 }
-@keyframes hero-wave {
-  from { -webkit-mask-position: 0 center; mask-position: 0 center; }
-  to { -webkit-mask-position: -240px center; mask-position: -240px center; }
-}
-/* scrolls RIGHT (opposite the primary) for the cross-weave. */
-@keyframes hero-wave-2 {
-  from { -webkit-mask-position: 0 center; mask-position: 0 center; }
-  to { -webkit-mask-position: 320px center; mask-position: 320px center; }
-}
-/* v0.50.67: the hero wave is now motif's primary "now working" indicator (the
-   user — make the activity effect "impact the hero bar as it's more visible +
-   more interesting", moved off the upper-left brand EQ which is now a calm
-   ambient drift). motif-busy is toggled on <html> (app.js) the instant work is
-   enqueued. Busy = faster, brighter (green→green-bright + higher opacity), and
-   taller (scaleY, centered so it stays inside the reserved padding band).
-   v0.50.68: data-busy-level (1..3, CAPPED) scales the intensity by how much is
-   queued (the user — "gets more and more intense as more queues up, but not so
-   intense it looks messy"). Level 1 is the base motif-busy (also the optimistic
-   click default before the poll sets a level); 2 + 3 escalate via the higher-
-   specificity attribute selectors. Level 3 stays inside the 38px reserved band
-   (scaleY 1.30 → ~2.8px clearance) so the wave never crashes the subtitle. */
-html.motif-busy .hero::after {
-  background: var(--green-bright);
-  opacity: 0.32;
-  animation-duration: 4.8s;
-  transform: scaleY(1.13);
-}
-html.motif-busy .hero::before {
-  opacity: 0.18;
-  animation-duration: 9s;
-  transform: scaleY(1.10);
-}
-html.motif-busy[data-busy-level="2"] .hero::after {
-  opacity: 0.40;
-  animation-duration: 3.6s;
-  transform: scaleY(1.22);
-}
-html.motif-busy[data-busy-level="2"] .hero::before {
-  opacity: 0.24;
-  animation-duration: 6s;
-  transform: scaleY(1.16);
-}
-html.motif-busy[data-busy-level="3"] .hero::after {
-  opacity: 0.48;
-  animation-duration: 2.7s;
-  transform: scaleY(1.30);
-}
-html.motif-busy[data-busy-level="3"] .hero::before {
-  opacity: 0.30;
-  animation-duration: 4.5s;
-  transform: scaleY(1.22);
-}
-/* v0.50.71: level 4 — heavy stacked activity (sync + refresh + a queue). Adds
-   RICHNESS, not franticness (the user — "richer another level ... but not so
-   intense it looks messy"): the primary is only marginally faster than L3, but
-   the SECOND layer jumps in presence (opacity 0.30→0.42) so the cross-weave reads
-   fuller + more textured. scaleY 1.32 stays inside the 38px reserved band. */
-html.motif-busy[data-busy-level="4"] .hero::after {
-  opacity: 0.55;
-  animation-duration: 2.5s;
-  transform: scaleY(1.32);
-}
-html.motif-busy[data-busy-level="4"] .hero::before {
-  opacity: 0.42;
-  animation-duration: 3.8s;
-  transform: scaleY(1.26);
-}
+/* v0.50.76: the "now working" intensity is a CONTINUOUS 0..1 --hero-wave-energy
+   (app.js's rAF loop eases it toward a target derived from the busy score), NOT the
+   old discrete motif-busy / data-busy-level classes. energy scales the wave's speed
+   (via the phase velocity in JS), brightness (filter), opacity, and height (scaleY)
+   — all off the one variable, so the wave accelerates/brakes like a gas pedal (the
+   user). The old idle→L4 ranges live on in the calc()s above: opacity 0.18→0.55 +
+   filter brightness ≈ the old green→green-bright pop; scaleY 1.0→1.32 stays inside
+   the 38px reserved band so the wave never crashes the subtitle. */
 /* v0.50.60: Settings → VISUALS per-browser opt-outs. base.html stamps the
    html.viz-no-<effect> class pre-paint from localStorage 'motif:visuals' for each
    effect the user turned off. CRT power on/off also gate in JS (so the flourish

@@ -645,47 +645,83 @@
   // placeholder directly so the topbar mini-bar still surfaces
   // a // REFRESHING PLEX pill on click instead of waiting for
   // the next 10s /api/progress poll.
-  // v0.50.73: hero-wave intensity RAMP. _waveDisplayed chases the target level
-  // (set by refreshTopbarStatus) ONE step per ~380ms, so the wave swells + settles
-  // smoothly instead of spiking to L3/L4 the instant a burst of jobs is enqueued
-  // (the user — "should have a natural increase ... right now it jumps"). Init from
-  // the DOM so a nav-restored level (base.html v0.50.71) doesn't ramp from idle on
-  // load. The CSS opacity/scaleY transitions (v0.50.67) ease each step's brightness
-  // + height; only the discrete animation-duration steps per level.
-  let _waveDisplayed = (parseInt(
-    document.documentElement.getAttribute('data-busy-level'), 10) || 0);
-  let _waveRampTimer = null;
-  function _rampWaveLevel(target) {
-    const root = document.documentElement;
-    if (_waveRampTimer) { clearTimeout(_waveRampTimer); _waveRampTimer = null; }
-    const step = () => {
-      if (_waveDisplayed === target) {
-        // v0.50.75 (code-review): at the terminal IDLE level, still ENFORCE the
-        // idle DOM even though we're already at 0 — ops.js adds motif-busy out-of-
-        // band on click (v0.50.68) without touching _waveDisplayed, so an
-        // optimistic-only click that never becomes a real op must be cleared HERE.
-        // Pre-fix the `displayed === target` early-return skipped the remove →
-        // the wave stuck busy forever. (target>0 already has the class from the
-        // ramp-up, so only the idle case needs the reconcile.)
-        if (target <= 0) {
-          root.classList.remove('motif-busy');
-          root.removeAttribute('data-busy-level');
-        }
-        return;
-      }
-      _waveDisplayed += target > _waveDisplayed ? 1 : -1;
-      if (_waveDisplayed <= 0) {
-        _waveDisplayed = 0;
-        root.classList.remove('motif-busy');
-        root.removeAttribute('data-busy-level');
-      } else {
-        root.classList.add('motif-busy');
-        root.setAttribute('data-busy-level', String(_waveDisplayed));
-      }
-      if (_waveDisplayed !== target) _waveRampTimer = setTimeout(step, 380);
-    };
-    step();
+  // v0.50.76: CONTINUOUS-VELOCITY hero wave (the user — "like pressing the gas
+  // pedal it smoothly starts increasing in speed, not suddenly at the new speed ...
+  // same when a job completes it's like gently pressing the brake"). The old model
+  // (v0.50.68-73) swapped animation-duration across 4 discrete data-busy-level CSS
+  // steps; animation-duration ISN'T animatable, so each step re-timed the keyframe
+  // and the wave visibly JOLTED even when stepping one level at a time. Now a single
+  // rAF loop advances a MONOTONIC phase (position only ever moves forward — a speed
+  // change alters the velocity, never the position, so it can't jump) while easing
+  // an energy scalar toward a target. energy also drives opacity/height/brightness
+  // (CSS calc()s off --hero-wave-energy), so intensity ramps continuously too.
+  const _HERO_TILE = 240, _HERO_TILE2 = 320;        // mask tile widths (seamless)
+  const _HERO_SPEED_IDLE = _HERO_TILE / 9;          // px/s — old idle 240px/9s
+  const _HERO_SPEED_IDLE2 = _HERO_TILE2 / 14;       // old idle 320px/14s
+  const _HERO_SPEED_FULL = _HERO_TILE / 2.5;        // old L4 (fastest) 240px/2.5s
+  const _HERO_SPEED_FULL2 = _HERO_TILE2 / 3.8;      // old L4 second layer
+  const _HERO_TAU = 0.75;                           // ease time-constant (s): gas/brake
+  const _HERO_OPT_FLOOR = 0.3;                      // optimistic-click energy floor
+  const _hero = { phase: 0, phase2: 0, energy: 0, target: 0, last: 0, raf: 0, started: false };
+  function _heroSeedPhaseFromClock() {
+    // seed the phase from the wall clock so the wave resumes its position across
+    // page navigations (each nav is a full reload) instead of snapping to 0 — the
+    // v0.50.70 no-flicker guarantee, now in JS. Uses the idle speeds; base.html
+    // seeds the same values pre-paint so even the first frame is continuous.
+    const t = Date.now() / 1000;
+    _hero.phase = (t * _HERO_SPEED_IDLE) % _HERO_TILE;
+    _hero.phase2 = (t * _HERO_SPEED_IDLE2) % _HERO_TILE2;
   }
+  function _heroWaveWrite() {
+    const s = document.documentElement.style;
+    s.setProperty('--hero-wave-x', (-_hero.phase).toFixed(2) + 'px');   // scrolls left
+    s.setProperty('--hero-wave2-x', _hero.phase2.toFixed(2) + 'px');    // scrolls right
+    s.setProperty('--hero-wave-energy', _hero.energy.toFixed(4));
+  }
+  function _heroWaveTick(now) {
+    const h = _hero;
+    if (!h.last) h.last = now;
+    let dt = (now - h.last) / 1000;
+    h.last = now;
+    // clamp dt so a background-tab gap (rAF pauses when hidden) doesn't fling the
+    // phase forward or snap the energy on resume — pick up gently.
+    if (dt > 0.05) dt = 0.05;
+    const k = 1 - Math.exp(-dt / _HERO_TAU);        // per-frame lerp toward target
+    h.energy += (h.target - h.energy) * k;
+    if (h.energy < 0.0005) h.energy = 0;            // settle exactly at idle
+    const e = h.energy;
+    const sp = _HERO_SPEED_IDLE + (_HERO_SPEED_FULL - _HERO_SPEED_IDLE) * e;
+    const sp2 = _HERO_SPEED_IDLE2 + (_HERO_SPEED_FULL2 - _HERO_SPEED_IDLE2) * e;
+    h.phase = (h.phase + sp * dt) % _HERO_TILE;
+    h.phase2 = (h.phase2 + sp2 * dt) % _HERO_TILE2;
+    // when the wave is turned off in VISUALS (display:none) skip the DOM write but
+    // keep advancing the phase so re-enabling stays continuous.
+    if (!document.documentElement.classList.contains('viz-no-hero-wave')) _heroWaveWrite();
+    h.raf = requestAnimationFrame(_heroWaveTick);
+  }
+  function _setHeroWaveTarget(energy) {
+    _hero.target = energy < 0 ? 0 : energy > 1 ? 1 : energy;
+  }
+  function _startHeroWave() {
+    if (_hero.started) return;
+    _hero.started = true;
+    _heroSeedPhaseFromClock();
+    // restore the busy ENERGY from sessionStorage (base.html also seeds the CSS var
+    // pre-paint) so a page loaded mid-op starts already-busy and eases to the live
+    // target, not idle→ramp-up on every nav (v0.50.71).
+    let restored = 0;
+    try { restored = parseFloat(sessionStorage.getItem('motif:busy')) || 0; } catch (_) { /* disabled storage */ }
+    if (restored > 0) { _hero.energy = restored; _hero.target = restored; }
+    _heroWaveWrite();
+    _hero.raf = requestAnimationFrame(_heroWaveTick);
+  }
+  // let ops.js nudge the wave the INSTANT the user clicks (before the next poll
+  // refines the target from /api/stats) so the gas pedal responds to the click.
+  window.__motifHeroWaveBump = function () {
+    if (_hero.target < _HERO_OPT_FLOOR) _setHeroWaveTarget(_HERO_OPT_FLOOR);
+    _startHeroWave();
+  };
+  if (document.querySelector('.hero')) _startHeroWave();
 
   // v1.12.118: legacy paintTopbarSyncing retired with the dot+text.
   // Click feedback is now handled by triggering motifOps.refresh()
@@ -1411,24 +1447,24 @@
       const heroBusy = anyMutatingOpActive || _optimisticBusy;
       const _busyScore = (themerrdbBusy ? 1 : 0) + (plexEnumBusy ? 1 : 0)
         + (opProgressRunning ? 1 : 0) + perJobSum;
-      // v0.50.71: level 4 for heavy stacked activity (the user — "increase the
-      // wave richness another level as a sync AND refresh is going on and so
-      // forth"). Still capped (no 5) so it can't get frantic; L4 adds richness
-      // via a more-visible SECOND wave layer, not just more speed.
-      const _busyLevel = _busyScore >= 6 ? 4
-        : _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;
-      // v0.50.73: ease the wave toward its target level (one step at a time via
-      // _rampWaveLevel) instead of snapping — kicking off several jobs at once
-      // used to spike the wave straight to L3/L4, jarring (the user). 0 = idle.
-      _rampWaveLevel(heroBusy ? _busyLevel : 0);
-      // v0.50.71: persist the TARGET busy level PER-TAB so a page loaded DURING
-      // an active op paints the busy wave immediately (base.html restores it pre-
-      // paint) instead of idle-then-flip on nav (the user — tv→dashboard showed
-      // the slow wave then jumped to fast). Restore SNAPS to the target (no ramp);
-      // the ramp is only for live changes within a page. sessionStorage is the
-      // right scope (survives within-tab nav, not cross-tab — v1.18.84).
+      // v0.50.76: map the busy SCORE → a 0..1 energy TARGET the rAF wave loop eases
+      // toward (gas pedal up when work starts, brake down as the queue drains).
+      // Continuous — not the old 4 discrete data-busy-level steps that snapped the
+      // wave speed (the user — "smoothly ... not suddenly at the new speed"). Any
+      // busy floors at _HERO_OPT_FLOOR so a single job still reads clearly; score 6+
+      // (sync + refresh + a queue) saturates at 1 so it can't get frantic.
+      const _busyEnergy = heroBusy
+        ? Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.145))
+        : 0;
+      _setHeroWaveTarget(_busyEnergy);
+      _startHeroWave();
+      // v0.50.71/76: persist the target ENERGY per-tab so a page loaded DURING an
+      // active op paints the busy wave immediately (base.html seeds --hero-wave-
+      // energy pre-paint) instead of idle-then-ramp on nav (the user — tv→dashboard
+      // showed the slow wave then jumped). app.js eases from the restored value to
+      // the live target. sessionStorage = right scope (within-tab, not cross — v1.18.84).
       try {
-        if (heroBusy) sessionStorage.setItem('motif:busy', String(_busyLevel));
+        if (heroBusy) sessionStorage.setItem('motif:busy', _busyEnergy.toFixed(3));
         else sessionStorage.removeItem('motif:busy');
       } catch (_storeErr) { /* private mode / disabled storage → skip restore hint */ }
       // v1.13.77: cascade-only signal for the dash SYNC THEMERRDB

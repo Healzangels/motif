@@ -31,10 +31,13 @@ def test_wave_uses_token_colour_masked_by_an_svg_wave():
     # behind the title/subtitle, decorative, inert.
     assert "z-index: -1" in a
     assert "pointer-events: none" in a
-    assert "animation: hero-wave" in a
 
 
-def test_wave_scroll_keyframes_exist():
-    assert "@keyframes hero-wave {" in APP_CSS
-    kf = _rule("@keyframes hero-wave {")
-    assert "mask-position" in kf
+def test_wave_scroll_is_driven_by_the_rAF_phase_var():
+    # v0.50.76: the scroll is no longer a CSS @keyframes animation (its speed snapped
+    # between discrete busy levels). app.js's rAF loop drives a monotonic phase into
+    # --hero-wave-x so speed changes never jump the position.
+    a = _rule(".hero::after {")
+    assert "mask-position: var(--hero-wave-x" in a
+    assert "@keyframes hero-wave {" not in APP_CSS
+    assert "animation: hero-wave" not in APP_CSS

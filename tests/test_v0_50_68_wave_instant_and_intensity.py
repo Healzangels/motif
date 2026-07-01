@@ -1,16 +1,21 @@
-"""v0.50.68 — hero-wave: instant start + queue-scaled intensity.
+"""v0.50.68 / v0.50.76 — hero-wave: instant start + queue-scaled intensity.
 
 Two follow-ups from the user on the v0.50.67 reactive hero wave:
 
 1. INSTANT START: the wave reacted ~1.1s late — it waited for refreshTopbarStatus
-   to see the enqueued job past the /api/stats 1s cache. Now ops.js flips
-   motif-busy the instant of the click (in setOptimisticPlaceholder), and
-   refreshTopbarStatus unions hasOptimistic() so it can't strip it back off in the
-   gap before the real op lands.
+   to see the enqueued job past the /api/stats 1s cache. Now ops.js kicks the wave
+   the instant of the click (in setOptimisticPlaceholder), and refreshTopbarStatus
+   unions hasOptimistic() so it can't drop it back off in the gap before the real op
+   lands.
 
 2. INTENSITY BY QUEUE DEPTH: stacking work (tdb sync + plex refresh + downloads…)
-   now escalates the wave via data-busy-level (1..3), CAPPED at 3 so it never
-   looks messy. Score = distinct active op-kinds + total queued per-row jobs.
+   escalates the wave. Score = distinct active op-kinds + total queued per-row jobs.
+
+v0.50.76 rebuilt the wave on a CONTINUOUS-velocity model (the user — "like a gas
+pedal ... not suddenly at the new speed"). The old discrete data-busy-level CSS
+steps snapped animation-duration; now one rAF loop eases a 0..1 energy toward a
+target derived from the score, and both speed (phase velocity) and intensity
+(opacity/scaleY/brightness) scale continuously off that energy.
 """
 from __future__ import annotations
 
@@ -30,12 +35,17 @@ def _rule(css: str, sel: str) -> str:
 
 # ── 1. Instant start (ops.js kicks + hasOptimistic; app.js unions it) ──
 
-def test_optimistic_click_flips_the_wave_immediately():
-    """setOptimisticPlaceholder (fired on the click, before any poll) adds
-    motif-busy so the wave reacts with zero latency."""
+def test_optimistic_click_kicks_the_wave_immediately():
+    """setOptimisticPlaceholder (fired on the click, before any poll) bumps the wave
+    energy target so it starts accelerating with zero latency (v0.50.76)."""
     fn = OPS_JS[OPS_JS.index("function setOptimisticPlaceholder("):]
     fn = fn[:fn.index("\n  }") + 1]
-    assert "document.documentElement.classList.add('motif-busy')" in fn
+    assert "window.__motifHeroWaveBump()" in fn
+
+
+def test_bump_raises_the_target_to_the_optimistic_floor():
+    assert "window.__motifHeroWaveBump = function ()" in APP_JS
+    assert "if (_hero.target < _HERO_OPT_FLOOR) _setHeroWaveTarget(_HERO_OPT_FLOOR);" in APP_JS
 
 
 def test_ops_exposes_has_optimistic():
@@ -45,70 +55,72 @@ def test_ops_exposes_has_optimistic():
     assert re.search(r"window\.motifOps\s*=\s*\{[^}]*\bhasOptimistic\b", OPS_JS, re.S)
 
 
-def test_app_unions_optimistic_so_busy_isnt_stripped_in_the_gap():
-    """refreshTopbarStatus keeps motif-busy on while a click-time optimistic op is
-    live, so the ~1.1s /api/stats gap doesn't flicker the wave off."""
+def test_app_unions_optimistic_so_busy_isnt_dropped_in_the_gap():
+    """refreshTopbarStatus keeps the wave target up while a click-time optimistic op
+    is live, so the ~1.1s /api/stats gap doesn't brake the wave back off."""
     assert "window.motifOps.hasOptimistic()" in APP_JS
     assert "const heroBusy = anyMutatingOpActive || _optimisticBusy;" in APP_JS
-    # v0.50.73: the busy state is driven through the ramp (target = level or 0),
-    # which owns the motif-busy class + data-busy-level.
-    assert "_rampWaveLevel(heroBusy ? _busyLevel : 0);" in APP_JS
+    # v0.50.76: the busy state is a continuous energy target the rAF loop eases into.
+    assert "_setHeroWaveTarget(_busyEnergy);" in APP_JS
 
 
-# ── 2. Intensity level scales with queue depth, capped (v0.50.71: at 4) ──
+# ── 2. Intensity scales with queue depth, saturating at full ──
 
 def test_busy_score_counts_op_kinds_plus_queued_jobs():
     # distinct active op-kinds + the per-row job SUM (pending+running).
     assert ("const _busyScore = (themerrdbBusy ? 1 : 0) + (plexEnumBusy ? 1 : 0)\n"
             "        + (opProgressRunning ? 1 : 0) + perJobSum;" in APP_JS)
-    # perJobSum is a real sum now (not just the boolean), so a deep download queue
-    # pushes the level up.
     assert "const perJobSum = (" in APP_JS
     assert "const perJobBusy = perJobSum > 0;" in APP_JS
 
 
-def test_busy_level_is_capped_at_4():
-    # v0.50.71: 4 tiers now (>=6 → 4 for sync + refresh + a queue), still capped.
-    assert ("const _busyLevel = _busyScore >= 6 ? 4\n"
-            "        : _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;" in APP_JS)
-    # v0.50.73: the level reaches the DOM via the ramp (String(_waveDisplayed)),
-    # which sets data-busy-level per step + removes it at idle.
-    assert "root.setAttribute('data-busy-level', String(_waveDisplayed));" in APP_JS
-    assert "root.removeAttribute('data-busy-level');" in APP_JS
+def test_busy_energy_is_continuous_floored_and_saturated():
+    # v0.50.76: score → a 0..1 energy target. Any busy floors at _HERO_OPT_FLOOR so
+    # one job still reads; heavy stacking saturates at 1 (min) so it can't get frantic.
+    assert ("const _busyEnergy = heroBusy\n"
+            "        ? Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.145))\n"
+            "        : 0;" in APP_JS)
+    assert "const _HERO_OPT_FLOOR = 0.3;" in APP_JS
 
 
-def test_css_levels_escalate_monotonically_and_cap():
-    """L1 (base) < L2 < L3 < L4 on brightness (opacity up) + height (scaleY up).
-    v0.50.71 added L4 for heavy stacked activity; L4 is the ceiling — no level 5."""
-    def vals(sel):
-        r = _rule(APP_CSS, sel)
-        op = float(re.search(r"opacity:\s*([\d.]+)", r).group(1))
-        dur = float(re.search(r"animation-duration:\s*([\d.]+)s", r).group(1))
-        sy = float(re.search(r"scaleY\(([\d.]+)\)", r).group(1))
-        return op, dur, sy
-    l1 = vals("html.motif-busy .hero::after {")
-    l2 = vals('html.motif-busy[data-busy-level="2"] .hero::after {')
-    l3 = vals('html.motif-busy[data-busy-level="3"] .hero::after {')
-    l4 = vals('html.motif-busy[data-busy-level="4"] .hero::after {')
-    # opacity (brightness) rises across all four
-    assert l1[0] < l2[0] < l3[0] < l4[0]
-    # duration (speed) falls monotonically — never SLOWER at a higher level
-    assert l1[1] > l2[1] > l3[1] > l4[1]
-    # scaleY (height) rises
-    assert l1[2] < l2[2] < l3[2] < l4[2]
-    # capped: no level 5
-    assert '[data-busy-level="5"]' not in APP_CSS
-    # v0.50.71: L4's richness comes largely from the SECOND layer swelling — its
-    # ::before opacity jumps more than the primary's, so the cross-weave reads
-    # fuller instead of just faster/messier.
-    b3 = vals('html.motif-busy[data-busy-level="3"] .hero::before {')
-    b4 = vals('html.motif-busy[data-busy-level="4"] .hero::before {')
-    assert b4[0] - b3[0] >= 0.10
+def _energy_mapping(score, hero_busy=True):
+    """mirror the JS _busyEnergy formula so we can assert its shape."""
+    if not hero_busy:
+        return 0.0
+    return min(1.0, max(0.3, 0.28 + (score - 1) * 0.145))
 
 
-def test_top_level_stays_inside_the_reserved_band():
-    """The tallest level's scaleY must not exceed the clearance the 38px band
-    affords (~1.35 max before the scaled wave would reach the subtitle)."""
-    r = _rule(APP_CSS, 'html.motif-busy[data-busy-level="4"] .hero::after {')
-    sy = float(re.search(r"scaleY\(([\d.]+)\)", r).group(1))
-    assert sy <= 1.35
+def test_energy_mapping_rises_monotonically_then_caps():
+    vals = [_energy_mapping(s) for s in range(1, 9)]
+    # non-decreasing across the score range
+    assert all(b >= a for a, b in zip(vals, vals[1:]))
+    # a single job is already clearly busy (>= the floor)
+    assert vals[0] >= 0.3
+    # heavy stacking saturates at exactly 1 (capped — no runaway)
+    assert vals[-1] == 1.0
+    assert _energy_mapping(6) == 1.0
+    # idle → zero
+    assert _energy_mapping(0, hero_busy=False) == 0.0
+
+
+def test_css_intensity_scales_continuously_off_energy_and_stays_in_band():
+    """opacity (brightness), scaleY (height) + brightness all rise with energy off ONE
+    variable — no discrete levels. At full energy (1) the wave is brightest + tallest;
+    scaleY tops out inside the 38px reserved band."""
+    a = _rule(APP_CSS, ".hero::after {")
+    # linear in energy: base + coeff * var
+    assert "opacity: calc(0.18 + 0.37 * var(--hero-wave-energy, 0))" in a
+    assert "transform: scaleY(calc(1 + 0.32 * var(--hero-wave-energy, 0)))" in a
+    assert "filter: brightness(calc(1 + 0.55 * var(--hero-wave-energy, 0)))" in a
+    # full-energy scaleY (1 + 0.32) stays within the clearance the 38px band affords.
+    assert 1 + 0.32 <= 1.35
+    # the old discrete-level rules + per-level duration swaps are gone.
+    assert '[data-busy-level="' not in APP_CSS
+    assert "animation-duration" not in _rule(APP_CSS, ".hero::after {")
+
+
+def test_speed_scales_off_the_same_energy_in_js():
+    # the phase velocity interpolates idle→full by energy — so speed ramps with the
+    # same continuous signal as the visuals (never a discrete duration swap).
+    assert "const sp = _HERO_SPEED_IDLE + (_HERO_SPEED_FULL - _HERO_SPEED_IDLE) * e;" in APP_JS
+    assert "const sp2 = _HERO_SPEED_IDLE2 + (_HERO_SPEED_FULL2 - _HERO_SPEED_IDLE2) * e;" in APP_JS

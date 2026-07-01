@@ -98,31 +98,22 @@
      running one would be — identical across every page, so nothing jumps. Set on
      documentElement BEFORE first paint (no phase-0 flash). Both layers (9s + 14s)
      synced independently so their cross-weave stays continuous too. #}
+  {# v0.50.76: seed the hero wave's continuous state PRE-PAINT so navigation never
+     flickers. (1) --hero-wave-x/2-x = the wall-clock phase (at the idle speeds
+     240px/9s + 320px/14s that app.js uses) so the wave resumes its position across a
+     full-page nav instead of resetting to 0. (2) --hero-wave-energy = the restored
+     BUSY energy from sessionStorage so a page loaded DURING a sync/refresh paints the
+     busy wave immediately (app.js then eases from it to the live target + clears it).
+     app.js's rAF loop takes over on the next frame. #}
   <script>
     (function () {
       try {
-        var n = Date.now(), r = document.documentElement.style;
-        r.setProperty('--hero-wave-delay', '-' + (n % 9000) + 'ms');
-        r.setProperty('--hero-wave-delay-2', '-' + (n % 14000) + 'ms');
-      } catch (e) { /* no-op → animation-delay falls back to 0s */ }
-    })();
-  </script>
-  {# v0.50.71: restore the hero-wave BUSY level pre-paint from sessionStorage so a
-     page loaded DURING an active sync/refresh paints the fast wave IMMEDIATELY
-     instead of idle-then-flip on nav (the user — tv→dashboard showed the slow wave
-     then jumped to fast). app.js writes motif:busy = the level while work runs; the
-     poll then keeps it accurate + clears it (self-corrects within ~1s if the op
-     finished while on the previous page). #}
-  <script>
-    (function () {
-      try {
-        var b = sessionStorage.getItem('motif:busy');
-        if (b) {
-          var e = document.documentElement;
-          e.classList.add('motif-busy');
-          e.setAttribute('data-busy-level', b);
-        }
-      } catch (e) { /* no-op → wave starts idle, poll flips it busy */ }
+        var t = Date.now() / 1000, r = document.documentElement.style;
+        r.setProperty('--hero-wave-x', '-' + ((t * (240 / 9)) % 240).toFixed(2) + 'px');
+        r.setProperty('--hero-wave2-x', ((t * (320 / 14)) % 320).toFixed(2) + 'px');
+        var b = parseFloat(sessionStorage.getItem('motif:busy'));
+        if (b > 0) r.setProperty('--hero-wave-energy', b.toFixed(3));
+      } catch (e) { /* no-op → wave starts idle at phase 0, app.js corrects */ }
     })();
   </script>
   <script defer src="/static/app.js?v={{ motif_version }}"></script>

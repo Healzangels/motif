@@ -1495,14 +1495,14 @@
       label,
       expiresAt: Date.now() + 5000,
     };
-    // v0.50.68: kick the hero wave the INSTANT the user clicks (the user — the
-    // wave "doesn't begin right away, slightly delayed"). The busy state used to
-    // wait for refreshTopbarStatus to see the enqueued job past the /api/stats 1s
-    // cache (~1.1s). Adding motif-busy here fires it now; refreshTopbarStatus then
-    // takes over (keeps it on + sets the intensity level) and clears it — its
-    // busy calc unions hasOptimistic() so it won't strip this out from under us
-    // before the real op lands.
-    document.documentElement.classList.add('motif-busy');
+    // v0.50.68/76: kick the hero wave the INSTANT the user clicks (the user — the
+    // wave "doesn't begin right away"). Without this the wave wouldn't start moving
+    // until refreshTopbarStatus saw the enqueued job past the /api/stats 1s cache
+    // (~1.1s). __motifHeroWaveBump raises the wave's energy target to the optimistic
+    // floor NOW so it begins accelerating on the click (gas pedal); refreshTopbar
+    // then refines the target from the real score, and its busy calc unions
+    // hasOptimistic() so the target can't drop before the real op lands.
+    if (window.__motifHeroWaveBump) window.__motifHeroWaveBump();
     renderTopbar(state.ops || []);
     boostPoll();
   }

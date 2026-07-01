@@ -66,10 +66,9 @@ def test_second_wave_layer_exists():
     assert "mask: url(\"data:image/svg+xml," in b
     assert "z-index: -1" in b
     assert "pointer-events: none" in b
-    assert "animation: hero-wave-2" in b
-    # scrolls the OTHER way (positive mask-position) for the cross-weave.
-    assert "@keyframes hero-wave-2 {" in APP_CSS
-    assert "to { -webkit-mask-position: 320px center; mask-position: 320px center; }" in APP_CSS
+    # v0.50.76: scrolls the OTHER way for the cross-weave via its own rAF phase var
+    # (positive offset), replacing the @keyframes hero-wave-2 animation.
+    assert "mask-position: var(--hero-wave2-x" in b
 
 
 def test_both_wave_layers_hidden_when_wave_toggled_off():
@@ -80,21 +79,26 @@ def test_both_wave_layers_hidden_when_wave_toggled_off():
 # ── 4. Activity reactivity moved to the hero (brand EQ calmed) ──
 
 def test_busy_makes_the_wave_faster_brighter_taller():
-    # v0.50.68: the base motif-busy rule is now LEVEL 1 (mild); the old 3.6s/1.25
-    # values moved to level 2 (see test_v0_50_68). Base is still brighter + faster
-    # than idle + taller.
-    a = _rule("html.motif-busy .hero::after {")
-    assert "var(--green-bright)" in a          # brighter colour
-    assert "animation-duration: 4.8s" in a     # faster than idle 9s
-    assert "scaleY(1.13)" in a                  # taller than idle
-    b = _rule("html.motif-busy .hero::before {")
-    assert "animation-duration: 9s" in b        # faster than idle 14s
-    assert "scaleY(1.10)" in b
-
-
-def test_wave_transition_eases_the_idle_to_busy_ramp():
+    # v0.50.76: intensity is a CONTINUOUS 0..1 --hero-wave-energy (no discrete
+    # motif-busy / data-busy-level rules). energy scales the wave's opacity (brighter),
+    # scaleY (taller), and brightness (green→green-bright pop); speed is scaled off the
+    # same energy in the JS rAF loop (idle 9s/14s → full ~2.5s/3.8s).
     a = _rule(".hero::after {")
-    assert "transition: opacity var(--motion-normal), transform var(--motion-normal);" in a
+    assert "opacity: calc(0.18 + 0.37 * var(--hero-wave-energy, 0))" in a   # brighter
+    assert "transform: scaleY(calc(1 + 0.32 * var(--hero-wave-energy, 0)))" in a  # taller
+    assert "filter: brightness(calc(1 + 0.55 * var(--hero-wave-energy, 0)))" in a  # pop
+    # the JS loop maps energy → phase velocity between the idle + full speeds.
+    assert "_HERO_SPEED_IDLE = _HERO_TILE / 9;" in APP_JS
+    assert "_HERO_SPEED_FULL = _HERO_TILE / 2.5;" in APP_JS
+
+
+def test_wave_ramp_is_eased_in_js_not_a_css_transition():
+    # v0.50.76: the idle→busy ramp is eased by the rAF loop (energy chases its target
+    # exponentially), so the CSS transition (which double-eased the var-driven calc)
+    # is gone.
+    assert "h.energy += (h.target - h.energy) * k;" in APP_JS
+    a = _rule(".hero::after {")
+    assert "transition:" not in a
 
 
 def test_brand_eq_is_now_calm_no_reactivity():
@@ -105,10 +109,11 @@ def test_brand_eq_is_now_calm_no_reactivity():
     assert "animation: brand-eq-1 2.8s ease-in-out infinite;" in APP_CSS
 
 
-def test_js_toggles_motif_busy_on_root_from_activity_signal():
-    # v0.50.68: keys off heroBusy (anyMutatingOpActive ∪ the click-time optimistic
-    # signal). v0.50.73: driven through _rampWaveLevel, which adds/removes the
-    # motif-busy class on documentElement as it steps toward the target.
-    assert "_rampWaveLevel(heroBusy ? _busyLevel : 0);" in APP_JS
-    assert "root.classList.add('motif-busy');" in APP_JS
-    assert "root.classList.remove('motif-busy');" in APP_JS
+def test_js_drives_wave_energy_from_activity_signal():
+    # v0.50.76: keys off heroBusy (anyMutatingOpActive ∪ the click-time optimistic
+    # signal) → a continuous energy target the rAF loop eases into; no motif-busy class.
+    assert "_setHeroWaveTarget(_busyEnergy);" in APP_JS
+    # no discrete class/attr DOM writes remain (mentions in comments are fine).
+    assert "classList.add('motif-busy')" not in APP_JS
+    assert "setAttribute('data-busy-level'" not in APP_JS
+    assert "getAttribute('data-busy-level'" not in APP_JS

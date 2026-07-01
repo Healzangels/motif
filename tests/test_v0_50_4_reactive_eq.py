@@ -42,7 +42,8 @@ def test_js_drives_activity_signal_into_the_hero_not_the_brand_mark():
     """v0.50.67: app.js toggles motif-busy on <html> to drive the hero wave (CSS);
     it no longer toggles .is-active on the brand-mark. v0.50.68: the toggle keys off
     heroBusy (anyMutatingOpActive unioned with the click-time optimistic signal)."""
-    # v0.50.73: motif-busy is driven through _rampWaveLevel (hero wave), not a
-    # direct toggle; the brand-mark still gets no .is-active.
-    assert "_rampWaveLevel(heroBusy ? _busyLevel : 0);" in APP_JS
+    # v0.50.76: the activity signal drives the hero wave's continuous energy target
+    # (_setHeroWaveTarget), which the rAF loop eases into; the brand-mark still gets
+    # no .is-active.
+    assert "_setHeroWaveTarget(_busyEnergy);" in APP_JS
     assert "_brandMark.classList.toggle('is-active'" not in APP_JS

@@ -2295,4 +2295,22 @@
 #   the parallel _keyById lookup into _SOURCE_DONUTS (each spec now carries its storage
 #   `key` — one source of truth, no drift); refreshed two stale comments referencing the
 #   removed renderTotal/Movies/Tv wrappers. app.js + test_v0_50_73.
-__version__ = "0.50.75"
+# 0.50.76: CONTINUOUS-VELOCITY hero wave (the user — "like pressing the gas pedal it
+#   smoothly starts increasing in speed, not suddenly at the new speed ... same when a
+#   job completes it's like gently pressing the brake"). The v0.50.68-73 model scaled
+#   the wave across 4 discrete data-busy-level CSS steps that swapped animation-duration;
+#   that property ISN'T animatable, so each step re-timed the keyframe and the wave
+#   JOLTED even stepping one level at a time. Replaced with a single rAF loop
+#   (_heroWaveTick): it advances a MONOTONIC phase (a speed change alters the velocity,
+#   never the position — so it can't jump) while easing a 0..1 energy toward a target
+#   (exponential smoothing, ~0.75s time-constant). energy drives BOTH the phase velocity
+#   (idle 9s/14s → full ~2.5s/3.8s) and the CSS intensity (opacity/scaleY/brightness via
+#   calc() off --hero-wave-energy), so speed + intensity ramp together, continuously.
+#   refreshTopbarStatus maps the busy score → a continuous energy target (floored so one
+#   job reads, saturated at 1 so heavy stacking can't get frantic). ops.js kicks the wave
+#   on click via window.__motifHeroWaveBump (instant gas response). base.html seeds the
+#   wall-clock phase + restored energy pre-paint (no nav flicker; replaces the v0.50.70
+#   animation-delay + v0.50.71 class/attr restore). Removed the 8 discrete level rules +
+#   2 @keyframes + the motif-busy/data-busy-level class machinery. app.js + app.css +
+#   base.html + ops.js; rewrote the 6 wave test files for the continuous model.
+__version__ = "0.50.76"
