@@ -23,10 +23,15 @@ Performance:
     files that have actually been modified.
 
 Concurrency:
-  - The worker thread is single-threaded, so the scan runs as a worker job
-    of type='scan'. While it runs, no place/relink jobs run (they share the
-    worker). A scan can be cancelled mid-flight by setting status='cancelled'
-    on the scan_runs row; the scanner checks every N folders.
+  - Scan runs as a worker job of type='scan' on the single "long" worker
+    thread (alongside sync/plex_enum). v0.50.89: this does NOT mean place/
+    relink jobs are excluded — since v1.20.40 those run concurrently on
+    their own dedicated "place" worker thread, so a scan can genuinely
+    overlap a place/relink touching the same theme.mp3. _classify_and_record
+    re-stats after hashing and discards the finding if the file changed
+    mid-read, rather than recording an internally-inconsistent row.
+  - A scan can be cancelled mid-flight by setting status='cancelled' on the
+    scan_runs row; the scanner checks every N folders.
 """
 from __future__ import annotations
 
@@ -244,6 +249,29 @@ def _classify_and_record(ctx: ScanContext, section_id: str, section_type: str,
             file_sha256 = _sha256_of(theme_file)
         except OSError as e:
             log.warning("Cannot hash %s: %s", theme_file, e)
+            return False
+        # v0.50.89 (audit HIGH): re-stat AFTER hashing and compare against
+        # the stat captured above. A concurrent PLACE/RELINK job (a separate
+        # worker thread per v1.20.40 — this file no longer runs exclusively
+        # while scan runs, contrary to the module docstring's old claim) can
+        # atomically os.replace() this exact theme.mp3 during the read,
+        # producing a scan_findings row whose (file_size, file_mtime) come
+        # from the OLD file but whose file_sha256 comes from the NEW one.
+        # Same fail-safe-on-uncertain-read philosophy as the OSError
+        # branches around this function: discard rather than record a
+        # hybrid, internally-inconsistent row.
+        try:
+            st2 = theme_file.stat()
+        except OSError as e:
+            log.warning("scanner: post-hash re-stat failed on %s — "
+                        "discarding this finding: %s", theme_file, e)
+            return False
+        if st2.st_size != file_size or st2.st_mtime != st.st_mtime:
+            log.info(
+                "scanner: %s changed during hashing (concurrent place/"
+                "relink?) — discarding this finding, next scan will "
+                "re-read the settled content", theme_file,
+            )
             return False
 
     # Now classify. Resolve folder name → media metadata.

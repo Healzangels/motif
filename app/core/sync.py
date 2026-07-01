@@ -3448,7 +3448,14 @@ def _detect_and_stamp_drops_git(
     for mt, tmdb_id in actually_dropped:
         by_type.setdefault(mt, []).append(tmdb_id)
     stamped_total = 0
-    with get_conn(db_path) as conn:
+    # v0.50.89 (audit MEDIUM): one transaction around the per-title
+    # tdb_dropped_at stamp + its companion pending_updates DELETE — mirrors
+    # the v1.24.15 fix already applied to the full-walk sibling
+    # (_detect_and_stamp_drops_full_walk). Pre-fix this git-transport path
+    # (the default/primary transport) ran both statements autocommit, so a
+    # crash/lock between them could leave a title stamped-dropped with its
+    # now-moot pending_updates row still present.
+    with get_conn(db_path) as conn, transaction(conn):
         for mt, ids in by_type.items():
             current_n = conn.execute(
                 "SELECT COUNT(*) FROM themes "

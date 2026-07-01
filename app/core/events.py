@@ -252,19 +252,39 @@ _URL_CREDENTIALS_RE = re.compile(
 # query string), but the scrubber is the last line of defense if a future
 # caller ever interpolates one into a message/detail — so redact the value
 # while keeping the param name visible for diagnostics.
+#
+# v0.50.89 (audit MEDIUM): rebuilt from _SCRUB_SUBSTRINGS (the SAME list the
+# dict-key scrubber uses) with the sensitive word allowed ANYWHERE inside the
+# param name, not anchored as the WHOLE name. Pre-fix the alternation was
+# exact-match-only right after `[?&]` — a compound name like `session_token=`,
+# `refresh_token=`, or `client_secret=` passed through completely unredacted,
+# an asymmetry with the dict-key scrubber (which already does substring
+# containment). Sharing the word list also means a future addition to
+# _SCRUB_SUBSTRINGS automatically covers this regex too.
 _URL_QUERY_SECRET_RE = re.compile(
-    r"(?i)([?&](?:x-plex-token|x_plex_token|token|api_key|apikey|"
-    r"access_token|auth|password|secret)=)[^&\s#\"']+",
+    r"(?i)([?&][A-Za-z0-9_\-]*(?:"
+    + "|".join(re.escape(_s) for _s in _SCRUB_SUBSTRINGS)
+    + r")[A-Za-z0-9_\-]*=)[^&\s#\"']+",
 )
 
 # v1.24.12 (security audit, defense-in-depth): webhook URLs carry their secret
-# in the PATH — `…/webhooks/<id>/<token>` (Discord, Slack-compatible) — which
+# in the PATH — `…/webhooks/<id>/<token>` (Discord, apprise-generic) — which
 # neither the userinfo nor the query-param regex catches. No code path logs an
 # apprise / Discord sink URL today (notify dispatch logs only counts), but if a
 # future caller ever interpolates one into a message/detail, redact the token
 # segment while keeping the path + id visible for diagnostics.
+#
+# v0.50.89 (audit LOW): the comment above used to (incorrectly) claim
+# "Slack-compatible" coverage too — Slack's real incoming-webhook shape,
+# `hooks.slack.com/services/<team>/<bot>/<token>`, has no `/webhooks/`
+# segment, so it passed through this pattern completely unredacted. Added a
+# dedicated pattern for Slack's actual shape (same philosophy: keep the
+# team/bot path segments visible, redact only the trailing token).
 _URL_WEBHOOK_PATH_RE = re.compile(
     r"(?i)(/webhooks?/[^/\s]+/)[^/\s?#\"']+",
+)
+_URL_SLACK_WEBHOOK_RE = re.compile(
+    r"(?i)(hooks\.slack\.com/services/[^/\s]+/[^/\s]+/)[^/\s?#\"']+",
 )
 
 
@@ -277,6 +297,7 @@ def _redact_url_credentials(s: str) -> str:
         lambda m: f"{m.group('scheme')}***@", s)
     s = _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}***", s)
     s = _URL_WEBHOOK_PATH_RE.sub(lambda m: f"{m.group(1)}***", s)
+    s = _URL_SLACK_WEBHOOK_RE.sub(lambda m: f"{m.group(1)}***", s)
     return s
 
 

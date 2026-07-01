@@ -940,77 +940,103 @@ def backup_cloud_theme(
     # statement committed independently — a crash between them could
     # leave a plex_orphan themes row + stamped plex_items.theme_id
     # with NO local_files row (a linked-but-empty theme). Atomic now.
-    with transaction(conn):
-        # v1.21.33: mirror of _resolve_or_mint_tmdb_id's mint block — keep
-        # the plex_orphan shape in sync across both sites. On the force
-        # path the helper has already pre-minted, so this SELECT finds the
-        # row and the INSERT below is a no-op; this block still owns the
-        # mint for non-force callers (real-tmdb rows TDB doesn't track).
-        theme_row = conn.execute(
-            "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
-            (media_type, tmdb_id),
-        ).fetchone()
-        if theme_row is None:
-            # v1.22.52: stamp guid_imdb on the minted orphan (mirror of the
-            # _resolve_or_mint_tmdb_id mint) so it stays resolvable later.
-            _imdb_row = conn.execute(
-                "SELECT guid_imdb FROM plex_items WHERE rating_key = ?",
-                (rk,),
+    try:
+        with transaction(conn):
+            # v1.21.33: mirror of _resolve_or_mint_tmdb_id's mint block — keep
+            # the plex_orphan shape in sync across both sites. On the force
+            # path the helper has already pre-minted, so this SELECT finds the
+            # row and the INSERT below is a no-op; this block still owns the
+            # mint for non-force callers (real-tmdb rows TDB doesn't track).
+            theme_row = conn.execute(
+                "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
+                (media_type, tmdb_id),
             ).fetchone()
-            _mint_imdb = _imdb_row["guid_imdb"] if _imdb_row else None
-            cur = conn.execute(
-                """INSERT INTO themes
-                     (media_type, tmdb_id, imdb_id, title, year,
-                      upstream_source, last_seen_sync_at,
-                      first_seen_sync_at)
-                   VALUES (?, ?, ?, ?, ?, 'plex_orphan', ?, ?)""",
-                (media_type, tmdb_id, _mint_imdb, title, year, now, now),
-            )
-            theme_id_pk = cur.lastrowid
-            log.info(
-                "backup_cloud_theme: created plex_orphan themes row "
-                "(id=%s) for %s/%s — TDB doesn't track this title",
-                theme_id_pk, media_type, tmdb_id,
-            )
-            # Stamp plex_items.theme_id so the library JOIN sees the
-            # new linkage. Without this the row's theme_id stays NULL
-            # until the next plex_enum.resolve_theme_ids — meaning the
-            # local_files row written below would exist but the row
-            # wouldn't surface as B in the library until then.
+            if theme_row is None:
+                # v1.22.52: stamp guid_imdb on the minted orphan (mirror of the
+                # _resolve_or_mint_tmdb_id mint) so it stays resolvable later.
+                _imdb_row = conn.execute(
+                    "SELECT guid_imdb FROM plex_items WHERE rating_key = ?",
+                    (rk,),
+                ).fetchone()
+                _mint_imdb = _imdb_row["guid_imdb"] if _imdb_row else None
+                cur = conn.execute(
+                    """INSERT INTO themes
+                         (media_type, tmdb_id, imdb_id, title, year,
+                          upstream_source, last_seen_sync_at,
+                          first_seen_sync_at)
+                       VALUES (?, ?, ?, ?, ?, 'plex_orphan', ?, ?)""",
+                    (media_type, tmdb_id, _mint_imdb, title, year, now, now),
+                )
+                theme_id_pk = cur.lastrowid
+                log.info(
+                    "backup_cloud_theme: created plex_orphan themes row "
+                    "(id=%s) for %s/%s — TDB doesn't track this title",
+                    theme_id_pk, media_type, tmdb_id,
+                )
+                # Stamp plex_items.theme_id so the library JOIN sees the
+                # new linkage. Without this the row's theme_id stays NULL
+                # until the next plex_enum.resolve_theme_ids — meaning the
+                # local_files row written below would exist but the row
+                # wouldn't surface as B in the library until then.
+                conn.execute(
+                    "UPDATE plex_items SET theme_id = ? "
+                    "WHERE rating_key = ? AND theme_id IS NULL",
+                    (theme_id_pk, rk),
+                )
+            # INSERT local_files row with the v1.19.x writer contract.
+            # Mirrors worker.py:1754 (downloader writer) shape exactly —
+            # any column drift between writers is a class-9 contract-drift
+            # bug waiting to happen.
             conn.execute(
-                "UPDATE plex_items SET theme_id = ? "
-                "WHERE rating_key = ? AND theme_id IS NULL",
-                (theme_id_pk, rk),
+                """
+                INSERT INTO local_files
+                    (media_type, tmdb_id, section_id, edition_key, file_path,
+                     file_sha256, file_size, downloaded_at,
+                     source_video_id, provenance, source_kind,
+                     last_place_attempt_reason, last_place_attempt_at,
+                     mismatch_state)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', 'plex_cloud',
+                        'backup_only', ?, NULL)
+                ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
+                    file_path = excluded.file_path,
+                    file_sha256 = excluded.file_sha256,
+                    file_size = excluded.file_size,
+                    downloaded_at = excluded.downloaded_at,
+                    source_video_id = excluded.source_video_id,
+                    provenance = excluded.provenance,
+                    source_kind = excluded.source_kind,
+                    last_place_attempt_reason = excluded.last_place_attempt_reason,
+                    last_place_attempt_at = excluded.last_place_attempt_at,
+                    mismatch_state = excluded.mismatch_state
+                """,
+                (media_type, tmdb_id, section_id, edition_key, rel_path,
+                 file_sha256, file_size, now, sha1, now),
             )
-        # INSERT local_files row with the v1.19.x writer contract.
-        # Mirrors worker.py:1754 (downloader writer) shape exactly —
-        # any column drift between writers is a class-9 contract-drift
-        # bug waiting to happen.
-        conn.execute(
-            """
-            INSERT INTO local_files
-                (media_type, tmdb_id, section_id, edition_key, file_path,
-                 file_sha256, file_size, downloaded_at,
-                 source_video_id, provenance, source_kind,
-                 last_place_attempt_reason, last_place_attempt_at,
-                 mismatch_state)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', 'plex_cloud',
-                    'backup_only', ?, NULL)
-            ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
-                file_path = excluded.file_path,
-                file_sha256 = excluded.file_sha256,
-                file_size = excluded.file_size,
-                downloaded_at = excluded.downloaded_at,
-                source_video_id = excluded.source_video_id,
-                provenance = excluded.provenance,
-                source_kind = excluded.source_kind,
-                last_place_attempt_reason = excluded.last_place_attempt_reason,
-                last_place_attempt_at = excluded.last_place_attempt_at,
-                mismatch_state = excluded.mismatch_state
-            """,
-            (media_type, tmdb_id, section_id, edition_key, rel_path,
-             file_sha256, file_size, now, sha1, now),
+    except Exception as e:
+        # v0.50.89 (audit HIGH): this transaction writes DB rows to describe
+        # a file that was ALREADY swapped onto disk above (os.replace already
+        # ran) — pre-fix an exception here (e.g. a "database is locked"
+        # after transaction()'s own retry ladder is exhausted) propagated
+        # uncaught, violating this function's documented "Never raises"
+        # contract and aborting the caller's ENTIRE batch, abandoning every
+        # remaining target. Catch + return an error dict like every other
+        # failure branch in this function; the row's on-disk/DB mismatch
+        # self-heals on the next run (the local_files INSERT is an
+        # idempotent upsert, and abs_path already holds the new bytes).
+        log.warning(
+            "backup_cloud_theme: rk=%s DB write failed after disk swap "
+            "(file at %s now describes NEW content the local_files row "
+            "doesn't yet record — will self-heal next run): %r",
+            rk, abs_path, e,
         )
+        return {
+            "ok": False,
+            "bytes_written": 0,
+            "file_path": str(abs_path),
+            "sha1": sha1,
+            "sha256": file_sha256,
+            "error": f"db: {e!r}",
+        }
     log.info(
         "backup_cloud_theme: rk=%s mt=%s tmdb=%s section=%s "
         "wrote %d bytes (sha1=%s, sha256=%s) at %s",

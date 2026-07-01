@@ -1553,10 +1553,15 @@ def _is_p_row_for_section(
     media_type: str,
     tmdb_id: int,
     section_id: str,
+    edition_key: str = "",
 ) -> bool:
     """Mirror of _not_p_row_sql in executable form (v1.19.33).
     True iff Plex serves the theme + motif owns no placement on
-    this section."""
+    this section/edition.
+    v0.50.89: added edition_key scoping to both the plex_items match and
+    the NOT EXISTS(placements) sub-check — pre-fix a sibling edition's
+    placement masked a genuine P-row here, letting ACCEPT UPDATE/REVERT
+    force-place over Plex's serving slot for the actually-P edition."""
     # v1.18.0: themes ↔ plex_items media_type alignment. tv → show;
     # collections share 'collection' on both sides.
     if media_type == "tv":
@@ -1572,6 +1577,7 @@ def _is_p_row_for_section(
           LEFT JOIN themes t ON t.id = pi.theme_id
          WHERE pi.section_id = ?
            AND pi.media_type = ?
+           AND pi.edition_key = ?
            AND (
                (t.media_type = ? AND t.tmdb_id = ?)
                OR (pi.guid_tmdb = ? AND pi.media_type = ?)
@@ -1583,13 +1589,14 @@ def _is_p_row_for_section(
                 WHERE p.media_type = ?
                   AND p.tmdb_id = ?
                   AND p.section_id = ?
+                  AND p.edition_key = ?
            )
          LIMIT 1
         """,
-        (section_id, plex_type,
+        (section_id, plex_type, edition_key,
          media_type, tmdb_id,
          tmdb_id, plex_type,
-         media_type, tmdb_id, section_id),
+         media_type, tmdb_id, section_id, edition_key),
     ).fetchone()
     return bool(row)
 
@@ -6303,7 +6310,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         WHEN 'tdb_sync'            THEN 2
                         WHEN 'tdb_sync_pending'    THEN 2
                         WHEN 'bulk_probe_tdb'      THEN 3
+                        WHEN 'bulk_lps'            THEN 3
+                        WHEN 'cloud_themes_backup' THEN 3
                         WHEN 'reprobe_plex_themes' THEN 4
+                        WHEN 'tvdb_bridge'         THEN 4
                         ELSE 99
                       END,
                       updated_at DESC
@@ -6311,17 +6321,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """).fetchone()
             if op_row is not None:
                 kind = op_row["kind"]
+                # v0.50.89: mirror TONE_BY_KIND / KIND_LABEL in ops.js
+                # for ALL real op_progress kinds. bulk_lps, tvdb_bridge,
+                # and cloud_themes_backup were missing here, so an SSR
+                # paint while one of them ran alone showed a generic
+                # tone + "…" label until the first ops.js poll landed.
                 tone_by_kind = {
                     "tdb_sync": "tdb",
                     "plex_enum": "plex",
                     "reprobe_plex_themes": "plex",
                     "bulk_probe_tdb": "tdb",
+                    "bulk_lps": "plex",
+                    "tvdb_bridge": "tdb",
+                    "cloud_themes_backup": "plex",
                 }
                 kind_label = {
                     "tdb_sync": "THEMERRDB SYNC",
                     "plex_enum": "PLEX REFRESH",
                     "reprobe_plex_themes": "REPROBE PLEX THEMES",
                     "bulk_probe_tdb": "BULK PROBE TDB",
+                    "bulk_lps": "BULK LET PLEX SERVE",
+                    "tvdb_bridge": "TVDB BRIDGE",
+                    "cloud_themes_backup": "DOWNLOAD PLEX BACKUP",
                 }
                 state["op_running"] = True
                 state["op_tone"] = tone_by_kind.get(kind, "tdb")
@@ -9887,28 +9908,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # despite the 400, and the next unrelated successful save
         # persisted them to motif.yaml. The live config now changes only
         # via save()+reload() on the success path.
+        #
+        # v0.50.89 (audit MEDIUM): the WHOLE read-modify-write span now
+        # holds settings.config_write_lock. Pre-fix, two concurrent PATCH
+        # requests touching disjoint sections could each deepcopy the same
+        # pre-update cfg, apply their own change, and both save() — the
+        # second's full-object write silently reverted the first's change
+        # (last-writer-wins), with no error surfaced to either caller.
         import copy
-        cfg = copy.deepcopy(settings.cfg)
+        with settings.config_write_lock:
+            cfg = copy.deepcopy(settings.cfg)
 
-        try:
-            _apply_partial_config(cfg, body)
-        except (ValueError, TypeError) as e:
-            raise HTTPException(status_code=400, detail=str(e))
+            try:
+                _apply_partial_config(cfg, body)
+            except (ValueError, TypeError) as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
-        # Validate strictly (require_themes_dir=False because partial saves
-        # might happen before the user gets to that field)
-        errors = validate_config(cfg, require_themes_dir=False)
-        # Block saves only on truly malformed data — out-of-range numbers,
-        # bad cron, invalid plus_mode, etc. Empty themes_dir is fine to save.
-        critical = [e for e in errors if "themes_dir is not set" not in e]
-        if critical:
-            raise HTTPException(status_code=400,
-                                detail={"errors": critical})
+            # Validate strictly (require_themes_dir=False because partial
+            # saves might happen before the user gets to that field)
+            errors = validate_config(cfg, require_themes_dir=False)
+            # Block saves only on truly malformed data — out-of-range
+            # numbers, bad cron, invalid plus_mode, etc. Empty themes_dir
+            # is fine to save.
+            critical = [e for e in errors if "themes_dir is not set" not in e]
+            if critical:
+                raise HTTPException(status_code=400,
+                                    detail={"errors": critical})
 
-        settings.save(cfg, updated_by=request.state.principal.username)
+            settings.save(cfg, updated_by=request.state.principal.username)
 
-        # Re-read so env overrides are re-applied
-        settings.reload()
+            # Re-read so env overrides are re-applied
+            settings.reload()
 
         # v1.11.0: only the themes_dir root is precreated. Per-section
         # subdirs land lazily as the worker / API write into them.
@@ -10058,7 +10088,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                   db: Path = Depends(get_db_path)):
         """Apply a decision to a single scan finding. Body: {"decision": "adopt"}."""
         _require_admin(request)
-        body = await request.json()
+        # v0.50.89: a malformed body raised JSONDecodeError → raw 500. Mirror
+        # api_tmdb_test's guard so bad input is a clean 400, not a server error.
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}")
         decision = body.get("decision")
         if decision not in ("adopt", "replace", "keep_existing"):
             raise HTTPException(status_code=400,
@@ -10105,7 +10140,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Apply a decision to many findings at once. Body:
             {"finding_ids": [1,2,3], "decision": "adopt"}"""
         _require_admin(request)
-        body = await request.json()
+        # v0.50.89: guard the JSON parse (see api_decide_finding) — malformed
+        # body must be a 400, not an unhandled 500.
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}")
         ids = body.get("finding_ids") or []
         decision = body.get("decision")
         if not isinstance(ids, list) or not ids:
@@ -11281,6 +11321,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 is_p_row_for_section = _is_p_row_for_section(
                     conn, media_type=media_type,
                     tmdb_id=tmdb_id, section_id=section_id,
+                    edition_key=_acc_edition,
                 )
             _record_audit(
                 conn, actor=request.state.user, action="accept_update",
@@ -12175,6 +12216,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 bulk_is_p_row = _is_p_row_for_section(
                     conn, media_type=media_type,
                     tmdb_id=tmdb_id, section_id=section_id,
+                    edition_key=edition,
                 )
                 if bulk_is_p_row:
                     _enqueue_download(
@@ -19114,6 +19156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     and _is_p_row_for_section(
                         conn, media_type=media_type,
                         tmdb_id=tmdb_id, section_id=section_id,
+                        edition_key=_rev_edition or "",
                     )
                     else "replace"
                 )
@@ -19344,6 +19387,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 revert_is_p_row = _is_p_row_for_section(
                     conn, media_type=media_type,
                     tmdb_id=tmdb_id, section_id=section_id,
+                    edition_key=_rev_edition or "",
                 )
             if revert_is_p_row:
                 _enqueue_download(

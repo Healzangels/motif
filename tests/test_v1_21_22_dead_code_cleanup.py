@@ -39,8 +39,9 @@ def test_dead_config_symbols_removed():
     assert "def section_themes_dir_by_subdir" in cfg
 
 
-def test_get_dotted_removed():
-    assert "_get_dotted" not in (REPO / "app" / "core" / "config_file.py").read_text()
+# v0.50.89: test_get_dotted_removed dropped — `_get_dotted` was reinstated
+# with a genuine caller (save()'s env-override-baking guard), so it is no
+# longer dead code and the removal pin no longer applies.
 
 
 def test_dead_js_lines_removed():

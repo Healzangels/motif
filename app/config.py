@@ -31,6 +31,7 @@ motif.yaml, then the env vars become no-ops.
 """
 from __future__ import annotations
 
+import logging
 import os
 import secrets
 import threading
@@ -40,6 +41,7 @@ from .core.config_file import (
     ConfigFile, MotifConfig, validate, env_overrides_present,
 )
 
+log = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG_DIR = Path(os.environ.get("MOTIF_CONFIG_DIR", "/config"))
 _DEFAULT_DATA_DIR = Path(os.environ.get("MOTIF_DATA_DIR", "/data"))
@@ -99,6 +101,21 @@ class Settings:
         Consumers cache against this value to detect setting changes."""
         with self._lock:
             return self._revision
+
+    @property
+    def config_write_lock(self) -> threading.RLock:
+        """v0.50.89 (audit MEDIUM): a caller doing a read-modify-write
+        partial update (deepcopy self.cfg -> mutate -> validate -> save())
+        must hold this across the WHOLE span. Pre-fix, PATCH /api/config had
+        no such lock: two concurrent requests each deepcopied the same
+        pre-update cfg, applied their own (disjoint) changes, and both
+        called save() — the second's full-object write silently overwrote
+        the first's change with the stale value it started from, even
+        though `_revision` was bumped on every save (it was never actually
+        compared against anything). Serializing on this lock makes the
+        second request's deepcopy see the first's already-applied change
+        instead of racing against it."""
+        return self._lock
 
     def env_overrides(self) -> dict[str, str]:
         return env_overrides_present()
@@ -364,8 +381,21 @@ class Settings:
         key = secrets.token_urlsafe(48)
         sk.parent.mkdir(parents=True, exist_ok=True)
         sk.write_text(key)
-        try: sk.chmod(0o600)
-        except OSError: pass
+        # v0.50.89 (audit LOW): log on chmod failure instead of a bare
+        # `except: pass` — the session-signing key is exactly the kind of
+        # secret-bearing artifact the identical config_file.py:861 fix
+        # (v1.17.9) already covers for motif.yaml, but this site was never
+        # mirrored. A silent failure here leaves the newly-written key at
+        # whatever the umask produced (e.g. group/world-readable) with zero
+        # operator visibility.
+        try:
+            sk.chmod(0o600)
+        except OSError as e:
+            log.warning(
+                "session key chmod 0600 failed (path=%s): %s — file may "
+                "be readable by other local users; check the host's "
+                "filesystem permissions", sk, e,
+            )
         return key
 
 

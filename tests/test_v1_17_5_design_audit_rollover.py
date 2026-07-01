@@ -185,8 +185,8 @@ def test_js_rendered_buttons_use_slash_prefix():
     assert '>// REFRESH</button>' in js
     # REVOKE (tokens)
     assert '>// REVOKE</button>' in js
-    # VIEW (scans)
-    assert '>// VIEW</button>' in js
+    # v0.50.89: the VIEW (scans) button assertion was dropped — the /scans
+    # client surface that rendered it was orphaned dead code, now removed.
 
 
 # ── Status-text auto-dismiss ─────────────────────────────────

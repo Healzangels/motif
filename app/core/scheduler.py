@@ -481,9 +481,36 @@ def _restore_lost_placements(settings: "Settings") -> None:
         # v1.24.29: plex_uploads have no on-disk sidecar — the SQL rk-liveness
         # gate above is their authority, so accept them directly.
         to_place.extend(pu_cands)
+        enqueued: list = []
         if to_place:
             with get_conn(db_path) as conn, transaction(conn):
                 for r in to_place:
+                    # v0.50.89 (audit MEDIUM): re-check the in-flight-job dedup
+                    # HERE, inside the same transaction as the INSERT below —
+                    # pre-fix the only check was the SELECT above, run on a
+                    # separate connection/transaction with a filesystem stat
+                    # loop in between. A manual PUSH/REPLACE/ACCEPT landing a
+                    # competing place job for this row in that window was
+                    # invisible to this sweep, which then inserted a
+                    # duplicate (jobs has no UNIQUE constraint to catch it —
+                    # same TOCTOU class already closed for _enqueue_sync
+                    # v1.22.33 and _retry_pending_placements v1.24.13). The
+                    # filesystem re-stat above still happens OUTSIDE this
+                    # transaction, by design (never hold a write lock during
+                    # I/O); only the dedup check needed to move.
+                    still_clear = conn.execute(
+                        """SELECT 1 FROM jobs
+                            WHERE job_type = 'place' AND media_type = ?
+                              AND tmdb_id = ? AND section_id = ?
+                              AND COALESCE(CASE WHEN json_valid(payload) THEN
+                                    json_extract(payload, '$.edition_key') END,
+                                  '') = ?
+                              AND status IN ('pending', 'running')""",
+                        (r["media_type"], r["tmdb_id"], r["section_id"],
+                         r["edition_key"]),
+                    ).fetchone()
+                    if still_clear:
+                        continue
                     conn.execute(
                         """INSERT INTO jobs (job_type, media_type, tmdb_id,
                                              section_id, payload, status,
@@ -507,13 +534,14 @@ def _restore_lost_placements(settings: "Settings") -> None:
                                      "reason": "auto_restore"}),
                          now_iso(), now_iso()),
                     )
+                    enqueued.append(r)
     except Exception as e:
         log.warning("restore-lost-placements sweep failed: %s", e)
         return
-    if not to_place:
+    if not enqueued:
         return
     titles = []
-    for r in to_place:
+    for r in enqueued:
         lbl = r["title"] or f"{r['media_type']} {r['tmdb_id']}"
         if r["year"]:
             lbl += f" ({r['year']})"
@@ -1065,7 +1093,17 @@ def _scheduled_database_backup(settings: "Settings") -> None:
 
 
 def start_scheduler(settings: Settings) -> BackgroundScheduler:
-    scheduler = BackgroundScheduler(timezone="UTC", daemon=True)
+    # v0.50.89: APScheduler's default misfire_grace_time is 1s, so any job
+    # whose fire time was straddled by a container restart (a daily sync at
+    # 1pm while motif was down for a redeploy) is judged "misfired" and
+    # silently skipped on resume. Set a 1h grace so a job due during a short
+    # outage still runs once the scheduler comes back, and coalesce=True so a
+    # longer outage that straddled several fires of a frequent interval job
+    # collapses into a single catch-up run instead of a startup burst.
+    scheduler = BackgroundScheduler(
+        timezone="UTC", daemon=True,
+        job_defaults={"misfire_grace_time": 3600, "coalesce": True},
+    )
 
     # Daily sync
     # v1.15.117: validate cron parts by constructing the trigger

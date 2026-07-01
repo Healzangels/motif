@@ -107,9 +107,15 @@ def test_bulk_adopt_filters_by_selection_and_sidecar_state():
         "per page-walked item."
     )
     # Sidecar-only state check.
-    assert "!it.media_folder && !!it.plex_local_theme" in body, (
-        "v1.15.124: bulk ADOPT must keep the sidecar-only "
-        "per-row gate so non-sidecar selections are skipped."
+    # v0.50.89: the gate widened to the canonical `placed` predicate
+    # (plex_upload counts as placed) — mirror of the adoptOnlyCount bucket.
+    # Pre-fix the bare `!it.media_folder` treated a plex_upload row
+    # (media_folder='') as unplaced and mis-included it as an adopt candidate.
+    assert "it.placement_kind === 'plex_upload'" in body
+    assert "!placed && !!it.plex_local_theme" in body, (
+        "v1.15.124/v0.50.89: bulk ADOPT must keep the sidecar-only "
+        "per-row gate (now via the widened `placed`) so non-sidecar "
+        "selections are skipped."
     )
 
 

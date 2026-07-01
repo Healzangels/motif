@@ -23,20 +23,33 @@ def _now() -> str:
 
 def get_runtime_bool(db_path: Path, key: str, default: bool) -> bool:
     """Read a boolean runtime setting. If the key doesn't exist yet, seed it
-    with `default` so the value is stable from this moment onward."""
+    with `default` so the value is stable from this moment onward.
+
+    v0.50.89 (audit MEDIUM): the seed is now a single `ON CONFLICT DO
+    NOTHING` INSERT instead of a separate SELECT-then-INSERT — pre-fix, two
+    concurrent callers racing on a not-yet-seeded key (a worker thread and
+    an API request both checking is_dry_run(), say) could both see `row is
+    None` and both attempt the bare INSERT; the loser hit an uncaught
+    sqlite3.IntegrityError (the PK has no ON CONFLICT clause to absorb it),
+    unlike set_runtime_bool which already upserts safely. The follow-up
+    SELECT is authoritative regardless of which caller's default (if any)
+    actually won the race."""
     with get_conn(db_path) as conn:
         row = conn.execute(
             "SELECT value FROM runtime_settings WHERE key = ?", (key,),
         ).fetchone()
         if row is not None:
             return row["value"].strip().lower() in ("1", "true", "yes", "on")
-        # Seed with default
         conn.execute(
             """INSERT INTO runtime_settings (key, value, updated_at, updated_by)
-               VALUES (?, ?, ?, 'system-default')""",
+               VALUES (?, ?, ?, 'system-default')
+               ON CONFLICT(key) DO NOTHING""",
             (key, "true" if default else "false", _now()),
         )
-        return default
+        row = conn.execute(
+            "SELECT value FROM runtime_settings WHERE key = ?", (key,),
+        ).fetchone()
+        return row["value"].strip().lower() in ("1", "true", "yes", "on")
 
 
 def set_runtime_bool(db_path: Path, key: str, value: bool, *, updated_by: str) -> None:

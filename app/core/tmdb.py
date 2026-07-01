@@ -234,6 +234,14 @@ class TMDBClient:
         if not results:
             return None
         # TMDB orders by popularity/relevance. Take the first.
+        # v0.50.89 (audit): no title-similarity confidence threshold here is a
+        # deliberate tradeoff, not an oversight. The query is already scoped by
+        # the year filter above, and TMDB's own relevance ranking is stronger
+        # than a naive string-distance gate — which would false-reject the
+        # common case where TMDB's canonical title diverges from the Plex
+        # folder-derived title (localized names, punctuation, article order).
+        # Callers (orphan adoption) treat a wrong match as recoverable via the
+        # manual URL override, so we favor recall over a brittle precision gate.
         first = results[0]
         # /search doesn't return imdb_id; if the caller cares, follow up
         # with an external_ids fetch. For orphan adoption we mostly need

@@ -2406,7 +2406,28 @@
 #   PLEX) auto-fires; dropped the v1.13.2 auto-probe so it's click-to-run like the others.
 #   settings.html (3 table-scroll wraps) + app.css (.form-actions) + app.js (bindSyncProbe) +
 #   new test_v0_50_87.
-__version__ = "0.50.88"
+# 0.50.89: holistic-audit fix sweep (Sonnet-5 full-codebase audit, 32 findings triaged into 7
+#   batches; every fix verified against real code before writing — Sonnet's raw finding list
+#   over-flagged, so ~6 "findings" were confirmed non-bugs on fresh scrutiny). BATCH 1 (edition-
+#   scope bleeds): colon-folder migration, _do_adopt/_verify_adopt_state, _is_p_row_for_section,
+#   recovery_v55 walker all had writes/reads missing edition_key → sibling-edition bleed; scoped
+#   each. BATCH 2 (atomicity): cloud_theme_backup DB write now try/except-wrapped (honors its
+#   never-raises contract after os.replace); _detect_and_stamp_drops_git wrapped in a txn;
+#   _restore_lost_placements re-checks the in-flight dedup INSIDE the txn; get_runtime_bool seeds
+#   via ON CONFLICT DO NOTHING. BATCH 3 (races): scanner re-stats after hashing + corrected stale
+#   docstring (scan/place DO run concurrently since v1.20.40); cookies snapshot chmod 0600;
+#   config_write_lock serializes PATCH /api/config read-modify-write. BATCH 4 (security): events
+#   scrubber redacts compound query-param secret names (session_token=) + Slack webhook tokens.
+#   BATCH 5 (config): validate() TypeError guard on corrupt YAML; save() no longer bakes active
+#   env overrides into motif.yaml; refresh_sections matches include/exclude case-insensitively +
+#   warns on zero-match. BATCH 6: _topbar_ssr_state now covers all 7 op_progress kinds (bulk_lps/
+#   tvdb_bridge/cloud_themes_backup were falling to the generic ELSE tier). BATCH 7: bulk-ADOPT
+#   click-handler predicate widened for plex_upload; api_decide_finding(_bulk) return 400 (not
+#   500) on malformed JSON; scheduler job_defaults set misfire_grace_time=3600+coalesce so a cron
+#   straddled by a restart still runs; downloader truncation + tmdb search-confidence scoped with
+#   documenting comments (deliberate tradeoffs); orphaned /scans client JS surface (354 lines)
+#   removed. New test files test_v0_50_89_audit_batch{1..7}; several stale source-pins updated.
+__version__ = "0.50.89"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -176,6 +176,7 @@ def adopt_folder(
         media_type=outcome.get("media_type"),
         tmdb_id=outcome.get("tmdb_id"),
         section_id=section_id,
+        edition_key=edition_key_for_folder(finding["media_folder"]),
     )
     log_event(db_path, level="INFO", component="adopt",
               media_type=outcome.get("media_type"),
@@ -198,33 +199,42 @@ def _verify_adopt_state(
     db_path: Path, *,
     media_type: str | None, tmdb_id: int | None,
     section_id: str | None,
+    edition_key: str = "",
 ) -> dict:
     """Read back local_files / placements / plex_items.theme_id for the
-    just-adopted (item, section) so the event log captures the actual
-    row state. Lets us debug 'badge didn't change' reports without DB
-    access."""
+    just-adopted (item, section, edition) so the event log captures the
+    actual row state. Lets us debug 'badge didn't change' reports without DB
+    access.
+
+    v0.50.89: added edition_key scoping — pre-fix these 3 reads matched by
+    (media_type, tmdb_id, section_id) alone with no deterministic ORDER BY,
+    so on a multi-edition title the diagnostic could report a SIBLING
+    edition's row instead of the one just adopted, misleading debugging."""
     if media_type is None or tmdb_id is None or not section_id:
         return {"ok": False, "reason": "missing keys"}
     with get_conn(db_path) as conn:
         lf = conn.execute(
             """SELECT theme_id, file_path, source_kind, provenance
                FROM local_files
-               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
-            (media_type, tmdb_id, section_id),
+               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?
+                 AND edition_key = ?""",
+            (media_type, tmdb_id, section_id, edition_key),
         ).fetchone()
         p = conn.execute(
             """SELECT theme_id, media_folder, placement_kind, provenance
                FROM placements
-               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?""",
-            (media_type, tmdb_id, section_id),
+               WHERE media_type = ? AND tmdb_id = ? AND section_id = ?
+                 AND edition_key = ?""",
+            (media_type, tmdb_id, section_id, edition_key),
         ).fetchone()
         pi = conn.execute(
             """SELECT rating_key, theme_id, has_theme, local_theme_file
                FROM plex_items
                WHERE section_id = ? AND guid_tmdb = ?
                  AND media_type = (CASE ? WHEN 'tv' THEN 'show' ELSE ? END)
+                 AND edition_key = ?
                LIMIT 1""",
-            (section_id, tmdb_id, media_type, media_type),
+            (section_id, tmdb_id, media_type, media_type, edition_key),
         ).fetchone()
     return {
         "local_files": dict(lf) if lf else None,
@@ -849,13 +859,19 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
         # the section being adopted so a per-section adopt doesn't
         # touch sibling sections that may legitimately resolve
         # differently.
+        # v0.50.89: added "AND edition_key = ?" — pre-fix this UPDATE matched
+        # by (section_id, media_type, guid_tmdb) alone, so adopting ONE
+        # edition's sidecar re-linked EVERY sibling edition's plex_items row
+        # in the section to the newly-adopted theme_id, even though the
+        # local_files/placements writes above are correctly edition-scoped.
         plex_media_type = "show" if media_type == "tv" else "movie"
         conn.execute(
             """UPDATE plex_items SET theme_id = ?
                WHERE section_id = ?
                  AND media_type = ?
+                 AND edition_key = ?
                  AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND folder_path = ?))""",
-            (theme_id, section_id, plex_media_type, tmdb_id,
+            (theme_id, section_id, plex_media_type, edition_key, tmdb_id,
              finding["media_folder"]),
         )
 

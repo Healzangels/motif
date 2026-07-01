@@ -2712,6 +2712,15 @@ class Worker:
             if plex_client:
                 plex_client.close()
 
+        # v0.50.89 (audit LOW): deliberately NO cancel checkpoint between
+        # here and the DB writes below. place_theme()'s hardlink/copy is
+        # atomic (temp+rename) and has already landed on disk by this
+        # point — a checkpoint here would mean CANCEL can produce a file
+        # that's genuinely placed with no local_files/placements row
+        # describing it, which is a worse inconsistency than the narrow
+        # "cancel didn't take effect in time" UX gap it would close. The
+        # one real checkpoint stays pre-place_theme (above), before any
+        # disk I/O commits.
         if outcome.placed:
             # v1.20.13: wrap the placements UPSERT + mismatch-clear in one
             # transaction (was bare autocommit). Pre-fix a concurrent

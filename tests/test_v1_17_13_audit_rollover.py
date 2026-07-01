@@ -165,33 +165,10 @@ def test_bind_config_saves_refuses_when_load_failed():
     )
 
 
-def test_load_scans_list_surfaces_errors_in_tbody():
-    """loadScansList catch must write an in-tbody error row,
-    not just console.error."""
-    src = APP_JS.read_text()
-    idx = src.index("async function loadScansList()")
-    # Function body is longer than the default 2000-char window
-    # because of the catch-up auto-poll and the row template;
-    # widen to 4000 so the catch block is captured.
-    window = src[idx:idx + 4000]
-    assert "scans list failed" in window
-    assert "accent-red" in window
-
-
-def test_load_findings_surfaces_errors_in_tbody():
-    src = APP_JS.read_text()
-    idx = src.index("async function loadFindings()")
-    window = src[idx:idx + 1500]
-    assert "findings load failed" in window
-    assert "accent-red" in window
-
-
-def test_load_scan_detail_surfaces_errors_in_meta():
-    src = APP_JS.read_text()
-    idx = src.index("async function loadScanDetail(runId)")
-    window = src[idx:idx + 2500]
-    assert "detail load failed" in window
-    assert "accent-red" in window
+# v0.50.89: test_load_scans_list/findings/scan_detail_surfaces_errors removed —
+# the /scans-page client JS (loadScansList/loadFindings/loadScanDetail) was
+# orphaned dead code (no template hosted the #scan-* elements, no /scans route)
+# and was deleted. The error-surfacing behavior they guarded no longer exists.
 
 
 def test_refresh_dry_run_state_surfaces_unknown_label():

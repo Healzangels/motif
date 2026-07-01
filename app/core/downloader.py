@@ -238,6 +238,13 @@ def _cookiefile_snapshot(cookies_file: Path) -> str:
     tmp = Path(tempfile.gettempdir()) / (
         f"motif-cookies-{os.getpid()}-{threading.get_ident()}.txt")
     shutil.copyfile(cookies_file, tmp)
+    # v0.50.89 (audit MEDIUM): shutil.copyfile doesn't preserve the source's
+    # permission bits (it never calls copymode/copystat), so this throwaway
+    # copy — holding live session cookies — landed at whatever the
+    # container's umask produces (644 under the documented default UMASK=022,
+    # i.e. world-readable) even when the operator hardened cookies_file
+    # itself to 600. Lock it down explicitly instead of trusting umask.
+    os.chmod(tmp, 0o600)
     return str(tmp)
 
 
@@ -685,6 +692,13 @@ def download_theme(
         raise DownloadError(
             f"Download produced a 0-byte theme.mp3 for {video_id} — treating as "
             f"a failed download (ffmpeg / postprocessing likely failed)")
+    # v0.50.89 (audit): this guard is deliberately scoped to the 0-byte class
+    # only. A truncated-but-nonzero mp3 (e.g. ffmpeg killed mid-encode) still
+    # passes — validating completeness would need an ffprobe subprocess on the
+    # download hot path, and the case is both rare (yt-dlp only renames off its
+    # `.part` file once its own download completes) and low-harm (a short theme
+    # still plays). We intentionally accept that over a fixed size floor, which
+    # would false-reject legitimately short themes.
     return DownloadResult(
         file_path=expected_mp3,
         file_size=_fresh_size,

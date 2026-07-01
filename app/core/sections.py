@@ -141,15 +141,24 @@ def refresh_sections(
     discovered: list[PlexSection] = plex.discover_sections()
     log.info("Plex returned %d sections", len(discovered))
 
+    # v0.50.89: match case-insensitively — Plex section titles as typed by
+    # the operator into MOTIF_PLEX_SECTION_INCLUDE/EXCLUDE or the YAML rarely
+    # match Plex's exact casing byte-for-byte, and a silent case mismatch
+    # meant the include/exclude rule quietly did nothing.
+    included_titles_ci = {t.casefold() for t in included_titles}
+    excluded_titles_ci = {t.casefold() for t in excluded_titles}
+    matched_any = False
+
     now = _now()
     sections_with_state: list[dict] = []
 
     with get_conn(db_path) as conn:
         for s in discovered:
-            if included_titles:
-                included = s.title in included_titles
-            elif excluded_titles:
-                included = s.title not in excluded_titles
+            if included_titles_ci:
+                included = s.title.casefold() in included_titles_ci
+                matched_any = matched_any or included
+            elif excluded_titles_ci:
+                included = s.title.casefold() not in excluded_titles_ci
             else:
                 included = False
 
@@ -202,6 +211,17 @@ def refresh_sections(
             "SELECT * FROM plex_sections ORDER BY title COLLATE NOCASE"
         ).fetchall()
         sections_with_state = [dict(r) for r in rows]
+
+    # v0.50.89: a non-empty include list that matched nothing is almost
+    # always a typo'd title — surface it instead of leaving the operator
+    # to notice their whole library silently stayed unmanaged.
+    if included_titles_ci and not matched_any:
+        log.warning(
+            "refresh_sections: section_include=%r matched none of the %d "
+            "discovered Plex section titles (%s) — check for a typo",
+            sorted(included_titles), len(discovered),
+            ", ".join(sorted(s.title for s in discovered)),
+        )
 
     return sections_with_state
 
@@ -385,7 +405,7 @@ def migrate_v1_14_94_colon_folders(
     }
     with get_conn(db_path) as conn:
         rows = conn.execute(
-            "SELECT lf.media_type, lf.tmdb_id, lf.section_id, "
+            "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
             "       lf.file_path, t.title, t.year "
             "FROM local_files lf "
             "JOIN themes t "
@@ -410,7 +430,12 @@ def migrate_v1_14_94_colon_folders(
         # 'theme.mp3' but tolerate extra segments defensively)
         tail = "/".join(parts[2:])
 
-        new_canonical = canonical_theme_subdir(title, year)
+        # v0.50.89: pass edition_key so a multi-edition title's NEW canonical
+        # matches what today's real placement code would compute (the
+        # {edition-X} folder tag) — the legacy shape below predates edition
+        # support entirely (v1.14.94 shipped before v1.21.52's edition_key),
+        # so it never needs one.
+        new_canonical = canonical_theme_subdir(title, year, r["edition_key"])
         legacy_canonical = legacy_canonical_theme_subdir_pre_v1_14_94(
             title, year,
         )
@@ -475,10 +500,16 @@ def migrate_v1_14_94_colon_folders(
             continue
 
         # Update local_files.file_path to the new canonical path.
+        # v0.50.89: scoped by edition_key too (local_files' PK since v63) —
+        # pre-fix this UPDATE matched every edition sharing (media_type,
+        # tmdb_id, section_id), so renaming ONE edition's legacy folder
+        # silently overwrote file_path on ALL sibling editions' rows.
         with get_conn(db_path) as conn:
             conn.execute(
                 "UPDATE local_files SET file_path = ? "
-                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ?",
-                (new_relative, r["media_type"], r["tmdb_id"], r["section_id"]),
+                "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                "AND edition_key = ?",
+                (new_relative, r["media_type"], r["tmdb_id"], r["section_id"],
+                 r["edition_key"]),
             )
     return stats

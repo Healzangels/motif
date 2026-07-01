@@ -1842,11 +1842,17 @@ def maybe_recover_lost_adopts(
     actions: list[tuple] = []
     with get_conn(db_path) as conn:
         for (mt, tid, sec), info in candidates.items():
+            # v0.50.89 (edition audit): these historical adopt events predate
+            # edition_key entirely, so the row they describe can only ever be
+            # the standard ('') edition — scoping here (and on both UPDATEs
+            # below) the same way the v1.22.25 sibling walkers did, so a
+            # title that's since split into multiple editions doesn't bleed
+            # this stale signal onto a genuinely different edition's row.
             lf = conn.execute(
                 "SELECT source_kind, file_path "
                 "FROM local_files "
                 "WHERE media_type = ? AND tmdb_id = ? "
-                "  AND section_id = ?",
+                "  AND section_id = ? AND edition_key = ''",
                 (mt, tid, sec),
             ).fetchone()
             if lf is None:
@@ -1972,7 +1978,7 @@ def maybe_recover_lost_adopts(
                     "       provenance = 'manual', "
                     "       file_sha256 = ? "
                     " WHERE media_type = ? AND tmdb_id = ? "
-                    "   AND section_id = ? "
+                    "   AND section_id = ? AND edition_key = '' "
                     "   AND source_kind = 'themerrdb'",
                     (sha, mt, tid, sec),
                 )
@@ -1993,7 +1999,7 @@ def maybe_recover_lost_adopts(
                     "   SET source_kind = 'themerrdb', "
                     "       provenance = 'auto' "
                     " WHERE media_type = ? AND tmdb_id = ? "
-                    "   AND section_id = ? "
+                    "   AND section_id = ? AND edition_key = '' "
                     "   AND source_kind = 'adopt'",
                     (mt, tid, sec),
                 )

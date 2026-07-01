@@ -527,6 +527,14 @@ def _set_dotted(obj: Any, dotted: str, value: Any) -> None:
     setattr(obj, parts[-1], value)
 
 
+def _get_dotted(obj: Any, dotted: str) -> Any:
+    """v0.50.89: read-side mirror of _set_dotted, used by save()'s
+    env-override-baking guard."""
+    for p in dotted.split("."):
+        obj = getattr(obj, p)
+    return obj
+
+
 # ----------------------------------------------------------------------------
 # Validation
 # ----------------------------------------------------------------------------
@@ -542,140 +550,156 @@ class ConfigValidationError(ValueError):
 def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
     """Return a list of validation errors. Empty list means valid.
     `require_themes_dir=False` is used during initial bootstrap before the
-    user has set the path — sync still runs (only download/place are blocked)."""
+    user has set the path — sync still runs (only download/place are blocked).
+
+    v0.50.89 (audit MEDIUM): the checks below assume each field already has
+    the type its dataclass declares, but `_hydrate_dataclass` does NOT
+    coerce types on YAML load ("intentionally minimal", per its own
+    docstring) — a hand-edited or corrupted motif.yaml can hand a numeric
+    field a string (`rate_per_hour: abc`), which raised an unhandled
+    TypeError here on a bare `<` comparison. main.py calls this with no
+    surrounding try/except, so that crashed boot on every subsequent
+    start instead of surfacing a clean validation error. Wrapped so any
+    stray type mismatch — TypeError from a numeric compare, AttributeError
+    from calling a str method on a non-str — becomes one more entry in the
+    returned error list instead of an uncaught exception."""
     errors: list[str] = []
+    try:
+        if require_themes_dir:
+            if not cfg.paths.themes_dir:
+                errors.append("paths.themes_dir is not set — visit /settings to choose where motif should write theme files")
+            elif not os.path.isabs(cfg.paths.themes_dir):
+                errors.append(f"paths.themes_dir must be an absolute path, got {cfg.paths.themes_dir!r}")
 
-    if require_themes_dir:
-        if not cfg.paths.themes_dir:
-            errors.append("paths.themes_dir is not set — visit /settings to choose where motif should write theme files")
-        elif not os.path.isabs(cfg.paths.themes_dir):
-            errors.append(f"paths.themes_dir must be an absolute path, got {cfg.paths.themes_dir!r}")
-
-    if cfg.paths.min_free_disk_mb < 0:
-        errors.append(
-            f"paths.min_free_disk_mb must be >= 0 (0 disables the guard), "
-            f"got {cfg.paths.min_free_disk_mb}"
-        )
-
-    if cfg.web.port < 1 or cfg.web.port > 65535:
-        errors.append(f"web.port {cfg.web.port} is out of range (1-65535)")
-
-    if cfg.web.cookie_secure not in ("auto", "on", "off"):
-        errors.append(
-            f"web.cookie_secure must be 'auto', 'on', or 'off' "
-            f"(got {cfg.web.cookie_secure!r})"
-        )
-
-    if cfg.downloads.rate_per_hour < 1:
-        errors.append(f"downloads.rate_per_hour must be >= 1, got {cfg.downloads.rate_per_hour}")
-    if cfg.downloads.rate_per_hour > 600:
-        errors.append(f"downloads.rate_per_hour > 600 risks YouTube bot detection")
-
-    if cfg.downloads.concurrency < 1 or cfg.downloads.concurrency > 8:
-        errors.append(f"downloads.concurrency must be 1-8, got {cfg.downloads.concurrency}")
-
-    if cfg.downloads.audio_quality < 0 or cfg.downloads.audio_quality > 9:
-        errors.append(f"downloads.audio_quality must be 0-9 (LAME -V scale)")
-
-    # v1.13.53: bypass option validation. geo_bypass_country is
-    # optional; if provided, must be a 2-letter ISO country code.
-    # proxy_url must look like a URL with a recognized scheme.
-    gbc = (cfg.downloads.geo_bypass_country or "").strip()
-    if gbc and (len(gbc) != 2 or not gbc.isalpha()):
-        errors.append(
-            f"downloads.geo_bypass_country must be a 2-letter ISO code "
-            f"(e.g. 'US', 'GB'), got {cfg.downloads.geo_bypass_country!r}",
-        )
-    proxy = (cfg.downloads.proxy_url or "").strip()
-    if proxy:
-        valid_schemes = ("http://", "https://", "socks5://", "socks5h://", "socks4://")
-        if not any(proxy.startswith(s) for s in valid_schemes):
+        if cfg.paths.min_free_disk_mb < 0:
             errors.append(
-                f"downloads.proxy_url must start with one of "
-                f"{valid_schemes} (got {proxy[:20]!r}…)",
+                f"paths.min_free_disk_mb must be >= 0 (0 disables the guard), "
+                f"got {cfg.paths.min_free_disk_mb}"
             )
 
-    # v1.21.15 (security audit MED): sync.database_url / git_url drive
-    # outbound fetches (tarball stream in _DatabaseSnapshot, dulwich
-    # clone). validate() checked proxy_url + apprise schemes but never
-    # these — leaving an admin-set (or config-injected) file:// or
-    # internal-host SSRF target unvalidated. Mirror the proxy_url check.
-    # v1.23.62 (audit #6): db_url (the per-item-JSON remote source) is the third
-    # outbound-fetch URL and was missed by this loop too — scheme-validate it.
-    for _u_field in ("database_url", "git_url", "db_url"):
-        _u_val = (getattr(cfg.sync, _u_field, "") or "").strip()
-        if _u_val and not (_u_val.startswith("http://")
-                           or _u_val.startswith("https://")):
+        if cfg.web.port < 1 or cfg.web.port > 65535:
+            errors.append(f"web.port {cfg.web.port} is out of range (1-65535)")
+
+        if cfg.web.cookie_secure not in ("auto", "on", "off"):
             errors.append(
-                f"sync.{_u_field} must start with http:// or https:// "
-                f"(got {_u_val[:24]!r}…)"
+                f"web.cookie_secure must be 'auto', 'on', or 'off' "
+                f"(got {cfg.web.cookie_secure!r})"
             )
 
-    if cfg.matching.plus_mode not in ("separator", "literal"):
-        errors.append(f"matching.plus_mode must be 'separator' or 'literal'")
+        if cfg.downloads.rate_per_hour < 1:
+            errors.append(f"downloads.rate_per_hour must be >= 1, got {cfg.downloads.rate_per_hour}")
+        if cfg.downloads.rate_per_hour > 600:
+            errors.append(f"downloads.rate_per_hour > 600 risks YouTube bot detection")
 
-    parts = cfg.sync.cron.split()
-    if len(parts) != 5:
-        errors.append(f"sync.cron must be 5-field cron (got {len(parts)} fields)")
+        if cfg.downloads.concurrency < 1 or cfg.downloads.concurrency > 8:
+            errors.append(f"downloads.concurrency must be 1-8, got {cfg.downloads.concurrency}")
 
-    if cfg.sync.source not in ("remote", "database", "git"):
-        errors.append(
-            f"sync.source must be 'remote', 'database', or 'git' "
-            f"(got {cfg.sync.source!r})"
-        )
+        if cfg.downloads.audio_quality < 0 or cfg.downloads.audio_quality > 9:
+            errors.append(f"downloads.audio_quality must be 0-9 (LAME -V scale)")
 
-    if cfg.runtime.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
-        errors.append(f"runtime.log_level must be DEBUG, INFO, WARNING, or ERROR")
-
-    # v1.23.16: scheduled-backup validation.
-    if len(cfg.database_backup.cron.split()) != 5:
-        errors.append(
-            f"database_backup.cron must be 5-field cron "
-            f"(got {len(cfg.database_backup.cron.split())} fields)"
-        )
-    if cfg.database_backup.retention < 0:
-        errors.append(
-            f"database_backup.retention must be >= 0 (0 keeps all), "
-            f"got {cfg.database_backup.retention}"
-        )
-
-    # v1.17.1: notifications.apprise_external_url scheme enforcement.
-    # Mirrors the downloads.proxy_url check above — the field is
-    # admin-controlled (low blast radius since motif is single-tenant
-    # behind Authentik), but an admin mistake here turns motif into
-    # a POST gun aimed at whatever the URL points at. Restrict to
-    # http/https to block file://, gopher://, ftp:// and the like;
-    # operators wanting another transport can use the embedded
-    # apprise_urls instead. RFC1918 / loopback isn't blocked — it's
-    # the canonical setup for a same-host apprise-api sidecar.
-    ext_url = (cfg.notifications.apprise_external_url or "").strip()
-    if ext_url:
-        if not ext_url.startswith(("http://", "https://")):
+        # v1.13.53: bypass option validation. geo_bypass_country is
+        # optional; if provided, must be a 2-letter ISO country code.
+        # proxy_url must look like a URL with a recognized scheme.
+        gbc = (cfg.downloads.geo_bypass_country or "").strip()
+        if gbc and (len(gbc) != 2 or not gbc.isalpha()):
             errors.append(
-                f"notifications.apprise_external_url must start with "
-                f"http:// or https:// (got {ext_url[:20]!r}…)",
+                f"downloads.geo_bypass_country must be a 2-letter ISO code "
+                f"(e.g. 'US', 'GB'), got {cfg.downloads.geo_bypass_country!r}",
+            )
+        proxy = (cfg.downloads.proxy_url or "").strip()
+        if proxy:
+            valid_schemes = ("http://", "https://", "socks5://", "socks5h://", "socks4://")
+            if not any(proxy.startswith(s) for s in valid_schemes):
+                errors.append(
+                    f"downloads.proxy_url must start with one of "
+                    f"{valid_schemes} (got {proxy[:20]!r}…)",
+                )
+
+        # v1.21.15 (security audit MED): sync.database_url / git_url drive
+        # outbound fetches (tarball stream in _DatabaseSnapshot, dulwich
+        # clone). validate() checked proxy_url + apprise schemes but never
+        # these — leaving an admin-set (or config-injected) file:// or
+        # internal-host SSRF target unvalidated. Mirror the proxy_url check.
+        # v1.23.62 (audit #6): db_url (the per-item-JSON remote source) is the third
+        # outbound-fetch URL and was missed by this loop too — scheme-validate it.
+        for _u_field in ("database_url", "git_url", "db_url"):
+            _u_val = (getattr(cfg.sync, _u_field, "") or "").strip()
+            if _u_val and not (_u_val.startswith("http://")
+                               or _u_val.startswith("https://")):
+                errors.append(
+                    f"sync.{_u_field} must start with http:// or https:// "
+                    f"(got {_u_val[:24]!r}…)"
+                )
+
+        if cfg.matching.plus_mode not in ("separator", "literal"):
+            errors.append(f"matching.plus_mode must be 'separator' or 'literal'")
+
+        parts = cfg.sync.cron.split()
+        if len(parts) != 5:
+            errors.append(f"sync.cron must be 5-field cron (got {len(parts)} fields)")
+
+        if cfg.sync.source not in ("remote", "database", "git"):
+            errors.append(
+                f"sync.source must be 'remote', 'database', or 'git' "
+                f"(got {cfg.sync.source!r})"
             )
 
-    # v1.17.13: notifications.apprise_urls per-URL scheme validation.
-    # apprise plugins accept a wide set of schemes (discord://,
-    # tgram://, pushover://, slack://, mailto://, gotify://, …);
-    # we don't enumerate the allowlist here — apprise's own plugin
-    # registry is the source of truth for what's dispatchable —
-    # but we DO reject obviously-dangerous schemes that should
-    # never appear in a notification URL (file://, ftp://,
-    # gopher://, javascript:, etc.). Without this guard a careless
-    # paste could send notifications anywhere apprise will dial.
-    # Security audit (v1.17.12) HIGH 2.
-    for i, url in enumerate(cfg.notifications.apprise_urls or []):
-        if not isinstance(url, str) or not url.strip():
-            continue
-        if not _validate_apprise_url_scheme(url.strip()):
-            scheme = url.strip().split("://", 1)[0] if "://" in url else url.strip()
+        if cfg.runtime.log_level not in ("DEBUG", "INFO", "WARNING", "ERROR"):
+            errors.append(f"runtime.log_level must be DEBUG, INFO, WARNING, or ERROR")
+
+        # v1.23.16: scheduled-backup validation.
+        if len(cfg.database_backup.cron.split()) != 5:
             errors.append(
-                f"notifications.apprise_urls[{i}]: scheme not allowed "
-                f"(got {scheme!r}). Use a known Apprise service URL."
+                f"database_backup.cron must be 5-field cron "
+                f"(got {len(cfg.database_backup.cron.split())} fields)"
+            )
+        if cfg.database_backup.retention < 0:
+            errors.append(
+                f"database_backup.retention must be >= 0 (0 keeps all), "
+                f"got {cfg.database_backup.retention}"
             )
 
+        # v1.17.1: notifications.apprise_external_url scheme enforcement.
+        # Mirrors the downloads.proxy_url check above — the field is
+        # admin-controlled (low blast radius since motif is single-tenant
+        # behind Authentik), but an admin mistake here turns motif into
+        # a POST gun aimed at whatever the URL points at. Restrict to
+        # http/https to block file://, gopher://, ftp:// and the like;
+        # operators wanting another transport can use the embedded
+        # apprise_urls instead. RFC1918 / loopback isn't blocked — it's
+        # the canonical setup for a same-host apprise-api sidecar.
+        ext_url = (cfg.notifications.apprise_external_url or "").strip()
+        if ext_url:
+            if not ext_url.startswith(("http://", "https://")):
+                errors.append(
+                    f"notifications.apprise_external_url must start with "
+                    f"http:// or https:// (got {ext_url[:20]!r}…)",
+                )
+
+        # v1.17.13: notifications.apprise_urls per-URL scheme validation.
+        # apprise plugins accept a wide set of schemes (discord://,
+        # tgram://, pushover://, slack://, mailto://, gotify://, …);
+        # we don't enumerate the allowlist here — apprise's own plugin
+        # registry is the source of truth for what's dispatchable —
+        # but we DO reject obviously-dangerous schemes that should
+        # never appear in a notification URL (file://, ftp://,
+        # gopher://, javascript:, etc.). Without this guard a careless
+        # paste could send notifications anywhere apprise will dial.
+        # Security audit (v1.17.12) HIGH 2.
+        for i, url in enumerate(cfg.notifications.apprise_urls or []):
+            if not isinstance(url, str) or not url.strip():
+                continue
+            if not _validate_apprise_url_scheme(url.strip()):
+                scheme = url.strip().split("://", 1)[0] if "://" in url else url.strip()
+                errors.append(
+                    f"notifications.apprise_urls[{i}]: scheme not allowed "
+                    f"(got {scheme!r}). Use a known Apprise service URL."
+                )
+    except (TypeError, AttributeError, ValueError) as e:
+        errors.append(
+            f"config contains a value of an unexpected type — {e}. "
+            f"Check motif.yaml for a hand-edited or corrupted field."
+        )
     return errors
 
 
@@ -829,6 +853,40 @@ class ConfigFile:
         rename over the target (os.replace is atomic, so a concurrent
         reader sees either the old or the new file, never a torn one)."""
         with self._lock:
+            # v0.50.89: don't let a save silently bake a currently-active env
+            # override into motif.yaml. `cfg` came from `load()`, which always
+            # applies env overrides on top of the on-disk values, so a field
+            # the caller never touched still holds the ENV value here, not the
+            # disk value. Serializing it as-is would freeze that env value
+            # into the YAML — the next time the env var is unset, the config
+            # would keep behaving as if it were still set. For every
+            # env-overridden field that's UNCHANGED from what the env
+            # mandates (a passive carryover, not an explicit edit), restore
+            # whatever's genuinely on disk before writing. A field the caller
+            # DID explicitly set to something else is left alone.
+            overrides = env_overrides_present()
+            if overrides and self.path.exists():
+                try:
+                    raw = yaml.safe_load(self.path.read_text()) or {}
+                except yaml.YAMLError:
+                    raw = {}
+                if isinstance(raw, dict):
+                    disk_cfg = MotifConfig()
+                    _hydrate_dataclass(disk_cfg, raw)
+                    for dotted, env_name in overrides.items():
+                        conv = next((c for e, p, c in ENV_BINDINGS if p == dotted), None)
+                        if conv is None:
+                            continue
+                        try:
+                            env_value = conv(os.environ[env_name])
+                        except (ValueError, TypeError):
+                            continue
+                        try:
+                            if _get_dotted(cfg, dotted) == env_value:
+                                _set_dotted(cfg, dotted, _get_dotted(disk_cfg, dotted))
+                        except AttributeError:
+                            continue
+
             self.path.parent.mkdir(parents=True, exist_ok=True)
             data = _serialize(cfg, updated_by=updated_by)
 

@@ -136,12 +136,32 @@ def test_accept_scopes_override_provenance_and_download_to_edition(app_client):
 
 
 def test_revert_download_carries_edition():
-    # source pin: both REVERT _enqueue_download calls thread the resolved edition.
+    # source pin: both REVERT _enqueue_download calls thread the resolved
+    # edition. v0.50.89 added two MORE `edition_key=_rev_edition or ""`
+    # sites in this function (the _is_p_row_for_section P-row guard calls,
+    # an unrelated audit fix) — scope the count to _enqueue_download( calls
+    # specifically so this pin doesn't collide with that.
     src = (REPO / "app" / "web" / "api.py").read_text()
     rev = src.index("async def api_revert_to_themerrdb")
     body = src[rev:rev + 24000]
-    assert body.count("edition_key=_rev_edition or \"\"") == 2, (
-        "both REVERT _enqueue_download calls must pass the resolved edition")
+    enqueue_calls = 0
+    idx = 0
+    while True:
+        idx = body.find("_enqueue_download(", idx)
+        if idx == -1:
+            break
+        call_end = body.index(")\n", idx)
+        call_body = body[idx:call_end]
+        assert "edition_key=_rev_edition or \"\"" in call_body, (
+            f"_enqueue_download call at offset {idx} must pass the "
+            "resolved edition"
+        )
+        enqueue_calls += 1
+        idx = call_end
+    assert enqueue_calls == 2, (
+        "expected exactly 2 _enqueue_download calls in "
+        "api_revert_to_themerrdb"
+    )
 
 
 def test_v1_21_87_version_pin():
