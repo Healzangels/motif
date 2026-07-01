@@ -83,7 +83,9 @@ def test_done_relink_adopt_do_not_count(admin_client):
 def test_perjobbusy_includes_relink_and_adopt():
     """The JS row-refresh union must read both new counts, or the signal
     still misses relink/adopt sweeps."""
-    anchor = APP_JS.index("const perJobBusy = (")
+    # v0.50.68: the per-job counts moved into perJobSum (perJobBusy derives from
+    # it); relink/adopt are still in the union.
+    anchor = APP_JS.index("const perJobSum = (")
     body = APP_JS[anchor:anchor + 700]
     assert "q.relink_in_flight" in body
     assert "q.adopt_in_flight" in body

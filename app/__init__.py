@@ -2219,4 +2219,15 @@
 #   (green→green-bright) + grows it (scaleY), eased via transition. The brand EQ's
 #   reactivity (.brand-mark.is-active) was RETIRED → calm constant ambient drift now.
 #   CSS + 1 JS toggle line.
-__version__ = "0.50.67"
+# 0.50.68: hero-wave reactivity follow-ups (2 the-user asks). (1) INSTANT START: the
+#   wave lagged ~1.1s — it waited for refreshTopbarStatus to see the enqueued job past
+#   the /api/stats 1s cache. ops.js now flips motif-busy the instant of the click (in
+#   setOptimisticPlaceholder) + exposes hasOptimistic(); refreshTopbarStatus unions it
+#   into heroBusy so it can't strip the wave off in the gap before the real op lands.
+#   (2) INTENSITY BY QUEUE DEPTH: data-busy-level (1..3, CAPPED at 3 so it never looks
+#   messy) scales the wave with how much is stacked — score = distinct active op-kinds
+#   (tdb sync + plex refresh + bulk) + total queued per-row jobs (download_in_flight
+#   etc. count pending+running, so a deep download queue pushes it up). 3 CSS levels
+#   escalate opacity↑/duration↓/scaleY↑ monotonically; L3 scaleY 1.30 stays inside the
+#   38px reserved band. CSS + ops.js + app.js.
+__version__ = "0.50.68"

@@ -1317,7 +1317,10 @@
       // v1.18.93: per-row job queue depths feed the transition signal
       // so background-worker-initiated jobs (no click, no rapid-poll
       // kick from a handler) still trip the contract.
-      const perJobBusy = (
+      // v0.50.68: keep the SUM (not just the boolean) — the hero-wave intensity
+      // level below scales with it. download_in_flight etc. count pending+running
+      // (api.py /api/stats), so a deep download queue genuinely pushes it up.
+      const perJobSum = (
         (q.download_in_flight || 0)
         + (q.place_in_flight || 0)
         + (q.scan_in_flight || 0)
@@ -1328,7 +1331,8 @@
         // sweep left library chips stale until the 30s tick.
         + (q.relink_in_flight || 0)
         + (q.adopt_in_flight || 0)
-      ) > 0;
+      );
+      const perJobBusy = perJobSum > 0;
       const anyMutatingOpActive = !!(
         themerrdbBusy || plexEnumBusy || opProgressRunning || perJobBusy
       );
@@ -1349,13 +1353,27 @@
         // cycle on the next tick anyway.
         setTimeout(() => loadLibrary().catch(() => {}), 200);
       }
-      // v0.50.67: the HERO WAVE is now motif's "now working" indicator (the
-      // user — bigger + more visible than the upper-left brand EQ). Toggle
-      // motif-busy on <html>; CSS (html.motif-busy .hero::after/::before) speeds
-      // up + brightens + grows the wave. Root-class toggle works on every page;
-      // a page with no .hero (login) just has nothing to style — harmless. The
-      // brand EQ stays a calm ambient drift now (its .is-active was retired).
-      document.documentElement.classList.toggle('motif-busy', anyMutatingOpActive);
+      // v0.50.67: the HERO WAVE is motif's "now working" indicator (the user —
+      // bigger + more visible than the upper-left brand EQ). CSS
+      // (html.motif-busy .hero::after/::before) speeds up + brightens + grows it.
+      // v0.50.68: two refinements from the user. (a) INSTANT start — union
+      // hasOptimistic() (ops.js flips motif-busy the moment of the click; this
+      // keeps it on through the ~1.1s /api/stats gap so refreshTopbarStatus can't
+      // strip it before the enqueued op lands). (b) INTENSITY — data-busy-level
+      // (1..3, CAPPED at 3 so it never looks messy) scales the wave with how much
+      // is queued: score = distinct active op-kinds (tdb sync + plex refresh +
+      // bulk ops) + total queued per-row jobs (downloads etc). More stacked =
+      // more intense.
+      const _optimisticBusy = !!(window.motifOps && window.motifOps.hasOptimistic
+        && window.motifOps.hasOptimistic());
+      const heroBusy = anyMutatingOpActive || _optimisticBusy;
+      const _busyScore = (themerrdbBusy ? 1 : 0) + (plexEnumBusy ? 1 : 0)
+        + (opProgressRunning ? 1 : 0) + perJobSum;
+      const _busyLevel = _busyScore >= 4 ? 3 : _busyScore >= 2 ? 2 : 1;
+      const _root = document.documentElement;
+      _root.classList.toggle('motif-busy', heroBusy);
+      if (heroBusy) _root.setAttribute('data-busy-level', String(_busyLevel));
+      else _root.removeAttribute('data-busy-level');
       // v1.13.77: cascade-only signal for the dash SYNC THEMERRDB
       // lock. Pre-fix the lock used globalEnumPipeline, which
       // includes scan_all (manual REFRESH PLEX) — so clicking

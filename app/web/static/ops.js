@@ -1495,8 +1495,23 @@
       label,
       expiresAt: Date.now() + 5000,
     };
+    // v0.50.68: kick the hero wave the INSTANT the user clicks (the user — the
+    // wave "doesn't begin right away, slightly delayed"). The busy state used to
+    // wait for refreshTopbarStatus to see the enqueued job past the /api/stats 1s
+    // cache (~1.1s). Adding motif-busy here fires it now; refreshTopbarStatus then
+    // takes over (keeps it on + sets the intensity level) and clears it — its
+    // busy calc unions hasOptimistic() so it won't strip this out from under us
+    // before the real op lands.
+    document.documentElement.classList.add('motif-busy');
     renderTopbar(state.ops || []);
     boostPoll();
+  }
+
+  // v0.50.68: is a click-time optimistic op still live? refreshTopbarStatus
+  // unions this into its busy calc so the hero wave can't be cleared in the
+  // gap between the click and the enqueued job showing up in /api/stats.
+  function hasOptimistic() {
+    return !!_optimisticOp && _optimisticOp.expiresAt > Date.now();
   }
 
   // v1.15.35: explicit clear for the failure path. Pre-fix the
@@ -2152,6 +2167,7 @@
     boostPoll,
     setOptimisticPlaceholder,
     clearOptimisticPlaceholder,
+    hasOptimistic,
     waitForOp,
     state: () => state,
   };

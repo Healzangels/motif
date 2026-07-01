@@ -80,8 +80,11 @@ def test_app_js_defines_per_job_busy_term():
     assert "perJobBusy" in src, (
         "v1.18.93: app.js must define perJobBusy"
     )
-    # The definition must reference all four queue-depth fields.
-    idx = src.index("perJobBusy = ")
+    # v0.50.68: the four queue-depth fields moved into perJobSum (the raw sum,
+    # used for the hero-wave intensity level); perJobBusy now DERIVES from it.
+    # The row-refresh signal still unions all four counts, just via perJobSum.
+    assert "const perJobBusy = perJobSum > 0;" in src
+    idx = src.index("perJobSum = (")
     block = src[idx:idx + 600]
     for field in (
         "download_in_flight",
@@ -90,7 +93,7 @@ def test_app_js_defines_per_job_busy_term():
         "refresh_in_flight",
     ):
         assert field in block, (
-            f"v1.18.93: perJobBusy must include {field}"
+            f"v1.18.93: perJobSum must include {field}"
         )
 
 

@@ -39,7 +39,8 @@ def test_brand_mark_reactivity_retired_v0_50_67():
 
 
 def test_js_drives_activity_signal_into_the_hero_not_the_brand_mark():
-    """v0.50.67: app.js toggles motif-busy on <html> off anyMutatingOpActive (CSS
-    speeds up the hero wave); it no longer toggles .is-active on the brand-mark."""
-    assert "document.documentElement.classList.toggle('motif-busy', anyMutatingOpActive)" in APP_JS
+    """v0.50.67: app.js toggles motif-busy on <html> to drive the hero wave (CSS);
+    it no longer toggles .is-active on the brand-mark. v0.50.68: the toggle keys off
+    heroBusy (anyMutatingOpActive unioned with the click-time optimistic signal)."""
+    assert "_root.classList.toggle('motif-busy', heroBusy);" in APP_JS
     assert "_brandMark.classList.toggle('is-active'" not in APP_JS

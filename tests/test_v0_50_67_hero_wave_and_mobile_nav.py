@@ -78,13 +78,16 @@ def test_both_wave_layers_hidden_when_wave_toggled_off():
 # ── 4. Activity reactivity moved to the hero (brand EQ calmed) ──
 
 def test_busy_makes_the_wave_faster_brighter_taller():
+    # v0.50.68: the base motif-busy rule is now LEVEL 1 (mild); the old 3.6s/1.25
+    # values moved to level 2 (see test_v0_50_68). Base is still brighter + faster
+    # than idle + taller.
     a = _rule("html.motif-busy .hero::after {")
-    assert "var(--green-bright)" in a          # brighter
-    assert "animation-duration: 3.6s" in a     # faster (vs idle 9s)
-    assert "scaleY(1.25)" in a                  # taller
+    assert "var(--green-bright)" in a          # brighter colour
+    assert "animation-duration: 4.8s" in a     # faster than idle 9s
+    assert "scaleY(1.13)" in a                  # taller than idle
     b = _rule("html.motif-busy .hero::before {")
-    assert "animation-duration: 6s" in b        # faster (vs idle 14s)
-    assert "scaleY(1.18)" in b
+    assert "animation-duration: 9s" in b        # faster than idle 14s
+    assert "scaleY(1.10)" in b
 
 
 def test_wave_transition_eases_the_idle_to_busy_ramp():
@@ -101,4 +104,7 @@ def test_brand_eq_is_now_calm_no_reactivity():
 
 
 def test_js_toggles_motif_busy_on_root_from_activity_signal():
-    assert "document.documentElement.classList.toggle('motif-busy', anyMutatingOpActive)" in APP_JS
+    # v0.50.68: the toggle now keys off heroBusy (anyMutatingOpActive unioned with
+    # the click-time optimistic signal) on the cached root element.
+    assert "const _root = document.documentElement;" in APP_JS
+    assert "_root.classList.toggle('motif-busy', heroBusy);" in APP_JS
