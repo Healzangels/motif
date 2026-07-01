@@ -39,7 +39,10 @@ def test_dialog_backdrop_fades_in():
 
 
 def test_chip_hover_lifts():
-    i = APP_CSS.index(".chip:hover {")
+    # v0.50.91: the @media (hover: none) touch block adds an earlier
+    # `.chip:hover { transform: none }` override, so target the BASE rule
+    # (last occurrence) which still carries the desktop lift.
+    i = APP_CSS.rfind(".chip:hover {")
     block = APP_CSS[i:APP_CSS.index("}", i)]
     assert "transform: translateY(-1px)" in block
     # the pre-existing color/border hover affordance is preserved.

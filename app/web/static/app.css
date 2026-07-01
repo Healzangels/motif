@@ -313,25 +313,45 @@ input[type="checkbox"] {
   opacity: 0.6;
 }
 
-/* v0.50.7: CRT power-on flicker — a quick, gentle "screen turns on" sweep
-   played ONCE per tab session (base.html adds .playing on the first load via
-   sessionStorage). A full-viewport overlay that rests invisible (opacity:0)
-   and never blocks input. */
+/* v0.50.91: CRT power-ON rebuilt as the exact INVERSE of the power-OFF (the
+   user: match the powering-off effect). The tube warms up — the screen starts
+   as a black veil, a bright --fg scanline blooms from a collapsed centre point
+   out to full width + flares, then the veil lifts to reveal the live page as
+   the line fades. Mirrors .crt-power-off's --fg scanline + --bg veil, played
+   in reverse (collapse → bloom). Fires once after login / a manual refresh
+   (base.html adds .playing). Rests invisible (opacity:0), never blocks input.
+   (Was a green scaleY flash, v0.50.7.) */
 .crt-power-on {
   position: fixed; inset: 0; z-index: 9999;
   pointer-events: none;
-  background: rgba(var(--green-rgb), 0.85);
+  background: var(--bg);
   opacity: 0;
 }
-.crt-power-on.playing {
-  transform-origin: center;
-  animation: crt-power-on 0.55s ease-out;
+.crt-power-on.playing { animation: crt-power-on-bg 0.5s ease-out; }
+.crt-power-on::before {
+  content: '';
+  position: absolute; left: 0; right: 0; top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  background: var(--fg);
+  box-shadow: 0 0 14px var(--fg), 0 0 5px var(--green-bright);
+  opacity: 0;
 }
-@keyframes crt-power-on {
-  0%   { opacity: 0.8;  transform: scaleY(0.03); filter: brightness(1.6); }
-  30%  { opacity: 0.65; transform: scaleY(1); }
-  60%  { opacity: 0.4; }
-  100% { opacity: 0;    transform: scaleY(1); filter: brightness(1); }
+.crt-power-on.playing::before { animation: crt-power-on-line 0.5s ease-out; }
+/* veil lifts (screen was off → on). No fill-mode:forwards — it ends at the
+   resting opacity:0, so nothing to hold. */
+@keyframes crt-power-on-bg {
+  0%   { opacity: 0.92; }
+  40%  { opacity: 0.72; }
+  100% { opacity: 0; }
+}
+/* the scanline blooms from a centre point (scaleX 0 → 1), flares thick, fades
+   — the time-reverse of crt-power-off-line's collapse. */
+@keyframes crt-power-on-line {
+  0%   { opacity: 0;    transform: translateY(-50%) scaleX(0) scaleY(0.6); }
+  22%  { opacity: 1;    transform: translateY(-50%) scaleX(1) scaleY(0.6); }
+  55%  { opacity: 0.95; transform: translateY(-50%) scaleX(1) scaleY(2.6); }
+  100% { opacity: 0;    transform: translateY(-50%) scaleX(1) scaleY(1.2); }
 }
 
 /* v0.50.29: CRT power-OFF — the classic "tube collapses" flicker on logout (the
@@ -912,6 +932,49 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 .src-key-clear:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
+}
+
+/* v0.50.91: touch devices EMULATE :hover — the hover state latches on tap and
+   stays until the next tap elsewhere, so every hover affordance reads as a
+   permanent "selected/pressed" look on mobile (the user: "buttons when you
+   press them continue to remain highlighted like they were selected"). Hover
+   is desktop-only polish here — the REAL selected state uses .*-active /
+   .chip-active / .has-active / .open classes, never :hover — so on pointers
+   with no hover we suppress the stuck cues: the fill, lift, glow, and
+   brighten. Base bg is transparent for every one of these primitives and none
+   carry a base transform/shadow/filter, so zeroing these is safe and leaves
+   the real state classes untouched. Mirrors the global :focus{outline:none}
+   approach (v1.15.131). */
+@media (hover: none) {
+  /* Group 1 — kill the latched fill / glow / brighten. Base bg is transparent
+     and none of these carry a base box-shadow/filter/text-shadow, so zeroing
+     is safe. NOTE: transform is intentionally NOT reset here — some of these
+     (.library-search-clear) use a base transform for layout; killing it would
+     shove them out of position. */
+  .btn:hover, .btn-tiny:hover, .btn-warn:hover, .btn-info:hover,
+  .btn-plex:hover, .btn-export:hover, .btn-cookies:hover, .btn-magenta:hover,
+  .btn-danger:hover, .btn-promote-ub:hover, .btn-promote-pb:hover,
+  .btn-promote-tb:hover, .btn-promote-ab:hover,
+  .chip:hover, .tab:hover, .library-legend-pill:hover,
+  .library-search-clear:hover, .library-clear-all-btn:hover,
+  .pill-filter-clear:hover, .src-key-btn:hover, .src-key-clear:hover,
+  .ed-pill-btn:hover, .state-pill-btn:hover, .tdb-pill-btn:hover,
+  .attn-pill-btn:hover, .lib-flag-pill:hover, .title-glyph:hover,
+  .dlg-close:hover, .source-legend-item:hover,
+  .source-pie-restore-chip:hover {
+    background: transparent;
+    box-shadow: none;
+    filter: none;
+    text-shadow: none;
+  }
+  /* .chip is the one primitive whose hover adds a translateY lift (base has no
+     transform), so zero it back flat. */
+  .chip:hover { transform: none; color: var(--fg-dim); border-color: var(--line-bright); }
+  /* Color/border-only shifters — restore each primitive's verified base pair so
+     a tapped button doesn't stay lit with the hover accent. */
+  .library-clear-all-btn:hover { color: var(--fg-mute); border-color: transparent; }
+  .library-search-clear:hover { color: var(--fg-mute); border-color: transparent; }
+  .pill-filter-clear:hover, .src-key-clear:hover { color: var(--fg-mute); border-color: var(--line); }
 }
 
 .link-tiny { font-size: var(--t-tiny); letter-spacing: 0.15em; text-transform: uppercase; color: var(--fg-dim); }
@@ -3750,6 +3813,42 @@ code {
   display: flex;
   flex-direction: column;
 }
+/* v0.50.91: on narrow screens the stacked title + two fields + button fill
+   most of the circle's HEIGHT, pushing the top/bottom rows toward the poles
+   where the ring's chord narrows — so the fields clipped THROUGH the ::after
+   ring (the user: "sign in boxes clipping with the circles ruining the loop").
+   v0.50.86 grew the card into an oval only when content was TALLER than the
+   circle; here it fits height-wise but still clips horizontally at the
+   off-centre rows. Force a gentle oval on small viewports so the form sits in
+   the oval's fat middle (wide chords) + trim the inner safe-zone for margin —
+   the ring stays a continuous loop and nothing crosses it. */
+@media (max-width: 560px) {
+  .auth-card { min-height: min(540px, 135vw); }
+  .auth-card-inner { max-width: 64%; }
+}
+/* v0.50.91: the first-run SETUP form carries far more than the 2-field login —
+   a lede, three stacked fields + hint, and the forward-auth help foot. That was
+   never viable inside the round vinyl LABEL: .auth-card is display:flex with the
+   DEFAULT row direction, and setup.html (unlike login.html) had no
+   .auth-card-inner column wrapper, so head/lede/form/foot laid out as SIDE-BY-
+   SIDE columns — the lede crushed against the left arc, the foot spilling off the
+   right edge entirely at 375px. Even wrapped in a column the content is far
+   taller than a circle can hold without the poles' narrowing chords clipping the
+   rows. So the setup variant degrades to a rounded-rect panel — the record
+   SLEEVE to login's round LABEL — that sizes to its content, keeps the green
+   identity ring + glow, and never clips at any width. Scoped to .auth-card-setup
+   (comes after the base + @media rules, so it wins the equal-specificity
+   min-height/width/border-radius conflicts) so the login circle is untouched. */
+.auth-card-setup {
+  width: min(400px, 92vw);
+  min-height: 0;
+  border-radius: var(--radius);
+  padding: var(--gap-6);
+}
+.auth-card-setup::after { inset: 9px; border-radius: var(--radius); }
+/* the round card clamps its inner to a 70%-of-diameter safe square; the rect
+   has real padding instead, so let the column fill it. */
+.auth-card-setup .auth-card-inner { width: 100%; max-width: none; }
 .auth-card-head { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: var(--gap-3); }
 .auth-glyph { color: var(--amber); font-size: 18px; letter-spacing: 0.4em; }
 
@@ -5241,6 +5340,31 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      second row inside the topbar instead of off the screen; justify-content
      keeps it right-aligned on both rows like the single-row default. */
   .topbar-status { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+  /* v0.50.91: the op-mini job strip (label + bar + pct) is wide; inside the
+     cramped topbar-status column it wrapped onto its own line and floated
+     there half-width, disconnected (the user: "the bar being pushed up for the
+     running job ... looks off floating above by itself"). Pull it out of the
+     status flow and pin it as a FULL-WIDTH strip along the bottom edge of the
+     topbar — reads as an intentional "job running" bar under the header, not a
+     stray pill. .topbar is sticky (a containing block), so absolute positions
+     against it. Reserve the row via :has ONLY while a job is live, so an idle
+     topbar keeps its normal height. */
+  .topbar:has(#op-mini:not([hidden])) { padding-bottom: 30px; }
+  #op-mini:not([hidden]) {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    width: auto;
+    justify-content: center;
+    gap: 10px;
+    height: 26px;
+    padding: 0 14px;
+    border: 0;
+    border-top: 1px solid var(--line-bright);
+    border-radius: 0;
+    background: var(--bg-elev);
+  }
+  #op-mini .op-mini-label { max-width: 55%; }
+  #op-mini .op-mini-bar { width: 90px; flex: 0 0 auto; }
   /* On a phone, scroll the nav as a single compact row rather than letting the
      base flex-wrap stack the 7 tabs into a tall multi-row block. */
   .nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }

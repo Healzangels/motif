@@ -2440,7 +2440,28 @@
 #   NOTE: a specific row only resolves if TMDB's /find cross-references its IMDB
 #   id — rows TMDB doesn't link stay orphan (logged as no_tmdb_match). New
 #   test_v0_50_90_deorphan_autoresolve.
-__version__ = "0.50.90"
+# 0.50.91: mobile polish + CRT turn-on rebuild (on-device report). (1) Touch
+#   devices latch :hover after a tap, so buttons stayed "selected" — a @media
+#   (hover: none) block suppresses the stuck fill/lift/glow/brighten (real
+#   selected state uses .*-active classes, untouched; transform preserved for
+#   .library-search-clear's base centering). (2) The round login card's stacked
+#   fields clipped through the ::after ring on narrow screens — a @media
+#   (max-width:560px) gentle oval (min-height 135vw) + trimmed inner safe-zone
+#   (64%) keeps the ring a continuous loop with the form in its fat middle
+#   (verified in-browser at 375px). (3) CRT power-ON rebuilt as the exact
+#   inverse of power-OFF (scanline blooms from a centre point + veil lifts)
+#   replacing the green flash. (4) The running-job op-mini strip wrapped onto
+#   its own line in the cramped mobile topbar and floated there half-width,
+#   disconnected — now pulled out of the status flow and pinned as a full-width
+#   bar along the bottom edge of the topbar (:has reserves the row only while a
+#   job is live). Verified in-browser at 375px. (5) The first-run SETUP form
+#   (lede + 3 fields + hint + forward-auth foot) overflowed the round vinyl card
+#   — it lacked login's .auth-card-inner column wrapper, so its children laid
+#   out as flex-ROW columns and the foot spilled off-screen; it now wraps in
+#   .auth-card-inner and the card degrades to the rounded-rect .auth-card-setup
+#   "sleeve" that sizes to content (login stays a circle; scoped to the
+#   modifier). New test_v0_50_91_mobile_and_crt.
+__version__ = "0.50.91"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
