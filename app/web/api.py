@@ -7095,7 +7095,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         #   ?since=… / ?level=… / ?component=…      -> events
         #   (none)                                   -> jobs
         qp = request.query_params
-        if "status" in qp:
+        # v0.50.72: explicit ?view=events deep-link (the dashboard Recent Activity
+        # "// all events →" link) — pre-fix it hit bare /queue and landed on JOBS,
+        # not the Events Log the label promises (the user).
+        if qp.get("view") == "events":
+            initial_logview = "events"
+        elif qp.get("view") == "jobs":
+            initial_logview = "jobs"
+        elif "status" in qp:
             initial_logview = "jobs"
         elif "since" in qp or "level" in qp or "component" in qp:
             initial_logview = "events"

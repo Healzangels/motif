@@ -2260,4 +2260,13 @@
 #   refresh is going on"): score >= 6 → L4; its richness comes mostly from the SECOND
 #   wave layer swelling (::before opacity 0.30→0.42) so the cross-weave reads fuller,
 #   not just faster. Still capped (no L5). base.html + app.js + CSS.
-__version__ = "0.50.71"
+# 0.50.72: two small clarity fixes (the user). (1) Dashboard RECENT ACTIVITY
+#   "// all events →" hit bare /queue → the JOBS default, not the Events Log the
+#   section shows. Link now carries ?view=events; both the /queue route (SSR) and
+#   bindQueue (client re-apply) honor an explicit ?view=events|jobs so it lands on
+#   the event stream flash-free. (2) The "no catalog changes (N checked)" sync
+#   notification named no unit — the creeping N read as a library count. Now
+#   "no catalog changes (6,201 ThemerrDB themes checked)" so it's clear the number
+#   grows with ThemerrDB, not with matches in the motif library. api.py + app.js +
+#   dashboard.html + worker.py.
+__version__ = "0.50.72"

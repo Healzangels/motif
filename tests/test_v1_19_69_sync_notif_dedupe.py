@@ -170,7 +170,8 @@ def test_zero_changes_count_lives_in_title():
     # v1.23.28: the rendered count is now `checked` (total_seen, or the
     # tracked-catalog fallback for an empty-diff cron sync). Still in the
     # TITLE, not the body — which is what this guard pins.
-    assert "{checked}" in title_block, (
+    # v0.50.72: the count names its unit + is comma-formatted ({checked:,}).
+    assert "{checked:,}" in title_block, (
         "v1.19.92: the (N checked) breadcrumb is rendered in the "
         "title, not the body"
     )

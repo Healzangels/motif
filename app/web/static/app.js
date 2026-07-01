@@ -4880,7 +4880,13 @@
     // The /queue handler SSRs the same choice into the active-panel
     // class for a flash-free first paint; this re-applies it client-side
     // (covers in-app SPA-style nav where the server view isn't re-rendered).
-    const _initialView = _qp.has('status')
+    // v0.50.72: explicit ?view=events/jobs wins (the dashboard "// all events →"
+    // link) — else the JS would fall through to the jobs default and flip away
+    // from the events panel the /queue SSR already painted.
+    const _viewParam = _qp.get('view');
+    const _initialView = (_viewParam === 'events' || _viewParam === 'jobs')
+      ? _viewParam
+      : _qp.has('status')
       ? 'jobs'
       : (_qp.has('since') || _qp.has('level') || _qp.has('component'))
         ? 'events'

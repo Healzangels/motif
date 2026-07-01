@@ -20,7 +20,10 @@ WORKER_PY = (REPO / "app" / "core" / "worker.py").read_text()
 
 def test_no_change_headline_is_catalog_scoped():
     # both the with-count and the bare (zero-catalog / errored) forms.
-    assert 'f"Motif sync — no catalog changes ({checked} checked)"' in WORKER_PY
+    # v0.50.72: the count now names its unit — "N ThemerrDB themes checked" — so
+    # the creeping number reads as ThemerrDB catalog growth, not a library match.
+    assert '({checked:,} ThemerrDB themes checked)"' in WORKER_PY
+    assert 'f"Motif sync — no catalog changes "' in WORKER_PY
     assert 'else "Motif sync — no catalog changes")' in WORKER_PY
     # the pre-fix bare "no changes" headline must be gone so it can't silently
     # revert (the changed/updated headline `parts` join is unaffected).

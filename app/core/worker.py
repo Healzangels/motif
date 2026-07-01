@@ -1315,8 +1315,15 @@ class Worker:
                 # reading as a contradiction (the user's DragonHeart repro: catalog
                 # unchanged, but an unthemed row got auto-themed in the same run).
                 # Scoping the word to "catalog" makes the two coherent.
+                # v0.50.72: name the count's UNIT — it's the ThemerrDB catalog
+                # size (grows as themes are added to ThemerrDB), NOT a match
+                # against the motif library. Pre-fix "(6201 checked)" read as if
+                # 6201 things in the user's library were checked; the number
+                # creeping up run-to-run looked unexplained (the user). Comma-
+                # formatted for readability at that scale.
                 title_text = (
-                    f"Motif sync — no catalog changes ({checked} checked)"
+                    f"Motif sync — no catalog changes "
+                    f"({checked:,} ThemerrDB themes checked)"
                     if checked else "Motif sync — no catalog changes")
             else:
                 title_text = f"Motif sync — {' · '.join(parts)}"

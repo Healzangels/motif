@@ -37,7 +37,8 @@ def test_no_change_title_uses_catalog_count():
     # jitter was the user's 6193-vs-5618 confusion.
     assert "checked = total_seen" not in block
     assert "SELECT COUNT(*) FROM themes" in block
-    assert "({checked} checked)" in block
+    # v0.50.72: the count now names its unit — "N ThemerrDB themes checked".
+    assert "({checked:,} ThemerrDB themes checked)" in block
     # a zero-catalog fresh install (or an errored sync) degrades to the bare
     # message. v1.24.16: "no catalog changes" (scoped to the TDB catalog diff).
     assert 'else "Motif sync — no catalog changes"' in block

@@ -101,7 +101,9 @@ def test_sync_completed_title_carries_the_outcome():
     assert '"Motif sync — no catalog changes"' in block
     # v1.23.28: the count is now `checked` (= total_seen, or the tracked
     # catalog size when an empty-diff cron sync processed 0 items).
-    assert "no catalog changes ({checked} checked)" in block
+    # v0.50.72: the count names its unit (ThemerrDB themes) so the growing number
+    # reads as catalog growth, not a library match.
+    assert "({checked:,} ThemerrDB themes checked)" in block
     assert "' · '.join(parts)" in block
 
 

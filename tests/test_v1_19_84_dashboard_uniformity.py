@@ -132,8 +132,10 @@ def test_live_stat_tone_rules_preserved():
 
 
 def test_all_events_link_prefixed():
-    assert '<a href="/queue" class="link-tiny">// all events →</a>' in DASH_HTML, (
-        "v1.19.84: the RECENT ACTIVITY link must carry the // prefix"
+    # v0.50.72: → the Events Log view, not the JOBS default (?view=events).
+    assert ('<a href="/queue?view=events" class="link-tiny">// all events →</a>'
+            in DASH_HTML), (
+        "v1.19.84: the RECENT ACTIVITY link must carry the // prefix + hit events"
     )
     assert '>all events →</a>' not in DASH_HTML, (
         "v1.19.84: the bare (un-prefixed) all-events link must be gone"

@@ -761,7 +761,9 @@
          data-dash-label="RECENT ACTIVITY">
   <header class="block-head">
     <h2 class="block-title">// RECENT ACTIVITY</h2>
-    <a href="/queue" class="link-tiny">// all events →</a>
+    {# v0.50.72: → the Events Log (event stream), not the JOBS default — this
+       section IS the event stream, so "all events" must land on the matching view. #}
+    <a href="/queue?view=events" class="link-tiny">// all events →</a>
   </header>
   <ol class="event-stream" id="event-stream"></ol>
 </section>
