@@ -1532,7 +1532,20 @@ body.help-mode .settings-help-about { display: block; }
 .library-presets-menu {
   position: relative;
   display: inline-block;
-  margin-left: auto;          /* pin to right of the search/chips row */
+}
+/* v0.50.86: pins the presets-bookmark + // CLEAR ALL pair to the right of the
+   filterbar row TOGETHER. This margin-left:auto used to live on
+   .library-presets-menu alone — when the filterbar's flex-wrap sent it to a new
+   line by itself, the auto margin consumed all the remaining space BEFORE it on
+   that line, leaving nothing for // CLEAR ALL (next in source order) and forcing
+   it onto yet another line, alone, underneath // FILTERS (the user, mobile).
+   Grouping both under one auto-margined flex wrapper keeps them adjacent on
+   whichever line the pair lands. */
+.library-toolgroup {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  margin-left: auto;
 }
 .library-presets-bookmark {
   list-style: none;
@@ -3674,10 +3687,19 @@ code {
    sized to scale down on narrow viewports, centred over the spinning record
    backdrop so it reads as the label at the record's centre. The old rectangular
    border-left:3px green accent is replaced by a full ring (::after); content is
-   centred + width-clamped via .auth-card-inner so the round edge never clips it. */
+   centred + width-clamped via .auth-card-inner so the round edge never clips it.
+   v0.50.86: aspect-ratio:1/1 forced a HARD diameter — a circle only has room for
+   content up to ~71% of its radius from centre (.auth-card-inner's 70%-of-diameter
+   safe zone) before the chord narrows past the content width. On mobile (width
+   shrinks toward 92vw) the "! Invalid username or password" error banner pushed
+   the stacked title+error+two fields+button past that budget, so PASSWORD started
+   clipping against the ring (the user). min-height (not aspect-ratio) keeps the
+   circle for the common case — content fits, height stays == width — but lets the
+   box grow into a taller oval ONLY when content needs more room than a circle
+   affords, so nothing ever clips. */
 .auth-card {
   width: min(460px, 92vw);
-  aspect-ratio: 1 / 1;
+  min-height: min(460px, 92vw);
   margin: 0 auto;
   background: var(--bg-elev);
   border: 1px solid var(--line-bright);
@@ -5200,6 +5222,17 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
      viewport; drop the floor so the two cards stack flush. */
   .dash-pair-col { min-width: 0; }
+  /* v0.50.86: SYNC HISTORY's 5-column table (several nowrap cells: WHEN, the
+     TRANSPORT/STATUS pills, DURATION) has no min-width floor on the OUTER card, so
+     on a phone it just spilled past the card's right edge with no way to reach the
+     clipped columns (the user). Give it its own swipe context (mirrors the
+     established #library-table .table-scroll pattern) + a min-width so the columns
+     keep their natural, readable widths instead of crushing into an unreadable wrap
+     — the table scrolls, the dashboard column doesn't. No vertical-overflow
+     children inside (just the <table>), so overflow-x:auto here doesn't hit the
+     dual-axis-clip trap that bit .table-scroll / .tabs. */
+  .sync-history-bars { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .sync-hist-table { min-width: 480px; }
 
   /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
      pager itself wrap instead of spilling the next/last buttons off the edge. */
@@ -5897,6 +5930,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   flex-direction: column;
   gap: 1px;
   font-size: var(--t-tiny);
+  min-width: 0;  /* v0.50.86: let the legend shrink with its grid track (mobile) */
 }
 .source-legend-item {
   display: flex;
@@ -5911,6 +5945,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   text-align: left;
   font-family: var(--font-mono);
   letter-spacing: 0.04em;
+  min-width: 0;  /* v0.50.86: ditto — a flex row's default min-width:auto would
+                    otherwise floor it at its content's width, defeating the
+                    parent's shrink-to-fit and pushing the row past the card. */
   transition: background var(--motion-normal) ease, border-color var(--motion-normal) ease, opacity var(--motion-normal) ease;
 }
 .source-legend-item:hover {
@@ -5933,7 +5970,20 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   width: 14px;
   text-align: center;
 }
-.source-legend-name { color: var(--fg-dim); flex: 1; }
+/* v0.50.86: min-width:0 + ellipsis — on a narrow legend column (mobile 2-per-row
+   pie cards) this flex item's default min-width:auto would floor it at the full
+   text width of names like "Manual sidecar", forcing the ROW (and its card) wider
+   than the viewport instead of truncating gracefully (the user: pies "spilling
+   outside of their given space" on mobile). Harmless on desktop — there's always
+   room there, so the ellipsis never engages. */
+.source-legend-name {
+  color: var(--fg-dim);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .source-legend-count {
   color: var(--fg);
   font-variant-numeric: tabular-nums;
@@ -6975,3 +7025,31 @@ body.dash-customize-mode .dash-customize-link:hover {
   border: 0;
 }
 #source-breakdown-block > .source-pie-row { margin-top: var(--gap-5); }
+
+/* v0.50.86: on mobile (2 cards per row, see the v0.50.74 @media(max-width:760px)
+   block above) a card's inner content width shrinks to roughly 125-160px — but
+   .source-pie-col lays the donut BESIDE the legend ("chart legend" grid areas)
+   with the donut fixed at 110px, so the chart ALONE (110px + its gap) already
+   exceeds that budget before the legend gets any room at all. The legend's
+   min-content (numbers + the widest un-splittable label chunk) then forced the
+   whole row wider than the viewport — the dashboard spilled off-screen with no
+   scroll affordance (the user: pies "spilling outside of their given space").
+   Fix at the source: STACK chart above legend on mobile (its own row instead of
+   sharing one with a 110px-wide neighbor) so the legend gets the card's full
+   width, and shrink the donut itself so the stack doesn't get too tall. Combined
+   with the min-width:0 + ellipsis truncation above, the legend now degrades
+   gracefully instead of forcing overflow. */
+@media (max-width: 760px) {
+  .source-pie-col {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "label"
+      "chart"
+      "legend";
+  }
+  .source-pie-col .source-breakdown-chart {
+    width: 90px;
+    max-width: 90px;
+    justify-self: center;
+  }
+}

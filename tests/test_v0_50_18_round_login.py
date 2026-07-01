@@ -22,7 +22,12 @@ def _block(sel: str) -> str:
 def test_auth_card_is_a_circle():
     block = _block(".auth-card {")
     assert "border-radius: 50%" in block
-    assert "aspect-ratio: 1 / 1" in block
+    # v0.50.86: min-height (not a hard aspect-ratio) — stays a circle when content
+    # fits, but can grow into a taller oval instead of clipping when it doesn't
+    # (e.g. the login-error banner pushed PASSWORD past the circle's safe chord on
+    # mobile). See test_v0_50_86 for the no-clip regression guard.
+    assert "min-height: min(460px, 92vw)" in block
+    assert "aspect-ratio" not in block
     # scales down on narrow viewports instead of a fixed 460px box.
     assert "width: min(460px, 92vw)" in block
     # the old rectangular accent is gone (replaced by the circular ::after ring).

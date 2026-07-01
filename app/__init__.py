@@ -2376,4 +2376,19 @@
 #   a user URL). Fix: gate on the SAME condition the per-row SWITCH uses (theme_tmdb + theme_
 #   media_type present) — any SRC (T/U/A/M) that's HL/copy is now switchable. Count bucket +
 #   handler predicate both updated (kept identical) + test_v0_50_83 (orphan row now eligible).
-__version__ = "0.50.85"
+# 0.50.86: batch of mobile optimizations (the user, on-device testing). (1) LOGIN — an
+#   "Invalid username or password" error pushed the auth-card's content past what a strict
+#   circle can hold on mobile, clipping PASSWORD against the ring; aspect-ratio:1/1 → min-
+#   height, so it stays a circle when content fits and grows into an oval instead of clipping
+#   when it doesn't. (2) DASHBOARD SYNC HISTORY table had no scroll affordance and spilled off
+#   the card's edge; gave it its own horizontal-scroll context (mirrors #library-table
+#   .table-scroll) + a min-width. (3) LIBRARY FILTERBAR — // CLEAR ALL stranded itself on a 3rd
+#   line alone, because margin-left:auto lived on .library-presets-menu ALONE and ate all
+#   remaining room on ITS wrapped line before CLEAR ALL (next in source order) could share it;
+#   grouped both under one .library-toolgroup wrapper so they wrap together. (4) SOURCE
+#   BREAKDOWN pie cards — legend text forced cards wider than a mobile 2-per-row column
+#   affords (the fixed 110px donut ALONE already exceeds the available column width beside a
+#   legend); min-width:0 + ellipsis on the legend name (general fix, harmless on desktop) +
+#   a mobile-only stack (donut above legend, not beside it) so the legend gets the full card
+#   width. app.css (4 spots) + library.html (toolgroup wrapper) + new test_v0_50_86.
+__version__ = "0.50.86"

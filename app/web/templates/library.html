@@ -155,7 +155,15 @@
        the popup. The bookmark glyph fills (★) when an active
        preset is applied so users can tell at a glance.
        The // CLEAR ALL button is right next to it so "page tools"
-       stay grouped near the filters they affect. -->
+       stay grouped near the filters they affect.
+       v0.50.86: both wrapped in .library-toolgroup so they wrap the
+       filterbar's flex-wrap TOGETHER — the margin-left:auto that pins
+       this pair to the right used to live on .library-presets-menu
+       alone, so when IT wrapped to a new line the auto margin ate all
+       the remaining room before it, leaving zero space for // CLEAR
+       ALL (next in source order) and stranding it on a 3rd line by
+       itself on a phone (the user). -->
+  <div class="library-toolgroup">
   <details class="library-presets-menu" id="library-presets-menu">
     <summary class="library-presets-bookmark"
              title="Saved filter presets" aria-label="Saved filter presets">
@@ -187,6 +195,7 @@
   <button type="button" class="library-clear-all-btn"
           id="library-clear-all"
           title="Clear all filters, search, and sort.">// CLEAR ALL</button>
+  </div>
 
   <!-- Pill filter rows. Order matches the row column order
        (TDB, SRC, DL, PL, LINK) so the user's eye tracks naturally
