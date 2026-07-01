@@ -41,8 +41,9 @@ def test_update_count_helper_defined():
     fn_anchor = js.index("function updateLibrarySelectionUi()")
     # v1.18.24: widen window — comment additions in
     # updateLibrarySelectionUi pushed `// ADOPT + LET PLEX SERVE`
-    # past the prior 30000 boundary.
-    fn_body = js[fn_anchor:fn_anchor + 36000]
+    # past the prior 30000 boundary. v0.50.83: the SWITCH TO API
+    # bucket + visibility block pushed the tail past 36000.
+    fn_body = js[fn_anchor:fn_anchor + 38000]
     assert "const updateCount = effectiveCount(" in fn_body, (
         "v1.15.59: updateCount must be declared via effectiveCount "
         "for ACCEPT ALL / KEEP ALL count-badge support"
@@ -95,8 +96,9 @@ def test_export_csv_button_uses_with_count():
     fn_anchor = js.index("function updateLibrarySelectionUi()")
     # v1.18.24: widen window — comment additions in
     # updateLibrarySelectionUi pushed `// ADOPT + LET PLEX SERVE`
-    # past the prior 30000 boundary.
-    fn_body = js[fn_anchor:fn_anchor + 36000]
+    # past the prior 30000 boundary. v0.50.83: the SWITCH TO API
+    # bucket + visibility block pushed the tail past 36000.
+    fn_body = js[fn_anchor:fn_anchor + 38000]
     assert "withCount('// EXPORT CSV', n)" in fn_body, (
         "v1.15.59: EXPORT CSV must use withCount('// EXPORT CSV', n) "
         "— scope = selection size since handler alerts when n === 0"
@@ -112,8 +114,9 @@ def test_all_bulk_buttons_share_with_count_convention():
     fn_anchor = js.index("function updateLibrarySelectionUi()")
     # v1.18.24: widen window — comment additions in
     # updateLibrarySelectionUi pushed `// ADOPT + LET PLEX SERVE`
-    # past the prior 30000 boundary.
-    fn_body = js[fn_anchor:fn_anchor + 36000]
+    # past the prior 30000 boundary. v0.50.83: the SWITCH TO API
+    # bucket + visibility block pushed the tail past 36000.
+    fn_body = js[fn_anchor:fn_anchor + 38000]
     expected_withcount_labels = [
         "// PUSH TO PLEX",
         "// REVERT MISMATCH",

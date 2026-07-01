@@ -2357,4 +2357,12 @@
 #   between the drawer head and the scrolling body (stays at the top); ops.js hides it when
 #   there are no active/finished cards to expand. base.html + ops.css + ops.js + guard in
 #   test_v1_20_22.
-__version__ = "0.50.82"
+# 0.50.83: bulk SWITCH TO API (the user — filter LINK=HL, select, switch all to API push in
+#   one pass instead of the per-row SOURCE menu). New // SWITCH TO API bulk button, visible
+#   when the selection holds ≥1 themed FILE-sidecar row (hardlink/copy: media_folder set, not
+#   the plex_upload sentinel ''), gated off the same browse views as PUSH. The click handler
+#   mirrors bulk PUSH and loops the EXISTING per-row /switch-placement endpoint (edition-
+#   scoped via rating_key) — no new backend, reuses the tested per-row teardown/upload path.
+#   Only file rows are candidates (the endpoint FLIPS file↔api, so a plex_upload row would
+#   flip back). library.html + app.js (bucket + visibility + handler) + new test_v0_50_83.
+__version__ = "0.50.83"

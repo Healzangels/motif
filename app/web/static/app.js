@@ -11870,6 +11870,17 @@
               && it.placement_kind !== 'plex_upload'
               && themedPred(it)
     );
+    // v0.50.83: bulk SWITCH TO API — themed rows placed via a FILE sidecar (hardlink
+    // /copy: media_folder set, NOT the plex_upload sentinel media_folder=''), not in
+    // flight. The per-row /switch-placement FLIPS file↔api, so we only offer rows
+    // currently on file — the flip then goes file→api (the user: bulk the HL→API
+    // switch instead of the per-row SOURCE menu). Mirrors the canonical `placed`
+    // predicate minus the plex_upload arm.
+    const switchToApiCount = effectiveCount(
+      (it) => !it.job_in_flight && !!it.media_folder
+              && it.placement_kind !== 'plex_upload'
+              && themedPred(it)
+    );
     const revertCount = effectiveCount(
       (it) => it.mismatch_state === 'pending'
               && it.theme_media_type && it.theme_tmdb != null
@@ -12073,6 +12084,16 @@
       pushBtn.style.display = (!onTdbOnly && !onAttnUpdateFilter && pushableCount > 0) ? '' : 'none';
       if (pushCount > 0) {
         pushBtn.textContent = withCount('// PUSH TO PLEX', pushCount);
+      }
+    }
+    // v0.50.83: bulk SWITCH TO API — visible when the selection holds ≥1 file-sidecar
+    // themed row (the bulk bar only shows on a selection, so no always-on clutter).
+    // Gated off the same browse views as PUSH.
+    const switchApiBtn = document.getElementById('library-switch-to-api-btn');
+    if (switchApiBtn) {
+      switchApiBtn.style.display = (!onTdbOnly && !onAttnUpdateFilter && switchToApiCount > 0) ? '' : 'none';
+      if (switchToApiCount > 0) {
+        switchApiBtn.textContent = withCount('// SWITCH TO API', switchToApiCount);
       }
     }
     // v1.12.60: relabel DOWNLOAD-FROM-TDB based on selection mix so
@@ -13950,6 +13971,88 @@
           failed++;
         }
         btn.textContent = `// PUSHING ${i + 1}/${candidates.length}`;
+      }
+      const parts = [`${ok} QUEUED`];
+      if (failed) parts.push(`${failed} FAILED`);
+      if (skipped.length) parts.push(`${skipped.length} SKIPPED`);
+      btn.textContent = `// ${parts.join(' · ')}`;
+      libraryState.selected.clear();
+      libraryState.selectedRows.clear();
+      setTimeout(() => loadLibrary().catch(()=>{}), 1000);
+      setTimeout(refreshTopbarStatus, 1100);
+      libraryRapidPoll();
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // v0.50.83: bulk SWITCH TO API. Flips selected file-sidecar (hardlink/copy)
+    // placements to Plex API uploads (the user: don't make me do it row-by-row).
+    // Mirrors the PUSH handler shape; loops the same per-row /switch-placement
+    // endpoint the SOURCE menu uses, edition-scoped via rating_key. Only file rows
+    // are candidates (the endpoint FLIPS, so file→api; a plex_upload row would flip
+    // BACK to file — excluded).
+    document.getElementById('library-switch-to-api-btn')?.addEventListener('click', async (e) => {
+      const btn = e.currentTarget;
+      const useSelection = libraryState.selected.size > 0;
+      const candidates = [];
+      const skipped = [];
+      const source = useSelection
+        ? libraryState.selectedRows.values()
+        : (libraryState.items || []);
+      for (const it of source) {
+        const key = libKey(it);
+        const themed = (it.theme_media_type
+                        && it.theme_tmdb !== null
+                        && it.theme_tmdb !== undefined
+                        && it.upstream_source !== 'plex_orphan');
+        const onFileSidecar = !it.job_in_flight
+                              && !!it.media_folder
+                              && it.placement_kind !== 'plex_upload';
+        if (onFileSidecar && themed) {
+          // rk scopes the flip to THIS edition (v1.21.69), matching the per-row btn.
+          candidates.push({ mt: it.theme_media_type, id: it.theme_tmdb,
+                            title: it.plex_title || '', rk: it.rating_key });
+        } else if (useSelection) {
+          skipped.push(it.plex_title || key);
+        }
+      }
+      if (candidates.length === 0) {
+        alert(useSelection
+          ? 'Nothing to switch — no selected row is a hardlink/copy sidecar placement.'
+          : 'Nothing to switch — no sidecar-placed rows on this page.');
+        return;
+      }
+      const scope = useSelection ? 'selected' : 'visible';
+      const lines = [
+        `Switch ${candidates.length} ${scope} sidecar placement${candidates.length === 1 ? '' : 's'} to a Plex API upload?`,
+        '',
+        "motif uploads the theme to Plex, then removes the theme.mp3 from the media "
+        + "folder. Reversible per-row via SWITCH TO SIDECAR.",
+      ];
+      if (useSelection && skipped.length) {
+        lines.push('');
+        lines.push(`(${skipped.length} skipped — already API-pushed, in flight, or unthemed.)`);
+      }
+      if (!confirm(lines.join('\n'))) return;
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = `// SWITCHING 0/${candidates.length}`;
+      try {
+        if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+          window.motifOps.setOptimisticPlaceholder('place_queue', '// QUEUING SWITCH');
+        }
+      } catch (_) { /* placeholder is cosmetic */ }
+      let ok = 0;
+      let failed = 0;
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        try {
+          const _qs = c.rk ? `?rating_key=${encodeURIComponent(c.rk)}` : '';
+          await api('POST', `/api/items/${c.mt}/${c.id}/switch-placement${_qs}`);
+          ok++;
+        } catch (_) {
+          failed++;
+        }
+        btn.textContent = `// SWITCHING ${i + 1}/${candidates.length}`;
       }
       const parts = [`${ok} QUEUED`];
       if (failed) parts.push(`${failed} FAILED`);
