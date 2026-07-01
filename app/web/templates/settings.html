@@ -719,10 +719,13 @@
             <option value="literal">literal — treat + as part of word</option>
           </select>
           <p class="form-hint">
-            How <code>+</code> in titles is handled. <code>separator</code>
-            matches "X+Y" against folders named "X Y"; <code>literal</code>
-            requires the <code>+</code> in the folder name. <code>separator</code>
-            is the safer default for most Plex layouts.
+            How a literal <code>+</code> in a title is matched — only matters for the
+            rare title that contains one. <code>separator</code> treats <code>+</code>
+            as a word break, so "Movie+Extra" matches a folder named "Movie Extra";
+            it's the safer default for almost every library. Pick <code>literal</code>
+            only if you have a title where the <code>+</code> is significant and you
+            want it kept distinct — e.g. so <code>C++</code> or <code>Disney+</code>
+            isn't collapsed and matched to <code>C</code> / <code>Disney</code>.
           </p>
         </span>
       </label>

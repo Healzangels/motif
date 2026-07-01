@@ -2337,4 +2337,12 @@
 #   _orderedDonuts() now. _loadChartOrder sanitizes stored order (dedup, drop unknown, append
 #   missing canonical); _reorderIds is the pure swap. app.js + dashboard.html + app.css +
 #   new test_v0_50_79.
-__version__ = "0.50.79"
+# 0.50.80: MATCHING/PLUS-MODE cleanup (the user asked what it still does). It's fully live
+#   — plus_mode threads config → normalize_title, which decides folder↔theme title matches;
+#   it only matters for a title containing a literal '+'. Dropped the never-reachable third
+#   "word" mode (+ → " plus "): it was absent from the settings dropdown AND rejected by the
+#   config validator, so only "separator" (default) + "literal" ever ran. Trimmed the enum +
+#   normalize branch, rewrote the settings help copy to say WHEN literal matters (so 'C++' /
+#   'Disney+' isn't collapsed to 'C' / 'Disney'). No behavior change for any reachable mode.
+#   normalize.py + settings.html + test_v1_13_82 (dropped word test, added enum guard).
+__version__ = "0.50.80"

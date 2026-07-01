@@ -7,9 +7,10 @@ tests to lock in that verdict permanently":
 
   1. `find_target_folder` chain coverage — every branch of the
      three-step matching algorithm.
-  2. `plus_mode` round-trip via `titles_equal` — the 'word' and
-     'literal' modes are reachable but only 'separator' had test
-     coverage. the user's library could opt into either via settings.
+  2. `plus_mode` round-trip via `titles_equal` — the 'literal'
+     mode is reachable but only 'separator' had test coverage.
+     the user's library could opt into it via settings. (v0.50.80
+     dropped the never-reachable 'word' mode.)
   3. `place_theme` with `cached_folder_path` skips the index
      entirely — pins the v1.11.68 bypass that sidesteps the
      edition-mismatch trap on orphan/SET-URL/UPLOAD-MP3 rows.
@@ -154,13 +155,6 @@ def test_titles_equal_separator_mode_default():
     assert not titles_equal("Disc + Tape", "Disc Box")
 
 
-def test_titles_equal_word_mode():
-    """plus_mode='word': '+' becomes ' plus '. So 'A+B' matches
-    'A plus B' but NOT 'A B'. Pin the discrimination."""
-    assert titles_equal("A+B", "A plus B", plus_mode="word")
-    assert not titles_equal("A+B", "A B", plus_mode="word")
-
-
 def test_titles_equal_literal_mode_preserves_plus():
     """plus_mode='literal': '+' is preserved through normalization
     via the __plus__ sentinel. So 'A+B' matches 'a+b' (case
@@ -173,13 +167,20 @@ def test_titles_equal_literal_mode_preserves_plus():
 
 def test_titles_equal_modes_are_disjoint():
     """The same input can match in one mode and not another —
-    that's the whole point of having three modes. Pin the
+    that's the whole point of having the two modes. Pin the
     discrimination so a normalize.py refactor can't collapse
     them silently."""
-    a, b = "Tony+Sons", "Tony plus Sons"
-    assert not titles_equal(a, b, plus_mode="separator")  # '+'→' '
-    assert titles_equal(a, b, plus_mode="word")            # '+'→' plus '
-    assert not titles_equal(a, b, plus_mode="literal")     # '+' kept
+    a, b = "Tony+Sons", "Tony Sons"
+    assert titles_equal(a, b, plus_mode="separator")       # '+'→' ' → matches
+    assert not titles_equal(a, b, plus_mode="literal")     # '+' kept → distinct
+
+
+def test_word_mode_removed_v0_50_80():
+    """v0.50.80: the 'word' mode was unreachable (not in the settings UI, rejected
+    by the config validator) — removed so the enum reflects the two real modes."""
+    from app.core.normalize import PlusMode
+    import typing
+    assert set(typing.get_args(PlusMode)) == {"separator", "literal"}
 
 
 # ── (3) place_theme cached_folder_path bypasses the index ────

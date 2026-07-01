@@ -6,7 +6,7 @@ organized their library around it.
 Key behaviors preserved:
 - Edition tags in {edition-...} or any {tag} suffixes
 - Title (Year) parsing
-- '+' handling with three modes: separator | word | literal
+- '+' handling with two modes: separator | literal
 - Roman numeral and word-number → arabic conversion
 - 'vs' / 'v' → 'versus'
 - '&' → 'and'
@@ -23,7 +23,10 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-PlusMode = Literal["separator", "word", "literal"]
+# v0.50.80: dropped the unreachable "word" mode (+ → " plus ") — it was never
+# selectable in the settings UI and the config validator rejects it, so only
+# "separator" (default) and "literal" ever reach here.
+PlusMode = Literal["separator", "literal"]
 
 
 _ROMAN_MAP = {
@@ -105,8 +108,6 @@ def normalize_title(raw: str, plus_mode: PlusMode = "separator") -> str:
 
     if plus_mode == "separator":
         t = t.replace("+", " ")
-    elif plus_mode == "word":
-        t = t.replace("+", " plus ")
     elif plus_mode == "literal":
         t = t.replace("+", " __plus__ ")
 
