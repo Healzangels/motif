@@ -2487,7 +2487,21 @@
 #   removed the now-dead v0.50.88 ops.css op-mini caps (the #op-mini strip
 #   override supersedes them). CSS only. test_v0_50_91 hover tests rewritten to
 #   assert the gating. Touch behavior to be confirmed on-device.
-__version__ = "0.50.93"
+# 0.50.94: fix a v0.50.93 hover-gating regression on the // LEGEND toggle (the
+#   user: "legend feels off ... should have the clicked highlight displayed"). The
+#   open (active) green was a TWO-LINE selector list — `.library-legend-pill.open,`
+#   / `.library-legend-pill.open:hover { … }` — and v0.50.93 wrapped the (hover:
+#   hover) gate around only the `{`-bearing line, leaving `.open,` dangling before
+#   the @media at-rule → invalid selector list → the browser dropped the WHOLE rule
+#   → an OPEN legend showed no active accent (brace-balanced, so the CSS check
+#   passed; the rule was just semantically dead). Split into two standalone rules:
+#   `.open` UNGATED (active green on every device, touch included) + `.open:hover`
+#   gated (only fights .chip:hover where a cursor can hover). Restores the exact
+#   pre-v0.50.93 look; desktop hover + closed state unchanged. test_v1_23_51 green-
+#   accent guard strengthened from a substring check to a real standalone-rule +
+#   not-swallowed-by-@media assertion (the old guard passed on the broken CSS). CSS
+#   + test only.
+__version__ = "0.50.94"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

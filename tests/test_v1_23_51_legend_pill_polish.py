@@ -44,6 +44,25 @@ def test_legend_pill_green_accent_only_when_open():
     # added the explicit .open:hover so the green survives a hover (.chip:hover
     # would otherwise win by source order).
     assert ".library-legend-pill.open:hover { color: var(--green)" in APP_CSS
+    # v0.50.94 regression guard: the OPEN accent must live in its OWN standalone
+    # rule (a `{` directly after `.open`), applied UNGATED so a pressed toggle
+    # reads active on touch too. v0.50.93 wrapped the (hover: hover) gate around
+    # the two-line selector list, leaving `.library-legend-pill.open,` dangling
+    # before the @media at-rule → the whole rule was invalid and the active green
+    # vanished. `.library-legend-pill.open {` is present ONLY when the base rule
+    # is standalone (the broken form had `.open,` / `.open:hover {`, never `.open {`).
+    assert ".library-legend-pill.open { color: var(--green)" in APP_CSS
+    assert ".library-legend-pill.open,\n@media" not in APP_CSS, (
+        "the .open base accent must not be swallowed into a media query"
+    )
+    # and the base rule must NOT sit inside any @media block — verify the nearest
+    # preceding `@media` (if any) has already closed before the base rule opens.
+    base_i = APP_CSS.index(".library-legend-pill.open { color: var(--green)")
+    prev_media = APP_CSS.rfind("@media", 0, base_i)
+    if prev_media != -1:
+        assert APP_CSS.count("}", prev_media, base_i) >= APP_CSS.count("{", prev_media, base_i), (
+            "the ungated .open base rule must not be nested inside an open @media block"
+        )
 
 
 def test_legend_pill_has_keyboard_focus_outline():

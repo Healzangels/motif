@@ -1463,10 +1463,15 @@ body.help-mode .help-mode-bar { display: flex; }
    or isn't"). Only the caret gap + the open (active) green accent are pill-
    specific now; everything else comes from .chip. */
 .library-legend-pill { gap: var(--gap-2); }
-/* v1.23.54: the :hover variant is explicit so the open (active) green survives a
-   hover — .chip:hover (color:--fg) is equal-specificity and later in source, so
-   without it an OPEN toggle's label reverted to dim grey while hovered. */
-.library-legend-pill.open,
+/* v1.23.54: the OPEN (active) green marks a pressed toggle. It must apply on EVERY
+   device — touch included — so this base rule stays UNGATED. The :hover twin is gated
+   under (hover: hover) so it only fights .chip:hover where a cursor can actually hover.
+   v0.50.94: the v0.50.93 hover-gating wrapped the gate around this two-line selector
+   list, leaving `.library-legend-pill.open,` dangling before the @media at-rule →
+   invalid selector list → the whole rule dropped → the active green vanished (the user:
+   "legend feels off ... should have the clicked highlight"). Keep the two as separate
+   rules so the base .open accent can never be swallowed by the media query again. */
+.library-legend-pill.open { color: var(--green); border-color: var(--green-deep); }
 @media (hover: hover) {
 .library-legend-pill.open:hover { color: var(--green); border-color: var(--green-deep); }
 }
