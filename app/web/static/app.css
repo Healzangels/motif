@@ -5496,6 +5496,24 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   .nav::-webkit-scrollbar { height: 3px; }
   .nav::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }
   .nav a { padding: 12px var(--gap-4); }
+  /* v0.51.6: mobile tap targets (audit A6). Several controls sat at ~10-22px —
+     below the 24px WCAG-AA floor / a comfortable thumb. Bump them to ~30px on a
+     phone ONLY; the desktop layouts (deliberately dense — the topbar trio, the
+     six-row filter drawer) are untouched. */
+  .help-toggle, .topbar-logout { min-height: 30px; min-width: 30px; }
+  /* the filter-drawer pills are 20px to fit six rows on desktop; on a phone the
+     drawer is a single scrollable column (line ~2883), so the extra height is free.
+     Scope to .pill-filter-drawer so any inline pill rows keep their density. */
+  .pill-filter-drawer .pill-filter-row .pill-filter-clear,
+  .pill-filter-drawer .pill-filter-row .tdb-pill-btn,
+  .pill-filter-drawer .pill-filter-row .attn-pill-btn,
+  .pill-filter-drawer .pill-filter-row .src-key-btn,
+  .pill-filter-drawer .pill-filter-row .state-pill-btn,
+  .pill-filter-drawer .pill-filter-row .link-glyph,
+  .pill-filter-drawer .pill-filter-row .ed-pill-btn { height: 30px; }
+  /* the SOURCE BREAKDOWN per-donut ◀ ▶ / // HIDE controls (customize mode) were
+     ~10-14px zero-padding glyphs jammed into each ~150px card. */
+  .source-pie-move, .source-pie-hide { min-height: 30px; min-width: 30px; }
   /* Hero: actions span the full width under the title (the row already wraps). */
   .hero-row { gap: var(--gap-3); }
   .sync-actions { width: 100%; }

@@ -2622,7 +2622,17 @@
 #   (audit A2/A3) intentionally SKIPPED — the fragile client-rendered core table
 #   can't be verified in-harness; the user chose to leave it (actions still reachable
 #   via h-scroll, not a regression).
-__version__ = "0.51.5"
+# 0.51.6: mobile audit A6 (P2) — tap targets bumped to ~30px on a phone. Several
+#   controls sat below the 24px WCAG-AA target / a comfortable thumb: the topbar `?`
+#   help + `⏻` logout glyphs (~22px), the filter-drawer DL/PL/LINK pills (20px —
+#   deliberately dense to fit six rows on desktop), and the SOURCE BREAKDOWN
+#   per-donut ◀ ▶ / // HIDE controls (~10-14px, customize mode). Bumped all to 30px
+#   in the ≤600px block ONLY; the desktop densities (topbar trio, six-row drawer)
+#   are untouched. The drawer pill bump is uniform across pill types so the rows
+#   stay aligned, and scoped to .pill-filter-drawer so inline rows keep density.
+#   Verified in-browser at 375px (help 30×30, logout 30h, link-glyph + state-pill
+#   30h, no overflow). CSS + test.
+__version__ = "0.51.6"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
