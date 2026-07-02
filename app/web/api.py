@@ -21604,8 +21604,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         _require_admin(request)
         with get_conn(db) as conn, transaction(conn):
+            # v0.51.11: select the full row so a cancelled ACCEPT/REVERT download
+            # can have its rollback recipe applied after the txn (round-4 audit
+            # HIGH — cancel used to skip the recipe, stranding the half-applied
+            # override/decision state).
             row = conn.execute(
-                "SELECT status, cancel_requested FROM jobs WHERE id = ?",
+                "SELECT id, status, cancel_requested, payload, media_type, "
+                "tmdb_id, section_id FROM jobs WHERE id = ?",
                 (job_id,),
             ).fetchone()
             if row is None:
@@ -21643,6 +21648,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     status_code=409,
                     detail=f"job is already in terminal state '{status_now}'",
                 )
+        # v0.51.11: outside the txn (apply_job_rollback opens its own conn) —
+        # undo the ACCEPT/REVERT destructive prep for a job cancelled into a
+        # terminal state. No-op (no conn opened) for jobs carrying no recipe.
+        # 'cancel_requested' (running, no force) is left to the worker's own
+        # _JobCancelled rollback so we don't double-run mid-flight.
+        if outcome in ("cancelled", "force_cancelled"):
+            from ..core.worker import apply_job_rollback
+            apply_job_rollback(db, row, "cancelled by user")
         log_event(db, level="INFO", component="api",
                   message=f"Job {job_id} cancellation requested by "
                           f"{request.state.principal.username}",
@@ -21680,6 +21693,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         f"{sorted(_BULK_CANCELABLE_JOB_TYPES)}"),
             )
         with get_conn(db) as conn, transaction(conn):
+            # v0.51.11: capture the rows BEFORE flipping so cancelled ACCEPT/REVERT
+            # downloads can have their rollback recipe applied after the txn
+            # (round-4 audit HIGH — bulk cancel skipped the recipe too).
+            rollback_rows = conn.execute(
+                "SELECT id, payload, media_type, tmdb_id, section_id FROM jobs "
+                "WHERE status = 'pending' AND job_type = ?",
+                (job_type,),
+            ).fetchall() if job_type == "download" else []
             cur = conn.execute(
                 "UPDATE jobs SET status = 'cancelled', "
                 "                finished_at = ?, "
@@ -21689,6 +21710,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (now_iso(), job_type),
             )
             n = cur.rowcount
+        # v0.51.11: outside the txn — undo each cancelled ACCEPT/REVERT prep
+        # (no-op / no conn opened for the recipe-less majority).
+        if rollback_rows:
+            from ..core.worker import apply_job_rollback
+            for r in rollback_rows:
+                apply_job_rollback(db, r, "bulk-cancelled by user")
         log_event(db, level="INFO", component="api",
                   message=(f"Bulk-cancelled {n} pending {job_type} "
                            f"job(s) by {request.state.principal.username}"),

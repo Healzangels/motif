@@ -198,6 +198,17 @@ def deorphan_imdb_resolvable(
                                 f"UPDATE {tbl} SET tmdb_id = ? "
                                 f"WHERE media_type = ? AND tmdb_id = ?",
                                 (real_tmdb, media_type, old_tmdb))
+                        # v0.51.11: re-key in-flight jobs too (mirrors sync.py's
+                        # v1.22.87 fix) — a pending download/place enqueued at the
+                        # synthetic orphan id (SET URL on an orphan) dies confusingly
+                        # when boot's de-orphan walker promotes the id mid-window: the
+                        # worker resolves the theme/override at the OLD id (re-keyed
+                        # away → empty) and the user's download fails as a mystery job
+                        # error. Not FK-constrained, so no target-delete needed.
+                        conn.execute(
+                            "UPDATE jobs SET tmdb_id = ? WHERE media_type = ? "
+                            "AND tmdb_id = ? AND status IN ('pending', 'running')",
+                            (real_tmdb, media_type, old_tmdb))
                 break
             except sqlite3.OperationalError as e:
                 if "database is locked" in str(e) and attempt < 2:
@@ -459,6 +470,16 @@ def merge_orphan_collisions(
                         "  previous_urls.media_type AND t.tmdb_id = ? "
                         "  AND t.section_id = previous_urls.section_id)",
                         (real_tmdb, media_type, old_tmdb, real_tmdb))
+                    # v0.51.11: re-key in-flight jobs (mirrors sync.py v1.22.87 +
+                    # the resolve-loop above) — a pending download/place enqueued at
+                    # the orphan's synthetic id must follow the merge into the real
+                    # id, or the worker resolves an empty theme at the old id and the
+                    # user's download fails as a mystery job error. No collision guard
+                    # needed (jobs has no UNIQUE on media_type/tmdb_id).
+                    conn.execute(
+                        "UPDATE jobs SET tmdb_id = ? WHERE media_type = ? "
+                        "AND tmdb_id = ? AND status IN ('pending', 'running')",
+                        (real_tmdb, media_type, old_tmdb))
                     # re-point library + scan rows BEFORE the husk delete
                     # (both FKs are ON DELETE SET NULL).
                     conn.execute(

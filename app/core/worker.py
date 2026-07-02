@@ -404,6 +404,175 @@ class TokenBucket:
 
 # -------- Job dispatching --------
 
+def apply_job_rollback(db_path: Path, job: "sqlite3.Row", err_text: str) -> None:
+    """v0.51.11: shared rollback runner, extracted from
+    Worker._run_rollback_safe so the API cancel paths can invoke it too.
+    Round-4 audit found that CANCEL (per-job pending-cancel, bulk
+    cancel-pending, worker _JobCancelled / pre-yt-dlp checkpoint) skipped
+    the rollback recipe that ACCEPT UPDATE / REVERT stamp at enqueue time,
+    stranding the destructive prep (override deleted, decision='accepted')
+    with no theme — the same half-applied state v1.20.12 fixed for the
+    terminal-FAILURE path, reachable via cancel. Self-guards: returns
+    immediately (no DB connection opened) when the job carries no
+    rollback recipe, so it is safe to call on every cancelled job.
+    """
+    try:
+        payload_raw = job["payload"]
+        if not payload_raw:
+            return
+        payload = json.loads(payload_raw)
+        rb = payload.get("rollback")
+        if not isinstance(rb, dict):
+            return
+        kind = rb.get("kind")
+        mt = job["media_type"]
+        tmdb = job["tmdb_id"]
+        section_id = rb.get("section_id") or job["section_id"] or ""
+        # v1.22.21 (edition audit): the destructive ACCEPT/REVERT prep
+        # was edition-scoped (the endpoint deletes/re-pends only the
+        # clicked edition's rows), but the rollback recipe dropped the
+        # edition — so on terminal download failure the re-pend + override
+        # restore hit ALL editions of the title-section, and the override
+        # INSERT (which omitted the edition_key column) landed on the ''
+        # row. Net: a non-'' edition's user URL was deleted by the
+        # endpoint then RESTORED TO THE WRONG (standard) edition — silent
+        # data-loss. The endpoints now stamp rollback['edition_key'];
+        # default '' keeps old in-flight jobs at standard-edition scope.
+        _rb_edition = rb.get("edition_key", "")
+        if kind == "accept_update":
+            # Flip pending_updates.decision back to 'pending' so the
+            # row's blue ! glyph returns and the user can choose
+            # again, AND (when one existed) restore the user_overrides
+            # row that ACCEPT UPDATE deleted.
+            # v1.20.12: the decision re-pend now runs UNCONDITIONALLY
+            # (was nested inside `if replaced`). An accept with NO
+            # override to restore — a SRC=— new_theme row, or a
+            # pure-T upstream change with no user URL — got rollback
+            # =None pre-fix and so stayed stuck decision='accepted'
+            # with no theme on disk and no recovery surface (sync
+            # only re-emits new_theme on is_new). Silent-bug audit
+            # HIGH-1. Restoring the deleted override is the additive,
+            # override-only half.
+            # v1.12.116: wrap both writes in one transaction() so a
+            # crash between them can't leave the row half-rolled-back.
+            replaced = rb.get("replaced_user_url")
+            # v1.19.36: preserve user_overrides.intent across the
+            # rollback (older recipes / no-override accepts default
+            # to 'replace').
+            prior_intent = rb.get("prior_intent") or "replace"
+            with get_conn(db_path) as conn, \
+                    transaction(conn):
+                conn.execute(
+                    """UPDATE pending_updates SET
+                          decision = 'pending',
+                          decision_at = NULL,
+                          decision_by = NULL,
+                          replaced_user_url = NULL
+                       WHERE media_type = ? AND tmdb_id = ?
+                         AND section_id = ? AND edition_key = ?
+                         AND decision = 'accepted'""",
+                    (mt, tmdb, section_id, _rb_edition),
+                )
+                if replaced:
+                    conn.execute(
+                        """INSERT INTO user_overrides
+                             (media_type, tmdb_id, youtube_url, set_at,
+                              set_by, note, section_id, edition_key, intent)
+                           VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)
+                           ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
+                               youtube_url = excluded.youtube_url,
+                               set_at = excluded.set_at,
+                               set_by = excluded.set_by,
+                               note = excluded.note,
+                               intent = excluded.intent""",
+                        (mt, tmdb, replaced, now_iso(),
+                         "rollback after ACCEPT UPDATE download "
+                         f"failed: {_truncate_err(err_text, 120)}",
+                         section_id, _rb_edition, prior_intent),
+                    )
+            log.info(
+                "rollback: re-pended accept-update failure on "
+                "%s/%s/%s%s", mt, tmdb, section_id,
+                " + restored override" if replaced else "")
+        elif kind == "revert":
+            # Restore the previous_urls row that REVERT consumed,
+            # AND restore the prior override (or clear if there
+            # wasn't one). Together this puts the row back where
+            # it was before the user clicked REVERT.
+            # v1.12.116: transaction() wraps all writes so a partial
+            # rollback (override restored but previous_urls chain
+            # not yet) can't leave the row in a half-state.
+            prior_override = rb.get("prior_override_url")
+            prior_prev = rb.get("prior_previous_url_row")  # dict or None
+            with get_conn(db_path) as conn, \
+                    transaction(conn):
+                if prior_override:
+                    # v1.19.36: preserve intent across REVERT
+                    # rollback too. Same drift class as the
+                    # ACCEPT UPDATE rollback fix above.
+                    prior_intent = (
+                        rb.get("prior_intent") or "replace"
+                    )
+                    conn.execute(
+                        """INSERT INTO user_overrides
+                             (media_type, tmdb_id, youtube_url, set_at,
+                              set_by, note, section_id, edition_key, intent)
+                           VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)
+                           ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
+                               youtube_url = excluded.youtube_url,
+                               set_at = excluded.set_at,
+                               set_by = excluded.set_by,
+                               note = excluded.note,
+                               intent = excluded.intent""",
+                        (mt, tmdb, prior_override, now_iso(),
+                         "rollback after REVERT download failed: "
+                         f"{_truncate_err(err_text, 120)}",
+                         section_id, _rb_edition, prior_intent),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM user_overrides "
+                        "WHERE media_type = ? AND tmdb_id = ? "
+                        "  AND section_id = ? AND edition_key = ?",
+                        (mt, tmdb, section_id, _rb_edition),
+                    )
+                if prior_prev:
+                    conn.execute(
+                        """INSERT INTO previous_urls
+                             (media_type, tmdb_id, section_id,
+                              youtube_url, kind, captured_at,
+                              hidden_url, hidden_kind, hidden_captured_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                           ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
+                               youtube_url = excluded.youtube_url,
+                               kind = excluded.kind,
+                               captured_at = excluded.captured_at,
+                               hidden_url = excluded.hidden_url,
+                               hidden_kind = excluded.hidden_kind,
+                               hidden_captured_at = excluded.hidden_captured_at""",
+                        (mt, tmdb, section_id,
+                         prior_prev.get("youtube_url"),
+                         prior_prev.get("kind"),
+                         prior_prev.get("captured_at"),
+                         prior_prev.get("hidden_url"),
+                         prior_prev.get("hidden_kind"),
+                         prior_prev.get("hidden_captured_at")),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM previous_urls "
+                        "WHERE media_type = ? AND tmdb_id = ? "
+                        "  AND section_id = ?",
+                        (mt, tmdb, section_id),
+                    )
+            log.info(
+                "rollback: restored revert state on %s/%s/%s",
+                mt, tmdb, section_id)
+    except Exception as e:
+        log.warning("rollback runner failed for job %s: %s",
+                    job["id"], e)
+
+
 @dataclass
 class Worker:
     settings: Settings
@@ -525,6 +694,14 @@ class Worker:
             except _JobCancelled:
                 log.info("Job %s cancelled by user", job["id"])
                 self._safe_mark(self._mark_cancelled, job["id"])
+                # v0.51.11 (round-4 audit HIGH): cancel must run the rollback
+                # recipe too. ACCEPT UPDATE / REVERT deleted the override +
+                # flipped decision='accepted' at enqueue time; without this the
+                # cancelled job strands that half-applied state (no theme, no
+                # !UPD retry surface) — the terminal-failure branch below has
+                # rolled back since v1.12.114 but cancel never did. No-op for
+                # jobs carrying no recipe.
+                self._run_rollback_safe(job, "cancelled by user")
             except _JobPermanentFailure as e:
                 log.info("Job %s permanently failed: %s", job["id"], e)
                 self._safe_mark(self._mark_failed_terminal, job["id"], str(e))
@@ -796,161 +973,7 @@ class Worker:
         via failure_kind, the user just keeps the half-applied state if
         rollback can't run.
         """
-        try:
-            payload_raw = job["payload"]
-            if not payload_raw:
-                return
-            payload = json.loads(payload_raw)
-            rb = payload.get("rollback")
-            if not isinstance(rb, dict):
-                return
-            kind = rb.get("kind")
-            mt = job["media_type"]
-            tmdb = job["tmdb_id"]
-            section_id = rb.get("section_id") or job["section_id"] or ""
-            # v1.22.21 (edition audit): the destructive ACCEPT/REVERT prep
-            # was edition-scoped (the endpoint deletes/re-pends only the
-            # clicked edition's rows), but the rollback recipe dropped the
-            # edition — so on terminal download failure the re-pend + override
-            # restore hit ALL editions of the title-section, and the override
-            # INSERT (which omitted the edition_key column) landed on the ''
-            # row. Net: a non-'' edition's user URL was deleted by the
-            # endpoint then RESTORED TO THE WRONG (standard) edition — silent
-            # data-loss. The endpoints now stamp rollback['edition_key'];
-            # default '' keeps old in-flight jobs at standard-edition scope.
-            _rb_edition = rb.get("edition_key", "")
-            if kind == "accept_update":
-                # Flip pending_updates.decision back to 'pending' so the
-                # row's blue ! glyph returns and the user can choose
-                # again, AND (when one existed) restore the user_overrides
-                # row that ACCEPT UPDATE deleted.
-                # v1.20.12: the decision re-pend now runs UNCONDITIONALLY
-                # (was nested inside `if replaced`). An accept with NO
-                # override to restore — a SRC=— new_theme row, or a
-                # pure-T upstream change with no user URL — got rollback
-                # =None pre-fix and so stayed stuck decision='accepted'
-                # with no theme on disk and no recovery surface (sync
-                # only re-emits new_theme on is_new). Silent-bug audit
-                # HIGH-1. Restoring the deleted override is the additive,
-                # override-only half.
-                # v1.12.116: wrap both writes in one transaction() so a
-                # crash between them can't leave the row half-rolled-back.
-                replaced = rb.get("replaced_user_url")
-                # v1.19.36: preserve user_overrides.intent across the
-                # rollback (older recipes / no-override accepts default
-                # to 'replace').
-                prior_intent = rb.get("prior_intent") or "replace"
-                with get_conn(self.settings.db_path) as conn, \
-                        transaction(conn):
-                    conn.execute(
-                        """UPDATE pending_updates SET
-                              decision = 'pending',
-                              decision_at = NULL,
-                              decision_by = NULL,
-                              replaced_user_url = NULL
-                           WHERE media_type = ? AND tmdb_id = ?
-                             AND section_id = ? AND edition_key = ?
-                             AND decision = 'accepted'""",
-                        (mt, tmdb, section_id, _rb_edition),
-                    )
-                    if replaced:
-                        conn.execute(
-                            """INSERT INTO user_overrides
-                                 (media_type, tmdb_id, youtube_url, set_at,
-                                  set_by, note, section_id, edition_key, intent)
-                               VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)
-                               ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
-                                   youtube_url = excluded.youtube_url,
-                                   set_at = excluded.set_at,
-                                   set_by = excluded.set_by,
-                                   note = excluded.note,
-                                   intent = excluded.intent""",
-                            (mt, tmdb, replaced, now_iso(),
-                             "rollback after ACCEPT UPDATE download "
-                             f"failed: {_truncate_err(err_text, 120)}",
-                             section_id, _rb_edition, prior_intent),
-                        )
-                log.info(
-                    "rollback: re-pended accept-update failure on "
-                    "%s/%s/%s%s", mt, tmdb, section_id,
-                    " + restored override" if replaced else "")
-            elif kind == "revert":
-                # Restore the previous_urls row that REVERT consumed,
-                # AND restore the prior override (or clear if there
-                # wasn't one). Together this puts the row back where
-                # it was before the user clicked REVERT.
-                # v1.12.116: transaction() wraps all writes so a partial
-                # rollback (override restored but previous_urls chain
-                # not yet) can't leave the row in a half-state.
-                prior_override = rb.get("prior_override_url")
-                prior_prev = rb.get("prior_previous_url_row")  # dict or None
-                with get_conn(self.settings.db_path) as conn, \
-                        transaction(conn):
-                    if prior_override:
-                        # v1.19.36: preserve intent across REVERT
-                        # rollback too. Same drift class as the
-                        # ACCEPT UPDATE rollback fix above.
-                        prior_intent = (
-                            rb.get("prior_intent") or "replace"
-                        )
-                        conn.execute(
-                            """INSERT INTO user_overrides
-                                 (media_type, tmdb_id, youtube_url, set_at,
-                                  set_by, note, section_id, edition_key, intent)
-                               VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)
-                               ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
-                                   youtube_url = excluded.youtube_url,
-                                   set_at = excluded.set_at,
-                                   set_by = excluded.set_by,
-                                   note = excluded.note,
-                                   intent = excluded.intent""",
-                            (mt, tmdb, prior_override, now_iso(),
-                             "rollback after REVERT download failed: "
-                             f"{_truncate_err(err_text, 120)}",
-                             section_id, _rb_edition, prior_intent),
-                        )
-                    else:
-                        conn.execute(
-                            "DELETE FROM user_overrides "
-                            "WHERE media_type = ? AND tmdb_id = ? "
-                            "  AND section_id = ? AND edition_key = ?",
-                            (mt, tmdb, section_id, _rb_edition),
-                        )
-                    if prior_prev:
-                        conn.execute(
-                            """INSERT INTO previous_urls
-                                 (media_type, tmdb_id, section_id,
-                                  youtube_url, kind, captured_at,
-                                  hidden_url, hidden_kind, hidden_captured_at)
-                               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                               ON CONFLICT(media_type, tmdb_id, section_id) DO UPDATE SET
-                                   youtube_url = excluded.youtube_url,
-                                   kind = excluded.kind,
-                                   captured_at = excluded.captured_at,
-                                   hidden_url = excluded.hidden_url,
-                                   hidden_kind = excluded.hidden_kind,
-                                   hidden_captured_at = excluded.hidden_captured_at""",
-                            (mt, tmdb, section_id,
-                             prior_prev.get("youtube_url"),
-                             prior_prev.get("kind"),
-                             prior_prev.get("captured_at"),
-                             prior_prev.get("hidden_url"),
-                             prior_prev.get("hidden_kind"),
-                             prior_prev.get("hidden_captured_at")),
-                        )
-                    else:
-                        conn.execute(
-                            "DELETE FROM previous_urls "
-                            "WHERE media_type = ? AND tmdb_id = ? "
-                            "  AND section_id = ?",
-                            (mt, tmdb, section_id),
-                        )
-                log.info(
-                    "rollback: restored revert state on %s/%s/%s",
-                    mt, tmdb, section_id)
-        except Exception as e:
-            log.warning("rollback runner failed for job %s: %s",
-                        job["id"], e)
+        apply_job_rollback(self.settings.db_path, job, err_text)
 
     def _dispatch(self, job: sqlite3.Row) -> None:
         jt = job["job_type"]
@@ -1796,6 +1819,10 @@ class Worker:
                 job["id"],
             )
             self._mark_cancelled(job["id"])
+            # v0.51.11 (round-4 audit HIGH): roll back the ACCEPT/REVERT prep on
+            # cancel here too — this checkpoint marks+returns (no _JobCancelled
+            # raised), so the run-loop's rollback branch never fires for it.
+            self._run_rollback_safe(job, "cancelled at pre-yt-dlp checkpoint")
             return
 
         # If a previously downloaded theme.mp3 in THIS section was for a

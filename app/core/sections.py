@@ -349,10 +349,18 @@ def migrate_themes_subdirs_inplace(db_path: Path, themes_dir: Path) -> int:
                 "UPDATE plex_sections SET themes_subdir = ? WHERE section_id = ?",
                 (new_subdir, r["section_id"]),
             )
+            # v0.51.11: substr offset is len(old_subdir) + 2, not + 1 — SQLite
+            # substr is 1-indexed, so +1 lands ON the '/' separator and, since the
+            # bound prefix already ends in '/', produced a double-slash path
+            # ('movies/X' → 'movies-4k//X'). +2 skips the separator. The '//' was
+            # silently survivable (pathlib collapses it) but broke the
+            # 'subdir/canonical/theme.mp3' shape contract, so
+            # migrate_v1_14_94_colon_folders' path.split('/') mis-parsed the row
+            # (parts[1]='') and permanently drift_skipped colon-folder repair.
             conn.execute(
                 "UPDATE local_files SET file_path = ? || substr(file_path, ?) "
                 "WHERE file_path LIKE ?",
-                (new_subdir + "/", len(old_subdir) + 1, old_subdir + "/%"),
+                (new_subdir + "/", len(old_subdir) + 2, old_subdir + "/%"),
             )
         migrated += 1
         log.info("Themes subdir migrated: section %s '%s' → '%s'",

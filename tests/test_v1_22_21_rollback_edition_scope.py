@@ -184,8 +184,10 @@ def test_accept_and_revert_rollback_recipes_carry_edition_key():
 
 
 def test_rollback_writes_thread_edition_key_source_pin():
-    start = WORKER_PY.index("def _run_rollback_safe(")
-    end = WORKER_PY.index("\n    def ", start + 10)
+    # v0.51.11: the rollback body moved to module-level apply_job_rollback (so
+    # the API cancel paths can share it); the pin follows the body.
+    start = WORKER_PY.index("def apply_job_rollback(")
+    end = WORKER_PY.index("\nclass ", start + 10)
     body = WORKER_PY[start:end]
     assert '_rb_edition = rb.get("edition_key", "")' in body
     # Both WHEREs carry edition_key; both INSERTs add the column.

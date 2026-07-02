@@ -329,10 +329,26 @@ def place_theme(
     # in which case we unlink it before linking the new one)
     existing = find_existing_theme_file(target)
     if existing and not force_overwrite:
-        return PlacementOutcome(
-            False, None, f"existing_theme:{existing.name}",
-            target_folder=target, plex_rating_key=rk,
-        )
+        # v0.51.11: but NOT if `existing` is motif's OWN placement — the same inode
+        # as source_file (a hardlink we already laid down). If a prior place landed
+        # the file but its placements-row write then failed (lock-ladder exhaustion,
+        # worker kill mid-transaction), the retry would otherwise classify motif's own
+        # theme.mp3 as a foreign M sidecar (existing_theme skip → no placements row →
+        # wrong SRC, sweep-excluded forever). samefile() (dev+inode) distinguishes our
+        # hardlink from a genuinely foreign sidecar; on our own file fall through to
+        # re-place (idempotent) so the placement row gets (re)written. Mirrors the
+        # inode-identity check already in scanner.py / adopt.py / worker.py:1722. NOTE:
+        # only catches hardlink placements — a cross-FS COPY is a distinct inode and
+        # still reads as foreign, same limitation those sibling sites carry.
+        try:
+            is_own = existing.samefile(source_file)
+        except OSError:
+            is_own = False
+        if not is_own:
+            return PlacementOutcome(
+                False, None, f"existing_theme:{existing.name}",
+                target_folder=target, plex_rating_key=rk,
+            )
 
     # 4. Place
     # v1.22.40 (audit): on force_overwrite, DON'T pre-unlink the existing theme.

@@ -2680,7 +2680,21 @@
 #   untouched; veil + line timings unchanged (all 0.62s, synced). Verified via
 #   freeze-frames (0.11/0.19/0.32s): black→glowing-seam→edges sweeping out. app.css +
 #   test (v0.50.91 §3 rewritten scaleY-unfold → translateY-slide+glow).
-__version__ = "0.51.10"
+# 0.51.11: round-4 holistic audit — Batch A (data integrity). #1 (HIGH): CANCEL of
+#   an ACCEPT UPDATE / REVERT download now runs the rollback recipe. Extracted
+#   Worker._run_rollback_safe → module-level apply_job_rollback (self-guards, opens
+#   no conn for recipe-less jobs) and wired it into the worker _JobCancelled +
+#   pre-yt-dlp checkpoint AND the API pending-cancel / bulk cancel-pending paths —
+#   all four skipped it, stranding the half-applied override/decision (no theme, no
+#   !UPD retry). #9: sections.migrate_themes_subdirs_inplace substr off-by-one wrote
+#   double-slash paths (+1 → +2). #8: deorphan re-key walker (both resolve loop +
+#   merge_orphan_collisions) omitted the jobs table → a pending download at the
+#   synthetic id died when the id was promoted mid-window; now re-keys pending/
+#   running jobs like sync.py v1.22.87. #3: place_theme mis-read motif's OWN
+#   just-placed hardlink as a foreign M sidecar when the placements-row write had
+#   failed; samefile() guard falls through to (idempotent) re-place. worker/api/
+#   sections/deorphan/placement + behavioral tests.
+__version__ = "0.51.11"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
