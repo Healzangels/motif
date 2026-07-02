@@ -8023,6 +8023,15 @@
   function hydrateLibraryStateForTab(tab, sp) {
     libraryState.tab = tab;
     libraryState.page = 1;
+    // v0.51.12 (audit #16): selection does NOT survive a tab switch. The old
+    // full-nav always dropped it (selection is in-memory only), but the
+    // v1.23.71 in-place switch kept selected/selectedRows populated with the
+    // PREVIOUS tab's rows — bulk bar stayed armed ("20 selected", zero visible
+    // checkboxes) and bulk DOWNLOAD/PUSH/LPS fired at off-screen rows. Pill
+    // filters, q + sort still persist (see the comment at the end).
+    libraryState.selected.clear();
+    libraryState.selectedRows.clear();
+    updateLibrarySelectionUi();
     if (tab === 'collections') {
       libraryState.fourk = false;
     } else {
@@ -8065,6 +8074,19 @@
     const url = new URL(href, location.origin);
     const tab = (url.pathname.replace(/^\/+/, '') || 'movies');
     if (['movies', 'tv', 'anime', 'collections'].indexOf(tab) === -1) {
+      window.location.href = href; return;
+    }
+    // v0.51.12 (audit #15): full nav when the switch CROSSES the collections
+    // boundary. The filterbar is server-rendered per tab (library.html gates
+    // SRC A/M, LINK HL/C and the ED row on tab != 'collections') and is NOT
+    // swapped below — its pill handlers are bound once at init, so an
+    // innerHTML swap would drop them (the v0.50.96 lost-listener class).
+    // Post-switch the stale drawer offered impossible pills (or lost A/M/HL/
+    // C/ED), and SRC ALL (v1.19.76) derives its letter set from DOM-present
+    // chips → silently wrong filter results. movies/tv/anime render an
+    // IDENTICAL filterbar, so they keep the fast path.
+    const _curTabEl = document.getElementById('library-tab');
+    if (_curTabEl && (tab === 'collections') !== (_curTabEl.value === 'collections')) {
       window.location.href = href; return;
     }
     // v1.23.73 (code review): in-flight guard — two quick switches must not
@@ -19157,7 +19179,15 @@
     if (path === '/') setInterval(() => loadDashboard().catch(() => {}), 30000);
     if (path === '/queue') setInterval(() => loadQueue().catch(() => {}), 10000);
     // v1.14.61: removed `/pending` poll interval — route deleted.
-    if (path === '/movies' || path === '/tv' || path === '/anime') {
+    // v0.51.12 (audit #14/#18): + '/collections' — omitted when the tab landed
+    // (v1.18.0) though its rows run downloads/places/pushes too, so it never got
+    // the 30s poll NOR the v1.22.36 reconciler below; and since the v1.23.71
+    // in-place switcher only moves WITHIN this library-page family, a session
+    // that landed on /collections and client-switched to /movies ran with
+    // neither for its whole life. Arming on ANY library landing page covers
+    // every client-side switch (the intervals read libraryState, not the path).
+    if (path === '/movies' || path === '/tv' || path === '/anime'
+        || path === '/collections') {
       // v1.10.7: skip the background tick when the user is interacting
       // with the page so the table doesn't redraw out from under them.
       // The rapid-poll path already has the same guard.

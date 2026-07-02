@@ -2694,7 +2694,24 @@
 #   just-placed hardlink as a foreign M sidecar when the placements-row write had
 #   failed; samefile() guard falls through to (idempotent) re-place. worker/api/
 #   sections/deorphan/placement + behavioral tests.
-__version__ = "0.51.11"
+# 0.51.12: round-4 audit — Batch B, the v1.23.71 client-tab-switch cluster. The
+#   in-place (pushState) switcher skipped three things full navigation did
+#   implicitly. #14/#18: the 30s library poll + v1.22.36 stuck-row reconciler armed
+#   once at DOMContentLoaded and the gate omitted '/collections' — that tab never
+#   got either, and a session landing there then client-switching to /movies ran
+#   with neither for its whole life (stuck DL/PL chips, the exact v1.22.36
+#   pathology); '/collections' added — arming on ANY library landing covers every
+#   in-family switch. #15: the filterbar is server-rendered per tab (SRC A/M, LINK
+#   HL/C, ED gated on tab != 'collections') and NOT swapped (pill handlers bound
+#   once — a swap would drop them, the v0.50.96 class); post-switch the stale
+#   drawer offered impossible pills / lost real ones and SRC ALL (DOM-derived)
+#   silently excluded A/M rows. Fix at the boundary: collections-crossing switches
+#   fall back to FULL navigation; movies/tv/anime (identical filterbar — test-
+#   pinned) keep the fast path. #16: selection survived the switch (bulk bar armed
+#   with the previous tab's off-screen rows; bulk actions fired at them) —
+#   hydrateLibraryStateForTab now clears selected/selectedRows + hides the bar;
+#   pill filters/q/sort persistence (v1.23.71 intent) unchanged. app.js + tests.
+__version__ = "0.51.12"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

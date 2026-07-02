@@ -95,8 +95,11 @@ def test_js_hydration_falls_back_to_first_chip():
     # The fallback to firstChip.
     assert "const firstChip = chipNodes[0]" in js
     # Must be inside the tabKey === 'collections' branch.
+    # v0.51.12: 2500 → 3200 — the selection-clear insert at the top of
+    # hydrateLibraryStateForTab (audit #16) sits between this anchor and the
+    # validSecIds fallback it reaches for.
     idx = js.index("if (tabKey === 'collections')")
-    block = js[idx:idx + 2500]
+    block = js[idx:idx + 3200]
     assert "validSecIds" in block, (
         "v1.18.18: validSecIds fallback must be inside the "
         "collections-tab hydration"

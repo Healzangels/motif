@@ -48,7 +48,9 @@ def test_switcher_functions_exist():
     assert "function hydrateLibraryStateForTab(" in APP_JS
     # the chips are re-bound after the swap (they're direct-bound, not delegated).
     i = APP_JS.index("async function switchLibraryTab(")
-    body = APP_JS[i:i + 4000]  # v0.50.92: widened for the pre-swap variant block
+    # v0.50.92: widened for the pre-swap variant block; v0.51.12: again for the
+    # collections-boundary full-nav guard inserted at the top of the function.
+    body = APP_JS[i:i + 5300]
     assert "bindLibraryToolbarChips();" in body
     assert "replaceWith(newChips)" in body
 
