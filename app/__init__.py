@@ -2668,7 +2668,19 @@
 #   wrapped, foot within card, no page overflow). Final tag of the mobile-audit
 #   sweep (v0.51.3-9); library-table row actions (A2/A3) were skipped per the user.
 #   CSS + test.
-__version__ = "0.51.9"
+# 0.51.10: CRT power-ON reveal polish (the user: centre flash good, but the reveal
+#   "off and clunky and not good looking"). Two root causes: (1) the shutters eased
+#   IN (cubic-bezier 0.4,0,… slow start) after the hold, so the picture crawled open;
+#   (2) they retracted as bare black edges — no phosphor, reading as curtains parting.
+#   Fix: the shutters now SLIDE apart (translateY, was scaleY) on an ease-OUT
+#   (cubic-bezier 0.32,0.62,0.4,1) so the tube springs open, and each shutter carries
+#   a soft green bloom on its reveal edge (box-shadow) — because translateY leaves the
+#   shadow un-squished (scaleY would flatten it), a glowing green scanline sweeps
+#   outward WITH the picture, the authentic warm-up. Centre fold-line flash kept
+#   untouched; veil + line timings unchanged (all 0.62s, synced). Verified via
+#   freeze-frames (0.11/0.19/0.32s): black→glowing-seam→edges sweeping out. app.css +
+#   test (v0.50.91 §3 rewritten scaleY-unfold → translateY-slide+glow).
+__version__ = "0.51.10"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

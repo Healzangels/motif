@@ -376,8 +376,14 @@ input[type="checkbox"] {
    shutters + line have already collapsed by then, so nothing flickers). */
 .crt-power-on.playing { animation: crt-power-on-veil 0.62s ease-out; }
 @keyframes crt-power-on-veil { 0% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; } }
-/* two black shutters, each covering half the screen, meeting at the centre. They
-   scale toward their own outer edge, so the picture unfolds from the middle out. */
+/* two black shutters meeting at the centre. v0.51.10: after the flash they SLIDE
+   apart (translateY) with a snappy ease-OUT so the tube springs to life. Pre-fix
+   they scaleY'd on an ease-IN start — the picture crawled open (the user: reveal
+   "off and clunky") and the bars retracted as bare black edges. translateY (a) is
+   the snappy ease-out motion and (b) leaves each shutter's reveal-edge box-shadow
+   un-squished (scaleY would flatten it), so a soft green phosphor bloom drags along
+   the opening edge — a glowing scanline sweeps outward WITH the picture instead of a
+   plain bar sliding off. The centre fold-line flash is kept. */
 .crt-power-on::before,
 .crt-power-on::after {
   content: '';
@@ -385,14 +391,19 @@ input[type="checkbox"] {
   height: 50%;
   background: var(--bg);
 }
-.crt-power-on::before { top: 0;    transform-origin: center top; }
-.crt-power-on::after  { bottom: 0; transform-origin: center bottom; }
-.crt-power-on.playing::before,
-.crt-power-on.playing::after { animation: crt-power-on-unfold 0.62s cubic-bezier(0.4, 0, 0.15, 1); }
-@keyframes crt-power-on-unfold {
-  0%   { transform: scaleY(1); }
-  14%  { transform: scaleY(0.95); }  /* hold nearly-closed — the centre-line beat */
-  100% { transform: scaleY(0); }     /* fully unfolded */
+.crt-power-on::before { top: 0;    box-shadow: 0 5px 22px rgba(var(--green-rgb), 0.5), 0 1px 4px var(--fg); }
+.crt-power-on::after  { bottom: 0; box-shadow: 0 -5px 22px rgba(var(--green-rgb), 0.5), 0 -1px 4px var(--fg); }
+.crt-power-on.playing::before { animation: crt-power-on-shutter-top 0.62s cubic-bezier(0.32, 0.62, 0.4, 1); }
+.crt-power-on.playing::after  { animation: crt-power-on-shutter-bot 0.62s cubic-bezier(0.32, 0.62, 0.4, 1); }
+@keyframes crt-power-on-shutter-top {
+  0%   { transform: translateY(0); }
+  16%  { transform: translateY(0); }      /* hold closed — the centre-line beat */
+  100% { transform: translateY(-100%); }  /* slide off the top pole */
+}
+@keyframes crt-power-on-shutter-bot {
+  0%   { transform: translateY(0); }
+  16%  { transform: translateY(0); }
+  100% { transform: translateY(100%); }
 }
 /* the bright fold-line at the seam — exposed as the shutters part, blooms, fades. */
 .crt-on-line {

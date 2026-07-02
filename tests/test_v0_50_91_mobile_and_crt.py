@@ -113,20 +113,32 @@ def test_op_mini_mobile_full_width_strip():
     assert "left: 0" in mini and "right: 0" in mini
 
 
-# ── 3. CRT power-on is a "vertical unfold" (v0.50.98, variant A) ─────────
+# ── 3. CRT power-on shutters slide apart with glowing edges (v0.51.10) ───
 
 
-def test_power_on_is_a_vertical_unfold():
-    # two black shutters (::before top / ::after bottom) retract from the centre
-    # to the poles — the picture unfolds vertically.
+def test_power_on_shutters_slide_apart_with_glowing_edges():
+    # v0.51.10: two black shutters (::before top / ::after bottom) SLIDE apart
+    # (translateY) on an ease-out so the tube springs open, and each carries a green
+    # phosphor bloom on its reveal edge (box-shadow) so a glowing scanline sweeps
+    # outward WITH the picture. Replaces the v0.50.98 scaleY unfold — its ease-IN
+    # start crawled open (the user: reveal "off and clunky") and the bars retracted
+    # as bare edges; scaleY would also squish the edge box-shadow, so translateY.
     assert ".crt-power-on::before" in CSS and ".crt-power-on::after" in CSS
-    assert "@keyframes crt-power-on-unfold" in CSS
-    unfold = CSS[CSS.index("@keyframes crt-power-on-unfold"):]
-    unfold = unfold[:unfold.index("}", unfold.index("100%"))]
-    assert "scaleY(1)" in unfold and "scaleY(0)" in unfold  # full cover → unfolded
-    # each shutter anchored to its own pole so the reveal grows from the centre
-    assert "transform-origin: center top" in CSS
-    assert "transform-origin: center bottom" in CSS
+    assert "@keyframes crt-power-on-shutter-top" in CSS
+    assert "@keyframes crt-power-on-shutter-bot" in CSS
+    top = CSS[CSS.index("@keyframes crt-power-on-shutter-top"):]
+    top = top[:top.index("}", top.index("100%"))]
+    assert "translateY(0)" in top and "translateY(-100%)" in top  # closed → slid off top pole
+    bot = CSS[CSS.index("@keyframes crt-power-on-shutter-bot"):]
+    bot = bot[:bot.index("}", bot.index("100%"))]
+    assert "translateY(100%)" in bot  # slid off the bottom pole
+    # the old scaleY unfold + transform-origin poles are gone.
+    assert "@keyframes crt-power-on-unfold" not in CSS
+    assert "transform-origin: center top" not in CSS
+    # each shutter carries a phosphor glow on its reveal edge (green bloom + fg core).
+    before = CSS[CSS.index(".crt-power-on::before {"):]
+    before = before[:before.index("}")]
+    assert "box-shadow" in before and "green-rgb" in before
 
 
 def test_power_on_has_a_bright_fold_line_child():
