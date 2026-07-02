@@ -156,8 +156,9 @@ def test_survivor_probe_uses_existence_not_read_json():
 def test_drop_detection_phases_have_distinct_labels():
     i = SYNC_PY.index("n_dropped = _detect_and_stamp_drops_git(")
     # v1.24.14 widened 4200→5400: the read-failure baseline-hold breadcrumb
-    # pushed the later phase labels down a few lines.
-    block = SYNC_PY[i:i + 5400]
+    # pushed the later phase labels down a few lines. v0.51.14 widened
+    # 5400→8000: the chronic-pin escape (audit #5) sits before the gate.
+    block = SYNC_PY[i:i + 8000]
     assert 'log.warning("drop detection failed' in block
     assert 'log.warning("git baseline advance failed' in block
     assert 'log.warning("mirror compaction failed' in block

@@ -240,7 +240,9 @@ def test_tier_classifier_signal_queries_present():
     # UNION ALL clause in backup_signal.
     # v1.22.39: widened 8000→9600 — sidecar_db grew to the LEFT-JOIN-themes +
     # theme_id linkage form (anime survivor fix), pushing other_fallback later.
-    chunk = PLEX_ENUM_PY[idx:idx + 9600]
+    # v0.51.14: widened 9600→12000 — the bounded tier-2 fs check (audit #7)
+    # sits between sidecar_db and other_fallback.
+    chunk = PLEX_ENUM_PY[idx:idx + 12000]
     assert "backup_signal = conn.execute(" in chunk, (
         "v1.19.41: classifier must have a backup_signal query "
         "(user_overrides.intent='backup' OR source_kind='plex_cloud')"
@@ -263,10 +265,19 @@ def test_tier_classifier_filesystem_check_present():
     the full SIDECAR_AUDIO_EXTS set (the hardcoded theme.mp3 mis-tiered a
     manual theme.flac to no_fallback)."""
     idx = PLEX_ENUM_PY.index("sidecar_fs = False")
-    chunk = PLEX_ENUM_PY[idx:idx + 2400]
-    assert "find_theme_sidecar_path(_folder_path)" in chunk, (
+    # v0.51.14 (audit #7): the check is now a BOUNDED executor submit (the call
+    # ran inside the reap's BEGIN IMMEDIATE txn; a stalled /data mount held the
+    # writer lock indefinitely) — the pin follows the submit form + deadline.
+    chunk = PLEX_ENUM_PY[idx:idx + 3600]
+    assert "find_theme_sidecar_path, _folder_path" in chunk, (
         "v1.22.15/v1.22.72: filesystem fallback must translate "
         "host→container + accept all sidecar extensions"
+    )
+    assert "timeout=_SIDECAR_STALL_TIMEOUT_S" in chunk, (
+        "v0.51.14: the in-txn fs check must be deadline-bounded"
+    )
+    assert "_ex.shutdown(wait=False)" in chunk, (
+        "v0.51.14: never join a possibly-hung fs thread (v1.22.65 rule)"
     )
 
 

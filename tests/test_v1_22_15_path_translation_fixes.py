@@ -50,9 +50,11 @@ def test_candidate_local_paths_translates_unraid_host_to_container():
 
 def _reaper_sidecar_block() -> str:
     src = (REPO / "app" / "core" / "plex_enum.py").read_text()
-    # The Tier-2 fs check sets sidecar_fs from disk.
+    # The Tier-2 fs check sets sidecar_fs from disk. v0.51.14: widened
+    # 1800→3600 — the check is now a deadline-bounded executor submit
+    # (audit #7: it ran inside the reap's BEGIN IMMEDIATE txn).
     i = src.index("sidecar_fs = False")
-    return src[i:i + 1800]
+    return src[i:i + 3600]
 
 
 def test_reaper_sidecar_fs_resolves_via_candidate_local_paths():
@@ -63,7 +65,9 @@ def test_reaper_sidecar_fs_resolves_via_candidate_local_paths():
     SIDECAR_AUDIO_EXTS set (the hardcoded theme.mp3 mis-tiered a
     manual theme.flac to no_fallback)."""
     block = _reaper_sidecar_block()
-    assert "find_theme_sidecar_path(_folder_path)" in block, (
+    # v0.51.14 (audit #7): the check became a deadline-bounded executor submit
+    # (it ran inside the reap's BEGIN IMMEDIATE txn) — pin the submit form.
+    assert "find_theme_sidecar_path, _folder_path" in block, (
         "v1.22.15/v1.22.72: reaper Tier-2 sidecar_fs must translate "
         "host→container (via find_theme_sidecar_path)"
     )

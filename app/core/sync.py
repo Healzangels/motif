@@ -2241,6 +2241,21 @@ class _GitMirror:
     def is_unchanged(self) -> bool:
         return self._unchanged
 
+    def is_baseline_reset(self) -> bool:
+        # v0.51.14 (audit #4): True on a first-run / baseline-reset walk (no
+        # prior MOTIF_LAST_SYNC to diff against) — list_changes() then returns
+        # the WHOLE tree as 'added' with removed=[], so the changeset drop
+        # detector is structurally blind; run_sync routes those runs to the
+        # last_seen-based full-walk detector instead.
+        return self._old_head is None
+
+    def baseline_key(self) -> str:
+        # v0.51.14 (audit #5): stable identity of the diff baseline, for the
+        # chronic-read-failure escape (compare failures across runs pinned at
+        # the SAME baseline).
+        h = self._old_head
+        return h.decode("ascii", "replace") if isinstance(h, bytes) else str(h)
+
     def acquire(self, _client_unused=None) -> None:
         """Clone (first run) or fetch (subsequent). On fetch with no
         new commits, sets the _unchanged flag (read via is_unchanged()).
@@ -3050,7 +3065,8 @@ def _run_git_differential_upsert(
     auto_place_override: bool | None,
     auto_download_new_themes: bool,
     cancel_check,
-) -> None:
+    errored_by_mt: dict[str, set[int]] | None = None,
+) -> tuple[list[str], int]:
     """Walk the git mirror's change set, read each changed item's
     JSON from the new HEAD's tree, and feed (media_type, tmdb_id,
     record, upstream_source) tuples into _flush_sync_batch — the
@@ -3088,7 +3104,36 @@ def _run_git_differential_upsert(
         # we care about. Skip upsert; commit so next run has the
         # latest baseline.
         git_mirror.commit_sync_ok()
-        return
+        return [], 0
+
+    # v0.51.14 (audit #4/#5): record WHICH paths fail to read. errored_by_mt
+    # gets the resolved (media_type, tmdb_id) so drop detection can EXCLUDE
+    # just those ids (the v1.21.44 per-item pattern — their last_seen wasn't
+    # refreshed, so a last_seen-based sweep would false-drop them);
+    # failed_paths + the unresolved count feed the chronic-pin escape and the
+    # baseline-reset routing in run_sync.
+    if errored_by_mt is None:
+        errored_by_mt = {}
+    failed_paths: list[str] = []
+    unresolved_failures = 0
+
+    def _note_read_failure(rel_path, media_type, imdb_id, tmdb_id) -> None:
+        nonlocal unresolved_failures
+        failed_paths.append(rel_path)
+        resolved = tmdb_id
+        if resolved is None and imdb_id is not None:
+            with get_conn(db_path) as conn:
+                row = conn.execute(
+                    "SELECT tmdb_id FROM themes "
+                    "WHERE media_type = ? AND imdb_id = ? "
+                    "ORDER BY tmdb_id LIMIT 1",
+                    (media_type, imdb_id),
+                ).fetchone()
+            resolved = row["tmdb_id"] if row else None
+        if resolved is None:
+            unresolved_failures += 1
+        else:
+            errored_by_mt.setdefault(media_type, set()).add(int(resolved))
 
     seen: set[tuple[str, int]] = set()
     batch: list[tuple[str, int, dict, str]] = []
@@ -3125,6 +3170,7 @@ def _run_git_differential_upsert(
                 "sync git: read_json(%s) returned None — skipping",
                 rel_path,
             )
+            _note_read_failure(rel_path, media_type, imdb_id, tmdb_id)
             continue
         # The record's `id` field is the TMDB id regardless of
         # whether we landed via the imdb/ or themoviedb/ subtree.
@@ -3137,6 +3183,7 @@ def _run_git_differential_upsert(
                 "sync git: bad tmdb_id for %s (record id=%r): %s",
                 rel_path, record.get("id"), e,
             )
+            _note_read_failure(rel_path, media_type, imdb_id, tmdb_id)
             continue
         # Dedupe: a record can show up via both imdb and themoviedb
         # paths in the same commit (LizardByte mirrors the same
@@ -3215,6 +3262,7 @@ def _run_git_differential_upsert(
                   f"({stats.new_count} new, {stats.updated_count} updated)"),
     )
     # v1.22.74: baseline advance moved to run_sync, after drop detection.
+    return failed_paths, unresolved_failures
 
 
 # v1.13.1 (Phase C): drop detection. Catches items LizardByte
@@ -3778,14 +3826,23 @@ def run_sync(db_path, base_url: str, *,
             # ONLY changed paths — typically tens of items vs. the
             # 5k+ full-index walk. Skips the index/fetch loop entirely
             # for both media types; resolve + prune sweeps still run.
+            # v0.51.14 (audit #4/#5): hoisted above the git call so the git
+            # path can populate the per-item exclusions too (was declared after
+            # it, remote-walk-only). git_failed_paths / git_unresolved feed the
+            # baseline-reset detection routing + the chronic-pin escape below.
+            index_incomplete = False
+            errored_by_mt: dict[str, set[int]] = {}
+            git_failed_paths: list[str] = []
+            git_unresolved = 0
             if (git_mirror is not None
                     and not git_mirror.is_unchanged()):
-                _run_git_differential_upsert(
+                git_failed_paths, git_unresolved = _run_git_differential_upsert(
                     db_path, git_mirror, stats, sync_ts=sync_ts,
                     enqueue_downloads=enqueue_downloads,
                     auto_place_override=auto_place_override,
                     auto_download_new_themes=auto_download_new_themes,
                     cancel_check=_cancel_check,
+                    errored_by_mt=errored_by_mt,
                 )
 
             # v1.12.126 Phase A.5: skip the per-media-type upsert pipeline
@@ -3816,9 +3873,8 @@ def run_sync(db_path, base_url: str, *,
             # per-item fetch errors (in-index but unfetched) → EXCLUDE just
             # those ids from stamping (don't disable the sweep — a single
             # chronically-erroring item must not permanently starve drop
-            # detection).
-            index_incomplete = False
-            errored_by_mt: dict[str, set[int]] = {}
+            # detection). v0.51.14: both now DECLARED above the git-upsert
+            # call (the git path populates errored_by_mt too — audit #4).
             # v0.50.45: running total of items COMPLETED (fetched, incl errors)
             # across prior media types — the per-type processed_total stamp adds
             # `completed` to this. Pre-fix the base was stats.X_seen (FLUSHED, so
@@ -4064,7 +4120,37 @@ def run_sync(db_path, base_url: str, *,
             n_dropped = 0
             detection_ok = False
             try:
-                if ran_git_diff:
+                if ran_git_diff and git_mirror.is_baseline_reset():
+                    # v0.51.14 (audit #4): a first-run / baseline-reset git walk
+                    # has removed=[] by construction (no old head to diff), so
+                    # the changeset detector below is blind to every upstream
+                    # removal across the reset window — while the full-tree
+                    # upsert just refreshed last_seen_sync_at on ALL surviving
+                    # rows, which is exactly the precondition the full-walk
+                    # detector needs. Route there, excluding the failed reads
+                    # (v1.21.44 per-item pattern); a failure that couldn't be
+                    # mapped to an id makes last_seen unreliable → skip (the
+                    # errors!=0 no-advance gate below keeps this a RESET next
+                    # run too, so detection retries until a clean walk).
+                    if git_unresolved:
+                        log.info(
+                            "Sync run #%s: baseline-reset drop detection "
+                            "skipped — %d read failure(s) could not be mapped "
+                            "to an id; retrying next run", run_id,
+                            git_unresolved)
+                    else:
+                        media_types_seen = set()
+                        if stats.movies_seen:
+                            media_types_seen.add("movie")
+                        if stats.tv_seen:
+                            media_types_seen.add("tv")
+                        if stats.collections_seen:
+                            media_types_seen.add("collection")
+                        n_dropped = _detect_and_stamp_drops_full_walk(
+                            db_path, sync_ts=sync_ts,
+                            media_types_seen=media_types_seen,
+                            exclude_by_mt=errored_by_mt)
+                elif ran_git_diff:
                     # The git-diff sweep keys on the dulwich changeset
                     # (explicit deletions), NOT last_seen_sync_at, so a
                     # partial per-item fetch can't make it see false drops
@@ -4123,11 +4209,53 @@ def run_sync(db_path, base_url: str, *,
             # ONLY git read failures. NOT advancing lets the next run re-diff the
             # same delta + retry the failed reads (themes upsert is idempotent).
             if ran_git_diff and detection_ok and stats.errors:
-                log.warning(
-                    "Sync run #%s: %d changed-path read(s) failed — NOT "
-                    "advancing the git baseline so the next run re-diffs and "
-                    "retries (else the add/modify would be permanently dropped)",
-                    run_id, stats.errors)
+                # v0.51.14 (audit #5): chronic-pin escape. One persistently-
+                # malformed upstream blob would otherwise pin the baseline
+                # FOREVER — every run re-diffs the same ever-growing delta
+                # (the starvation class v1.21.44 fixed per-item for the full
+                # walk). If the SAME baseline produced the SAME failed-path
+                # set on the previous run too, the failures are persistent,
+                # not transient: advance anyway. The skipped paths re-enter
+                # the diff whenever upstream actually changes them (their
+                # content at the new baseline is still the broken blob).
+                _chronic = False
+                try:
+                    from .runtime import get_runtime_text, set_runtime_text
+                    _key = "git_chronic_read_failures"
+                    _cur = json.dumps({
+                        "baseline": git_mirror.baseline_key(),
+                        "paths": sorted(git_failed_paths),
+                    }, sort_keys=True)
+                    if git_failed_paths and get_runtime_text(
+                            db_path, _key) == _cur:
+                        _chronic = True
+                        set_runtime_text(db_path, _key, "", updated_by="sync")
+                    else:
+                        set_runtime_text(db_path, _key, _cur,
+                                         updated_by="sync")
+                except Exception as e:
+                    log.warning(
+                        "chronic-read-failure tracking failed: %s", e)
+                if _chronic:
+                    log.warning(
+                        "Sync run #%s: %d changed-path read(s) failed on the "
+                        "SAME paths as the previous run — chronic upstream "
+                        "breakage; advancing the git baseline anyway so it "
+                        "can't stay pinned (skipping: %s)",
+                        run_id, stats.errors,
+                        ", ".join(sorted(git_failed_paths)[:5]))
+                    try:
+                        git_mirror.commit_sync_ok()
+                    except Exception as e:
+                        log.warning("git baseline advance failed: %s", e)
+                else:
+                    log.warning(
+                        "Sync run #%s: %d changed-path read(s) failed — NOT "
+                        "advancing the git baseline so the next run re-diffs "
+                        "and retries (else the add/modify would be permanently "
+                        "dropped); a repeat of the SAME failures next run "
+                        "triggers the chronic escape above",
+                        run_id, stats.errors)
             if ran_git_diff and detection_ok and stats.errors == 0:
                 try:
                     git_mirror.commit_sync_ok()

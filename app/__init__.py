@@ -2727,7 +2727,28 @@
 #   tracking txns, so no transaction spans the await. #27: PUT
 #   /api/dashboard/layout guards its JSON parse (400, was raw 500 — the last
 #   bare await request.json() in the file, v0.50.89 class). api.py + tests.
-__version__ = "0.51.13"
+# 0.51.14: round-4 audit — Batch D (Plex/sync correctness). #4: a git first-run/
+#   baseline-reset walk (old head None → whole tree 'added', removed=[]) made the
+#   changeset drop detector structurally blind to every removal across the reset
+#   window; run_sync now routes reset runs to the last_seen-based FULL-WALK
+#   detector (its precondition — all survivors' last_seen just refreshed — holds
+#   exactly then), excluding failed reads per-item via errored_by_mt, which the
+#   git read loop now populates (unresolvable failures skip detection; the
+#   errors!=0 no-advance gate keeps the run a reset so it retries). #5: chronic-
+#   pin escape — one persistently-malformed upstream blob pinned the baseline
+#   forever (errors!=0 → never advance → ever-growing delta); if the SAME
+#   baseline yields the SAME failed-path set two runs straight, advance anyway
+#   (runtime key git_chronic_read_failures) with a WARNING. #6: the in-place
+#   has_theme 1→0 backup-ready detector also fires for walker-staged cloud/TDB
+#   backups (local_files source_kind='plex_cloud' / reason='backup_only', no
+#   override row) — the Plex-Pass-lapse mode the v1.19.42 pipe was built for;
+#   pre-fix only the reaper (DELETE path) matched them. #7: the reaper's tier-2
+#   find_theme_sidecar_path ran INSIDE the reap's BEGIN IMMEDIATE txn — a stalled
+#   /data mount held the writer lock indefinitely ('database is locked'
+#   everywhere); now deadline-bounded (v1.22.65 pattern, 30s no-progress) with
+#   abandon-without-join + skip-remaining-after-first-stall. sync/plex_enum +
+#   tests (incl. a behavioral dulwich baseline-reset test).
+__version__ = "0.51.14"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

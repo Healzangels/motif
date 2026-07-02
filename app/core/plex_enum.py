@@ -1939,7 +1939,33 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 "LIMIT 1",
                                 (_row_mt, _row_tmdb, it.section_id),
                             ).fetchone()
-                            if _backup_ovr is not None:
+                            _cloud_backup = None
+                            if _backup_ovr is None:
+                                # v0.51.14 (audit #6): walker-staged cloud/TDB
+                                # backups (// BACKUP CLOUD THEMES) write ONLY
+                                # local_files (source_kind='plex_cloud' /
+                                # reason='backup_only') — no user_overrides row
+                                # — so the intent gate above missed the exact
+                                # Plex-Pass-lapse mode the v1.19.42 pipe was
+                                # built for: item still in Plex, has_theme 1→0,
+                                # the staged backup sitting silently unused.
+                                # The reaper's tier-1 classifier DOES match
+                                # these rows, but it only runs when Plex
+                                # DELETES the item. Fire the same notification
+                                # here for the in-place transition.
+                                # edition-blind OK (v1.21.94): notify-only
+                                # backup-ready detection, mirrors the override
+                                # query above.
+                                _cloud_backup = conn.execute(
+                                    "SELECT 1 FROM local_files "
+                                    "WHERE media_type = ? AND tmdb_id = ? "
+                                    "  AND (source_kind = 'plex_cloud' OR "
+                                    "  last_place_attempt_reason = 'backup_only')"
+                                    " ORDER BY (section_id = ?) DESC LIMIT 1",
+                                    (_row_mt, _row_tmdb, it.section_id),
+                                ).fetchone()
+                            if (_backup_ovr is not None
+                                    or _cloud_backup is not None):
                                 log.warning(
                                     "backup_ready_to_deploy: "
                                     "Plex stopped serving theme "
@@ -2236,6 +2262,11 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                         # `mt` / `tmdb_id` / `title` (was the
                         # underlying themes columns); update field
                         # references to match.
+                        # v0.51.14 (audit #7): once ONE tier-2 fs check stalls,
+                        # skip the rest this reap (mirrors the v1.22.65 Phase-1
+                        # treatment) — 50 candidates × a 30s deadline each would
+                        # still hold the writer lock for minutes on a dead mount.
+                        _reaper_fs_stalled = False
                         for cand in lost_candidates_raw:
                             mt = cand["mt"]
                             tid = cand["tmdb_id"]
@@ -2407,34 +2438,56 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                             # outside the hot path of the loop.
                             sidecar_fs = False
                             _folder_path = cand["folder_path"]
-                            if _folder_path:
+                            if _folder_path and not _reaper_fs_stalled:
+                                # v1.22.15: resolve host→container before
+                                # stat (raw Path().exists() was ALWAYS False
+                                # inside the container). v1.22.72: full
+                                # SIDECAR_AUDIO_EXTS via the existing helper.
+                                # v0.51.14 (audit #7): BOUNDED — this check
+                                # runs inside the reap's BEGIN IMMEDIATE txn,
+                                # and find_theme_sidecar_path does unbounded
+                                # is_dir/iterdir on /data; a stalled NFS/SMB
+                                # mount (the v1.11.63 hang class) held the
+                                # SQLite writer lock indefinitely, failing
+                                # every other motif write with 'database is
+                                # locked'. Same no-progress deadline + abandon-
+                                # without-join treatment the Phase-1 stats got
+                                # in v1.22.65; on timeout the row goes
+                                # indeterminate (sidecar_fs=False — the tier
+                                # falls back conservatively) and the reap
+                                # commits.
+                                from concurrent.futures import (
+                                    ThreadPoolExecutor as _TPE,
+                                    TimeoutError as _FutTimeout,
+                                )
+                                _ex = _TPE(max_workers=1,
+                                           thread_name_prefix="motif-reap-fs")
+                                _fut = _ex.submit(
+                                    find_theme_sidecar_path, _folder_path)
                                 try:
-                                    # v1.22.15: resolve host→container before
-                                    # stat. Plex reports the host view
-                                    # (/mnt/user/... on the user's Unraid) which
-                                    # does not exist inside the container, so the
-                                    # pre-fix raw Path().exists() was ALWAYS
-                                    # False → a row with a recoverable on-disk
-                                    # sidecar mis-tiered to no_fallback and fired
-                                    # the wrong "theme lost, no recovery" alert
-                                    # (audit #4). Every sibling sidecar check in
-                                    # this module already routes through
-                                    # _candidate_local_paths.
-                                    # v1.22.72: full SIDECAR_AUDIO_EXTS set
-                                    # via the existing helper — a manual
-                                    # theme.flac mis-tiered the loss to
-                                    # no_fallback ("no recovery") while the
-                                    # recoverable sidecar sat on disk.
                                     sidecar_fs = (
-                                        find_theme_sidecar_path(_folder_path)
-                                        is not None
-                                    )
+                                        _fut.result(
+                                            timeout=_SIDECAR_STALL_TIMEOUT_S)
+                                        is not None)
+                                except _FutTimeout:
+                                    _reaper_fs_stalled = True
+                                    log.warning(
+                                        "reaper: sidecar-fs check for %s made "
+                                        "no progress for %.0fs — treating as "
+                                        "indeterminate (stalled mount?), "
+                                        "skipping remaining fs checks this "
+                                        "reap", _folder_path,
+                                        _SIDECAR_STALL_TIMEOUT_S)
                                 except OSError as _e:
                                     log.debug(
                                         "v1.19.41 sidecar-fs check "
                                         "raised for %s: %s",
                                         _folder_path, _e,
                                     )
+                                finally:
+                                    # never join a possibly-hung thread —
+                                    # leaked once, logged above (v1.22.65).
+                                    _ex.shutdown(wait=False)
                             sidecar_present = bool(sidecar_db) or sidecar_fs
                             # Tier-3 (other fallback) check.
                             # source_kind != 'plex_cloud' so we

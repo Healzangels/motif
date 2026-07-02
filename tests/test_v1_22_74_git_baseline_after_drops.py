@@ -57,8 +57,9 @@ def test_run_sync_commits_after_drop_detection():
         "n_dropped = _detect_and_stamp_drops_git(\n"
         "                        db_path, git_mirror, sync_ts=sync_ts)")
     # v1.24.14 widened 3200→4000: the read-failure baseline-hold breadcrumb
-    # added a few lines before the commit gate.
-    after = SYNC_PY[call:call + 4000]
+    # added a few lines before the commit gate. v0.51.14 widened 4000→7000:
+    # the chronic-pin escape (audit #5) sits between detection and the gate.
+    after = SYNC_PY[call:call + 7000]
     assert "git_mirror.commit_sync_ok()" in after, (
         "v1.22.74: run_sync must advance MOTIF_LAST_SYNC after drop detection"
     )
@@ -68,7 +69,9 @@ def test_run_sync_commits_after_drop_detection():
     # v1.24.14: the commit gate gained `and stats.errors == 0` (hold the
     # baseline when a changed-path read failed).
     gate_at = after.index("if ran_git_diff and detection_ok and stats.errors == 0:")
-    commit_at = after.index("git_mirror.commit_sync_ok()")
+    # v0.51.14: search from the gate — the chronic escape has its own earlier
+    # commit_sync_ok call; this assert pins the CLEAN-path one.
+    commit_at = after.index("git_mirror.commit_sync_ok()", gate_at)
     except_at = after.index("log.warning(\"drop detection failed")
     assert except_at < gate_at < commit_at, (
         "v1.24.0: commit_sync_ok sits under the detection_ok gate (after the "
