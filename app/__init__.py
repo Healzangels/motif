@@ -2632,7 +2632,18 @@
 #   stay aligned, and scoped to .pill-filter-drawer so inline rows keep density.
 #   Verified in-browser at 375px (help 30×30, logout 30h, link-glyph + state-pill
 #   30h, no overflow). CSS + test.
-__version__ = "0.51.6"
+# 0.51.7: mobile audit B2 (P2) — settings action rows left-align their buttons after
+#   wrapping on a phone. The .control-row groups (DRY-RUN, TVDB BRIDGE, REPROBE,
+#   PROBE, ORPHAN SCAN) use .control-actions { margin-left: auto } to dock buttons
+#   RIGHT on desktop; on mobile the flex-wrap row drops them to their own line but
+#   margin-left:auto kept them right-anchored + detached from their label. Added
+#   .control-row .control-actions { margin-left: 0 } in the ≤600px block. The
+#   .control-row prefix (0,2,0) is REQUIRED — the base .control-actions (0,1,0) is
+#   defined LATER in the file than the ≤600px block, so a bare-selector override
+#   there would lose on source order (the mobile-override-before-base-rule trap;
+#   caught it in-browser — first attempt showed margin-left still 110px). Verified:
+#   marginLeft 0, actions left-aligned under the label, wrapped. CSS + test.
+__version__ = "0.51.7"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

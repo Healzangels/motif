@@ -5562,6 +5562,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   .tabs::-webkit-scrollbar { height: 0; }
   .tab { flex-shrink: 0; }
 
+  /* v0.51.7: settings action rows (.control-row — DRY-RUN, TVDB BRIDGE, REPROBE,
+     PROBE, ORPHAN SCAN) wrap on a phone, dropping their buttons to a 2nd line. Drop
+     the desktop margin-left:auto there so the buttons sit under their label (left)
+     instead of right-anchored + visually detached from it (audit B2). The
+     .control-row prefix (0,2,0) is needed to beat the base .control-actions
+     margin-left:auto (0,1,0), which is defined LATER in the file than this block. */
+  .control-row .control-actions { margin-left: 0; }
+
   /* v0.50.88: LOGS/JOBS — the fixed 180px ACTION column + 6 fluid text
      columns had no floor; on a phone every column shrank to single digits
      of width and ellipsized down to 1-2 characters (the user: "you can't
