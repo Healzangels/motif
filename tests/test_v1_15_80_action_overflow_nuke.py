@@ -65,7 +65,9 @@ def test_import_table_uses_border_box_sizing():
     is inclusive of padding/border. Without it the table can
     exceed its container width by the padding amount."""
     css = APP_CSS.read_text()
-    sel_idx = css.index("#import-preview-table {")
+    # v0.51.5: anchor on the multi-line base rule — a one-liner
+    # `#import-preview-table { min-width: 880px; }` mobile floor now precedes it.
+    sel_idx = css.index("#import-preview-table {\n")
     block_end = css.index("}", sel_idx)
     block = css[sel_idx:block_end]
     assert "box-sizing: border-box" in block, (

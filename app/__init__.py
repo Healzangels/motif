@@ -2608,7 +2608,21 @@
 #   dashboard pair spans the row like the library (single SYNC THEMERRDB usually;
 #   +REFRESH PLEX when auto-enum is off → stacked full-width). Verified in-browser
 #   (dashboard button 190px left-aligned → 319px full content width). CSS + test.
-__version__ = "0.51.4"
+# 0.51.5: mobile audit A4 (P1) — the Settings > IMPORT preview table swipes on a
+#   phone instead of crushing. It's table-layout:fixed width:100% with fixed columns
+#   summing ~736px + a fluid TITLE, wrapped in the generic .table-scroll (overflow-x
+#   at ≤1080px) but with NO min-width floor — so at 375px its columns crushed to
+#   ~281px (the Apply <select> + URL cells unreadable), unlike the sync-history /
+#   jobs sibling tables which pin a floor. Added #import-preview-table {
+#   min-width: 880px } in the ≤1080px block (co-located with the .table-scroll swipe
+#   context) so the table holds its readable width and the wrapper swipes. Its only
+#   popover is the Apply ▼ native <select> (browser top layer) — no dual-axis clip
+#   like #library-table's custom .row-menu-panel. Verified in-browser (table 880px,
+#   wrapper swipes, page stays 375). CSS + test. NOTE: library-table row actions
+#   (audit A2/A3) intentionally SKIPPED — the fragile client-rendered core table
+#   can't be verified in-harness; the user chose to leave it (actions still reachable
+#   via h-scroll, not a regression).
+__version__ = "0.51.5"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

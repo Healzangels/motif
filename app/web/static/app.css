@@ -2176,6 +2176,15 @@ body.help-mode .settings-help-about { display: block; }
      desktop row dropdowns). On a phone a bottom-row menu may clip against the
      swipe box, an acceptable trade where horizontal scroll is unavoidable. */
   .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  /* v0.51.5: the IMPORT preview table (settings) shares the generic .table-scroll
+     swipe context above but had no min-width floor — so at phone width its fixed
+     columns (state 36 + status 100 + imdb 140 + current 130 + url 170 + action 160
+     ≈ 736px, plus the fluid TITLE) crushed to fit instead of swiping, unlike the
+     sync-history / jobs siblings which pin a floor (mobile audit A4). Pin its
+     natural readable width (~736 fixed + ~144 title) so .table-scroll swipes. Its
+     only popover is the Apply ▼ native <select>, which renders in the browser's top
+     layer — no dual-axis clip like #library-table's custom .row-menu-panel. */
+  #import-preview-table { min-width: 880px; }
   /* v0.50.67: below ~927px the 7 tabs no longer fit the brand|nav|status grid's
      1fr column, so the nav WRAPPED LOGS/SETTINGS to a 2nd row. The user wants a
      horizontal-scroll strip like the settings tabs instead. nowrap + overflow-x

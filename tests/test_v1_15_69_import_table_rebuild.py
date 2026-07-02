@@ -110,7 +110,9 @@ def test_app_css_import_preview_table_has_fixed_layout():
     # v1.15.80 split the rule across multiple lines (added
     # box-sizing/max-width). Anchor on the selector + check for
     # table-layout:fixed anywhere in the same block.
-    sel_idx = css.index("#import-preview-table {")
+    # v0.51.5: anchor on the multi-line base rule (the newline distinguishes it
+    # from the new one-liner `#import-preview-table { min-width: 880px; }` floor).
+    sel_idx = css.index("#import-preview-table {\n")
     block_end = css.index("}", sel_idx)
     block = css[sel_idx:block_end]
     assert "table-layout: fixed" in block, (
