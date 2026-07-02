@@ -316,8 +316,18 @@
       legendToggle.setAttribute('aria-expanded', lopen ? 'true' : 'false');
       legendToggle.addEventListener('click', () =>
         setLegendOpen(!legendPanel.classList.contains('open')));
-      const glossLink = document.getElementById('library-legend-gloss');
-      if (glossLink && dlg) glossLink.addEventListener('click', () => showModalNoFocusRing(dlg));
+      // v0.50.96: delegate on the STABLE #library-legend panel, not the button.
+      // switchLibraryTab innerHTML-swaps .library-legend-body on every client-side
+      // library-tab change (v1.23.71), replacing the #library-legend-gloss node and
+      // silently dropping a direct listener — so the button went dead after any tab
+      // switch (the user: "the full reference GLOSSARY button in the legend doesn't
+      // do anything"). The panel element itself persists across the swap, so a
+      // delegated listener survives every tab change.
+      if (dlg) {
+        legendPanel.addEventListener('click', (e) => {
+          if (e.target.closest('#library-legend-gloss')) showModalNoFocusRing(dlg);
+        });
+      }
     }
     // v1.23.47: per-section // ABOUT overviews on the settings page.
     initSettingsHelp();

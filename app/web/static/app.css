@@ -3889,6 +3889,13 @@ code {
 @media (max-width: 560px) {
   .auth-card { min-height: min(540px, 135vw); }
   .auth-card-inner { max-width: 64%; }
+  /* v0.50.96: the global .input floor (min-width:240px) forced the username /
+     password fields WIDER than the trimmed .auth-card-inner (64% ≈ 217px at a
+     368px viewport), so they overflowed the inner and spilled past the ::after
+     ring (the user: "the username and password fields spill out too far"). Let
+     the auth fields shrink to the inner width on narrow screens — the inner is
+     already the width constraint here, so the 240px floor is meaningless. */
+  .auth-card .input { min-width: 0; }
 }
 /* v0.50.91: the first-run SETUP form carries far more than the 2-field login —
    a lede, three stacked fields + hint, and the forward-auth help foot. That was

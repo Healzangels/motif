@@ -108,7 +108,9 @@ def test_legend_always_visible_not_help_gated():
 def test_legend_collapse_state_persisted():
     # v1.23.49: the legend is a header toggle + a panel (was a <details>).
     i = APP_JS.index("const legendToggle = document.getElementById('library-legend-toggle')")
-    body = APP_JS[i:i + 1300]
+    # slice the whole legend-init block (ends at initSettingsHelp) rather than a
+    # fixed length — v0.50.96 delegated the gloss link, growing the block.
+    body = APP_JS[i:APP_JS.index("initSettingsHelp();", i)]
     assert "motif:help_legend_open" in body
     assert "legendToggle.addEventListener('click'" in body
     assert "legendPanel.classList.toggle('open'" in body

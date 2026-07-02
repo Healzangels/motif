@@ -2517,7 +2517,18 @@
 #   → branded font on the first frame, no swap reflow; also kills the external
 #   dependency (privacy/offline) for a self-hosted Authentik-gated app. New
 #   test_v0_50_95. base.html + app.css + 5 woff2, no JS.
-__version__ = "0.50.95"
+# 0.50.96: two on-device UI bugs. (1) LEGEND: the "full reference in // GLOSSARY"
+#   button inside the library legend went dead after any client-side library-tab
+#   switch (the user). switchLibraryTab innerHTML-swaps .library-legend-body, which
+#   replaced the #library-legend-gloss node and dropped the direct click listener
+#   initHelpMode attached once. Fixed via event delegation on the STABLE
+#   #library-legend panel (survives the body swap). (2) LOGIN: on a narrow mobile
+#   viewport the username/password fields spilled past the vinyl-label oval (the
+#   user). The global .input min-width:240px floor forced them wider than the
+#   trimmed .auth-card-inner (64% ≈ 217px at 368px); scoped .auth-card .input
+#   { min-width: 0 } into the ≤560px media query so the fields shrink to the inner.
+#   app.js + app.css. New test_v0_50_96.
+__version__ = "0.50.96"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
