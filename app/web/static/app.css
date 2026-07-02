@@ -1851,7 +1851,11 @@ body.help-mode .settings-help-about { display: block; }
 }
 }
 .input {
-  flex: 1; min-width: 240px;
+  /* v0.51.1: min() caps the 240px floor at the container's own width, so the input
+     never forces itself wider than a narrower parent (the auth oval, a tight cell) —
+     the floor still holds at 240px wherever there's room. Retires the per-container
+     min-width:0 escapes the flat 240px floor kept needing (code-review altitude). */
+  flex: 1; min-width: min(240px, 100%);
   background: var(--bg);
   border: 1px solid var(--line-bright);
   color: var(--fg);
@@ -3907,13 +3911,9 @@ code {
 @media (max-width: 560px) {
   .auth-card { min-height: min(540px, 135vw); }
   .auth-card-inner { max-width: 64%; }
-  /* v0.50.96: the global .input floor (min-width:240px) forced the username /
-     password fields WIDER than the trimmed .auth-card-inner (64% ≈ 217px at a
-     368px viewport), so they overflowed the inner and spilled past the ::after
-     ring (the user: "the username and password fields spill out too far"). Let
-     the auth fields shrink to the inner width on narrow screens — the inner is
-     already the width constraint here, so the 240px floor is meaningless. */
-  .auth-card .input { min-width: 0; }
+  /* v0.51.1: the v0.50.96 `.auth-card .input { min-width: 0 }` escape is retired —
+     the base .input floor is now min(240px, 100%), which already self-limits to the
+     trimmed inner so the fields no longer spill past the ::after ring. */
 }
 /* v0.50.91: the first-run SETUP form carries far more than the 2-field login —
    a lede, three stacked fields + hint, and the forward-auth help foot. That was

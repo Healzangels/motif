@@ -56,33 +56,14 @@ def test_switch_library_tab_still_swaps_legend_body():
 
 # ── 2. login fields no longer spill past the oval on mobile ──────────────
 
-def _media_600_or_560_block(css: str, width: str) -> str:
-    marker = f"@media (max-width: {width}) {{"
-    i = css.index(marker)
-    depth = 0
-    j = i
-    while True:
-        if css[j] == "{":
-            depth += 1
-        elif css[j] == "}":
-            depth -= 1
-            if depth == 0:
-                return css[i:j + 1]
-        j += 1
-
-
-def test_auth_input_min_width_dropped_on_narrow_screens():
-    block = _media_600_or_560_block(APP_CSS, "560px")
-    assert ".auth-card .input { min-width: 0; }" in block, (
-        "auth fields must be allowed to shrink to .auth-card-inner on mobile"
-    )
-
-
-def test_global_input_floor_unchanged_on_desktop():
-    """The 240px floor still applies to .input generally — the fix only
-    releases it inside the auth card on narrow viewports."""
-    # anchor on the TOP-LEVEL .input rule (line-start), not the indented
-    # `.auth-card .input` override the fix added earlier in the file.
+def test_input_floor_self_limits_to_container():
+    """v0.51.1 (code-review altitude): the login spill is fixed at the root — the
+    base .input floor is now min(240px, 100%), which caps at the container's own
+    width so it can never overflow a narrower parent (the auth oval, a tight cell).
+    The 240px floor still holds wherever there's room; the per-container
+    .auth-card min-width:0 escape (v0.50.96) is retired."""
     idx = APP_CSS.index("\n.input {")
     end = APP_CSS.index("}", idx)
-    assert "min-width: 240px;" in APP_CSS[idx:end]
+    assert "min-width: min(240px, 100%);" in APP_CSS[idx:end], "floor must self-limit to the container"
+    # the scoped escape is gone — the global cap covers the auth card now.
+    assert ".auth-card .input { min-width: 0; }" not in APP_CSS

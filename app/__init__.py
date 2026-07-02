@@ -2568,7 +2568,15 @@
 #   the stale library.html class pass green — now scans every template. Two altitude
 #   design-smells (60px magic rail; the recurring .input min-width:240px floor)
 #   deferred as backlog. app.css + library.html + test.
-__version__ = "0.51.0"
+# 0.51.1: code-review altitude fix #1 — the global .input min-width:240px floor
+#   (sized for full-width dialog inputs) kept overflowing narrower containers and
+#   needing per-container min-width:0 escapes (.input-tiny; the v0.50.96 .auth-card
+#   one). Changed the base floor to min(240px, 100%): it self-limits to the
+#   container's own width, so it can never force the input wider than its parent,
+#   while still holding at 240px wherever there's room. Retired the redundant
+#   .auth-card .input escape (verified the login still doesn't spill at 368px). CSS
+#   only; test_v0_50_96 login tests reworked to assert the self-limiting floor.
+__version__ = "0.51.1"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
