@@ -5548,7 +5548,12 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 
   /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
      pager itself wrap instead of spilling the next/last buttons off the edge. */
-  .block-head { flex-wrap: wrap; gap: var(--gap-2); }
+  /* v0.51.8 (audit A8): trim the generous 18px side padding to 12px on a phone.
+     Besides a sensible density gain for every section header, it recovers just
+     enough room on the LOGS header for the EVENT STREAM view's `● live` indicator
+     to stay on the toggle-chip row instead of wrapping to its own line, detached
+     from the // EVENT STREAM chip it annotates. */
+  .block-head { flex-wrap: wrap; gap: var(--gap-2); padding-left: 12px; padding-right: 12px; }
   .block-head-actions { flex-wrap: wrap; }
   .pager { flex-wrap: wrap; }
 
@@ -5583,6 +5588,13 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   .jobs-grid { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .jobs-grid-row { min-width: 760px; }
   .jobs-scroll-y { width: max-content; }
+  /* v0.51.8 (audit A5): show a thin scroll track under the jobs grid as the "more
+     columns → (cancel / // ACK live in ACTION at the far right)" affordance — same
+     treatment as the topbar nav. On touch the native overlay scrollbar is invisible
+     until you scroll, so the ACTION column read as absent. */
+  .jobs-grid { scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent; }
+  .jobs-grid::-webkit-scrollbar { height: 3px; }
+  .jobs-grid::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }
 
   /* v0.50.88: LOGS/EVENT STREAM — TIME(90px)+LEVEL(64px)+COMPONENT(110px)
      alone ate ~264px of a ~350px mobile content width, leaving MESSAGE a

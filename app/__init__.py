@@ -2643,7 +2643,20 @@
 #   there would lose on source order (the mobile-override-before-base-rule trap;
 #   caught it in-browser — first attempt showed margin-left still 110px). Verified:
 #   marginLeft 0, actions left-aligned under the label, wrapped. CSS + test.
-__version__ = "0.51.7"
+# 0.51.8: mobile audit A5 + A8 (P2/P3) — LOGS polish. A5: the .jobs-grid scrolls
+#   horizontally on a phone (min-width:760px) so the ACTION column (cancel / // ACK)
+#   sits off the right edge, but the native touch overlay scrollbar is invisible
+#   until you scroll → the column read as absent. Added a thin persistent scroll
+#   track (same treatment as the topbar nav) as the affordance. A8: the LOGS
+#   .block-head (// JOBS + // EVENT STREAM chips + `● live`) is space-between +
+#   flex-wrap on mobile; chips (~238px) + live (~45px) exceeded the ~281px content
+#   width by a hair, so `live` wrapped to its own line, detached from the // EVENT
+#   STREAM chip. Trimmed the block-head 18px side padding to 12px on a phone (a
+#   sensible density gain for every section header) — recovers enough room for live
+#   to stay on the chip row. Verified in-browser at 375px (live inline, block-head
+#   back to 50px; jobs-grid scrollbar-width:thin, still scrolls, no overflow). CSS +
+#   test.
+__version__ = "0.51.8"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
