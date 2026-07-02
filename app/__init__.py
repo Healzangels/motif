@@ -2585,7 +2585,19 @@
 #   documented adjustment point) + document the constraint (rail ≥ widest chip ≈ 58px)
 #   inline. No auto-size, no overflow char-guard (char-count ≠ rendered width across
 #   the chip fonts = a phantom guard). CSS + test only; no visual change.
-__version__ = "0.51.2"
+# 0.51.3: mobile audit A1 (P0) — the nav gets its own full-width second row on a
+#   phone. Pre-fix the brand | nav | status single-row grid crushed the 7-tab nav
+#   into a ~45px horizontal-scroll sliver (measured; only "DAS…" of DASHBOARD
+#   showed, the other 6 tabs off-screen with no scroll affordance) — mobile
+#   navigation was effectively broken. Reworked the ≤600px topbar into a 2-row
+#   grid-template-areas layout: brand + status share row 1 (they fit ~330px <
+#   375px once the nav leaves), nav spans the full width on row 2 (~351px) as a
+#   horizontal-scroll strip keeping desktop tab order, now with a thin scroll
+#   track as the "more →" affordance (was hidden) + ~44px tap targets. brand got a
+#   min-width:0 shrink floor (A9). The v0.50.91 op-mini job strip still pins to
+#   the topbar bottom via :has(), below the nav row (verified: no overlap). CSS
+#   only + test_v0_51_3; v0.50.88 grid-floor asserts updated for the supersession.
+__version__ = "0.51.3"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

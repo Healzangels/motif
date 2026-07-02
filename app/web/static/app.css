@@ -5423,9 +5423,22 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      overrides reclaim horizontal space + stop the worst overflow offenders so the
      app is usable on a ~390px phone. Surface-specific refinement (table column
      priority, drawers, charts) iterates from here. */
-  /* Topbar: reclaim the 28px side padding + big gap so the brand | nav | status
-     grid has room; let the 7 nav tabs scroll instead of forcing the bar wider. */
-  .topbar { padding: 10px 12px; gap: var(--gap-3); grid-template-columns: auto minmax(24px, 1fr) auto; }
+  /* Topbar: reclaim the 28px side padding + big gap so the brand | status row has
+     room. v0.51.3: the 7-tab nav gets its OWN full-width second row instead of a
+     crushed ~45px scroll sliver in the middle column (the user's mobile audit —
+     only "DAS…" of DASHBOARD showed, the other 6 tabs off-screen with no
+     affordance). Two grid rows: brand + status share row 1 (they fit ~330px <
+     375px once the nav leaves), nav spans the full width on row 2. */
+  .topbar {
+    padding: 10px 12px;
+    column-gap: var(--gap-3);
+    row-gap: var(--gap-2);
+    grid-template-columns: minmax(0, auto) 1fr;
+    grid-template-areas: "brand status" "nav nav";
+  }
+  /* min-width:0 shrink floor so a long version + update badge can't overflow the
+     brand column and re-widen the topbar (mobile audit A9). */
+  .brand { grid-area: brand; min-width: 0; }
   /* v0.50.88: .topbar-status is the grid's third `auto` column — with no
      shrink floor it reported its full max-content width (every visible pill
      + the op-mini job indicator) as the column's minimum, which could force
@@ -5439,7 +5452,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      its clientWidth). flex-wrap lets a crowded status cluster spill onto a
      second row inside the topbar instead of off the screen; justify-content
      keeps it right-aligned on both rows like the single-row default. */
-  .topbar-status { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .topbar-status { grid-area: status; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
   /* v0.50.91: the op-mini job strip (label + bar + pct) is wide; inside the
      cramped topbar-status column it wrapped onto its own line and floated
      there half-width, disconnected (the user: "the bar being pushed up for the
@@ -5465,10 +5478,15 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   }
   #op-mini .op-mini-label { max-width: 55%; }
   #op-mini .op-mini-bar { width: 90px; flex: 0 0 auto; }
-  /* On a phone, scroll the nav as a single compact row rather than letting the
-     base flex-wrap stack the 7 tabs into a tall multi-row block. */
-  .nav { flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .nav::-webkit-scrollbar { height: 0; }
+  /* v0.51.3: the nav is now a dedicated full-width second row (see .topbar grid
+     areas above). Keep it a single horizontal-scroll strip; show a thin scroll
+     track as the "more tabs →" affordance (was hidden — the mobile audit flagged
+     no scroll cue) and give the tabs a ~44px tap height on their own row. */
+  .nav { grid-area: nav; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
+         scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent; }
+  .nav::-webkit-scrollbar { height: 3px; }
+  .nav::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }
+  .nav a { padding: 12px var(--gap-4); }
   /* Hero: actions span the full width under the title (the row already wraps). */
   .hero-row { gap: var(--gap-3); }
   .sync-actions { width: 100%; }

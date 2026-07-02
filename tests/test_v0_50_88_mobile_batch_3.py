@@ -89,11 +89,19 @@ def test_op_mini_desktop_rule_unchanged():
 
 
 def test_topbar_status_shrinks_and_wraps_on_mobile():
-    assert ".topbar-status { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }" in MOBILE_APP_CSS
+    # v0.51.3: the status cluster is now the `status` grid area (topbar is a
+    # 2-row areas grid on a phone — see test_v0_51_3_mobile_nav_row), but it
+    # still shrinks + wraps exactly as v0.50.88 established.
+    assert ".topbar-status { grid-area: status; min-width: 0; flex-wrap: wrap; justify-content: flex-end; }" in MOBILE_APP_CSS
 
 
 def test_topbar_nav_column_floored_on_mobile():
-    assert "grid-template-columns: auto minmax(24px, 1fr) auto;" in MOBILE_APP_CSS
+    # v0.51.3 SUPERSEDED the v0.50.88 floored middle-column approach: the 7-tab
+    # nav no longer shares the row as a crushed `minmax(24px, 1fr)` sliver — it
+    # gets its own full-width second row. The floored-column grid is gone; the
+    # new 2-row layout is asserted in test_v0_51_3_mobile_nav_row.
+    assert "grid-template-columns: auto minmax(24px, 1fr) auto;" not in MOBILE_APP_CSS
+    assert 'grid-template-areas: "brand status" "nav nav";' in MOBILE_APP_CSS
 
 
 # ── 2. LOGS/JOBS + LOGS/EVENT STREAM unreadable on mobile ───────────────

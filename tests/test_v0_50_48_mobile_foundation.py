@@ -49,8 +49,9 @@ def test_phone_breakpoint_exists_with_the_key_overrides():
     assert m, "no consolidated phone breakpoint"
     block = m.group(0)
     # nav scrolls as a single compact row on a phone (v0.50.49: + flex-wrap:nowrap
-    # to override the base flex-wrap)
-    assert ".nav { flex-wrap: nowrap; overflow-x: auto;" in block
+    # to override the base flex-wrap; v0.51.3: + grid-area:nav — the nav is now its
+    # own full-width second row, see test_v0_51_3_mobile_nav_row)
+    assert ".nav { grid-area: nav; flex-wrap: nowrap; overflow-x: auto;" in block
     # the 260px refresh button + 240px search no longer reserve their min-width
     assert "#library-refresh-btn { min-width: 0;" in block
     assert ".library-search-wrap { min-width: 0;" in block
