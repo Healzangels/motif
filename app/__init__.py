@@ -2597,7 +2597,18 @@
 #   min-width:0 shrink floor (A9). The v0.50.91 op-mini job strip still pins to
 #   the topbar bottom via :has(), below the nav row (verified: no overlap). CSS
 #   only + test_v0_51_3; v0.50.88 grid-floor asserts updated for the supersession.
-__version__ = "0.51.3"
+# 0.51.4: mobile audit B1 (P1) — hero action buttons reflow consistently across
+#   pages on a phone. Pre-fix the hero groups reflowed THREE ways: desktop docks
+#   them right; on mobile the library's .sync-actions went full-width below the
+#   title but the dashboard's .hero-actions had NO mobile rule, so under .hero-row's
+#   space-between it wrapped to a 2nd line and stayed LEFT-aligned at natural width.
+#   Swiping tabs, the primary button jumped full-width → left-aligned. The user
+#   chose one treatment for all: full-width below the title. Added .hero-actions {
+#   width:100% } + .hero-actions .btn { flex:1 1 100% } to the ≤600px block so the
+#   dashboard pair spans the row like the library (single SYNC THEMERRDB usually;
+#   +REFRESH PLEX when auto-enum is off → stacked full-width). Verified in-browser
+#   (dashboard button 190px left-aligned → 319px full content width). CSS + test.
+__version__ = "0.51.4"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

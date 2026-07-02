@@ -5491,6 +5491,16 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   .hero-row { gap: var(--gap-3); }
   .sync-actions { width: 100%; }
   #library-refresh-btn { min-width: 0; flex: 1 1 100%; }
+  /* v0.51.4: the dashboard hero action pair matches the library treatment above —
+     full-width below the title (audit B1). Pre-fix .hero-actions had NO mobile
+     rule, so under .hero-row's space-between it wrapped to a 2nd line but stayed
+     LEFT-aligned, while the library page went full-width and desktop docks right —
+     three different reflows across pages. Now every hero action group is a
+     full-width block below the title on a phone; its button(s) span the row
+     (single SYNC THEMERRDB usually, +REFRESH PLEX when auto-enum is off → stacked
+     full-width, big tap targets). */
+  .hero-actions { width: 100%; }
+  .hero-actions .btn { flex: 1 1 100%; }
   /* Library toolbar: the search box no longer reserves 240px+ — it spans the row
      so the chips + // FILTERS sit on their own line below it. */
   .library-search-wrap { min-width: 0; flex-basis: 100%; max-width: none; }
