@@ -2556,7 +2556,19 @@
 #   col-1 chip indicator. The 60px uniform rail from v0.50.97 still aligns the defs
 #   across sections; this just re-centres the chips within it — all chip centres + all
 #   defs line up. CSS only; test_v1_23_58 flipped back to assert center.
-__version__ = "0.50.99"
+# 0.51.0: rolled over from the 0.50.x line (closed at 0.50.99). Cut to land the
+#   /code-review fixes for the v0.50.96-99 UI thread (3 confirmed findings):
+#   (1) CRT fold-line glow was clipped below the seam — .crt-on-line paints between
+#   ::before and ::after, so the bottom shutter overpainted its downward glow;
+#   gave it z-index:1 above both shutters → symmetric bloom (verified via freeze-
+#   frame). (2) The inline library legend's TDB section still carried the dead
+#   .help-gloss-grid-wide class (rule deleted in v0.50.97, base.html stripped, but
+#   library.html:813 missed) — removed it; the section already used the 60px rail so
+#   no visual change. (3) test_no_wide_rail_exception only scanned base.html, letting
+#   the stale library.html class pass green — now scans every template. Two altitude
+#   design-smells (60px magic rail; the recurring .input min-width:240px floor)
+#   deferred as backlog. app.css + library.html + test.
+__version__ = "0.51.0"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

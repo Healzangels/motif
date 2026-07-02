@@ -38,10 +38,18 @@ def test_help_gloss_grid_is_two_column():
 def test_no_wide_rail_exception():
     """v0.50.97: the per-section auto-rail exception is gone — the 60px base rail
     fits the widest chip, so no section may opt out (that's what left TDB/TOPBAR
-    misaligned). Guard both the CSS rule and the template class usage."""
+    misaligned). Guard both the CSS rule and the template class usage.
+
+    v0.51.0: scan EVERY template, not just base.html. The class lives on two
+    surfaces — the modal glossary (base.html) AND the inline library legend
+    (library.html) — and the original base.html-only check let a stale
+    library.html:813 usage slip through (code review)."""
     assert ".help-gloss-grid-wide {" not in APP_CSS, "the auto-rail exception must not return"
-    base = (REPO / "app" / "web" / "templates" / "base.html").read_text()
-    assert "help-gloss-grid-wide" not in base, "no glossary section should carry the dropped class"
+    tpl_dir = REPO / "app" / "web" / "templates"
+    for tpl in sorted(tpl_dir.glob("*.html")):
+        assert "help-gloss-grid-wide" not in tpl.read_text(), (
+            f"{tpl.name} must not carry the dropped .help-gloss-grid-wide class"
+        )
 
 
 def test_help_gloss_row_uses_display_contents():

@@ -397,6 +397,10 @@ input[type="checkbox"] {
 /* the bright fold-line at the seam — exposed as the shutters part, blooms, fades. */
 .crt-on-line {
   position: absolute; left: 0; right: 0; top: 50%;
+  /* v0.51.0: above BOTH shutters. Without it the line paints between ::before and
+     ::after (tree order), so the bottom shutter (::after, last) overpaints the
+     line's downward glow → the bloom was clipped below the seam (code review). */
+  z-index: 1;
   height: 3px;
   transform: translateY(-50%);
   background: var(--fg);
