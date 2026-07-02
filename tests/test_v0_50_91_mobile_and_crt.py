@@ -23,6 +23,7 @@ REPO = Path(__file__).resolve().parent.parent
 CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 SETUP_HTML = (REPO / "app" / "web" / "templates" / "setup.html").read_text()
 LOGIN_HTML = (REPO / "app" / "web" / "templates" / "login.html").read_text()
+BASE_HTML = (REPO / "app" / "web" / "templates" / "base.html").read_text()
 
 
 # ── 1. touch hover-stick suppression ────────────────────────────────────
@@ -112,32 +113,35 @@ def test_op_mini_mobile_full_width_strip():
     assert "left: 0" in mini and "right: 0" in mini
 
 
-# ── 3. CRT power-on is the inverse of power-off ─────────────────────────
+# ── 3. CRT power-on is a "vertical unfold" (v0.50.98, variant A) ─────────
 
 
-def test_power_on_uses_scanline_and_veil_like_power_off():
-    # the scanline pseudo-element + its bloom keyframes
-    assert ".crt-power-on::before" in CSS
-    assert "@keyframes crt-power-on-line" in CSS
-    assert "@keyframes crt-power-on-bg" in CSS
-    line = CSS[CSS.index("@keyframes crt-power-on-line"):]
-    line = line[:line.index("}", line.index("100%"))]
-    # blooms from a collapsed centre point outward (the inverse of the collapse)
-    assert "scaleX(0)" in line
-    assert "scaleX(1)" in line
-    # shares the power-off's --fg scanline + green-bright glow
-    j = CSS.index(".crt-power-on::before")
-    before = CSS[j:CSS.index("}", j)]
-    assert "var(--fg)" in before
-    assert "green-bright" in before
+def test_power_on_is_a_vertical_unfold():
+    # two black shutters (::before top / ::after bottom) retract from the centre
+    # to the poles — the picture unfolds vertically.
+    assert ".crt-power-on::before" in CSS and ".crt-power-on::after" in CSS
+    assert "@keyframes crt-power-on-unfold" in CSS
+    unfold = CSS[CSS.index("@keyframes crt-power-on-unfold"):]
+    unfold = unfold[:unfold.index("}", unfold.index("100%"))]
+    assert "scaleY(1)" in unfold and "scaleY(0)" in unfold  # full cover → unfolded
+    # each shutter anchored to its own pole so the reveal grows from the centre
+    assert "transform-origin: center top" in CSS
+    assert "transform-origin: center bottom" in CSS
 
 
-def test_power_on_no_longer_a_green_flash():
-    i = CSS.index(".crt-power-on {")
-    block = CSS[i:CSS.index("}", i)]
-    # the veil is the --bg black tube, not the old rgba(green) flash
-    assert "var(--bg)" in block
-    assert "green-rgb), 0.85" not in block
+def test_power_on_has_a_bright_fold_line_child():
+    # the fold-line is a SEPARATE child element (.crt-on-line) so its flash + bloom
+    # doesn't ride the container opacity (which would wash out the black shutters).
+    assert "crt-on-line" in BASE_HTML, "base.html renders the fold-line child span"
+    assert ".crt-on-line {" in CSS
+    j = CSS.index(".crt-on-line {")
+    line = CSS[j:CSS.index("}", j)]
+    assert "var(--fg)" in line and "green-bright" in line  # scanline + glow
+    # the v0.50.91 inverse-of-power-off is gone: no crt-power-on-bg veil, no scaleX.
+    assert "@keyframes crt-power-on-bg" not in CSS
+    on_line = CSS[CSS.index("@keyframes crt-power-on-line"):]
+    on_line = on_line[:on_line.index("}", on_line.index("100%"))]
+    assert "scaleX" not in on_line
 
 
 def test_power_on_still_inert_and_one_shot():

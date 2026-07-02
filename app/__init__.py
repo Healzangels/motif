@@ -2539,7 +2539,19 @@
 #   (CSS rule + the class on the TDB/TOPBAR divs). Verified in-browser: every chip
 #   left edge + every def now land at one x across all 6 sections (chipLeft 29 /
 #   defLeft 101 uniformly). app.css + base.html; test_v1_23_58 updated.
-__version__ = "0.50.97"
+# 0.50.98: CRT power-ON rebuilt as a "vertical unfold" (the user picked variant A
+#   from the mockup; the v0.50.91 inverse-of-power-off wasn't quite "a CRT turning
+#   on"). The raster snaps to a bright centre line then the picture unfolds top→bottom
+#   to fill the tube, the fold-line blooming then fading. Mechanism: two black shutters
+#   (.crt-power-on::before top / ::after bottom) retract from the centre to the poles
+#   revealing the live page; a SEPARATE child span (.crt-on-line, added in base.html)
+#   carries the bright --fg scanline + glow so its flash doesn't ride the container
+#   opacity (which would wash out the shutters). Dropped the crt-power-on-bg veil +
+#   scaleX bloom. Verified via freeze-frames at 0.10/0.30/0.50s (centre-line flash →
+#   unfolding → settled). Fires once after login / manual refresh, same trigger + the
+#   VISUALS opt-out (html.viz-no-crt-on) as before. app.css + base.html; test_v0_50_91
+#   §3 rewritten, test_v0_50_7 structure-agnostic (still green).
+__version__ = "0.50.98"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

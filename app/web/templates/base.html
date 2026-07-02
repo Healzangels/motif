@@ -137,7 +137,10 @@
      motif:just-logged-in on submit; a refresh is detected via the Navigation
      Timing type. Decorative + aria-hidden + pointer-events:none; reduced-motion
      clamp makes it near-instant. #}
-  <div class="crt-power-on" id="crt-power-on" aria-hidden="true"></div>
+  {# v0.50.98: the child .crt-on-line is the bright fold-line for the vertical-unfold
+     effect — kept separate from the ::before/::after shutters so it can flash + fade
+     on its own without the container's opacity washing out the black shutters. #}
+  <div class="crt-power-on" id="crt-power-on" aria-hidden="true"><span class="crt-on-line"></span></div>
   {# v0.50.29: CRT power-OFF — the tube-collapse flicker, played on logout before
      the nav (the script below wires the ⏻ link). #}
   <div class="crt-power-off" id="crt-power-off" aria-hidden="true"></div>

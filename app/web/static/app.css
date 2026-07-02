@@ -358,45 +358,58 @@ input[type="checkbox"] {
   opacity: 0.6;
 }
 
-/* v0.50.91: CRT power-ON rebuilt as the exact INVERSE of the power-OFF (the
-   user: match the powering-off effect). The tube warms up — the screen starts
-   as a black veil, a bright --fg scanline blooms from a collapsed centre point
-   out to full width + flares, then the veil lifts to reveal the live page as
-   the line fades. Mirrors .crt-power-off's --fg scanline + --bg veil, played
-   in reverse (collapse → bloom). Fires once after login / a manual refresh
-   (base.html adds .playing). Rests invisible (opacity:0), never blocks input.
-   (Was a green scaleY flash, v0.50.7.) */
+/* v0.50.98: CRT power-ON = a "vertical unfold" (the user picked variant A). The
+   raster snaps to a bright centre line, then the picture unfolds top→bottom to fill
+   the tube, the fold-line blooming then fading — the classic warm-up (a refined take
+   on the old v0.50.7 scaleY flash; replaces the v0.50.91 inverse-of-power-off). Two
+   black shutters (::before top / ::after bottom) start meeting at the centre and
+   retract to the poles, revealing the live page between them; .crt-on-line is the
+   bright fold-line, kept separate so it flashes without the container opacity washing
+   out the shutters. Fires once after login / a manual refresh (base.html adds
+   .playing). Rests fully inert (opacity:0), never blocks input. */
 .crt-power-on {
   position: fixed; inset: 0; z-index: 9999;
   pointer-events: none;
-  background: var(--bg);
   opacity: 0;
 }
-.crt-power-on.playing { animation: crt-power-on-bg 0.5s ease-out; }
-.crt-power-on::before {
+/* the overlay holds opaque for the whole unfold then fades out at the very end (the
+   shutters + line have already collapsed by then, so nothing flickers). */
+.crt-power-on.playing { animation: crt-power-on-veil 0.62s ease-out; }
+@keyframes crt-power-on-veil { 0% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; } }
+/* two black shutters, each covering half the screen, meeting at the centre. They
+   scale toward their own outer edge, so the picture unfolds from the middle out. */
+.crt-power-on::before,
+.crt-power-on::after {
   content: '';
+  position: absolute; left: 0; right: 0;
+  height: 50%;
+  background: var(--bg);
+}
+.crt-power-on::before { top: 0;    transform-origin: center top; }
+.crt-power-on::after  { bottom: 0; transform-origin: center bottom; }
+.crt-power-on.playing::before,
+.crt-power-on.playing::after { animation: crt-power-on-unfold 0.62s cubic-bezier(0.4, 0, 0.15, 1); }
+@keyframes crt-power-on-unfold {
+  0%   { transform: scaleY(1); }
+  14%  { transform: scaleY(0.95); }  /* hold nearly-closed — the centre-line beat */
+  100% { transform: scaleY(0); }     /* fully unfolded */
+}
+/* the bright fold-line at the seam — exposed as the shutters part, blooms, fades. */
+.crt-on-line {
   position: absolute; left: 0; right: 0; top: 50%;
   height: 3px;
   transform: translateY(-50%);
   background: var(--fg);
-  box-shadow: 0 0 14px var(--fg), 0 0 5px var(--green-bright);
+  box-shadow: 0 0 14px var(--fg), 0 0 6px var(--green-bright);
   opacity: 0;
 }
-.crt-power-on.playing::before { animation: crt-power-on-line 0.5s ease-out; }
-/* veil lifts (screen was off → on). No fill-mode:forwards — it ends at the
-   resting opacity:0, so nothing to hold. */
-@keyframes crt-power-on-bg {
-  0%   { opacity: 0.92; }
-  40%  { opacity: 0.72; }
-  100% { opacity: 0; }
-}
-/* the scanline blooms from a centre point (scaleX 0 → 1), flares thick, fades
-   — the time-reverse of crt-power-off-line's collapse. */
+.crt-power-on.playing .crt-on-line { animation: crt-power-on-line 0.62s ease-out; }
 @keyframes crt-power-on-line {
-  0%   { opacity: 0;    transform: translateY(-50%) scaleX(0) scaleY(0.6); }
-  22%  { opacity: 1;    transform: translateY(-50%) scaleX(1) scaleY(0.6); }
-  55%  { opacity: 0.95; transform: translateY(-50%) scaleX(1) scaleY(2.6); }
-  100% { opacity: 0;    transform: translateY(-50%) scaleX(1) scaleY(1.2); }
+  0%   { opacity: 0;    transform: translateY(-50%) scaleY(0.6); }
+  11%  { opacity: 1;    transform: translateY(-50%) scaleY(1); }
+  32%  { opacity: 1;    transform: translateY(-50%) scaleY(2.4); }  /* bloom */
+  70%  { opacity: 0.45; transform: translateY(-50%) scaleY(1.2); }
+  100% { opacity: 0;    transform: translateY(-50%) scaleY(1); }
 }
 
 /* v0.50.29: CRT power-OFF — the classic "tube collapses" flicker on logout (the
