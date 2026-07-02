@@ -1,11 +1,16 @@
 """v1.23.58 — glossary/legend chip rows align their definitions into a column.
 
 After v1.23.56 the SRC/LINK decode chips reuse the real row classes and so have
-varying widths (C/M narrower than HL/PU/PB; DISK wider than UPD), which left the
-def text ragged. .help-gloss-grid is now a 2-col (auto 1fr) grid with the rows as
-display:contents, so the chip column sizes to the widest chip per section and
-every definition lines up — while the chips keep their natural (row-identical)
-size.
+varying widths, which left the def text ragged. .help-gloss-grid is a 2-col grid
+with the rows as display:contents so chips + defs line up.
+
+v0.50.97: unified the chip rail across ALL sections. Pre-fix the narrow sections
+shared a 26px fixed rail while the wider TDB + TOPBAR text-pill sections used a
+`.help-gloss-grid-wide` `auto` rail — so their chips + defs sat ~25-33px right of
+the rest (the user: "the TDB chips at the top and the TOPBAR at the bottom are
+not in line"). Now every section shares ONE 60px rail (fits the widest chip,
+RE-PUSH / NO TDB ≈ 58px) and chips LEFT-align, so all chip left edges + all defs
+line up in one column.
 """
 from __future__ import annotations
 
@@ -23,14 +28,20 @@ def _rule(selector: str) -> str:
 
 def test_help_gloss_grid_is_two_column():
     grid = _rule(".help-gloss-grid")
-    # v1.23.68: the chip rail is now a FIXED width (was `auto`) so every section's
-    # def column lands at the same x — auto sized each section's rail to its own
-    # content, so the 9px DL/PL dots left their defs left of the wider chips.
-    assert "grid-template-columns: 26px 1fr" in grid, "fixed chip rail + 1fr defs"
+    # v0.50.97: ONE uniform 60px chip rail on EVERY section so all chips + defs
+    # line up across sections (was 26px + an auto-rail exception for the wide
+    # TDB/TOPBAR pills, which sat right of the rest).
+    assert "grid-template-columns: 60px 1fr" in grid, "uniform fixed chip rail + 1fr defs"
     assert "justify-items: start" in grid, "chips keep natural width, not stretched"
-    # the text-pill sections (TDB / TOPBAR) opt into a wider auto rail.
-    wide = _rule(".help-gloss-grid-wide")
-    assert "grid-template-columns: auto 1fr" in wide
+
+
+def test_no_wide_rail_exception():
+    """v0.50.97: the per-section auto-rail exception is gone — the 60px base rail
+    fits the widest chip, so no section may opt out (that's what left TDB/TOPBAR
+    misaligned). Guard both the CSS rule and the template class usage."""
+    assert ".help-gloss-grid-wide {" not in APP_CSS, "the auto-rail exception must not return"
+    base = (REPO / "app" / "web" / "templates" / "base.html").read_text()
+    assert "help-gloss-grid-wide" not in base, "no glossary section should carry the dropped class"
 
 
 def test_help_gloss_row_uses_display_contents():
@@ -38,11 +49,12 @@ def test_help_gloss_row_uses_display_contents():
     assert "display: contents" in row, "chip + def join the grid for column alignment"
 
 
-def test_chips_centre_in_the_rail():
-    """v0.50.24: the user reversed v1.23.86 — every chip/dot/glyph now CENTRES in
-    the 26px rail (justify-self:center on the col-1 indicator) while the defs keep
-    lining up (justify-items:start). The grid vertically centres them too."""
-    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: center; }" in APP_CSS
+def test_chips_left_align_in_the_rail():
+    """v0.50.97: every chip/dot/glyph LEFT-aligns on the uniform rail so all chip
+    left edges line up in one column (the user: "line them all up"). Was
+    justify-self:center — fine per-section, ragged once the rails differed."""
+    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: start; }" in APP_CSS
+    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: center; }" not in APP_CSS
     glyph = _rule(".help-gloss-glyph")
     assert "text-align: center" in glyph
     assert "align-items: center" in _rule(".help-gloss-grid")

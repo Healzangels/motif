@@ -1399,13 +1399,14 @@ body.help-mode .help-mode-bar { display: flex; }
    up. justify-items:start keeps chips from stretching to fill the column. */
 .help-gloss-grid {
   display: grid;
-  /* v1.23.68: a FIXED chip rail (was `auto`) so every section's definition
-     column lands at the same x — pre-fix each section auto-sized its own first
-     column, so the 9px DL/PL dots left their defs ~11px left of the wider
-     SRC/LINK chips' defs (the user: "the DL/PL dots are not lined up"). 26px fits
-     the single-letter SRC badges, the 2-char LINK glyphs, the dots, and the
-     flag glyphs; the wider text-pill sections opt into .help-gloss-grid-wide. */
-  grid-template-columns: 26px 1fr;
+  /* v1.23.68: a FIXED chip rail so every section's definition column lands at the
+     same x. v0.50.97: widened 26px → 60px and applied to EVERY section (dropped the
+     .help-gloss-grid-wide auto-rail exception). Pre-fix the TDB + TOPBAR text-pill
+     sections auto-sized a wider rail than the others, so their chips + defs sat
+     ~25-33px right of the rest (the user: "the TDB chips at the top and the TOPBAR
+     at the bottom are not in line"). 60px fits the widest chip (RE-PUSH / NO TDB
+     ≈ 58px); every section now shares one chip rail + one def column. */
+  grid-template-columns: 60px 1fr;
   /* v0.50.24: vertically centre the chip/dot/glyph against its definition (was
      baseline, which sat the small dots low). justify-items stays `start` so the
      DEFS keep lining up at the rail edge; the chips themselves get
@@ -1415,13 +1416,13 @@ body.help-mode .help-mode-bar { display: flex; }
   column-gap: var(--gap-3);
   row-gap: var(--gap-2);
 }
-/* v0.50.24: centre the chip/pill/dot/glyph horizontally in the 26px rail (the
-   user). :not(.help-gloss-def) is the col-1 indicator; the def keeps start. */
-.help-gloss-row > :not(.help-gloss-def) { justify-self: center; }
-/* v1.23.68: TDB pills + the topbar // UPD/FAIL/DROP/DISK pills are multi-char
-   text chips that overflow the tight rail — give them an auto rail (they still
-   align within their own section). */
-.help-gloss-grid-wide { grid-template-columns: auto 1fr; }
+/* v0.50.97: LEFT-align every chip on the uniform rail so all chip left edges line up
+   in one column (the user: "line them all up"). Was justify-self:center — fine when
+   every section shared the 26px rail, but with a uniform WIDE rail, centering would
+   leave ragged left edges. :not(.help-gloss-def) is the col-1 indicator; the def
+   keeps start so definitions align too. v0.50.97 removed .help-gloss-grid-wide (the
+   auto-rail exception for TDB/TOPBAR) — the 60px base rail fits their chips now. */
+.help-gloss-row > :not(.help-gloss-def) { justify-self: start; }
 /* v1.23.68: the row TDB pill carries margin-left:6px (it trails the title on a
    row); zero it in the glossary/legend so it sits flush on the chip rail. */
 .help-gloss-grid .tdb-pill { margin-left: 0; }

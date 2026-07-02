@@ -2528,7 +2528,18 @@
 #   trimmed .auth-card-inner (64% ≈ 217px at 368px); scoped .auth-card .input
 #   { min-width: 0 } into the ≤560px media query so the fields shrink to the inner.
 #   app.js + app.css. New test_v0_50_96.
-__version__ = "0.50.96"
+# 0.50.97: glossary chips line up across ALL sections (the user: "the TDB chips at
+#   the top and the TOPBAR at the bottom are not in line with the other glossary
+#   items"). The 4 narrow sections shared a fixed 26px chip rail (defs aligned at
+#   x=71), but TDB + TOPBAR used .help-gloss-grid-wide with an `auto` rail sized to
+#   their wider text pills, so their chips + defs sat ~25-33px right of the rest
+#   (measured: defLeft 96 / 104 vs 71). Fix: ONE uniform 60px rail on every section
+#   (fits the widest chip, RE-PUSH/NO TDB ≈ 58px) + LEFT-align the chips
+#   (justify-self:center → start), and dropped the .help-gloss-grid-wide exception
+#   (CSS rule + the class on the TDB/TOPBAR divs). Verified in-browser: every chip
+#   left edge + every def now land at one x across all 6 sections (chipLeft 29 /
+#   defLeft 101 uniformly). app.css + base.html; test_v1_23_58 updated.
+__version__ = "0.50.97"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
