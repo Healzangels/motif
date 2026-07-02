@@ -2711,7 +2711,23 @@
 #   with the previous tab's off-screen rows; bulk actions fired at them) —
 #   hydrateLibraryStateForTab now clears selected/selectedRows + hides the bar;
 #   pill filters/q/sort persistence (v1.23.71 intent) unchanged. app.js + tests.
-__version__ = "0.51.12"
+# 0.51.13: round-4 audit — Batch C (API robustness). #10: cleanup-dead-rk now
+#   requires a DEFINITIVE 404 before deleting the placement row — get_themes
+#   returns ok=False with http_status=None on transport errors, and the old
+#   ok-only gate let a CLEAN UP click during a Plex outage delete LIVE plex_upload
+#   placements' rows (orphan_scan classifies any not-ok as plex_fetch_failed).
+#   #11: api_upload_theme reads the multipart body in 4MiB chunks with a running
+#   50MiB cap (the v1.23.18 OOM-before-cap fix, missed at this endpoint — an
+#   accidental multi-GB pick materialized fully in RAM before the cap check).
+#   #12: the PURGE/UNPLACE/UNMANAGE/DELETE sidecar+canonical unlink loops are
+#   offloaded via run_in_threadpool (class 12 — they hit the /data + themes
+#   mounts; a spun-down Unraid disk blocked each syscall serially, freezing the
+#   event loop for every concurrent request; invisible to the v1.22.58 AST lint
+#   which covers network/subprocess only). All four loops run BEFORE their
+#   tracking txns, so no transaction spans the await. #27: PUT
+#   /api/dashboard/layout guards its JSON parse (400, was raw 500 — the last
+#   bare await request.json() in the file, v0.50.89 class). api.py + tests.
+__version__ = "0.51.13"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

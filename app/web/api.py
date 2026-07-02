@@ -12922,12 +12922,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         upload = form.get("file")
         if upload is None or not hasattr(upload, "read"):
             raise HTTPException(status_code=400, detail="multipart 'file' required")
-        # Read the upload up-front (simpler than streaming for typical theme sizes)
-        data = await upload.read()
+        # v0.51.13 (audit #11): read in chunks with a running cap so an oversized
+        # upload is rejected BEFORE it's fully resident — the identical
+        # OOM-before-cap shape v1.23.18 fixed at database-restore/upload. Pre-fix
+        # `await upload.read()` materialized a multi-GB mistake in RAM and only
+        # THEN checked the 50 MiB cap.
+        _CAP = 50 * 1024 * 1024
+        _buf = bytearray()
+        while True:
+            chunk = await upload.read(4 * 1024 * 1024)
+            if not chunk:
+                break
+            _buf += chunk
+            if len(_buf) > _CAP:
+                raise HTTPException(status_code=413, detail="file > 50 MiB")
+        data = bytes(_buf)
         if not data:
             raise HTTPException(status_code=400, detail="empty file")
-        if len(data) > 50 * 1024 * 1024:
-            raise HTTPException(status_code=413, detail="file > 50 MiB")
         # v1.21.18 (security audit): reject non-audio before it's stored as
         # theme.mp3. Lenient on container (MP3/Ogg/FLAC/WAV/AIFF/MP4) so a
         # real theme isn't blocked; rejects HTML/script/image/binary blobs.
@@ -15629,16 +15640,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # has_theme=1/verified_ok=1 and render a phantom P. Mirrors the
         # PURGE rk_from_placement guard (audit MED-2 / class 1).
         sidecar_unlinked_sections: set[str] = set()
-        for pr in sidecar_placements:
-            sidecar_unlinked_sections.add(pr["section_id"] or "")
-            try:
-                p = Path(pr["media_folder"]) / "theme.mp3"
-                if p.is_file():
-                    p.unlink()
-                    unlinked += 1
-                affected_folders.append(pr["media_folder"])
-            except OSError as e:
-                log.warning("unplace: could not unlink %s: %s", pr["media_folder"], e)
+
+        # v0.51.13 (audit #12, class 12): offload the unlink loop — it hits the
+        # /data mount; a spun-down disk blocks each syscall for seconds, serially,
+        # freezing the event loop for every concurrent request (invisible to the
+        # v1.22.58 AST lint, which covers network/subprocess only). Same offload
+        # v1.23.96 gave the orphan-sidecar delete. No DB txn is open here.
+        def _unlink_sidecars() -> int:
+            n = 0
+            for pr in sidecar_placements:
+                sidecar_unlinked_sections.add(pr["section_id"] or "")
+                try:
+                    p = Path(pr["media_folder"]) / "theme.mp3"
+                    if p.is_file():
+                        p.unlink()
+                        n += 1
+                    affected_folders.append(pr["media_folder"])
+                except OSError as e:
+                    log.warning("unplace: could not unlink %s: %s", pr["media_folder"], e)
+            return n
+        unlinked = await run_in_threadpool(_unlink_sidecars)
         # v1.18.36 / v1.18.38: Plex-side LPS restore — clear motif's
         # active selection (when applicable) and re-select a non-motif
         # entry via the v1.18.35 re-upload trick so the row keeps
@@ -17081,8 +17102,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ]
 
         # Delete the per-section canonicals — leave Plex-folder placements intact.
+        # v0.51.13 (audit #12, class 12): offloaded — the loop hits the themes
+        # mount; a spun-down disk blocks each syscall, freezing the event loop
+        # (invisible to the v1.22.58 AST lint). No txn is open here.
         themes_dir = settings.themes_dir
-        if themes_dir:
+
+        def _unlink_canonicals() -> None:
+            if not themes_dir:
+                return
             for lr in locals_rows:
                 try:
                     p = themes_dir / lr["file_path"]
@@ -17112,6 +17139,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 except OSError as e:
                     log.warning("unmanage: could not unlink canonical %s: %s",
                                 lr["file_path"], e)
+        await run_in_threadpool(_unlink_canonicals)
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         # v1.24.13 (holistic review): compute the post-unmanage sidecar re-stat
@@ -17661,45 +17689,55 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # above is what cleans those rows up.
         unlinked = 0
         affected_folders: list[str] = []
-        for pr in placements:
-            if (pr["placement_kind"] or "") == "plex_upload":
-                # No sidecar to unlink — the file lives in Plex's
-                # metadata bundle; v1.18.60 teardown above handled it.
-                continue
-            try:
-                p = Path(pr["media_folder"]) / "theme.mp3"
-                if p.is_file():
-                    p.unlink()
-                    unlinked += 1
-                affected_folders.append(pr["media_folder"])
-            except OSError as e:
-                log.warning("forget: could not unlink %s: %s",
-                            pr["media_folder"], e)
         themes_dir = settings.themes_dir
-        if themes_dir:
-            for lr in locals_rows:
+
+        # v0.51.13 (audit #12, class 12): offload BOTH unlink loops — they hit
+        # the /data + themes mounts; a spun-down disk blocks each syscall for
+        # seconds, serially across N placements, freezing the event loop for
+        # every concurrent request (invisible to the v1.22.58 AST lint). Runs
+        # BEFORE the tracking txn below, so no transaction spans the await.
+        def _unlink_files() -> int:
+            n = 0
+            for pr in placements:
+                if (pr["placement_kind"] or "") == "plex_upload":
+                    # No sidecar to unlink — the file lives in Plex's
+                    # metadata bundle; v1.18.60 teardown above handled it.
+                    continue
                 try:
-                    p = themes_dir / lr["file_path"]
+                    p = Path(pr["media_folder"]) / "theme.mp3"
                     if p.is_file():
                         p.unlink()
-                    # v1.14.57: see api_unmanage_item — same errno-
-                    # aware logging upgrade so persistent permission
-                    # / unexpected FS errors surface instead of being
-                    # silently masked alongside ENOTEMPTY.
-                    try:
-                        parent = p.parent
-                        if parent.is_dir() and not any(parent.iterdir()):
-                            parent.rmdir()
-                    except OSError as rmd_err:
-                        import errno as _errno
-                        if rmd_err.errno not in (_errno.ENOTEMPTY,
-                                                  _errno.ENOENT):
-                            log.warning(
-                                "forget: parent rmdir %s failed "
-                                "unexpectedly: %s", p.parent, rmd_err)
+                        n += 1
+                    affected_folders.append(pr["media_folder"])
                 except OSError as e:
-                    log.warning("forget: could not unlink canonical %s: %s",
-                                lr["file_path"], e)
+                    log.warning("forget: could not unlink %s: %s",
+                                pr["media_folder"], e)
+            if themes_dir:
+                for lr in locals_rows:
+                    try:
+                        p = themes_dir / lr["file_path"]
+                        if p.is_file():
+                            p.unlink()
+                        # v1.14.57: see api_unmanage_item — same errno-
+                        # aware logging upgrade so persistent permission
+                        # / unexpected FS errors surface instead of being
+                        # silently masked alongside ENOTEMPTY.
+                        try:
+                            parent = p.parent
+                            if parent.is_dir() and not any(parent.iterdir()):
+                                parent.rmdir()
+                        except OSError as rmd_err:
+                            import errno as _errno
+                            if rmd_err.errno not in (_errno.ENOTEMPTY,
+                                                      _errno.ENOENT):
+                                log.warning(
+                                    "forget: parent rmdir %s failed "
+                                    "unexpectedly: %s", p.parent, rmd_err)
+                    except OSError as e:
+                        log.warning("forget: could not unlink canonical %s: %s",
+                                    lr["file_path"], e)
+            return n
+        unlinked = await run_in_threadpool(_unlink_files)
 
         is_orphan = theme["upstream_source"] == "plex_orphan"
         with get_conn(db) as conn, transaction(conn):
@@ -18240,38 +18278,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the canonical doesn't remove these). Best-effort; missing files are OK.
         # plex_upload rows skip the unlink — no sidecar to remove,
         # the v1.18.60 teardown above handled them.
-        unlinked = 0
-        for pr in placement_rows:
-            if (pr["placement_kind"] or "") == "plex_upload":
-                continue  # no sidecar; v1.18.60 teardown handled it
-            try:
-                p = Path(pr["media_folder"]) / "theme.mp3"
-                if p.is_file():
-                    p.unlink()
-                    unlinked += 1
-            except OSError as e:
-                log.warning("Could not unlink placement %s: %s", pr["media_folder"], e)
-        # Unlink every per-section canonical.
+        # v0.51.13 (audit #12, class 12): offload BOTH unlink loops — they hit
+        # the /data + themes mounts; a spun-down disk blocks each syscall,
+        # serially, freezing the event loop (invisible to the v1.22.58 AST
+        # lint). Runs BEFORE the cascade txn below, so nothing spans the await.
         themes_dir = settings.themes_dir
-        if themes_dir:
-            for lr in local_rows:
+
+        def _unlink_files() -> int:
+            n = 0
+            for pr in placement_rows:
+                if (pr["placement_kind"] or "") == "plex_upload":
+                    continue  # no sidecar; v1.18.60 teardown handled it
                 try:
-                    p = themes_dir / lr["file_path"]
+                    p = Path(pr["media_folder"]) / "theme.mp3"
                     if p.is_file():
                         p.unlink()
-                    try:
-                        parent = p.parent
-                        if parent.is_dir() and not any(parent.iterdir()):
-                            parent.rmdir()
-                    except OSError as e:
-                        # v1.22.31 (audit): best-effort empty-dir cleanup — a
-                        # leftover empty staging dir is harmless, but log the
-                        # swallow so it's auditable (class-9, not bare pass).
-                        log.debug("delete: empty-parent rmdir skipped for "
-                                  "%s: %s", p.parent, e)
+                        n += 1
                 except OSError as e:
-                    log.warning("Could not unlink canonical %s: %s",
-                                lr["file_path"], e)
+                    log.warning("Could not unlink placement %s: %s", pr["media_folder"], e)
+            # Unlink every per-section canonical.
+            if themes_dir:
+                for lr in local_rows:
+                    try:
+                        p = themes_dir / lr["file_path"]
+                        if p.is_file():
+                            p.unlink()
+                        try:
+                            parent = p.parent
+                            if parent.is_dir() and not any(parent.iterdir()):
+                                parent.rmdir()
+                        except OSError as e:
+                            # v1.22.31 (audit): best-effort empty-dir cleanup — a
+                            # leftover empty staging dir is harmless, but log the
+                            # swallow so it's auditable (class-9, not bare pass).
+                            log.debug("delete: empty-parent rmdir skipped for "
+                                      "%s: %s", p.parent, e)
+                    except OSError as e:
+                        log.warning("Could not unlink canonical %s: %s",
+                                    lr["file_path"], e)
+            return n
+        unlinked = await run_in_threadpool(_unlink_files)
 
         # Drop the theme row; FK ON DELETE CASCADE handles local_files,
         # placements, pending_updates, user_overrides in one transaction.
@@ -22880,7 +22926,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db: Path = Depends(get_db_path),
     ):
         _require_admin(request)
-        body = await request.json()
+        # v0.51.13 (audit #27): the last bare parse in the file — a malformed
+        # body raised JSONDecodeError → raw 500 (the v0.50.89 class).
+        try:
+            body = await request.json()
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"invalid JSON body: {e}")
         if not isinstance(body, dict):
             raise HTTPException(status_code=400, detail="body must be a JSON object")
         sections = body.get("sections")
@@ -25077,6 +25128,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return {"ok": False, "detail": (
                     "Plex now serves that rating_key — re-probe instead of "
                     "cleaning up")}
+            # v0.51.13 (audit #10): DEAD means a definitive 404 — a transport
+            # error (get_themes returns ok=False with http_status=None on any
+            # exception) or a 5xx must NOT fall through to the DELETE. A scan
+            # taken while Plex restarts flags every plex_upload placement as
+            # plex_fetch_failed, and pre-fix a CLEAN UP click during the outage
+            # deleted LIVE placements' rows — the exact wrong-write the v0.50.11
+            # guard was built to refuse.
+            if resp.get("http_status") != 404:
+                return {"ok": False, "detail": (
+                    "Plex unreachable / indeterminate (http_status="
+                    f"{resp.get('http_status')}) — not cleaning up; retry when "
+                    "Plex is back")}
             # (c) Genuinely dead — drop ONLY the stale placement row(s).
             ek_sql = " AND COALESCE(edition_key, '') = ?" if edition_key is not None else ""
             params: list = [media_type, tmdb_id, section_id, str(rating_key)]

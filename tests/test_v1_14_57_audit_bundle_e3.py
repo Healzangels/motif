@@ -43,7 +43,10 @@ def test_unmanage_item_parent_dir_cleanup_logs_unexpected_errors():
     permission / unexpected FS errors alongside the benign cases."""
     src = (REPO / "app" / "web" / "api.py").read_text()
     fn_anchor = src.index("async def api_unmanage_item(")
-    body = src[fn_anchor:fn_anchor + 12000]
+    # v0.51.13: slice to the function's actual end (the forget test's v1.22.75
+    # pattern) — the fixed 12000 window went stale when the class-12 offload
+    # wrapper grew the body above the rmdir block.
+    body = src[fn_anchor:src.index("\n    @app.", fn_anchor)]
     # The errno-aware shape.
     assert "import errno as _errno" in body
     assert "rmd_err.errno not in (_errno.ENOTEMPTY," in body
@@ -63,7 +66,9 @@ def test_forget_item_parent_dir_cleanup_logs_unexpected_errors():
     body = src[fn_anchor:src.index("\n    @app.", fn_anchor)]
     assert "import errno as _errno" in body
     assert "rmd_err.errno not in (_errno.ENOTEMPTY," in body
-    assert 'log.warning(\n                                "forget: parent rmdir' in body
+    # v0.51.13: +4 indent — the loop moved inside the class-12 offload wrapper
+    # (_unlink_files); the errno-aware shape itself is unchanged.
+    assert 'log.warning(\n                                    "forget: parent rmdir' in body
 
 
 # ── L10: atomic _stats_cache tuple-swap ──────────────────────
