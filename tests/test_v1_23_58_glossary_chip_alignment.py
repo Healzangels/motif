@@ -9,8 +9,8 @@ shared a 26px fixed rail while the wider TDB + TOPBAR text-pill sections used a
 `.help-gloss-grid-wide` `auto` rail — so their chips + defs sat ~25-33px right of
 the rest (the user: "the TDB chips at the top and the TOPBAR at the bottom are
 not in line"). Now every section shares ONE 60px rail (fits the widest chip,
-RE-PUSH / NO TDB ≈ 58px) and chips LEFT-align, so all chip left edges + all defs
-line up in one column.
+RE-PUSH / NO TDB ≈ 58px). v0.50.99 centres the chips in that rail (the user
+preferred centred), so all chip centres + all defs line up in one column.
 """
 from __future__ import annotations
 
@@ -49,12 +49,12 @@ def test_help_gloss_row_uses_display_contents():
     assert "display: contents" in row, "chip + def join the grid for column alignment"
 
 
-def test_chips_left_align_in_the_rail():
-    """v0.50.97: every chip/dot/glyph LEFT-aligns on the uniform rail so all chip
-    left edges line up in one column (the user: "line them all up"). Was
-    justify-self:center — fine per-section, ragged once the rails differed."""
-    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: start; }" in APP_CSS
-    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: center; }" not in APP_CSS
+def test_chips_centre_in_the_rail():
+    """v0.50.99: every chip/dot/glyph CENTRES in the uniform 60px rail (the user
+    preferred centred over the v0.50.97 left-align). The uniform rail still aligns
+    the defs across sections; centring re-centres the chips within it."""
+    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: center; }" in APP_CSS
+    assert ".help-gloss-row > :not(.help-gloss-def) { justify-self: start; }" not in APP_CSS
     glyph = _rule(".help-gloss-glyph")
     assert "text-align: center" in glyph
     assert "align-items: center" in _rule(".help-gloss-grid")

@@ -2551,7 +2551,12 @@
 #   unfolding → settled). Fires once after login / manual refresh, same trigger + the
 #   VISUALS opt-out (html.viz-no-crt-on) as before. app.css + base.html; test_v0_50_91
 #   §3 rewritten, test_v0_50_7 structure-agnostic (still green).
-__version__ = "0.50.98"
+# 0.50.99: centre the glossary chips in the uniform rail (the user preferred centred
+#   over the v0.50.97 left-align). One-line flip: justify-self start → center on the
+#   col-1 chip indicator. The 60px uniform rail from v0.50.97 still aligns the defs
+#   across sections; this just re-centres the chips within it — all chip centres + all
+#   defs line up. CSS only; test_v1_23_58 flipped back to assert center.
+__version__ = "0.50.99"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
