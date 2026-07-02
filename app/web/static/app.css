@@ -1416,14 +1416,16 @@ body.help-mode .help-mode-bar { display: flex; }
    up. justify-items:start keeps chips from stretching to fill the column. */
 .help-gloss-grid {
   display: grid;
-  /* v1.23.68: a FIXED chip rail so every section's definition column lands at the
-     same x. v0.50.97: widened 26px → 60px and applied to EVERY section (dropped the
-     .help-gloss-grid-wide auto-rail exception). Pre-fix the TDB + TOPBAR text-pill
-     sections auto-sized a wider rail than the others, so their chips + defs sat
-     ~25-33px right of the rest (the user: "the TDB chips at the top and the TOPBAR
-     at the bottom are not in line"). 60px fits the widest chip (RE-PUSH / NO TDB
-     ≈ 58px); every section now shares one chip rail + one def column. */
-  grid-template-columns: 60px 1fr;
+  /* v1.23.68 / v0.50.97: a FIXED chip rail so every section's definition column
+     lands at the same x. It is fixed (not content-auto-sized) ON PURPOSE: the modal
+     STACKS its sections so one shared rail aligns their defs, while the inline legend
+     lays sections out in a multi-column grid (sections independent) — a single
+     content-sized column can't span both surfaces, which share this rule. v0.51.2:
+     named it --gloss-chip-rail so the rail is one documented adjustment point (was a
+     bare 60px literal; code-review altitude). MUST stay ≥ the widest chip (RE-PUSH /
+     NO TDB ≈ 58px) — a longer chip label needs this bumped or the label shortened. */
+  --gloss-chip-rail: 60px;
+  grid-template-columns: var(--gloss-chip-rail) 1fr;
   /* v0.50.24: vertically centre the chip/dot/glyph against its definition (was
      baseline, which sat the small dots low). justify-items stays `start` so the
      DEFS keep lining up at the rail edge; the chips themselves get

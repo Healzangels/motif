@@ -28,10 +28,12 @@ def _rule(selector: str) -> str:
 
 def test_help_gloss_grid_is_two_column():
     grid = _rule(".help-gloss-grid")
-    # v0.50.97: ONE uniform 60px chip rail on EVERY section so all chips + defs
-    # line up across sections (was 26px + an auto-rail exception for the wide
-    # TDB/TOPBAR pills, which sat right of the rest).
-    assert "grid-template-columns: 60px 1fr" in grid, "uniform fixed chip rail + 1fr defs"
+    # v0.51.2: the uniform rail is now the named --gloss-chip-rail token (was a bare
+    # 60px literal; code-review altitude). It stays FIXED on purpose — the modal
+    # stacks its sections (one shared rail aligns their defs) while the inline legend
+    # is multi-column, so a content-auto column can't span both surfaces.
+    assert "--gloss-chip-rail: 60px;" in grid, "the rail is a named, documented token"
+    assert "grid-template-columns: var(--gloss-chip-rail) 1fr" in grid, "rail token + 1fr defs"
     assert "justify-items: start" in grid, "chips keep natural width, not stretched"
 
 

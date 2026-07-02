@@ -2576,7 +2576,16 @@
 #   while still holding at 240px wherever there's room. Retired the redundant
 #   .auth-card .input escape (verified the login still doesn't spill at 368px). CSS
 #   only; test_v0_50_96 login tests reworked to assert the self-limiting floor.
-__version__ = "0.51.1"
+# 0.51.2: code-review altitude #2 — named the glossary chip rail --gloss-chip-rail
+#   (was a bare 60px literal). Investigating the "auto-size the rail" suggestion: it
+#   isn't feasible — the modal STACKS its glossary sections (one shared fixed rail
+#   aligns their defs) while the inline library legend lays sections in a multi-column
+#   grid (independent), and both share .help-gloss-grid, so no single content-sized
+#   column spans both. So the fixed rail is correct; the fix here is to name it (one
+#   documented adjustment point) + document the constraint (rail ≥ widest chip ≈ 58px)
+#   inline. No auto-size, no overflow char-guard (char-count ≠ rendered width across
+#   the chip fonts = a phantom guard). CSS + test only; no visual change.
+__version__ = "0.51.2"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
