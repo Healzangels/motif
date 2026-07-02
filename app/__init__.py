@@ -2656,7 +2656,19 @@
 #   to stay on the chip row. Verified in-browser at 375px (live inline, block-head
 #   back to 50px; jobs-grid scrollbar-width:thin, still scrolls, no overflow). CSS +
 #   test.
-__version__ = "0.51.8"
+# 0.51.9: mobile audit A7 (P3) — TDB coverage card foot wraps instead of clipping.
+#   The COVERAGE cards (MOVIES/TV/ANIME/COLLECTIONS THEMED) render two foot spans
+#   ("N of M themed" + "Z ready to add") in the base .stat-foot flex row with no
+#   wrap; 4-5 digit counts overflowed the card and clipped against its
+#   overflow:hidden (worst on a narrow 4-up desktop card or a full-width phone
+#   card). The PLEX cards already stack their foot (v1.21.4 column); coverage had no
+#   relief. Added flex-wrap:wrap to the base .stat-foot so the 2nd span drops to a
+#   new line only when it must — harmless for the plex column layout + single-span
+#   clickable cards. Verified in-browser at 375px with injected big counts (2nd span
+#   wrapped, foot within card, no page overflow). Final tag of the mobile-audit
+#   sweep (v0.51.3-9); library-table row actions (A2/A3) were skipped per the user.
+#   CSS + test.
+__version__ = "0.51.9"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -1156,6 +1156,13 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 
 .stat-foot {
   display: flex; gap: var(--gap-4);
+  /* v0.51.9 (audit A7): wrap so the two TDB-coverage spans ("N of M themed" +
+     "Z ready to add") drop to a 2nd line instead of clipping against the card's
+     overflow:hidden when the counts are 4-5 digits (worst on a narrow 4-up card or
+     a full-width phone card). The PLEX cards stack their foot outright (v1.21.4);
+     coverage keeps its compact single row and only wraps when it must. Harmless for
+     the plex column layout (foot never overflows vertically) + single-span cards. */
+  flex-wrap: wrap;
   font-size: var(--t-tiny);
   letter-spacing: 0.05em;
   color: var(--fg-dim);
