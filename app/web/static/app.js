@@ -7991,6 +7991,17 @@
       x.classList.remove('chip-active'));
     b.classList.add('chip-active');
   }
+  // v0.51.22: is the // ALL chip available for `tab`? True iff it's rendered
+  // and visible — the resolution ALL chip is display:none'd by SSR unless both
+  // a standard AND a 4K section exist; the collections ALL chip is only
+  // rendered when ≥2 collection sections exist. Drives the ALL-is-default
+  // resolution on a first-ever visit (no persisted choice).
+  function _allChipAvailable(tab) {
+    const grp = (tab === 'collections')
+      ? '.chips[aria-label="section"]' : '.chips[aria-label="resolution"]';
+    const btn = document.querySelector(grp + ' [data-allres]');
+    return !!(btn && btn.style.display !== 'none');
+  }
   function bindLibraryToolbarChips() {
     document.querySelectorAll('.chips [data-section-id]').forEach((b) => {
       b.addEventListener('click', () => {
@@ -8080,10 +8091,16 @@
       const v = sp.get('all_res');
       allRes = (v === '1' || v === 'true');
     } else if (!sp || (!sp.has('fourk') && !sp.has('section_id'))) {
+      // v0.51.22: // ALL is the default when available. A persisted per-tab
+      // choice wins; only a first-ever visit (no saved value) falls through
+      // to ALL-when-available.
       try {
-        allRes = (tab === 'collections')
-          ? localStorage.getItem('motif:collections-section') === 'all'
-          : localStorage.getItem('motif:variant:' + tab) === 'all';
+        const key = (tab === 'collections')
+          ? 'motif:collections-section' : ('motif:variant:' + tab);
+        const saved = localStorage.getItem(key);
+        if (saved === 'all') allRes = true;
+        else if (saved === null) allRes = _allChipAvailable(tab);
+        // else: an explicit STANDARD/4K/section choice — allRes stays false
       } catch (_) { /* fine */ }
     }
     libraryState.allRes = allRes;
@@ -8193,8 +8210,13 @@
       } else {
         try {
           const pv = localStorage.getItem('motif:variant:' + tab);
-          wantAll = pv === 'all';
-          wantFourk = pv === 'fourk';
+          if (pv === 'all') wantAll = true;
+          else if (pv === 'fourk') wantFourk = true;
+          else if (pv === null) {
+            // v0.51.22: first-ever visit → default ALL when available.
+            const _a = newChips.querySelector('[data-allres]');
+            wantAll = !!(_a && _a.style.display !== 'none');
+          }
         } catch (_) { /* private mode — fine */ }
       }
       const allc = newChips.querySelector('[data-allres]');
@@ -12497,9 +12519,13 @@
           const v = sp.get('all_res');
           initAll = (v === 'true' || v === '1');
         } else if (!sp.has('fourk') && !sp.has('section_id')) {
-          initAll = (tabKey0 === 'collections')
-            ? localStorage.getItem('motif:collections-section') === 'all'
-            : localStorage.getItem('motif:variant:' + tabKey0) === 'all';
+          // v0.51.22: ALL is the default when available; a persisted choice
+          // wins; only a first-ever visit (no saved value) defaults to ALL.
+          const key = (tabKey0 === 'collections')
+            ? 'motif:collections-section' : ('motif:variant:' + tabKey0);
+          const saved = localStorage.getItem(key);
+          if (saved === 'all') initAll = true;
+          else if (saved === null) initAll = _allChipAvailable(tabKey0);
         }
         libraryState.allRes = initAll;
         if (initAll) {

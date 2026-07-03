@@ -7061,6 +7061,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         v = (request.query_params.get("all_res") or "").lower()
         return v in ("true", "1", "yes")
 
+    def _default_all_res(request: Request, tab: str) -> bool:
+        # v0.51.22 (the user: "lets make all be the default"): // ALL is now
+        # the DEFAULT view whenever it's available — both a standard AND a 4K
+        # section (movies/tv/anime) or ≥2 collection sections. An explicit
+        # ?all_res=/?fourk=/?section_id= in the URL still wins (deep-links,
+        # bookmarks, the topbar badges that carry ?fourk=). This is the SSR
+        # first-paint state; the JS hydration applies the same rule and lets a
+        # persisted per-tab choice (localStorage) override for return visits.
+        qp = request.query_params
+        if "all_res" in qp:
+            return _all_res_from_query(request)
+        if tab == "collections":
+            if qp.get("section_id"):
+                return False  # explicit section pick
+            return len(_library_section_state(tab).get("sections", [])) > 1
+        if "fourk" in qp:
+            return False  # explicit STANDARD / 4K pick
+        return bool(_library_resolution_state(tab).get("has_both"))
+
     def _pipeline_in_flight(db: Path) -> bool:
         """v1.13.77: true when ANY scope-tagged plex_enum job is
         pending or running (cascade or scan_all). Threaded into the
@@ -7097,7 +7116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "movies", "title": "Movies",
             "fourk": _fourk_from_query(request),
-            "all_res": _all_res_from_query(request),
+            "all_res": _default_all_res(request, "movies"),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -7106,7 +7125,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "tv", "title": "TV Shows",
             "fourk": _fourk_from_query(request),
-            "all_res": _all_res_from_query(request),
+            "all_res": _default_all_res(request, "tv"),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -7115,7 +7134,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "anime", "title": "Anime",
             "fourk": _fourk_from_query(request),
-            "all_res": _all_res_from_query(request),
+            "all_res": _default_all_res(request, "anime"),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -7132,7 +7151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "fourk": False,
             # v0.51.21: collections // ALL chip — combine every managed
             # section's collections into one view (section_id='').
-            "all_res": _all_res_from_query(request),
+            "all_res": _default_all_res(request, "collections"),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 

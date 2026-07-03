@@ -50,7 +50,7 @@ def test_switcher_functions_exist():
     i = APP_JS.index("async function switchLibraryTab(")
     # v0.50.92: widened for the pre-swap variant block; v0.51.12: again for the
     # collections-boundary full-nav guard inserted at the top of the function.
-    body = APP_JS[i:i + 5300]
+    body = APP_JS[i:i + 5700]  # v0.51.22: widened for the ALL-default pre-apply block
     assert "bindLibraryToolbarChips();" in body
     assert "replaceWith(newChips)" in body
 

@@ -2858,7 +2858,17 @@
 #   Verified live: standard=5 / 4K=3 / ALL=8 combined; chip order ALL·STANDARD·4K
 #   with STANDARD active by default; click ALL -> 8 rows, "REFRESH ALL MOVIES",
 #   persisted 'all', survives reload; collections ALL combines both sections.
-__version__ = "0.51.21"
+# 0.51.22 — // ALL is now the DEFAULT library view (the user: "lets make all
+#   be the default"). When ALL is available (both a standard AND a 4K section,
+#   or >=2 collection sections) a fresh visit lands on ALL instead of STANDARD /
+#   the first section. An explicit ?all_res=/?fourk=/?section_id= URL param
+#   still wins, and a persisted per-tab choice (localStorage) overrides for
+#   return visits — so picking STANDARD/4K/a-section still sticks. SSR: new
+#   _default_all_res(request, tab) resolves the first-paint state (checks
+#   has_both / >=2 sections); JS hydrate + init-load + switchLibraryTab
+#   pre-apply mirror it via _allChipAvailable, defaulting ALL only when no
+#   per-tab choice was ever saved.
+__version__ = "0.51.22"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

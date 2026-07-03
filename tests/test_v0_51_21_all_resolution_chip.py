@@ -16,8 +16,11 @@ Feature 1 — the // ALL chip:
   * collections: ALL = every managed section's collections at once
     (all_res forces section_id='' — the union the backend already supported;
     v1.18.18 only removed the *chip*, which the user is now re-adding).
-  * ALL is opt-in: STANDARD stays the movies/tv/anime default; collections
-    keep the first-section default. The choice persists per tab.
+  * v0.51.22 (the user: "lets make all be the default"): // ALL is now the
+    DEFAULT view whenever it's available (both resolutions / ≥2 collection
+    sections). An explicit ?all_res=/?fourk=/?section_id= URL param still
+    wins, and a persisted per-tab choice (localStorage) overrides for return
+    visits — so picking STANDARD/4K/a-section still sticks.
 
 Feature 2 — the carousel window: _recently_placed_sync LIMIT 24 → 40.
 """
@@ -150,6 +153,35 @@ def test_resolution_state_reports_has_both(client):
         "standard and 4K sections exist")
 
 
+def _active_res_chips(html):
+    """Return the labels of chip-active chips in the resolution chip row."""
+    i = html.index('aria-label="resolution"')
+    block = html[i:html.index("</div>", i)]
+    out = []
+    for m in block.split("<button"):
+        if "chip-active" in m:
+            # label is the text between > and </button>
+            seg = m[m.index(">") + 1: m.index("</button>")] if "</button>" in m else ""
+            out.append(seg.strip())
+    return out
+
+
+def test_all_is_the_default_when_available(client):
+    # v0.51.22: bare /movies (has_both, no URL param) → SSR marks // ALL active.
+    html = client.get("/movies", headers=AUTH).text
+    assert _active_res_chips(html) == ["ALL"], (
+        "v0.51.22: ALL must be the default active chip when both resolutions "
+        "exist")
+
+
+def test_explicit_fourk_param_beats_all_default(client):
+    # An explicit ?fourk=false still selects STANDARD (deep-links/bookmarks win).
+    html = client.get("/movies?fourk=false", headers=AUTH).text
+    assert _active_res_chips(html) == ["STANDARD"]
+    html4k = client.get("/movies?fourk=true", headers=AUTH).text
+    assert _active_res_chips(html4k) == ["4K"]
+
+
 def test_resolution_state_hides_all_when_single_variant(tmp_path, monkeypatch):
     # Only a standard TV section → has_both False → the ALL chip is hidden.
     monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
@@ -171,6 +203,9 @@ def test_resolution_state_hides_all_when_single_variant(tmp_path, monkeypatch):
     chip = html[i:html.index("</button>", i)]
     assert 'style="display:none"' in chip, (
         "v0.51.21: no 4K TV section → the ALL chip must be hidden")
+    # v0.51.22: with ALL unavailable, STANDARD stays the default active chip.
+    assert _active_res_chips(html) == ["STANDARD"], (
+        "v0.51.22: a single-variant tab defaults to STANDARD, not ALL")
 
 
 # ── refresh enumerates BOTH sections in ALL mode ──────────────
