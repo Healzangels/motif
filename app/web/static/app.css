@@ -3657,10 +3657,13 @@ body.help-mode .settings-help-about { display: block; }
    page-ward drop shadow, slide in along X). `display:flex` is gated on [open] so
    the UA's `dialog:not([open]){display:none}` still hides it when closed. The
    slide-in reuses the proven .dlg @starting-style pattern (transform+opacity over
-   the ops-drawer's 0.28s cubic-bezier); close is instant like every other .dlg —
-   the overlay/display allow-discrete slide-OUT was dropped after it froze the
-   transform mid-transition in the target browser. Scoped to .dlg-drawer-left so
-   every OTHER .dlg (glossary, upload, manual-URL) stays a centered modal. */
+   the ops-drawer's 0.28s cubic-bezier). v0.51.40 (the user): it also slides OUT
+   the same way the ops-drawer retracts — closeInfoDialog adds `.is-closing` (below)
+   to run the 0.28s transform, then delays dlg.close() by that duration. The
+   overlay/display allow-discrete route was dropped in v0.51.32 after it froze
+   mid-transition, so a JS class-toggle + timed close() drives the slide-out
+   instead. Scoped to .dlg-drawer-left so every OTHER .dlg (glossary, upload,
+   manual-URL) stays a centered modal. */
 .dlg.dlg-drawer-left {
   margin: 0;
   top: 0;
@@ -3690,6 +3693,13 @@ body.help-mode .settings-help-about { display: block; }
 @starting-style {
   .dlg.dlg-drawer-left[open] { opacity: 0; transform: translateX(-100%); }
 }
+/* v0.51.40 (the user: the drawer should "slide away / retract" like the status-bar
+   drawer): the out-state closeInfoDialog toggles on before its timed close(). The
+   panel slides left off-screen + the scrim fades — mirroring ops.js closeDrawer
+   (remove .is-open → panel translateX(100%) + scrim opacity 0 → display:none after
+   280ms). Reuses the same 0.28s transform/opacity transition declared above. */
+.dlg.dlg-drawer-left.is-closing { transform: translateX(-100%); opacity: 0; }
+.dlg.dlg-drawer-left.is-closing::backdrop { opacity: 0; }
 /* scrim matches the ops-drawer (lighter, no blur) for cross-surface parity —
    v0.51.33 (code-review): both pull the shared --drawer-scrim token. */
 .dlg.dlg-drawer-left::backdrop { background: var(--drawer-scrim); backdrop-filter: none; }

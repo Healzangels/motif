@@ -178,8 +178,17 @@
   // initial auto-focus ring.
   function showModalNoFocusRing(dlg) {
     if (!dlg) return;
+    // v0.51.40: reopening the info drawer mid-retract — cancel the pending
+    // slide-out close so we don't call showModal() on an already-[open] <dialog>
+    // (which throws) + slide it back in. Inert for every other dialog (they
+    // never set _infoCloseTimer).
+    if (dlg._infoCloseTimer) {
+      clearTimeout(dlg._infoCloseTimer);
+      dlg._infoCloseTimer = null;
+      dlg.classList.remove('is-closing');
+    }
     if (typeof dlg.showModal === 'function') {
-      dlg.showModal();
+      if (!dlg.open) dlg.showModal();
       const focused = document.activeElement;
       if (focused
           && focused !== dlg
@@ -18484,6 +18493,9 @@
   function closeInfoDialog() {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
+    // v0.51.40: already retracting (slide-out timer pending) — don't double-fire
+    // the audio teardown / re-schedule the close.
+    if (dlg._infoCloseTimer) return;
     // v1.12.73: clear focus from any focused element inside the
     // dialog before closing. Pre-fix, clicking the X (or Esc)
     // closed the dialog with the X button still :focus, so when
@@ -18506,6 +18518,23 @@
         el.currentTime = 0;
       } catch (_) { /* defensive — element may already be torn down */ }
     });
+    // v0.51.40 (the user: the info drawer should "slide away / retract" like the
+    // status-bar ops-drawer): a <dialog>'s close() snaps to display:none, so —
+    // mirroring ops.js closeDrawer — add the .is-closing out-state to run the
+    // 0.28s CSS slide-out, then delay close() by that duration. (The v0.51.32
+    // overlay/display allow-discrete route froze mid-transition, hence the JS
+    // class-toggle + timed close() instead.) Reopening mid-retract cancels this
+    // timer in showModalNoFocusRing so showModal() never hits an [open] dialog.
+    if (dlg.classList.contains('dlg-drawer-left')) {
+      dlg.classList.add('is-closing');
+      dlg._infoCloseTimer = setTimeout(() => {
+        dlg._infoCloseTimer = null;
+        dlg.classList.remove('is-closing');
+        if (typeof dlg.close === 'function') dlg.close();
+        else dlg.removeAttribute('open');
+      }, 280);
+      return;
+    }
     if (typeof dlg.close === 'function') dlg.close();
     else dlg.removeAttribute('open');
   }
@@ -18519,6 +18548,13 @@
     // reports the dialog element itself as the target for ::backdrop clicks;
     // route through closeInfoDialog so the audio-teardown + focus-blur fire.
     dlg.addEventListener('click', (e) => { if (e.target === dlg) closeInfoDialog(); });
+    // v0.51.40 (the user: the drawer should slide away): Esc fires the native
+    // cancel→close sequence which snaps display:none with no slide. Intercept
+    // cancel + preventDefault (keeps it [open]) and route through closeInfoDialog
+    // so Esc retracts with the same slide-out as the × / scrim. The eventual
+    // dlg.close() still fires the native `close` event below (audio + v1.24.91
+    // focus-ring teardown), and closeInfoDialog's own audio stop runs up-front.
+    dlg.addEventListener('cancel', (e) => { e.preventDefault(); closeInfoDialog(); });
     // v1.13.16: TDB preview removed. YouTube blocks the embed for
     // many videos (Error 153 / video player configuration error)
     // and there's no clean alternative without violating ToS. The

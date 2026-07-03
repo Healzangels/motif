@@ -3103,7 +3103,16 @@
 #   label (v0.51.7), NOT centred, since centring would detach it from the label.
 #   Every other action row already wraps/centres (v0.51.7/.27/.38) or scroll-
 #   contains (library .row-actions in the min-width table). CSS-only.
-__version__ = "0.51.39"
+# 0.51.40 — the // MOTIF INFO left drawer slides AWAY on close (the user: "the
+#   info card drawer doesn't have the same slide away or retract effect like our
+#   status bar drawer can we add that so it matches"). v0.51.32 slid it IN but
+#   close()d instantly (the allow-discrete slide-OUT froze mid-transition). Now it
+#   mirrors ops.js closeDrawer: closeInfoDialog adds .is-closing (transform
+#   slide-out + scrim fade), then delays dlg.close() by the 0.28s transition.
+#   Reopening mid-retract cancels the pending close (showModalNoFocusRing) so
+#   showModal() never hits an [open] dialog; Esc routes through the same slide via
+#   a cancel-event interceptor. Audio/focus teardown unchanged.
+__version__ = "0.51.40"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
