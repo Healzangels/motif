@@ -40,7 +40,10 @@ MOBILE = _mobile_block(APP_CSS)
 
 
 def test_control_actions_left_aligned_on_mobile():
-    assert ".control-row .control-actions { margin-left: 0; }" in MOBILE
+    # v0.51.39: + flex-wrap so the one 2-button row (DRY-RUN) wraps rather than
+    # forcing a page-wide overflow; still margin-left:0 (LEFT-aligned under label,
+    # not centred) — see test_v0_51_39_mobile_button_overflow.
+    assert ".control-row .control-actions { margin-left: 0; flex-wrap: wrap; }" in MOBILE
 
 
 def test_override_outspecifies_the_base_rule():

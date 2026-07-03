@@ -5753,7 +5753,12 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      filename VERTICALLY one letter per line — unreadable (the user). Stack the
      row on a phone so the name gets the full width above its actions. */
   .backup-row { flex-direction: column; align-items: stretch; }
-  .backup-row-actions { justify-content: flex-end; }
+  /* v0.51.39: the 3 snapshot buttons (DOWNLOAD / RESTORE / DELETE) wrap + centre
+     on a phone. Before, `justify-content: flex-end` with NO flex-wrap meant that
+     at ~361px the row overflowed and — being right-anchored — spilled off the
+     LEFT edge (the user saw `// DOWNLOAD` clipped to `/ DOWNLOAD`). Same centred
+     treatment as the v0.51.38 pager / v0.51.27 filterbar. */
+  .backup-row-actions { flex-wrap: wrap; justify-content: center; }
 
   /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
      pager itself wrap instead of spilling the next/last buttons off the edge. */
@@ -5791,8 +5796,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      the desktop margin-left:auto there so the buttons sit under their label (left)
      instead of right-anchored + visually detached from it (audit B2). The
      .control-row prefix (0,2,0) is needed to beat the base .control-actions
-     margin-left:auto (0,1,0), which is defined LATER in the file than this block. */
-  .control-row .control-actions { margin-left: 0; }
+     margin-left:auto (0,1,0), which is defined LATER in the file than this block.
+     v0.51.39: + flex-wrap so the ONE two-button row (DRY-RUN: ENABLE DRY-RUN +
+     DISABLE) wraps too. Its nowrap ~335px min-content forced the whole settings
+     page to ≥373px wide — a horizontal page overflow below that (the user at
+     361px). Left-aligned (not centred like the standalone backup-row / pager
+     groups) — these buttons sit under a left-aligned label, so centring them
+     would detach them from it; kept consistent with the v0.51.7 under-label rule. */
+  .control-row .control-actions { margin-left: 0; flex-wrap: wrap; }
 
   /* v0.50.88: LOGS/JOBS — the fixed 180px ACTION column + 6 fluid text
      columns had no floor; on a phone every column shrank to single digits

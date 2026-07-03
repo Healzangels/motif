@@ -3091,7 +3091,19 @@
 #   centres as its own line instead of stranding left. Mirrors the v0.51.27
 #   filterbar treatment; scoped to @media (max-width: 600px); .block-head-actions
 #   is library-only so LOGS/queue block-heads are untouched. CSS-only.
-__version__ = "0.51.38"
+# 0.51.39 — mobile: DB-backup + DRY-RUN button rows no longer overflow (the user:
+#   "the database recovery buttons spill off the screen to the left ... stack them
+#   centered ... audit for other places"). (1) .backup-row-actions (DOWNLOAD /
+#   RESTORE / DELETE) had `justify-content: flex-end` + NO flex-wrap, so at ~361px
+#   it overflowed and — right-anchored — spilled off the LEFT (`// DOWNLOAD` clipped
+#   to `/ DOWNLOAD`). Now wraps + centres like the v0.51.38 pager. (2) Audit found
+#   one sibling: the DRY-RUN .control-actions (ENABLE DRY-RUN + DISABLE) was nowrap,
+#   its ~335px min-content forcing the whole settings page to ≥373px wide (a
+#   horizontal page overflow < that). Added flex-wrap; kept left-aligned under its
+#   label (v0.51.7), NOT centred, since centring would detach it from the label.
+#   Every other action row already wraps/centres (v0.51.7/.27/.38) or scroll-
+#   contains (library .row-actions in the min-width table). CSS-only.
+__version__ = "0.51.39"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
