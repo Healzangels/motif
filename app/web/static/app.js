@@ -1471,8 +1471,14 @@
       // wave speed (the user — "smoothly ... not suddenly at the new speed"). Any
       // busy floors at _HERO_OPT_FLOOR so a single job still reads clearly; score 6+
       // (sync + refresh + a queue) saturates at 1 so it can't get frantic.
+      // v0.51.28: per-job step 0.145 -> 0.22 so each additional running job
+      // lifts the wave energy noticeably more (the user: "increase the hero wave
+      // bar intensity a bit more per job running, right now ... the increase [is]
+      // pretty subtle"). Still floors at _HERO_OPT_FLOOR for a lone job and
+      // saturates at 1, but now hits full energy by ~score 4 (sync + refresh +
+      // a couple queued jobs) instead of ~6, so the ramp reads clearly.
       const _busyEnergy = heroBusy
-        ? Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.145))
+        ? Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.22))
         : 0;
       _setHeroWaveTarget(_busyEnergy);
       _startHeroWave();

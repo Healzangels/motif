@@ -2937,7 +2937,15 @@
 #   ragged wrap. Verified live at 375: resolution chips centred (28-347), filter
 #   labels centred full-width. .chips is only used in library.html (3 groups), so
 #   no collateral. Desktop untouched.
-__version__ = "0.51.27"
+# 0.51.28 — hero wave ramps harder per running job (the user: "increase the hero
+#   wave bar intensity a bit more per job running, right now ... the increase [is]
+#   pretty subtle"). Two levers: app.js per-job energy step 0.145 -> 0.22 (each
+#   extra job lifts --hero-wave-energy more; full energy by ~score 4 not ~6), and
+#   app.css energy->visual gain (.hero::after height 0.32->0.44, brightness
+#   0.55->0.75, opacity 0.37->0.44; .hero::before cross-weave height 0.26->0.36,
+#   opacity 0.32->0.40). Verified live: per-job scaleY delta ~0.04 -> ~0.088, per-
+#   job brightness ~+0.08 -> ~+0.15. Still eased (not snapped) + saturates at 1.
+__version__ = "0.51.28"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

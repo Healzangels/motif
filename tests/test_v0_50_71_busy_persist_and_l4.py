@@ -53,4 +53,4 @@ def test_app_start_seeds_energy_from_the_restore_so_it_doesnt_ramp_from_idle():
 
 def test_energy_saturates_at_one():
     # heavy stacking (score 6+) hits Math.min(1, ...) — the ceiling.
-    assert "Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.145))" in APP_JS
+    assert "Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.22))" in APP_JS

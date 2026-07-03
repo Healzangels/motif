@@ -672,9 +672,13 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
      (wall-clock phase + sessionStorage energy) so navigation never flickers. */
   -webkit-mask-position: var(--hero-wave-x, 0px) center;
   mask-position: var(--hero-wave-x, 0px) center;
-  opacity: calc(0.18 + 0.37 * var(--hero-wave-energy, 0));
-  transform: scaleY(calc(1 + 0.32 * var(--hero-wave-energy, 0)));
-  filter: brightness(calc(1 + 0.55 * var(--hero-wave-energy, 0)));
+  /* v0.51.28: bigger energy->visual gain so the ramp per running job reads
+     clearly (the user). height 0.32->0.44, brightness 0.55->0.75, opacity
+     0.37->0.44 — the wave visibly rises + brightens with each job instead of
+     nudging a few %. */
+  opacity: calc(0.18 + 0.44 * var(--hero-wave-energy, 0));
+  transform: scaleY(calc(1 + 0.44 * var(--hero-wave-energy, 0)));
+  filter: brightness(calc(1 + 0.75 * var(--hero-wave-energy, 0)));
   pointer-events: none;
 }
 /* v0.50.67: a SECOND, broader, slower wave scrolling the OTHER way — the two
@@ -699,8 +703,9 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
      the OTHER way for the cross-weave) sharing the eased --hero-wave-energy. */
   -webkit-mask-position: var(--hero-wave2-x, 0px) center;
   mask-position: var(--hero-wave2-x, 0px) center;
-  opacity: calc(0.10 + 0.32 * var(--hero-wave-energy, 0));
-  transform: scaleY(calc(1 + 0.26 * var(--hero-wave-energy, 0)));
+  /* v0.51.28: the cross-weave underlay tracks the primary's bigger gain. */
+  opacity: calc(0.10 + 0.40 * var(--hero-wave-energy, 0));
+  transform: scaleY(calc(1 + 0.36 * var(--hero-wave-energy, 0)));
   pointer-events: none;
 }
 /* v0.50.76: the "now working" intensity is a CONTINUOUS 0..1 --hero-wave-energy

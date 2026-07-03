@@ -84,9 +84,9 @@ def test_busy_makes_the_wave_faster_brighter_taller():
     # scaleY (taller), and brightness (green→green-bright pop); speed is scaled off the
     # same energy in the JS rAF loop (idle 9s/14s → full ~2.5s/3.8s).
     a = _rule(".hero::after {")
-    assert "opacity: calc(0.18 + 0.37 * var(--hero-wave-energy, 0))" in a   # brighter
-    assert "transform: scaleY(calc(1 + 0.32 * var(--hero-wave-energy, 0)))" in a  # taller
-    assert "filter: brightness(calc(1 + 0.55 * var(--hero-wave-energy, 0)))" in a  # pop
+    assert "opacity: calc(0.18 + 0.44 * var(--hero-wave-energy, 0))" in a   # brighter
+    assert "transform: scaleY(calc(1 + 0.44 * var(--hero-wave-energy, 0)))" in a  # taller
+    assert "filter: brightness(calc(1 + 0.75 * var(--hero-wave-energy, 0)))" in a  # pop
     # the JS loop maps energy → phase velocity between the idle + full speeds.
     assert "_HERO_SPEED_IDLE = _HERO_TILE / 9;" in APP_JS
     assert "_HERO_SPEED_FULL = _HERO_TILE / 2.5;" in APP_JS

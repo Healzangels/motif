@@ -78,8 +78,9 @@ def test_busy_score_counts_op_kinds_plus_queued_jobs():
 def test_busy_energy_is_continuous_floored_and_saturated():
     # v0.50.76: score → a 0..1 energy target. Any busy floors at _HERO_OPT_FLOOR so
     # one job still reads; heavy stacking saturates at 1 (min) so it can't get frantic.
+    # v0.51.28: per-job step 0.145 -> 0.22 (each job lifts energy more).
     assert ("const _busyEnergy = heroBusy\n"
-            "        ? Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.145))\n"
+            "        ? Math.min(1, Math.max(_HERO_OPT_FLOOR, 0.28 + (_busyScore - 1) * 0.22))\n"
             "        : 0;" in APP_JS)
     assert "const _HERO_OPT_FLOOR = 0.3;" in APP_JS
 
@@ -88,7 +89,7 @@ def _energy_mapping(score, hero_busy=True):
     """mirror the JS _busyEnergy formula so we can assert its shape."""
     if not hero_busy:
         return 0.0
-    return min(1.0, max(0.3, 0.28 + (score - 1) * 0.145))
+    return min(1.0, max(0.3, 0.28 + (score - 1) * 0.22))
 
 
 def test_energy_mapping_rises_monotonically_then_caps():
@@ -110,11 +111,12 @@ def test_css_intensity_scales_continuously_off_energy_and_stays_in_band():
     scaleY tops out inside the 38px reserved band."""
     a = _rule(APP_CSS, ".hero::after {")
     # linear in energy: base + coeff * var
-    assert "opacity: calc(0.18 + 0.37 * var(--hero-wave-energy, 0))" in a
-    assert "transform: scaleY(calc(1 + 0.32 * var(--hero-wave-energy, 0)))" in a
-    assert "filter: brightness(calc(1 + 0.55 * var(--hero-wave-energy, 0)))" in a
-    # full-energy scaleY (1 + 0.32) stays within the clearance the 38px band affords.
-    assert 1 + 0.32 <= 1.35
+    # v0.51.28: bigger energy->visual gain so the ramp per running job reads.
+    assert "opacity: calc(0.18 + 0.44 * var(--hero-wave-energy, 0))" in a
+    assert "transform: scaleY(calc(1 + 0.44 * var(--hero-wave-energy, 0)))" in a
+    assert "filter: brightness(calc(1 + 0.75 * var(--hero-wave-energy, 0)))" in a
+    # full-energy scaleY (1 + 0.44) stays within the clearance the reserved band affords.
+    assert 1 + 0.44 <= 1.45
     # the old discrete-level rules + per-level duration swaps are gone.
     assert '[data-busy-level="' not in APP_CSS
     assert "animation-duration" not in _rule(APP_CSS, ".hero::after {")
