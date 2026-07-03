@@ -5763,8 +5763,18 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      to stay on the toggle-chip row instead of wrapping to its own line, detached
      from the // EVENT STREAM chip it annotates. */
   .block-head { flex-wrap: wrap; gap: var(--gap-2); padding-left: 12px; padding-right: 12px; }
-  .block-head-actions { flex-wrap: wrap; }
-  .pager { flex-wrap: wrap; }
+  /* v0.51.38: centre the // RESULTS action group (LEGEND / NEEDS WORK / pager) on
+     a phone — mirrors the v0.51.27 filterbar treatment (the user: "do centering
+     similar to what we did in the filter section above"). width:100% so
+     justify-content centres it ON SCREEN rather than inside the left-hugging
+     shrink box the space-between .block-head packs a single wrapped child into
+     (same reason the resolution chips need width:100% at 5670). The pager also
+     centres its own buttons so the `last »` that can't share the row (5 buttons +
+     the page span overflow ~455px) reads as a centred overflow line, not a
+     left-stranded orphan. .block-head-actions is library-only, so this is scoped
+     to the RESULTS header and never touches the LOGS/queue block-heads. */
+  .block-head-actions { flex-wrap: wrap; width: 100%; justify-content: center; }
+  .pager { flex-wrap: wrap; justify-content: center; }
 
   /* v0.50.51: the 13 settings tabs wrapped into a ragged multi-row block that
      read as "one big list stacked on itself" (the user). Scroll them as a single

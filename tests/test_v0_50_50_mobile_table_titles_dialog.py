@@ -40,8 +40,11 @@ def _phone_block() -> str:
 def test_results_header_and_pager_wrap_on_phone():
     block = _phone_block()
     assert ".block-head { flex-wrap: wrap;" in block
-    assert ".block-head-actions { flex-wrap: wrap; }" in block
-    assert ".pager { flex-wrap: wrap; }" in block
+    # v0.51.38: the action group + pager still wrap on a phone, and now also
+    # centre (width:100% + justify-content:center) so the // RESULTS controls
+    # read as a centred stack — see test_v0_51_38_pager_centering.
+    assert ".block-head-actions { flex-wrap: wrap; width: 100%; justify-content: center; }" in block
+    assert ".pager { flex-wrap: wrap; justify-content: center; }" in block
 
 
 def test_dialogs_go_fullscreen_on_phone():

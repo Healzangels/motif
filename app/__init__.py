@@ -3083,7 +3083,15 @@
 #   mutation. (2) DOWNLOAD PLEX BACKUP force-capture confirm leads with WHY the
 #   strict run found nothing (Plex serving a motif upload, not a Plex Pass cloud
 #   theme) so it doesn't read as "the action did nothing" (the user).
-__version__ = "0.51.37"
+# 0.51.38 — centre the // RESULTS action group on a phone (the user: "get last on
+#   the same row as the other options or if not do centering similar to what we
+#   did in the filter section above ... same for legend and needs work"). The
+#   LEGEND / NEEDS WORK / pager group now spans full width + centres on-screen and
+#   the pager centres its own buttons, so a `last »` that can't share the row
+#   centres as its own line instead of stranding left. Mirrors the v0.51.27
+#   filterbar treatment; scoped to @media (max-width: 600px); .block-head-actions
+#   is library-only so LOGS/queue block-heads are untouched. CSS-only.
+__version__ = "0.51.38"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
