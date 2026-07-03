@@ -2830,7 +2830,22 @@
 #   Fully inert at rest (:has-gated on .playing); overlays stay outside the
 #   wrapper. Verified live: per-frame computed-transform samples 0.004 →
 #   0.10 → 0.88 → 1.0, brightness 2.6 → 1.0, transform/filter none at rest.
-__version__ = "0.51.19"
+# 0.51.20 — CRT power-on rebuilt as the exact time-reverse of the power-OFF the
+#   user calls "perfect". Iterating on the reveal (v0.51.10-19), the user: the
+#   shutters felt "too much like curtains ... something being pulled across"; the
+#   v0.51.19 tube-stretch felt like "a conveyor belt" AND its squash shrank the
+#   scroll region so Chrome parked the page mid-way, not at the top. The power-off
+#   nails it because NOTHING TRAVELS — a black veil fades in while a bright beam
+#   blooms then collapses to a dot; pure luminance, zero page motion. Power-on now
+#   mirrors it reversed: the veil (.crt-power-on black bg) HOLDS then fades AWAY to
+#   reveal the untouched page, and the beam (.crt-on-line) plays power-off's line
+#   keyframes backwards — a collapsed dot (scaleX 0) streaks out horizontally into
+#   a thin bright line, blooms tall as the picture floods in, then fades. The page
+#   never transforms: no scroll jank, no travel, same language as power-off. The
+#   v0.50.98/v0.51.10-18 shutters + v0.51.19 #crt-tube wrapper are removed. Verified
+#   live (Web Animations sampling): veil 1→hold→0, beam scaleX 0→1 streak, scaleY
+#   blooms to 2.6, body transform `none` + scroll untouched throughout.
+__version__ = "0.51.20"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

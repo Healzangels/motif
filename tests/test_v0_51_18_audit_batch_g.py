@@ -90,32 +90,19 @@ def test_phone_block_protections_still_in_place():
     assert "#op-mini .op-mini-bar { width: 90px; flex: 0 0 auto; }" in phone
 
 
-# ── #33: shutter glow exits with the shutter ──────────────────
+# ── #33: superseded by v0.51.20 (shutters removed entirely) ───
 
 
-def test_shutters_park_past_the_poles():
-    top = CSS[CSS.index("@keyframes crt-power-on-shutter-top"):]
-    top = top[:top.index("}", top.index("100%"))]
-    assert "translateY(calc(-100% - 30px))" in top, (
-        "v0.51.18 #33: at a plain -100% the reveal-edge glow (5px offset "
-        "+ 22px blur) projects ~27px back into the viewport — a static "
-        "band at the top pole until the veil fade")
-    bot = CSS[CSS.index("@keyframes crt-power-on-shutter-bot"):]
-    bot = bot[:bot.index("}", bot.index("100%"))]
-    assert "translateY(calc(100% + 30px))" in bot
-    # the plain ±100% park must be gone from both shutter keyframes.
-    shutters = CSS[CSS.index("@keyframes crt-power-on-shutter-top"):
-                   CSS.index("/* the bright fold-line")]
-    assert "translateY(-100%)" not in shutters
-    assert "translateY(100%);" not in shutters
-
-
-def test_shutter_glow_still_present():
-    """The fix moves the park point — the phosphor bloom itself (the
-    v0.51.10 reveal-edge box-shadow) must survive."""
-    before = CSS[CSS.index(".crt-power-on::before { top: 0;"):]
-    before = before[:before.index("\n")]
-    assert "box-shadow: 0 5px 22px" in before
+def test_shutter_glow_finding_now_moot():
+    """v0.51.18 #33 parked the shutters past the poles so their reveal-edge
+    glow exited the viewport. v0.51.20 removed the shutter mechanism outright
+    (power-on now mirrors power-off — a veil + beam, no shutters), so the
+    glow-band artifact is structurally impossible. Guard the removal so the
+    shutters can't creep back."""
+    assert "@keyframes crt-power-on-shutter-top" not in CSS
+    assert "@keyframes crt-power-on-shutter-bot" not in CSS
+    assert ".crt-power-on::before" not in CSS and ".crt-power-on::after" not in CSS
+    # see test_v0_51_20_crt_power_on_mirror for the replacement effect's pins.
 
 
 # ── #32: the tap-target desktop guard is scoped, not substring ──

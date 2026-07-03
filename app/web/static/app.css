@@ -358,108 +358,49 @@ input[type="checkbox"] {
   opacity: 0.6;
 }
 
-/* v0.50.98: CRT power-ON = a "vertical unfold" (the user picked variant A). The
-   raster snaps to a bright centre line, then the picture unfolds top→bottom to fill
-   the tube, the fold-line blooming then fading — the classic warm-up (a refined take
-   on the old v0.50.7 scaleY flash; replaces the v0.50.91 inverse-of-power-off). Two
-   black shutters (::before top / ::after bottom) start meeting at the centre and
-   retract to the poles, revealing the live page between them; .crt-on-line is the
-   bright fold-line, kept separate so it flashes without the container opacity washing
-   out the shutters. Fires once after login / a manual refresh (base.html adds
-   .playing). Rests fully inert (opacity:0), never blocks input. */
+/* v0.51.20: CRT power-ON = the exact time-reverse of the power-OFF the user
+   calls "perfect". The power-off nails it because NOTHING TRAVELS: a black veil
+   fades in while a bright beam blooms then collapses to a dot — pure luminance,
+   zero page motion. Every geometric power-on we tried read as something being
+   moved: v0.50.98 shutters sliding + v0.51.10-18 their glow tuning ("curtains
+   ... something being pulled across"), then v0.51.19's tube-stretch ("conveyor
+   belt", AND the squash shrank the scroll region so Chrome parked mid-page).
+   So power-on now mirrors power-off, reversed: the screen HOLDS black, a bright
+   dot streaks horizontally out into a line, and the picture floods in (the veil
+   fades away) as the beam blooms and dies. The page never transforms — no
+   scroll jank, no travel, same visual language as power-off. Fires once after
+   login / a manual refresh (base.html adds .playing). Rests fully inert
+   (opacity:0 → page visible), never blocks input. */
 .crt-power-on {
   position: fixed; inset: 0; z-index: 9999;
   pointer-events: none;
+  background: var(--bg);
   opacity: 0;
 }
-/* the overlay holds opaque for the whole unfold then fades out at the very end (the
-   shutters + line have already collapsed by then, so nothing flickers). */
-.crt-power-on.playing { animation: crt-power-on-veil 0.62s ease-out; }
-@keyframes crt-power-on-veil { 0% { opacity: 1; } 90% { opacity: 1; } 100% { opacity: 0; } }
-/* two black shutters meeting at the centre. v0.51.10: after the flash they SLIDE
-   apart (translateY) with a snappy ease-OUT so the tube springs to life. Pre-fix
-   they scaleY'd on an ease-IN start — the picture crawled open (the user: reveal
-   "off and clunky") and the bars retracted as bare black edges. translateY (a) is
-   the snappy ease-out motion and (b) leaves each shutter's reveal-edge box-shadow
-   un-squished (scaleY would flatten it), so a soft green phosphor bloom drags along
-   the opening edge — a glowing scanline sweeps outward WITH the picture instead of a
-   plain bar sliding off. The centre fold-line flash is kept. */
-.crt-power-on::before,
-.crt-power-on::after {
-  content: '';
-  position: absolute; left: 0; right: 0;
-  height: 50%;
-  background: var(--bg);
-}
-.crt-power-on::before { top: 0;    box-shadow: 0 5px 22px rgba(var(--green-rgb), 0.5), 0 1px 4px var(--fg); }
-.crt-power-on::after  { bottom: 0; box-shadow: 0 -5px 22px rgba(var(--green-rgb), 0.5), 0 -1px 4px var(--fg); }
-.crt-power-on.playing::before { animation: crt-power-on-shutter-top 0.62s cubic-bezier(0.32, 0.62, 0.4, 1); }
-.crt-power-on.playing::after  { animation: crt-power-on-shutter-bot 0.62s cubic-bezier(0.32, 0.62, 0.4, 1); }
-/* v0.51.18 (audit #33): the shutters park PAST the poles, not at them. At a
-   plain translateY(±100%) the shutter body leaves but its reveal-edge glow
-   (5px offset + 22px blur ≈ 27px) projects back into the viewport — a static
-   green band sat at both screen edges at full opacity from ~0.45s until the
-   veil's 90% keyframe, then blinked out in the 62ms fade: an artifact, not
-   the intended "bloom sweeps out WITH the shutter". The extra 30px carries
-   the glow off-screen along the same ease, so the veil comment above ("the
-   shutters + line have already collapsed by then") is true again. */
-@keyframes crt-power-on-shutter-top {
-  0%   { transform: translateY(0); }
-  16%  { transform: translateY(0); }      /* hold closed — the centre-line beat */
-  100% { transform: translateY(calc(-100% - 30px)); }  /* off the top pole, glow included */
-}
-@keyframes crt-power-on-shutter-bot {
-  0%   { transform: translateY(0); }
-  16%  { transform: translateY(0); }
-  100% { transform: translateY(calc(100% + 30px)); }
-}
-/* v0.51.19: the PICTURE unfolds, not just the mask. the user on the
-   v0.51.10-18 reveal: "still feels a bit too much like curtains ... you can
-   really feel like it's something being pulled across" — because the page
-   behind the shutters was fully-formed and static, the moving edge read as a
-   drape being drawn (worst over the empty side margins, where the edge was
-   the ONLY thing in motion). A real CRT's vertical deflection ramps up: the
-   image starts as a compressed line and STRETCHES open from it. #crt-tube
-   (base.html wrapper around all visible chrome) squashes to a sliver at the
-   fold-line, holds through the centre-line beat, then expands on the SAME
-   timing + bezier as the shutters — the phosphor glow now rides the edge of
-   a growing picture instead of sliding across a finished one. The brightness
-   bloom starts white-hot and settles as the raster opens (phosphor warming).
-   transform-origin 50vh = the fold-line for the top-of-page plays this fires
-   on (post-login landing, manual refresh); a scrolled reload restores scroll
-   mid-play at worst — transient and masked by the shutters. :has-gated on
-   .playing so the wrapper is completely inert at rest and the VISUALS
-   opt-out (viz-no-crt-on) is honoured for free. */
-body:has(> .crt-power-on.playing) #crt-tube {
-  animation: crt-tube-unfold 0.62s cubic-bezier(0.32, 0.62, 0.4, 1);
-  transform-origin: 50% 50vh;
-}
-@keyframes crt-tube-unfold {
-  0%   { transform: scaleY(0.004); filter: brightness(2.6) saturate(1.4); }
-  16%  { transform: scaleY(0.004); filter: brightness(2.6) saturate(1.4); }
-  55%  { filter: brightness(1.35) saturate(1.12); }
-  100% { transform: scaleY(1); filter: brightness(1) saturate(1); }
-}
-/* the bright fold-line at the seam — exposed as the shutters part, blooms, fades. */
+/* the veil: hold black over the page, then fade AWAY to reveal it — the reverse
+   of power-off's crt-power-off-bg (0→1, then hold). ease-OUT is the time-reverse
+   of power-off's ease-in; the ~0.5s energy matches power-off's snap. */
+.crt-power-on.playing { animation: crt-power-on-veil 0.5s ease-out; }
+@keyframes crt-power-on-veil { 0% { opacity: 1; } 45% { opacity: 1; } 100% { opacity: 0; } }
+/* the beam — a bright scanline at the tube's centre, a child riding the veil's
+   opacity exactly as power-off's ::before rides its own veil. Its keyframes are
+   crt-power-off-line played BACKWARDS: a collapsed dot (scaleX 0) streaks out
+   horizontally into a thin bright line, blooms tall as the picture floods in,
+   then thins + fades, handing off to the settled picture. */
 .crt-on-line {
   position: absolute; left: 0; right: 0; top: 50%;
-  /* v0.51.0: above BOTH shutters. Without it the line paints between ::before and
-     ::after (tree order), so the bottom shutter (::after, last) overpaints the
-     line's downward glow → the bloom was clipped below the seam (code review). */
-  z-index: 1;
   height: 3px;
   transform: translateY(-50%);
   background: var(--fg);
   box-shadow: 0 0 14px var(--fg), 0 0 6px var(--green-bright);
   opacity: 0;
 }
-.crt-power-on.playing .crt-on-line { animation: crt-power-on-line 0.62s ease-out; }
+.crt-power-on.playing .crt-on-line { animation: crt-power-on-line 0.5s ease-out; }
 @keyframes crt-power-on-line {
-  0%   { opacity: 0;    transform: translateY(-50%) scaleY(0.6); }
-  11%  { opacity: 1;    transform: translateY(-50%) scaleY(1); }
-  32%  { opacity: 1;    transform: translateY(-50%) scaleY(2.4); }  /* bloom */
-  70%  { opacity: 0.45; transform: translateY(-50%) scaleY(1.2); }
-  100% { opacity: 0;    transform: translateY(-50%) scaleY(1); }
+  0%   { opacity: 0;    transform: translateY(-50%) scaleX(0) scaleY(0.6); }  /* collapsed dot */
+  22%  { opacity: 1;    transform: translateY(-50%) scaleY(0.6); }            /* streaked out to a thin bright line */
+  60%  { opacity: 0.95; transform: translateY(-50%) scaleY(2.6); }           /* bloom tall as the picture floods in */
+  100% { opacity: 0;    transform: translateY(-50%) scaleY(1.2); }           /* thin + fade — hand off to the picture */
 }
 
 /* v0.50.29: CRT power-OFF — the classic "tube collapses" flicker on logout (the

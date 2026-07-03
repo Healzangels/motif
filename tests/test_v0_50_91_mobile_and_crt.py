@@ -116,48 +116,41 @@ def test_op_mini_mobile_full_width_strip():
 # ── 3. CRT power-on shutters slide apart with glowing edges (v0.51.10) ───
 
 
-def test_power_on_shutters_slide_apart_with_glowing_edges():
-    # v0.51.10: two black shutters (::before top / ::after bottom) SLIDE apart
-    # (translateY) on an ease-out so the tube springs open, and each carries a green
-    # phosphor bloom on its reveal edge (box-shadow) so a glowing scanline sweeps
-    # outward WITH the picture. Replaces the v0.50.98 scaleY unfold — its ease-IN
-    # start crawled open (the user: reveal "off and clunky") and the bars retracted
-    # as bare edges; scaleY would also squish the edge box-shadow, so translateY.
-    assert ".crt-power-on::before" in CSS and ".crt-power-on::after" in CSS
-    assert "@keyframes crt-power-on-shutter-top" in CSS
-    assert "@keyframes crt-power-on-shutter-bot" in CSS
-    top = CSS[CSS.index("@keyframes crt-power-on-shutter-top"):]
-    top = top[:top.index("}", top.index("100%"))]
-    # v0.51.18 (audit #33): the shutters now park PAST the poles
-    # (calc(±100% ± 30px)) so the reveal-edge glow exits with them —
-    # a plain ±100% left a static glow band at both screen edges.
-    assert "translateY(0)" in top
-    assert "translateY(calc(-100% - 30px))" in top  # closed → off top pole, glow included
-    bot = CSS[CSS.index("@keyframes crt-power-on-shutter-bot"):]
-    bot = bot[:bot.index("}", bot.index("100%"))]
-    assert "translateY(calc(100% + 30px))" in bot  # off the bottom pole, glow included
-    # the old scaleY unfold + transform-origin poles are gone.
-    assert "@keyframes crt-power-on-unfold" not in CSS
-    assert "transform-origin: center top" not in CSS
-    # each shutter carries a phosphor glow on its reveal edge (green bloom + fg core).
-    before = CSS[CSS.index(".crt-power-on::before {"):]
-    before = before[:before.index("}")]
-    assert "box-shadow" in before and "green-rgb" in before
+def test_power_on_is_the_reverse_of_power_off():
+    # v0.51.20: the shutter/tube approaches are GONE — power-on now mirrors the
+    # power-off the user calls "perfect": a black veil + a bright beam, no page
+    # motion. The shutters ("curtains") and the v0.51.19 tube-stretch ("conveyor
+    # belt" + scroll jank) both read as travel; the veil+beam reads as pure
+    # luminance, exactly like power-off.
+    assert "@keyframes crt-power-on-shutter-top" not in CSS
+    assert "@keyframes crt-power-on-shutter-bot" not in CSS
+    assert "@keyframes crt-tube-unfold" not in CSS
+    assert "#crt-tube" not in CSS
+    assert ".crt-power-on::before" not in CSS and ".crt-power-on::after" not in CSS
+    # the veil: a black container that HOLDS then fades AWAY to reveal the page
+    # (reverse of power-off's crt-power-off-bg 0→1 hold).
+    cont = CSS[CSS.index(".crt-power-on {"):]
+    cont = cont[:cont.index("}")]
+    assert "background: var(--bg)" in cont and "opacity: 0" in cont
+    veil = CSS[CSS.index("@keyframes crt-power-on-veil"):]
+    veil = veil[:veil.index("}", veil.index("100%"))]
+    assert "0% { opacity: 1; }" in veil and "100% { opacity: 0;" in veil
 
 
-def test_power_on_has_a_bright_fold_line_child():
-    # the fold-line is a SEPARATE child element (.crt-on-line) so its flash + bloom
-    # doesn't ride the container opacity (which would wash out the black shutters).
-    assert "crt-on-line" in BASE_HTML, "base.html renders the fold-line child span"
+def test_power_on_beam_streaks_then_blooms():
+    # the beam is the power-OFF line played backwards: a collapsed dot (scaleX 0)
+    # streaks out horizontally into a thin bright line, blooms tall, then fades.
+    assert "crt-on-line" in BASE_HTML, "base.html renders the beam child span"
     assert ".crt-on-line {" in CSS
     j = CSS.index(".crt-on-line {")
     line = CSS[j:CSS.index("}", j)]
-    assert "var(--fg)" in line and "green-bright" in line  # scanline + glow
-    # the v0.50.91 inverse-of-power-off is gone: no crt-power-on-bg veil, no scaleX.
-    assert "@keyframes crt-power-on-bg" not in CSS
-    on_line = CSS[CSS.index("@keyframes crt-power-on-line"):]
-    on_line = on_line[:on_line.index("}", on_line.index("100%"))]
-    assert "scaleX" not in on_line
+    assert "var(--fg)" in line and "green-bright" in line  # scanline core + glow
+    beam = CSS[CSS.index("@keyframes crt-power-on-line"):]
+    beam = beam[:beam.index("}", beam.index("100%"))]
+    # starts as a collapsed dot (scaleX 0) — the horizontal streak-out is the
+    # reverse of power-off's scaleX(0) collapse-to-a-dot.
+    assert "scaleX(0)" in beam
+    assert "scaleY(2.6)" in beam  # blooms tall at the peak
 
 
 def test_power_on_still_inert_and_one_shot():
