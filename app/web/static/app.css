@@ -3666,7 +3666,12 @@ body.help-mode .settings-help-about { display: block; }
   bottom: auto;
   height: 100dvh;
   max-height: 100dvh;
-  width: 440px;
+  /* v0.51.34 (the user: the 440px drawer "feels a bit narrow"): widened to the
+     720px the info card had as a centered modal before v0.51.32 (base .dlg
+     max-width) so the poster hero + `140px 1fr` grid + sections get their old
+     breathing room. max-width:92vw still caps it on narrower desktops; mobile
+     stays 100vw full-screen (v0.51.33). */
+  width: 720px;
   max-width: 92vw;
   border: 0;
   border-right: 1px solid var(--green-deep);

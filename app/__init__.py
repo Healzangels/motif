@@ -3031,7 +3031,13 @@
 #   scrims stay in sync by reference not by two copies. Serial-probe latency (~15s
 #   worst case, flagged) left as-is: acceptable for a 30s dashboard poll where 0-1
 #   deps are usually down; revisit with concurrency if it bites.
-__version__ = "0.51.33"
+# 0.51.34 — widen the INFO left drawer back to 720px (the user: the 440px drawer
+#   "feels a bit narrow"). v0.51.32 shipped the drawer at 440px, but the info
+#   card's content (poster hero + `140px 1fr` diff/detail grid + sections) was
+#   laid out for the 720px it had as a centered modal (base .dlg max-width), so
+#   440px cramped it. Restored width:720px (max-width:92vw still caps narrower
+#   desktops; mobile stays 100vw full-screen per v0.51.33). CSS one-liner.
+__version__ = "0.51.34"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
