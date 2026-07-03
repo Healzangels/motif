@@ -2786,7 +2786,25 @@
 #   #26 cloud_theme_backup.py: force-walk mints stranded linked-but-empty
 #   plex_orphan rows when the download failed/cancelled; targets carry a
 #   'minted' flag + unmint_stale_orphans compensates at the run's exits.
-__version__ = "0.51.16"
+# 0.51.17 — round-4 audit Batch F2: frontend behavior.
+#   #17 dashboard-customize.js: fetchLayout's silent empty-layout default on
+#   a failed GET + exitCustomize's unconditional flush overwrote the user's
+#   saved dashboard layout with template defaults (v1.17.13 class; v1.21.43
+#   fixed the PUT side only). Load failure now latches LAYOUT_LOAD_FAILED;
+#   saveLayout refuses to PUT while latched; enterCustomize retries the GET
+#   and refuses entry if it still fails. #13 ops.js: poll() scheduled its
+#   successor without clearing the pending timer — every direct
+#   motifOps.refresh (visibilitychange, opsHidden kick) forked one more
+#   permanent /api/progress loop; poll() now cancels the pending successor
+#   at entry + coalesces re-entrant calls (pollInFlight). #28 app.js: six
+#   post-action sites called refreshTopbarStatus() immediately — the
+#   /api/stats 1s cache + hash-skip froze pre-action topbar state (FAIL
+#   count after ACK, DRY-RUN banner after disable) up to 10s; all six now
+#   use the class-7 setTimeout(..., 1100). #29 app.js: bulk DOWNLOAD / bulk
+#   TDB BACKUP error paths + bulk ADOPT's three early exits stranded their
+#   optimistic '// QUEUING …' placeholder after failure (v1.15.35
+#   convention); all clear it now.
+__version__ = "0.51.17"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

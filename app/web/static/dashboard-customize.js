@@ -41,6 +41,13 @@
   let LAYOUT = { sections: [] };
   let CUSTOMIZE = false;
   let SAVE_TIMER = null;
+  // v0.51.17 (audit #17): true while the saved layout was NEVER successfully
+  // loaded. While latched, saveLayout refuses to PUT — LAYOUT holds template
+  // defaults, and flushing them (exitCustomize saves unconditionally) would
+  // overwrite the user's stored layout with defaults. Same failed-GET-then-
+  // SAVE data-loss class as v1.17.13 loadConfigIntoForms; v1.21.43 fixed
+  // only the PUT side of this module.
+  let LAYOUT_LOAD_FAILED = false;
 
   // ── network ──────────────────────────────────────────────────────
   async function fetchLayout() {
@@ -48,11 +55,17 @@
       const r = await fetch('/api/dashboard/layout', {
         credentials: 'same-origin',
       });
-      if (!r.ok) return { sections: [] };
+      if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
+      LAYOUT_LOAD_FAILED = false;
+      // A well-formed "nothing saved yet" response is a real load — the
+      // defaults ARE the truth, saving stays enabled.
       return data && Array.isArray(data.sections)
         ? data : { sections: [] };
-    } catch (_) {
+    } catch (e) {
+      LAYOUT_LOAD_FAILED = true;
+      console.warn('fetchLayout failed — dashboard renders template order; '
+                   + 'layout saving disabled to protect the stored layout:', e);
       return { sections: [] };
     }
   }
@@ -69,6 +82,20 @@
     // redundant duplicate PUT ~300ms later. No-op when we ARE the timer.
     if (SAVE_TIMER) clearTimeout(SAVE_TIMER);
     SAVE_TIMER = null;
+    // v0.51.17 (audit #17): never PUT template defaults over the user's
+    // stored layout. enterCustomize retries the GET, so this only fires if
+    // the layout STILL can't be loaded.
+    if (LAYOUT_LOAD_FAILED) {
+      console.warn('saveLayout blocked — the saved layout never loaded; '
+                   + 'reload the page to customize.');
+      if (!_saveLayoutWarned) {
+        _saveLayoutWarned = true;
+        alert('Dashboard layout could not be loaded, so saving is disabled '
+              + 'to avoid overwriting your stored layout. Reload the page '
+              + 'and try again.');
+      }
+      return;
+    }
     try {
       const r = await fetch('/api/dashboard/layout', {
         method: 'PUT',
@@ -311,7 +338,21 @@
   // lowercase to match the new "// customize layout" copy; entering
   // customize mode swaps to "// done editing" so the affordance to
   // exit is obvious without dragging the eye.
-  function enterCustomize() {
+  async function enterCustomize() {
+    // v0.51.17 (audit #17): the boot GET failed → LAYOUT is template
+    // defaults. Retry before letting the user edit; editing defaults and
+    // exiting would flush them over the stored layout. Success clears the
+    // latch and applies the real saved layout.
+    if (LAYOUT_LOAD_FAILED) {
+      LAYOUT = await fetchLayout();
+      if (LAYOUT_LOAD_FAILED) {
+        alert('Dashboard layout could not be loaded — customize is '
+              + 'disabled to avoid overwriting your stored layout. '
+              + 'Reload the page and try again.');
+        return;
+      }
+      applyLayout();
+    }
     CUSTOMIZE = true;
     document.body.classList.add('dash-customize-mode');
     const btn = customizeBtn();

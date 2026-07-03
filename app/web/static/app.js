@@ -1893,11 +1893,11 @@
         const fd = new FormData();
         fd.append('enabled', 'false');
         await api('POST', '/api/dry-run', fd);
-        // v1.15.108: await + .catch — pre-fix this was a bare
-        // call, so a rejection became an unhandled promise rejection
-        // (console only). The outer try/catch only catches the api()
-        // POST above; the unawaited refresh slipped past.
-        refreshTopbarStatus().catch(() => {});
+        // v0.51.17 (audit #28): class-7 delay — the immediate call hit
+        // the /api/stats 1s cache, and the hash-skip re-ratified the
+        // pre-action payload, so the amber DRY-RUN banner could sit
+        // visible up to 10s after the user confirmed disable.
+        setTimeout(refreshTopbarStatus, 1100);
       } catch (e) {
         alert('Failed: ' + e.message);
       }
@@ -5628,9 +5628,9 @@
       // visibility) and the standard/4K toggle reflect the new flag
       // state immediately. Pre-fix the user had to wait up to 15s for
       // the next stats poll to surface a freshly-enabled tab.
-      // v1.15.108: .catch suppresses the unhandled rejection if the
-      // refresh call itself errors (rare; bare call swallowed it).
-      refreshTopbarStatus().catch(() => {});
+      // v0.51.17 (audit #28): class-7 delay — the immediate kick hit the
+      // /api/stats 1s cache + hash-skip, freezing the pre-save nav state.
+      setTimeout(refreshTopbarStatus, 1100);
       // Re-fetch authoritative state, in case anything diverged
       setTimeout(() => loadLibraries().catch(()=>{}), 600);
       // v1.11.4: keep the message up longer when there's a failure so
@@ -5820,9 +5820,9 @@
       try {
         await api('POST', '/api/dry-run', fd);
         refreshDryRunState();
-        // v1.15.108: .catch — see matching note above the dry-run-off
-        // handler. Unawaited rejection slipped past the outer try.
-        refreshTopbarStatus().catch(() => {});
+        // v0.51.17 (audit #28): class-7 delay — see the dry-run-off
+        // handler's matching note.
+        setTimeout(refreshTopbarStatus, 1100);
       } catch (e) {
         alert('Failed: ' + e.message);
       }
@@ -7517,8 +7517,9 @@
             s.textContent = '✓ saved';
             s.classList.add('ok');
           });
-          // Refresh topbar so paths banner updates if themes_dir was just set
-          refreshTopbarStatus().catch(() => {});
+          // Refresh topbar so paths banner updates if themes_dir was just set.
+          // v0.51.17 (audit #28): class-7 delay past the /api/stats 1s cache.
+          setTimeout(refreshTopbarStatus, 1100);
           _saveOk = true;
         } catch (e) {
           statuses.forEach((s) => {
@@ -13297,6 +13298,14 @@
         setTimeout(refreshTopbarStatus, 1100);
         libraryRapidPoll();
       } catch (err) {
+        // v0.51.17 (audit #29): clear the '// QUEUING DOWNLOADS' pulse —
+        // pre-fix it kept promising queued work for the rest of its 5s
+        // TTL after the failure alert (v1.15.35 convention).
+        try {
+          if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('download_queue');
+          }
+        } catch (_) { /* placeholder is cosmetic */ }
         alert('Bulk download failed: ' + err.message);
       }
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
@@ -13397,6 +13406,13 @@
         setTimeout(refreshTopbarStatus, 1100);
         libraryRapidPoll();
       } catch (err) {
+        // v0.51.17 (audit #29): clear the pulse on failure — see the
+        // bulk DOWNLOAD handler's matching note.
+        try {
+          if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('download_queue');
+          }
+        } catch (_) { /* placeholder is cosmetic */ }
         alert('Bulk TDB backup failed: ' + err.message);
       }
       setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
@@ -14554,6 +14570,17 @@
           );
         }
       } catch (_) { /* placeholder is cosmetic */ }
+      // v0.51.17 (audit #29): every early return below must clear the
+      // pulse — pre-fix a failed scan (and the 0-candidate / cancelled-
+      // confirm exits) left '// QUEUING ADOPTS' promising work for the
+      // rest of its TTL (v1.15.35 convention).
+      const clearAdoptPulse = () => {
+        try {
+          if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('adopt_queue');
+          }
+        } catch (_) { /* placeholder is cosmetic */ }
+      };
       let candidates;
       try {
         // Walk every page of the current filter; collect rows that
@@ -14586,12 +14613,14 @@
         }
         candidates = collected;
       } catch (err) {
+        clearAdoptPulse();  // v0.51.17 (audit #29)
         alert('ADOPT scan failed: ' + (err.message || err));
         btn.disabled = false;
         btn.textContent = orig;
         return;
       }
       if (candidates.length === 0) {
+        clearAdoptPulse();  // v0.51.17 (audit #29)
         alert('No sidecar-only rows in the selection. ADOPT applies to rows showing the M pill (Plex has a theme.mp3 motif doesn\'t manage).');
         btn.disabled = false;
         btn.textContent = orig;
@@ -14602,6 +14631,7 @@
         ? `\n\n(${nonSidecar} selected row(s) skipped — not sidecar-only state.)`
         : '';
       if (!confirm(`Adopt ${candidates.length} sidecar(s)? Each is hardlinked into /themes and managed by motif from now on.${tail}`)) {
+        clearAdoptPulse();  // v0.51.17 (audit #29)
         btn.disabled = false;
         btn.textContent = orig;
         return;
@@ -17673,7 +17703,10 @@
             if (!confirmed) return;
             await api('POST', `/api/items/${mt}/${id}/mark-alive`);
             await hydrateRecoveryOptions(root, mt, id, sectionId);
-            refreshTopbarStatus().catch(() => {});
+            // v0.51.17 (audit #28): class-7 delay — the immediate call
+            // hit the /api/stats 1s cache + hash-skip, so the FAIL count
+            // kept the pre-action value for up to 10s.
+            setTimeout(refreshTopbarStatus, 1100);
             loadLibrary().catch(() => {});
           } else if (act === 'clear-failure') {
             // v1.12.88: ACK from INFO doesn't close the dialog —
@@ -17702,7 +17735,8 @@
             // resolved-state lookup stays section-scoped after
             // ACK FAILURE.
             await hydrateRecoveryOptions(root, mt, id, sectionId);
-            refreshTopbarStatus().catch(() => {});
+            // v0.51.17 (audit #28): class-7 delay — see mark-alive above.
+            setTimeout(refreshTopbarStatus, 1100);
             loadLibrary().catch(() => {});
           } else if (act === 'manual-url') {
             if (!ratingKey) {

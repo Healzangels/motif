@@ -265,6 +265,7 @@
   let state = {
     ops: [],
     pollTimer: null,
+    pollInFlight: false,           // v0.51.17 (audit #13): coalesce direct refresh
     pollInterval: 10000,           // 10s idle
     drawerOpen: false,
     // per op_id: smoothed counter state for interpolation
@@ -1920,6 +1921,22 @@
   // ── poll loop ─────────────────────────────────────────────────
   let lastRunning = false;
   async function poll() {
+    // v0.51.17 (audit #13): cancel any pending successor FIRST. poll() is
+    // also invoked directly (motifOps.refresh — app.js visibilitychange +
+    // the opsHidden kick); pre-fix each direct call left the old chain's
+    // setTimeout pending and scheduled its own at the bottom, permanently
+    // forking one extra self-perpetuating /api/progress loop per tab
+    // return (state.pollTimer only tracks the LAST id, so the cadence /
+    // boostPoll clears could cull at most one chain). The in-flight latch
+    // coalesces a direct call landing DURING the awaited fetch — the same
+    // fork via a different window (fetchProgress never throws, so the
+    // latch always resets at the re-arm below).
+    if (state.pollInFlight) return;
+    state.pollInFlight = true;
+    if (state.pollTimer) {
+      clearTimeout(state.pollTimer);
+      state.pollTimer = null;
+    }
     const data = await fetchProgress();
     if (data && Array.isArray(data.ops)) {
       state.ops = data.ops;
@@ -1986,6 +2003,7 @@
         }
       }
     }
+    state.pollInFlight = false;  // v0.51.17 (audit #13)
     state.pollTimer = setTimeout(poll, state.pollInterval);
   }
 

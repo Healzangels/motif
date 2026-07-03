@@ -184,7 +184,9 @@ def test_js_dispatcher_handles_mark_alive_action():
     src = APP_JS.read_text()
     assert "if (act === 'mark-alive')" in src
     handler_anchor = src.index("if (act === 'mark-alive')")
-    handler_block = src[handler_anchor:handler_anchor + 1500]
+    # v0.51.17 (audit #28): widened 1500→1900 — the class-7 delay comment
+    # lands ahead of the loadLibrary kick.
+    handler_block = src[handler_anchor:handler_anchor + 1900]
     assert "/mark-alive" in handler_block
     # Same close-and-reload shape as clear-failure.
     assert "hydrateRecoveryOptions" in handler_block

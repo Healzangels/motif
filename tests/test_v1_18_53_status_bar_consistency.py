@@ -185,7 +185,9 @@ def test_poll_cadence_kind_agnostic():
     src = OPS_JS.read_text()
     # Find the cadence-decision block.
     poll_idx = src.index("async function poll()")
-    body = src[poll_idx:poll_idx + 3000]
+    # v0.51.17 (audit #13): widened 3000→4000 — the anti-fork entry block
+    # (pending-timer clear + pollInFlight latch) lands ahead of the cadence.
+    body = src[poll_idx:poll_idx + 4000]
     # The `running` and `pending` flags must read across the whole
     # ops array, not filter on specific kinds.
     assert "state.ops.some" in body, (
