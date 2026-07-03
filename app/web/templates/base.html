@@ -538,8 +538,13 @@
      buttons on /queue's REPROBE error events (and any future
      cross-page caller) can trigger openInfoDialog regardless of
      which page the user is on. The dialog stays hidden until
-     showModal() fires; zero render cost when unused. #}
-  <dialog class="dlg" id="info-dlg">
+     showModal() fires; zero render cost when unused.
+     v0.51.32: `dlg-drawer-left` renders it as a LEFT overlay drawer (the user:
+     "make the info card into a left drawer ... more in theme with the status
+     bar drawer"). Still a native <dialog> — showModal() keeps the scrim, Esc,
+     focus trap + all the open/close + audio-teardown JS; only the layout +
+     slide animation change (see .dlg-drawer-left in app.css). #}
+  <dialog class="dlg dlg-drawer-left" id="info-dlg">
     <article class="dlg-body">
       <header class="dlg-head">
         <h2 class="dlg-title">// MOTIF INFO</h2>

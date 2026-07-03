@@ -2988,7 +2988,28 @@
 #   server-side. Audited the other dashboard cards: COVERAGE vs PLEX LIBRARY
 #   (themed% vs TDB-reach) + GENERAL STATISTICS vs PER-SECTION COVERAGE (distinct
 #   columns) are intentionally different, not dups — left as-is.
-__version__ = "0.51.31"
+# 0.51.32 — INFO card → LEFT overlay drawer (the user: "make the info card into a
+#   left drawer instead of what it is currently so it's more in theme with the
+#   status bar drawer, would like it have everything it current has in it but a
+#   drawer instead"). The // MOTIF INFO card stays a native <dialog> — showModal()
+#   keeps the modal scrim, Esc-to-close, focus trap, and ALL the v1.12.x open/close
+#   + audio-teardown machinery intact — so only the LAYOUT + entry animation
+#   change. A new `dlg-drawer-left` modifier class (base.html) restyles it into a
+#   left-pinned, full-height sliding panel that mirrors the right-pinned
+#   .ops-drawer: inner-edge (right) green-deep border + page-ward drop shadow,
+#   slide in from -X reusing the proven .dlg @starting-style pattern (transform +
+#   opacity over the ops-drawer's 0.28s cubic-bezier), a sticky ops-drawer-style
+#   head, a scrolling body, and an ops-drawer-matched scrim (::backdrop rgba black
+#   0.45, no blur). `display:flex` is gated on [open] so the UA hides it when
+#   closed. Added scrim-click-to-close (routed through closeInfoDialog for the
+#   audio/focus teardown) to match the ops-drawer. Scoped to .dlg-drawer-left so
+#   every OTHER .dlg (glossary, upload, manual-URL) stays a centered modal. The
+#   allow-discrete slide-OUT was dropped (it froze the entry transform mid-flight
+#   in the target browser); close is instant like every other .dlg. Live-verified:
+#   info-dlg computes position:fixed left/top 0, 440px full-height, green-deep
+#   border-right, display:flex, translateX(0) on-screen; sticky head at y0, body
+#   scrolls; the other dialogs unaffected.
+__version__ = "0.51.32"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

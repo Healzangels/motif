@@ -18484,6 +18484,11 @@
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
     document.getElementById('info-dlg-close')?.addEventListener('click', closeInfoDialog);
+    // v0.51.32: click the scrim (the area beside the left drawer) to close,
+    // matching the ops-drawer's scrim-click-to-close. A native modal <dialog>
+    // reports the dialog element itself as the target for ::backdrop clicks;
+    // route through closeInfoDialog so the audio-teardown + focus-blur fire.
+    dlg.addEventListener('click', (e) => { if (e.target === dlg) closeInfoDialog(); });
     // v1.13.16: TDB preview removed. YouTube blocks the embed for
     // many videos (Error 153 / video player configuration error)
     // and there's no clean alternative without violating ToS. The

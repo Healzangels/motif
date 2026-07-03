@@ -51,7 +51,10 @@ def test_no_raw_duration_in_transition_rules():
       - 0.6s width transition on coverage bars (deliberate
         slow contrast vs the 0.4s fill cluster)
       - 0.2s opacity inside the .pulsed-pill rule (too
-        narrow to justify a fourth token)"""
+        narrow to justify a fourth token)
+      - 0.28s cubic-bezier on the // MOTIF INFO left drawer
+        (v0.51.32) — the ops-drawer's deliberate slide timing,
+        between --motion-normal (120ms) and --motion-slow (400ms)"""
     src = APP_CSS.read_text()
     # Strip comments — the :root doc comment intentionally
     # references the pre-fix raw values.
@@ -69,6 +72,11 @@ def test_no_raw_duration_in_transition_rules():
         if "0.6s" in body and "width" in body:
             continue
         if "stroke-dasharray" in body and "opacity 0.2s" in body:
+            continue
+        # v0.51.32: the // MOTIF INFO left-drawer slide reuses the ops-drawer's
+        # deliberate 0.28s cubic-bezier timing (a documented outlier like the
+        # ops-drawer's own, which lives in ops.css and isn't scanned here).
+        if "0.28s cubic-bezier(0.4, 0, 0.2, 1)" in body:
             continue
         if re.search(r"\b(?:0?\.\d+s|\d+ms)\b", body):
             bad.append(body)

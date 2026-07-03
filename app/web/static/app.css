@@ -3640,6 +3640,63 @@ body.help-mode .settings-help-about { display: block; }
 @starting-style {
   .dlg[open]::backdrop { opacity: 0; }
 }
+
+/* v0.51.32: the // MOTIF INFO card renders as a LEFT overlay drawer (the user:
+   "make the info card into a left drawer ... more in theme with the status bar
+   drawer"). It stays a native <dialog> — showModal() keeps the modal scrim,
+   Esc-to-close, focus trap + all the v1.12.x open/close + audio-teardown JS — so
+   ONLY the layout + entry animation change here: a left-pinned, full-height
+   sliding panel that mirrors the right-pinned .ops-drawer (inner-edge border +
+   page-ward drop shadow, slide in along X). `display:flex` is gated on [open] so
+   the UA's `dialog:not([open]){display:none}` still hides it when closed. The
+   slide-in reuses the proven .dlg @starting-style pattern (transform+opacity over
+   the ops-drawer's 0.28s cubic-bezier); close is instant like every other .dlg —
+   the overlay/display allow-discrete slide-OUT was dropped after it froze the
+   transform mid-transition in the target browser. Scoped to .dlg-drawer-left so
+   every OTHER .dlg (glossary, upload, manual-URL) stays a centered modal. */
+.dlg.dlg-drawer-left {
+  margin: 0;
+  top: 0;
+  left: 0;
+  right: auto;
+  bottom: auto;
+  height: 100dvh;
+  max-height: 100dvh;
+  width: 440px;
+  max-width: 92vw;
+  border: 0;
+  border-right: 1px solid var(--green-deep);
+  box-shadow: 0 0 40px rgba(var(--green-rgb), 0.15),
+              8px 0 60px rgba(var(--black-rgb), 0.6);
+  flex-direction: column;
+  overflow: hidden;
+  transform: translateX(0);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.dlg.dlg-drawer-left[open] { display: flex; }
+@starting-style {
+  .dlg.dlg-drawer-left[open] { opacity: 0; transform: translateX(-100%); }
+}
+@starting-style {
+  .dlg.dlg-drawer-left[open] { opacity: 0; transform: translateX(-100%); }
+}
+/* scrim matches the ops-drawer (lighter, no blur) for cross-surface parity. */
+.dlg.dlg-drawer-left::backdrop { background: rgba(var(--black-rgb), 0.45); backdrop-filter: none; }
+/* the article becomes the single scroll region; the head pins on top like the
+   ops-drawer head (sticky + border + solid bg so content scrolls under it). */
+.dlg.dlg-drawer-left .dlg-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 0; }
+.dlg.dlg-drawer-left .dlg-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  margin: 0;
+  padding: 14px 18px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--line);
+}
+.dlg.dlg-drawer-left #info-dlg-body { padding: 18px; }
+
 .dlg-body { padding: 28px; position: relative; }
 /* v1.19.89: was `.dlg h3` (descendant selector). The info card is
    the only .dlg with a body <h3>; promoted to a class for parity
