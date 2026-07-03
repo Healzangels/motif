@@ -3656,10 +3656,16 @@
         + 'collection) — there is no green TDB pill to revert to. Motif '
         + 'keeps a copy of whatever Plex is serving, replacing any '
         + 'existing backup on the row.';
+    // v0.51.37 (the user: "download plex backup doesn't do anything"): lead with
+    // WHY the strict run found nothing, so this fallback confirm doesn't read as
+    // "the action silently did nothing" — Plex is serving a theme motif itself
+    // uploaded (an upload:// entry), not a Plex Pass metadata:// cloud theme, so
+    // there's no cloud theme to auto-back-up.
     const proceed = confirm(
-      "Plex isn't serving a cloud theme motif would auto-back-up "
-      + 'here.\n\nCapture whatever Plex IS currently serving for this '
-      + 'row as a Plex Backup anyway?' + revertNote
+      'DOWNLOAD PLEX BACKUP found no Plex Pass cloud theme to back up '
+      + 'here — Plex is serving a theme motif itself uploaded, not a '
+      + 'cloud theme.\n\nCapture whatever Plex IS currently serving for '
+      + 'this row as a Plex Backup anyway?' + revertNote
     );
     if (!proceed) return;
     api('POST', '/api/admin/cloud-themes-backup-run',
@@ -16149,6 +16155,15 @@
       // staged)".
       if (!lf && data.plex_independent_theme === 1) {
         return 'Plex serves its own theme (motif standing by)';
+      }
+      // v0.51.37 (the user): a Plex-serving row with no motif theme (e.g. right
+      // after UNMANAGE of a plex_upload row — motif untracked it but Plex keeps
+      // serving the theme it uploaded, before plex_enum sets the independent
+      // flag) used to fall to "(none)", which read as "motif lost the theme".
+      // Name the real state + the recovery paths so it isn't confusing.
+      if (!lf && data.plex_has_theme === 1) {
+        return 'Plex is serving a theme motif no longer manages — SOURCE → '
+             + 'RE-DOWNLOAD TDB to take it over, or REMOVE → PURGE to clear it';
       }
       if (!lf) return '(none — row has no theme staged)';
       const sk = lf.source_kind || '';

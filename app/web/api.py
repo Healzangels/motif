@@ -15534,31 +15534,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # plex_items column — never on the themes dict) + is_plex_agent
             # (a field never returned), so every pure-P card showed "(none —
             # row has no theme staged)". rk-first, then section, then title.
+            # v0.51.37 (the user): ALSO surface has_theme so the card can say
+            # "Plex is serving a theme motif isn't managing" for a Plex-serving /
+            # no-local row EVEN in the transient window after UNMANAGE of a
+            # plex_upload row, before the next plex_enum sets plex_independent_
+            # theme=1. Without it the card fell to "(none — no theme staged)"
+            # while Plex was visibly still serving (the user's confusing state).
             _pi_independent = None
+            _pi_has_theme = None
             with get_conn(db) as conn:
                 if rating_key:
                     _pind = conn.execute(
-                        "SELECT plex_independent_theme FROM plex_items "
+                        "SELECT plex_independent_theme, has_theme FROM plex_items "
                         "WHERE rating_key = ?", (rating_key,)).fetchone()
                     if _pind:
                         _pi_independent = _pind["plex_independent_theme"]
-                if _pi_independent is None and section_id:
+                        _pi_has_theme = _pind["has_theme"]
+                if _pi_independent is None and _pi_has_theme is None and section_id:
                     _pind = conn.execute(
-                        "SELECT MAX(plex_independent_theme) AS v FROM plex_items "
+                        "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
+                        "FROM plex_items "
                         "WHERE section_id = ? AND guid_tmdb = ? AND media_type = ?",
                         (section_id, str(tmdb_id), _info_plex_type)).fetchone()
-                    _pi_independent = _pind["v"] if _pind else None
-                if _pi_independent is None:
+                    if _pind:
+                        _pi_independent = _pind["v"]
+                        _pi_has_theme = _pind["h"]
+                if _pi_independent is None and _pi_has_theme is None:
                     _pind = conn.execute(
-                        "SELECT MAX(plex_independent_theme) AS v FROM plex_items "
+                        "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
+                        "FROM plex_items "
                         "WHERE guid_tmdb = ? AND media_type = ?",
                         (str(tmdb_id), _info_plex_type)).fetchone()
-                    _pi_independent = _pind["v"] if _pind else None
+                    if _pind:
+                        _pi_independent = _pind["v"]
+                        _pi_has_theme = _pind["h"]
 
             return {
                 "theme": dict(t),
                 # v1.22.71: P-row discriminator for the playback-source line.
                 "plex_independent_theme": _pi_independent,
+                # v0.51.37: Plex-is-serving flag so the card explains a
+                # Plex-served / no-motif-theme row (incl. the transient window
+                # after UNMANAGE of a plex_upload row) instead of "(none)".
+                "plex_has_theme": _pi_has_theme,
                 "local_file": local_payloads[0] if local_payloads else None,
                 "local_files": local_payloads,
                 "placements": [dict(p) for p in placements],

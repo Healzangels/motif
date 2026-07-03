@@ -3067,7 +3067,23 @@
 #   "DOWNLOAD PLEX BACKUP no-ops" + info-card items from the same report are
 #   plex_independent_theme / force-capture-UX questions, flagged separately — not
 #   touched here to avoid the phantom-P edition-scope minefield.)
-__version__ = "0.51.36"
+# 0.51.37 — follow-ups on the v0.51.36 confusing-row report (the user OK'd both).
+#   (1) INFO card no longer says "(none — row has no theme staged)" for a row
+#   where Plex IS serving a theme motif no longer manages — e.g. right after
+#   UNMANAGE of a plex_upload row (motif untracks it but Plex keeps serving the
+#   uploaded theme; landing at P is by-design since v1.20.57). The card's
+#   Plex-serving branch only fired on plex_independent_theme=1, which plex_enum
+#   sets on its NEXT cycle, so the post-UNMANAGE window fell to "(none)". api_item
+#   now also surfaces plex_items.has_theme (plex_has_theme) so the card names the
+#   real state + the recovery paths ("Plex is serving a theme motif no longer
+#   manages — SOURCE → RE-DOWNLOAD TDB to take it over, or REMOVE → PURGE to clear
+#   it"). NOTE: the SRC=P (vs the user's expected "T +P") is UNMANAGE working as
+#   designed — it removes motif's theme, so there's no T; plex_independent_theme
+#   self-heals to a formal +P on the next plex_enum. Display-only, no data
+#   mutation. (2) DOWNLOAD PLEX BACKUP force-capture confirm leads with WHY the
+#   strict run found nothing (Plex serving a motif upload, not a Plex Pass cloud
+#   theme) so it doesn't read as "the action did nothing" (the user).
+__version__ = "0.51.37"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
