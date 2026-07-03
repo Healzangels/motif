@@ -177,12 +177,15 @@ def test_info_play_row_is_a_flex_row_that_keeps_both_on_one_line():
     assert "flex-wrap: wrap;" in block
 
 
-def test_info_audio_uses_zero_basis_so_wrap_assignment_shares_the_line():
+def test_info_audio_fills_the_play_row():
+    # v0.51.29: the ↓ download sibling was removed, so the player no longer
+    # needs the 0-basis line-sharing trick — it owns the whole play row now
+    # (max-width:none + width:100%), giving the volume/seek sliders width.
     idx = APP_CSS.index(".info-audio {")
     end_idx = APP_CSS.index("}", idx)
     block = APP_CSS[idx:end_idx]
-    assert "flex: 1 1 0;" in block
     assert "min-width: 0;" in block
+    assert "max-width: none;" in block and "width: 100%;" in block
 
 
 def test_info_play_row_dd_wraps_the_audio_and_download_link():

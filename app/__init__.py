@@ -2945,7 +2945,17 @@
 #   0.55->0.75, opacity 0.37->0.44; .hero::before cross-weave height 0.26->0.36,
 #   opacity 0.32->0.40). Verified live: per-job scaleY delta ~0.04 -> ~0.088, per-
 #   job brightness ~+0.08 -> ~+0.15. Still eased (not snapped) + saturates at 1.
-__version__ = "0.51.28"
+# 0.51.29 — info-card audio playback: easier volume + drop the redundant ↓ (the
+#   user: "the volume control bar on our info card playback is very hard to see
+#   and control, also lets get ride of the little downwards arrow to download
+#   since the vertical tripple dots also includes a download option"). app.js:
+#   removed the sibling <a download>↓</a> next to the <audio> — the native
+#   controls' ⋮ overflow menu already has Download. app.css: with the ↓ gone the
+#   <audio> owns the whole play row — .info-audio max-width 480px->none +
+#   width:100% + height 32px->40px, so the native volume slider + seek bar get
+#   real width/height (the 32px squish was cramping them). Dead .info-play-row>a
+#   rule removed. Verified live: play row has one child; .info-audio 40px, fills.
+__version__ = "0.51.29"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

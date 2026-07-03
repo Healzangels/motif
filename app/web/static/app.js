@@ -16640,12 +16640,14 @@
           if (ratingKey) _ap.push(`rating_key=${encodeURIComponent(ratingKey)}`);
           const sec = _ap.length ? `?${_ap.join('&')}` : '';
           const src = `/api/items/${encodeURIComponent(t.media_type)}/${encodeURIComponent(t.tmdb_id)}/theme.mp3${sec}`;
+          // v0.51.29: dropped the sibling ↓ download link — the native
+          // <audio> controls' ⋮ overflow menu already has "Download" (the
+          // user), so the extra arrow was redundant. The player now owns the
+          // whole play row, giving its volume slider + seek bar more width.
           return `<dt>play</dt><dd class="info-play-row">`
             + `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
             + `your browser doesn't support inline audio playback`
             + `</audio>`
-            + `<a href="${htmlEscape(src)}" download="theme.mp3"`
-            +   ` class="muted small" title="Download the canonical theme.mp3 — useful if the inline player can't decode the file.">↓</a>`
             + `</dd>`;
         })()
       : '';

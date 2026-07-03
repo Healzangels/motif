@@ -87,21 +87,13 @@ def test_audio_uses_preload_auto():
     )
 
 
-def test_audio_has_download_escape_hatch():
-    """Next to the <audio> element there must be a `<a download>`
-    link so the user can grab the file locally if the inline
-    decoder still struggles. The Watchmen case was: VLC plays
-    fine, Chrome doesn't — the download link lets the user
-    confirm the file's intact without leaving the dialog."""
+def test_audio_download_is_the_native_overflow_menu():
+    """v0.51.29: the separate `<a download="theme.mp3">↓</a>` escape hatch was
+    REMOVED (the user) — the native <audio controls> ⋮ overflow menu already
+    offers Download, so the extra arrow was a redundant duplicate. The download
+    path still exists (native menu); it's just no longer a sibling link."""
     src = APP_JS.read_text()
-    audio_idx = src.index("class=\"info-audio\"")
-    audio_window = src[audio_idx:audio_idx + 600]
-    # The download link uses the same src URL + a download
-    # attribute so the browser downloads instead of playing
-    # inline.
-    assert 'download="theme.mp3"' in audio_window, (
-        "v1.15.125: a `<a href=\"...\" download=\"theme.mp3\">` "
-        "escape hatch must sit next to the inline player so the "
-        "user has a one-click fallback for browser-decode "
-        "failures."
+    assert 'download="theme.mp3"' not in src, (
+        "v0.51.29: the redundant sibling download arrow must stay removed — the "
+        "native audio controls' ⋮ menu is the download affordance now."
     )
