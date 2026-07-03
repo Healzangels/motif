@@ -128,10 +128,14 @@ def test_power_on_shutters_slide_apart_with_glowing_edges():
     assert "@keyframes crt-power-on-shutter-bot" in CSS
     top = CSS[CSS.index("@keyframes crt-power-on-shutter-top"):]
     top = top[:top.index("}", top.index("100%"))]
-    assert "translateY(0)" in top and "translateY(-100%)" in top  # closed → slid off top pole
+    # v0.51.18 (audit #33): the shutters now park PAST the poles
+    # (calc(±100% ± 30px)) so the reveal-edge glow exits with them —
+    # a plain ±100% left a static glow band at both screen edges.
+    assert "translateY(0)" in top
+    assert "translateY(calc(-100% - 30px))" in top  # closed → off top pole, glow included
     bot = CSS[CSS.index("@keyframes crt-power-on-shutter-bot"):]
     bot = bot[:bot.index("}", bot.index("100%"))]
-    assert "translateY(100%)" in bot  # slid off the bottom pole
+    assert "translateY(calc(100% + 30px))" in bot  # off the bottom pole, glow included
     # the old scaleY unfold + transform-origin poles are gone.
     assert "@keyframes crt-power-on-unfold" not in CSS
     assert "transform-origin: center top" not in CSS

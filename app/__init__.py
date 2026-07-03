@@ -2804,7 +2804,20 @@
 #   TDB BACKUP error paths + bulk ADOPT's three early exits stranded their
 #   optimistic '// QUEUING …' placeholder after failure (v1.15.35
 #   convention); all clear it now.
-__version__ = "0.51.17"
+# 0.51.18 — round-4 audit Batch G: recent-delta CSS + test hygiene.
+#   #22 app.css: the v0.50.88/91 running-job topbar shrink protections were
+#   ≤600px only — at 601-780px (half-snapped 1440px desktop, iPad portrait)
+#   a running job still overflowed the topbar past the viewport; new disjoint
+#   601-780px block applies the status-column shrink floor + wrap and the
+#   op-mini full-width bottom strip WITHOUT the phone block's two-row
+#   re-layout. #33 app.css: the v0.51.10 shutter reveal-edge glow (5px+22px
+#   box-shadow) bled ~27px back into the viewport at a plain translateY(±100%)
+#   park — a static green band at both poles for ~110ms before the veil fade;
+#   shutters now park past the poles (calc(±100% ± 30px)) so the bloom exits
+#   with them (the user opted to fix). #32 test_v0_51_6: the desktop-density
+#   guard's bare substring asserts matched four unrelated rules (v1.18.81
+#   phantom-guard class) — now scoped rule-body extraction.
+__version__ = "0.51.18"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

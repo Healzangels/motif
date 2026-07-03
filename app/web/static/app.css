@@ -395,15 +395,23 @@ input[type="checkbox"] {
 .crt-power-on::after  { bottom: 0; box-shadow: 0 -5px 22px rgba(var(--green-rgb), 0.5), 0 -1px 4px var(--fg); }
 .crt-power-on.playing::before { animation: crt-power-on-shutter-top 0.62s cubic-bezier(0.32, 0.62, 0.4, 1); }
 .crt-power-on.playing::after  { animation: crt-power-on-shutter-bot 0.62s cubic-bezier(0.32, 0.62, 0.4, 1); }
+/* v0.51.18 (audit #33): the shutters park PAST the poles, not at them. At a
+   plain translateY(±100%) the shutter body leaves but its reveal-edge glow
+   (5px offset + 22px blur ≈ 27px) projects back into the viewport — a static
+   green band sat at both screen edges at full opacity from ~0.45s until the
+   veil's 90% keyframe, then blinked out in the 62ms fade: an artifact, not
+   the intended "bloom sweeps out WITH the shutter". The extra 30px carries
+   the glow off-screen along the same ease, so the veil comment above ("the
+   shutters + line have already collapsed by then") is true again. */
 @keyframes crt-power-on-shutter-top {
   0%   { transform: translateY(0); }
   16%  { transform: translateY(0); }      /* hold closed — the centre-line beat */
-  100% { transform: translateY(-100%); }  /* slide off the top pole */
+  100% { transform: translateY(calc(-100% - 30px)); }  /* off the top pole, glow included */
 }
 @keyframes crt-power-on-shutter-bot {
   0%   { transform: translateY(0); }
   16%  { transform: translateY(0); }
-  100% { transform: translateY(100%); }
+  100% { transform: translateY(calc(100% + 30px)); }
 }
 /* the bright fold-line at the seam — exposed as the shutters part, blooms, fades. */
 .crt-on-line {
@@ -5442,6 +5450,39 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   padding: 0 var(--gap-1);
   user-select: none;
 }
+/* v0.51.18 (audit #22): the v0.50.88/91 running-job topbar shrink protections
+   were scoped ≤600px only — at 601-780px (half-snapped 1440px desktop = 720px,
+   iPad portrait 768px) the base auto/1fr/auto topbar grid still sized the
+   status column at max-content, so any running job (op-mini label + bar + pct
+   + pills) pushed the ?/logout controls past the right edge and grew a page
+   horizontal scrollbar for the job's duration — the exact v0.50.88 symptom,
+   one breakpoint up. Same two fixes, tablet range: a shrink floor + wrap on
+   the status column, and the op-mini strip pinned full-width along the
+   topbar's bottom edge (a wrapped op-mini floating half-width inside the
+   status cluster is the exact look the user rejected in v0.50.91). Kept as a
+   separate disjoint block — the ≤600px block also re-lays the topbar into two
+   rows, which must NOT extend to tablets, and its rules are test-pinned in
+   place (test_v0_50_88 / test_v0_50_91). */
+@media (min-width: 601px) and (max-width: 780px) {
+  .topbar-status { min-width: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .topbar:has(#op-mini:not([hidden])) { padding-bottom: 30px; }
+  #op-mini:not([hidden]) {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    width: auto;
+    justify-content: center;
+    gap: 10px;
+    height: 26px;
+    padding: 0 14px;
+    border: 0;
+    border-top: 1px solid var(--line-bright);
+    border-radius: 0;
+    background: var(--bg-elev);
+  }
+  #op-mini .op-mini-label { max-width: 55%; }
+  #op-mini .op-mini-bar { width: 90px; flex: 0 0 auto; }
+}
+
 @media (max-width: 600px) {
   .diff-tiles, .diff-tiles-single { grid-template-columns: 1fr; }
   .diff-arrow { transform: rotate(90deg); padding: var(--gap-2) 0; }

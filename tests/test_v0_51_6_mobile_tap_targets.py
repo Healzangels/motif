@@ -55,6 +55,20 @@ def test_desktop_densities_unchanged():
     # the base rules keep their tuned tight sizes — the bump is phone-only. Both the
     # help-toggle 22px and the filter-pill 20px base heights live before the ≤600px
     # block and must survive there.
+    # v0.51.18 (audit #32): extract each RULE BODY before asserting. The old bare
+    # substring asserts matched four unrelated rules ("height: 22px;" also lives on
+    # .state-pill-btn / .ed-pill-btn / .link-glyph; "height: 20px;" substring-matched
+    # .pill-filter-spacer's min-height) — a phantom guard (v1.18.81 class): dropping
+    # either pinned density shipped green. Same scoped-extraction shape as
+    # test_v1_23_76_help_question_glyph.
     pre = APP_CSS[:APP_CSS.index("@media (max-width: 600px) {")]
-    assert "height: 22px;" in pre, "base 22px topbar-glyph height stays on desktop"
-    assert "height: 20px;" in pre, "base 20px filter-pill density stays on desktop"
+    help_rule = pre[pre.index(".help-toggle {"):]
+    help_rule = help_rule[:help_rule.index("}")]
+    assert "height: 22px;" in help_rule, (
+        "base 22px .help-toggle height stays on desktop")
+    # the v1.12.25 shared filter-pill density rule — anchor on its selector list.
+    pill_anchor = pre.index(".pill-filter-row .pill-filter-clear,")
+    pill_rule = pre[pill_anchor:]
+    pill_rule = pill_rule[:pill_rule.index("}")]
+    assert "height: 20px;" in pill_rule, (
+        "base 20px filter-pill density stays on desktop")
