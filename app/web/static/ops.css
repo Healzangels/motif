@@ -317,7 +317,7 @@ body[data-ops-running="1"] #topbar-status-text {
 .ops-drawer-scrim {
   position: absolute;
   inset: 0;
-  background: rgba(var(--black-rgb), 0.45);
+  background: var(--drawer-scrim);  /* v0.51.33: shared token (app.css :root) */
   opacity: 0;
   /* v1.17.8: deliberately NOT migrated to --motion-* tokens.
      The drawer scrim + panel are a paired animation tuned for

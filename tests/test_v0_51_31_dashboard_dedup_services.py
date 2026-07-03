@@ -115,6 +115,7 @@ def test_services_reports_themerrdb_and_tmdb_keys(client):
     tdb = data["themerrdb"]
     # git_url emptied → not configured, probe skipped, no network / latency.
     assert tdb["configured"] is False
+    assert tdb["probeable"] is False  # v0.51.33: empty/non-http git_url isn't probed
     assert tdb["online"] is False
     assert tdb["latency_ms"] is None
     assert isinstance(tdb["source"], str)  # active transport still reported
@@ -123,3 +124,25 @@ def test_services_reports_themerrdb_and_tmdb_keys(client):
     assert tmdb["configured"] is False
     assert tmdb["online"] is False
     assert tmdb["latency_ms"] is None
+
+
+def test_non_http_git_url_is_configured_but_not_probed(tmp_path, monkeypatch):
+    # v0.51.33 (code-review F6): a git@/file:// git_url is valid for dulwich but
+    # can't be http-probed — it must report configured + probeable:false + a null
+    # latency (→ 'git source · not probed'), NOT a false 'unreachable'. No network.
+    monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("MOTIF_DB_GIT_URL", "git@github.com:LizardByte/ThemerrDB.git")
+    from app.config import Settings
+    from app.core.auth import create_admin, init_auth_schema
+    from app.web.api import create_app
+    s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    init_db(s.db_path)
+    init_auth_schema(s.db_path)
+    create_admin(s.db_path, username="testadmin", password="testpassword")
+    tdb = TestClient(create_app(s)).get("/api/services", headers=AUTH).json()["themerrdb"]
+    assert tdb["configured"] is True     # git_url is set …
+    assert tdb["probeable"] is False     # … but git@ isn't http(s) → skip the probe
+    assert tdb["online"] is False
+    assert tdb["latency_ms"] is None

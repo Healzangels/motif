@@ -2162,13 +2162,20 @@
     row.appendChild(_serviceCard(
       'yt-dlp', yt ? 'ok' : 'down', yt ? `v${yt}` : 'unavailable', ''));
     // v0.51.31: ThemerrDB — the upstream catalogue motif syncs from. Always
-    // shown (it's the core dependency); sub-line names the active transport.
+    // shown (it's the core dependency). v0.51.33 (code-review): the status is
+    // honest that it's the GIT SOURCE repo reachability (what's actually
+    // probed), not the sync transport; `source` is shown as a separate config
+    // note ("sync: X") rather than "via X", which implied the transport was
+    // probed. `probeable=false` = a git@/file:// git_url that dulwich can use
+    // but we can't http-probe → "not probed", not a false "unreachable".
     const tdb = data.themerrdb || {};
-    const tdbState = !tdb.configured ? 'idle' : (tdb.online ? 'ok' : 'down');
+    const tdbState = !tdb.configured ? 'idle'
+      : (!tdb.probeable ? 'idle' : (tdb.online ? 'ok' : 'down'));
     const tdbStatus = !tdb.configured ? 'not configured'
-      : (tdb.online ? `reachable · ${tdb.latency_ms}ms` : 'unreachable');
+      : (!tdb.probeable ? 'git source · not probed'
+        : (tdb.online ? `git source · ${tdb.latency_ms}ms` : 'git source unreachable'));
     row.appendChild(_serviceCard(
-      'ThemerrDB', tdbState, tdbStatus, tdb.source ? `via ${tdb.source}` : ''));
+      'ThemerrDB', tdbState, tdbStatus, tdb.source ? `sync: ${tdb.source}` : ''));
     // v0.51.31: TMDB — optional (orphan id resolution). Only card it when a key
     // is configured; an absent key isn't a fault worth a red/idle chip.
     const tmdb = data.tmdb || {};

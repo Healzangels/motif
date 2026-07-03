@@ -61,9 +61,14 @@ def test_drawer_slides_in_via_starting_style():
 
 
 def test_drawer_scrim_matches_ops_drawer():
+    # v0.51.33: both scrims pull the shared --drawer-scrim token (parity by
+    # reference, not two copies of the literal).
     r = _rule(APP_CSS, ".dlg.dlg-drawer-left::backdrop {")
-    assert "rgba(var(--black-rgb), 0.45)" in r  # same as .ops-drawer-scrim
+    assert "var(--drawer-scrim)" in r
     assert "backdrop-filter: none;" in r
+    OPS_CSS = (REPO / "app" / "web" / "static" / "ops.css").read_text()
+    assert "background: var(--drawer-scrim);" in OPS_CSS   # ops-drawer scrim too
+    assert "--drawer-scrim:" in APP_CSS                    # token defined in :root
 
 
 def test_drawer_head_is_sticky_and_body_scrolls():
@@ -71,6 +76,31 @@ def test_drawer_head_is_sticky_and_body_scrolls():
     assert "position: sticky;" in head and "top: 0;" in head
     body = _rule(APP_CSS, ".dlg.dlg-drawer-left .dlg-body {")
     assert "overflow-y: auto;" in body and "flex: 1 1 auto;" in body
+
+
+def test_drawer_head_no_redundant_border_override():
+    # v0.51.33: the drawer head inherits border-bottom from the base .dlg-head —
+    # it must NOT re-declare it (dead override the review flagged).
+    head = _rule(APP_CSS, ".dlg.dlg-drawer-left .dlg-head {")
+    assert "border-bottom" not in head
+
+
+def test_drawer_is_full_screen_on_mobile():
+    # v0.51.33 (the user): on <=600px the info card fills the viewport again
+    # (v0.50.50 intent), re-stated at drawer specificity so it beats the base
+    # drawer rule on source order. Kept inside the single canonical mobile block.
+    assert ".dlg.dlg-drawer-left { width: 100vw; max-width: none; border-right: 0; }" in APP_CSS
+    # the override must live inside the @media (max-width: 600px) block, AFTER the
+    # mobile `.dlg` full-screen rule it complements.
+    i_media = APP_CSS.index("@media (max-width: 600px) {")
+    i_close = APP_CSS.index("\n}\n", i_media)
+    assert i_media < APP_CSS.index(".dlg.dlg-drawer-left { width: 100vw;") < i_close
+
+
+def test_no_duplicate_starting_style_block():
+    # v0.51.33: the two-step edit had left two identical @starting-style blocks.
+    assert APP_CSS.count(
+        ".dlg.dlg-drawer-left[open] { opacity: 0; transform: translateX(-100%); }") == 1
 
 
 def test_other_dialogs_stay_centered_modals():

@@ -12055,18 +12055,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 log.debug("services: plex probe failed: %s", e)
         # v0.51.31: ThemerrDB — the upstream theme catalogue motif syncs from
         # (the user: "any other services worth tracking that motif is built off
-        # of"). Probe the configured git source's smart-HTTP refs endpoint — the
-        # real "can the next sync reach it" signal. `source` = active transport.
-        tdb = {"configured": False, "online": False, "latency_ms": None,
-               "source": settings.sync_source}
+        # of"). v0.51.33 (code-review): this probes the GIT SOURCE repo's
+        # smart-HTTP refs endpoint specifically — NOT whichever transport
+        # `sync.source` names (remote→db_url / database→database_url each hit a
+        # different host). The git repo reliably 200s its refs endpoint, so it's
+        # the honest "is the ThemerrDB project reachable" signal; the card labels
+        # it as git-source reachability + shows `source` as the sync transport
+        # separately (not "via", which falsely implied the transport was probed).
+        # `probeable` gates the http(s)-only check: a git@/file:// git_url (valid
+        # for dulwich) is configured-but-not-probeable, reported as such rather
+        # than a false "unreachable".
         tdb_url = (settings.sync_git_url or "").rstrip("/")
-        if tdb_url:
-            tdb["configured"] = True
+        tdb = {"configured": bool(tdb_url), "probeable": False, "online": False,
+               "latency_ms": None, "source": settings.sync_source}
+        if tdb_url.startswith(("http://", "https://")):
+            tdb["probeable"] = True
             import time as _time
             import httpx
             try:
                 t0 = _time.perf_counter()
-                with httpx.Client(timeout=5.0, follow_redirects=True) as c:
+                # v0.51.33: no follow_redirects — matches the Plex probe + avoids
+                # trailing an operator-set git_url's 30x to an arbitrary host.
+                with httpx.Client(timeout=5.0) as c:
                     r = c.get(f"{tdb_url}/info/refs",
                               params={"service": "git-upload-pack"})
                 if r.status_code == 200:

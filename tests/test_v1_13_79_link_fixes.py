@@ -92,7 +92,7 @@ def test_version_string_matches_current_release():
     next tag lands, this constant must be updated alongside
     app/__init__.py."""
     init_py = (REPO / "app" / "__init__.py").read_text()
-    assert '__version__ = "0.51.32"' in init_py, (
+    assert '__version__ = "0.51.33"' in init_py, (
         "Bump app/__init__.py __version__ to match the next tag — "
         "see CLAUDE.md § release conventions"
     )

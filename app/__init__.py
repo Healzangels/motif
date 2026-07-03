@@ -3009,7 +3009,29 @@
 #   info-dlg computes position:fixed left/top 0, 440px full-height, green-deep
 #   border-right, display:flex, translateX(0) on-screen; sticky head at y0, body
 #   scrolls; the other dialogs unaffected.
-__version__ = "0.51.32"
+# 0.51.33 — code-review follow-ups on the v0.51.31/32 pair (10-angle review; no
+#   crashers/data-loss found — all in the two just-shipped tags). (1) The
+#   // SERVICES ThemerrDB card was honest-ified: it probes the GIT SOURCE repo's
+#   smart-HTTP refs endpoint specifically, but labeled the card "via {sync.source}"
+#   as if it health-checked whichever transport (remote→db_url / database→
+#   database_url each hit a different host) — misleading whenever source != git.
+#   Now the status says "git source · Nms" (what's actually probed) and the
+#   transport shows as a separate "sync: X" note. (2) Non-http(s) git_url (git@ /
+#   file://, valid for dulwich, settable via MOTIF_DB_GIT_URL bypassing the
+#   config-file scheme validator) → new `probeable` flag → card shows "git source ·
+#   not probed" instead of a false "unreachable". (3) Dropped follow_redirects from
+#   the probe (Plex probe it mirrors lacks it; avoids trailing an operator git_url's
+#   30x to an arbitrary host). (4) INFO drawer goes FULL-SCREEN on ≤600px again
+#   (the user's pick) — the drawer's .dlg.dlg-drawer-left (0,2,0) had silently
+#   out-specificity'd the v0.50.50 mobile full-screen .dlg rule (0,1,0), so a phone
+#   got a cramped 92vw drawer; re-stated at drawer specificity in a mobile @media.
+#   (5) CSS cleanup: deleted a duplicate @starting-style block (two-step-edit
+#   debris), dropped a redundant border-bottom re-declaration on the drawer head,
+#   and extracted a shared --drawer-scrim token so the ops-drawer + info-drawer
+#   scrims stay in sync by reference not by two copies. Serial-probe latency (~15s
+#   worst case, flagged) left as-is: acceptable for a 30s dashboard poll where 0-1
+#   deps are usually down; revisit with concurrency if it bites.
+__version__ = "0.51.33"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

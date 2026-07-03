@@ -219,6 +219,10 @@
   --lemon-rgb:   245, 221, 43;
   --white-rgb:   255, 255, 255;
   --black-rgb:   0, 0, 0;
+  /* v0.51.33 (code-review): shared overlay-drawer scrim so the ops-drawer
+     (ops.css) + the // MOTIF INFO left drawer (.dlg-drawer-left) stay in sync
+     by reference, not by two copies of the literal. */
+  --drawer-scrim: rgba(var(--black-rgb), 0.45);
   /* v1.24.2: neutral grey for the muted-metadata family (edition pills,
      dropped-TDB pill, op-tone-drop) — was ~7 raw rgba(var(--grey-rgb),…) sites. */
   --grey-rgb:    180, 180, 180;
@@ -3678,11 +3682,9 @@ body.help-mode .settings-help-about { display: block; }
 @starting-style {
   .dlg.dlg-drawer-left[open] { opacity: 0; transform: translateX(-100%); }
 }
-@starting-style {
-  .dlg.dlg-drawer-left[open] { opacity: 0; transform: translateX(-100%); }
-}
-/* scrim matches the ops-drawer (lighter, no blur) for cross-surface parity. */
-.dlg.dlg-drawer-left::backdrop { background: rgba(var(--black-rgb), 0.45); backdrop-filter: none; }
+/* scrim matches the ops-drawer (lighter, no blur) for cross-surface parity —
+   v0.51.33 (code-review): both pull the shared --drawer-scrim token. */
+.dlg.dlg-drawer-left::backdrop { background: var(--drawer-scrim); backdrop-filter: none; }
 /* the article becomes the single scroll region; the head pins on top like the
    ops-drawer head (sticky + border + solid bg so content scrolls under it). */
 .dlg.dlg-drawer-left .dlg-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-gutter: stable; padding: 0; }
@@ -3693,7 +3695,8 @@ body.help-mode .settings-help-about { display: block; }
   margin: 0;
   padding: 14px 18px;
   background: var(--bg-elev);
-  border-bottom: 1px solid var(--line);
+  /* v0.51.33 (code-review): the bottom rule inherits from the base .dlg-head —
+     no redundant re-declaration. Only the sticky/pad/bg differ from the modal. */
 }
 .dlg.dlg-drawer-left #info-dlg-body { padding: 18px; }
 
@@ -5829,6 +5832,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
     overflow-y: auto;
   }
   .dlg-body { padding: var(--gap-4); }
+  /* v0.51.33 (code-review, the user): the // MOTIF INFO left drawer fills the
+     viewport on a phone like every other .dlg (the v0.50.50 intent above) rather
+     than the 92vw desktop drawer — the base mobile `.dlg` rule (0,1,0) can't beat
+     `.dlg.dlg-drawer-left` (0,2,0), so it's re-stated here at drawer specificity.
+     It stays a left-anchored panel (still slides in from -X via the base rule) but
+     spans 100vw. Kept INSIDE this single mobile block (not a 2nd @media) so the
+     canonical-block brace scan in test_v0_50_88 still sees the whole thing. */
+  .dlg.dlg-drawer-left { width: 100vw; max-width: none; border-right: 0; }
 }
 
 /* v1.12.71: TRY THIS NEXT recovery section in the INFO card.
