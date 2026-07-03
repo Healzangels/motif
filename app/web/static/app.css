@@ -5626,6 +5626,35 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      dual-axis-clip trap that bit .table-scroll / .tabs. */
   .sync-history-bars { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .sync-hist-table { min-width: 480px; }
+  /* v0.51.26: the horizontal-scroll DATA regions (dash-pair cards, the library
+     table, sync-history) fell through to the global ::-webkit-scrollbar — a
+     10px muted-gray (--fg-mute) bar that read as foreign next to the green
+     header + the nav's own thin-green scroll strip (the user: the dash scroll
+     bar "is a different color and doesn't match the rest of the header"). Give
+     them the SAME thin-green treatment the nav (v0.51.3) uses so every mobile
+     scroll strip is one visual language. */
+  .dash-pair-col, .table-scroll, .sync-history-bars {
+    scrollbar-width: thin;
+    scrollbar-color: var(--green-deep) transparent;
+  }
+  .dash-pair-col::-webkit-scrollbar,
+  .table-scroll::-webkit-scrollbar,
+  .sync-history-bars::-webkit-scrollbar { height: 4px; }
+  .dash-pair-col::-webkit-scrollbar-track,
+  .table-scroll::-webkit-scrollbar-track,
+  .sync-history-bars::-webkit-scrollbar-track { background: transparent; }
+  .dash-pair-col::-webkit-scrollbar-thumb,
+  .table-scroll::-webkit-scrollbar-thumb,
+  .sync-history-bars::-webkit-scrollbar-thumb {
+    background: var(--green-deep); border-radius: 2px; border: 0;
+  }
+  /* v0.51.26: EXISTING BACKUPS rows were a flex row [name | DOWNLOAD RESTORE
+     DELETE]; the three flex-shrink:0 buttons ate the width and crushed the
+     min-width:0 name column to ~one char, so word-break:break-all stacked the
+     filename VERTICALLY one letter per line — unreadable (the user). Stack the
+     row on a phone so the name gets the full width above its actions. */
+  .backup-row { flex-direction: column; align-items: stretch; }
+  .backup-row-actions { justify-content: flex-end; }
 
   /* v0.50.50: the // RESULTS header (title + LEGEND/NEEDS WORK/pager) and the
      pager itself wrap instead of spilling the next/last buttons off the edge. */

@@ -2911,7 +2911,20 @@
 #   plex-specific, preserving the v1.14.62 invariant (this button never locks on
 #   a TDB sync). Verified live: hasOptimistic('plex_enum')=true /
 #   ('tdb_sync')=false. Only the dashboard button touched.
-__version__ = "0.51.25"
+# 0.51.26 — two mobile display fixes (the user). (1) The EXISTING BACKUPS rows
+#   are a flex row [name | DOWNLOAD RESTORE DELETE]; the 3 flex-shrink:0 buttons
+#   ate the width and crushed the min-width:0 name to ~one char, so
+#   word-break:break-all stacked the filename VERTICALLY one letter per line —
+#   unreadable. Stack the row on a phone (flex-direction:column) so the name gets
+#   the full width above its actions. (2) The horizontal-scroll data regions
+#   (v0.51.24 dash-pair cards, the library .table-scroll, sync-history) fell
+#   through to the global 10px muted-gray ::-webkit-scrollbar, which read as
+#   foreign next to the green header + the nav's thin-green scroll strip (the
+#   user: the dash scroll bar "is a different color and doesn't match the rest of
+#   the header"). Give them the nav's thin-green treatment so every mobile scroll
+#   strip is one visual language. Verified live at 375: name = full 319px row
+#   width / one line; dash-pair scrollbar-color = green-deep.
+__version__ = "0.51.26"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
