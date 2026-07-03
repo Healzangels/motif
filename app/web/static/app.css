@@ -5579,6 +5579,28 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      controls drop to a second line under the name instead of overflowing; the
      name keeps its full text and the 30px tap targets stay. */
   .source-pie-col-label { flex-wrap: wrap; min-width: 0; row-gap: var(--gap-1); }
+  /* v0.51.27: centre the library toolbar's button groups on a phone so they read
+     as one uniform centred stack instead of the desktop's left-chips /
+     right-pinned-tools split (the user: centre "all standard 4k and the favorite
+     filters and clear all ... any other that don't fit naturally"). The chip
+     groups (ALL/STANDARD/4K resolution, ALL/THEMED/UNTHEMED status) centre; the
+     resolution + collections-section groups need width:100% so justify-content
+     centres them ON SCREEN rather than inside a left-hugging shrink-wrap box; the
+     preset-star + // CLEAR ALL toolgroup drops its desktop margin-left:auto
+     right-pin so it centres with the rest. */
+  .filterbar { justify-content: center; }
+  .chips { justify-content: center; }
+  .chips[aria-label="resolution"], .chips[aria-label="section"] { width: 100%; }
+  .library-toolgroup { margin-left: 0; }
+  /* v0.51.27: de-jumble the filter drawer — the 72px right-aligned label column
+     shoved each axis's chips into a ragged wrap (the user: "our filters look a
+     bit jumbled"). Put each axis label on its OWN centred line with the chips
+     centred beneath it, so every row reads as a tidy centred group. */
+  .pill-filter-row { justify-content: center; }
+  .pill-filter-label {
+    min-width: 0; flex-basis: 100%; text-align: center;
+    padding-right: 0; margin-right: 0;
+  }
   /* Hero: actions span the full width under the title (the row already wraps). */
   .hero-row { gap: var(--gap-3); }
   .sync-actions { width: 100%; }

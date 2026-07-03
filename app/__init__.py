@@ -2924,7 +2924,20 @@
 #   the header"). Give them the nav's thin-green treatment so every mobile scroll
 #   strip is one visual language. Verified live at 375: name = full 319px row
 #   width / one line; dash-pair scrollbar-color = green-deep.
-__version__ = "0.51.26"
+# 0.51.27 — centre the library toolbar's button groups + de-jumble the filter
+#   drawer on a phone (the user: centre "all standard 4k and the favorite filters
+#   and clear all ... any other that don't fit naturally", and "our filters look a
+#   bit jumbled"). @media <=600px: .filterbar + .chips justify-content:center; the
+#   resolution + collections-section .chips get width:100% so they centre ON
+#   SCREEN not inside a left-hugging shrink box; the preset-star + // CLEAR ALL
+#   toolgroup drops its desktop margin-left:auto right-pin. Filter drawer: each
+#   axis label (.pill-filter-label) drops its 72px right-aligned column for its
+#   OWN centred full-width line (flex-basis:100%, text-align:center) with the
+#   chips centred beneath (.pill-filter-row justify-content:center) — no more
+#   ragged wrap. Verified live at 375: resolution chips centred (28-347), filter
+#   labels centred full-width. .chips is only used in library.html (3 groups), so
+#   no collateral. Desktop untouched.
+__version__ = "0.51.27"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
