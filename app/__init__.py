@@ -3120,7 +3120,16 @@
 #   a bare "loading…" (colspan 10→11 so it centres under the full table). The SVG
 #   is inlined in the template for SSR first paint; test_v0_51_41 pins it identical
 #   to the JS helper so they can't drift.
-__version__ = "0.51.41"
+# 0.51.42 — code-review fix on v0.51.37: api_item resolved plex_independent_theme
+#   + has_theme with a COUPLED gate (`_pi_independent is None AND _pi_has_theme is
+#   None`). has_theme is NOT NULL, so a tier-1 rating_key hit always set it, which
+#   short-circuited the section/global MAX fallback for a NULL plex_independent_
+#   theme (a sidecar row) — the info-card +P label regressed 1 → (none) for a
+#   multi-edition title whose queried edition's flag was NULL but a sibling's was
+#   1. Now each tier runs if EITHER flag is unresolved + fills only the column
+#   still None, so independent resolves off siblings again while a resolved rk
+#   value is never clobbered. Behavioral test + a decouple source guard.
+__version__ = "0.51.42"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

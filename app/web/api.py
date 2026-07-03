@@ -15550,24 +15550,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if _pind:
                         _pi_independent = _pind["plex_independent_theme"]
                         _pi_has_theme = _pind["has_theme"]
-                if _pi_independent is None and _pi_has_theme is None and section_id:
+                # v0.51.42 (code-review): resolve each flag INDEPENDENTLY. The
+                # v0.51.37 gate `_pi_independent is None AND _pi_has_theme is None`
+                # coupled them — has_theme is NOT NULL, so a tier-1 rk-hit always
+                # set it, which then blocked the section/global fallback from
+                # resolving a NULL plex_independent_theme (a sidecar row) off its
+                # siblings (regressed the +P label to (none)). Run each tier if
+                # EITHER is still unresolved, and fill only the column still None
+                # so a resolved rk value is never clobbered by a sibling MAX.
+                if (_pi_independent is None or _pi_has_theme is None) and section_id:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
                         "WHERE section_id = ? AND guid_tmdb = ? AND media_type = ?",
                         (section_id, str(tmdb_id), _info_plex_type)).fetchone()
                     if _pind:
-                        _pi_independent = _pind["v"]
-                        _pi_has_theme = _pind["h"]
-                if _pi_independent is None and _pi_has_theme is None:
+                        if _pi_independent is None:
+                            _pi_independent = _pind["v"]
+                        if _pi_has_theme is None:
+                            _pi_has_theme = _pind["h"]
+                if _pi_independent is None or _pi_has_theme is None:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
                         "WHERE guid_tmdb = ? AND media_type = ?",
                         (str(tmdb_id), _info_plex_type)).fetchone()
                     if _pind:
-                        _pi_independent = _pind["v"]
-                        _pi_has_theme = _pind["h"]
+                        if _pi_independent is None:
+                            _pi_independent = _pind["v"]
+                        if _pi_has_theme is None:
+                            _pi_has_theme = _pind["h"]
 
             return {
                 "theme": dict(t),
