@@ -5571,6 +5571,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* the SOURCE BREAKDOWN per-donut ◀ ▶ / // HIDE controls (customize mode) were
      ~10-14px zero-padding glyphs jammed into each ~150px card. */
   .source-pie-move, .source-pie-hide { min-height: 30px; min-width: 30px; }
+  /* v0.51.24: that 30px touch bump widened the per-donut control cluster to
+     ~122px, and in the 2-up mobile donut grid (~150px columns) the label's
+     name + space-between controls no longer fit on one line — the label (a grid
+     item, min-width:auto) took its min-content and spilled ~25px past the card
+     (the user's "audit no other sections do this"). Let the label wrap so the
+     controls drop to a second line under the name instead of overflowing; the
+     name keeps its full text and the 30px tap targets stay. */
+  .source-pie-col-label { flex-wrap: wrap; min-width: 0; row-gap: var(--gap-1); }
   /* Hero: actions span the full width under the title (the row already wraps). */
   .hero-row { gap: var(--gap-3); }
   .sync-actions { width: 100%; }
@@ -5591,6 +5599,22 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
      viewport; drop the floor so the two cards stack flush. */
   .dash-pair-col { min-width: 0; }
+  /* v0.51.24: dropping the min-width floor alone did NOT stack them — the flex
+     items kept a calc(50%) basis and sat 2-up at ~152px each, and each 6-7-col
+     compact table (476-599px of nowrap cells) then spilled hundreds of px past
+     its card (the user: coverage + general stats "spilling out of bounds of
+     their sections" on mobile). A flex item won't shrink below its content's
+     min-content even with min-width:0, so the card grew to the table's width and
+     pushed the whole page wider than the viewport. Fix: drop to plain block flow
+     on a phone so each card is one full-width row, and make the card its OWN
+     horizontal-scroll context (min-width:0 above + overflow-x) so the wide table
+     scrolls INSIDE the card instead of spilling — the v0.50.86 SYNC HISTORY
+     swipe pattern. Only the <table> overflows vertically-safe content, so
+     overflow-x:auto doesn't hit the dual-axis-clip trap. Scoped to the phone
+     tier; desktop keeps the v1.24.66/69/77 flex 2-up equal-height layout. */
+  .dash-pair { display: block; }
+  .dash-pair-col { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .dash-pair-col > .table { min-width: 480px; }
   /* v0.50.86: SYNC HISTORY's 5-column table (several nowrap cells: WHEN, the
      TRANSPORT/STATUS pills, DURATION) has no min-width floor on the OUTER card, so
      on a phone it just spilled past the card's right edge with no way to reach the

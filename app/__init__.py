@@ -2880,7 +2880,23 @@
 #   full card from section_context.is_4k (api_item), the bare no-theme card from
 #   the cached row's section_is_4k. .tier-badge-4k reuses the settings
 #   .lib-flag-pill-4k amber "premium tier" palette (v1.11.9) with no hover/cursor.
-__version__ = "0.51.23"
+# 0.51.24 — mobile card overflow (the user: "the per section coverage and the
+#   general statistics in mobile view are spilling out of bounds of their
+#   sections, can we also do an audit to make sure no other sections in mobile
+#   view are doing this"). The v1.24.66 .dash-pair 2-up kept both cards flex at
+#   ~152px each on a phone, so each 6-7-col compact table (476-599px of nowrap
+#   cells) spilled hundreds of px past its card — dropping min-width alone never
+#   actually stacked them (a flex item won't shrink below its content's
+#   min-content). Fix (@media <=600px): plain block flow so each card is one
+#   full-width row + the card becomes its own overflow-x scroll context so the
+#   wide table scrolls INSIDE it (the v0.50.86 SYNC HISTORY swipe pattern) +
+#   a table min-width floor for readability. The audit also caught SOURCE
+#   BREAKDOWN: the v0.51.6 30px touch bump widened the per-donut controls to
+#   ~122px, overflowing the ~150px 2-up donut column by ~25px — the label now
+#   wraps the controls under the name. All scoped to the phone tier; desktop
+#   keeps the flex 2-up equal-height layout (verified live at 375 + 1280). Every
+#   other page (movies/tv/anime/collections/queue/settings) audited clean at 375.
+__version__ = "0.51.24"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -38,8 +38,21 @@ def test_every_card_has_a_hide_button():
 
 
 def test_hide_button_and_restore_chip_styled():
-    i = CSS.index(".source-pie-col-label {")
-    label = CSS[i:CSS.index("}", i)]
+    # v0.51.24: a mobile @media override added an earlier .source-pie-col-label
+    # rule (flex-wrap the controls under the name on a phone), so the FIRST
+    # match is no longer the base rule — scan for the base one that carries the
+    # name-left / HIDE-right layout.
+    label = ""
+    start = 0
+    while True:
+        i = CSS.find(".source-pie-col-label {", start)
+        if i == -1:
+            break
+        block = CSS[i:CSS.index("}", i)]
+        if "justify-content: space-between" in block:
+            label = block
+            break
+        start = i + 1
     assert "justify-content: space-between" in label  # name left, HIDE right
     assert ".source-pie-hide {" in CSS
     assert ".source-pie-restore-chip {" in CSS
