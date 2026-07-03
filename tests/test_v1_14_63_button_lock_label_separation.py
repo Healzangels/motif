@@ -88,20 +88,32 @@ def test_dash_refresh_plex_textContent_assignment_uses_plex_enum_only():
     `dashPlexBusy = themerrdbBusy || plexEnumBusy`. The label
     flipped to "// REFRESHING PLEX…" during a TDB sync."""
     block = _strip_js_comments(_btn_state_block("sync-plex-btn"))
-    # Pin the ternary shape: textContent = plexEnumBusy ? '...' : '...'
+    # v0.51.25: ternary now reads `plexRefreshing` = plexEnumBusy OR the button's
+    # own 'plex_enum' optimistic. The v1.14.62 contract still holds because both
+    # terms are the button's OWN operation (asserted below).
     pattern = re.compile(
-        r"\.textContent\s*=\s*plexEnumBusy\s*\?\s*"
+        r"\.textContent\s*=\s*plexRefreshing\s*\?\s*"
         r"'//\s*REFRESHING PLEX[^']*'\s*"
         r":\s*'//\s*REFRESH PLEX'",
     )
     assert pattern.search(block), (
         "REFRESH PLEX button's textContent assignment doesn't "
-        "match the v1.14.62 contract: a ternary on `plexEnumBusy` "
-        "alone (NOT a combined themerrdbBusy||plexEnumBusy predicate). "
-        "Pre-fix the assignment lived inside `if (dashPlexBusy) "
-        "{ ... textContent = '// REFRESHING PLEX…' }` where "
-        "dashPlexBusy = themerrdbBusy || plexEnumBusy → false "
-        "REFRESHING label during a TDB sync."
+        "match the contract: a ternary on the own-operation "
+        "`plexRefreshing` local (NOT a combined predicate that "
+        "includes themerrdbBusy)."
+    )
+    # The v1.14.62 invariant, enforced on the actual predicate (comments
+    # stripped): plexRefreshing may only union the button's OWN operation —
+    # plexEnumBusy and a 'plex_enum'-kind optimistic — NEVER themerrdbBusy.
+    fn = _strip_js_comments(_refresh_topbar_status_block())
+    m = re.search(r"const plexRefreshing\s*=\s*([^;]+);", fn, re.DOTALL)
+    assert m, "the `plexRefreshing` own-op local is missing"
+    defn = m.group(1)
+    assert "plexEnumBusy" in defn
+    assert "hasOptimistic('plex_enum')" in defn
+    assert "themerrdbBusy" not in defn, (
+        "plexRefreshing must never fold in themerrdbBusy — that re-introduces "
+        "the v1.14.62 'REFRESHING PLEX during a TDB sync' bug."
     )
 
 
@@ -133,13 +145,13 @@ def test_dash_refresh_plex_disable_predicate_is_plex_enum_only():
     stays clickable during a TDB sync, the click queues a
     plex_enum, and the long worker runs it after sync drains."""
     block = _strip_js_comments(_btn_state_block("sync-plex-btn"))
-    # Narrowed predicate.
-    pattern = re.compile(r"\.disabled\s*=\s*plexEnumBusy\s*;")
+    # v0.51.25: disable reads the own-operation `plexRefreshing` local (the
+    # v0.51.25 union of plexEnumBusy + the button's plex_enum optimistic).
+    pattern = re.compile(r"\.disabled\s*=\s*plexRefreshing\s*;")
     assert pattern.search(block), (
-        "REFRESH PLEX button's `.disabled` assignment isn't "
-        "`plexEnumBusy` only. v1.14.66 narrowed it from "
-        "`themerrdbBusy || plexEnumBusy` — see the test file's "
-        "module docstring + the v1.14.66 marker in app.js."
+        "REFRESH PLEX button's `.disabled` assignment isn't the "
+        "own-operation `plexRefreshing` local. The predicate must stay "
+        "plex-only — see the v1.14.66 + v0.51.25 markers in app.js."
     )
     # Pre-v1.14.66 form must not return.
     assert "themerrdbBusy || plexEnumBusy" not in block

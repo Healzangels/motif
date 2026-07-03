@@ -52,14 +52,22 @@ def test_dash_refresh_plex_label_only_flips_when_plex_enum_busy():
     for the label decision. themerrdbBusy is irrelevant to
     whether Plex is actually being refreshed."""
     js = JS.read_text()
-    # The new shape: ternary on plexEnumBusy alone.
+    # v0.51.25: the ternary now reads the `plexRefreshing` local — plexEnumBusy
+    # OR the button's OWN 'plex_enum' optimistic placeholder. Both terms are the
+    # button's own operation, so the label still only flips for a Plex refresh
+    # (never a TDB sync). The local is defined just above the anchor.
     anchor = js.index("const dashSyncPlexBtn = document.getElementById('sync-plex-btn');")
     block = js[anchor:anchor + 1500]
-    # Label assignment uses plexEnumBusy only.
-    assert "plexEnumBusy\n          ? '// REFRESHING PLEX…'\n          : '// REFRESH PLEX'" in block
-    # v1.14.62 marker.
-    block_with_marker = js[max(0, anchor - 1500):anchor + 1500]
+    assert "plexRefreshing\n          ? '// REFRESHING PLEX…'\n          : '// REFRESH PLEX'" in block
+    # plexRefreshing is own-operation only: plexEnumBusy || a plex_enum optimistic.
+    defn = js[max(0, anchor - 900):anchor]
+    assert "const plexRefreshing = plexEnumBusy ||" in defn
+    assert "hasOptimistic('plex_enum')" in defn
+    # v1.14.62 + v0.51.25 markers (widened window — the v0.51.25 comment sits
+    # between the v1.14.62 rationale block and the button code).
+    block_with_marker = js[max(0, anchor - 2800):anchor + 1500]
     assert "v1.14.62:" in block_with_marker
+    assert "v0.51.25:" in block_with_marker
 
 
 def test_dash_refresh_plex_disable_predicate_is_plex_enum_only():
@@ -77,8 +85,9 @@ def test_dash_refresh_plex_disable_predicate_is_plex_enum_only():
     js = JS.read_text()
     anchor = js.index("const dashSyncPlexBtn = document.getElementById('sync-plex-btn');")
     block = js[anchor:anchor + 1500]
-    # The narrowed predicate.
-    assert "dashSyncPlexBtn.disabled = plexEnumBusy;" in block
+    # v0.51.25: disable reads the own-operation `plexRefreshing` local
+    # (plexEnumBusy || the button's plex_enum optimistic) — still plex-only.
+    assert "dashSyncPlexBtn.disabled = plexRefreshing;" in block
     # The pre-v1.14.66 form must NOT survive.
     assert "dashSyncPlexBtn.disabled = themerrdbBusy || plexEnumBusy" not in block
 

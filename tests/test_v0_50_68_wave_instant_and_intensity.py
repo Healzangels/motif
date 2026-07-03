@@ -49,7 +49,8 @@ def test_bump_raises_the_target_to_the_optimistic_floor():
 
 
 def test_ops_exposes_has_optimistic():
-    assert "function hasOptimistic()" in OPS_JS
+    # v0.51.25: gained an optional `kind` filter (bare call still any-kind).
+    assert "function hasOptimistic(kind)" in OPS_JS
     assert "_optimisticOp.expiresAt > Date.now()" in OPS_JS
     # exported so app.js can union it into the busy calc.
     assert re.search(r"window\.motifOps\s*=\s*\{[^}]*\bhasOptimistic\b", OPS_JS, re.S)

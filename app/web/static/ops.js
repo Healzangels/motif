@@ -1514,8 +1514,15 @@
   // v0.50.68: is a click-time optimistic op still live? refreshTopbarStatus
   // unions this into its busy calc so the hero wave can't be cleared in the
   // gap between the click and the enqueued job showing up in /api/stats.
-  function hasOptimistic() {
-    return !!_optimisticOp && _optimisticOp.expiresAt > Date.now();
+  // v0.51.25: optional `kind` filter. Callers that own a SPECIFIC button's
+  // lock (e.g. the dashboard // REFRESH PLEX, kind 'plex_enum') pass their
+  // kind so the button stays locked ONLY for its own optimistic op — a
+  // bare hasOptimistic() (no arg) keeps the any-kind behavior the hero wave
+  // wants. Kind-specificity preserves the v1.14.62 invariant: the REFRESH
+  // PLEX button must never lock on a foreign op (e.g. a TDB sync).
+  function hasOptimistic(kind) {
+    return !!_optimisticOp && _optimisticOp.expiresAt > Date.now()
+      && (kind == null || _optimisticOp.kind === kind);
   }
 
   // v1.15.35: explicit clear for the failure path. Pre-fix the

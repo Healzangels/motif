@@ -64,19 +64,26 @@ API = REPO / "app" / "web" / "api.py"
 
 
 def test_dash_refresh_plex_disable_predicate_drops_themerrdb_busy():
-    """The disable assignment must read `dashSyncPlexBtn.disabled
-    = plexEnumBusy;` — `themerrdbBusy` is dropped. The long worker
-    serializes sync/plex_enum naturally; queueing a Plex refresh
-    during a TDB sync is safe."""
+    """`themerrdbBusy` must stay dropped from the disable predicate — the long
+    worker serializes sync/plex_enum, so queueing a Plex refresh during a TDB
+    sync is safe. v0.51.25: the disable now reads the own-operation
+    `plexRefreshing` local (plexEnumBusy || the button's plex_enum optimistic),
+    which is still plex-only — it must never fold in themerrdbBusy."""
     js = JS.read_text()
     # Anchor on the v1.14.66 marker so the assertion stays
     # localized to the dashSyncPlexBtn block.
     anchor = js.index("v1.14.66: dropped themerrdbBusy from the disable predicate")
-    block = js[anchor:anchor + 2000]
-    # The new (narrowed) disable line.
-    assert "dashSyncPlexBtn.disabled = plexEnumBusy;" in block
-    # The old (broader) line must NOT appear anywhere in the block.
+    # v0.51.25: widened from 2000 — the v0.51.25 comment + plexRefreshing local
+    # sit between the v1.14.66 marker and the disable line.
+    block = js[anchor:anchor + 2600]
+    # v0.51.25: the disable line reads the own-operation plexRefreshing local.
+    assert "dashSyncPlexBtn.disabled = plexRefreshing;" in block
+    # The plexRefreshing predicate is plexEnumBusy || a plex_enum optimistic.
+    assert "const plexRefreshing = plexEnumBusy ||" in block
+    assert "hasOptimistic('plex_enum')" in block
+    # The old (broader) forms must NOT appear anywhere in the block.
     assert "dashSyncPlexBtn.disabled = themerrdbBusy || plexEnumBusy" not in block
+    assert "plexRefreshing = themerrdbBusy" not in block
 
 
 def test_dash_refresh_plex_writer_lock_tooltip_retired():

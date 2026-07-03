@@ -2896,7 +2896,22 @@
 #   wraps the controls under the name. All scoped to the phone tier; desktop
 #   keeps the flex 2-up equal-height layout (verified live at 375 + 1280). Every
 #   other page (movies/tv/anime/collections/queue/settings) audited clean at 375.
-__version__ = "0.51.24"
+# 0.51.25 — dashboard // REFRESH PLEX button locks instantly on click (the user:
+#   "Plex refresh button is not locking when clicking on the dashboard and is
+#   queued up, it takes a few seconds to show refreshing"). refreshTopbarStatus
+#   (the 10s poll that owns the button) set .disabled/.textContent from
+#   plexEnumBusy alone, and plexEnumBusy comes from /api/stats which is cached
+#   ~750ms-1s + hash-skipped — so for ~1-2s after a click the poll served the
+#   STALE pre-click snapshot (plex_enum_in_flight still 0) and UNLOCKED the
+#   button the click handler had just locked; it only re-locked once the enqueued
+#   enum finally showed up in stats. Fix: the poll now unions the button's OWN
+#   click-time optimistic placeholder — plexRefreshing = plexEnumBusy ||
+#   hasOptimistic('plex_enum') — the same bridge the hero wave already uses
+#   (v0.50.68). hasOptimistic gained an optional kind filter so the union is
+#   plex-specific, preserving the v1.14.62 invariant (this button never locks on
+#   a TDB sync). Verified live: hasOptimistic('plex_enum')=true /
+#   ('tdb_sync')=false. Only the dashboard button touched.
+__version__ = "0.51.25"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

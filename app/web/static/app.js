@@ -1650,13 +1650,27 @@
       // The plexEnumBusy disable stays — that's the actual operation,
       // not a writer-lock guard. The themerrdbBusy tooltip branch is
       // also retired since the button no longer locks on that signal.
+      // v0.51.25: union the button's OWN click-time optimistic placeholder
+      // (kind 'plex_enum', set by the click handler with a 5s TTL). Pre-fix the
+      // lock read plexEnumBusy alone, and plexEnumBusy comes from /api/stats
+      // which is cached ~750ms-1s + hash-skipped — so for the ~1-2s after a
+      // click the poll served the STALE pre-click snapshot (plex_enum_in_flight
+      // still 0) and UNLOCKED the button, which then re-locked once the enqueued
+      // enum finally showed up: the button "didn't lock, took a few seconds to
+      // show refreshing" (the user). hasOptimistic('plex_enum') bridges exactly
+      // that gap — the same mechanism the hero wave already unions. It is
+      // KIND-SPECIFIC, so the v1.14.62 invariant holds: a pure TDB sync sets no
+      // plex_enum optimistic, so this button still never locks on themerrdbBusy.
+      const plexRefreshing = plexEnumBusy || (window.motifOps
+        && window.motifOps.hasOptimistic
+        && window.motifOps.hasOptimistic('plex_enum'));
       const dashSyncPlexBtn = document.getElementById('sync-plex-btn');
       if (dashSyncPlexBtn) {
-        dashSyncPlexBtn.disabled = plexEnumBusy;
-        dashSyncPlexBtn.textContent = plexEnumBusy
+        dashSyncPlexBtn.disabled = plexRefreshing;
+        dashSyncPlexBtn.textContent = plexRefreshing
           ? '// REFRESHING PLEX…'
           : '// REFRESH PLEX';
-        if (plexEnumBusy) {
+        if (plexRefreshing) {
           dashSyncPlexBtn.title = 'Plex refresh in progress…';
         } else {
           dashSyncPlexBtn.removeAttribute('title');
