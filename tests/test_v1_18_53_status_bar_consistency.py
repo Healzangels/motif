@@ -209,7 +209,7 @@ def test_drawer_open_forces_fast_poll():
     silently widen it."""
     src = OPS_JS.read_text()
     fn_idx = src.index("function openDrawer()")
-    body = src[fn_idx:fn_idx + 1100]
+    body = src[fn_idx:fn_idx + 1600]  # v0.51.35: widened (lock-removal comment grew the fn)
     assert "state.pollInterval = 1000" in body, (
         "v1.18.53: openDrawer must drop pollInterval to 1000ms"
     )

@@ -275,17 +275,20 @@ html {
      too dark to clearly register as a designed element. */
   scrollbar-color: var(--fg-mute) var(--bg);
   scrollbar-width: thin;
-  /* v1.21.30: always reserve the scrollbar gutter so the page doesn't
-     shift sideways when its scrollbar appears/disappears — notably when
-     the LIVE OPS drawer locks the background (ops-drawer-locked below) on
-     Windows / classic-scrollbar systems where the scrollbar takes width. */
+  /* v1.21.30: always reserve the scrollbar gutter so the page doesn't shift
+     sideways when its scrollbar appears/disappears on Windows / classic-
+     scrollbar systems where the scrollbar takes width. (v0.51.35: this alone
+     covers the double-scrollbar case — the ops-drawer background lock that
+     also relied on it was dropped for unsticking the sticky topbar.) */
   scrollbar-gutter: stable;
 }
-/* v1.21.30: lock the page behind the open ops-drawer → only the drawer
-   scrolls, not two scrollbars (page + drawer). The stable gutter above
-   keeps the width identical whether the page scrollbar is shown or
-   suppressed, so locking doesn't jump the layout. */
-html.ops-drawer-locked { overflow: hidden; }
+/* v0.51.35 (the user): the v1.21.30 `html.ops-drawer-locked { overflow:hidden }`
+   background lock was REMOVED — making <html> a clamped scroll container unstuck
+   the position:sticky .topbar (it dropped to its flow position off the top),
+   exposing the page hero + buttons behind the open ops-drawer. The page scrollbar
+   the lock removed hides behind the right-pinned drawer panel anyway, and the
+   `scrollbar-gutter:stable` above still prevents any width shift — so the lock's
+   Windows double-scrollbar concern (v1.21.30) is covered without it. */
 body {
   font-family: var(--font-mono);
   font-size: var(--t-base);

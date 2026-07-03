@@ -3037,7 +3037,20 @@
 #   laid out for the 720px it had as a centered modal (base .dlg max-width), so
 #   440px cramped it. Restored width:720px (max-width:92vw still caps narrower
 #   desktops; mobile stays 100vw full-screen per v0.51.33). CSS one-liner.
-__version__ = "0.51.34"
+# 0.51.35 — ops/status drawer no longer unsticks the topbar (the user: with a
+#   drawer open "you can see the top that's usually behind the bar ... you can
+#   suddenly see buttons"). The v1.21.30 LIVE-OPS background scroll-lock
+#   (`html.ops-drawer-locked { overflow: hidden }`) made <html> a clamped scroll
+#   container, which broke the position:sticky .topbar — it fell to its flow
+#   position off the top of the viewport, exposing the page hero + its buttons
+#   behind the open drawer. Removed the lock (class add/remove in ops.js + the CSS
+#   rule); kept the v1.21.30 `scrollbar-gutter:stable` anti-shift halves, which
+#   alone cover the Windows double-scrollbar case (the page scrollbar hides behind
+#   the right-pinned drawer panel anyway). The INFO drawer (a native <dialog>
+#   modal) never used this lock, so it was already unaffected — verified the
+#   sticky topbar stays put with either drawer open. CSS/JS one-liners + guard
+#   test flipped (test_v1_21_30).
+__version__ = "0.51.35"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

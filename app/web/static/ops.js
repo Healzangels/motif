@@ -2027,12 +2027,13 @@
     void drawer.offsetWidth;
     drawer.classList.add('is-open');
     state.drawerOpen = true;
-    // v1.21.30: lock the page behind the drawer so there's only ONE
-    // scrollbar (the drawer's), not two (page + drawer). On Windows /
-    // classic-scrollbar systems the second scrollbar takes width and the
-    // page shifts; scrollbar-gutter:stable on html keeps it from jumping
-    // when the page scrollbar is suppressed.
-    document.documentElement.classList.add('ops-drawer-locked');
+    // v0.51.35 (the user): the v1.21.30 `html{overflow:hidden}` background lock
+    // is GONE — it made <html> a clamped scroll container, which UNSTUCK the
+    // position:sticky .topbar (it fell to its flow position off the top),
+    // exposing the page hero + its buttons behind the open drawer. The page
+    // scrollbar it removed is hidden behind the right-pinned drawer panel
+    // anyway, and html's `scrollbar-gutter:stable` still prevents any width
+    // shift — so dropping the lock keeps the topbar stuck with no downside.
     renderDrawerBody(state.ops);
     // Tighten poll while the user's looking.
     if (state.pollInterval !== 1000) {
@@ -2047,7 +2048,8 @@
     if (!drawer) return;
     // v1.20.22: reset expand state so the drawer reopens collapsed.
     state.expandedOpIds.clear();
-    document.documentElement.classList.remove('ops-drawer-locked');  // v1.21.30
+    // v0.51.35: the ops-drawer-locked background lock was removed (it unstuck the
+    // sticky topbar); nothing to clean up here now.
     // v0.50.88: re-hiding while a descendant (e.g. the just-clicked ×
     // button) still has focus trips the SAME aria-hidden/focus warning
     // openDrawer's removeAttribute above avoids on the way in — move focus

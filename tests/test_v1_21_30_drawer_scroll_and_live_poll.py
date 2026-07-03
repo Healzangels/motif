@@ -33,23 +33,23 @@ def test_poll_stays_fast_while_drawer_open():
 
 # ── Bug 1: background scroll-lock + stable gutters ───────────
 
-def test_open_close_toggle_the_lock_class():
-    op = OPS_JS.index("function openDrawer(")
-    open_body = OPS_JS[op:OPS_JS.index("function closeDrawer(")]
-    assert "document.documentElement.classList.add('ops-drawer-locked')" in open_body
-    cl = OPS_JS.index("function closeDrawer(")
-    close_body = OPS_JS[cl:cl + 600]
-    assert "document.documentElement.classList.remove('ops-drawer-locked')" in close_body
+def test_background_lock_removed():
+    # v0.51.35 (the user): the ops-drawer-locked `html{overflow:hidden}` lock was
+    # REMOVED — it unstuck the position:sticky .topbar (dropped it off the top,
+    # exposing the page hero + buttons behind the open drawer). No add/remove of
+    # the class anywhere (a comment may still name it); the CSS rule is gone too.
+    assert "classList.add('ops-drawer-locked')" not in OPS_JS
+    assert "classList.remove('ops-drawer-locked')" not in OPS_JS
+    assert "html.ops-drawer-locked { overflow: hidden; }" not in APP_CSS
 
 
-def test_lock_css_and_stable_gutters():
-    # page locks behind the open drawer
-    assert "html.ops-drawer-locked { overflow: hidden; }" in APP_CSS
-    # page reserves its scrollbar gutter so locking doesn't shift it
-    assert "scrollbar-gutter: stable;" in APP_CSS
-    # the drawer's own scroll reserves its gutter so expand doesn't reflow
+def test_stable_gutters_survive():
+    # the anti-shift halves of v1.21.30 STAY — they were never the problem and
+    # keep the width identical (the page scrollbar hides behind the right-pinned
+    # drawer, so no double-scrollbar despite dropping the lock).
+    assert "scrollbar-gutter: stable;" in APP_CSS          # page reserves its gutter
     idx = OPS_CSS.index(".ops-drawer-body {")
-    assert "scrollbar-gutter: stable;" in OPS_CSS[idx:idx + 450]
+    assert "scrollbar-gutter: stable;" in OPS_CSS[idx:idx + 450]  # drawer reserves its own
 
 
 def test_version_bumped():
