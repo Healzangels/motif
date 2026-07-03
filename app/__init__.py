@@ -2868,7 +2868,19 @@
 #   has_both / >=2 sections); JS hydrate + init-load + switchLibraryTab
 #   pre-apply mirror it via _allChipAvailable, defaulting ALL only when no
 #   per-tab choice was ever saved.
-__version__ = "0.51.22"
+# 0.51.23 — amber 4K tier badge next to the title (the user: after // ALL became
+#   the default, "if a movie exists in both 4k and standard its impossible to
+#   tell them apart at a glance, can we make a amber 4k symbol similar to in the
+#   setting section chip that sits next to the title of the 4k library version
+#   and in the info card"). /api/library now returns section_is_4k per row
+#   (ps.is_4k); renderLibraryRow draws a non-interactive <span.tier-badge
+#   .tier-badge-4k>4K</span> after the title name whenever section_is_4k — so a
+#   4K row is distinguishable at a glance in the combined // ALL view AND the
+#   dedicated 4K section. Both INFO-card render paths draw the same badge: the
+#   full card from section_context.is_4k (api_item), the bare no-theme card from
+#   the cached row's section_is_4k. .tier-badge-4k reuses the settings
+#   .lib-flag-pill-4k amber "premium tier" palette (v1.11.9) with no hover/cursor.
+__version__ = "0.51.23"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

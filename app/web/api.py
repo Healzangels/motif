@@ -3122,6 +3122,11 @@ def _library_main_query(
                -- surface — exactly what happened in v1.13.38–.41.
                pi.plex_independent_theme,
                ps.title AS section_title,
+               -- v0.51.23: the row's library resolution, so the JS can draw an
+               -- amber 4K badge next to the title. In the // ALL view a title
+               -- present in both the standard AND 4K sections is otherwise
+               -- indistinguishable at a glance (the user).
+               ps.is_4k AS section_is_4k,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
                -- v1.12.107: row's currently-applied URL — matches the

@@ -11115,6 +11115,7 @@
                  too — leaves the title cell with just glyphs +
                  truncatable name. -->
             <span class="title-cell-name">${htmlEscape(it.plex_title)}</span>
+            ${it.section_is_4k ? '<span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}
           </div>
         </td>
         <td class="col-edition">${editionLabel}</td>
@@ -16054,7 +16055,7 @@
       <div class="info-hero">
         ${posterImgHtml}
         <div class="info-hero-meta">
-          <h3 class="info-title">${title}${yr}</h3>
+          <h3 class="info-title">${title}${yr}${it.section_is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}</h3>
           <p class="info-hero-playback muted small">no theme — Plex metadata only</p>
         </div>
       </div>
@@ -16838,7 +16839,7 @@
       <div class="info-hero">
         ${posterImgHtml}
         <div class="info-hero-meta">
-          <h3 class="info-title">${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}</h3>
+          <h3 class="info-title">${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}${sc && sc.is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}</h3>
           ${scopeChips}
           <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
         </div>

@@ -3230,7 +3230,12 @@ body.help-mode .settings-help-about { display: block; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  flex: 1 1 auto;
+  /* v0.51.23: flex-grow 1 -> 0 so the name sizes to its content and the
+     v0.51.23 amber 4K badge sits IMMEDIATELY next to the title (the user)
+     instead of being pushed to the wide col-title cell's right edge. Still
+     shrinks (flex-shrink:1) + min-width:0 + overflow:hidden so a long title
+     ellipsizes — the v1.13.55 behavior — before it can shove the badge off. */
+  flex: 0 1 auto;
   min-width: 0;
 }
 .title-cell > *:not(.title-cell-name) { flex-shrink: 0; }
@@ -4451,6 +4456,31 @@ body.auth-page .auth-card { margin: 0; }
 .edition-pill-meta {
   border-style: dashed;
   border-color: var(--line);
+}
+/* v0.51.23: the amber 4K tier badge next to a 4K library row's title (and in
+   the INFO card). Non-interactive sibling of the settings .lib-flag-pill-4k
+   toggle — same amber "premium tier" palette (v1.11.9), no hover/cursor.
+   Lets the user tell the 4K version of a title from its standard twin at a
+   glance, especially in the combined // ALL view (the user). */
+.tier-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  padding: 1px 5px;
+  border-radius: 3px;
+  text-transform: uppercase;
+  vertical-align: middle;
+  user-select: none;
+}
+.tier-badge-4k {
+  color: var(--amber-bright);
+  border: 1px solid var(--amber);
+  background: rgba(var(--amber-rgb), 0.14);
 }
 /* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
    overwrite something the user might care about; info (cyan) for
