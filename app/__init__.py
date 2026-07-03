@@ -2845,7 +2845,20 @@
 #   v0.50.98/v0.51.10-18 shutters + v0.51.19 #crt-tube wrapper are removed. Verified
 #   live (Web Animations sampling): veil 1→hold→0, beam scaleX 0→1 streak, scaleY
 #   blooms to 2.6, body transform `none` + scroll untouched throughout.
-__version__ = "0.51.20"
+# 0.51.21 — the // ALL library chip + a wider RECENTLY ADDED carousel (the user).
+#   ALL button: on Movies/TV/Anime a new resolution mode that unions the
+#   standard AND 4K sections into one view (shown only when BOTH exist), and on
+#   Collections combines every managed section's collections at once — reversing
+#   the v1.18.18 removal of the collections ALL chip at the user's request. Opt-in
+#   (STANDARD / first-section stays the default; choice persists per tab).
+#   Backend: new `all_res` param on /api/library + _library_main_query SKIPS the
+#   is_4k narrowing when set (collections force section_id=''); _library_resolution
+#   _state gains has_both; /api/library/refresh's all_res branch re-enumerates BOTH
+#   sections (scope <tab>-all). Carousel: _recently_placed_sync LIMIT 24 -> 40.
+#   Verified live: standard=5 / 4K=3 / ALL=8 combined; chip order ALL·STANDARD·4K
+#   with STANDARD active by default; click ALL -> 8 rows, "REFRESH ALL MOVIES",
+#   persisted 'all', survives reload; collections ALL combines both sections.
+__version__ = "0.51.21"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

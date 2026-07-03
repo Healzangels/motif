@@ -558,6 +558,8 @@
         collections: 'COLLECTIONS' }[tab]
     ) || 'PLEX';
     if (tab === 'collections') return tabName;
+    // v0.51.21: // ALL refreshes both resolutions — "REFRESH ALL MOVIES".
+    if (libraryState.allRes) return `ALL ${tabName}`;
     return fourk ? `4K ${tabName}` : tabName;
   }
 
@@ -7589,6 +7591,12 @@
   const libraryState = {
     tab: null,
     fourk: false,
+    // v0.51.21: the // ALL chip. When true, the view unions BOTH the
+    // standard and 4K sections (movies/tv/anime) or every collection
+    // section (collections) — fourk / section_id are then ignored. Opt-in
+    // (default false); persisted per-tab in localStorage 'motif:variant:*'
+    // as 'all' (or 'motif:collections-section' = 'all' for collections).
+    allRes: false,
     // v1.18.1: per-section scope for the /collections tab. Empty
     // string = ALL sections (the default). Set via the per-section
     // chip row's click handler in the tab-toggle bindings below.
@@ -7974,12 +7982,20 @@
   // swapped chips, re-hydrate libraryState, loadLibrary(). Progressive
   // enhancement: the <a href> still works and ANY error falls back to a full
   // navigation, so this can never regress nav.
+  // v0.51.21: clear chip-active across the WHOLE chip group the clicked
+  // chip belongs to (not just the same-attribute chips), so // ALL and
+  // STANDARD/4K (or ALL and the per-section chips) stay mutually exclusive.
+  function _activateChip(b) {
+    const group = b.closest('.chips');
+    if (group) group.querySelectorAll('.chip').forEach((x) =>
+      x.classList.remove('chip-active'));
+    b.classList.add('chip-active');
+  }
   function bindLibraryToolbarChips() {
     document.querySelectorAll('.chips [data-section-id]').forEach((b) => {
       b.addEventListener('click', () => {
-        document.querySelectorAll('.chips [data-section-id]').forEach((x) =>
-          x.classList.remove('chip-active'));
-        b.classList.add('chip-active');
+        _activateChip(b);
+        libraryState.allRes = false;  // v0.51.21: a specific section clears ALL
         libraryState.section_id = b.dataset.sectionId || '';
         // v1.18.1: persist per-tab section choice. Only relevant on /collections.
         try {
@@ -7999,9 +8015,8 @@
     // 4K toggle
     document.querySelectorAll('.chips [data-fourk]').forEach((b) => {
       b.addEventListener('click', () => {
-        document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
-          x.classList.remove('chip-active'));
-        b.classList.add('chip-active');
+        _activateChip(b);
+        libraryState.allRes = false;  // v0.51.21: STANDARD/4K clears ALL
         libraryState.fourk = b.dataset.fourk === '1';
         // v1.14.68: synchronous label flip so the toggle feels instant.
         updateLibraryRefreshBtnLabel();
@@ -8019,6 +8034,29 @@
         refreshTopbarStatus().catch(() => {});
       });
     });
+    // v0.51.21: the // ALL chip — unions both resolutions (movies/tv/anime)
+    // or every collection section. Shares the chip group with STANDARD/4K
+    // (or the per-section chips), so _activateChip clears them all.
+    document.querySelectorAll('.chips [data-allres]').forEach((b) => {
+      b.addEventListener('click', () => {
+        _activateChip(b);
+        libraryState.allRes = true;
+        libraryState.fourk = false;
+        libraryState.section_id = '';
+        updateLibraryRefreshBtnLabel();
+        try {
+          const tabKey = (document.getElementById('library-tab') || {}).value;
+          if (tabKey === 'collections') {
+            localStorage.setItem('motif:collections-section', 'all');
+          } else if (tabKey) {
+            localStorage.setItem(`motif:variant:${tabKey}`, 'all');
+          }
+        } catch (_) { /* private mode / quota — fine */ }
+        libraryState.page = 1;
+        loadLibrary().catch(console.error);
+        refreshTopbarStatus().catch(() => {});
+      });
+    });
   }
 
   function hydrateLibraryStateForTab(tab, sp) {
@@ -8033,7 +8071,23 @@
     libraryState.selected.clear();
     libraryState.selectedRows.clear();
     updateLibrarySelectionUi();
-    if (tab === 'collections') {
+    // v0.51.21: resolve the // ALL state FIRST — it overrides fourk/section.
+    // The URL wins: an explicit ?all_res=… decides it; an explicit ?fourk=…
+    // or ?section_id=… means a specific (non-ALL) pick; only a bare URL
+    // falls back to the persisted per-tab choice ('all').
+    let allRes = false;
+    if (sp && sp.has('all_res')) {
+      const v = sp.get('all_res');
+      allRes = (v === '1' || v === 'true');
+    } else if (!sp || (!sp.has('fourk') && !sp.has('section_id'))) {
+      try {
+        allRes = (tab === 'collections')
+          ? localStorage.getItem('motif:collections-section') === 'all'
+          : localStorage.getItem('motif:variant:' + tab) === 'all';
+      } catch (_) { /* fine */ }
+    }
+    libraryState.allRes = allRes;
+    if (tab === 'collections' || allRes) {
       libraryState.fourk = false;
     } else {
       let f = false;
@@ -8045,12 +8099,14 @@
       }
       libraryState.fourk = f;
     }
-    if (tab === 'collections') {
+    if (tab === 'collections' && !allRes) {
       let sec = (sp && sp.get('section_id')) || '';
       if (!sec) {
         try { sec = localStorage.getItem('motif:collections-section') || ''; } catch (_) { /* fine */ }
       }
       // v1.18.18 default-to-first-chip logic, mirrored from the init hydration.
+      // v0.51.21: 'all' is a sentinel handled above, never a section_id here.
+      if (sec === 'all') sec = '';
       const chipNodes = document.querySelectorAll('.chips [data-section-id]');
       const validSecIds = new Set();
       chipNodes.forEach((c) => { if (c.dataset.sectionId) validSecIds.add(c.dataset.sectionId); });
@@ -8061,10 +8117,16 @@
       libraryState.section_id = '';
     }
     // reflect the resolved variant/section on the freshly-swapped chips.
+    // v0.51.21: the // ALL chip is mutually exclusive with STANDARD/4K + the
+    // per-section chips — none of those are active while allRes is set.
+    document.querySelectorAll('.chips [data-allres]').forEach((x) =>
+      x.classList.toggle('chip-active', libraryState.allRes));
     document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
-      x.classList.toggle('chip-active', x.dataset.fourk === (libraryState.fourk ? '1' : '0')));
+      x.classList.toggle('chip-active',
+        !libraryState.allRes && x.dataset.fourk === (libraryState.fourk ? '1' : '0')));
     document.querySelectorAll('.chips [data-section-id]').forEach((x) =>
-      x.classList.toggle('chip-active', (x.dataset.sectionId || '') === libraryState.section_id));
+      x.classList.toggle('chip-active',
+        !libraryState.allRes && (x.dataset.sectionId || '') === libraryState.section_id));
     // pill filters (SRC/TDB/DL/PL/LINK/ATTN), q + sort are intentionally KEPT in
     // memory across the switch — mirrors the full-nav cross-tab persistence
     // (v1.13.13) without the sessionStorage round-trip.
@@ -8117,20 +8179,37 @@
     // the server hides an unavailable variant with style.display:none, so only
     // retarget when the wanted chip is actually shown.
     if (tab !== 'collections') {
+      // v0.51.21: resolve the wanted resolution (ALL / STANDARD / 4K) the
+      // same way hydrateLibraryStateForTab will, so the pre-swap paint
+      // matches and there's no one-frame flash of the server's default.
+      let wantAll = false;
       let wantFourk = false;
-      if (url.searchParams.has('fourk')) {
+      if (url.searchParams.has('all_res')) {
+        const v = url.searchParams.get('all_res');
+        wantAll = (v === '1' || v === 'true');
+      } else if (url.searchParams.has('fourk')) {
         const v = url.searchParams.get('fourk');
         wantFourk = (v === '1' || v === 'true');
       } else {
-        try { wantFourk = localStorage.getItem('motif:variant:' + tab) === 'fourk'; } catch (_) { /* private mode — fine */ }
+        try {
+          const pv = localStorage.getItem('motif:variant:' + tab);
+          wantAll = pv === 'all';
+          wantFourk = pv === 'fourk';
+        } catch (_) { /* private mode — fine */ }
       }
+      const allc = newChips.querySelector('[data-allres]');
       const std = newChips.querySelector('[data-fourk="0"]');
       const fk = newChips.querySelector('[data-fourk="1"]');
-      if (std && fk) {
+      const clearActive = () => {
+        [allc, std, fk].forEach((c) => c && c.classList.remove('chip-active'));
+      };
+      if (wantAll && allc && allc.style.display !== 'none') {
+        clearActive();
+        allc.classList.add('chip-active');
+      } else if (std && fk) {
         const want = wantFourk ? fk : std;
-        const other = wantFourk ? std : fk;
         if (want.style.display !== 'none') {
-          other.classList.remove('chip-active');
+          clearActive();
           want.classList.add('chip-active');
         }
       }
@@ -8189,10 +8268,15 @@
       page: libraryState.page,
       per_page: libraryState.perPage,
     });
+    // v0.51.21: the // ALL chip. Unions both resolutions (movies/tv/anime)
+    // or every collection section; the backend ignores fourk / section_id
+    // when all_res is set, so we skip sending section_id below.
+    if (libraryState.allRes) params.set('all_res', 'true');
     // v1.18.1: section_id is only meaningful for the /collections
     // tab. Other tabs use the fourk binary toggle for the same
     // narrowing axis. Empty string means "all included sections."
-    if (libraryState.tab === 'collections' && libraryState.section_id) {
+    if (libraryState.tab === 'collections' && libraryState.section_id
+        && !libraryState.allRes) {
       params.set('section_id', libraryState.section_id);
     }
     if (libraryState.q) params.set('q', libraryState.q);
@@ -11093,6 +11177,20 @@
     if (!toggle) return;
     const stdBtn = toggle.querySelector('[data-fourk="0"]');
     const fkBtn  = toggle.querySelector('[data-fourk="1"]');
+    // v0.51.21: the // ALL chip — only meaningful (and only shown) when BOTH
+    // resolutions exist. If ALL was persisted but one variant later vanished,
+    // drop back to the single variant so the toggle stays coherent.
+    const allBtn = toggle.querySelector('[data-allres]');
+    const bothExist = !!(av.standard && av.fourk);
+    if (allBtn) allBtn.style.display = bothExist ? '' : 'none';
+    if (libraryState.allRes && !bothExist) {
+      libraryState.allRes = false;
+      try {
+        localStorage.setItem(`motif:variant:${tab}`,
+          av.fourk ? 'fourk' : 'standard');
+      } catch (_) { /* fine */ }
+      loadLibrary().catch(() => {});
+    }
     const showAny = av.standard || av.fourk;
     toggle.style.display = showAny ? '' : 'none';
     if (stdBtn) stdBtn.style.display = av.standard ? '' : 'none';
@@ -11121,14 +11219,19 @@
     // Sync chip-active + chip-label state. The 'sole variant' becomes
     // a label; when both exist the chips act as a toggle.
     const sole = (av.standard !== av.fourk);
+    // v0.51.21: in ALL mode neither STANDARD nor 4K is active — the // ALL
+    // chip owns the active state instead (it's never a chip-label; it's only
+    // shown when both variants exist, so it's always a real toggle).
+    const allActive = !!libraryState.allRes && bothExist;
+    if (allBtn) allBtn.classList.toggle('chip-active', allActive);
     if (stdBtn) {
-      const active = sole ? av.standard : !libraryState.fourk;
+      const active = allActive ? false : (sole ? av.standard : !libraryState.fourk);
       stdBtn.classList.toggle('chip-active', active);
       stdBtn.classList.toggle('chip-label',  sole);
       stdBtn.disabled = sole;
     }
     if (fkBtn) {
-      const active = sole ? av.fourk : libraryState.fourk;
+      const active = allActive ? false : (sole ? av.fourk : libraryState.fourk);
       fkBtn.classList.toggle('chip-active', active);
       fkBtn.classList.toggle('chip-label',  sole);
       fkBtn.disabled = sole;
@@ -12383,16 +12486,47 @@
         // search.
         _writeSessionQ(wantQ);
       }
+      // v0.51.21: resolve the // ALL state on first paint (same precedence
+      // as hydrateLibraryStateForTab). URL ?all_res wins; an explicit
+      // ?fourk=/?section_id= means a specific (non-ALL) pick; otherwise fall
+      // back to the persisted 'all' choice. ALL overrides fourk + section_id.
+      try {
+        const tabKey0 = (document.getElementById('library-tab') || {}).value;
+        let initAll = false;
+        if (sp.has('all_res')) {
+          const v = sp.get('all_res');
+          initAll = (v === 'true' || v === '1');
+        } else if (!sp.has('fourk') && !sp.has('section_id')) {
+          initAll = (tabKey0 === 'collections')
+            ? localStorage.getItem('motif:collections-section') === 'all'
+            : localStorage.getItem('motif:variant:' + tabKey0) === 'all';
+        }
+        libraryState.allRes = initAll;
+        if (initAll) {
+          libraryState.fourk = false;
+          libraryState.section_id = '';
+          document.querySelectorAll('.chips [data-allres]').forEach((x) =>
+            x.classList.add('chip-active'));
+          document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+            x.classList.remove('chip-active'));
+          document.querySelectorAll('.chips [data-section-id]').forEach((x) =>
+            x.classList.remove('chip-active'));
+        }
+      } catch (_) { /* fine */ }
+
       // v1.18.1: section_id hydration for the /collections tab.
       // URL param wins; localStorage fallback for return visits.
       // v1.18.18: ALL chip dropped — an empty section_id resolves
       // to the first available section chip (the template uses
       // the same default at first paint). Skipped silently on
       // non-collection tabs (the chip row isn't rendered there).
+      // v0.51.21: the ALL chip is BACK (the user) — skip this per-section
+      // default when allRes is set (the block above already marked ALL).
       try {
         const tabKey = (document.getElementById('library-tab') || {}).value;
-        if (tabKey === 'collections') {
+        if (tabKey === 'collections' && !libraryState.allRes) {
           let wantSec = sp.get('section_id') || '';
+          if (wantSec === 'all') wantSec = '';  // v0.51.21: 'all' is a sentinel
           if (!wantSec) {
             const saved = localStorage.getItem('motif:collections-section') || '';
             wantSec = saved;
@@ -12426,8 +12560,12 @@
         }
       } catch (_) { /* fine */ }
 
+      // v0.51.21: skip the STANDARD/4K hydration entirely when // ALL is
+      // active — the ALL block above already set fourk=false + marked chips.
       const sawFourkParam = sp.has('fourk');
-      if (sawFourkParam) {
+      if (libraryState.allRes) {
+        /* ALL owns the resolution axis — nothing to do here. */
+      } else if (sawFourkParam) {
         const v = sp.get('fourk');
         const want4k = (v === 'true' || v === '1');
         libraryState.fourk = want4k;
@@ -12925,6 +13063,8 @@
         await api('POST', '/api/library/refresh', {
           tab: libraryState.tab,
           fourk: !!libraryState.fourk,
+          // v0.51.21: // ALL → re-enumerate BOTH resolutions' sections.
+          all_res: !!libraryState.allRes,
         });
         // v1.14.53: paintTopbarSyncing call removed —
         // setOptimisticPlaceholder('plex_enum', ...) above already

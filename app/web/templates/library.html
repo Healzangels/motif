@@ -34,8 +34,20 @@
         {% set _default_sec = _sec.sections[0].section_id if _sec.sections else "" %}
         {% set _resolved_sec = _active_sec if _active_sec else _default_sec %}
         <div class="chips" role="tablist" aria-label="section"{% if not _sec.show_chips %} style="display:none"{% endif %}>
+          {# v0.51.21: the // ALL chip (the user, reversing the v1.18.18
+             removal) — combines EVERY managed section's collections into
+             one view (section_id=''). Shown only when ≥2 sections exist
+             (with one section, ALL == that section). ALL is opt-in: the
+             default stays the first real section (data-allres, distinct
+             from the section chips' data-section-id, so JS can tell them
+             apart and the SSR default doesn't accidentally select it). #}
+          {% if _sec.sections|length > 1 %}
+            <button class="chip{% if all_res %} chip-active{% endif %}"
+                    data-allres="1"
+                    title="Show collections from every managed section together.">ALL</button>
+          {% endif %}
           {% for s in _sec.sections %}
-            <button class="chip{% if _resolved_sec == s.section_id %} chip-active{% endif %}"
+            <button class="chip{% if not all_res and _resolved_sec == s.section_id %} chip-active{% endif %}"
                     data-section-id="{{ s.section_id }}"
                     title="Show collections from the '{{ s.label }}' section only.">{{ s.label|upper }}</button>
           {% endfor %}
@@ -43,12 +55,18 @@
       {% else %}
         {% set _res = library_resolution_state(tab) %}
         <div class="chips" role="tablist" aria-label="resolution"{% if not _res.show_chips %} style="display:none"{% endif %}>
+          {# v0.51.21: the // ALL chip (the user) — combines the standard
+             AND 4K sections into one view. Shown only when BOTH exist
+             (has_both); with a single section "combined" == that section.
+             Placed FIRST (before STANDARD). ALL is opt-in — STANDARD stays
+             the default when neither all_res nor fourk is set. #}
+          <button class="chip{% if all_res %} chip-active{% endif %}" data-allres="1"{% if not _res.has_both %} style="display:none"{% endif %} title="Show both standard and 4K items in this library together.">ALL</button>
           {# v1.19.85: title= added when the // prefix was stripped —
              the bare "4K" chip is terse enough that the a11y guard
              (test_v1_15_120) needs an accessible name on it. Both
              resolution chips get one for symmetry. #}
-          <button class="chip{% if not fourk %} chip-active{% endif %}" data-fourk="0"{% if not _res.has_standard %} style="display:none"{% endif %} title="Show standard-resolution items in this library.">STANDARD</button>
-          <button class="chip{% if fourk %} chip-active{% endif %}" data-fourk="1"{% if not _res.has_fourk %} style="display:none"{% endif %} title="Show 4K items in this library.">4K</button>
+          <button class="chip{% if not all_res and not fourk %} chip-active{% endif %}" data-fourk="0"{% if not _res.has_standard %} style="display:none"{% endif %} title="Show standard-resolution items in this library.">STANDARD</button>
+          <button class="chip{% if not all_res and fourk %} chip-active{% endif %}" data-fourk="1"{% if not _res.has_fourk %} style="display:none"{% endif %} title="Show 4K items in this library.">4K</button>
         </div>
       {% endif %}
       {# v1.13.63: button label is scope-aware now — JS overwrites
@@ -70,7 +88,7 @@
          // REFRESH PLEX → /movies to hit it. Busy label matches
          the JS busy state (// REFRESHING…). #}
       <button class="btn" id="library-refresh-btn" type="button"
-              {% if pipeline_in_flight %}disabled{% endif %}>{% if pipeline_in_flight %}// REFRESHING…{% else %}// REFRESH {% if fourk and tab != "collections" %}4K {% endif %}{{ title|upper }}{% endif %}</button>
+              {% if pipeline_in_flight %}disabled{% endif %}>{% if pipeline_in_flight %}// REFRESHING…{% else %}// REFRESH {% if all_res and tab != "collections" %}ALL {% elif fourk and tab != "collections" %}4K {% endif %}{{ title|upper }}{% endif %}</button>
     </div>
   </div>
   <p class="muted hero-sub" id="library-subtitle">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>

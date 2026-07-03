@@ -76,14 +76,18 @@ def test_api_library_forwards_section_id_only_for_collections():
     string for other tabs — keeps the narrowing axis collections-
     scoped without leaking into movie/tv/anime queries."""
     src = API_PY.read_text()
-    # Pin the conditional forward.
+    # Pin the conditional forward. v0.51.21: the // ALL chip forces
+    # section_id='' (every section), so the ternary is nested under an
+    # all_res guard now — but the collections-only forwarding is intact.
     assert re.search(
-        r'section_id=\(section_id if tab == "collections" else ""\)',
+        r'section_id if tab == "collections" else ""',
         src,
     ), (
         "v1.18.1: api_library must forward section_id only for "
         "tab='collections' (empty string for other tabs)"
     )
+    # v0.51.21: // ALL overrides section_id → empty for every tab.
+    assert '"" if all_res' in src
 
 
 # ── _library_main_query honors section_id ─────────────────────
@@ -177,9 +181,11 @@ def test_library_html_keeps_fourk_chips_for_other_tabs():
     html = LIBRARY_HTML.read_text()
     # Pin the else branch.
     assert "{% else %}" in html
-    # The else branch must still have data-fourk chips.
+    # The else branch must still have data-fourk chips. v0.51.21: widened
+    # 1000 → 1800 — the // ALL chip + its comment now sit ahead of the
+    # STANDARD/4K buttons in the else branch.
     else_idx = html.index("{% else %}")
-    else_block = html[else_idx:else_idx + 1000]
+    else_block = html[else_idx:else_idx + 1800]
     assert 'data-fourk="0"' in else_block
     assert 'data-fourk="1"' in else_block
     assert "library_resolution_state(tab)" in else_block

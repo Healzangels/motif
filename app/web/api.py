@@ -2167,6 +2167,15 @@ _LIBRARY_SORTS_NOT_IN_PLEX = {
 def _library_main_query(
     db: Path, *, tab: str, fourk: bool, q: str, status: str,
     page: int, per_page: int,
+    # v0.51.21: the // ALL resolution chip. When True, union BOTH the
+    # standard and 4K sections of a library type (movies/tv/anime) into
+    # one view instead of the fourk binary picking exactly one. For the
+    # collections tab it means "all managed sections' collections at once"
+    # — the caller forces section_id='' in that case, which the existing
+    # per-section filter below already treats as "no narrowing". Only
+    # offered by the UI when both a standard AND a 4K section exist
+    # (movies/tv/anime) or ≥2 collection sections exist.
+    all_res: bool = False,
     # v1.18.1: per-section scope for the /collections tab (empty
     # string means "all included sections"). Honored only for
     # tab='collections'; the caller in api_library forces the
@@ -2237,7 +2246,10 @@ def _library_main_query(
     # the fourk filter is meaningless for them — skip it and let
     # the tab return both 4K and non-4K parent sections' collections
     # together.
-    if tab != "collections":
+    # v0.51.21: the // ALL chip unions both resolutions — skip the is_4k
+    # narrowing entirely so a title present in BOTH the standard and 4K
+    # sections renders as its two (distinct rating_key) rows together.
+    if tab != "collections" and not all_res:
         tab_where += " AND ps.is_4k = 1" if fourk else " AND ps.is_4k = 0"
     # v1.18.1: per-section narrowing for the /collections tab. The
     # caller (api_library) only forwards section_id when tab is
@@ -6899,6 +6911,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "has_standard": bool(row["std"]),
                 "has_fourk": bool(row["fourk"]),
                 "show_chips": bool(row["std"]) or bool(row["fourk"]),
+                # v0.51.21: the // ALL chip is only meaningful when BOTH a
+                # standard and a 4K section exist — otherwise "combined" is
+                # identical to the single section that does exist.
+                "has_both": bool(row["std"]) and bool(row["fourk"]),
             }
         except Exception as e:
             # v1.15.35: log at WARNING. Pre-fix bare `except:` hid
@@ -6906,7 +6922,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # the 4K / Standard chips would silently disappear on
             # every page-load with zero operator visibility.
             log.warning("library_resolution_state(%s) failed: %s", tab, e)
-            return {"has_standard": False, "has_fourk": False, "show_chips": False}
+            return {"has_standard": False, "has_fourk": False,
+                    "show_chips": False, "has_both": False}
 
     templates.env.globals["library_resolution_state"] = _library_resolution_state
 
@@ -7037,6 +7054,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         v = (request.query_params.get("fourk") or "").lower()
         return v in ("true", "1", "yes")
 
+    def _all_res_from_query(request: Request) -> bool:
+        # v0.51.21: the // ALL resolution/section chip. Threaded into the
+        # library template for the SSR chip-active state so the first paint
+        # matches the URL (JS hydrateLibraryStateForTab keeps it in sync).
+        v = (request.query_params.get("all_res") or "").lower()
+        return v in ("true", "1", "yes")
+
     def _pipeline_in_flight(db: Path) -> bool:
         """v1.13.77: true when ANY scope-tagged plex_enum job is
         pending or running (cascade or scan_all). Threaded into the
@@ -7073,6 +7097,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "movies", "title": "Movies",
             "fourk": _fourk_from_query(request),
+            "all_res": _all_res_from_query(request),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -7081,6 +7106,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "tv", "title": "TV Shows",
             "fourk": _fourk_from_query(request),
+            "all_res": _all_res_from_query(request),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -7089,6 +7115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "anime", "title": "Anime",
             "fourk": _fourk_from_query(request),
+            "all_res": _all_res_from_query(request),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -7103,6 +7130,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "library.html", {
             "tab": "collections", "title": "Collections",
             "fourk": False,
+            # v0.51.21: collections // ALL chip — combine every managed
+            # section's collections into one view (section_id='').
+            "all_res": _all_res_from_query(request),
             "pipeline_in_flight": _pipeline_in_flight(db),
         })
 
@@ -11950,7 +11980,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  WHERE p.plex_rating_key IS NOT NULL
                  GROUP BY pi.rating_key
                  ORDER BY placed_at DESC
-                 LIMIT 24
+                 -- v0.51.21: 24 → 40 (the user: "extend the range ... so we
+                 -- see more in the carousel"). The strip scrolls horizontally,
+                 -- so the extra tiles cost nothing at rest and the poster proxy
+                 -- is lazy per-tile.
+                 LIMIT 40
                 """
             ).fetchall()
         return [dict(r) for r in rows]
@@ -11958,8 +11992,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/api/recently-placed")
     async def api_recently_placed(db: Path = Depends(get_db_path)):
         """v1.24.52: feed for the dashboard RECENTLY ADDED carousel — the last
-        24 distinct titles motif placed a theme on, newest first, each with the
-        rating_key (poster proxy + INFO card) and its INFO-card keys."""
+        40 distinct titles (v0.51.21: was 24) motif placed a theme on, newest
+        first, each with the rating_key (poster proxy + INFO card) and its
+        INFO-card keys."""
         items = await run_in_threadpool(_recently_placed_sync, db)
         return {"items": items}
 
@@ -12425,6 +12460,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Validated as a non-negative integer string (Plex section
         # IDs are integers serialized as strings throughout motif).
         section_id: str = Query("", pattern="^[0-9]*$"),
+        # v0.51.21: the // ALL resolution chip. For movies/tv/anime it
+        # unions the standard AND 4K sections into one view (instead of
+        # fourk picking exactly one); for collections it means "all
+        # managed sections' collections" (equivalent to section_id='').
+        # When true, fourk / section_id are ignored.
+        all_res: bool = Query(False),
         q: str = Query(""),
         status: str = Query("all", pattern="^(all|has_theme|themed|manual|plex_agent|untracked|downloaded|placed|unplaced|dl_missing|failures|updates|not_in_plex)$"),
         tdb: str = Query("any", pattern="^(any|tracked|untracked)$"),
@@ -12551,10 +12592,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                and settings.cookies_file.exists())
         return await run_in_threadpool(
             _library_main_query, db, tab=tab, fourk=fourk,
+            all_res=all_res,
             # v1.18.1: section_id is collections-only; the helper
             # ignores it for other tabs (where it falls through to
             # the existing tab_where dispatch).
-            section_id=(section_id if tab == "collections" else ""),
+            # v0.51.21: // ALL forces section_id='' (collections → every
+            # section) — the helper's per-section filter then no-ops.
+            section_id=("" if all_res
+                        else (section_id if tab == "collections" else "")),
             q=q, status=effective_status, tdb=tdb,
             page=page, per_page=per_page,
             sort=sort, sort_dir=sort_dir,
@@ -14679,6 +14724,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         tab = body.get("tab")
         fourk = bool(body.get("fourk"))
+        # v0.51.21: when the // ALL resolution chip is active the refresh must
+        # re-enumerate BOTH the standard and 4K sections (not just one), so the
+        # combined view is fully refreshed.
+        all_res = bool(body.get("all_res"))
         # v1.13.28: validate `tab` up front. Pre-fix the body's tab
         # could be any value — non-None/non-allowlisted values fell
         # through both branches and hit the legacy global insert at
@@ -14742,7 +14791,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # level, so the requested_4k filter is meaningless
                 # for the collections tab — enqueue plex_enum across
                 # every included section regardless of 4K flag.
-                if tab == "collections":
+                if tab == "collections" or all_res:
+                    # v0.51.21: // ALL (or collections, which are never
+                    # 4K-tagged) → every section for this tab regardless of
+                    # the is_4k flag, so both resolutions get re-enumerated.
                     sections = conn.execute(
                         f"SELECT section_id FROM plex_sections "
                         f"WHERE included = 1 AND {sec_where}"
@@ -14796,9 +14848,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # collection rows. Cuts wall-clock by ~10× on
                     # libraries with thousands of movies/shows but
                     # only hundreds of collections per section.
+                    # v0.51.21: // ALL enumerates both sections — tag every
+                    # job 'scope: <tab>-all' so the topbar reads
+                    # "REFRESHING ALL MOVIES" for the whole combined refresh.
+                    _scope = (
+                        f"{tab}-all" if (all_res and tab != "collections")
+                        else f"{tab}{'-4k' if effective_fourk else ''}"
+                    )
                     job_payload: dict = {
                         "section_id": sid,
-                        "scope": f"{tab}{'-4k' if effective_fourk else ''}",
+                        "scope": _scope,
                     }
                     if tab == "collections":
                         job_payload["collections_only"] = True

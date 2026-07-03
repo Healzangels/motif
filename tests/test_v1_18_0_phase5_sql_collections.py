@@ -149,22 +149,21 @@ def test_libraries_refresh_skips_4k_filter_for_collections():
     # branch where the SELECT actually runs.
     refresh_idx = src.index("if tab in (\"movies\", \"tv\", \"anime\", \"collections\"):")
     block = src[refresh_idx:refresh_idx + 4000]
-    # The SELECT-specific collections branch is the SECOND
-    # `if tab == "collections":` in this block (the first is the
-    # sec_where branch). Walk past the first occurrence.
-    first_coll = block.index("if tab == \"collections\":")
-    second_coll = block.index("if tab == \"collections\":", first_coll + 1)
+    # v0.51.21: the SELECT-specific collections branch now also serves the
+    # // ALL resolution mode, so its condition is `if tab == "collections"
+    # or all_res:` (was a bare `if tab == "collections":`). Anchor on that.
+    sel = block.index('if tab == "collections" or all_res:')
     # Clip the branch at the `else:` that immediately follows it
     # so we don't pick up the else-branch's is_4k filter.
-    branch_chunk = block[second_coll:second_coll + 1200]
+    branch_chunk = block[sel:sel + 1200]
     else_offset = branch_chunk.find("\n                else:")
     branch = branch_chunk if else_offset < 0 else branch_chunk[:else_offset]
     assert "SELECT section_id FROM plex_sections" in branch
-    # The if-branch (collections-only path) must NOT add the
-    # is_4k suffix.
+    # The if-branch (collections / ALL path) must NOT add the is_4k suffix —
+    # collections aren't 4K-tagged, and ALL unions both resolutions.
     assert "AND is_4k =" not in branch, (
-        "v1.18.0: the collections sec-query must NOT filter on "
-        "is_4k — collections aren't 4K-tagged."
+        "v1.18.0/v0.51.21: the collections + ALL sec-query must NOT filter "
+        "on is_4k."
     )
 
 

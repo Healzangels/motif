@@ -197,9 +197,14 @@ def test_library_template_chip_active_reflects_url_fourk():
     chip_anchor = src.index('aria-label="resolution"')
     chip_end = src.index("</div>", chip_anchor)
     chip_block = src[chip_anchor:chip_end]
-    # Both buttons reference the `fourk` template var.
-    assert "{% if not fourk %} chip-active" in chip_block
-    assert "{% if fourk %} chip-active" in chip_block
+    # Both buttons reference the `fourk` template var. v0.51.21: the // ALL
+    # chip landed FIRST + is mutually exclusive, so STANDARD/4K are active
+    # only when NOT all_res.
+    assert "{% if not all_res and not fourk %} chip-active" in chip_block
+    assert "{% if not all_res and fourk %} chip-active" in chip_block
+    # v0.51.21: the ALL chip is active when all_res (shown when both exist).
+    assert 'data-allres="1"' in chip_block
+    assert "{% if all_res %} chip-active" in chip_block
 
 
 def test_library_template_no_unconditional_resolution_display_none():
