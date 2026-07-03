@@ -39,3 +39,6 @@ motif.yml
 # secrets-leak guard scans tracked source for. Kept OUT of the repo so the guard
 # names nothing public; absent on a fresh clone / CI (guard is a no-op there).
 tests/personal_strings.local
+
+# local dev-preview launch config (machine-specific paths)
+.claude/launch.json

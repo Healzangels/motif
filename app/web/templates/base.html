@@ -180,6 +180,17 @@
       });
     });
   </script>
+  {# v0.51.19: #crt-tube wraps ALL visible page chrome (banners → footer) so the
+     power-on can squash-stretch the PICTURE itself — the user on v0.51.10-18: the
+     shutter reveal "still feels a bit too much like curtains ... something being
+     pulled across". A real CRT's vertical deflection ramps up: the image starts
+     as a compressed line and STRETCHES open; nothing travels across the screen.
+     The wrapper is style-free at rest (a neutral block — zero layout change);
+     only body:has(.crt-power-on.playing) animates it. The fixed overlays
+     (scanlines, power-on/off) stay OUTSIDE so they don't squash with the page;
+     the dialogs + ops drawer inside are top-layer / hidden during the 0.62s
+     boot, so wrapping them is inert. #}
+  <div id="crt-tube">
   {% if request.state.principal is defined and request.state.principal.is_authenticated %}
   {# v1.15.22: SSR topbar + banner state. Same flash-bug class as
      v1.15.21 nav availability — pre-fix the banners + topbar
@@ -555,5 +566,6 @@
     <span class="muted">motif · homelab theme orchestration · </span>
     <a class="muted" href="/healthz">healthz</a>
   </footer>
+  </div>{# /crt-tube (v0.51.19) #}
 </body>
 </html>

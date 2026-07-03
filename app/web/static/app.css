@@ -413,6 +413,33 @@ input[type="checkbox"] {
   16%  { transform: translateY(0); }
   100% { transform: translateY(calc(100% + 30px)); }
 }
+/* v0.51.19: the PICTURE unfolds, not just the mask. the user on the
+   v0.51.10-18 reveal: "still feels a bit too much like curtains ... you can
+   really feel like it's something being pulled across" — because the page
+   behind the shutters was fully-formed and static, the moving edge read as a
+   drape being drawn (worst over the empty side margins, where the edge was
+   the ONLY thing in motion). A real CRT's vertical deflection ramps up: the
+   image starts as a compressed line and STRETCHES open from it. #crt-tube
+   (base.html wrapper around all visible chrome) squashes to a sliver at the
+   fold-line, holds through the centre-line beat, then expands on the SAME
+   timing + bezier as the shutters — the phosphor glow now rides the edge of
+   a growing picture instead of sliding across a finished one. The brightness
+   bloom starts white-hot and settles as the raster opens (phosphor warming).
+   transform-origin 50vh = the fold-line for the top-of-page plays this fires
+   on (post-login landing, manual refresh); a scrolled reload restores scroll
+   mid-play at worst — transient and masked by the shutters. :has-gated on
+   .playing so the wrapper is completely inert at rest and the VISUALS
+   opt-out (viz-no-crt-on) is honoured for free. */
+body:has(> .crt-power-on.playing) #crt-tube {
+  animation: crt-tube-unfold 0.62s cubic-bezier(0.32, 0.62, 0.4, 1);
+  transform-origin: 50% 50vh;
+}
+@keyframes crt-tube-unfold {
+  0%   { transform: scaleY(0.004); filter: brightness(2.6) saturate(1.4); }
+  16%  { transform: scaleY(0.004); filter: brightness(2.6) saturate(1.4); }
+  55%  { filter: brightness(1.35) saturate(1.12); }
+  100% { transform: scaleY(1); filter: brightness(1) saturate(1); }
+}
 /* the bright fold-line at the seam — exposed as the shutters part, blooms, fades. */
 .crt-on-line {
   position: absolute; left: 0; right: 0; top: 50%;

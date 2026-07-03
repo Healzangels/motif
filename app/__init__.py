@@ -2817,7 +2817,20 @@
 #   with them (the user opted to fix). #32 test_v0_51_6: the desktop-density
 #   guard's bare substring asserts matched four unrelated rules (v1.18.81
 #   phantom-guard class) — now scoped rule-body extraction.
-__version__ = "0.51.18"
+# 0.51.19 — CRT power-on: the PICTURE unfolds, not just the mask. the user on
+#   the v0.51.10-18 reveal: "still feels a bit too much like curtains ... you
+#   can really feel like it's something being pulled across" — the page behind
+#   the shutters was fully-formed and static, so the moving edge read as a
+#   drape (worst over the empty side margins). A real CRT's vertical
+#   deflection ramps up: the image starts as a compressed line and STRETCHES
+#   open. New style-free #crt-tube wrapper (base.html, banners → footer)
+#   squashes to scaleY(0.004) at the fold-line, holds through the centre-line
+#   beat, then expands on the shutters' exact duration + bezier, with a
+#   white-hot brightness/saturation bloom that settles as the raster opens.
+#   Fully inert at rest (:has-gated on .playing); overlays stay outside the
+#   wrapper. Verified live: per-frame computed-transform samples 0.004 →
+#   0.10 → 0.88 → 1.0, brightness 2.6 → 1.0, transform/filter none at rest.
+__version__ = "0.51.19"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
