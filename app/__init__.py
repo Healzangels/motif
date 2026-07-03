@@ -3129,7 +3129,15 @@
 #   1. Now each tier runs if EITHER flag is unresolved + fills only the column
 #   still None, so independent resolves off siblings again while a resolved rk
 #   value is never clobbered. Behavioral test + a decouple source guard.
-__version__ = "0.51.42"
+# 0.51.43 — the mobile section-nav scroll track no longer hides the active tab's
+#   colored underline (the user: scrolling DASHBOARD/MOVIES/TV/ANIME/COLLECTIONS
+#   "you can't see the colored bar since the scroll bar covers it"). The ≤600px
+#   nav is a horizontal-scroll strip with a 3px green track (v0.51.3); the active
+#   tab underline is a 2px border-bottom at the same bottom edge, and macOS overlay
+#   scrollbars draw OVER the box (no reserved space) so the track covered it. Added
+#   padding-bottom:6px to the mobile nav so the underline sits above the track —
+#   both visible. CSS-only, scoped to ≤600px (desktop nav unchanged).
+__version__ = "0.51.43"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

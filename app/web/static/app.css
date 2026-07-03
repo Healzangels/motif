@@ -5636,7 +5636,13 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      track as the "more tabs →" affordance (was hidden — the mobile audit flagged
      no scroll cue) and give the tabs a ~44px tap height on their own row. */
   .nav { grid-area: nav; flex-wrap: nowrap; overflow-x: auto; -webkit-overflow-scrolling: touch;
-         scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent; }
+         scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent;
+         /* v0.51.43 (the user): the 3px scroll track sits at the nav's bottom edge
+            and covered the active tab's 2px colored underline (a border-bottom) —
+            worst with macOS overlay scrollbars, which draw OVER the box, not in
+            reserved space. Pad the bottom so the underline sits ABOVE the track:
+            both stay visible while scrolling the section tabs. */
+         padding-bottom: 6px; }
   .nav::-webkit-scrollbar { height: 3px; }
   .nav::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }
   .nav a { padding: 12px var(--gap-4); }
