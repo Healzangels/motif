@@ -3112,7 +3112,15 @@
 #   Reopening mid-retract cancels the pending close (showModalNoFocusRing) so
 #   showModal() never hits an [open] dialog; Esc routes through the same slide via
 #   a cancel-event interceptor. Audio/focus teardown unchanged.
-__version__ = "0.51.40"
+# 0.51.41 — the library RESULTS loading state uses the branded record-spinner (the
+#   user: "when there is a loading screen for the results can we have the spinning
+#   logo loading screen we used for our info card"). Both placeholders — the JS
+#   re-fetch one (loadLibrary, gated on lastHash==null) + the template first-paint
+#   one (#library-body) — now render recordLoaderHtml's .record-spinner instead of
+#   a bare "loading…" (colspan 10→11 so it centres under the full table). The SVG
+#   is inlined in the template for SSR first paint; test_v0_51_41 pins it identical
+#   to the JS helper so they can't drift.
+__version__ = "0.51.41"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

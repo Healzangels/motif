@@ -57,7 +57,10 @@ def test_loading_placeholder_still_first_load_only():
     body = _loadlibrary_body()
     assert "if (tbody.dataset.lastHash == null)" in body
     idx = body.index("if (tbody.dataset.lastHash == null)")
-    assert "loading…" in body[idx:idx + 200]
+    # v0.51.41: window widened 200→400 — the placeholder is now the branded
+    # recordLoaderHtml('loading…') spinner (with a lead comment) rather than a
+    # bare inline string, so the "loading…" caption sits further from the guard.
+    assert "loading…" in body[idx:idx + 400]
 
 
 def test_v1_20_33_version_pin():

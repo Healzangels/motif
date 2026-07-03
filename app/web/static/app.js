@@ -8320,7 +8320,10 @@
     // a re-fetch, leave existing rows in place until the new render
     // either matches (skip) or differs (overwrite).
     if (tbody.dataset.lastHash == null) {
-      tbody.innerHTML = `<tr><td colspan="10" class="muted center">loading…</td></tr>`;
+      // v0.51.41 (the user): the branded record-spinner (shared with the INFO
+      // card via recordLoaderHtml) instead of a bare "loading…". colspan 11 spans
+      // the full row (checkbox + 10 cols) so the spinner centres under the table.
+      tbody.innerHTML = `<tr><td colspan="11">${recordLoaderHtml('loading…')}</td></tr>`;
     }
     // v1.13.28: in-flight guard. Pre-fix two loadLibrary() calls
     // could race — a fast filter-chip click while the prior fetch

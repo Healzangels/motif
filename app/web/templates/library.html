@@ -943,7 +943,27 @@
       </tr>
     </thead>
     <tbody id="library-body">
-      <tr><td colspan="11" class="muted center">loading…</td></tr>
+      {# v0.51.41 (the user): the branded record-spinner on the first-paint
+         placeholder too, so navigating in shows the spinner immediately rather
+         than a "loading…" text flash before JS repaints. Same markup + classes
+         as app.js recordLoaderHtml (its .record-spinner CSS is shared, not
+         mirrored); test_v0_51_41 pins the two in sync. #}
+      <tr><td colspan="11">
+        <div class="record-loader">
+          <svg class="record-spinner" viewBox="0 0 100 100" aria-hidden="true">
+            <circle class="rec-rim" cx="50" cy="50" r="47" stroke-width="1"/>
+            <g class="rec-grooves">
+              <circle class="rec-groove rec-groove-outer" cx="50" cy="50" r="40" stroke-width="3" stroke-dasharray="170 80"/>
+              <circle class="rec-groove" cx="50" cy="50" r="31" stroke-width="2.6" stroke-dasharray="120 70"/>
+              <circle class="rec-groove" cx="50" cy="50" r="22" stroke-width="2.2" stroke-dasharray="70 140"/>
+              <circle class="rec-tick" cx="50" cy="14" r="2.4"/>
+            </g>
+            <circle class="rec-spindle" cx="50" cy="50" r="6.5"/>
+            <circle class="rec-hole" cx="50" cy="50" r="1.6"/>
+          </svg>
+          <p class="muted small">loading…</p>
+        </div>
+      </td></tr>
     </tbody>
   </table>
   </div>{# /.table-scroll #}
