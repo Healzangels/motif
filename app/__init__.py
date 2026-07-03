@@ -2955,7 +2955,21 @@
 #   width:100% + height 32px->40px, so the native volume slider + seek bar get
 #   real width/height (the 32px squish was cramping them). Dead .info-play-row>a
 #   rule removed. Verified live: play row has one child; .info-audio 40px, fills.
-__version__ = "0.51.29"
+# 0.51.30 — collections chips: // ALL + a section could be highlighted at once
+#   (the user: "in collections both All and other sections can become clicked at
+#   the same time"). On a full page load bindLibrary's chip hydration toggled each
+#   axis piecemeal, but SSR marks // ALL active BY DEFAULT (the server can't read
+#   the client's persisted section / STANDARD-4K pick, so a bare /collections or
+#   /movies SSRs ALL). When the client then resolved to a specific section (or
+#   STANDARD/4K from localStorage), nothing cleared the SSR-ALL chip — so ALL AND
+#   the section/resolution chip both showed .chip-active. Fix: an authoritative
+#   chip reconcile at the end of the hydration (same shape hydrateLibraryStateFor
+#   Tab uses on the in-place tab switch) so exactly ONE chip is active for the
+#   resolved allRes/fourk/section_id. Also fixes a latent movies/tv/anime variant
+#   where a persisted STANDARD left NO resolution chip lit. Verified live at the
+#   resolution chips: default→ALL only, persisted fourk→4K only, standard→STANDARD
+#   only (each exactly one active).
+__version__ = "0.51.30"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

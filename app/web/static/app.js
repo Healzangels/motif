@@ -12638,6 +12638,26 @@
           }
         } catch (_) { /* private mode / quota — fine */ }
       }
+      // v0.51.30: authoritative chip reconcile. The piecemeal toggles above each
+      // touch only their own axis, and SSR marks the // ALL chip active BY
+      // DEFAULT (the server can't read the client's persisted section /
+      // STANDARD-4K pick, so a bare /collections SSRs ALL). When the client then
+      // resolves to a specific section (or STANDARD/4K), nothing cleared the
+      // SSR-ALL chip — so // ALL AND the section/resolution chip both showed
+      // active at once (the user, /collections: "both All and other sections can
+      // become clicked at the same time"). Reconcile once from the resolved
+      // state so exactly ONE chip is active — same shape hydrateLibraryStateFor
+      // Tab uses on the in-place tab switch.
+      document.querySelectorAll('.chips [data-allres]').forEach((x) =>
+        x.classList.toggle('chip-active', libraryState.allRes));
+      document.querySelectorAll('.chips [data-fourk]').forEach((x) =>
+        x.classList.toggle('chip-active',
+          !libraryState.allRes
+          && x.dataset.fourk === (libraryState.fourk ? '1' : '0')));
+      document.querySelectorAll('.chips [data-section-id]').forEach((x) =>
+        x.classList.toggle('chip-active',
+          !libraryState.allRes
+          && (x.dataset.sectionId || '') === libraryState.section_id));
     } catch (_) { /* URLSearchParams not supported — skip */ }
 
     // v1.13.13: if the URL carried no filter params, hydrate from
