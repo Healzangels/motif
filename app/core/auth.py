@@ -202,8 +202,18 @@ def create_admin(db_path: Path, *, username: str, password: str) -> None:
         )
 
 
-def change_admin_password(db_path: Path, *, current_password: str, new_password: str) -> bool:
-    """Verify current password, then update. Returns True on success."""
+def change_admin_password(db_path: Path, *, current_password: str,
+                          new_password: str,
+                          keep_session_id: str | None = None) -> bool:
+    """Verify current password, then update. Returns True on success.
+
+    v0.51.16 (audit #19): rotating the password now revokes every OTHER
+    session — pre-fix a stolen/lingering motif_sess cookie survived the
+    rotation for the full 30-day TTL (lookup_session binds only on id +
+    expiry, not the hash), defeating the point of changing it. The caller's
+    own session (keep_session_id) stays alive so the admin isn't logged out
+    by their own rotation. API tokens are deliberately NOT revoked — they
+    have their own lifecycle + revocation UI at /settings#tokens."""
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT password_hash FROM admin WHERE id = 1").fetchone()
         if row is None:
@@ -215,6 +225,11 @@ def change_admin_password(db_path: Path, *, current_password: str, new_password:
             "UPDATE admin SET password_hash = ? WHERE id = 1",
             (new_hash,),
         )
+        if keep_session_id:
+            conn.execute("DELETE FROM sessions WHERE id != ?",
+                         (keep_session_id,))
+        else:
+            conn.execute("DELETE FROM sessions")
     return True
 
 

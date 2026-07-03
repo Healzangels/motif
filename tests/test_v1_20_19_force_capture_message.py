@@ -29,7 +29,9 @@ def test_worker_stamps_outcome_before_finish():
     fn_idx = API_PY.index("def _cloud_themes_backup_run(")
     # v0.50.45: widened 12000→13000 — the walk-count carry-forward added lines
     # ahead of the backup_outcome stamp, pushing final_status past the old window.
-    fn = API_PY[fn_idx:fn_idx + 13000]
+    # v0.51.16 (audit #26): widened 13000→15000 — the unmint_stale_orphans
+    # compensation blocks (cancel-during-walk + post-loop) land before the stamp.
+    fn = API_PY[fn_idx:fn_idx + 15000]
     assert 'set_detail_field(' in fn
     assert '"backup_outcome"' in fn
     # the stamp must precede finish_progress (waitForOp returns the

@@ -142,7 +142,10 @@ def test_predicate_excludes_over_ceiling_clause():
 
 def test_collection_downscale_gate_requires_ceiling_fit():
     src = (REPO / "app" / "core" / "worker.py").read_text()
-    i = src.index("if len(audio_bytes) >= _ceiling_bytes:")
+    # v0.51.16 (audit #2): the gate grew a media_type guard — over-ceiling
+    # movie/TV skips the downscale entirely (sidecar fallback instead).
+    i = src.index(
+        "if len(audio_bytes) >= _ceiling_bytes and not _skip_doomed_upload:")
     block = src[i:i + 3400]
     # accept only a re-encode that fits the ceiling (was: < len(audio_bytes))
     assert "len(_small) < _ceiling_bytes" in block

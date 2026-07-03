@@ -2766,7 +2766,27 @@
 #   and uniformly skip the un-bake (env wins this save — deterministic,
 #   least-damaging; load() already fails loudly on the same faults).
 #   recovery_v55/db_backup/config_file + behavioral tests.
-__version__ = "0.51.15"
+# 0.51.16 — round-4 audit Batch F1: backend security + behavior.
+#   #19 auth.py: password rotation revokes every OTHER session (a stolen
+#   motif_sess cookie survived rotation for its full 30-day TTL); the
+#   caller's own session is kept via keep_session_id, API tokens untouched.
+#   #2 worker.py: the v1.24.45 collection downscale had no media_type gate —
+#   an over-ceiling movie/TV API push was re-encoded to lower bitrate and
+#   uploaded, making the v1.18.69 full-quality sidecar fallback unreachable;
+#   movie/TV now skips the downscale AND the doomed POST (v1.21.99 pattern).
+#   #23 worker.py: _do_place created its PlexClient ~160 lines before the
+#   only finally that closed it — the pre-place cancel checkpoint + any DB
+#   raise in the pi-resolution span leaked the client; creation moved to
+#   just before the place_theme try. #24 worker.py: _safe_mark's final
+#   attempt re-raised into the crash handler (re-pending completed jobs) or
+#   killed the worker thread; locked-on-final now logs ERROR + gives up.
+#   #25 scheduler.py: sync hour 0 wrapped section_refresh to 23:00 the
+#   previous day — with restricted dom/dow it fired ~23h AFTER the sync;
+#   hour-0 + restricted days now drops dom/dow (daily at 23:mm).
+#   #26 cloud_theme_backup.py: force-walk mints stranded linked-but-empty
+#   plex_orphan rows when the download failed/cancelled; targets carry a
+#   'minted' flag + unmint_stale_orphans compensates at the run's exits.
+__version__ = "0.51.16"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

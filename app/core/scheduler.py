@@ -1291,10 +1291,27 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     if hour.isdigit():
         section_minute = minute
         section_hour = str((int(hour) - 1) % 24)
+        # v0.51.16 (audit #25): hour 0 wraps to 23 — the PREVIOUS calendar
+        # day. Keeping restricted day fields then fires the refresh ~23h
+        # AFTER the sync, not 1h before (a Sunday 00:30 sync got its
+        # refresh Sunday 23:30). Drop dom/dow in that case: daily at
+        # 23:mm always lands 1h before the sync day's run, at the cost
+        # of extra idempotent refreshes on off days. (A restricted month
+        # still mis-times the month's FIRST sync — rare enough to leave.)
+        section_dom, section_dow = dom, dow
+        if int(hour) == 0 and (dom != "*" or dow != "*"):
+            section_dom, section_dow = "*", "*"
+            log.info(
+                "scheduler: sync hour 0 wraps section_refresh to 23:%s "
+                "the previous day — dropping day restrictions (dom=%r "
+                "dow=%r) so the refresh runs daily, 1h before each sync",
+                section_minute, dom, dow,
+            )
         scheduler.add_job(
             _refresh_sections_job, args=[settings],
-            trigger=CronTrigger(minute=section_minute, hour=section_hour, day=dom, month=month,
-                                day_of_week=dow, timezone="UTC"),
+            trigger=CronTrigger(minute=section_minute, hour=section_hour,
+                                day=section_dom, month=month,
+                                day_of_week=section_dow, timezone="UTC"),
             id="section_refresh", replace_existing=True, max_instances=1,
         )
     else:

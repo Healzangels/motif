@@ -784,9 +784,27 @@ class Worker:
                 log.warning("Bookkeeping (%s) DB-locked; retrying in %.1fs",
                             fn.__name__, d)
                 self.stop_event.wait(d)
-        # Last attempt — let the exception propagate this time, and
-        # the run() loop's OperationalError catch above will absorb it.
-        fn(*args)
+        # v0.51.16 (audit #24): last attempt — pre-fix this re-raised on the
+        # theory that "run()'s OperationalError catch above will absorb it",
+        # but that catch only wraps _claim_next_job. An escape from the
+        # _mark_done call landed in the generic crash handler, which
+        # _mark_failed-ed (re-pended) a job whose work had ALREADY completed
+        # — a duplicate re-run; an escape from the except-block marks killed
+        # the worker thread outright, the exact v1.11.51 failure this helper
+        # exists to prevent. Locked-on-final-attempt now logs loud and gives
+        # up: the row stays 'running' and the aged stuck-job sweep reclaims
+        # it. Non-locked OperationalErrors still propagate (schema bugs must
+        # stay loud — the class-8 rule).
+        try:
+            fn(*args)
+        except sqlite3.OperationalError as e:
+            if "locked" not in str(e).lower():
+                raise
+            log.error(
+                "Bookkeeping (%s) still DB-locked after %d retries — giving "
+                "up; job row left for the stuck-job sweep: %s",
+                fn.__name__, len(delays), e,
+            )
 
     def _claim_next_job(self) -> sqlite3.Row | None:
         # v1.11.36: optional job_type_filter scopes claim to the worker's
@@ -2551,7 +2569,12 @@ class Worker:
             force_overwrite = True
 
         index = self._index_for_section(section_id)
-        plex_client = self._plex_client()
+        # v0.51.16 (audit #23): the PlexClient (eager httpx.Client) is created
+        # BELOW, just before place_theme — it used to be created here, ~160
+        # lines and several early returns/raises before the only finally that
+        # closed it, leaking a client + open sockets on every cancel-checkpoint
+        # bail or DB error in the pi-resolution block. Nothing in that span
+        # uses it.
         # v1.11.39: pre-resolve rating_key + has_theme from plex_items
         # so place_theme doesn't have to hit Plex for them.
         # v1.11.68: also resolve through pi.theme_id (the v1.11.43 /
@@ -2717,6 +2740,9 @@ class Worker:
             )
             self._mark_cancelled(job["id"])
             return
+        # v0.51.16 (audit #23): created HERE — first use is the call below,
+        # and the finally that closes it now covers its whole lifetime.
+        plex_client = self._plex_client()
         try:
             outcome = place_theme(
                 media_type=media_type,
@@ -3545,7 +3571,26 @@ class Worker:
         # benefits. If the re-encode can't help (no ffmpeg / theme too long even
         # at the bitrate floor), we upload the original and surface over_ceiling.
         _ceiling_bytes = _PLEX_THEME_UPLOAD_CEILING_MB * 1024 * 1024
-        if len(audio_bytes) >= _ceiling_bytes:
+        # v0.51.16 (audit #2): the v1.24.45 downscale is for the FOLDERLESS
+        # collection path only — exactly what the comment above promises
+        # ("Movies keep their full-quality sidecar fallback"), but the check
+        # below had no media_type gate, so an over-ceiling movie/TV API push
+        # was silently re-encoded to a lower bitrate and uploaded, making the
+        # v1.18.69 full-quality sidecar fallback unreachable. Movie/TV rows
+        # over the ceiling now skip the downscale AND the doomed ~10MB POST
+        # (v1.21.99), synthesizing the (ok=False, http_status=None) outcome so
+        # the post-upload sidecar fallback below fires with the ORIGINAL bytes'
+        # size_mb.
+        _skip_doomed_upload = (
+            len(audio_bytes) >= _ceiling_bytes and media_type != "collection")
+        if _skip_doomed_upload:
+            log.info(
+                "_do_place_collection: %s theme %.1fMB exceeds Plex's ~%dMB "
+                "upload ceiling — skipping the doomed POST; taking the "
+                "full-quality sidecar fallback (rk=%s)",
+                media_type, len(audio_bytes) / (1024 * 1024),
+                _PLEX_THEME_UPLOAD_CEILING_MB, cached_rk)
+        if len(audio_bytes) >= _ceiling_bytes and not _skip_doomed_upload:
             _small = _downscale_audio_to_fit(
                 source_file, int(_ceiling_bytes * 0.85))
             # v1.24.46: accept the re-encode only if it actually FITS the ceiling.
@@ -3600,20 +3645,26 @@ class Worker:
                         media_type, tmdb_id, section_id, e)
                 raise _JobPermanentFailure(_oc_note)
 
-        plex = self._plex_client()
-        if plex is None:
-            raise RuntimeError("Plex client unavailable")
-        try:
-            # v1.18.68: upload_collection_theme returns a 3-tuple
-            # (ok, http_status, body_snippet) so the failure note
-            # can include actionable triage info.
-            ok, http_status, body_snip = plex.upload_collection_theme(
-                rating_key=str(cached_rk),
-                audio_bytes=audio_bytes,
-                content_type="audio/mpeg",
-            )
-        finally:
-            plex.close()
+        if _skip_doomed_upload:
+            # v0.51.16 (audit #2): synthesized over-ceiling outcome — same
+            # (500, None)-class shape the fallback gate below accepts.
+            ok, http_status, body_snip = (
+                False, None, "over upload ceiling — POST skipped (v0.51.16)")
+        else:
+            plex = self._plex_client()
+            if plex is None:
+                raise RuntimeError("Plex client unavailable")
+            try:
+                # v1.18.68: upload_collection_theme returns a 3-tuple
+                # (ok, http_status, body_snippet) so the failure note
+                # can include actionable triage info.
+                ok, http_status, body_snip = plex.upload_collection_theme(
+                    rating_key=str(cached_rk),
+                    audio_bytes=audio_bytes,
+                    content_type="audio/mpeg",
+                )
+            finally:
+                plex.close()
         size_mb = len(audio_bytes) / (1024 * 1024)
         # v1.18.69: track whether we ended up serving via sidecar
         # fallback rather than the API upload. Drives downstream

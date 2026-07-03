@@ -284,7 +284,10 @@ def _set_cursor(conn, rating_key: str | None) -> None:
     )
 
 
-def _resolve_or_mint_tmdb_id(conn, r, motif_mt: str, *, mint: bool) -> int | None:
+def _resolve_or_mint_tmdb_id(
+    conn, r, motif_mt: str, *, mint: bool,
+    minted_out: list | None = None,
+) -> int | None:
     """v1.21.32: the tmdb_id a backup row gets keyed to.
 
     A real `guid_tmdb` wins. Else an existing orphan id reachable via
@@ -298,6 +301,14 @@ def _resolve_or_mint_tmdb_id(conn, r, motif_mt: str, *, mint: bool) -> int | Non
     the writer) means two back-to-back mints in one run can't both grab the
     same MIN-1. Returns None when there's no id and minting isn't allowed
     (the non-force walk, where the candidate query already excludes these).
+
+    v0.51.16 (audit #26): when a mint fires, its (media_type, tmdb_id)
+    pair is appended to `minted_out` so the caller can compensate — the
+    mint commits at WALK time, minutes before the download stage's
+    local_files write, and a fetch failure / cancel in between would
+    otherwise strand a linked-but-empty plex_orphan row (the exact state
+    the v1.19.79 writer-atomicity fix eliminated inside
+    backup_cloud_theme). See unmint_stale_orphans.
     """
     g = r["guid_tmdb"]
     if g is not None:
@@ -351,7 +362,58 @@ def _resolve_or_mint_tmdb_id(conn, r, motif_mt: str, *, mint: bool) -> int | Non
         "Plex serves a theme but TDB doesn't track this title",
         synth, r["rating_key"], motif_mt,
     )
+    if minted_out is not None:
+        minted_out.append((motif_mt, synth))
     return synth
+
+
+def unmint_stale_orphans(conn, targets: list[dict]) -> int:
+    """v0.51.16 (audit #26): compensating unmint for force-path walk mints.
+
+    The force walk mints plex_orphan themes rows + stamps plex_items.
+    theme_id BEFORE the download stage (deliberate — MIN-1 allocation
+    safety, see _resolve_or_mint_tmdb_id). If the download then fails or
+    the run is cancelled, the mint strands a linked-but-empty orphan:
+    theme_id is non-NULL so every resolve pass gated on `theme_id IS
+    NULL` skips the row forever. Called at the run's exits with the full
+    target list; deletes ONLY rows this run minted (target['minted'])
+    that are still plex_orphan, still synthetic (tmdb_id < 0), and got
+    NO local_files row — the v1.18.10 fail-safe-sweep rule. The themes
+    DELETE fires the plex_items.theme_id ON DELETE SET NULL FK; the
+    explicit UPDATE is belt-and-braces so the unstamp never depends on
+    FK enforcement being on.
+    """
+    from .db import transaction
+    removed = 0
+    for t in targets:
+        if not t.get("minted"):
+            continue
+        mt = t["media_type"]
+        tid = int(t["guid_tmdb"])
+        with transaction(conn):
+            row = conn.execute(
+                "SELECT id FROM themes "
+                " WHERE media_type = ? AND tmdb_id = ? AND tmdb_id < 0 "
+                "   AND upstream_source = 'plex_orphan' "
+                "   AND NOT EXISTS (SELECT 1 FROM local_files lf "
+                "        WHERE lf.media_type = themes.media_type "
+                "          AND lf.tmdb_id = themes.tmdb_id)",
+                (mt, tid),
+            ).fetchone()
+            if row is None:
+                continue
+            conn.execute(
+                "UPDATE plex_items SET theme_id = NULL WHERE theme_id = ?",
+                (row["id"],),
+            )
+            conn.execute("DELETE FROM themes WHERE id = ?", (row["id"],))
+            removed += 1
+            log.info(
+                "cloud_backup: unminted stale orphan tmdb_id=%s (%s) — "
+                "backup never completed for rk=%s",
+                tid, mt, t.get("rating_key"),
+            )
+    return removed
 
 
 def identify_c1_rows(
@@ -589,8 +651,13 @@ def identify_c1_rows(
                     # v1.21.32: resolve (or, force-only, mint) the tmdb_id
                     # this backup keys to. The call site passes
                     # target["guid_tmdb"] to backup_cloud_theme as tmdb_id.
+                    # v0.51.16 (audit #26): collect mints so the target can
+                    # carry a 'minted' flag for the caller's compensating
+                    # unmint_stale_orphans on failure/cancel exits.
+                    _minted_pairs: list = []
                     tmdb_id = _resolve_or_mint_tmdb_id(
-                        conn, r, motif_mt, mint=force)
+                        conn, r, motif_mt, mint=force,
+                        minted_out=_minted_pairs)
                     if tmdb_id is None:
                         # v1.21.33: defensive — unreachable on current
                         # callers (a NULL-guid row only enters the loop on
@@ -619,6 +686,9 @@ def identify_c1_rows(
                             "year": r["year"] or "",
                             "entry_uri": pick["entry_uri"],
                             "sha1": pick["sha1"],
+                            # v0.51.16 (audit #26): True iff THIS resolve
+                            # minted — gates unmint_stale_orphans.
+                            "minted": (motif_mt, tmdb_id) in _minted_pairs,
                         })
             # Inter-call sleep (politeness to Plex). 200ms ×
             # ~3,883 P-rows = ~13min worst case; with batching

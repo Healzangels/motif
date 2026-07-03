@@ -70,8 +70,10 @@ def test_guid_gate_is_force_conditional():
     assert 'if not force:\n        sql_parts.append("   AND pi.guid_tmdb IS NOT NULL ")' in CTB_PY
     # the candidate query must SELECT theme_id (the resolve path reads it)
     assert "pi.guid_tmdb, pi.theme_id, pi.media_type" in CTB_PY
-    # the resolve-or-mint helper exists
-    assert "def _resolve_or_mint_tmdb_id(conn, r, motif_mt" in CTB_PY
+    # the resolve-or-mint helper exists. v0.51.16 (audit #26): signature
+    # went multi-line when the minted_out compensation param landed.
+    assert "def _resolve_or_mint_tmdb_id(" in CTB_PY
+    assert "conn, r, motif_mt: str, *, mint: bool," in CTB_PY
 
 
 # ── force on a NULL-guid row mints + keys the target ─────────

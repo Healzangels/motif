@@ -4826,7 +4826,7 @@ def _cloud_themes_backup_run(
     from ..core import progress as op_progress
     from ..core.plex import PlexClient, PlexConfig
     from ..core.cloud_theme_backup import (
-        identify_c1_rows, backup_cloud_theme,
+        identify_c1_rows, backup_cloud_theme, unmint_stale_orphans,
     )
     OP_ID = "cloud-themes-backup"
 
@@ -4912,6 +4912,11 @@ def _cloud_themes_backup_run(
                 force=force,
             )
             if _cancel():
+                # v0.51.16 (audit #26): the force walk minted plex_orphan
+                # themes rows + theme_id stamps for its targets; nothing
+                # downloaded yet, so unmint them or the rows stay linked-
+                # but-empty (skipped by every theme_id-IS-NULL resolve).
+                unmint_stale_orphans(conn, targets)
                 op_progress.finish_progress(
                     db_path, OP_ID, status="cancelled",
                 )
@@ -5032,6 +5037,17 @@ def _cloud_themes_backup_run(
                             f"({result.get('error') or 'unknown'})"
                         ),
                     )
+            # v0.51.16 (audit #26): compensate for force-walk mints whose
+            # download never landed (fetch error, disk error, or the cancel
+            # break above). Guarded — only deletes still-plex_orphan
+            # synthetic rows with NO local_files, so successful backups are
+            # untouched.
+            _unminted = unmint_stale_orphans(conn, targets)
+            if _unminted:
+                log.info(
+                    "cloud_themes_backup: unminted %d stale orphan mint(s) "
+                    "whose backup did not complete", _unminted,
+                )
         # Stage 3: summary.
         summary = (
             f"CLOUD THEMES BACKUP completed: "
@@ -7432,8 +7448,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=403,
                                 detail="password change requires interactive session")
         try:
+            # v0.51.16 (audit #19): pass the caller's session so the rotation
+            # revokes every OTHER session (a stolen cookie must not survive a
+            # password change) without logging the admin out of their own.
             ok = change_admin_password(
                 db, current_password=current_password, new_password=new_password,
+                keep_session_id=request.cookies.get(SESSION_COOKIE),
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
