@@ -55,36 +55,34 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
-# ── Restored: .coverage-bar-seg-no-tdb (v1.14.56 over-deletion) ──
+# ── v0.51.31: .coverage-bar-seg-no-tdb co-removed with its feature ──
+# The v1.14.56 regression was "CSS rule deleted but JS still emits the
+# class → blank unthemed wedge." v0.51.31 removed the whole
+# // COVERAGE COMPARISON block (renderCoverageComparison), so BOTH the
+# CSS rule and its sole JS emitter are gone together — the
+# CSS-vs-JS-consistency invariant this section guards holds trivially
+# now, and can never recur (no emitter left to strand).
 
 
-def test_coverage_bar_seg_no_tdb_css_rule_present():
-    """The libraries-page per-section coverage bar emits this
-    class for the unthemed remainder (app.js:2899). Without
-    the CSS rule, the wedge renders with no background color
-    and the bar reads as themed-vs-blank instead of themed-vs-
-    unthemed. Restored after the v1.14.56 sweep over-deleted it."""
-    # Strip CSS comment blocks first so the marker comment that
-    # mentions the class name doesn't confuse the rule scan.
+def test_coverage_bar_seg_no_tdb_css_rule_removed():
+    """v0.51.31: the .coverage-bar-seg rules were removed with the
+    // COVERAGE COMPARISON block they styled. Scan outside comments."""
     import re
     css_raw = (REPO / "app" / "web" / "static" / "app.css").read_text()
     css = re.sub(r"/\*.*?\*/", "", css_raw, flags=re.DOTALL)
-    # Verify the rule declaration exists outside any comment.
     rule_pattern = re.compile(
         r"\.coverage-bar-seg-no-tdb\s*\{([^}]+)\}", flags=re.DOTALL
     )
-    m = rule_pattern.search(css)
-    assert m, "`.coverage-bar-seg-no-tdb` rule not declared in CSS"
-    body = m.group(1)
-    assert "var(--fg-mute)" in body
-    assert "opacity: 0.5" in body
+    assert not rule_pattern.search(css), (
+        "v0.51.31: `.coverage-bar-seg-no-tdb` rule must be gone — its only "
+        "emitter (renderCoverageComparison) was removed")
 
 
-def test_coverage_bar_seg_no_tdb_js_emit_still_present():
-    """Sanity: the JS site that emits the class is still there
-    (so the CSS restoration isn't a wasted addition)."""
+def test_coverage_bar_seg_no_tdb_js_emit_removed():
+    """v0.51.31: the sole JS emitter (renderCoverageComparison) is gone, so
+    the class must no longer appear in app.js — no stranded emitter."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    assert 'class="coverage-bar-seg coverage-bar-seg-no-tdb"' in js
+    assert 'class="coverage-bar-seg coverage-bar-seg-no-tdb"' not in js
 
 
 # ── Deleted: pending-page surface (JS) ──────────────────────

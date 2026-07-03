@@ -10,7 +10,9 @@
 
 2. PER-SECTION COVERAGE mislabeled the synthetic Collections row as 'MOVIES /
    STD' (the typeLabel ternary had no collections branch). Now 'COLLECTIONS'
-   with no STD/4K suffix, mirroring renderCoverageComparison.
+   with no STD/4K suffix. (v0.51.31: the // COVERAGE COMPARISON block this
+   note once mirrored was removed as a duplicate — the branch lives on in
+   renderSectionCoverage.)
 """
 from __future__ import annotations
 

@@ -2161,6 +2161,22 @@
     const yt = (data.yt_dlp || {}).version;
     row.appendChild(_serviceCard(
       'yt-dlp', yt ? 'ok' : 'down', yt ? `v${yt}` : 'unavailable', ''));
+    // v0.51.31: ThemerrDB — the upstream catalogue motif syncs from. Always
+    // shown (it's the core dependency); sub-line names the active transport.
+    const tdb = data.themerrdb || {};
+    const tdbState = !tdb.configured ? 'idle' : (tdb.online ? 'ok' : 'down');
+    const tdbStatus = !tdb.configured ? 'not configured'
+      : (tdb.online ? `reachable · ${tdb.latency_ms}ms` : 'unreachable');
+    row.appendChild(_serviceCard(
+      'ThemerrDB', tdbState, tdbStatus, tdb.source ? `via ${tdb.source}` : ''));
+    // v0.51.31: TMDB — optional (orphan id resolution). Only card it when a key
+    // is configured; an absent key isn't a fault worth a red/idle chip.
+    const tmdb = data.tmdb || {};
+    if (tmdb.configured) {
+      row.appendChild(_serviceCard(
+        'TMDB', tmdb.online ? 'ok' : 'down',
+        tmdb.online ? `reachable · ${tmdb.latency_ms}ms` : 'unreachable', ''));
+    }
     block.style.display = '';
   }
 
@@ -2239,10 +2255,6 @@
       const sec = await api('GET', '/api/sections/coverage');
       if (loadDashboard._seq !== _myToken) return;
       renderSectionCoverage(sec.sections || []);
-      // v1.13.27: comparison bars also fed from per-section data so
-      // each library has its own normalized bar instead of being
-      // collapsed into a Movies / TV aggregate.
-      renderCoverageComparison(sec.sections || []);
       // v1.23.90: the PLEX ANIME card is populated in renderPlexCoverage from
       // /api/coverage/plex's anime array (matches the ANIME tab), not summed
       // from the per-section payload here — renderPlexAnimeCard retired.
@@ -2950,8 +2962,7 @@
     body.innerHTML = sections.map((s) => {
       // v1.24.79: Collections rows had no branch here → fell through to
       // 'MOVIES' + a spurious 'STD' sub-label (the synthetic collections row is
-      // tab='collections', is_4k=0). Mirror renderCoverageComparison: label
-      // COLLECTIONS with no STD/4K suffix.
+      // tab='collections', is_4k=0). Label COLLECTIONS with no STD/4K suffix.
       const isCollections = s.tab === 'collections';
       const fourkLabel = isCollections ? '' : (s.is_4k ? '4K' : 'STD');
       const typeLabel = isCollections     ? 'COLLECTIONS'
@@ -4639,12 +4650,10 @@
     setCov('collections', collectionsWithTheme, collectionsTotal,
       collectionsList.filter(isAddable).length);
 
-    // v1.13.27: per-section comparison bars live in
-    // renderCoverageComparison and are populated from
-    // /api/sections/coverage (called alongside renderSectionCoverage
-    // in loadDashboard's section-coverage fetch). The earlier
-    // aggregated movies/tv recomputation that lived here was dead
-    // code by v1.13.27 and was removed in v1.13.28.
+    // v0.51.31: the earlier aggregated movies/tv comparison recompute
+    // that lived here was dead code by v1.13.27 (removed v1.13.28); the
+    // per-section comparison bars it seeded were themselves retired with
+    // the // COVERAGE COMPARISON block (duplicate of PER-SECTION COVERAGE).
   }
 
   // v1.23.90: renderPlexAnimeCard retired. The PLEX ANIME card is now
@@ -4656,92 +4665,10 @@
   // 1,341"). data.anime carries motif_available per item, so the "in
   // ThemerrDB / not in ThemerrDB" foot is derivable without the per-section sum.
 
-  // v1.13.22: per-row stacked-bar comparison block.
-  // v1.13.27: input is now an array of plex_sections (from
-  // /api/sections/coverage) instead of an aggregated movies / tv
-  // pair. Each section gets its own row with a 2-segment bar
-  // (themed vs unthemed), normalized to that section's total — so
-  // a 28-item 4K Movies library at 90% themed reads as a near-full
-  // bar even though Movies (10K items) at 30% themed reads as a
-  // mostly-empty bar of similar visual width. Pre-fix the user
-  // reported the aggregate view masked small-library coverage.
-  //
-  // The 3-segment "themed / TDB-available / no-TDB" axis from
-  // v1.13.22 is dropped — the section coverage payload doesn't
-  // carry the TDB-availability split (that data lives in
-  // /api/coverage/plex's per-item motif_available flag), and the
-  // 2-segment view is what users actually compare across rows.
-  let _lastCoverageComparisonKey = '';
-  function renderCoverageComparison(sections) {
-    const block = document.getElementById('coverage-comparison-block');
-    const body = document.getElementById('coverage-comparison-body');
-    if (!block || !body) return;
-    const rows = (sections || []).filter((s) => (s.total || 0) > 0);
-    if (rows.length === 0) { block.style.display = 'none'; return; }
-    // v1.13.29: include tab, is_4k, is_anime in the cache key. Pre-fix
-    // a section reclassification from /settings (toggling A/4K flags)
-    // would change the rendered tab + STD/4K subtype label but not
-    // the totals, so the hash matched and the swap was skipped — the
-    // user kept seeing the stale classification on screen until
-    // numbers happened to change.
-    const key = JSON.stringify(rows.map((s) => [
-      s.section_id, s.title, s.total, s.themed,
-      s.tab, s.is_4k, s.is_anime,
-    ]));
-    if (key === _lastCoverageComparisonKey) {
-      block.style.display = '';
-      return;
-    }
-    _lastCoverageComparisonKey = key;
-    block.style.display = '';
-    body.innerHTML = rows.map((s) => {
-      const total = s.total || 0;
-      const themed = s.themed || 0;
-      const unthemed = Math.max(0, total - themed);
-      const pctThemed = total ? (themed / total) * 100 : 0;
-      const pctUnthemed = total ? (unthemed / total) * 100 : 0;
-      const pctDisplay = pctThemed >= 10
-        ? Math.round(pctThemed)
-        : pctThemed.toFixed(1);
-      const fourkLabel = s.is_4k ? '4K' : 'STD';
-      // v1.18.20: collections tab label. The synthetic
-      // collections aggregate row carries tab='collections' +
-      // is_4k=0 + is_anime=0; render its sub-label as just
-      // "COLLECTIONS" without the STD/4K suffix (the 4K split
-      // doesn't apply to Plex collections).
-      const typeLabel = s.tab === 'collections' ? 'COLLECTIONS'
-                      : s.tab === 'anime'       ? 'ANIME'
-                      : s.tab === 'tv'          ? 'TV'
-                      :                           'MOVIES';
-      const sectionTitle = s.title || `${typeLabel} ${fourkLabel}`;
-      const subLabel = s.tab === 'collections'
-        ? typeLabel
-        : `${typeLabel} ${fourkLabel}`;
-      const href = s.tab === 'collections'
-        ? '/collections'
-        : `/${s.tab}?fourk=${s.is_4k ? 1 : 0}`;
-      return `<a class="coverage-row" data-tab="${htmlEscape(s.tab || '')}"
-                  href="${htmlEscape(href)}">
-        <div class="coverage-row-head">
-          <span class="coverage-row-tab">
-            ${htmlEscape(sectionTitle)}
-            <span class="muted small">· ${subLabel}</span>
-          </span>
-          <span class="coverage-row-ratio">
-            ${fmt.num(themed)} <span class="muted">/ ${fmt.num(total)} themed</span>
-            <span class="coverage-row-pct">${pctDisplay}%</span>
-          </span>
-        </div>
-        <div class="coverage-bar"
-             title="${fmt.num(themed)} themed · ${fmt.num(unthemed)} unthemed">
-          <span class="coverage-bar-seg coverage-bar-seg-themed"
-                style="flex-basis:${pctThemed}%; ${themed === 0 ? 'display:none' : ''}"></span>
-          <span class="coverage-bar-seg coverage-bar-seg-no-tdb"
-                style="flex-basis:${pctUnthemed}%; ${unthemed === 0 ? 'display:none' : ''}"></span>
-        </div>
-      </a>`;
-    }).join('');
-  }
+  // v0.51.31: renderCoverageComparison removed — the // COVERAGE COMPARISON
+  // block it fed showed the same per-section themed/unthemed split as the
+  // // PER-SECTION COVERAGE table (both from /api/sections/coverage), so it
+  // was pure duplicate clutter (the user).
 
   function bindCoverage() {
     const btn = $('#relink-all-btn');

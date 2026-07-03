@@ -6186,19 +6186,6 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 .sync-history-sum-database .sync-history-sum-label { color: var(--magenta); }
 .sync-history-sum-remote   .sync-history-sum-label { color: var(--fg-mute); }
 
-/* v1.13.22: COVERAGE COMPARISON — per-tab horizontal stacked bars
-   showing themed (any source) / TDB-available-but-unthemed / no-TDB.
-   Each row reads top-to-bottom: tab label + headline ratio, then
-   the segmented bar, then a comma-separated legend strip with
-   exact counts. Color encoding mirrors the existing palette: green
-   for themed (the "covered" cohort), amber for "motif can help",
-   muted gray for "motif can't help". */
-.coverage-comparison-body {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 18px;
-}
 /* v1.13.34: dashboard insight blocks (failure breakdown, sync
    performance sparkline, daily download activity). All three
    share the .insight-row block frame and the .insight-body
@@ -6305,59 +6292,10 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   letter-spacing: 0.06em;
 }
 
-/* v1.13.27: rows are now <a> click-throughs to the matching library
-   tab. Inherit color so the green-on-black palette stays intact;
-   drop the default underline; show a subtle hover. */
-.coverage-row {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  color: inherit;
-  text-decoration: none;
-  cursor: pointer;
-}
-.coverage-row:hover { opacity: 0.92; }
-.coverage-row:hover .coverage-row-tab { color: var(--fg); }
-.coverage-row-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  font-size: var(--t-tiny);
-  letter-spacing: 0.14em;
-}
-.coverage-row-tab { color: var(--fg-dim); font-weight: 600; }
-.coverage-row-ratio {
-  color: var(--fg);
-  font-family: var(--font-display);
-  letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
-.coverage-row-pct { color: var(--green-bright); margin-left: var(--gap-1); }
-.coverage-bar {
-  display: flex;
-  height: 14px;
-  background: var(--bg-elev-2);
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-.coverage-bar-seg { height: 100%; transition: flex-basis var(--motion-slow) ease; }
-.coverage-bar-seg-themed    { background: var(--green-bright); }
-/* v1.14.61: restored `.coverage-bar-seg-no-tdb`. v1.14.56's sweep
-   incorrectly deleted this rule on the assumption only the green
-   themed segment was rendered — the libraries-page per-section
-   coverage bar at app.js:2899 still emits a 2nd `<span class=
-   "coverage-bar-seg coverage-bar-seg-no-tdb">` for the unthemed
-   remainder. Without the rule the unthemed wedge rendered with
-   no background → no visual differentiation between themed (green)
-   and unthemed (now blank) on the per-section bars. The audit
-   follow-up after v1.14.59 caught the regression. The other
-   v1.14.56 deletions (`.coverage-bar-seg-available`,
-   `.coverage-row-legend`, `.coverage-legend-swatch-*`) ARE
-   genuinely dead — verified zero JS / template refs.
-   The class name reads as "no-tdb" historically (v1.13.21 era)
-   but the JS uses it for the generic "unthemed remainder"
-   segment regardless of TDB coverage. */
-.coverage-bar-seg-no-tdb    { background: var(--fg-mute); opacity: 0.5; }
+/* v0.51.31: .coverage-row / .coverage-bar rules removed with the
+   // COVERAGE COMPARISON block they styled (renderCoverageComparison).
+   The surviving // PER-SECTION COVERAGE table uses .section-coverage-row
+   and is unaffected. */
 
 /* v1.13.21: SOURCE BREAKDOWN — donut chart + click-to-filter
    legend. Slices are SVG circles with stroke-dasharray sliced

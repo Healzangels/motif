@@ -12022,8 +12022,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         items = await run_in_threadpool(_recently_placed_sync, db)
         return {"items": items}
 
-    # v1.24.53: dashboard SERVICES panel — live status of motif's two external
-    # dependencies (Plex + yt-dlp). Short-timeout probe so a down Plex reports
+    # v1.24.53: dashboard SERVICES panel — live status of motif's external
+    # dependencies. v0.51.31 added ThemerrDB (the upstream catalogue) + TMDB
+    # (orphan id resolution). Short-timeout probes so a down dependency reports
     # "offline" fast instead of holding a threadpool worker for 30s.
     def _service_status_sync() -> dict:
         yt_version = None
@@ -12052,13 +12053,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 version=mc.get("version") or None)
             except Exception as e:  # noqa: BLE001
                 log.debug("services: plex probe failed: %s", e)
-        return {"plex": plex, "yt_dlp": {"version": yt_version}}
+        # v0.51.31: ThemerrDB — the upstream theme catalogue motif syncs from
+        # (the user: "any other services worth tracking that motif is built off
+        # of"). Probe the configured git source's smart-HTTP refs endpoint — the
+        # real "can the next sync reach it" signal. `source` = active transport.
+        tdb = {"configured": False, "online": False, "latency_ms": None,
+               "source": settings.sync_source}
+        tdb_url = (settings.sync_git_url or "").rstrip("/")
+        if tdb_url:
+            tdb["configured"] = True
+            import time as _time
+            import httpx
+            try:
+                t0 = _time.perf_counter()
+                with httpx.Client(timeout=5.0, follow_redirects=True) as c:
+                    r = c.get(f"{tdb_url}/info/refs",
+                              params={"service": "git-upload-pack"})
+                if r.status_code == 200:
+                    tdb.update(online=True,
+                               latency_ms=round((_time.perf_counter() - t0) * 1000))
+            except Exception as e:  # noqa: BLE001
+                log.debug("services: themerrdb probe failed: %s", e)
+        # v0.51.31: TMDB — used for orphan id resolution. Only probed when a key
+        # is configured (most homelab installs have none → skip the network hit).
+        tmdb = {"configured": bool(settings.tmdb_api_key), "online": False,
+                "latency_ms": None}
+        if tmdb["configured"]:
+            import time as _time
+            import httpx
+            try:
+                t0 = _time.perf_counter()
+                with httpx.Client(timeout=5.0) as c:
+                    r = c.get("https://api.themoviedb.org/3/configuration",
+                              params={"api_key": settings.tmdb_api_key})
+                if r.status_code == 200:
+                    tmdb.update(online=True,
+                                latency_ms=round((_time.perf_counter() - t0) * 1000))
+            except Exception as e:  # noqa: BLE001
+                log.debug("services: tmdb probe failed: %s", e)
+        return {"plex": plex, "yt_dlp": {"version": yt_version},
+                "themerrdb": tdb, "tmdb": tmdb}
 
     @app.get("/api/services")
     async def api_services():
         """v1.24.53: live status for the dashboard SERVICES panel — Plex
-        (online + round-trip latency + friendly name/version) and yt-dlp
-        (running version). The token rides the X-Plex-Token header server-side."""
+        (online + latency + friendly name/version) and yt-dlp (running version).
+        v0.51.31 added ThemerrDB (git source reachability + active transport)
+        and TMDB (reachability, only when an api key is configured). Plex token
+        + TMDB key ride server-side; neither leaves this process."""
         return await run_in_threadpool(_service_status_sync)
 
     @app.get("/api/youtube/oembed")

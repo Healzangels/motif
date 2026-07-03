@@ -159,15 +159,14 @@ def test_js_pie_legend_toggle_rerenders_only_clicked_donut():
     assert "renderAllSourcePies(" not in block
 
 
-def test_js_coverage_comparison_handles_collections_tab():
-    """renderCoverageComparison must label tab='collections' as
-    COLLECTIONS (no STD/4K suffix) and route the click-through
-    to /collections."""
+def test_js_coverage_comparison_removed():
+    """v0.51.31: the // COVERAGE COMPARISON block (renderCoverageComparison)
+    was removed as a duplicate of the // PER-SECTION COVERAGE table — both
+    fed from /api/sections/coverage (the user). The collections-label branch
+    lives on in renderSectionCoverage (see test_v1_24_79)."""
     js = APP_JS.read_text()
-    idx = js.index("function renderCoverageComparison")
-    body = js[idx:idx + 3000]
-    assert "tab === 'collections' ? 'COLLECTIONS'" in body
-    assert "'/collections'" in body
+    assert "function renderCoverageComparison" not in js
+    assert "coverage-comparison-body" not in js
 
 
 def test_js_calls_renderallsourcepies_in_load_dashboard():

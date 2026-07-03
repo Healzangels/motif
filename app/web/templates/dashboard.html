@@ -578,24 +578,10 @@
 </section>
 </div>{# /.dash-pair (PER-SECTION COVERAGE + GENERAL STATISTICS) #}
 
-<!-- v1.13.27: per-section comparison bars. Each managed Plex section
-     gets its own row, normalized to 100% of that section's total —
-     so 4K Movies (28 items, 90% themed) reads as a near-full bar
-     even though it sits right next to Movies (10K items, 30% themed).
-     Pre-fix v1.13.22 collapsed everything into a Movies / TV pair,
-     which masked small-library coverage. Backed by /api/sections/
-     coverage (same payload as the // PER-SECTION COVERAGE table
-     below). Hidden when there are no managed sections. -->
-<section class="block" id="coverage-comparison-block"
-         data-dash-section="coverage-comparison"
-         data-dash-label="COVERAGE COMPARISON"
-         style="display:none">
-  <header class="block-head">
-    <h2 class="block-title">// COVERAGE COMPARISON</h2>
-    <span class="muted small">themed vs unthemed · normalized per section</span>
-  </header>
-  <div class="coverage-comparison-body" id="coverage-comparison-body"></div>
-</section>
+<!-- v0.51.31: // COVERAGE COMPARISON removed — it was fed by the same
+     /api/sections/coverage payload as the // PER-SECTION COVERAGE table
+     above and showed no distinct information (the user: "a lot of them
+     now have a lot of duplicate information ... COVERAGE COMPARISON"). -->
 
 <!-- v1.13.34: insight charts. Three small data-viz blocks rendered
      as CSS+SVG (no external chart lib) so the bundle stays small

@@ -2969,7 +2969,26 @@
 #   where a persisted STANDARD left NO resolution chip lit. Verified live at the
 #   resolution chips: default→ALL only, persisted fourk→4K only, standard→STANDARD
 #   only (each exactly one active).
-__version__ = "0.51.30"
+# 0.51.31 — dashboard de-dup + SERVICES enrichment (the user: "reducing some of
+#   the charts on the dashboard, seems a lot of them now have a lot of duplicate
+#   information ... COVERAGE COMPARISON ... any other services worth tracking
+#   that motif is using or built off of lets add that to // SERVICES"). Removed
+#   the // COVERAGE COMPARISON block — renderCoverageComparison fed it the SAME
+#   /api/sections/coverage per-section themed/unthemed split the // PER-SECTION
+#   COVERAGE table already shows, so it was pure duplicate clutter. Deleted the
+#   template section, the JS fn + call, and the now-dead .coverage-row/.coverage-
+#   bar CSS (their sole builder); the surviving PER-SECTION table uses
+#   .section-coverage-row and is untouched. Reconciled the historical dead-CSS /
+#   motion-token guards (v1.14.61 flip to co-removed; v1.20.47 drop from LIVE).
+#   SERVICES gained ThemerrDB (the upstream catalogue — always shown, probes the
+#   configured git source's smart-HTTP refs endpoint for reachability + names the
+#   active transport) and TMDB (orphan id resolution — carded only when an api
+#   key is configured, probed against /3/configuration). Both mirror the Plex
+#   short-timeout probe, run off the event loop, and keep their credentials
+#   server-side. Audited the other dashboard cards: COVERAGE vs PLEX LIBRARY
+#   (themed% vs TDB-reach) + GENERAL STATISTICS vs PER-SECTION COVERAGE (distinct
+#   columns) are intentionally different, not dups — left as-is.
+__version__ = "0.51.31"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -67,7 +67,9 @@ LIVE = [
     (".tdb-pill-btn {", APP_CSS),
     (".link-glyph {", APP_CSS),
     (".link-glyph-pu {", APP_CSS),
-    (".coverage-bar-seg-no-tdb ", APP_CSS),
+    # v0.51.31: .coverage-bar-seg-no-tdb was dropped here — it's no longer a
+    # live sibling (the // COVERAGE COMPARISON block that used it was removed;
+    # its co-removal is guarded by test_v1_14_61).
     (".op-pill.op-tone-fail ", OPS_CSS),
     (".op-pill.op-pill-idle {", OPS_CSS),
     ("@keyframes op-pill-fail-pulse", OPS_CSS),
