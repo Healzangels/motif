@@ -2748,7 +2748,25 @@
 #   everywhere); now deadline-bounded (v1.22.65 pattern, 30s no-progress) with
 #   abandon-without-join + skip-remaining-after-first-stall. sync/plex_enum +
 #   tests (incl. a behavioral dulwich baseline-reset test).
-__version__ = "0.51.14"
+# 0.51.15: round-4 audit — Batch E (silent failures, round 3 — class 9). #21: the
+#   v55 recovery walker's pi sidecar stat coerced OSError to False ("file
+#   absent") — now None (indeterminate, consumer's .get(rk, False) gate stays
+#   conservative) + an INFO breadcrumb + an indeterminate count in the summary
+#   line (the v1.21.42 M2 indeterminate-vs-False class). #20: its canonical-stat
+#   OSError was a bare continue — a present-but-unstatable file left a permanent
+#   silent gap in the one-shot walker; now breadcrumbed (v1.18.7 cold-path rule).
+#   #30: apply_pending_restore swallowed ALL OSErrors on the stale WAL/-shm
+#   unlink and proceeded to os.replace — directly beneath its own comment that a
+#   leftover WAL would replay onto the restored file and corrupt it. Now
+#   ENOENT-tolerant; any REAL unlink failure ABORTS the swap (pending snapshot
+#   kept for retry, mirroring the safety-backup branch). #31: config save()'s
+#   env-un-bake guard had two silent, DIVERGING fault branches — corrupt YAML
+#   reset env-bound fields to dataclass DEFAULTS, a non-mapping document skipped
+#   the guard (baking the env value, the exact bug it prevents). Both now WARN
+#   and uniformly skip the un-bake (env wins this save — deterministic,
+#   least-damaging; load() already fails loudly on the same faults).
+#   recovery_v55/db_backup/config_file + behavioral tests.
+__version__ = "0.51.15"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

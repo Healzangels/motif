@@ -351,7 +351,7 @@ def maybe_recover_post_v55_data_loss(
         "v1.18.5 recovery: pre-computing disk-state for plex_items "
         "with folder_path != '' (cache build pass)",
     )
-    pi_on_disk: dict[str, bool] = {}  # rating_key → file exists
+    pi_on_disk: dict[str, bool | None] = {}  # rk → exists (None=indeterminate)
     all_pis: list[dict] = []
     for pis in plex_by_section.values():
         all_pis.extend(pis)
@@ -367,13 +367,25 @@ def maybe_recover_post_v55_data_loss(
         plex_path = Path(pi["folder_path"]) / "theme.mp3"
         try:
             pi_on_disk[rk] = plex_path.is_file()
-        except OSError:
-            pi_on_disk[rk] = False
+        except OSError as e:
+            # v0.51.15 (audit #21): indeterminate, NOT False — an OSError here
+            # (stalled mount, permissions) doesn't mean "file absent"; the old
+            # coercion was the exact indeterminate-vs-False class v1.21.42 M2
+            # fixed in stat_theme_sidecar. None keeps the consumer conservative
+            # (the .get(rk, False) gate skips it) while the breadcrumb makes the
+            # one-shot walker's gaps auditable (cold-path rule, v1.18.7).
+            pi_on_disk[rk] = None
+            log.info(
+                "v1.18.5 recovery: sidecar stat indeterminate for rk=%s "
+                "(%s): %s — row skipped, not treated as absent",
+                rk, plex_path, e,
+            )
     log.info(
         "v1.18.5 recovery: disk-state cache built — %d pi rows "
-        "checked, %d with on-disk sidecar, in %.1fs",
+        "checked, %d with on-disk sidecar, %d indeterminate, in %.1fs",
         len(seen_rks),
         sum(1 for v in pi_on_disk.values() if v),
+        sum(1 for v in pi_on_disk.values() if v is None),
         _t.monotonic() - t0,
     )
 
@@ -414,7 +426,17 @@ def maybe_recover_post_v55_data_loss(
                 continue
             try:
                 stat = canonical_path.stat()
-            except OSError:
+            except OSError as e:
+                # v0.51.15 (audit #20): breadcrumb the skip — the file IS
+                # present (is_file above) but unstatable (permissions, mount
+                # fault), and this one-shot walker never revisits, so a bare
+                # continue left a permanent silent gap (cold-path rule,
+                # v1.18.7: every recovery early-return logs WHY).
+                log.info(
+                    "v1.18.5 recovery: canonical present but stat failed "
+                    "for %s/%s (%s): %s — pair skipped",
+                    t["media_type"], t["tmdb_id"], canonical_path, e,
+                )
                 continue
             rel_path = str(canonical_path.relative_to(themes_dir))
             has_override = s["section_id"] in override_index.get(

@@ -866,10 +866,33 @@ class ConfigFile:
             # DID explicitly set to something else is left alone.
             overrides = env_overrides_present()
             if overrides and self.path.exists():
+                # v0.51.15 (audit #31): both fault branches were silent AND
+                # diverged: a YAMLError hydrated disk_cfg from pure dataclass
+                # DEFAULTS (env-bound fields written back as defaults, losing
+                # the operator's real disk values), while a non-dict document
+                # silently skipped the guard entirely (baking the env value —
+                # the exact bug this guard exists to prevent). Unify: on either
+                # fault we cannot know the disk values, so WARN loudly and skip
+                # the un-bake — the env value gets written this once (env still
+                # wins at runtime; nothing changes until the env var is unset),
+                # which is strictly less damaging than a silent reset-to-default.
                 try:
                     raw = yaml.safe_load(self.path.read_text()) or {}
-                except yaml.YAMLError:
-                    raw = {}
+                except yaml.YAMLError as e:
+                    raw = None
+                    log.warning(
+                        "config save: %s is not parseable YAML (%s) — "
+                        "skipping the env-override un-bake; env-mandated "
+                        "values will be written into the file this save. "
+                        "Restore a valid motif.yaml to preserve disk values.",
+                        self.path, e)
+                if raw is not None and not isinstance(raw, dict):
+                    log.warning(
+                        "config save: %s parsed as %s, not a mapping — "
+                        "skipping the env-override un-bake (env-mandated "
+                        "values will be written into the file this save)",
+                        self.path, type(raw).__name__)
+                    raw = None
                 if isinstance(raw, dict):
                     disk_cfg = MotifConfig()
                     _hydrate_dataclass(disk_cfg, raw)

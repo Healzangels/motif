@@ -359,10 +359,27 @@ def apply_pending_restore(db_path: Path, config_dir: Path, *,
         # The old db's WAL/-shm belong to the OUTGOING inode; if left in
         # place SQLite would try to replay them onto the restored file
         # and corrupt it. Remove them around the swap.
+        # v0.51.15 (audit #30): errno-aware — ENOENT (no sidecar) is the
+        # benign no-op; any OTHER unlink failure means the stale WAL is
+        # still in place, and proceeding with os.replace risks the exact
+        # corruption the comment above describes. ABORT the swap (the
+        # pending snapshot is kept for a retry, mirroring the safety-backup
+        # failure branch above); the old bare `except OSError: pass`
+        # conflated the two and left no breadcrumb on the dangerous case.
         for sidecar in (db_path.with_name(db_path.name + "-wal"),
                         db_path.with_name(db_path.name + "-shm")):
-            try: sidecar.unlink()
-            except OSError: pass
+            try:
+                sidecar.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                log.error(
+                    "apply_pending_restore: could not remove stale %s (%s) "
+                    "— ABORTING the swap; a leftover WAL would replay onto "
+                    "the restored file and corrupt it. Pending snapshot "
+                    "kept for retry.", sidecar.name, e)
+                return {"applied": False,
+                        "error": f"stale {sidecar.name} unlink failed: {e}"}
         os.replace(pending, db_path)
         log.warning("DATABASE RESTORED from staged snapshot (schema v%s). "
                     "Pre-restore safety backup: %s",

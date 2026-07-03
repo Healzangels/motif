@@ -104,12 +104,14 @@ def test_walker_precomputes_disk_check_cache():
     fired per (themes_row × candidate) which on the user's install
     meant millions of stat() calls."""
     src = RECOVERY_PY.read_text()
-    assert "pi_on_disk: dict[str, bool] = {}" in src, (
+    # v0.51.15 (audit #21): the cache is now bool | None — None = the stat
+    # raised (indeterminate), no longer coerced to "absent".
+    assert "pi_on_disk: dict[str, bool | None] = {}" in src, (
         "v1.18.12: cache must be declared as a typed dict"
     )
     # The cache must be populated BEFORE the themes loop (which
     # starts with `for t_idx, t in enumerate(themes_rows):`).
-    cache_idx = src.index("pi_on_disk: dict[str, bool]")
+    cache_idx = src.index("pi_on_disk: dict[str, bool | None]")
     themes_loop_idx = src.index("for t_idx, t in enumerate(themes_rows):")
     assert cache_idx < themes_loop_idx, (
         "v1.18.12: disk-check cache must be built BEFORE the "
@@ -122,7 +124,7 @@ def test_walker_cache_dedupes_by_rating_key():
     + plex_by_theme_id). The cache must dedupe on rating_key so
     we don't re-stat the same file."""
     src = RECOVERY_PY.read_text()
-    cache_idx = src.index("pi_on_disk: dict[str, bool]")
+    cache_idx = src.index("pi_on_disk: dict[str, bool | None]")
     block = src[cache_idx:cache_idx + 1500]
     assert "seen_rks" in block or "seen_rks: set" in block, (
         "v1.18.12: cache build must dedupe via a seen-set"
