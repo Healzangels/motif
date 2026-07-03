@@ -9366,9 +9366,17 @@
     // IS placed; exclude it from awaitingApproval so PL renders
     // as 'on' (green) instead of 'await' (amber). Mirrors the
     // backend _row_matches_pl + _row_matches_attn await fixes.
+    // v0.51.36 (the user): a backup-only download (DOWNLOAD TDB BACKUP → TB badge,
+    // "deferring to Plex") is a TERMINAL state, NOT "awaiting placement" — exclude
+    // it or the row paints amber PL + the amber ! "downloaded, awaiting placement"
+    // glyph even though it's a finished backup. Mirrors the write side
+    // (worker stamps last_place_attempt_reason='backup_only') + the backend await
+    // predicates (_LIB_AWAIT_SQL / pl_pills=await / _row_matches_attn) — same
+    // contract-drift class as the v1.18.16 plex_upload exclusion above.
     const awaitingApproval = !it.job_in_flight && !!it.file_path
                           && !it.media_folder && !lpsState
-                          && !isPlexUpload;
+                          && !isPlexUpload
+                          && it.last_place_attempt_reason !== 'backup_only';
     const placementBroken = !!placed && !!it.placement_missing;
     // v1.18.25 introduced the 'pushed' (cyan) PL state to mark
     // plex_upload placements (API push, no folder sidecar) apart

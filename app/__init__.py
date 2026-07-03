@@ -3050,7 +3050,24 @@
 #   modal) never used this lock, so it was already unaffected — verified the
 #   sticky topbar stays put with either drawer open. CSS/JS one-liners + guard
 #   test flipped (test_v1_21_30).
-__version__ = "0.51.35"
+# 0.51.36 — a backup-only (TB) row no longer paints as "awaiting placement" (the
+#   user: DOWNLOAD TDB BACKUP "leaves it an amber state PL row thinking that it
+#   needs to be placed when it was just downloading the backup"). Contract-drift
+#   (bug class 9): the v1.19.21 `backup_only` terminal state was added to the WRITE
+#   side (worker stamps last_place_attempt_reason='backup_only') + the retry-sweep
+#   skip-list, but the READ-side "awaiting placement" predicates were never taught
+#   to exclude it, so a finished backup row still lit the amber PL dot + amber "!"
+#   glyph + matched the AWAIT/attention filters. Excluded backup_only at all FOUR
+#   drift sites (mirror-drift): JS awaitingApproval (app.js — the visible dot +
+#   glyph), _LIB_AWAIT_SQL (api.py — attn filter + count), the pl_pills=await SQL
+#   branch, and the _row_matches_attn await branch. Display/filter only — no data
+#   mutation. Behavioral test seeds a backup_only row + a genuine-await row and
+#   asserts only the latter matches pl=await / attn=await. (Diagnosed from the
+#   user's prod row via a 3-agent read-only trace; the SRC T→P-on-UNMANAGE +
+#   "DOWNLOAD PLEX BACKUP no-ops" + info-card items from the same report are
+#   plex_independent_theme / force-capture-UX questions, flagged separately — not
+#   touched here to avoid the phantom-P edition-scope minefield.)
+__version__ = "0.51.36"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

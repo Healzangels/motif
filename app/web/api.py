@@ -1338,7 +1338,13 @@ _LIB_AWAIT_SQL = (
     " AND COALESCE(p_e.media_folder, p_g.media_folder) IS NULL "
     " AND COALESCE(pi.plex_independent_theme, 0) = 0 "
     " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
-    "     IS NOT 'plex_rejected:over_ceiling')")
+    "     IS NOT 'plex_rejected:over_ceiling' "
+    # v0.51.36 (the user): a backup-only row (DOWNLOAD TDB BACKUP → TB badge,
+    # deferring to Plex) is terminal, not "downloaded, click to PLACE" — exclude
+    # it like the over-ceiling reason above so it doesn't pollute the AWAIT
+    # filter/attention. NULL-safe IS NOT keeps every other reason in AWAIT.
+    " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
+    "     IS NOT 'backup_only')")
 # v1.24.44: per-(tab, fourk) breakdown for the RE-PUSH badge so the topbar pill
 # CYCLES through every impacted section on successive clicks (incl. collections) —
 # like FAIL/UPD. Same plex_items-anchored shape as the count.
@@ -2921,10 +2927,14 @@ def _library_main_query(
             # gate; lets users find every row that needs a PLACE →
             # PUSH TO PLEX (or REMOVE → PURGE) without scrolling.
             elif p == "await":
+                # v0.51.36 (the user): exclude backup_only (terminal TB state) —
+                # mirrors the JS awaitingApproval + _LIB_AWAIT_SQL exclusion.
                 branches.append(
                     "(COALESCE(p_e.media_folder, p_g.media_folder) IS NULL "
                     " AND COALESCE(p_e.placement_kind, p_g.placement_kind) IS NULL "
-                    " AND COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL)"
+                    " AND COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
+                    " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
+                    "     IS NOT 'backup_only')"
                 )
             # v1.18.30: removed the pl_pills='pushed' SQL branch.
             # Its predicate was the literal same SQL as
@@ -3885,10 +3895,13 @@ def _library_main_query(
                         and it.get("plex_independent_theme") == 1
                         and not is_plex_upload
                     )
+                    # v0.51.36 (the user): backup_only (terminal TB) is not AWAIT —
+                    # mirror the JS awaitingApproval + _LIB_AWAIT_SQL exclusion.
                     if (it.get("file_path")
                             and not it.get("media_folder")
                             and not is_lps
-                            and not is_plex_upload):
+                            and not is_plex_upload
+                            and it.get("last_place_attempt_reason") != "backup_only"):
                         return True
             return False
 
