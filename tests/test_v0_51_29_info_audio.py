@@ -26,8 +26,9 @@ def test_info_audio_capped_width_and_taller_controls():
     # reads as a tidy control in the value column instead of stretching the whole
     # 1fr (the user: the play bar "goes so far to the right"). width:100% + flex
     # still fill UP TO the cap and shrink below it on narrow phones.
-    assert "max-width: 340px" in block and "width: 100%" in block, (
-        "v0.51.58: the player must be width-capped (340px) yet still fill up to "
-        "that cap")
+    # v0.51.60: cap bumped 340->360 to match the thumbnail width (the user).
+    assert "max-width: 360px" in block and "width: 100%" in block, (
+        "v0.51.60: the player must be width-capped (360px, matching the thumbnail) "
+        "yet still fill up to that cap")
     assert "max-width: none" not in block, (
         "v0.51.58: the pre-fix full-bleed max-width:none must be gone")

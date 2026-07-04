@@ -180,15 +180,16 @@ def test_info_play_row_is_a_flex_row_that_keeps_both_on_one_line():
 def test_info_audio_fills_the_play_row():
     # v0.51.29: the ↓ download sibling was removed, so the player no longer
     # needs the 0-basis line-sharing trick.
-    # v0.51.58: the player is WIDTH-CAPPED at 340px (was max-width:none / full-
-    # bleed) so it's a tidy control in the value column, not a bar stretching the
-    # whole 1fr (the user: it "goes so far to the right"). width:100% + flex still
-    # fill up to the cap + shrink on narrow phones.
+    # v0.51.58: the player is WIDTH-CAPPED (was max-width:none / full-bleed) so
+    # it's a tidy control in the value column, not a bar stretching the whole 1fr
+    # (the user: it "goes so far to the right"). width:100% + flex still fill up to
+    # the cap + shrink on narrow phones.
+    # v0.51.60: cap 340->360 to match the thumbnail width (the user).
     idx = APP_CSS.index(".info-audio {")
     end_idx = APP_CSS.index("}", idx)
     block = APP_CSS[idx:end_idx]
     assert "min-width: 0;" in block
-    assert "max-width: 340px;" in block and "width: 100%;" in block
+    assert "max-width: 360px;" in block and "width: 100%;" in block
     assert "max-width: none;" not in block
 
 

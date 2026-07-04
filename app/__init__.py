@@ -3284,7 +3284,12 @@
 #   margin:0 auto + .info-thumb-caption text-align:center — so the source preview is the
 #   original centered look, just smaller/less dominant. The v0.51.58 left-align lived one
 #   tag. CSS-only.
-__version__ = "0.51.59"
+# 0.51.60 — INFO card play bar matched to the thumbnail length (the user: "make it so the
+#   playback is the same length as the thumbnail"). .info-audio max-width 340->360 so the
+#   player cap equals .info-source-thumb-wrap's max-width. Bonus: at 360 the value-column
+#   player (x~174) and the centered 360 thumbnail (x~180) also land at nearly the same
+#   left edge, so they read as aligned too. CSS-only; keep the two caps in lockstep.
+__version__ = "0.51.60"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

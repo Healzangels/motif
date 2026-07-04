@@ -3822,11 +3822,15 @@ body.help-mode .settings-help-about { display: block; }
    volume slider + seek bar real height, so they're easy to see + drag (the user:
    "the volume control bar ... is very hard to see and control").
    v0.51.58 (the user: the play bar "goes so far to the right", the card "feels
-   askew"): capped at 340px (was max-width:none) so the player reads as a tidy
-   control left-aligned in the value column instead of a full-bleed bar stretching
-   the whole 1fr. flex-grow + width:100% still fill the row UP TO the cap, and
-   flex-shrink keeps it fitting narrower phone widths (where 100% < 340). */
-.info-audio { flex: 1 1 auto; min-width: 0; max-width: 340px; width: 100%; height: 40px; }
+   askew"): capped (was max-width:none) so the player reads as a tidy control in
+   the value column instead of a full-bleed bar stretching the whole 1fr. flex-grow
+   + width:100% still fill the row UP TO the cap, and flex-shrink keeps it fitting
+   narrower phone widths (where 100% < the cap).
+   v0.51.60 (the user: "make it so the playback is the same length as the
+   thumbnail"): cap bumped 340->360 to MATCH .info-source-thumb-wrap's max-width.
+   Keep these two in lockstep — at 360 the value-column-left player (x~174) and the
+   centered 360 thumbnail (x~180) also land at nearly the same position. */
+.info-audio { flex: 1 1 auto; min-width: 0; max-width: 360px; width: 100%; height: 40px; }
 /* v1.15.144 / v1.16.1: source-thumbnail primitive — wrapper +
    img split.
    Used by the info card's YouTube + SoundCloud preview blocks

@@ -32,12 +32,23 @@ def _rule(sel: str) -> str:
 
 def test_play_bar_is_width_capped_not_full_bleed():
     block = _rule(".info-audio")
-    assert "max-width: 340px" in block, (
-        "v0.51.58: the play bar must be capped so it doesn't sprawl the whole 1fr")
+    # v0.51.60: cap is 360 to MATCH the thumbnail's max-width (the user: "make it
+    # so the playback is the same length as the thumbnail"). Was 340 in v0.51.58.
+    assert "max-width: 360px" in block, (
+        "v0.51.60: the play bar cap must match the thumbnail (360px)")
     assert "max-width: none" not in block, (
         "v0.51.58: the pre-fix full-bleed max-width:none must be gone")
     # still fills up to the cap + keeps its taller controls.
     assert "width: 100%" in block and "height: 40px" in block
+
+
+def test_play_bar_and_thumbnail_same_width():
+    # v0.51.60: the two caps are kept in lockstep so the player and the source
+    # preview are the same length.
+    audio = _rule(".info-audio")
+    thumb = _rule(".info-source-thumb-wrap")
+    assert "max-width: 360px" in audio and "max-width: 360px" in thumb, (
+        "v0.51.60: .info-audio and .info-source-thumb-wrap must share max-width:360px")
 
 
 def test_thumbnail_centered_at_smaller_size():
