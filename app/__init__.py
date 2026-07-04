@@ -3245,7 +3245,13 @@
 #   circles, so cyan/magenta fall back to the nearest); the platform reads as
 #   plain text + renders its real preview card from the URL. The dot also shows
 #   on url-less sources (adopt / manual / upload) now, since it's a SOURCE signal.
-__version__ = "0.51.54"
+# 0.51.55 — the branded record-spinner (the library "results section" loader) now
+#   shows on the JOBS log + EVENT STREAM first load too (the user: "anywhere we
+#   say loading, include the spinning animation"). loadQueue paints
+#   recordLoaderHtml into #jobs-body + #event-stream-full on the empty state
+#   (lastHash null) instead of the SSR "loading…" text / empty list; the events
+#   loading row spans the 4-col grid via .event-stream-loading so it centres.
+__version__ = "0.51.55"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

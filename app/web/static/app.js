@@ -4807,6 +4807,20 @@
 
   async function loadQueue() {
     if (!$('#jobs-body')) return;
+    // v0.51.55: branded record-spinner on FIRST load of the JOBS log + EVENT
+    // STREAM (mirrors the library "results section" loader) instead of the SSR
+    // "loading…" text / empty list. Gated on the empty state (lastHash == null)
+    // so the 10s poll + the hash-skip re-render don't reset it. recordLoaderHtml
+    // is the shared loader; the events <li> gets .event-stream-loading to span
+    // the 4-col grid so the spinner centres.
+    const _jbLoad = $('#jobs-body');
+    if (_jbLoad && _jbLoad.dataset.lastHash == null) {
+      _jbLoad.innerHTML = `<li class="jobs-list-empty">${recordLoaderHtml('loading…')}</li>`;
+    }
+    const _evLoad = $('#event-stream-full');
+    if (_evLoad && _evLoad.dataset.lastHash == null) {
+      _evLoad.innerHTML = `<li class="event-stream-loading">${recordLoaderHtml('loading…')}</li>`;
+    }
     // v1.15.108: in-flight guard mirroring loadLibrary's pattern
     // (app.js:5561). Pre-fix two loadQueue calls could race —
     // the 10s setInterval (line 12639) overlapping with a click

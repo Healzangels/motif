@@ -3573,6 +3573,10 @@ body.help-mode .settings-help-about { display: block; }
   font-variant-numeric: tabular-nums;
 }
 .event-stream li:hover { background: rgba(var(--green-rgb), 0.025); }
+/* v0.51.55: first-load record-loader row spans the full width so the branded
+   spinner centres (the li is a 4-col grid otherwise → spinner in one cell). */
+.event-stream li.event-stream-loading { display: block; }
+.event-stream li.event-stream-loading:hover { background: none; }
 .event-time { color: var(--fg-mute); }
 .event-level {
   text-align: center; font-weight: 600; letter-spacing: 0.1em;
