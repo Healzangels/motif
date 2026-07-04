@@ -20,7 +20,7 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 def _load_recent_body():
     idx = APP_JS.index("async function loadRecentlyAdded()")
-    return APP_JS[idx:idx + 2600]
+    return APP_JS[idx:idx + 3300]
 
 
 def test_year_is_bracketed():

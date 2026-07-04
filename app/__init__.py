@@ -3215,7 +3215,16 @@
 #   nothing → capture anyway?" two-step is gone. Bulk DOWNLOAD PLEX BACKUP stays
 #   the strict C1-only Plex-Pass-loss sweep. plex_theme_uri reverted out of the
 #   /api/library payload (nothing reads it now).
-__version__ = "0.51.51"
+# 0.51.52 — RECENTLY ADDED carousel posters eager-load instead of lazy. the user:
+#   they "sometimes don't load right away ... load in late, looks a bit off". Each
+#   of the ~40 posters was loading='lazy', so off-screen tiles didn't fetch until
+#   scrolled near — and with auto-scroll ON by default the strip cycles through
+#   all of them anyway, so lazy just spread the SAME art-proxy fetches across the
+#   scroll (the pop-in). Now eager + decoding='async', with the first ~8 (initial
+#   viewport) at high fetch priority; the art proxy's 1-day Cache-Control makes it
+#   a one-time cost per browser. No layout shift — the tiles already reserve the
+#   2:3 poster box with a placeholder background.
+__version__ = "0.51.52"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

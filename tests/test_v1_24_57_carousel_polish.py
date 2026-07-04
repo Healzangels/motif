@@ -40,7 +40,7 @@ def test_type_icon_maps_movie_tv_collection():
 def test_carousel_meta_renders_the_icon():
     # The meta line builds the icon span (innerHTML SVG) ahead of the year/date.
     idx = APP_JS.index("async function loadRecentlyAdded()")
-    body = APP_JS[idx:idx + 2200]
+    body = APP_JS[idx:idx + 2900]
     assert "_recentTypeIcon(it.media_type)" in body
     assert "recent-type" in body
     assert "g.innerHTML = icon" in body

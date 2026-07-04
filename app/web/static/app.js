@@ -2024,7 +2024,7 @@
     if (strip.dataset.lastHash === hash) { block.style.display = ''; return; }
     strip.dataset.lastHash = hash;
     strip.textContent = '';
-    items.forEach((it) => {
+    items.forEach((it, idx) => {
       const rk = String(it.rating_key);
       const card = document.createElement('button');
       card.type = 'button';
@@ -2032,7 +2032,17 @@
       card.title = (it.title || '') + (it.year ? ` (${it.year})` : '');
       const img = document.createElement('img');
       img.className = 'recent-poster';
-      img.loading = 'lazy';
+      // v0.51.52: eager-load the posters (was loading='lazy'). With auto-scroll
+      // ON by default the strip cycles through all ~40 tiles anyway, so lazy
+      // just spread the SAME proxy fetches across the scroll and made off-screen
+      // tiles pop in late (the user: "don't load right away ... load in late").
+      // Eager front-loads them so the strip is fully rendered on arrival; the
+      // art proxy sets a 1-day Cache-Control so it's a one-time cost per browser.
+      // decoding=async keeps decode off the main thread; the first ~8 (the
+      // initial viewport) get high fetch priority so the visible strip paints
+      // before the scrolled-in tail.
+      img.decoding = 'async';
+      if (idx < 8) img.fetchPriority = 'high';
       img.alt = '';
       img.src = `/api/plex/art/${encodeURIComponent(rk)}`;
       img.addEventListener('error', () => card.classList.add('recent-card-noart'));
