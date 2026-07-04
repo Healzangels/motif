@@ -3860,9 +3860,18 @@
       const folderLine = folderHint
         ? `Plex folder: ${folderHint}\n\n`
         : '';
+      // v0.51.57 (the user): a plex_upload (PU) row has NO theme.mp3 sidecar in the
+      // media folder — motif POSTed the theme to Plex's own theme list (v1.18.36),
+      // so "DELETE theme.mp3 from the Plex folder" is misleading (that's the
+      // hardlink/copy HL/CP truth). Word the removal by placement kind — same
+      // signal as the LINK badge (placement_kind === 'plex_upload').
+      const isPlexUpload = !!(lpsRow && lpsRow.placement_kind === 'plex_upload');
+      const removalLine = isPlexUpload
+        ? '  • REMOVE motif\'s uploaded theme from Plex (motif POSTed it to Plex\'s theme list — there\'s no file in the media folder)\n'
+        : '  • DELETE motif\'s theme.mp3 from the Plex folder\n';
       const baseText = 'LET PLEX SERVE\n\n'
         + 'This will:\n'
-        + '  • DELETE motif\'s theme.mp3 from the Plex folder\n'
+        + removalLine
         + '  • KEEP motif\'s canonical at /themes/ (in case you change your mind)\n\n'
         + folderLine
         + 'Plex\'s own theme (cloud / embed) will become the only one served.\n'

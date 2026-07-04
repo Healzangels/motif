@@ -42,7 +42,9 @@ def test_lps_flow_resolves_by_clicked_rating_key():
     assert "ratingKey" in sig_line, (
         "letPlexServeFlow must accept the clicked ratingKey; signature was: "
         + sig_line)
-    body = APP_JS[sig:sig + 2500]
+    # v0.51.57: widened 2500→3100 — the PU-vs-sidecar removalLine branch (+
+    # comment) landed ahead of the unplace-URL rk resolution, pushing it out.
+    body = APP_JS[sig:sig + 3100]
     # Row resolution prefers an exact rating_key match.
     assert "String(row.rating_key) === String(ratingKey)" in body
     # The unplace URL threads the clicked rk (authoritative).

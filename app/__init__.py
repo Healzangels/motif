@@ -3260,7 +3260,16 @@
 #   cloudBackupForceCapture: clear the optimistic '// QUEUING PLEX BACKUP'
 #   placeholder when waitForOp is unavailable, so a successful start can't leave
 #   it hanging with nothing to poll it to done.
-__version__ = "0.51.56"
+# 0.51.57 — LET PLEX SERVE confirm honesty for PU rows (the user). The SOURCE-menu
+#   LPS confirm always said "DELETE motif's theme.mp3 from the Plex folder", but a
+#   plex_upload (PU/cyan) row has NO sidecar file in the media folder — motif POSTed
+#   the theme to Plex's own theme list (v1.18.36). The line is only true for a
+#   hardlink/copy (HL/CP) row. letPlexServeFlow now branches the removal bullet on
+#   the row's placement_kind (same signal as the LINK badge): PU → "REMOVE motif's
+#   uploaded theme from Plex … no file in the media folder"; HL/CP → the original
+#   folder-delete line. Mirrors the honest state-branched copy v1.20.57 already gave
+#   DEL/UNMANAGE/PURGE. Confirm-text only; no handler behavior changed.
+__version__ = "0.51.57"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -119,7 +119,9 @@ def test_purge_revert_to_plex_handler_calls_unplace():
     assert "letPlexServeFlow(" in body
     # The helper itself hits /unplace.
     helper_anchor = js.index("async function letPlexServeFlow(")
-    helper_body = js[helper_anchor:helper_anchor + 3000]
+    # v0.51.57: widened 3000→3600 — the PU-vs-sidecar removalLine branch (+
+    # comment) landed ahead of the unplaceUrl, pushing it past the old window.
+    helper_body = js[helper_anchor:helper_anchor + 3600]
     assert "/api/items/${mt}/${id}/unplace" in helper_body
 
 
