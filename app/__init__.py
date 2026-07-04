@@ -3278,7 +3278,13 @@
 #   480->360, and .info-thumb-caption text-align:left — so the SOURCE PREVIEW header,
 #   thumbnail + caption all hang off the card's left content edge like the grid above
 #   (one alignment axis, not a third centered one). 4:3 aspect + YT/SC parity unchanged.
-__version__ = "0.51.58"
+# 0.51.59 — INFO card thumbnail re-centered (the user, after seeing v0.51.58: "I don't
+#   mind the smaller thumbnail but I prefer it centered"). Keeps v0.51.58's play-bar cap
+#   (.info-audio 340px) + the trimmed 360 preview, but restores .info-source-thumb-wrap
+#   margin:0 auto + .info-thumb-caption text-align:center — so the source preview is the
+#   original centered look, just smaller/less dominant. The v0.51.58 left-align lived one
+#   tag. CSS-only.
+__version__ = "0.51.59"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
