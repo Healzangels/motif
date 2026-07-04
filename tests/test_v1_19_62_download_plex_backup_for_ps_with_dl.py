@@ -257,10 +257,14 @@ def test_source_menu_passes_allow_existing_local_on_ps_with_dl():
 def test_click_handler_reads_allow_existing_local_from_dataset():
     """The click handler must read `data-allow-existing-local` and
     pass it as `allow_existing_local` in the POST body."""
+    # v0.51.51: the per-row action always force-captures (the helper POSTs
+    # allow_existing_local: true); the dataset flag now drives only the
+    # pre-replace confirm (passed to cloudBackupForceCapture as the swap flag).
     idx = APP_JS.index("else if (act === 'backup-cloud-theme')")
-    block = APP_JS[idx:idx + 3000]
+    block = APP_JS[idx:idx + 2100]
     assert "btn.dataset.allowExistingLocal" in block
-    assert "allow_existing_local: allowExistingLocal" in block
+    assert "cloudBackupForceCapture(rk, hasTdb, allowExistingLocal)" in block
+    assert "force: true, allow_existing_local: true" in APP_JS
 
 
 def test_menu_item_html_serializes_allow_existing_local_data_attr():

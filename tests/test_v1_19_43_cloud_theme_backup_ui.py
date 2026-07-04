@@ -330,7 +330,7 @@ def test_backup_cloud_theme_visibility_gate():
     idx = APP_JS.index("'backup-cloud-theme'")
     # v1.19.62: widened window 500→1500 to absorb the v1.19.62
     # tooltip-branching block between the gate and the menuItemHtml.
-    pre = APP_JS[max(0, idx - 1500):idx]
+    pre = APP_JS[max(0, idx - 2400):idx]
     assert "isPlexAgent" in pre
     assert "!downloaded" in pre
 
@@ -342,10 +342,15 @@ def test_backup_cloud_theme_click_handler_present():
         "v1.19.43: SOURCE-menu click dispatch needs the "
         "backup-cloud-theme branch"
     )
+    # v0.51.51: the handler delegates to cloudBackupForceCapture (straight-to-
+    # capture); the POST to the run endpoint lives in that helper now.
     idx = APP_JS.index("act === 'backup-cloud-theme'")
-    block = APP_JS[idx:idx + 3400]
-    assert "/api/admin/cloud-themes-backup-run" in block
-    assert "rks" in block
+    block = APP_JS[idx:idx + 2100]
+    assert "cloudBackupForceCapture(rk, hasTdb, allowExistingLocal)" in block
+    fc = APP_JS.index("function cloudBackupForceCapture(rk, hasTdb, isSwap)")
+    fcbody = APP_JS[fc:fc + 3000]
+    assert "/api/admin/cloud-themes-backup-run" in fcbody
+    assert "rks" in fcbody
 
 
 def test_backup_cloud_theme_in_enqueueing_set():

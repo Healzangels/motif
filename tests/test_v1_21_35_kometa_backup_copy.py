@@ -18,7 +18,7 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 def _force_capture_fn():
     idx = APP_JS.index("function cloudBackupForceCapture(")
-    return APP_JS[idx:idx + 5000]
+    return APP_JS[idx:idx + 7200]
 
 
 def test_has_tdb_flag_plumbed_from_upstream_source():
@@ -29,11 +29,12 @@ def test_has_tdb_flag_plumbed_from_upstream_source():
     assert "hasTdb: cloudBackupHasTdb ? '1' : '0'" in APP_JS
     assert 'data-has-tdb="${extras.hasTdb}"' in APP_JS
     assert "btn.dataset.hasTdb === '1'" in APP_JS
-    assert "cloudBackupForceCapture(rk, hasTdb)" in APP_JS
+    # v0.51.51: the per-row handler passes the swap flag as the 3rd arg.
+    assert "cloudBackupForceCapture(rk, hasTdb, allowExistingLocal)" in APP_JS
 
 
 def test_force_capture_signature_takes_has_tdb():
-    assert "function cloudBackupForceCapture(rk, hasTdb, direct)" in APP_JS
+    assert "function cloudBackupForceCapture(rk, hasTdb, isSwap)" in APP_JS
 
 
 def test_copy_branches_on_has_tdb():

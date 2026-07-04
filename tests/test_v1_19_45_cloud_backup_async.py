@@ -470,10 +470,12 @@ def test_bulk_handler_expects_op_id_async_response():
 
 
 def test_source_menu_handler_expects_op_id_async_response():
-    """Per-row SOURCE-menu handler must also expect async
-    response shape."""
-    idx = APP_JS.index("act === 'backup-cloud-theme'")
-    block = APP_JS[idx:idx + 3400]
+    """Per-row SOURCE-menu handler must expect the async response shape.
+
+    v0.51.51: the handler delegates to cloudBackupForceCapture (straight-to-
+    capture), which carries the async op_id handling (boostPoll + waitForOp)."""
+    idx = APP_JS.index("function cloudBackupForceCapture(rk, hasTdb, isSwap)")
+    block = APP_JS[idx:idx + 3000]
     assert "downloaded_count" not in block
     assert "boostPoll" in block
 

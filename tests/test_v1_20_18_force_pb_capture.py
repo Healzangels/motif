@@ -279,9 +279,10 @@ def test_identify_signature_and_force_implies_allow_existing():
 def test_js_force_capture_helper_and_wiring():
     # v1.21.35: signature gained a hasTdb arg (TDB-revert copy branch).
     assert "function cloudBackupForceCapture(" in APP_JS
-    # invoked from the strict-run 0-result branch.
-    assert "cloudBackupForceCapture(rk, hasTdb);" in APP_JS
-    # the retry POSTs force + allow_existing_local.
+    # v0.51.51: invoked straight from the per-row handler (was the strict-run
+    # 0-result fallback).
+    assert "cloudBackupForceCapture(rk, hasTdb, allowExistingLocal)" in APP_JS
+    # the POST forces + allows existing local.
     assert "force: true, allow_existing_local: true" in APP_JS
 
 

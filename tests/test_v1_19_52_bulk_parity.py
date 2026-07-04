@@ -199,11 +199,12 @@ def test_per_row_cloud_backup_sets_optimistic_placeholder():
     """Per-row handler must also call setOptimisticPlaceholder.
     Mirrors every other queueing SOURCE-menu action (DOWNLOAD
     TDB BACKUP, REPLACE TDB, etc.)."""
-    # Locate the per-row backup-cloud-theme handler.
-    idx = APP_JS.index("act === 'backup-cloud-theme'")
-    block = APP_JS[idx:idx + 3500]
+    # v0.51.51: the per-row handler delegates to cloudBackupForceCapture,
+    # which sets the optimistic placeholder.
+    idx = APP_JS.index("function cloudBackupForceCapture(")
+    block = APP_JS[idx:idx + 7200]
     assert "setOptimisticPlaceholder" in block, (
-        "v1.19.52: per-row handler must set optimistic "
+        "v1.19.52: per-row backup path must set optimistic "
         "placeholder so the click→busy gap shows feedback"
     )
     assert "'// QUEUING PLEX BACKUP'" in block
@@ -212,10 +213,10 @@ def test_per_row_cloud_backup_sets_optimistic_placeholder():
 def test_per_row_cloud_backup_clears_placeholder_on_catch():
     """Same as bulk — clear placeholder on failure so the
     mini-bar doesn't hang."""
-    idx = APP_JS.index("act === 'backup-cloud-theme'")
-    # Per-row handler is ~4500 chars (waitForOp polling + nested
-    # branches make it longer than typical SOURCE-menu actions).
-    block = APP_JS[idx:idx + 5000]
+    # v0.51.51: in cloudBackupForceCapture now (set before the POST, cleared on
+    # terminal / ok:false / catch).
+    idx = APP_JS.index("function cloudBackupForceCapture(")
+    block = APP_JS[idx:idx + 7200]
     assert "clearOptimisticPlaceholder" in block, (
         "v1.19.52: per-row failure path must clear the "
         "placeholder"

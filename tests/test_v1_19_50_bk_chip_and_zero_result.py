@@ -234,27 +234,30 @@ def test_backup_click_handler_alert_only_on_zero_zero_done():
     error_count === 0 AND status === 'done' — NOT on failed
     (different message), NOT on success (>=1 processed), NOT
     on errors (different message)."""
-    idx = APP_JS.index("act === 'backup-cloud-theme'")
-    block = APP_JS[idx:idx + 5000]
-    assert "processed === 0 && errors === 0" in block, (
-        "v1.19.50: 0-target alert condition must check both "
-        "processed_total == 0 AND error_count == 0 (failures "
-        "get a different message)"
+    # v0.51.51: the result handling moved into cloudBackupForceCapture. The
+    # failure branch (status==='failed' || errs>0) is checked BEFORE the
+    # 0-captured branch (proc===0), so a failed op gets the failure message,
+    # not the "0 captured" one.
+    i = APP_JS.index("function cloudBackupForceCapture(")
+    fn = APP_JS[i:i + 7200]
+    failed_at = fn.index("fin.status === 'failed' || errs > 0")
+    zero_at = fn.index("proc === 0")
+    assert failed_at < zero_at, (
+        "v1.19.50/v0.51.51: the failure branch must precede the 0-captured "
+        "branch so a failed op doesn't get the '0 captured' message"
     )
-    assert "status === 'done'" in block
+    assert "Nothing was captured for this row" in fn
 
 
 def test_backup_click_handler_has_failure_branch():
     """A separate alert must fire when status='failed' — different
     message from the 0-target case."""
-    idx = APP_JS.index("act === 'backup-cloud-theme'")
-    # v1.19.62: widened outer block 4000→7000 to cover the handler
-    # post-allow_existing_local plumb-through. The failed alert
-    # lives ~100 lines after the act check.
-    block = APP_JS[idx:idx + 7000]
-    assert "status === 'failed'" in block
+    # v0.51.51: the failure branch moved into cloudBackupForceCapture.
+    i = APP_JS.index("function cloudBackupForceCapture(")
+    block = APP_JS[i:i + 7200]
+    assert "fin.status === 'failed' || errs > 0" in block
     # And the failure alert mentions LOGS for diagnostic.
-    failed_idx = block.index("status === 'failed'")
+    failed_idx = block.index("fin.status === 'failed'")
     failed_block = block[failed_idx:failed_idx + 900]
     assert "LOGS" in failed_block, (
         "v1.19.50: failure alert should direct the user to the "

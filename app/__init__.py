@@ -3201,7 +3201,21 @@
 #   going STRAIGHT to the one-step force-capture (positive-leading confirm) that
 #   actually stores the bytes. A metadata:// (or NULL not-yet-enumerated) uri keeps
 #   DOWNLOAD PLEX BACKUP. Behavioral test pins plex_theme_uri into the payload.
-__version__ = "0.51.50"
+# 0.51.51 — straight-to-capture for the per-row DOWNLOAD PLEX BACKUP; reverts the
+#   dead v0.51.50 RECAPTURE gate. A prod-DB audit (the user's UNMANAGE/upload://
+#   row) showed v0.51.50 gated on plex_theme_uri.startsWith('upload://'), but
+#   plex_items.plex_theme_uri is ALWAYS the /library/metadata/{rk}/theme/{ver}
+#   association url — never the upload://<sha> entry key (6,379/6,379 rows; no
+#   scheme column exists at all), so RECAPTURE never rendered. The scheme is only
+#   knowable via a per-row /themes call motif doesn't persist. So instead of a
+#   render-time relabel, the per-row DOWNLOAD PLEX BACKUP click now goes STRAIGHT
+#   to force-capture (capture whatever Plex serves — upload:// or metadata://
+#   alike), non-destructive for a bare-P row, confirming only on the swap case
+#   (a non-plex_cloud local file that would be REPLACED). The strict-then-"found
+#   nothing → capture anyway?" two-step is gone. Bulk DOWNLOAD PLEX BACKUP stays
+#   the strict C1-only Plex-Pass-loss sweep. plex_theme_uri reverted out of the
+#   /api/library payload (nothing reads it now).
+__version__ = "0.51.51"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

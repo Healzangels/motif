@@ -42,7 +42,12 @@ def test_js_playback_label_has_plex_serving_branch():
 
 
 def test_force_capture_confirm_explains_why():
-    assert "DOWNLOAD PLEX BACKUP found no Plex Pass cloud theme to back up" in APP_JS
+    # v0.51.51 superseded the v0.51.37 strict-run "found no cloud theme" confirm:
+    # the per-row backup now goes straight to capture (no confusing two-step),
+    # so that negative-leading copy is gone. The only remaining confirm is the
+    # destructive swap case (replacing an existing local file).
+    assert "DOWNLOAD PLEX BACKUP found no Plex Pass cloud theme" not in APP_JS
+    assert "REPLACE it with whatever Plex is currently serving" in APP_JS
 
 
 # ── behavioral: api_item surfaces plex_has_theme ─────────────

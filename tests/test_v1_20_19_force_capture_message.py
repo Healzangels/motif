@@ -80,10 +80,9 @@ def test_outcome_surfaces_through_load_active(tmp_path):
 
 def test_js_reads_definitive_outcome():
     idx = APP_JS.index("function cloudBackupForceCapture(")
-    # v0.51.37: widened 4000→5000 — the reworded no-cloud-theme confirm copy
-    # (explaining WHY the strict run found nothing) added length ahead of the
-    # outcome-reading branches, pushing skipped_identical/byte-identical past 4000.
-    fn = APP_JS[idx:idx + 5000]
+    # v0.51.51: widened 5000→6800 — the helper gained the optimistic-placeholder
+    # set/clear plumbing ahead of the outcome-reading branches.
+    fn = APP_JS[idx:idx + 6800]
     # reads the stamped outcome off the finished op.
     assert "fin.detail && fin.detail.backup_outcome" in fn
     # definitive branches: captured (downloaded>0) and identical.

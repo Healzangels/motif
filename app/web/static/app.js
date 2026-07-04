@@ -3650,43 +3650,59 @@
   // SOURCE → DOWNLOAD TDB BACKUP re-pulls it anytime. The backend
   // sha256-dedups identical bytes, so it's a no-op when Plex is just
   // echoing motif's own uploaded theme back as the selected entry.
-  function cloudBackupForceCapture(rk, hasTdb, direct) {
-    // v1.21.35: branch the revert copy on whether the row actually has
-    // a ThemerrDB theme. For a TDB-less row (plex_orphan — e.g. a
-    // Kometa-built collection, the user's A24 Films repro) there is no
-    // green TDB pill and no DOWNLOAD TDB BACKUP, so promising a re-pull
-    // there is inaccurate. hasTdb is undefined on legacy callers → the
-    // safe no-TDB copy (it never claims a revert path that may not exist).
-    const revertNote = hasTdb
-      ? ' This replaces any existing TB/UB backup on the row — you can '
-        + 're-pull the ThemerrDB theme anytime via SOURCE → DOWNLOAD '
-        + 'TDB BACKUP.'
-      : ' This row has no ThemerrDB theme (e.g. a Kometa-built '
-        + 'collection) — there is no green TDB pill to revert to. Motif '
-        + 'keeps a copy of whatever Plex is serving, replacing any '
-        + 'existing backup on the row.';
-    // v0.51.37 (the user: "download plex backup doesn't do anything"): lead with
-    // WHY the strict run found nothing, so this fallback confirm doesn't read as
-    // "the action silently did nothing" — Plex is serving a theme motif itself
-    // uploaded (an upload:// entry), not a Plex Pass metadata:// cloud theme, so
-    // there's no cloud theme to auto-back-up.
-    // v0.51.50: `direct` is the RECAPTURE FROM PLEX entry point — the SOURCE
-    // menu already told the user it's a motif upload, so lead POSITIVELY
-    // (capture the bytes) instead of the strict-run "found nothing" framing.
-    const lead = direct
-      ? 'Plex is serving a theme motif itself uploaded but no longer keeps '
-        + 'a local copy of.\n\nCapture those exact bytes back into motif as '
-        + 'a Plex Backup?'
-      : 'DOWNLOAD PLEX BACKUP found no Plex Pass cloud theme to back up '
-        + 'here — Plex is serving a theme motif itself uploaded, not a '
-        + 'cloud theme.\n\nCapture whatever Plex IS currently serving for '
-        + 'this row as a Plex Backup anyway?';
-    const proceed = confirm(lead + revertNote);
-    if (!proceed) return;
+  function cloudBackupForceCapture(rk, hasTdb, isSwap) {
+    // v0.51.51 (the user's UNMANAGE/upload:// repro + prod-DB audit): the
+    // single entry point for the per-row DOWNLOAD PLEX BACKUP. Force-captures
+    // whatever Plex is currently serving for this row — a motif upload:// serve
+    // OR a metadata:// cloud theme alike (the scheme isn't knowable at render
+    // time: plex_theme_uri is the /theme association url, not the upload://<sha>
+    // entry key). A bare-P capture is non-destructive and goes STRAIGHT
+    // through; only the swap case (isSwap: a non-plex_cloud local file gets
+    // REPLACED with Plex's bytes) asks first. Supersedes the dead v0.51.50
+    // render-time RECAPTURE gate (plex_theme_uri never carried the scheme).
+    if (isSwap) {
+      // v1.21.35: branch the revert copy on whether the row actually has a
+      // ThemerrDB theme. A TDB-less row (plex_orphan — e.g. a Kometa-built
+      // collection) has no green TDB pill and no DOWNLOAD TDB BACKUP, so
+      // promising a re-pull there is inaccurate.
+      const revertNote = hasTdb
+        ? ' This replaces any existing TB/UB backup on the row — you can '
+          + 're-pull the ThemerrDB theme anytime via SOURCE → DOWNLOAD '
+          + 'TDB BACKUP.'
+        : ' This row has no ThemerrDB theme (e.g. a Kometa-built '
+          + 'collection) — there is no green TDB pill to revert to. Motif '
+          + 'keeps a copy of whatever Plex is serving, replacing any '
+          + 'existing backup on the row.';
+      if (!confirm(
+        'This row already has a local theme file — capturing Plex\'s theme '
+        + 'will REPLACE it with whatever Plex is currently serving.'
+        + revertNote + '\n\nProceed?'
+      )) return;
+    }
+    try {
+      if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
+        // v1.19.83: kind matches the real op (cloud_themes_backup) so the
+        // placeholder hands off cleanly to the op card.
+        window.motifOps.setOptimisticPlaceholder(
+          'cloud_themes_backup', '// QUEUING PLEX BACKUP',
+        );
+      }
+    } catch (_) { /* placeholder is cosmetic */ }
     api('POST', '/api/admin/cloud-themes-backup-run',
         { rks: [rk], force: true, allow_existing_local: true })
       .then((res) => {
-        if (!(res && res.ok)) return;
+        if (!(res && res.ok)) {
+          // v1.22.34 (audit): res.ok===false on a 200 must clear the
+          // optimistic placeholder + tell the user, not swallow silently.
+          try {
+            if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+            }
+          } catch (_) { /* cosmetic */ }
+          alert('DOWNLOAD PLEX BACKUP could not start'
+                + (res && res.error ? ': ' + res.error : '.'));
+          return;
+        }
         if (window.motifOps
             && typeof window.motifOps.boostPoll === 'function') {
           try { window.motifOps.boostPoll(); } catch (_) {}
@@ -3700,6 +3716,14 @@
           window.motifOps.waitForOp(res.op_id || 'cloud-themes-backup',
                                      { timeoutMs: 30000 })
             .then((fin) => {
+              // v1.19.83: clear the placeholder on terminal so a fast op
+              // can't leave QUEUING lingering after the row changed over.
+              try {
+                if (window.motifOps
+                    && window.motifOps.clearOptimisticPlaceholder) {
+                  window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+                }
+              } catch (_) { /* cosmetic */ }
               if (!fin) return;  // timed out — drawer has detail
               const proc = fin.processed_total || 0;
               const errs = fin.error_count || 0;
@@ -3767,12 +3791,19 @@
         }
       })
       .catch((e) => {
+        // v1.19.52: clear the optimistic placeholder so the mini-bar
+        // doesn't hang on a queued state that never landed an op.
+        try {
+          if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+            window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+          }
+        } catch (_) { /* cosmetic */ }
         if (e && e.message && e.message.indexOf('409') !== -1) {
           alert('Another cloud-themes-backup run is already in '
                 + 'flight. Wait for it to finish or cancel it from '
                 + 'the ops drawer.');
         } else {
-          alert('Capture failed to start: ' + (e.message || e));
+          alert('DOWNLOAD PLEX BACKUP failed to start: ' + (e.message || e));
         }
       });
   }
@@ -9983,12 +10014,6 @@
         // revert path that doesn't exist for TDB-less rows (e.g. a
         // Kometa-built collection — the user's A24 Films repro).
         extras.hasTdb !== undefined ? `data-has-tdb="${extras.hasTdb}"` : '',
-        // v0.51.50: data-recapture flags the RECAPTURE FROM PLEX variant of
-        // backup-cloud-theme (Plex serving a theme motif itself uploaded,
-        // upload://). The click handler skips the strict cloud-backup run
-        // (which finds nothing — it's not a cloud theme) and goes straight
-        // to the one-step force-capture that actually captures the bytes.
-        extras.recapture !== undefined ? `data-recapture="${extras.recapture}"` : '',
       ].filter(Boolean).join(' ');
       // v1.11.14: extras.tone tints the source menu entries to match
       // the SRC column badge colors so the user can read at a glance
@@ -10509,6 +10534,22 @@
                             && (!downloaded
                                 || it.source_kind !== 'plex_cloud');
     if (isCloudBackupable) {
+      // v0.51.51 (the user's UNMANAGE/upload:// repro + prod-DB audit): honest
+      // tooltip — the per-row action captures WHATEVER Plex is serving (a motif
+      // upload:// OR a metadata:// cloud theme), not only Plex-Pass cloud
+      // themes. The scheme isn't knowable at render time (plex_theme_uri is the
+      // /theme association url, not the upload://<sha> entry key), so the label
+      // stays generic and the click goes straight to force-capture.
+      const tooltipBase = "Capture the theme Plex is currently serving for "
+        + "this row as a local backup — motif keeps a copy, Plex stays the "
+        + "active source. PROMOTE TO ACTIVE from the INFO card swaps motif's "
+        + "copy back in later. (The bulk // DOWNLOAD PLEX BACKUP backs up only "
+        + "Plex-Pass cloud themes; this per-row action grabs whatever's "
+        + "serving.)";
+      const swapTooltip = downloaded
+        ? tooltipBase + " ⚠ This row already has a non-Plex local file — it "
+          + "will be REPLACED with Plex's bytes."
+        : tooltipBase;
       // v1.21.35: does this row have a real ThemerrDB theme to revert
       // to? A TDB-less row (plex_orphan — e.g. a Kometa-built collection
       // with no TDB match) has no green TDB pill and no DOWNLOAD TDB
@@ -10516,55 +10557,15 @@
       const cloudBackupHasTdb = !!(
         it.upstream_source && it.upstream_source !== 'plex_orphan'
         && it.youtube_url);
-      // v0.51.50: branch on what Plex is actually serving. An upload://
-      // entry is a theme motif ITSELF uploaded (typically post-UNMANAGE /
-      // orphaned) — there's no Plex-Pass cloud theme to rescue, so the
-      // strict DOWNLOAD PLEX BACKUP walker finds nothing and the flow drops
-      // into a confusing "found nothing → capture anyway?" confirm (the
-      // user: "you get the option but it never downloads"). Offer a single
-      // honest RECAPTURE action that goes straight to the force-capture. A
-      // metadata:// cloud theme (or a not-yet-enumerated NULL uri) keeps the
-      // existing DOWNLOAD PLEX BACKUP path.
-      const servingIsMotifUpload =
-        (it.plex_theme_uri || '').indexOf('upload://') === 0;
-      if (servingIsMotifUpload) {
-        sourceItems.push(menuItemHtml(
-          'backup-cloud-theme', 'RECAPTURE FROM PLEX',
-          "Plex is serving a theme motif itself uploaded but no longer "
-          + "keeps a local copy of (e.g. after UNMANAGE). Capture those "
-          + "exact bytes back into motif as a Plex Backup — Plex stays the "
-          + "active source; PROMOTE TO ACTIVE from the INFO card can swap "
-          + "motif's copy back in later. This isn't a Plex-Pass cloud "
-          + "theme, so there's nothing external to lose — it just gives "
-          + "motif its own copy of the theme again.",
-          {
-            rk: it.rating_key, tone: 'plex',
-            recapture: '1',
-            hasTdb: cloudBackupHasTdb ? '1' : '0',
-          },
-        ));
-      } else {
-        const tooltipBase = "Download Plex's cloud theme (Plex "
-          + "Pass) as a local backup via the v1.19.42 walker. "
-          + "Insurance against Plex Pass loss or catalog drops. "
-          + "Motif keeps the bytes; Plex stays the active source. "
-          + "PROMOTE TO ACTIVE from the INFO card later swaps "
-          + "motif's copy back in via the v1.18.36 re-upload trick.";
-        const swapTooltip = downloaded
-          ? tooltipBase + " ⚠ This row already has a non-Plex "
-            + "local file — it will be REPLACED with Plex's cloud "
-            + "theme bytes."
-          : tooltipBase;
-        sourceItems.push(menuItemHtml(
-          'backup-cloud-theme', 'DOWNLOAD PLEX BACKUP',
-          swapTooltip,
-          {
-            rk: it.rating_key, tone: 'plex',
-            allowExistingLocal: downloaded ? '1' : '0',
-            hasTdb: cloudBackupHasTdb ? '1' : '0',
-          },
-        ));
-      }
+      sourceItems.push(menuItemHtml(
+        'backup-cloud-theme', 'DOWNLOAD PLEX BACKUP',
+        swapTooltip,
+        {
+          rk: it.rating_key, tone: 'plex',
+          allowExistingLocal: downloaded ? '1' : '0',
+          hasTdb: cloudBackupHasTdb ? '1' : '0',
+        },
+      ));
     }
 
     // v1.14.47: LET PLEX SERVE moved from INFO TRY THIS NEXT to
@@ -15499,24 +15500,9 @@
           } catch (_) { /* placeholder is cosmetic */ }
         });
       } else if (act === 'backup-cloud-theme') {
-        // v1.19.43: SOURCE-menu DOWNLOAD PLEX BACKUP. Scopes the
-        // v1.19.42 admin endpoint to a single rk via the {rks}
-        // body.
-        // v1.19.45: endpoint is now async (acquire-then-spawn-
-        // thread). Returns immediately with {ok, op_id}; the
-        // actual work runs in a background thread + surfaces in
-        // the ops drawer / mini-bar.
-        // v1.19.50: poll the op via motifOps.waitForOp + alert
-        // on the 0-eligible-target case. the user's repro: clicked
-        // DOWNLOAD PLEX BACKUP on 90 Day Fiancé (SRC=P) → walker
-        // found 1 row + classified it as non-C1 → 0 backed up,
-        // ops drawer said "done" but the row didn't change → user
-        // couldn't tell what happened. Explicit alert now
-        // surfaces the "not eligible" case.
-        // v1.19.52: setOptimisticPlaceholder mirrors every other
-        // queueing SOURCE-menu action — gives the user immediate
-        // mini-bar feedback rather than waiting for the next
-        // poll tick.
+        // v1.19.43: SOURCE-menu DOWNLOAD PLEX BACKUP (single-rk). The op is
+        // async (op_id → ops drawer / mini-bar); v0.51.51 moved the run + the
+        // waitForOp result handling into cloudBackupForceCapture (below).
         const rk = btn.dataset.rk;
         // v1.19.62: PS-with-DL rows pass allow_existing_local so
         // the walker drops its NOT-EXISTS-local_files filter and
@@ -15527,115 +15513,21 @@
         const allowExistingLocal = btn.dataset.allowExistingLocal === '1';
         // v1.21.35: TDB-presence flag for the force-capture copy branch.
         const hasTdb = btn.dataset.hasTdb === '1';
-        // v0.51.50: RECAPTURE FROM PLEX — Plex is serving a theme motif
-        // itself uploaded (upload://), so the strict cloud-backup walker
-        // finds nothing (not a metadata:// cloud theme). Skip it and go
-        // straight to the honest one-step force-capture that stores the
-        // bytes, instead of the confusing "found nothing → capture anyway?"
-        // dance the strict run falls into.
-        if (btn.dataset.recapture === '1') {
-          cloudBackupForceCapture(rk, hasTdb, true);
-          return;
-        }
-        try {
-          if (window.motifOps && window.motifOps.setOptimisticPlaceholder) {
-            // v1.19.83: kind must match the real op (cloud_themes_backup)
-            // so the placeholder hands off cleanly — see the bulk
-            // handler for the full rationale (stale QUEUING after the
-            // LINK already changed over).
-            window.motifOps.setOptimisticPlaceholder(
-              'cloud_themes_backup', '// QUEUING PLEX BACKUP',
-            );
-          }
-        } catch (_) { /* placeholder is cosmetic */ }
-        api('POST', '/api/admin/cloud-themes-backup-run',
-            { rks: [rk],
-              allow_existing_local: allowExistingLocal }).then((res) => {
-          if (res && res.ok) {
-            // boostPoll surfaces the new op in the mini-bar.
-            // libraryRapidPoll refreshes the row so the B badge
-            // lands when the worker completes.
-            if (window.motifOps && typeof window.motifOps.boostPoll === 'function') {
-              try { window.motifOps.boostPoll(); } catch (_) {}
-            }
-            if (typeof libraryRapidPoll === 'function'
-                && document.getElementById('library-body')) {
-              libraryRapidPoll();
-            }
-            // Poll for completion + surface 0-result if needed.
-            if (window.motifOps
-                && typeof window.motifOps.waitForOp === 'function') {
-              window.motifOps.waitForOp(res.op_id || 'cloud-themes-backup',
-                                         { timeoutMs: 30000 })
-                .then((finalOp) => {
-                  // v1.19.83: clear the placeholder on terminal (see
-                  // bulk handler) so a fast op can't leave QUEUING
-                  // lingering after the row already changed over.
-                  try {
-                    if (window.motifOps
-                        && window.motifOps.clearOptimisticPlaceholder) {
-                      window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
-                    }
-                  } catch (_) { /* cosmetic */ }
-                  if (!finalOp) return;  // timed out — drawer has detail
-                  const processed = finalOp.processed_total || 0;
-                  const errors = finalOp.error_count || 0;
-                  if (finalOp.status === 'done'
-                      && processed === 0 && errors === 0) {
-                    // v1.20.18: the strict run found no cloud
-                    // (metadata://) theme to auto-back-up. Rather
-                    // than a dead-end alert, offer to force-capture
-                    // WHATEVER Plex is currently serving (incl a
-                    // themerr-plex upload://). Reversible: the
-                    // ThemerrDB linkage lives on themes.youtube_url,
-                    // untouched by the swap — re-pull via SOURCE →
-                    // DOWNLOAD TDB BACKUP anytime. backup_cloud_theme
-                    // dedups byte-identical bytes so this is a no-op
-                    // when Plex is just echoing motif's own upload.
-                    cloudBackupForceCapture(rk, hasTdb);
-                  } else if (finalOp.status === 'failed') {
-                    alert(
-                      'DOWNLOAD PLEX BACKUP failed. Check the LOGS '
-                      + 'tab for details.'
-                    );
-                  }
-                })
-                .catch(() => { /* polling-only; cosmetic */ });
-            }
-          } else {
-            // v1.22.34 (audit): res.ok===false on a 200 left the optimistic
-            // placeholder hanging with no feedback (the swallow). Clear it +
-            // tell the user the backup didn't start.
-            try {
-              if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
-                window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
-              }
-            } catch (_) { /* cosmetic */ }
-            alert('DOWNLOAD PLEX BACKUP could not start'
-                  + (res && res.error ? ': ' + res.error : '.'));
-          }
-        }).catch((e) => {
-          // v1.19.52: clear the optimistic placeholder so the
-          // mini-bar doesn't hang on a queued state that never
-          // landed an op_progress row.
-          try {
-            if (window.motifOps
-                && window.motifOps.clearOptimisticPlaceholder) {
-              window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
-            }
-          } catch (_) { /* cosmetic */ }
-          // The most common failure: 409 if another cloud-backup
-          // run is already in flight. Surface that vs generic
-          // errors.
-          if (e && e.message && e.message.indexOf('409') !== -1) {
-            alert('Another cloud-themes-backup run is already in '
-                  + 'flight. Wait for it to finish or cancel it '
-                  + 'from the ops drawer.');
-          } else {
-            alert('DOWNLOAD PLEX BACKUP failed to start: '
-                  + (e.message || e));
-          }
-        });
+        // v0.51.51 (the user's UNMANAGE/upload:// repro + prod-DB audit): go
+        // STRAIGHT to force-capture — capture whatever Plex is serving for this
+        // row (a motif upload:// OR a metadata:// cloud theme alike). The old
+        // strict-then-"found nothing → capture anyway?" two-step was confusing
+        // on an upload:// serve (a bare-P row serving motif's own upload is
+        // exactly where the strict cloud-backup walker finds nothing, so it
+        // always dead-ended into the fallback confirm). The scheme isn't
+        // knowable at render time (plex_theme_uri is the /theme association url,
+        // not the upload://<sha> entry key — confirmed across the prod DB), so
+        // we can't relabel per-row; the single action just does the honest
+        // thing. Bulk // DOWNLOAD PLEX BACKUP stays the strict C1-only
+        // Plex-Pass-loss insurance sweep. allowExistingLocal=true (a non-
+        // plex_cloud local file the capture will REPLACE) is the swap case →
+        // cloudBackupForceCapture confirms before replacing.
+        cloudBackupForceCapture(rk, hasTdb, allowExistingLocal);
       } else if (act === 'purge-revert-to-plex') {
         // v1.14.47: SOURCE-menu LET PLEX SERVE (moved from
         // INFO TRY THIS NEXT). Calls the top-level
