@@ -32,9 +32,11 @@ def test_poster_is_first_hero_child():
 
 def test_grid_is_full_width_sibling_after_hero():
     i_hero = APP_JS.index('<div class="info-hero">', _CARD)
-    # the meta + hero <div>s both close BEFORE the grid opens (grid un-nested).
+    # the meta + hero <div>s both close BEFORE the detail grid opens (grid un-nested).
     i_close = APP_JS.index('</div>\n      </div>', i_hero)
-    i_grid = APP_JS.index('<dl class="dlg-grid">', i_hero)
+    # v0.51.62: the flat <dl> became four ${_grp(...)} sibling groups; the first
+    # (ids) is the full-width detail block right after the hero, before recovery.
+    i_grid = APP_JS.index("${_grp('ids', _idsRows)}", i_hero)
     i_recovery = APP_JS.index('${recoveryPlaceholder}', i_grid)
     assert i_hero < i_close < i_grid < i_recovery
 

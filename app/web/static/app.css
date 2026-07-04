@@ -3777,6 +3777,11 @@ body.help-mode .settings-help-about { display: block; }
 .info-hero-meta { flex: 1 1 auto; min-width: 0; }
 .dlg-section { margin-top: var(--gap-5); padding-top: var(--gap-4); border-top: 1px solid var(--line); }
 .dlg-section h4 { font-size: var(--t-tiny); letter-spacing: 0.2em; color: var(--fg-dim); text-transform: uppercase; margin-bottom: var(--gap-2); }
+/* v0.51.62 (the user, polish): the INFO card detail grid is split into labeled
+   .dlg-section.info-group blocks (IDS / LINKS / TIMELINE / ON DISK). The first
+   group sits directly under the hero — which already separates it — so drop its
+   top divider + gap; later groups keep the .dlg-section divider above. */
+.info-hero + .info-group { margin-top: var(--gap-4); padding-top: 0; border-top: 0; }
 .dlg-grid { display: grid; grid-template-columns: 140px 1fr; gap: var(--gap-2) var(--gap-4); font-size: var(--t-small); }
 .dlg-grid dt { color: var(--fg-dim); }
 /* v0.51.61 (the user, polish): overflow-wrap:anywhere (was word-break:break-all)

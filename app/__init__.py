@@ -3298,7 +3298,16 @@
 #   (repeated 3x, wrapped each to 2 lines; the value shows the full URL). The (pending)
 #   / (was:) / dead tags + value-side src provenance are kept. Reverses v1.14.20's M2
 #   parens-harmonization (its test updated).
-__version__ = "0.51.61"
+# 0.51.62 — INFO card detail rows grouped into labeled sections (the user, chose
+#   IDS / LINKS / TIMELINE / ON DISK). renderInfoCard's flat ~17-row <dl> is split into
+#   four .dlg-section.info-group blocks reusing the .dlg-section + <h4> primitive (same
+#   as SOURCE PREVIEW). Rows built as consts (_idsRows/_linksRows/_timelineRows/
+#   _onDiskRows — same nesting depth as the old grid, conditional sub-templates
+#   unchanged) + a _grp(title,rows) helper that renders a group only when non-empty, so
+#   a metadata-only row's empty ON DISK leaves no dangling header. Row order within each
+#   group unchanged. CSS: .info-hero + .info-group drops the first group's redundant
+#   divider (hero already separates it). CSS+JS only, brace/paren delta 0.
+__version__ = "0.51.62"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

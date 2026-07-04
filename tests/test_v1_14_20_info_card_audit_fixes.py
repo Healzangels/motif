@@ -241,27 +241,17 @@ def test_themerrdb_added_edited_hidden_for_plex_orphan_rows():
     `body.innerHTML = ...` assignments in app.js, so a generic
     anchor would land on the wrong template."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    # Anchor on the unique imdb row.
-    # v0.50.64: scope to the FULL card (openInfoDialog) first — the
-    # universal bare card (renderBareInfoCard) also emits a
-    # `<dt>imdb</dt><dd>${imdb}</dd>` row earlier in the file, so a bare
-    # js.index() now lands on the bare card (which has no plex_orphan gate).
-    card = js.index("async function openInfoDialog(")
-    body_anchor = js.index("<dt>imdb</dt><dd>${imdb}</dd>", card)
-    # Window covers the dlg-grid through the closing </dl>.
-    block_end = js.index("</dl>", body_anchor)
-    block = js[body_anchor:block_end]
-    # Count plex_orphan-skip ternaries. Pre-fix: 1 (URL row).
-    # Post-fix: 2 (URL row + added/edited block).
-    pattern_count = block.count("t.upstream_source === 'plex_orphan' ? '' : `")
-    assert pattern_count >= 2, (
-        f"v1.14.20 (M3): expected at least 2 plex_orphan-skip "
-        f"ternaries (URL row + added/edited block), found "
-        f"{pattern_count}"
-    )
-    # And the added/edited rows live inside the second ternary.
-    assert "themerrdb added" in block
-    assert "themerrdb edited" in block
+    # v0.51.62: the detail rows are grouped; the plex_orphan gate now lives in two
+    # group consts — the themerrdb url row in _linksRows (LINKS), and the two
+    # themerrdb-timestamp rows in _timelineRows (TIMELINE) — behind the SAME
+    # `upstream_source === 'plex_orphan' ? '' : …` gate, so orphans render neither.
+    links = js[js.index("const _linksRows = "):js.index("const _timelineRows = ")]
+    assert "t.upstream_source === 'plex_orphan' ? '' : `" in links
+    assert "themerrdb url" in links
+    timeline = js[js.index("const _timelineRows = "):js.index("const _onDiskRows = ")]
+    assert "t.upstream_source === 'plex_orphan' ? '' : `" in timeline
+    assert "themerrdb added" in timeline
+    assert "themerrdb edited" in timeline
 
 
 # ── L1: vestigial tdbPreviewBlock removed ─────────────────────

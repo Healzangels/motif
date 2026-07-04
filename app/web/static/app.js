@@ -16830,6 +16830,42 @@
       ? `<img class="info-poster" loading="lazy" alt=""`
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
       : '';
+    // v0.51.62 (the user, polish): the flat detail grid is split into labeled
+    // groups — IDS / LINKS / TIMELINE / ON DISK — reusing the .dlg-section + <h4>
+    // primitive (same as SOURCE PREVIEW) for scannability. The rows are built as
+    // consts here (same nesting depth as the old flat <dl>, so the conditional
+    // sub-templates are unchanged) and wrapped by _grp, which renders a group ONLY
+    // when it has ≥1 row — so a metadata-only title (empty ON DISK) doesn't leave a
+    // dangling header. Row ORDER within each group is identical to the old list.
+    const _grp = (title, rows) => rows.trim()
+      ? `<div class="dlg-section info-group"><h4>${title}</h4><dl class="dlg-grid">${rows}</dl></div>`
+      : '';
+    const _idsRows = `
+        <dt>imdb</dt><dd>${imdb}</dd>
+        <dt>tmdb</dt><dd>${tmdbLink}</dd>
+        <dt>upstream</dt><dd>${t.upstream_source === 'plex_orphan'
+          ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
+          : htmlEscape(t.upstream_source || '')}</dd>`;
+    const _linksRows = `
+        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
+        <dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}</dd>
+        <dt>previous url</dt><dd>${previousUrlLink}</dd>
+        <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
+        ${probeBtnHtml}`;
+    const _timelineRows = `
+        ${t.upstream_source === 'plex_orphan' ? '' : `
+        <dt>themerrdb added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_added_at))}</dd>
+        <dt>themerrdb edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_edited_at))}</dd>`}
+        <dt>motif added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_added_at))}</dd>
+        <dt>motif edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_edited_at))}</dd>
+        ${failBlock}
+        ${ovrBlock}
+        ${puBlock}`;
+    const _onDiskRows = `
+        ${dlBlock}
+        ${backupBlock}
+        ${placedBlock}
+        ${audioBlock}`;
     body.innerHTML = `
       <!-- v1.24.92: back to option A (the user compared A vs B and kept A) — the
            cover sits top-LEFT with the title, scope chip + playback headline
@@ -16845,30 +16881,10 @@
           <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
         </div>
       </div>
-      <dl class="dlg-grid">
-        <dt>imdb</dt><dd>${imdb}</dd>
-        <dt>tmdb</dt><dd>${tmdbLink}</dd>
-        <dt>upstream</dt><dd>${t.upstream_source === 'plex_orphan'
-          ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
-          : htmlEscape(t.upstream_source || '')}</dd>
-        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
-        <dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}</dd>
-        <dt>previous url</dt><dd>${previousUrlLink}</dd>
-        <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
-        ${probeBtnHtml}
-        ${t.upstream_source === 'plex_orphan' ? '' : `
-        <dt>themerrdb added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_added_at))}</dd>
-        <dt>themerrdb edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_edited_at))}</dd>`}
-        <dt>motif added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_added_at))}</dd>
-        <dt>motif edited</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(data.motif_edited_at))}</dd>
-        ${failBlock}
-        ${ovrBlock}
-        ${puBlock}
-        ${dlBlock}
-        ${backupBlock}
-        ${placedBlock}
-        ${audioBlock}
-      </dl>
+      ${_grp('ids', _idsRows)}
+      ${_grp('links', _linksRows)}
+      ${_grp('timeline', _timelineRows)}
+      ${_grp('on disk', _onDiskRows)}
       ${recoveryPlaceholder}
       ${diffSection}
       ${(() => {
