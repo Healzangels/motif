@@ -29,9 +29,9 @@ def test_carousel_posters_are_not_lazy():
     )
 
 
-def test_carousel_posters_async_decode_and_priority():
+def test_carousel_posters_async_decode_default_priority():
     block = _recent_img_block()
     assert "img.decoding = 'async'" in block
-    # the initial-viewport tiles get high fetch priority so they paint first.
-    assert "idx < 8" in block
-    assert "img.fetchPriority = 'high'" in block
+    # v0.51.56 (code-review): posters eager-load at DEFAULT priority — no
+    # fetchPriority='high' that would contend with the dashboard's data XHRs.
+    assert "fetchPriority" not in block

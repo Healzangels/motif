@@ -2024,7 +2024,7 @@
     if (strip.dataset.lastHash === hash) { block.style.display = ''; return; }
     strip.dataset.lastHash = hash;
     strip.textContent = '';
-    items.forEach((it, idx) => {
+    items.forEach((it) => {
       const rk = String(it.rating_key);
       const card = document.createElement('button');
       card.type = 'button';
@@ -2038,11 +2038,11 @@
       // tiles pop in late (the user: "don't load right away ... load in late").
       // Eager front-loads them so the strip is fully rendered on arrival; the
       // art proxy sets a 1-day Cache-Control so it's a one-time cost per browser.
-      // decoding=async keeps decode off the main thread; the first ~8 (the
-      // initial viewport) get high fetch priority so the visible strip paints
-      // before the scrolled-in tail.
+      // decoding=async keeps decode off the main thread.
+      // v0.51.56 (code-review): dropped the first-8 high-priority fetch hint — at
+      // default image priority the posters don't contend with the dashboard's data
+      // XHRs (/api/stats, /api/insights); they still eager-load immediately.
       img.decoding = 'async';
-      if (idx < 8) img.fetchPriority = 'high';
       img.alt = '';
       img.src = `/api/plex/art/${encodeURIComponent(rk)}`;
       img.addEventListener('error', () => card.classList.add('recent-card-noart'));
@@ -3721,6 +3721,9 @@
             && document.getElementById('library-body')) {
           libraryRapidPoll();
         }
+        // v1.19.45/v1.19.50 (relocated here from the SOURCE-menu handler in
+        // v0.51.51): the run endpoint is async ({ok, op_id}); poll it via
+        // waitForOp + surface the 0-captured / failed outcome below.
         if (window.motifOps
             && typeof window.motifOps.waitForOp === 'function') {
           window.motifOps.waitForOp(res.op_id || 'cloud-themes-backup',
@@ -3798,6 +3801,15 @@
               }
             })
             .catch(() => { /* polling-only; cosmetic */ });
+        } else {
+          // v0.51.56: no waitForOp (older/partial ops bundle) — clear the
+          // optimistic placeholder here so a successful start doesn't leave
+          // '// QUEUING PLEX BACKUP' hanging with nothing to poll it to done.
+          try {
+            if (window.motifOps && window.motifOps.clearOptimisticPlaceholder) {
+              window.motifOps.clearOptimisticPlaceholder('cloud_themes_backup');
+            }
+          } catch (_) { /* cosmetic */ }
         }
       })
       .catch((e) => {

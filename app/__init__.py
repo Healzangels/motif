@@ -3251,7 +3251,16 @@
 #   recordLoaderHtml into #jobs-body + #event-stream-full on the empty state
 #   (lastHash null) instead of the SSR "loading…" text / empty list; the events
 #   loading row spans the 4-col grid via .event-stream-loading so it centres.
-__version__ = "0.51.55"
+# 0.51.56 — code-review follow-ups. (1) worker: the plex_upload place log said
+#   "Uploaded collection theme" but that API path serves movies/TV too (v1.23.65)
+#   — reworded to "Uploaded theme to Plex (API)" (media_type field already carries
+#   the type). (2) RECENTLY ADDED carousel: dropped fetchPriority='high' on the
+#   first 8 posters — at default image priority they don't contend with the
+#   dashboard's data XHRs (/api/stats, /api/insights); still eager-loaded. (3)
+#   cloudBackupForceCapture: clear the optimistic '// QUEUING PLEX BACKUP'
+#   placeholder when waitForOp is unavailable, so a successful start can't leave
+#   it hanging with nothing to poll it to done.
+__version__ = "0.51.56"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

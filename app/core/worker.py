@@ -4143,7 +4143,11 @@ class Worker:
                 self.settings.db_path, level="INFO", component="place",
                 media_type=media_type, tmdb_id=tmdb_id,
                 section_id=section_id,
-                message=(f"Uploaded collection theme for "
+                # v0.51.56: was "collection theme" — the plex_upload/API path
+                # serves movies + TV too (v1.23.65), so name the transport, not
+                # the media type (the structured media_type field already
+                # carries movie/tv/collection).
+                message=(f"Uploaded theme to Plex (API) for "
                          f"'{theme['title']}' "
                          f"(rk={cached_rk})"),
                 detail={"reason": None, "kind": "plex_upload",
