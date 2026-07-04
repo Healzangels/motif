@@ -38,6 +38,12 @@ SAFE = '"show" if media_type == "tv" else media_type'
 BUGGY_MT = '"show" if mt == "tv" else "movie"'
 SAFE_MT = '"show" if mt == "tv" else mt'
 
+# v0.51.53: the REVERSE direction (plex_items.media_type -> motif media_type)
+# had the SAME class in a spelling the forward grep couldn't see:
+# `"tv" if pi["media_type"] == "show" else "movie"` collapses a collection to
+# 'movie' (the upload-theme mint bug). Now routed through _motif_media_type.
+BUGGY_REVERSE = '"media_type"] == "show" else "movie"'
+
 # The eight handlers whose plex_items media_type filter was swept, keyed
 # by their def anchor. Value = the collection reach path (or why not).
 SWEPT = {
@@ -56,6 +62,27 @@ def _body(anchor: str) -> str:
     i = API_PY.index(anchor)
     j = API_PY.index("\n    @app.", i + 1)
     return API_PY[i:j]
+
+
+def test_no_reverse_hardcoded_movie_map_remains():
+    # v0.51.53: mirror of the forward tripwire for the plex_items.media_type ->
+    # motif conversion. A collection must stay 'collection', never collapse to
+    # 'movie' (which mis-keys its theme row and orphans it from the
+    # media_type='collection' endpoints — the upload-theme mint bug). Route
+    # every reverse conversion through _motif_media_type().
+    assert BUGGY_REVERSE not in API_PY, (
+        "a reverse plex->motif media_type map still hardcodes `else \"movie\"` "
+        "— a collection collapses to 'movie'. Route through _motif_media_type()."
+    )
+
+
+def test_motif_media_type_helper_is_collection_safe():
+    # The reverse-direction chokepoint must exist and map collection->collection
+    # + show->tv (never collection->movie).
+    assert "def _motif_media_type(plex_media_type: str) -> str:" in API_PY
+    i = API_PY.index("def _motif_media_type(")
+    body = API_PY[i:i + 200]
+    assert 'return "tv" if plex_media_type == "show" else plex_media_type' in body
 
 
 def test_no_media_type_hardcoded_movie_map_remains():

@@ -3224,7 +3224,19 @@
 #   viewport) at high fetch priority; the art proxy's 1-day Cache-Control makes it
 #   a one-time cost per browser. No layout shift — the tiles already reserve the
 #   2:3 poster box with a placeholder background.
-__version__ = "0.51.52"
+# 0.51.53 — reverse-direction plex_items.media_type -> motif collection fix (code
+#   review follow-up). The v0.51.47-49 forward sweep + guard only covered the
+#   FORWARD map (motif -> plex_items); the review found 5 REVERSE sites
+#   (plex_items -> motif) with the identical collection->movie collapse in a
+#   spelling the forward grep couldn't see. The LIVE one: api_upload_theme minted
+#   a themeless collection's themes row at media_type='movie' (NULL guid_tmdb
+#   skips the theme-match branch -> hits the mint), orphaning it from the
+#   /api/items/collection endpoints (INFO card / REVERT / PURGE). The other 4
+#   409 before the ternary for collections (defensive). All 6 reverse conversions
+#   now route through a single _motif_media_type helper (show->tv, movie/
+#   collection identity); the v0.51.48 guard gains a reverse tripwire so the
+#   'gone everywhere' claim is finally true.
+__version__ = "0.51.53"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

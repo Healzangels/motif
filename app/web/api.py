@@ -80,6 +80,17 @@ log = logging.getLogger(__name__)
 MediaType = Literal["movie", "tv", "collection"]
 
 
+# v0.51.53: plex_items.media_type uses Plex's vocabulary {movie, show,
+# collection}; every other table (themes / local_files / placements) uses
+# motif's {movie, tv, collection}. The ONLY divergence is tv<->show; movie and
+# collection are identical. Route plex_items.media_type -> motif conversions
+# through this so a collection can never collapse to 'movie' (which orphans its
+# theme from the media_type='collection'-keyed endpoints — the upload-theme mint
+# bug the v0.51.47-49 forward sweep left standing in the reverse direction).
+def _motif_media_type(plex_media_type: str) -> str:
+    return "tv" if plex_media_type == "show" else plex_media_type
+
+
 # ---- Helpers for /api/config PATCH ----
 # Allow partial updates: caller sends a JSON dict whose structure mirrors
 # MotifConfig. Only the leaf keys present get updated. The plex.token field
@@ -12998,7 +13009,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=409,
                                     detail="no theme.mp3 sidecar at this folder")
         from ..core.adopt import adopt_folder, AdoptError
-        media_type = "tv" if pi["media_type"] == "show" else "movie"
+        media_type = _motif_media_type(pi["media_type"])
         try:
             outcome = await run_in_threadpool(
                 adopt_folder, db,
@@ -13040,7 +13051,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=409,
                                     detail="Plex item has no tmdb GUID")
         from ..core.adopt import replace_with_themerrdb, AdoptError
-        media_type = "tv" if pi["media_type"] == "show" else "movie"
+        media_type = _motif_media_type(pi["media_type"])
         # v1.21.66: resolve the edition from this row's folder so the
         # replace targets ONLY this edition (per-edition theme isolation).
         # Pre-fix REPLACE TDB on "Sam Takes a Step" enqueued an edition-less
@@ -13116,7 +13127,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if pi is None:
                 raise HTTPException(status_code=404,
                                     detail="plex_items row not found; refresh /libraries")
-            theme_media_type = "tv" if pi["media_type"] == "show" else "movie"
+            # v0.51.53: was `else "movie"` — a collection (pi.media_type=
+            # 'collection') mis-minted its theme row at media_type='movie',
+            # orphaning it from the /api/items/collection endpoints. Reverse of
+            # the v0.51.48 forward sweep; now collection-safe via the helper.
+            theme_media_type = _motif_media_type(pi["media_type"])
             # v1.21.78: UPLOAD MP3 is per-edition — resolve the clicked
             # row's edition so the canonical lands in ITS folder and the
             # local_files / mismatch write key to it. Pre-fix the upload
@@ -14033,7 +14048,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # plex_items.media_type uses 'show' for TV — translate
                 # to the themes-canonical 'tv' so downstream lookups
                 # agree. Movies pass through unchanged.
-                mt = "tv" if pi_rows[0]["media_type"] == "show" else "movie"
+                mt = _motif_media_type(pi_rows[0]["media_type"])
                 return ("orphan_pending", {
                     "media_type": mt,
                     "imdb_id": imdb_norm,
@@ -14056,7 +14071,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ).fetchall()
             if pis:
                 pi_rows = [dict(r) for r in pis]
-                mt = "tv" if pi_rows[0]["media_type"] == "show" else "movie"
+                mt = _motif_media_type(pi_rows[0]["media_type"])
                 # Use the first row's guid_imdb if available (it's the
                 # canonical key for synthetic theme creation); else
                 # synthesize without imdb_id (manual-url accepts NULL).
@@ -24501,14 +24516,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             # Compute (mt, tmdb_id) — mirror the v1.19.41 Bug A
             # widening (guid_tmdb fallback to theme_id resolve).
-            _row_mt = (
-                "tv" if row["media_type"] == "show"
-                else (
-                    "collection"
-                    if row["media_type"] == "collection"
-                    else row["media_type"]
-                )
-            )
+            _row_mt = _motif_media_type(row["media_type"])
             _row_tmdb = row["guid_tmdb"]
             if _row_tmdb is None and row["theme_id"] is not None:
                 _resolved = conn.execute(
