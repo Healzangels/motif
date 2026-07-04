@@ -4124,6 +4124,13 @@ body.auth-page .auth-card { margin: 0; }
   letter-spacing: 0.06em;
   text-shadow: 0 0 16px rgba(var(--green-rgb), 0.3);
 }
+/* v0.51.44 (the user): the login card head is the topbar MOTIF wordmark + synth
+   equalizer (was ▰ + "AUTHENTICATE"). Reuses the real .brand-mark bars (same
+   irregular EQ animation) scaled up to sit with the 26px title; the name
+   uppercases to match the topbar brand. Login-only (setup.html keeps ▰ FIRST RUN). */
+.auth-brand-mark { height: 20px; gap: 3px; }
+.auth-brand-mark .brand-bar { width: 3px; }
+.auth-title.auth-brand-name { text-transform: uppercase; }
 .auth-lede { margin-bottom: var(--gap-6); font-size: var(--t-small); }
 .auth-foot { margin-top: var(--gap-6); font-size: var(--t-tiny); line-height: 1.6; }
 .auth-foot code {

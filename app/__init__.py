@@ -3137,7 +3137,14 @@
 #   scrollbars draw OVER the box (no reserved space) so the track covered it. Added
 #   padding-bottom:6px to the mobile nav so the underline sits above the track —
 #   both visible. CSS-only, scoped to ≤600px (desktop nav unchanged).
-__version__ = "0.51.43"
+# 0.51.44 — the login card head shows the topbar MOTIF wordmark + synth equalizer
+#   (the user: "instead of the top bar saying authenticate ... make it say MOTIF
+#   with the synth like in the top bar"). login.html's .auth-card-head reuses the
+#   real .brand-mark bars (the 5 animated .brand-bar synth bands) + a MOTIF
+#   wordmark instead of ▰ + "AUTHENTICATE"; .auth-brand-mark scales the EQ to the
+#   26px title + .auth-title uppercases the name. Login-only (setup.html keeps
+#   ▰ FIRST RUN). Template + CSS only.
+__version__ = "0.51.44"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -31,8 +31,12 @@
 <section class="auth-card{% if error %} auth-card-has-error{% endif %}">
   <div class="auth-card-inner">
     <div class="auth-card-head">
-      <span class="auth-glyph">▰</span>
-      <h1 class="auth-title">AUTHENTICATE</h1>
+      {# v0.51.44 (the user): the topbar MOTIF wordmark + synth equalizer replaces
+         the old glyph + sign-in title — reuses the real .brand-mark bars (same
+         irregular 5-band EQ animation) scaled to the login title; .auth-title
+         uppercases the name to MOTIF like the topbar brand. #}
+      <span class="brand-mark auth-brand-mark" aria-hidden="true"><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i><i class="brand-bar"></i></span>
+      <h1 class="auth-title auth-brand-name">motif</h1>
     </div>
 
     {% if error %}
