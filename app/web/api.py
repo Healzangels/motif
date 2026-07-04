@@ -15523,8 +15523,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "WHERE section_id = ? AND guid_tmdb = ? "
                                 "  AND media_type = ? "
                                 "LIMIT 1",
-                                (section_id, str(tmdb_id),
-                                 "show" if media_type == "tv" else "movie"),
+                                (section_id, str(tmdb_id), _info_plex_type),
                             ).fetchone()
                     if pi_row and pi_row["folder_path"]:
                         edition_label = edition_label_for_folder(
@@ -20070,7 +20069,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # Picks the first plex_items row matching this title;
             # NULL if the row isn't currently in any Plex section
             # (e.g., after the Plex section was removed).
-            plex_mt = "show" if media_type == "tv" else "movie"
+            # v0.51.47 (info-card audit): `else media_type` (was `else "movie"`) so a
+            # COLLECTION maps to plex_items.media_type='collection', not 'movie' —
+            # the wrong map made all three rk-pick queries (incl. the clicked-rk one)
+            # miss a collection's row, so rating_key came back None and the
+            # SET URL / UPLOAD MP3 recovery buttons couldn't wire up. Matches api_item.
+            plex_mt = "show" if media_type == "tv" else media_type
             # v1.22.71: honor the clicked row's rk (validated against this
             # title), then a section-scoped pick. Pre-fix the unscoped
             # LIMIT 1 could hand SET URL / UPLOAD MP3 a sibling section's

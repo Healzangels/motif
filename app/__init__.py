@@ -3158,7 +3158,18 @@
 #   above plex_enum (now 3) in ops.js OP_MINI_PRIORITY + the api.py _topbar_ssr_state
 #   CASE (lockstep). Download still tops both. Reverses the v1.15.82 refresh>sync
 #   order for this pair only.
-__version__ = "0.51.46"
+# 0.51.47 — INFO-card audit fixes (4-agent read-only sweep). (1+2) EDITION BLEED:
+#   the recovery-options RE-DOWNLOAD + REVERT handlers dropped rating_key (passed
+#   only section_id), so on a multi-edition-in-one-section title they hit the
+#   legacy section-wide path instead of the clicked edition — now thread rating_key
+#   like the row SOURCE-menu equivalents (v1.21.64/.73) + the recovery-PURGE. (3)
+#   COLLECTIONS: api_recovery_options mapped media_type='collection' → plex_mt
+#   'movie', so all 3 rk-pick queries (incl. the clicked-rk one) missed the
+#   collection's plex_items row → rating_key None → SET URL / UPLOAD MP3 recovery
+#   buttons couldn't wire up; now `else media_type` like api_item. (4) consistency:
+#   api_item's edition-label folder_path query used the same hardcoded-movie map →
+#   aligned to _info_plex_type. Rest of the audit (open/render, lifecycle) clean.
+__version__ = "0.51.47"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

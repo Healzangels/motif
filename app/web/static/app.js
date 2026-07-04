@@ -17853,10 +17853,15 @@
                 );
               }
             } catch (_) { /* swallow — placeholder is cosmetic */ }
-            const redlUrl = sectionId
-              ? `/api/items/${mt}/${id}/redownload?section_id=${encodeURIComponent(sectionId)}`
-              : `/api/items/${mt}/${id}/redownload`;
-            await api('POST', redlUrl);
+            // v0.51.47 (info-card audit): thread rating_key so RE-DOWNLOAD from the
+            // recovery options scopes to THIS edition's folder (mirrors the row
+            // SOURCE-menu redownload v1.21.64) — was section-only, so on a
+            // multi-edition title it re-downloaded across sibling editions.
+            const redlQp = [
+              sectionId ? `section_id=${encodeURIComponent(sectionId)}` : '',
+              ratingKey ? `rating_key=${encodeURIComponent(ratingKey)}` : '',
+            ].filter(Boolean).join('&');
+            await api('POST', `/api/items/${mt}/${id}/redownload${redlQp ? `?${redlQp}` : ''}`);
             closeAndReload();
           } else if (act === 'mark-alive') {
             // v1.15.24: operator-asserted "URL works in browser,
@@ -18094,10 +18099,15 @@
                 );
               }
             } catch (_) { /* placeholder is cosmetic */ }
-            const revertUrl = sectionId
-              ? `/api/items/${mt}/${id}/revert?section_id=${encodeURIComponent(sectionId)}`
-              : `/api/items/${mt}/${id}/revert`;
-            await api('POST', revertUrl);
+            // v0.51.47 (info-card audit): thread rating_key so REVERT from the
+            // recovery options scopes the override restore/drop + accepted-pending
+            // reset to THIS edition (mirrors the row REVERT v1.21.73) — was
+            // section-only, bleeding a multi-edition title's siblings.
+            const revertQp = [
+              sectionId ? `section_id=${encodeURIComponent(sectionId)}` : '',
+              ratingKey ? `rating_key=${encodeURIComponent(ratingKey)}` : '',
+            ].filter(Boolean).join('&');
+            await api('POST', `/api/items/${mt}/${id}/revert${revertQp ? `?${revertQp}` : ''}`);
             closeAndReload();
           }
           // v1.14.47: removed `push-to-plex` and `download-tdb-
