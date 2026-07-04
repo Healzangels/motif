@@ -13,9 +13,15 @@ handlers. The fix mirrors api_item's `_info_plex_type` convention:
 All eight are plex_items TABLE queries, where 'collection' is the correct
 media_type value. Plex HTTP-API type args (which use 'movie'/'show' and
 have no 'collection' library type) are a different shape and are NOT
-swept — none of these eight feed a Plex API call. The `else "movie"`
-maps keyed on OTHER variables (bulk-LPS `mt`, section-probe `tab`) are
-outside this guard on purpose.
+swept — none of these eight feed a Plex API call.
+
+v0.51.49 caught a 9th site of the same class that the media_type-keyed
+enumeration missed: the bulk LET PLEX SERVE helper (_bulk_lps_run) maps
+`"show" if mt == "tv" else "movie"` (mt = a theme row's media_type, so it
+reaches 'collection') into a plex_items lookup — now `else mt`. That map
+is guarded below too. The section-probe `tab` map (api.py ~6926) stays
+`else "movie"` on purpose: it filters plex_sections.type, where
+'collection' is not a valid library section type.
 """
 from __future__ import annotations
 
@@ -26,6 +32,11 @@ API_PY = (REPO / "app" / "web" / "api.py").read_text()
 
 BUGGY = '"show" if media_type == "tv" else "movie"'
 SAFE = '"show" if media_type == "tv" else media_type'
+
+# v0.51.49: the mt-keyed bulk-LPS sibling (theme-row media_type, reaches
+# 'collection'). Same plex_items-query class, different variable name.
+BUGGY_MT = '"show" if mt == "tv" else "movie"'
+SAFE_MT = '"show" if mt == "tv" else mt'
 
 # The eight handlers whose plex_items media_type filter was swept, keyed
 # by their def anchor. Value = the collection reach path (or why not).
@@ -69,3 +80,18 @@ def test_each_swept_handler_uses_collection_safe_map():
             f"{anchor} ({note}) reintroduced the hardcoded `else \"movie\"` "
             f"plex_items map — collections would be missed."
         )
+
+
+def test_bulk_lps_mt_map_is_collection_safe():
+    # v0.51.49: the bulk LET PLEX SERVE helper's mt-keyed plex_items map must
+    # be `else mt` (mt = a theme row's media_type, reaches 'collection'), not
+    # the hardcoded `else "movie"` that missed a collection's plex_items rows.
+    assert BUGGY_MT not in API_PY, (
+        "an mt-keyed plex_items map still hardcodes `else \"movie\"` — a themed "
+        "collection (media_type='collection') would match no plex_items rows. "
+        "Map with `else mt`."
+    )
+    body = _body("def _bulk_lps_run(")
+    assert SAFE_MT in body, (
+        "_bulk_lps_run lost its collection-safe mt map (`else mt`)."
+    )

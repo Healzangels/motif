@@ -5576,8 +5576,11 @@ def _bulk_lps_run(
                     # mirrors v1.15.90's api_unplace_item pattern:
                     # theme_id FK preferred, guid_tmdb+media_type
                     # fallback for orphan rows.
+                    # v0.51.49: else mt (was "movie") so bulk LET PLEX SERVE on a
+                    # themed collection matches its plex_items rows (media_type=
+                    # 'collection'); the mt-keyed sibling of the v0.51.48 sweep.
                     plex_media_type = (
-                        "show" if mt == "tv" else "movie")
+                        "show" if mt == "tv" else mt)
                     with get_conn(db_path) as conn:
                         with transaction(conn):
                             if section_id:

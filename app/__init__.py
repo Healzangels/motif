@@ -3180,7 +3180,17 @@
 #   sidecar for a folderless collection) but aligned for uniformity. All eight now
 #   `else media_type` like _info_plex_type. Source guard (test_v0_51_48) pins the
 #   media_type-keyed hardcoded-movie shape out of api.py + each swept handler.
-__version__ = "0.51.48"
+# 0.51.49 — the 9th collection→movie plex_items miss, the mt-keyed sibling of the
+#   v0.51.48 sweep. The bulk LET PLEX SERVE helper (_bulk_lps_run) mapped
+#   `"show" if mt == "tv" else "movie"` (mt = a theme row's media_type, so it
+#   reaches 'collection') into a plex_items (guid_tmdb, media_type) lookup — so a
+#   themed collection in a bulk-LPS selection matched media_type='movie', an empty
+#   set, and its local_theme_file/has_theme flag-clear silently no-op'd (stale
+#   SRC/PL after the op). v0.51.48's enumeration was media_type-keyed, so this
+#   mt-keyed one slipped through. Now `else mt`. Source guard gains an mt-keyed
+#   global tripwire + a _bulk_lps_run pin; the tab-keyed plex_sections.type map
+#   (~6926) stays `else "movie"` on purpose (no 'collection' library section).
+__version__ = "0.51.49"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
