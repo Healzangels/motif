@@ -162,10 +162,15 @@
   // SSR side (_topbar_ssr_state in api.py) in lockstep.
   const OP_MINI_PRIORITY = {
     download_queue:      1,  // downloads (most user-visible work)
-    plex_enum:           2,  // library refresh
-    plex_enum_pending:   2,  // queued refresh shares its parent's slot
-    tdb_sync:            3,  // themerrdb sync
-    tdb_sync_pending:    3,
+    // v0.51.46 (the user): themerrdb sync now outranks the plex refresh. Clicking
+    // SYNC THEMERRDB then REFRESH PLEX put the quick refresh in the slot, then it
+    // "bumped" to the longer sync once the refresh finished — tdb_sync winning the
+    // slot whenever both run keeps the sync steady. Download still tops both. This
+    // reverses the v1.15.82 refresh>sync order for this pair only.
+    tdb_sync:            2,  // themerrdb sync
+    tdb_sync_pending:    2,
+    plex_enum:           3,  // library refresh
+    plex_enum_pending:   3,  // queued refresh shares its parent's slot
     bulk_probe_tdb:      4,  // probe TDB URLs
     // v1.18.51: bulk_lps shares the bulk-probe slot — both are
     // user-initiated bulk operations that surface in the mini-

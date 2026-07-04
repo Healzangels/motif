@@ -6344,6 +6344,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # one-tick mismatch can happen on a download+refresh
             # nav (SSR paints refresh; JS swaps to download). The
             # main complaint — steady-state flipping — is fixed.
+            # v0.51.46 (the user): tdb_sync now ranks ABOVE plex_enum (was below)
+            # so SYNC THEMERRDB holds the slot over a concurrent REFRESH PLEX —
+            # kept in lockstep with ops.js OP_MINI_PRIORITY.
             with get_conn(settings.db_path) as conn:
                 op_row = conn.execute("""
                     SELECT kind, stage_label
@@ -6351,10 +6354,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     WHERE status IN ('running', 'cancelling')
                     ORDER BY
                       CASE kind
-                        WHEN 'plex_enum'           THEN 1
-                        WHEN 'plex_enum_pending'   THEN 1
-                        WHEN 'tdb_sync'            THEN 2
-                        WHEN 'tdb_sync_pending'    THEN 2
+                        WHEN 'tdb_sync'            THEN 1
+                        WHEN 'tdb_sync_pending'    THEN 1
+                        WHEN 'plex_enum'           THEN 2
+                        WHEN 'plex_enum_pending'   THEN 2
                         WHEN 'bulk_probe_tdb'      THEN 3
                         WHEN 'bulk_lps'            THEN 3
                         WHEN 'cloud_themes_backup' THEN 3

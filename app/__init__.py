@@ -3151,7 +3151,14 @@
 #   on mobile, customize-mode flex). The wrapper is the single customize unit
 #   (reuses the insight-syncs layout key); each inner .block keeps its id for the
 #   JS chart render + its own SSR display gate.
-__version__ = "0.51.45"
+# 0.51.46 — topbar mini-bar: SYNC THEMERRDB now outranks REFRESH PLEX in the single
+#   contended slot (the user: clicking both back-to-back "showed plex is refreshing
+#   then bumps to themerrdb" — the quick refresh grabbed the slot at priority 2,
+#   then handed off to the longer sync when it finished). Swapped tdb_sync (now 2)
+#   above plex_enum (now 3) in ops.js OP_MINI_PRIORITY + the api.py _topbar_ssr_state
+#   CASE (lockstep). Download still tops both. Reverses the v1.15.82 refresh>sync
+#   order for this pair only.
+__version__ = "0.51.46"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

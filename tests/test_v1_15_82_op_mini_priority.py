@@ -52,10 +52,12 @@ def test_ops_js_declares_priority_map():
     decl_end = js.index("}", decl_start)
     decl = js[decl_start:decl_end]
     # Required entries with the user's order.
+    # v0.51.46 (the user): tdb_sync now outranks plex_enum (was 2 vs 3) so
+    # SYNC THEMERRDB holds the contended slot over a concurrent REFRESH PLEX.
     pairs = [
         ("download_queue", 1),
-        ("plex_enum", 2),
-        ("tdb_sync", 3),
+        ("tdb_sync", 2),
+        ("plex_enum", 3),
         ("bulk_probe_tdb", 4),
         ("reprobe_plex_themes", 5),
     ]
@@ -155,9 +157,11 @@ def test_topbar_ssr_priority_matches_client_order():
         m = re.search(rf"WHEN\s+'{kind}'\s+THEN\s+(\d+)", case_block)
         assert m, f"v1.15.82: SSR CASE missing WHEN '{kind}'"
         return int(m.group(1))
-    assert _prio("plex_enum") < _prio("tdb_sync"), (
-        "v1.15.82: SSR priority must rank plex_enum (refresh) "
-        "above tdb_sync per the user's order"
+    # v0.51.46 (the user): tdb_sync (sync themerrdb) now ranks ABOVE plex_enum
+    # (refresh) so SYNC THEMERRDB holds the slot over a concurrent REFRESH PLEX.
+    assert _prio("tdb_sync") < _prio("plex_enum"), (
+        "v0.51.46: SSR priority must rank tdb_sync (sync) above plex_enum "
+        "(refresh) so the sync holds the slot when both run"
     )
-    assert _prio("tdb_sync") < _prio("bulk_probe_tdb")
+    assert _prio("plex_enum") < _prio("bulk_probe_tdb")
     assert _prio("bulk_probe_tdb") < _prio("reprobe_plex_themes")
