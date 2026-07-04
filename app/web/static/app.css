@@ -3787,9 +3787,11 @@ body.help-mode .settings-help-about { display: block; }
 .info-src-tag-user { color: var(--violet); }
 .info-src-tag-tdb  { color: var(--green-bright); }
 .info-tag-pending  { color: var(--blue); }
-/* v1.19.89: centered caption under the source thumbnail (was inline
-   margin-top + text-align). The divider above it reuses .dlg-section. */
-.info-thumb-caption { margin-top: var(--gap-2); text-align: center; }
+/* v1.19.89: caption under the source thumbnail (was inline margin-top +
+   text-align). The divider above it reuses .dlg-section.
+   v0.51.58: left-aligned (was center) to match the now left-aligned thumbnail —
+   both hang off the card's left content edge (the user: the card "feels askew"). */
+.info-thumb-caption { margin-top: var(--gap-2); text-align: left; }
 /* v1.19.89: probe-result + last-probed spacing (was inline
    margin-left:10px → --gap-3). */
 .info-probe-meta { margin-left: var(--gap-3); }
@@ -3815,12 +3817,16 @@ body.help-mode .settings-help-about { display: block; }
    link was even considered, wrapping every time regardless of flex-shrink.
    A 0 basis makes wrap-assignment size it as ~0 so the link joins the same
    line, then flex-grow:1 hands the player whatever's left. */
-/* v0.51.29: the ↓ download sibling is gone (native ⋮ menu has Download), so the
-   player owns the whole play row — max-width:none + width:100% + a taller 40px
-   (was a squished 32px that cramped the native controls) give the volume slider
-   + seek bar real width/height, so they're easy to see + drag (the user: "the
-   volume control bar ... is very hard to see and control"). */
-.info-audio { flex: 1 1 auto; min-width: 0; max-width: none; width: 100%; height: 40px; }
+/* v0.51.29: the ↓ download sibling is gone (native ⋮ menu has Download); the
+   taller 40px (was a squished 32px that cramped the native controls) gives the
+   volume slider + seek bar real height, so they're easy to see + drag (the user:
+   "the volume control bar ... is very hard to see and control").
+   v0.51.58 (the user: the play bar "goes so far to the right", the card "feels
+   askew"): capped at 340px (was max-width:none) so the player reads as a tidy
+   control left-aligned in the value column instead of a full-bleed bar stretching
+   the whole 1fr. flex-grow + width:100% still fill the row UP TO the cap, and
+   flex-shrink keeps it fitting narrower phone widths (where 100% < 340). */
+.info-audio { flex: 1 1 auto; min-width: 0; max-width: 340px; width: 100%; height: 40px; }
 /* v1.15.144 / v1.16.1: source-thumbnail primitive — wrapper +
    img split.
    Used by the info card's YouTube + SoundCloud preview blocks
@@ -3836,10 +3842,16 @@ body.help-mode .settings-help-about { display: block; }
    regardless of the image's intrinsic ratio. */
 .info-source-thumb-wrap {
   width: 100%;
-  max-width: 480px;
+  /* v0.51.58 (the user: the centered thumbnail "feels off centered" / the card
+     "askew"): left-aligned (margin:0, was `0 auto`) so the preview + its SOURCE
+     PREVIEW header + caption all hang off the card's left content edge like the
+     grid above — one alignment axis, not a third centered one. Trimmed 480->360
+     so it reads as a tidy preview, not a near-full-width block. The 4:3 aspect
+     box + YT/SC parity (both fill the same wrapper) are unchanged. */
+  max-width: 360px;
   aspect-ratio: 4 / 3;
   display: block;
-  margin: 0 auto;
+  margin: 0;
   border: 1px solid var(--line);
   overflow: hidden;
 }

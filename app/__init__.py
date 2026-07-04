@@ -3269,7 +3269,16 @@
 #   uploaded theme from Plex … no file in the media folder"; HL/CP → the original
 #   folder-delete line. Mirrors the honest state-branched copy v1.20.57 already gave
 #   DEL/UNMANAGE/PURGE. Confirm-text only; no handler behavior changed.
-__version__ = "0.51.57"
+# 0.51.58 — INFO card layout cleanup (the user: the play bar + text "going so far to
+#   the right", the thumbnail "feels off centered", "everything feels askew"). Two CSS
+#   changes, no DOM/JS: (1) .info-audio capped at max-width:340px (was max-width:none /
+#   full-bleed) so the native player is a tidy control in the value column instead of a
+#   bar stretching the whole 1fr — width:100%+flex still fill up to the cap and shrink on
+#   phones; (2) .info-source-thumb-wrap left-aligned (margin:0, was 0 auto) + trimmed
+#   480->360, and .info-thumb-caption text-align:left — so the SOURCE PREVIEW header,
+#   thumbnail + caption all hang off the card's left content edge like the grid above
+#   (one alignment axis, not a third centered one). 4:3 aspect + YT/SC parity unchanged.
+__version__ = "0.51.58"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -76,7 +76,10 @@ def test_info_source_thumb_classes_defined_in_css():
     wrap_idx = src.index(".info-source-thumb-wrap {")
     wrap_block = src[wrap_idx:wrap_idx + 500]
     assert "width: 100%" in wrap_block
-    assert "max-width: 480px" in wrap_block
+    # v0.51.58: trimmed 480->360 + left-aligned (margin:0, was 0 auto) so the
+    # preview sits on the card's left axis, not centered (the user: card "askew").
+    # The YT/SC parity this test guards is width-agnostic — both fill the same box.
+    assert "max-width: 360px" in wrap_block
     assert "aspect-ratio: 4 / 3" in wrap_block, (
         "v1.16.1: aspect-ratio MUST live on the wrapper "
         "(non-replaced element). v1.15.144 put it on the <img>; "
