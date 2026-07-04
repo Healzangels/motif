@@ -223,6 +223,6 @@ def test_menu_item_html_vocab_comment_documents_place_tones():
     fn_idx = js.index(
         "function menuItemHtml(act, label, tip, extras = {})"
     )
-    body = js[fn_idx:fn_idx + 5000]
+    body = js[fn_idx:fn_idx + 5700]
     assert "//   place_file" in body
     assert "//   place_api" in body

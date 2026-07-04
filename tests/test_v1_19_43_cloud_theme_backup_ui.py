@@ -343,7 +343,7 @@ def test_backup_cloud_theme_click_handler_present():
         "backup-cloud-theme branch"
     )
     idx = APP_JS.index("act === 'backup-cloud-theme'")
-    block = APP_JS[idx:idx + 2500]
+    block = APP_JS[idx:idx + 3400]
     assert "/api/admin/cloud-themes-backup-run" in block
     assert "rks" in block
 

@@ -473,7 +473,7 @@ def test_source_menu_handler_expects_op_id_async_response():
     """Per-row SOURCE-menu handler must also expect async
     response shape."""
     idx = APP_JS.index("act === 'backup-cloud-theme'")
-    block = APP_JS[idx:idx + 2500]
+    block = APP_JS[idx:idx + 3400]
     assert "downloaded_count" not in block
     assert "boostPoll" in block
 

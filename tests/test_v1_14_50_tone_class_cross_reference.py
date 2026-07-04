@@ -208,7 +208,7 @@ def test_menu_item_html_tone_vocab_documents_all_source_menu_tones():
     js = JS.read_text()
     fn_anchor = js.index("function menuItemHtml(act, label, tip, extras = {}) {")
     # The vocab comment sits ~50 lines into the function body.
-    body = js[fn_anchor:fn_anchor + 5000]
+    body = js[fn_anchor:fn_anchor + 5700]
     css_tones = _css_lib_source_classes()
     for tone in sorted(css_tones):
         assert f"//   {tone}" in body, (

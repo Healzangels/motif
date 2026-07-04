@@ -33,7 +33,7 @@ def test_has_tdb_flag_plumbed_from_upstream_source():
 
 
 def test_force_capture_signature_takes_has_tdb():
-    assert "function cloudBackupForceCapture(rk, hasTdb)" in APP_JS
+    assert "function cloudBackupForceCapture(rk, hasTdb, direct)" in APP_JS
 
 
 def test_copy_branches_on_has_tdb():

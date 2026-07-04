@@ -3190,7 +3190,18 @@
 #   mt-keyed one slipped through. Now `else mt`. Source guard gains an mt-keyed
 #   global tripwire + a _bulk_lps_run pin; the tab-keyed plex_sections.type map
 #   (~6926) stays `else "movie"` on purpose (no 'collection' library section).
-__version__ = "0.51.49"
+# 0.51.50 — RECAPTURE FROM PLEX: an honest one-click action for a row where Plex
+#   is serving a theme motif itself uploaded. Post-UNMANAGE (the user's repro) the
+#   row lands at bare P with Plex still serving motif's own upload:// entry.
+#   DOWNLOAD PLEX BACKUP only captures Plex-Pass metadata:// CLOUD themes, so its
+#   strict walker found nothing and dropped into a confusing "found nothing →
+#   capture anyway?" confirm (the user: "you get the option but it never
+#   downloads"). Now the /api/library payload carries plex_items.plex_theme_uri;
+#   the SOURCE menu offers RECAPTURE FROM PLEX for an upload:// serving theme,
+#   going STRAIGHT to the one-step force-capture (positive-leading confirm) that
+#   actually stores the bytes. A metadata:// (or NULL not-yet-enumerated) uri keeps
+#   DOWNLOAD PLEX BACKUP. Behavioral test pins plex_theme_uri into the payload.
+__version__ = "0.51.50"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -278,7 +278,7 @@ def test_source_menu_tooltip_warns_on_destructive_swap():
     """When the row already has a non-plex_cloud local file, the
     tooltip must warn that the file will be REPLACED."""
     idx = APP_JS.index("v1.19.62: extend visibility to PS-with-")
-    block = APP_JS[idx:idx + 2000]
+    block = APP_JS[idx:idx + 3400]
     assert "REPLACED" in block
     assert "swapTooltip" in block
 

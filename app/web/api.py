@@ -3131,6 +3131,11 @@ def _library_main_query(
                -- the gate never fires, so REPROBE updates never
                -- surface — exactly what happened in v1.13.38–.41.
                pi.plex_independent_theme,
+               -- v0.51.50: the currently-serving theme's URI, so the SOURCE
+               -- menu can tell an upload:// (a theme motif itself uploaded —
+               -- offer RECAPTURE) from a metadata:// Plex-Pass cloud theme
+               -- (offer DOWNLOAD PLEX BACKUP). NULL when not yet enumerated.
+               pi.plex_theme_uri,
                ps.title AS section_title,
                -- v0.51.23: the row's library resolution, so the JS can draw an
                -- amber 4K badge next to the title. In the // ALL view a title
@@ -4095,6 +4100,7 @@ def _library_not_in_plex(
             NULL AS plex_local_theme,
             NULL AS plex_theme_verified_ok,
             NULL AS plex_independent_theme,
+            NULL AS plex_theme_uri,
             NULL AS section_title,
             t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
             t.title AS theme_title, t.youtube_url, t.youtube_video_id,
