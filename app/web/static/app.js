@@ -16772,9 +16772,12 @@
     const _pendingSuffix = tdbUrlIsPending
       ? ' <span class="muted small info-tag-pending" title="ACCEPT UPDATE to commit · KEEP CURRENT to dismiss">(pending)</span>'
       : '';
-    const tdbSrcTag = tdbUrl
-      ? ` <span class="muted small">(${urlSource(tdbUrl)})</span>${_pendingSuffix}`
-      : '';
+    // v0.51.61 (the user, polish): dropped the redundant (youtube)/(soundcloud)
+    // platform tag from the label — the value already shows the full URL, and it
+    // repeated identically across the themerrdb/applied/previous url rows (wrapping
+    // each label to 2 ragged lines). The (pending) suffix stays: it flags an
+    // uncommitted URL, which is NOT derivable from the value.
+    const tdbSrcTag = _pendingSuffix;
     // v1.19.60: when sync's pending_update captured the PREVIOUS
     // TDB URL (post-v1.19.60 sync writes always do), surface a
     // "(was: OLDURL)" suffix on the themerrdb url line so the user
@@ -16790,9 +16793,8 @@
     const tdbWasTag = _pendingOldUrl
       ? ` <span class="muted small" title="The TDB URL before this sync's roll. Surfaces the diff for ACCEPT/KEEP CURRENT context.">(was: ${htmlEscape(_pendingOldUrl)})</span>`
       : '';
-    const prevSrcTag = previousUrl
-      ? ` <span class="muted small">(${urlSource(previousUrl)})</span>`
-      : '';
+    // v0.51.61 (the user, polish): the previous-url platform tag is dropped too
+    // (same redundancy as tdbSrcTag) — the label is now just "previous url".
     // v1.14.28: PROBE TDB URL — fires yt-dlp simulate against the
     // row's TDB URL so the user can confirm the URL is alive
     // before doing a destructive action like LET PLEX SERVE.
@@ -16850,8 +16852,8 @@
           ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
           : htmlEscape(t.upstream_source || '')}</dd>
         ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
-        <dt>${appliedUrlLabel} ${currentUrl ? `<span class="muted small">(${urlSource(currentUrl)})</span>` : ''}</dt><dd>${currentUrlLink}</dd>
-        <dt>previous url${prevSrcTag}</dt><dd>${previousUrlLink}</dd>
+        <dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}</dd>
+        <dt>previous url</dt><dd>${previousUrlLink}</dd>
         <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
         ${probeBtnHtml}
         ${t.upstream_source === 'plex_orphan' ? '' : `

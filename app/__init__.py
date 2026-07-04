@@ -3289,7 +3289,16 @@
 #   player cap equals .info-source-thumb-wrap's max-width. Bonus: at 360 the value-column
 #   player (x~174) and the centered 360 thumbnail (x~180) also land at nearly the same
 #   left edge, so they read as aligned too. CSS-only; keep the two caps in lockstep.
-__version__ = "0.51.60"
+# 0.51.61 — INFO card detail polish (the user, 3 bundled tweaks). (1) .info-audio
+#   color-scheme:dark + accent-color green so the native player renders as a dark
+#   control, not a bright-white pill clashing with the CRT card. (2) .dlg-grid dd
+#   overflow-wrap:anywhere (was word-break:break-all) so paths/URLs break at cleaner
+#   points ("theme.mp3" stays whole vs "theme.mp"+"3"). (3) dropped the redundant
+#   (youtube)/(soundcloud) platform tag from the themerrdb/applied/previous url labels
+#   (repeated 3x, wrapped each to 2 lines; the value shows the full URL). The (pending)
+#   / (was:) / dead tags + value-side src provenance are kept. Reverses v1.14.20's M2
+#   parens-harmonization (its test updated).
+__version__ = "0.51.61"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

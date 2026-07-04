@@ -181,7 +181,9 @@ def test_currently_applied_label_renamed_to_applied_url():
     value must still be 'applied url', and the <dt> must render
     that variable."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    assert "<dt>${appliedUrlLabel} ${currentUrl ?" in js
+    # v0.51.61: the (youtube) platform span after the label is dropped — the dt is
+    # now just the appliedUrlLabel variable.
+    assert "<dt>${appliedUrlLabel}</dt>" in js
     assert "? 'backup url'" in js and ": 'applied url';" in js
     assert "<dt>currently applied ${currentUrl ?" not in js
 
@@ -189,34 +191,28 @@ def test_currently_applied_label_renamed_to_applied_url():
 # ── M2: harmonized parens label format ────────────────────────
 
 
-def test_themerrdb_label_uses_parens_format():
-    """The `themerrdb url` row uses the muted parens form
-    `(youtube)` / `(soundcloud)` matching the applied url
-    and previous url rows.
-
-    v1.18.63: the parens span is now concatenated with a
-    pending-state suffix in the same template literal —
-    `(${urlSource(tdbUrl)})</span>${_pendingSuffix}` — so the
-    pre-v1.18.63 substring `(${urlSource(tdbUrl)})</span>` `
-    no longer appears as a standalone backticked literal. Loosen
-    the assertion to verify the parens-format fragment is present
-    in source, regardless of the surrounding literal structure."""
+def test_themerrdb_label_drops_platform_tag():
+    """v0.51.61 (the user, polish): the `(youtube)`/`(soundcloud)` PLATFORM tag
+    that v1.14.20 M2 added to the themerrdb url label is dropped — it repeated
+    identically across the 3 URL rows (wrapping each label to 2 lines) and the
+    value already shows the full URL. tdbSrcTag now carries ONLY the (pending)
+    suffix (not derivable from the value); tdbDeadTag + the dt are unchanged."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    # The new tdbSrcTag helper.
-    assert "const tdbSrcTag = tdbUrl" in js
-    # Parens form for the urlSource label — present anywhere in
-    # the file (v1.18.63 fused this with _pendingSuffix).
-    assert '(${urlSource(tdbUrl)})</span>' in js
-    # The render site uses the helper.
-    # v0.50.35: a dead-url "dead" tag is concatenated after tdbSrcTag.
+    # tdbSrcTag reduced to the pending suffix (no urlSource platform label).
+    assert "const tdbSrcTag = _pendingSuffix;" in js
+    # the platform-tag fragment is gone from the whole file.
+    assert "(${urlSource(tdbUrl)})" not in js
+    # the render site + the dead-url tag are preserved.
     assert "<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt>" in js
 
 
-def test_previous_url_label_uses_parens_format():
-    """Same harmonization for the `previous url` row."""
+def test_previous_url_label_has_no_platform_tag():
+    """v0.51.61: the previous-url platform tag is dropped too — the label is now
+    just `previous url` (prevSrcTag var removed)."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    assert "const prevSrcTag = previousUrl" in js
-    assert "<dt>previous url${prevSrcTag}</dt>" in js
+    assert "const prevSrcTag" not in js
+    assert "<dt>previous url</dt>" in js
+    assert "(${urlSource(previousUrl)})" not in js
 
 
 def test_old_themerrdb_label_format_is_gone():

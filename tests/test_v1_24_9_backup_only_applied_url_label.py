@@ -54,9 +54,14 @@ def test_applied_url_label_relabels_to_backup_url_when_backup_only():
 def test_dt_renders_the_label_variable_not_a_hardcoded_string():
     """The <dt> must render ${appliedUrlLabel}; the pre-v1.24.9 hardcoded
     literal must be gone so a regression that re-pins 'applied url' fails."""
-    assert "<dt>${appliedUrlLabel} ${currentUrl ?" in APP_JS
+    # v0.51.61: the trailing (youtube) platform span was dropped; the dt is now
+    # just the label variable.
+    assert "<dt>${appliedUrlLabel}</dt>" in APP_JS
     assert "<dt>applied url ${currentUrl ?" not in APP_JS, (
         "re-hardcoding 'applied url' would resurrect the backup-only mislabel"
+    )
+    assert "<dt>applied url</dt>" not in APP_JS, (
+        "the label must stay the variable (backup-only rows read 'backup url')"
     )
 
 

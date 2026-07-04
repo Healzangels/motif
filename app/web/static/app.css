@@ -3779,7 +3779,11 @@ body.help-mode .settings-help-about { display: block; }
 .dlg-section h4 { font-size: var(--t-tiny); letter-spacing: 0.2em; color: var(--fg-dim); text-transform: uppercase; margin-bottom: var(--gap-2); }
 .dlg-grid { display: grid; grid-template-columns: 140px 1fr; gap: var(--gap-2) var(--gap-4); font-size: var(--t-small); }
 .dlg-grid dt { color: var(--fg-dim); }
-.dlg-grid dd { color: var(--fg); word-break: break-all; }
+/* v0.51.61 (the user, polish): overflow-wrap:anywhere (was word-break:break-all)
+   so long paths/URLs break only when they must AND prefer segment boundaries —
+   "theme.mp3" stays whole instead of chopping to "theme.mp"+"3", while a too-long
+   URL still wraps rather than overflowing the value column. */
+.dlg-grid dd { color: var(--fg); overflow-wrap: anywhere; }
 /* v1.19.89: info-card URL source/state tags — promoted from inline
    color styles. user=violet (SRC=U), themerrdb=green (SRC=T),
    pending=blue (informational). Placed after .muted so the tone
@@ -3830,7 +3834,10 @@ body.help-mode .settings-help-about { display: block; }
    thumbnail"): cap bumped 340->360 to MATCH .info-source-thumb-wrap's max-width.
    Keep these two in lockstep — at 360 the value-column-left player (x~174) and the
    centered 360 thumbnail (x~180) also land at nearly the same position. */
-.info-audio { flex: 1 1 auto; min-width: 0; max-width: 360px; width: 100%; height: 40px; }
+/* v0.51.61 (the user, polish): color-scheme:dark makes the native player render as
+   a dark control instead of a bright-white pill that clashed with the CRT card;
+   accent-color greens the progress/volume fills to match the theme. */
+.info-audio { flex: 1 1 auto; min-width: 0; max-width: 360px; width: 100%; height: 40px; color-scheme: dark; accent-color: var(--green); }
 /* v1.15.144 / v1.16.1: source-thumbnail primitive — wrapper +
    img split.
    Used by the info card's YouTube + SoundCloud preview blocks

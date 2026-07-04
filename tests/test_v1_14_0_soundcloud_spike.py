@@ -275,23 +275,26 @@ def test_app_js_validator_accepts_either_source():
     assert "if (!YOUTUBE_URL_RE.test(url))" not in js
 
 
-def test_info_card_uses_source_aware_labels():
-    """The info card's URL row labels must be source-aware. Pin
-    via the urlSourceLabel() / urlSource() calls in the
-    template-string DL block.
+def test_info_card_url_labels_have_no_platform_tag():
+    """v0.51.61 (the user, polish): the info-card URL row LABELS no longer carry
+    the source-aware `(youtube)`/`(soundcloud)` platform tag — it repeated across
+    the 3 URL rows and the value already shows the full URL. (urlSource() itself
+    is still the classification mirror used by the thumbnail branch — pinned in
+    test_url_classification_helper_exists.)
 
-    v1.14.20 (M1) renamed the `currently applied` label to
-    `applied url`. v1.24.9 made it a variable (`appliedUrlLabel`,
-    so backup-only rows read "backup url"); anchor on that."""
+    v1.14.20 (M1) renamed the `currently applied` label to `applied url`; v1.24.9
+    made it the `appliedUrlLabel` variable (backup-only rows read "backup url").
+    That variable stays; only the trailing platform span is gone."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    # Find the info card DL grid (label var post-v1.24.9).
+    # the applied-url label renders the plain variable, no inline urlSource tag.
     anchor = js.index("<dt>${appliedUrlLabel}")
-    block = js[anchor - 200:anchor + 400]
-    # Source-aware label fragments.
-    assert "urlSourceLabel" in block or "urlSource(" in block, (
-        "Info card URL row labels must use urlSource()/urlSourceLabel() "
-        "to render source-aware text"
-    )
+    block = js[anchor:anchor + 60]
+    assert block.startswith("<dt>${appliedUrlLabel}</dt>"), (
+        "v0.51.61: the applied-url label is the bare variable, no (youtube) span")
+    # the platform-tag fragments are gone from all three URL labels.
+    assert "(${urlSource(currentUrl)})" not in js
+    assert "(${urlSource(tdbUrl)})" not in js
+    assert "(${urlSource(previousUrl)})" not in js
 
 
 # ── Static guards: production SQL has the SC relaxation ──────
