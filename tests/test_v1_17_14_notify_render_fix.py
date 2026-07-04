@@ -141,7 +141,7 @@ def test_added_body_order_is_source_url():
     body = format_theme_added_body(ctx)
     # v1.17.16: no bold title to check.
     assert "**Elektra (2005)**" not in body
-    source_idx = body.index("Source: ThemerrDB")
+    source_idx = body.index("Source: 🟢 ThemerrDB")
     url_idx = body.index("https://www.youtube.com")
     assert source_idx < url_idx, (
         f"v1.17.16: order must be source → URL, got:\n{body}"
@@ -188,7 +188,7 @@ def test_added_body_handles_missing_url_gracefully():
     body = format_theme_added_body(ctx)
     # v1.17.16: title is in the subject, not the body.
     assert "**Some Title**" not in body
-    assert "Source: Manual sidecar" in body
+    assert "Source: 🟤 Manual sidecar" in body
     # No "None" leaked anywhere.
     assert "None" not in body
     assert "<None>" not in body

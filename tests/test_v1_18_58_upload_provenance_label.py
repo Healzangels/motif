@@ -283,7 +283,7 @@ def test_theme_added_body_reads_user_upload_for_upload_mp3(tmp_path):
     )
     ctx = enrich_item(db, media_type='tv', tmdb_id=-69, section_id='3')
     body = format_theme_added_body(ctx)
-    assert "Source: User upload" in body, (
+    assert "Source: 🟣 User upload" in body, (
         f"v1.18.58: body must read 'Source: User upload' for "
         f"the UPLOAD MP3 path. Got:\n{body}"
     )

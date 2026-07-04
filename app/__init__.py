@@ -3236,7 +3236,16 @@
 #   now route through a single _motif_media_type helper (show->tv, movie/
 #   collection identity); the v0.51.48 guard gains a reverse tripwire so the
 #   'gone everywhere' claim is finally true.
-__version__ = "0.51.53"
+# 0.51.54 — notification Source line colours its dot by SOURCE, not platform.
+#   the user: "colour the dot by the source — purple for a user url/upload, green
+#   for themerrdb, cyan for adopted ... at a glance show where it came from." Was
+#   per-platform (YouTube-red) since v0.50.37. The dot now sits next to the
+#   provenance label and follows the SRC pill palette (T green / U violet / A
+#   cyan->blue / M magenta->brown / P amber — Discord ships only solid colour
+#   circles, so cyan/magenta fall back to the nearest); the platform reads as
+#   plain text + renders its real preview card from the URL. The dot also shows
+#   on url-less sources (adopt / manual / upload) now, since it's a SOURCE signal.
+__version__ = "0.51.54"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

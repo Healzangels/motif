@@ -1,10 +1,13 @@
-"""v0.50.37 — notification source line carries a per-platform colour dot.
+"""v0.51.54 (supersedes v0.50.37) — the Source line's colour dot encodes SOURCE.
 
-the user: "make the color on all youtube added videos red as blue is supposed to
-be facebook." Apprise's Discord embed bar is SEVERITY-coloured (INFO=blue for every
-theme-add) and not a per-source knob — and the external apprise-api path can't set
-a colour at all — so the colour lives in the body's Source line, where it renders
-identically on every transport: 🔴 YouTube, 🔵 Facebook (🟠 SoundCloud, 🟣 Instagram).
+v0.50.37 originally coloured the dot by PLATFORM (YouTube-red / Facebook-blue).
+the user then wanted it by SOURCE instead: "colour the dot by the source —
+purple for a user url/upload, green for themerrdb, cyan for adopted ... at a
+glance show where it came from." So the dot now sits next to the provenance
+label and follows the SRC pill palette; the platform (YouTube/Facebook) reads as
+plain text. Apprise's Discord embed bar is severity-coloured (INFO=blue for every
+theme-add) and the external apprise-api path can't set a colour, so the colour
+lives in the body where it renders identically on every transport.
 """
 from __future__ import annotations
 
@@ -15,19 +18,34 @@ def _line(url, prov="themerrdb"):
     return _format_provenance_line({"provenance": prov, "theme_url": url})
 
 
-def test_youtube_is_red_facebook_is_blue():
-    assert "🔴 YouTube" in _line("https://www.youtube.com/watch?v=abcdefghijk")
-    assert "🔴 YouTube" in _line("https://youtu.be/abcdefghijk")
-    assert "🔵 Facebook" in _line("https://www.facebook.com/watch/?v=1", prov="user_url")
-    assert "🔵 Facebook" in _line("https://fb.watch/xyz", prov="user_url")
+def test_dot_encodes_source_not_platform():
+    # themerrdb -> green, whatever the platform is
+    assert _line("https://www.youtube.com/watch?v=abcdefghijk") \
+        == "Source: 🟢 ThemerrDB · YouTube"
+    assert _line("https://youtu.be/abcdefghijk") \
+        == "Source: 🟢 ThemerrDB · YouTube"
+    # user_url -> violet; platform is just text
+    assert _line("https://www.facebook.com/watch/?v=1", prov="user_url") \
+        == "Source: 🟣 User URL · Facebook"
+    assert _line("https://soundcloud.com/foo/bar", prov="user_url") \
+        == "Source: 🟣 User URL · SoundCloud"
 
 
-def test_other_platforms_get_their_own_dot():
-    assert "🟠 SoundCloud" in _line("https://soundcloud.com/foo/bar", prov="user_url")
-    assert "🟣 Instagram" in _line("https://instagram.com/reel/abc", prov="user_url")
+def test_source_dot_per_provenance():
+    assert _line("https://youtu.be/x", prov="user_upload").startswith(
+        "Source: 🟣 User upload")
+    assert _line("https://youtu.be/x", prov="adopted").startswith(
+        "Source: 🔵 Adopted")
+    assert _line("https://youtu.be/x", prov="manual").startswith(
+        "Source: 🟤 Manual sidecar")
+    assert _line("https://youtu.be/x", prov="plex_served").startswith(
+        "Source: 🟡 Plex-served")
 
 
-def test_no_url_has_no_dot():
-    # nothing to classify → bare provenance, no colour dot
+def test_no_url_still_shows_the_source_dot():
+    # v0.51.54: the dot is a SOURCE indicator, so it shows even without a URL
+    # (was bare provenance / no dot under the old per-platform design).
     assert _format_provenance_line({"provenance": "themerrdb", "theme_url": ""}) \
-        == "Source: ThemerrDB"
+        == "Source: 🟢 ThemerrDB"
+    assert _format_provenance_line({"provenance": "adopted", "theme_url": ""}) \
+        == "Source: 🔵 Adopted"

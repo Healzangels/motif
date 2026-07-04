@@ -432,34 +432,52 @@ _PROVENANCE_LABEL: dict[str, str] = {
 }
 
 
+# v0.51.54: the Source line's colour DOT now encodes the SOURCE (provenance) so
+# the operator can tell at a glance WHERE a theme came from — matching the SRC
+# pill palette (T green / U violet / A cyan / M magenta / P amber). Discord only
+# ships solid colour circles, so cyan->blue and magenta->brown are the closest
+# available. Was per-platform (YouTube-red) since v0.50.37; the platform now
+# reads as plain text + its real preview card renders from the URL.
+_PROVENANCE_DOT: dict[str, str] = {
+    "themerrdb":   "🟢 ",  # green — SRC=T
+    "user_url":    "🟣 ",  # violet — SRC=U
+    "user_upload": "🟣 ",  # violet — user-driven, same family as user_url
+    "adopted":     "🔵 ",  # blue — SRC=A (no cyan circle emoji)
+    "manual":      "🟤 ",  # brown — SRC=M (no magenta circle emoji)
+    "plex_served": "🟡 ",  # amber — SRC=P
+    "unknown":     "⚪ ",
+}
+
+
 def _format_provenance_line(ctx: ItemContext) -> str:
     """Source provenance line — distinguishes 'ThemerrDB / YouTube',
     'User URL / SoundCloud', etc. The URL host gets included so
     Discord / Slack auto-link previews show the actual platform.
     """
-    prov = _PROVENANCE_LABEL.get(ctx.get("provenance", "unknown"),
-                                 "Unknown")
+    prov_key = ctx.get("provenance", "unknown")
+    prov = _PROVENANCE_LABEL.get(prov_key, "Unknown")
+    # v0.51.54: the leading colour DOT encodes the SOURCE, not the platform (the
+    # user: "colour the dot by the source ... at a glance show where it came
+    # from"). Apprise's Discord embed bar is severity-coloured (INFO=blue for
+    # every theme-add) and the external apprise-api path can't set a colour at
+    # all — so the colour lives in the body, where it renders identically on
+    # every transport. It now sits next to the provenance label; the platform
+    # (YouTube / Facebook / …) reads as plain text + its preview card below.
+    dot = _PROVENANCE_DOT.get(prov_key, _PROVENANCE_DOT["unknown"])
     url = ctx.get("theme_url") or ""
     if not url:
-        return f"Source: {prov}"
-    # Cheap platform classification — no need to re-import
-    # url_source for this one shape.
-    # v0.50.37: a leading colour DOT per platform (the user wanted YouTube red /
-    # Facebook blue). Apprise's Discord embed bar is severity-coloured (INFO=blue
-    # for every theme-add) and not a per-source knob — and the external apprise-api
-    # path can't set a colour at all — so the colour lives in the body, where it
-    # renders identically on every transport.
+        return f"Source: {dot}{prov}"
+    # Cheap platform classification — no need to re-import url_source here.
     plat = "URL"
-    dot = ""
     if "youtube.com" in url or "youtu.be" in url:
-        plat, dot = "YouTube", "🔴 "
+        plat = "YouTube"
     elif "soundcloud.com" in url:
-        plat, dot = "SoundCloud", "🟠 "
+        plat = "SoundCloud"
     elif "instagram.com" in url:  # v1.20.26
-        plat, dot = "Instagram", "🟣 "
+        plat = "Instagram"
     elif "facebook.com" in url or "fb.watch" in url:  # v1.22.90
-        plat, dot = "Facebook", "🔵 "
-    return f"Source: {prov} · {dot}{plat}"
+        plat = "Facebook"
+    return f"Source: {dot}{prov} · {plat}"
 
 
 def format_theme_added_body(ctx: ItemContext) -> str:
