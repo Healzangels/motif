@@ -3144,7 +3144,14 @@
 #   wordmark instead of ▰ + "AUTHENTICATE"; .auth-brand-mark scales the EQ to the
 #   26px title + .auth-title uppercases the name. Login-only (setup.html keeps
 #   ▰ FIRST RUN). Template + CSS only.
-__version__ = "0.51.44"
+# 0.51.45 — // SYNC PERFORMANCE + // DOWNLOAD ACTIVITY sit side by side as a 2-up
+#   pair (half width each) instead of a full-width row each (the user). Wrapped in
+#   a .dash-pair, mirroring the v1.24.66 STATISTICS pair — pure template change,
+#   reuses all the existing .dash-pair / .dash-pair-col CSS (2-up desktop, stacks
+#   on mobile, customize-mode flex). The wrapper is the single customize unit
+#   (reuses the insight-syncs layout key); each inner .block keeps its id for the
+#   JS chart render + its own SSR display gate.
+__version__ = "0.51.45"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -604,9 +604,15 @@
   <div class="insight-body" id="insight-failures-body"></div>
 </section>
 
-<section class="block insight-row" id="insight-syncs-block"
-         data-dash-section="insight-syncs"
-         data-dash-label="SYNC PERFORMANCE"
+{# v0.51.45 (the user): SYNC PERFORMANCE + DOWNLOAD ACTIVITY sit side by side as a
+   2-up pair (half width each) instead of a full-width row each — both are short
+   insight charts that waste horizontal space alone. Mirrors the v1.24.66
+   STATISTICS .dash-pair: the wrapper is the single customize unit (reuses the
+   insight-syncs layout key so an existing saved layout keeps its spot); each inner
+   .block keeps its id for the JS chart render + its own SSR display gate + flexes
+   to fill the row if its sibling has no data. #}
+<div class="dash-pair" data-dash-section="insight-syncs" data-dash-label="SYNC &amp; DOWNLOADS">
+<section class="block dash-pair-col insight-row" id="insight-syncs-block"
          {% if not _ssr_dash.has_insight_syncs %}style="display:none"{% endif %}>
   <header class="block-head">
     <h2 class="block-title">// SYNC PERFORMANCE</h2>
@@ -614,10 +620,7 @@
   </header>
   <div class="insight-body" id="insight-syncs-body"></div>
 </section>
-
-<section class="block insight-row" id="insight-downloads-block"
-         data-dash-section="insight-downloads"
-         data-dash-label="DOWNLOAD ACTIVITY"
+<section class="block dash-pair-col insight-row" id="insight-downloads-block"
          {% if not _ssr_dash.has_insight_downloads %}style="display:none"{% endif %}>
   <header class="block-head">
     <h2 class="block-title">// DOWNLOAD ACTIVITY</h2>
@@ -625,6 +628,7 @@
   </header>
   <div class="insight-body" id="insight-downloads-body"></div>
 </section>
+</div>{# /.dash-pair (SYNC PERFORMANCE + DOWNLOAD ACTIVITY) #}
 
 {# v1.24.56: GENERAL STATISTICS moved up into the .dash-pair beside PER-SECTION
    COVERAGE (v1.24.66) — see that block above. #}
