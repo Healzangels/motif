@@ -3169,7 +3169,18 @@
 #   buttons couldn't wire up; now `else media_type` like api_item. (4) consistency:
 #   api_item's edition-label folder_path query used the same hardcoded-movie map →
 #   aligned to _info_plex_type. Rest of the audit (open/render, lifecycle) clean.
-__version__ = "0.51.47"
+# 0.51.48 — collection-safe plex_items media_type maps: the sequel to the v0.51.47
+#   INFO-card audit. Eight more handlers derived a plex_items filter as `"show" if
+#   media_type == "tv" else "movie"`, so a themed COLLECTION (media_type=
+#   'collection', placed via plex_upload) matched media_type='movie' — an empty set
+#   — and its plex_items rows were silently missed. Six are live-reachable (PURGE/
+#   forget, DELETE, DEL-unplace, UNMANAGE restat, clear-failure owner-sections,
+#   post-PURGE plex refresh); two are the api→file placement-transition branches
+#   (REPLACE + SWITCH), movie/tv-only in practice (SWITCH 400s on collection, no
+#   sidecar for a folderless collection) but aligned for uniformity. All eight now
+#   `else media_type` like _info_plex_type. Source guard (test_v0_51_48) pins the
+#   media_type-keyed hardcoded-movie shape out of api.py + each swept handler.
+__version__ = "0.51.48"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

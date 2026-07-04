@@ -15635,7 +15635,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         if not (settings.plex_enabled and settings.plex_token):
             return 0
-        plex_mt = "show" if media_type == "tv" else "movie"
+        # v0.51.48: else media_type (was "movie") so PURGE/DEL on a themed
+        # collection resolves its plex_items rows (media_type='collection'),
+        # not a phantom 'movie' lookup that matches nothing.
+        plex_mt = "show" if media_type == "tv" else media_type
         with get_conn(settings.db_path) as conn:
             rks = conn.execute(
                 "SELECT rating_key FROM plex_items "
@@ -16242,7 +16245,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # unlinked. the user's repro: M+P+DL+PS state after
             # LET PLEX SERVE on an Unraid setup with
             # /mnt/user/movies/... ↔ /data/media/movies/... paths.
-            plex_media_type = "show" if media_type == "tv" else "movie"
+            # v0.51.48: else media_type (was "movie") so DEL/unplace on a themed
+            # collection matches its plex_items rows (media_type='collection').
+            plex_media_type = "show" if media_type == "tv" else media_type
             # Resolve theme_id once. Most rows have it set (post
             # resolve_theme_ids); the guid_tmdb fallback covers
             # the pre-resolve window + orphan rows where the
@@ -16545,8 +16550,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     (media_type, tmdb_id) + _repl_ed_params,
                 ).fetchall()
                 if kind == "file":
+                    # v0.51.48: else media_type for convention uniformity —
+                    # collections never take the kind='file' sidecar path (no
+                    # media folder), so in practice this only sees movie/tv.
                     repl_plex_mt = (
-                        "show" if media_type == "tv" else "movie"
+                        "show" if media_type == "tv" else media_type
                     )
                     tid_row = conn.execute(
                         "SELECT id FROM themes "
@@ -16764,7 +16772,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # manual recovery.
         clear_rks_per_section: dict[str, list[str]] = {}
         if target_kind == "file" and outgoing:
-            plex_mt_for_lookup = "show" if media_type == "tv" else "movie"
+            # v0.51.48: else media_type for uniformity — the endpoint 400s on
+            # media_type=='collection' above, so this only ever sees movie/tv.
+            plex_mt_for_lookup = "show" if media_type == "tv" else media_type
             with get_conn(db) as conn:
                 tid_row = conn.execute(
                     "SELECT id FROM themes "
@@ -17280,7 +17290,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # falling back to M, and only a follow-up REFRESH FROM PLEX
             # would correct it. Capture the pi list here while themes
             # (and pi.theme_id) still exist.
-            plex_type_for_restat = "show" if media_type == "tv" else "movie"
+            # v0.51.48: else media_type (was "movie") so UNMANAGE on a themed
+            # collection re-stats its plex_items rows (media_type='collection').
+            plex_type_for_restat = "show" if media_type == "tv" else media_type
             theme_id_pk_pre_row = conn.execute(
                 "SELECT id FROM themes WHERE media_type = ? AND tmdb_id = ?",
                 (media_type, tmdb_id),
@@ -17706,7 +17718,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             theme_id_pk_for_clear = (
                 theme_id_pk_for_clear["id"] if theme_id_pk_for_clear else None
             )
-            plex_mt = "show" if media_type == "tv" else "movie"
+            # v0.51.48: else media_type (was "movie") so PURGE (forget) on a
+            # themed collection clears its plex_items rows (media_type=
+            # 'collection'), not a phantom 'movie' lookup that matches nothing.
+            plex_mt = "show" if media_type == "tv" else media_type
             placement_folders = [pr["media_folder"] for pr in placements]
             rk_clear: set[str] = set()
             # v1.12.77: when section_id is provided, scope the
@@ -18526,7 +18541,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # post-delete flags by rating_key. Same reasoning as the
         # forget endpoint fix — guid_tmdb-keyed clears miss
         # synthetic-negative orphan tmdb_ids entirely.
-        plex_mt = "show" if media_type == "tv" else "movie"
+        # v0.51.48: else media_type (was "movie") so DELETE on a themed
+        # collection clears its plex_items rows (media_type='collection'),
+        # not a phantom 'movie' lookup that matches nothing.
+        plex_mt = "show" if media_type == "tv" else media_type
         placement_folders = [pr["media_folder"] for pr in placement_rows]
         rk_clear: set[str] = set()
         with get_conn(db) as conn, transaction(conn):
@@ -20971,7 +20989,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # exists per section). If plex_items is empty (e.g.
                 # row hasn't been enumerated), fall back to
                 # local_files / placements.
-                plex_mt = "show" if media_type == "tv" else "movie"
+                # v0.51.48: else media_type (was "movie") so a collection's
+                # owner-sections resolve from plex_items (media_type=
+                # 'collection'), not an empty 'movie' set that skips the
+                # title-global ack rollup.
+                plex_mt = "show" if media_type == "tv" else media_type
                 owner_sections = {
                     r["section_id"] for r in conn.execute(
                         "SELECT DISTINCT section_id FROM plex_items "
