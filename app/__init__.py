@@ -3467,7 +3467,16 @@
 #   .pill-filter-clear]) deleted + their now-stale JS/source-pin tests updated. (c)
 #   ops.css: exact-match hardcoded sizes/radii swapped to the app.css :root tokens
 #   (zero visual change). Static guards so the rings can't vanish + dead CSS can't creep.
-__version__ = "0.51.79"
+# 0.51.80: CSS+login audit — login half. Session ids are hashed at rest:
+#   sessions.id now stores sha256(cookie) instead of the raw motif_sess value, so a
+#   DB read (SQLi foothold elsewhere, a leaked motif.db backup, /config filesystem
+#   access) yields only a digest — useless for replay, since the raw token is 256 bits
+#   of secrets.token_urlsafe entropy. create/lookup/destroy_session + the password-
+#   rotation keep_session_id all hash consistently; the cookie stays raw. Deterministic
+#   unsalted sha256 keeps the per-request lookup a plain indexed WHERE (no writer-lock
+#   cost — cf. v1.11.37). No schema change; pre-existing raw-id rows stop matching and
+#   expire (one forced re-login). Behavioral tests prove leak-can't-replay + keep-alive.
+__version__ = "0.51.80"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

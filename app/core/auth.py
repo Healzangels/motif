@@ -213,7 +213,11 @@ def change_admin_password(db_path: Path, *, current_password: str,
     expiry, not the hash), defeating the point of changing it. The caller's
     own session (keep_session_id) stays alive so the admin isn't logged out
     by their own rotation. API tokens are deliberately NOT revoked — they
-    have their own lifecycle + revocation UI at /settings#tokens."""
+    have their own lifecycle + revocation UI at /settings#tokens.
+
+    v0.51.80: keep_session_id is the caller's RAW cookie value; hash it to
+    match the sha256-at-rest sessions.id (else `id != raw` matches every
+    hashed row and the rotation deletes the admin's OWN session too)."""
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT password_hash FROM admin WHERE id = 1").fetchone()
         if row is None:
@@ -227,7 +231,7 @@ def change_admin_password(db_path: Path, *, current_password: str,
         )
         if keep_session_id:
             conn.execute("DELETE FROM sessions WHERE id != ?",
-                         (keep_session_id,))
+                         (_hash_session_id(keep_session_id),))
         else:
             conn.execute("DELETE FROM sessions")
     return True
@@ -274,6 +278,17 @@ def authenticate_password(db_path: Path, *, username: str, password: str) -> boo
 
 # -------- Sessions --------
 
+def _hash_session_id(raw: str) -> str:
+    # v0.51.80 (CSS+login audit): sessions.id stores sha256(cookie), never the raw
+    # cookie value. A DB read (SQLi via some other endpoint, a leaked backup, disk
+    # access) then yields only the digest — useless for replay, since the raw token
+    # carries 256 bits of secrets.token_urlsafe entropy (not brute-forceable, so no
+    # salt/stretch is needed). Deterministic + unsalted on purpose: the per-request
+    # lookup stays a plain indexed WHERE with no writer-lock cost (cf. the v1.11.37
+    # note in lookup_session). Same primitive as _hash_token's pre-sha256 step.
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def create_session(db_path: Path, *, username: str, user_agent: str | None) -> str:
     sid = secrets.token_urlsafe(32)
     now = datetime.now(timezone.utc)
@@ -283,7 +298,8 @@ def create_session(db_path: Path, *, username: str, user_agent: str | None) -> s
             """INSERT INTO sessions (id, username, created_at, expires_at,
                                      last_seen_at, user_agent)
                VALUES (?, ?, ?, ?, ?, ?)""",
-            (sid, username, now.isoformat(timespec="seconds"),
+            # store the hash; the RAW sid is returned to the caller for the cookie.
+            (_hash_session_id(sid), username, now.isoformat(timespec="seconds"),
              expires.isoformat(timespec="seconds"),
              now.isoformat(timespec="seconds"),
              (user_agent or "")[:200]),
@@ -300,7 +316,7 @@ def lookup_session(db_path: Path, session_id: str) -> str | None:
         row = conn.execute(
             """SELECT username, expires_at FROM sessions
                WHERE id = ? AND expires_at > ?""",
-            (session_id, now_iso),
+            (_hash_session_id(session_id), now_iso),
         ).fetchone()
     if row is None:
         return None
@@ -318,7 +334,7 @@ def destroy_session(db_path: Path, session_id: str) -> None:
     if not session_id:
         return
     with get_conn(db_path) as conn:
-        conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+        conn.execute("DELETE FROM sessions WHERE id = ?", (_hash_session_id(session_id),))
 
 
 def cleanup_expired_sessions(db_path: Path) -> int:
