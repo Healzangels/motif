@@ -3323,7 +3323,15 @@
 #   (the 4 _grp() render-call titles). The row-const names + membership + order are
 #   unchanged. _grp now htmlEscape's the title so the '&' in "file & placement"
 #   renders as a literal ampersand. Label-only.
-__version__ = "0.51.64"
+# 0.51.65 — code-review follow-up to v0.51.63: the body-absent /api/library/refresh
+#   (legacy "scan everything", incl. collections) enqueued an UNTAGGED plex_enum
+#   (payload '{}'), which matched neither the collections-scoped count nor the
+#   scan_all/cascade pipeline signal — so a raw-API global refresh left the
+#   /collections REFRESH button clickable mid-scan. Now tagged scope='scan_all' (a
+#   full scan, like /api/libraries/refresh), so the existing pipeline lock covers it.
+#   Not UI-reachable (the button always sends a concrete tab) — closes the
+#   supported-endpoint hole generically. Backend one-liner + behavioral test.
+__version__ = "0.51.65"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -15007,11 +15007,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "scope": f"{tab}{'-4k' if effective_fourk else ''}",
                         "fallback_used": used_fallback}
 
-            # Legacy global refresh (no tab specified).
+            # Legacy global refresh (no tab specified) — a full "scan
+            # everything" incl. collections.
+            # v0.51.65 (code-review): tag it scope='scan_all' (was an untagged
+            # '{}' payload) so it's covered by the pipeline lock machinery, same
+            # as /api/libraries/refresh. Pre-fix an untagged global job matched
+            # NEITHER the collections-scoped count (v0.51.63) NOR the
+            # scan_all/cascade pipeline signal, so a raw-API global refresh left
+            # the /collections REFRESH button clickable mid-scan (the button no
+            # longer locks on "any enum"). Not UI-reachable — the refresh button
+            # always sends a concrete tab — but this closes the supported-endpoint
+            # hole generically.
             cur = conn.execute(
                 "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
-                "VALUES ('plex_enum', '{}', 'pending', ?, ?)",
-                (now_iso(), now_iso()),
+                "VALUES ('plex_enum', ?, 'pending', ?, ?)",
+                (json.dumps({"scope": "scan_all"}), now_iso(), now_iso()),
             )
             return {"ok": True, "job_id": cur.lastrowid}
 
