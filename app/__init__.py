@@ -3357,7 +3357,17 @@
 #   Added the missing exclusion STRINGS to all three (no refactor into a shared helper
 #   — the audit's low-risk guidance + CLAUDE.md "no premature abstraction"). New
 #   behavioral guard exercises all four surfaces (proven to fail without the fix).
-__version__ = "0.51.68"
+# 0.51.69 — complexity/regression audit fix #2: additive completeness guards for two
+#   unguarded "mirror" surfaces (defense against the fix-one-break-another class — pure
+#   test additions, no runtime change, currently in-sync). (a) notify._EVENT_NOTIFY_TYPE
+#   severity map — assert every dispatchable config_file._DEFAULT_NOTIFY_EVENTS kind has
+#   an explicit severity (it drifted twice, v1.23.62/v1.24.26, rendering warnings as
+#   neutral info); runtime-import check. (b) server _pset pill whitelist vs JS pillAxes
+#   — the tdb/dl/pl/link/ed axes had no client<->server set-equality guard (only attn
+#   did, test_v1_15_23), so a UI token forgotten in _pset silently shows ALL rows; regex
+#   on stable literals, per-axis set-equality, proven to catch a dropped token. Robust
+#   checks, NOT brittle char-window source-pins.
+__version__ = "0.51.69"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
