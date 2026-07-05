@@ -3436,7 +3436,18 @@
 #   change); operator sets it to NPM's container IP to close the hole. Also fixed 3 stale
 #   comments that still called an empty forward_auth_allowed_ips "legacy permissive"
 #   (v1.24.12 made it FAIL-CLOSED). Additive knob, default unchanged; config-roundtrip test.
-__version__ = "0.51.76"
+# 0.51.77 — security audit cheap hardening: digit-validate `year` at the canonical path
+#   chokepoint (path-traversal DiD). canonical_theme_subdir built f"{title} ({year})"
+#   with title + edition sanitized but `year` RAW; a malicious Plex server supplying a
+#   crafted year ("2020)/../../etc/(x") could escape themes_dir. Coerce any non-4-digit
+#   year to no-year (ThemerrDB already caps to 4 chars). Not real-world exploitable
+#   (trusted-Plex, constrained fixed-name write, no RCE) — a cheap one-line close.
+#   NOTE: the logout-CSRF hardening (also cheap-hardening) was deliberately NOT done —
+#   it's LOW (forced re-login only) and every fix variant (POST-form UI conversion /
+#   Origin-Referer check) carries UI-styling or reverse-proxy-Host risk that can't be
+#   verified in this environment; deferred to a change where the topbar button + NPM
+#   Host behavior can be eyeballed. (SESSION_JOURNAL + memory record it.)
+__version__ = "0.51.77"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

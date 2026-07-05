@@ -63,6 +63,13 @@ def canonical_theme_subdir(
     folder convention) so per-edition themes stage independently; '' (the
     default + every standard item) yields the exact pre-v1.21.54 name."""
     safe = sanitize_for_filesystem(title or "untitled")
+    # v0.51.77 (security audit — path-traversal DiD): title + edition are sanitized,
+    # but `year` was interpolated RAW. Only a 4-digit year may reach the path — a
+    # crafted Plex `year` like "2020)/../../etc/(x" would otherwise escape themes_dir
+    # (ThemerrDB already caps year to 4 chars; the uncapped source is a malicious
+    # Plex server). Coerce anything that isn't exactly 4 digits to no-year.
+    if year is not None and not re.fullmatch(r"\d{4}", str(year)):
+        year = None
     base = f"{safe} ({year})" if year else safe
     if edition_key:
         return f"{base} {{edition-{edition_key}}}"
