@@ -233,6 +233,12 @@ def change_admin_password(db_path: Path, *, current_password: str,
     return True
 
 
+# v0.51.78 (security audit): a real rounds=12 bcrypt hash used ONLY to equalize the
+# timing of the no-admin login branch below. Not a secret — its plaintext is
+# irrelevant; it exists purely so bcrypt.checkpw runs a full ~235ms compare.
+_DUMMY_PW_HASH = "$2b$12$n3/MPSAAl4c9WSEJfE2aR.wQ8UGoO6hTqZu802AAzGP/6tunsf42q"
+
+
 def authenticate_password(db_path: Path, *, username: str, password: str) -> bool:
     """Constant-time-ish credential check."""
     with get_conn(db_path) as conn:
@@ -240,8 +246,14 @@ def authenticate_password(db_path: Path, *, username: str, password: str) -> boo
             "SELECT username, password_hash FROM admin WHERE id = 1"
         ).fetchone()
     if row is None:
-        # Run a dummy bcrypt to keep timing roughly constant
-        bcrypt.checkpw(b"x", b"$2b$12$" + b"x" * 53)
+        # v0.51.78 (security audit): burn ~the same time as a real verify so the
+        # no-admin path doesn't leak (via timing) that no admin exists — WITHOUT
+        # raising. The old b"$2b$12$"+b"x"*53 was a MALFORMED 60-byte salt →
+        # bcrypt.checkpw raised ValueError in microseconds (defense inert + INVERTED:
+        # no-admin returned FASTER), and the unhandled ValueError 500'd POST /login on
+        # a fresh/wiped-admin install (exempting that state from the rate limit).
+        # verify_password swallows any bcrypt error; _DUMMY_PW_HASH is a real hash.
+        verify_password("x", _DUMMY_PW_HASH)
         return False
     # v1.22.77: compare UTF-8 bytes — compare_digest raises TypeError on
     # non-ASCII str inputs, so a non-ASCII admin username 500'd every

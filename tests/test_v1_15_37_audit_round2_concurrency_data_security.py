@@ -308,7 +308,9 @@ def test_login_get_validates_next_parameter():
         if 'RedirectResponse(' in line
         and not line.lstrip().startswith('#')
     ]
-    assert len(redirect_calls) >= 2  # forward-auth + already-logged-in
+    # v0.51.78: the forward-auth redirect was removed (redirect-loop lockout fix); the
+    # already-logged-in redirect remains and must still use safe_next.
+    assert len(redirect_calls) >= 1
     for line in redirect_calls:
         assert "safe_next" in line, (
             f"GET /login RedirectResponse must use safe_next, "

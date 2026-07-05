@@ -7433,10 +7433,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      and not next.startswith("//"))
             else "/"
         )
-        # If forward-auth is on, login page isn't useful; redirect home
-        if settings.trust_forward_auth:
-            return RedirectResponse(safe_next, status_code=302)
-        # Already logged in?
+        # v0.51.78 (security audit): removed the `if settings.trust_forward_auth:
+        # redirect` — it bounced EVERY visitor away from the login page when
+        # forward-auth was merely ENABLED, but AuthMiddleware only trusts the header
+        # when forward_auth_allowed_ips is set AND the IP matches (v1.24.12 fail-
+        # closed). Flipping trust on WITHOUT the allowlist → anonymous → GET /login
+        # → RedirectResponse('/') → (anonymous on non-public '/') → back to /login:
+        # an infinite loop that locked the operator out of the local-login fallback.
+        # The is_authenticated check below is the correct gate — the middleware always
+        # resolves the principal (see dispatch()), so a genuinely forward-authed
+        # visitor is already is_authenticated=True and is redirected home here, while
+        # everyone else correctly sees the local login form.
         if request.state.principal.is_authenticated:
             return RedirectResponse(safe_next, status_code=302)
         return templates.TemplateResponse(

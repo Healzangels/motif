@@ -3447,7 +3447,17 @@
 #   Origin-Referer check) carries UI-styling or reverse-proxy-Host risk that can't be
 #   verified in this environment; deferred to a change where the topbar button + NPM
 #   Host behavior can be eyeballed. (SESSION_JOURNAL + memory record it.)
-__version__ = "0.51.77"
+# 0.51.78 — CSS+login audit: two REAL login bugs. (1) authenticate_password's no-admin
+#   timing-equalizer ran bcrypt.checkpw(b"x", b"$2b$12$"+b"x"*53) — a MALFORMED salt →
+#   ValueError in microseconds (timing defense inert + INVERTED) and the unhandled error
+#   500'd POST /login on a fresh/wiped-admin install (also exempting it from the rate
+#   limit). Now verify_password("x", real-precomputed-hash) — real timing, swallows any
+#   error. (2) login_get redirected away on `trust_forward_auth` ALONE, but forward-auth
+#   is fail-closed with an empty allowlist (v1.24.12) → flip trust on without the IP list
+#   and GET /login looped /login->'/'->/login, locking out the local-login fallback.
+#   Removed the redundant redirect; the existing is_authenticated check (middleware always
+#   resolves the principal) is the correct gate. Behavioral tests, proven fail-without.
+__version__ = "0.51.78"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
