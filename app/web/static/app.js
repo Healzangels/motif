@@ -17953,7 +17953,11 @@
             );
             if (!confirmed) return;
             await api('POST', `/api/items/${mt}/${id}/mark-alive`);
-            await hydrateRecoveryOptions(root, mt, id, sectionId);
+            // v0.51.83 (audit): pass rowRk so the in-place re-hydrate stays
+            // pinned to the clicked edition. Dropping it fell back to the
+            // server's LIMIT 1 rep-rk (api.py), redrawing an arbitrary sibling
+            // edition's resolved/acked annotation on multi-edition titles.
+            await hydrateRecoveryOptions(root, mt, id, sectionId, rowRk);
             // v0.51.17 (audit #28): class-7 delay — the immediate call
             // hit the /api/stats 1s cache + hash-skip, so the FAIL count
             // kept the pre-action value for up to 10s.
@@ -17985,7 +17989,11 @@
             // v1.13.35: forward sectionId on re-hydrate so the
             // resolved-state lookup stays section-scoped after
             // ACK FAILURE.
-            await hydrateRecoveryOptions(root, mt, id, sectionId);
+            // v0.51.83 (audit): pass rowRk so the in-place re-hydrate stays
+            // pinned to the clicked edition. Dropping it fell back to the
+            // server's LIMIT 1 rep-rk (api.py), redrawing an arbitrary sibling
+            // edition's resolved/acked annotation on multi-edition titles.
+            await hydrateRecoveryOptions(root, mt, id, sectionId, rowRk);
             // v0.51.17 (audit #28): class-7 delay — see mark-alive above.
             setTimeout(refreshTopbarStatus, 1100);
             loadLibrary().catch(() => {});

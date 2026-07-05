@@ -3496,7 +3496,14 @@
 #   loaded via _loadCarouselPosters — only ~5 requests in flight, so no deprioritizable
 #   backlog; still eager (every tile loads on arrival, leftmost first). Browser-timing
 #   behavior; pinned by source-shape tests (can't be exercised headless).
-__version__ = "0.51.82"
+# 0.51.83: UI audit pass (status drawer / info drawer / library CSS) — the info drawer's
+#   recovery re-hydrate was edition-blind. hydrateRecoveryOptions takes a 5th rowRk arg
+#   (v1.22.71) that pins /recovery-options to the clicked edition; the initial call passed
+#   it but the two in-place re-hydrations after mark-alive + clear-failure (ACK FAILURE)
+#   dropped it → server LIMIT 1 fallback redrew an arbitrary sibling edition's resolved/
+#   acked annotation on multi-edition titles. Pass rowRk at both sites. (Status drawer +
+#   library CSS audited clean — recurring traps all already guarded.)
+__version__ = "0.51.83"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
