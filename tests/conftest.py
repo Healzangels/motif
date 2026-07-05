@@ -21,7 +21,22 @@ from __future__ import annotations
 
 import os
 
+import pytest
 from starlette.testclient import TestClient
+
+
+@pytest.fixture(autouse=True)
+def _reset_login_rate_limit_state():
+    """v0.51.81: isolate the login-failure counters between tests.
+
+    The per-IP bucket AND the new global brute-force ceiling live as
+    process-level state in app.core.auth; the global window (900s) does not age
+    out within a single suite run, so failed logins in one test would otherwise
+    pile up across the ~4-min suite and start 429-ing unrelated later tests.
+    Reset both before every test so each starts from a clean slate."""
+    from app.core.auth import _reset_login_failures_for_test
+    _reset_login_failures_for_test()
+    yield
 
 # 1. Allowlist the test client's IP so forward-auth (fail-closed since v1.24.12)
 #    admits the X-Authentik-Username header the suite uses to authenticate.

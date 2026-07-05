@@ -461,8 +461,25 @@ def authenticate_token(db_path: Path, raw_token: str) -> Principal | None:
 LOGIN_MAX_FAILURES = 10
 LOGIN_FAILURE_WINDOW_S = 900.0
 
+# v0.51.81 (CSS+login audit): a GLOBAL failed-attempt ceiling on top of the
+# per-IP counter. The per-IP limit is defeated by an attacker rotating source
+# IPs — trivial, since request.client.host is spoofable while uvicorn runs
+# forwarded_allow_ips="*" (the deferred forward-auth item). motif has exactly
+# ONE admin account, so a high failure volume across ALL IPs is unambiguously
+# an attack, not legitimate fat-fingering. Once the ceiling is reached the
+# endpoint refuses EVERYONE (429, no password check) until the failures age
+# out — a deliberate short lockout that caps both the guess rate and the
+# bcrypt-CPU burn under a distributed attack. Set well above any human's
+# mistyping (a real admin won't fail 50x in 15 min); a success does NOT clear
+# it (only the legit admin knows the password, so wiping the attacker's counter
+# on the admin's login would just hand back attempts). Authentik still fronts
+# /login in production; this is defense-in-depth for a forward-auth bypass.
+LOGIN_GLOBAL_MAX_FAILURES = 50
+LOGIN_GLOBAL_WINDOW_S = 900.0
+
 _LOGIN_FAIL_LOCK = threading.Lock()
 _LOGIN_FAILS: dict[str, list[float]] = {}
+_LOGIN_FAILS_GLOBAL: list[float] = []
 
 
 def _login_purge_locked(ip: str, now: float) -> list[float]:
@@ -474,24 +491,38 @@ def _login_purge_locked(ip: str, now: float) -> list[float]:
     return fresh
 
 
+def _login_global_purge_locked(now: float) -> list[float]:
+    global _LOGIN_FAILS_GLOBAL
+    _LOGIN_FAILS_GLOBAL = [t for t in _LOGIN_FAILS_GLOBAL
+                          if now - t < LOGIN_GLOBAL_WINDOW_S]
+    return _LOGIN_FAILS_GLOBAL
+
+
 def login_rate_limited(ip: str) -> bool:
-    """True if `ip` has reached LOGIN_MAX_FAILURES failed attempts within the
-    rolling window — the caller should 429 without checking the password."""
-    if not ip:
-        return False
+    """True if the GLOBAL across-all-IPs ceiling has been reached (v0.51.81) OR
+    `ip` has hit its own LOGIN_MAX_FAILURES within the rolling window — either
+    way the caller should 429 without checking the password. The global check
+    applies even to an IP (or a missing IP) with no personal failure history."""
     now = time.monotonic()
     with _LOGIN_FAIL_LOCK:
+        if len(_login_global_purge_locked(now)) >= LOGIN_GLOBAL_MAX_FAILURES:
+            return True
+        if not ip:
+            return False
         return len(_login_purge_locked(ip, now)) >= LOGIN_MAX_FAILURES
 
 
 def record_login_failure(ip: str) -> None:
-    """Stamp a failed login for `ip`."""
-    if not ip:
-        return
+    """Stamp a failed login against both the global ceiling and (if present)
+    the per-IP bucket. A missing IP still counts toward the global ceiling —
+    an attacker sending a blank client host can't dodge it (v0.51.81)."""
     now = time.monotonic()
     with _LOGIN_FAIL_LOCK:
-        _login_purge_locked(ip, now)
-        _LOGIN_FAILS.setdefault(ip, []).append(now)
+        _login_global_purge_locked(now)
+        _LOGIN_FAILS_GLOBAL.append(now)
+        if ip:
+            _login_purge_locked(ip, now)
+            _LOGIN_FAILS.setdefault(ip, []).append(now)
 
 
 def clear_login_failures(ip: str) -> None:
@@ -503,5 +534,7 @@ def clear_login_failures(ip: str) -> None:
 
 
 def _reset_login_failures_for_test() -> None:
+    global _LOGIN_FAILS_GLOBAL
     with _LOGIN_FAIL_LOCK:
         _LOGIN_FAILS.clear()
+        _LOGIN_FAILS_GLOBAL = []

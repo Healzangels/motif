@@ -3476,7 +3476,18 @@
 #   unsalted sha256 keeps the per-request lookup a plain indexed WHERE (no writer-lock
 #   cost — cf. v1.11.37). No schema change; pre-existing raw-id rows stop matching and
 #   expire (one forced re-login). Behavioral tests prove leak-can't-replay + keep-alive.
-__version__ = "0.51.80"
+# 0.51.81: CSS+login audit — global brute-force ceiling on /login. The v1.21.18
+#   per-IP throttle is defeated by an attacker rotating source IPs (trivial while
+#   forwarded_allow_ips="*"). motif has ONE admin, so a high failure volume across ALL
+#   IPs is unambiguously an attack: a second in-memory rolling-window counter caps total
+#   failures across every IP (LOGIN_GLOBAL_MAX_FAILURES=50/900s) — once reached the
+#   endpoint 429s everyone (no password check, no bcrypt-CPU burn) until it ages out. A
+#   blank IP still counts; a success clears only the per-IP bucket (never the global one).
+#   Folded into login_rate_limited/record_login_failure so /login is unchanged. An autouse
+#   conftest fixture resets the process-level counters per test (the 900s window doesn't
+#   age out within a suite run). Behavioral tests: fresh-IP blocked at ceiling + no
+#   false-positive lockout below it.
+__version__ = "0.51.81"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
