@@ -22,6 +22,7 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 try:
     import yt_dlp  # type: ignore
@@ -248,6 +249,40 @@ def _cookiefile_snapshot(cookies_file: Path) -> str:
     return str(tmp)
 
 
+# v0.51.74 (security audit — SSRF): motif only ever fetches themes from four
+# platforms. Pre-fix the unanchored _YT_VID_RE (sync.py) let a ThemerrDB-supplied
+# URL like http://169.254.169.254/embed/<11 chars> pass the video-id gate and reach
+# yt-dlp's extract_info/download → a blind SSRF (attacker-directed server GETs to
+# cloud-metadata / LAN / localhost during unattended cron sync). This host+scheme
+# allowlist gates BOTH yt-dlp sinks below; the four platforms are the only sources
+# the app supports, so it rejects nothing legitimate. Robust vs DNS-rebinding: the
+# allowlisted hosts are Google/SoundCloud/Meta domains the attacker can't repoint.
+_FETCH_ALLOWED_HOSTS = (
+    "youtube.com", "youtu.be", "youtube-nocookie.com",
+    "soundcloud.com",
+    "instagram.com",
+    "facebook.com", "fb.watch",
+)
+
+
+def is_fetchable_theme_url(url: str | None) -> bool:
+    """True only for http(s) URLs on a supported theme-source platform host.
+    The SSRF gate for both yt-dlp sinks (probe + download). Matches exact host or
+    a subdomain of it (www./m./music.), so youtube.com.attacker.com is rejected."""
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urlparse(url.strip())
+    except (ValueError, TypeError):
+        return False
+    if parsed.scheme not in ("http", "https"):
+        return False
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False
+    return any(host == h or host.endswith("." + h) for h in _FETCH_ALLOWED_HOSTS)
+
+
 def probe_youtube_url(
     youtube_url: str,
     *,
@@ -273,6 +308,9 @@ def probe_youtube_url(
     if yt_dlp is None:
         return FailureKind.UNKNOWN
     if not youtube_url:
+        return FailureKind.UNKNOWN
+    # v0.51.74 (security audit — SSRF): reject non-platform hosts before yt-dlp fetches.
+    if not is_fetchable_theme_url(youtube_url):
         return FailureKind.UNKNOWN
     opts: dict[str, Any] = {
         "quiet": True,
@@ -523,6 +561,12 @@ def download_theme(
     """
     if yt_dlp is None:
         raise DownloadError("yt-dlp is not installed in this environment")
+
+    # v0.51.74 (security audit — SSRF): refuse to fetch a non-platform URL. Belt-and-
+    # suspenders with the extract_video_id gate at the call sites — the unanchored
+    # _YT_VID_RE could mint a fake id for http://<internal-host>/embed/<11 chars>.
+    if not is_fetchable_theme_url(youtube_url):
+        raise DownloadError("refusing to fetch a non-platform theme URL (SSRF guard)")
 
     if cookies_file and not cookies_file.exists():
         log.warning(

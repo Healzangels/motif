@@ -3405,7 +3405,17 @@
 #   deps, kept out of the runtime image) + ruff.toml (target py3.12). Every CI command
 #   validated locally (ruff gate clean, pip-audit = 0 CVEs, yaml valid); GHA itself can't
 #   be run here so the first live run may need a tweak. Guard test pins the structure.
-__version__ = "0.51.73"
+# 0.51.74 — security audit fix (SSRF, medium). ThemerrDB (public, community-editable)
+#   supplies youtube_theme_url values motif stores verbatim + feeds to yt-dlp; the
+#   video-id gate used the UNANCHORED _YT_VID_RE, so http://169.254.169.254/embed/<11>
+#   minted a fake id and reached yt-dlp's generic extractor → blind SSRF (server GETs to
+#   cloud-metadata/LAN/localhost, unattended on cron sync). Added is_fetchable_theme_url()
+#   — an http(s)+host-allowlist gate on the 4 supported platforms — at BOTH yt-dlp
+#   chokepoints (probe_youtube_url + download_theme). Additive; does NOT touch the fragile
+#   _YT_VID_RE/url_source/app.js-mirror path, and the 4 platforms are the only sources the
+#   app supports so no legitimate URL is rejected. Unit + behavioral tests (probe/download
+#   reject the SSRF URL without touching the network).
+__version__ = "0.51.74"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
