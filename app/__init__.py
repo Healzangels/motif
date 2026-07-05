@@ -3507,7 +3507,13 @@
 #   accessible name. A native <dialog> opened with showModal() does NOT derive its
 #   name from a descendant <h2>, so a screen reader announced an unnamed dialog. Added
 #   aria-labelledby on each, pointing at its (now id'd) // MOTIF INFO / // GLOSSARY title.
-__version__ = "0.51.84"
+# 0.51.85: UI audit polish — the #op-mini-overflow pill was SSR'd op-tone-warn, but
+#   renderTopbar always sets its computed tone (plex/tdb/queue) before it un-hides and no
+#   op-mini renders warn anymore → a misleading dead default. Dropped to a neutral bare
+#   .op-pill (the disk badge keeps its legit warn). NOTE: the .info-scope-row 6px/14px the
+#   audit flagged as token-drift was DELIBERATELY LEFT — no --gap token matches (scale is
+#   4/8/12/16…), so a swap would change spacing; off-scale literals stay (v0.51.79 policy).
+__version__ = "0.51.85"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

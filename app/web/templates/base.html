@@ -349,7 +349,11 @@
           <span class="op-mini-pct"></span>
         {%- endif -%}
       </a>
-      <a href="#" class="op-pill op-tone-warn" id="op-mini-overflow" hidden
+      {# v0.51.85 (audit): no tone class — renderTopbar always sets the overflow
+         pill's computed tone (op-tone-plex/tdb/queue) before it un-hides, and no
+         op-mini renders warn anymore (ops.css). The stale op-tone-warn default was
+         a misleading second source of truth; the .op-pill base is neutral. #}
+      <a href="#" class="op-pill" id="op-mini-overflow" hidden
          data-ops-trigger title="Multiple ops running — click to expand all."></a>
       <!-- v1.12.118: idle pill replaces the legacy green dot + IDLE
            text. Same visual family as the active op-mini bar; no
