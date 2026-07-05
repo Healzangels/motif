@@ -3487,7 +3487,16 @@
 #   conftest fixture resets the process-level counters per test (the 900s window doesn't
 #   age out within a suite run). Behavioral tests: fresh-IP blocked at ceiling + no
 #   false-positive lockout below it.
-__version__ = "0.51.81"
+# 0.51.82: RECENTLY ADDED carousel posters load through a bounded-concurrency queue.
+#   v0.51.52 eager-loaded all ~40 posters (good — no lazy pop-in), but assigning all
+#   ~40 img.src at once saturates the browser's ~6-connection-per-host cap; the long
+#   pending image queue is then deprioritized to a near-stall while the WINDOW IS
+#   UNFOCUSED (the user: "while autoscrolling and not clicked on the window the posters
+#   aren't loading") until a click refocuses it. Now each URL is staged on data-src and
+#   loaded via _loadCarouselPosters — only ~5 requests in flight, so no deprioritizable
+#   backlog; still eager (every tile loads on arrival, leftmost first). Browser-timing
+#   behavior; pinned by source-shape tests (can't be exercised headless).
+__version__ = "0.51.82"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

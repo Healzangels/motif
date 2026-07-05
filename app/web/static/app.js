@@ -2066,9 +2066,11 @@
       // v0.51.56 (code-review): dropped the first-8 high-priority fetch hint — at
       // default image priority the posters don't contend with the dashboard's data
       // XHRs (/api/stats, /api/insights); they still eager-load immediately.
+      // v0.51.82: URL staged on data-src, loaded via _loadCarouselPosters (paced)
+      // — see there for why (unfocused-window stall). Still eager, not lazy.
       img.decoding = 'async';
       img.alt = '';
-      img.src = `/api/plex/art/${encodeURIComponent(rk)}`;
+      img.dataset.src = `/api/plex/art/${encodeURIComponent(rk)}`;
       img.addEventListener('error', () => card.classList.add('recent-card-noart'));
       const title = document.createElement('span');
       title.className = 'recent-title';
@@ -2104,8 +2106,39 @@
       });
       strip.appendChild(card);
     });
+    _loadCarouselPosters(strip);
     block.style.display = '';
     _setupCarouselAutoScroll();
+  }
+
+  // v0.51.82: load the staged data-src posters through a small in-flight queue
+  // instead of assigning all ~40 img.src at once. 40 same-origin proxy fetches
+  // saturate the browser's ~6-connection-per-host cap; the long pending queue is
+  // then deprioritized to a near-stall while the WINDOW IS UNFOCUSED (the user:
+  // "while autoscrolling and not clicked on the window the posters aren't
+  // loading") until a click refocuses it. Keeping only a few requests in flight
+  // means no deprioritizable backlog — each poster fetches as soon as a slot
+  // frees. Still eager (v0.51.52): every tile loads on arrival, leftmost first.
+  function _loadCarouselPosters(strip) {
+    const pending = Array.from(
+      strip.querySelectorAll('img.recent-poster[data-src]'));
+    const CONCURRENCY = 5;  // headroom under the ~6/host cap for the data XHRs
+    let i = 0;
+    function startNext() {
+      if (i >= pending.length) return;
+      const img = pending[i++];
+      const url = img.dataset.src;
+      delete img.dataset.src;
+      const advance = () => {
+        img.removeEventListener('load', advance);
+        img.removeEventListener('error', advance);
+        startNext();  // free the slot the instant this tile settles
+      };
+      img.addEventListener('load', advance);
+      img.addEventListener('error', advance);
+      img.src = url;
+    }
+    for (let k = 0; k < Math.min(CONCURRENCY, pending.length); k++) startNext();
   }
 
   // v1.24.54: carousel auto-scroll — slowly advance the strip when the toggle is

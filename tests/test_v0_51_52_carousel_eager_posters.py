@@ -17,8 +17,11 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 
 def _recent_img_block():
+    # v0.51.82: widened 900 → 1400 — the paced-loader breadcrumb comment grew the
+    # img-creation block, pushing `img.decoding` past the old window. Safe: neither
+    # `fetchPriority` nor a spaced `loading = 'lazy'` appears anywhere in app.js.
     i = APP_JS.index("img.className = 'recent-poster';")
-    return APP_JS[i:i + 900]
+    return APP_JS[i:i + 1400]
 
 
 def test_carousel_posters_are_not_lazy():
