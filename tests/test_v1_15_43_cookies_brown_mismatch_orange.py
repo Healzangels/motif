@@ -90,9 +90,10 @@ def test_yellow_token_removed():
 
 
 def test_cookies_surfaces_use_lemon_not_brown_not_yellow():
-    """The four cookies surfaces (.btn-cookies, .tdb-pill-cookies,
-    .attn-pill-cookies, --tone-cookies) must all reference
-    `--lemon` (v1.15.121+) so they read as one family. Any leftover
+    """The three live cookies surfaces (.btn-cookies, .tdb-pill-cookies,
+    --tone-cookies) must all reference `--lemon` (v1.15.121+) so they read
+    as one family (v0.51.79: .attn-pill-cookies dropped — dead since the
+    v1.19.67 STATUS-chip removal). Any leftover
     --brown or --yellow consumer becomes an undefined-var fallback
     (silently no-op'd by the browser) and breaks the unified
     appearance."""
@@ -111,12 +112,8 @@ def test_cookies_surfaces_use_lemon_not_brown_not_yellow():
     assert 'var(--lemon)' in tdb_block, (
         "v1.15.121: .tdb-pill-cookies must use --lemon (row pill)"
     )
-    # .attn-pill-cookies
-    attn_anchor = css.index('.attn-pill-cookies {')
-    attn_block = css[attn_anchor:attn_anchor + 200]
-    assert 'var(--lemon)' in attn_block, (
-        "v1.15.121: .attn-pill-cookies must use --lemon (filter chip)"
-    )
+    # v0.51.79 (audit): .attn-pill-cookies removed — the STATUS filter chip it
+    # styled was dropped in v1.19.67 (dead CSS, zero live emitters).
     # --tone-cookies (ops.css topbar tone)
     assert '--tone-cookies: var(--lemon);' in ops_css, (
         "v1.15.121: --tone-cookies must alias --lemon so the topbar "

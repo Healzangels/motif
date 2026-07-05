@@ -108,13 +108,14 @@ def test_no_brown_var_references_in_code():
 
 
 def test_cookies_family_surfaces_use_lemon():
-    """Four canonical cookies surfaces all reference --lemon
-    (filter chip, row pill, action button, semantic alias):"""
+    """The three live canonical cookies surfaces all reference --lemon
+    (row pill, action button, semantic alias). v0.51.79 (CSS audit): the
+    .attn-pill-cookies filter chip was dropped from this list — the STATUS
+    pill it styled was removed v1.19.67 (dead CSS, deleted v0.51.79)."""
     css = APP_CSS.read_text()
     ops = OPS_CSS.read_text()
 
-    for selector in (".btn-cookies {", ".tdb-pill-cookies {",
-                     ".attn-pill-cookies {"):
+    for selector in (".btn-cookies {", ".tdb-pill-cookies {"):
         idx = css.index(selector)
         block = css[idx:idx + 300]
         assert "var(--lemon)" in block, (

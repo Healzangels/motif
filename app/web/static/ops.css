@@ -26,6 +26,7 @@
  * indicators read consistently.
  */
 
+/* v0.51.79 (audit): tokenize exact-match sizes/radii to the app.css scale. */
 :root {
   --tone-tdb: var(--green-bright);
   --tone-plex: var(--amber);
@@ -77,7 +78,7 @@
   background: var(--bg-elev);
   color: var(--fg);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--t-tiny);
   letter-spacing: 0.04em;
   line-height: 1;
   cursor: pointer;
@@ -192,7 +193,7 @@
   border: 1px solid var(--line-bright);
   background: var(--bg-elev);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--t-tiny);
   cursor: pointer;
   text-decoration: none;
   /* v1.13.13: tint label + pct inherit by op tone. Pre-fix the
@@ -226,7 +227,7 @@
   width: 90px;
   height: 4px;
   background: var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -407,7 +408,7 @@ body[data-ops-running="1"] #topbar-status-text {
   background: none;
   border: 0;
   color: var(--fg);
-  font-size: 22px;
+  font-size: var(--t-large);
   line-height: 1;
   cursor: pointer;
   padding: 0 6px;
@@ -431,7 +432,7 @@ body[data-ops-running="1"] #topbar-status-text {
   padding: 36px 12px;
   color: var(--fg);
   opacity: 0.55;
-  font-size: 12px;
+  font-size: var(--t-small);
   letter-spacing: 0.1em;
 }
 
@@ -548,7 +549,7 @@ body[data-ops-running="1"] #topbar-status-text {
 }
 
 .op-card-counter-current {
-  font-size: 22px;
+  font-size: var(--t-large);
   font-weight: 600;
   /* v1.19.88: tone via --ot (was per-tone cyan/green overrides). */
   color: var(--ot, var(--green-bright));
@@ -556,7 +557,7 @@ body[data-ops-running="1"] #topbar-status-text {
 }
 
 .op-card-counter-total {
-  font-size: 13px;
+  font-size: var(--t-base);
   opacity: 0.55;
 }
 
@@ -570,7 +571,7 @@ body[data-ops-running="1"] #topbar-status-text {
    in the status bar [should show] a similar % in the drawer
    view." */
 .op-card-counter-pct {
-  font-size: 13px;
+  font-size: var(--t-base);
   font-weight: 500;
   opacity: 0.75;
   margin-left: auto;
@@ -629,7 +630,7 @@ body[data-ops-running="1"] #topbar-status-text {
   display: flex;
   gap: 14px;
   margin: 6px 0 10px;
-  font-size: 11px;
+  font-size: var(--t-tiny);
   opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
@@ -685,7 +686,7 @@ body[data-ops-running="1"] #topbar-status-text {
 .op-card-timeline-step {
   flex: 1;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   background: var(--line);
   /* v1.17.8: 0.4s → --motion-slow (exact match). */
   transition: background var(--motion-slow) ease;
@@ -786,7 +787,7 @@ body[data-ops-running="1"] #topbar-status-text {
   flex-wrap: wrap;
   gap: var(--gap-1) var(--gap-4);
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: var(--t-tiny);
   opacity: 0.85;
 }
 .op-card-detail-meta b { color: var(--fg); font-weight: 600; }
@@ -795,7 +796,7 @@ body[data-ops-running="1"] #topbar-status-text {
   overflow-y: auto;
   border-top: 1px dashed var(--line);
   padding-top: var(--gap-2);
-  font-size: 11px;
+  font-size: var(--t-tiny);
 }
 .op-card-runlog-item {
   display: flex;
@@ -854,13 +855,13 @@ body[data-ops-running="1"] #topbar-status-text {
   flex: 1;
   height: 9px;
   background: rgba(var(--line-rgb), 0.6);
-  border-radius: 2px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 .op-wf-bar {
   display: block;
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--radius);
   opacity: 0.85;
   /* v1.21.27: grow-in so the breakdown reads as a little animation */
   transition: width 0.5s cubic-bezier(0.22, 1, 0.36, 1);
@@ -918,7 +919,7 @@ body[data-ops-running="1"] #topbar-status-text {
   margin-top: 10px;
   padding-top: 10px;
   border-top: 1px dashed var(--line);
-  font-size: 11px;
+  font-size: var(--t-tiny);
 }
 
 .op-card-activity-item {
@@ -985,7 +986,7 @@ body[data-ops-running="1"] #topbar-status-text {
   background: rgba(var(--red-rgb), 0.06);
   color: var(--red);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--t-tiny);
   letter-spacing: 0.15em;
   border-radius: 4px;
   cursor: pointer;
@@ -1011,7 +1012,7 @@ body[data-ops-running="1"] #topbar-status-text {
   border-radius: 4px;
   background: rgba(var(--red-rgb), 0.08);
   border-left: 2px solid var(--red);
-  font-size: 11px;
+  font-size: var(--t-tiny);
   color: var(--red);
   word-break: break-word;
 }
@@ -1025,7 +1026,7 @@ body[data-ops-running="1"] #topbar-status-text {
   border-radius: 4px;
   background: rgba(var(--green-rgb), 0.08);
   border-left: 2px solid var(--green);
-  font-size: 11px;
+  font-size: var(--t-tiny);
   color: var(--green);
   display: flex;
   gap: 6px;
@@ -1049,7 +1050,7 @@ body[data-ops-running="1"] #topbar-status-text {
   border-radius: 4px;
   background: rgba(var(--orange-rgb), 0.08);
   border-left: 2px solid var(--orange);
-  font-size: 11px;
+  font-size: var(--t-tiny);
   color: var(--orange);
   display: flex;
   gap: 6px;

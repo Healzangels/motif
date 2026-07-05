@@ -61,7 +61,10 @@ def test_deleted_rules_are_gone():
 # must not have nicked them.
 LIVE = [
     (".src-key-btn {", APP_CSS),
-    (".src-key-clear:", APP_CSS),
+    # v0.51.79: .src-key-clear was dropped here — the CSS audit found it dead
+    # (renamed to .pill-filter-clear; zero live emitters) and deleted it, so it's
+    # no longer a live sibling. Its removal is guarded by
+    # test_v0_51_79_css_a11y_deadcode::test_dead_css_clusters_stay_removed.
     (".pill-filter-row {", APP_CSS),
     (".state-pill-btn-active {", APP_CSS),
     (".tdb-pill-btn {", APP_CSS),

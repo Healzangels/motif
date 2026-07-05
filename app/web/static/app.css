@@ -847,7 +847,7 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 .btn-warn:hover { background: rgba(var(--amber-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.15); }
 }
 /* v1.11.96: btn-info = blue button variant for "informational
-   actions" (ACCEPT UPDATE). Same family as .chip-info /
+   actions" (ACCEPT UPDATE). Same family as
    .tdb-pill-update / .title-glyph-update. */
 .btn-info { color: var(--blue); border-color: var(--blue); }
 @media (hover: hover) {
@@ -876,8 +876,8 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 }
 /* v1.15.17: btn-cookies for the cookies-needed recovery actions
    (FIX COOKIES, ACK FAILURE on cookies_expired). Same tone as
-   .tdb-pill-cookies, .attn-pill-cookies, .op-tone-cookies — all
-   four surfaces share the cookies family so the user reads the
+   .tdb-pill-cookies, .op-tone-cookies — the cookies-family surfaces
+   share the color so the user reads the
    same color from row → filter → chip → action.
    v1.15.43: yellow → biscuit brown so the cookies surfaces stop
    reading as Plex-related. */
@@ -984,8 +984,7 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    visible even when focused. The universal :focus rule above
    doesn't touch box-shadow so this carve-out remains targeted. */
 .link-badge:focus:not(.src-key-btn-active),
-.src-key-btn:focus:not(.src-key-btn-active),
-.src-key-clear:focus { box-shadow: none; }
+.src-key-btn:focus:not(.src-key-btn-active) { box-shadow: none; }
 /* v1.15.119: extended the keyboard-focus outline to .tab and
    .lib-flag-pill — both were interactive primitives with hover
    styling but no focus-visible counterpart, so Tab-keying through
@@ -1014,7 +1013,15 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 .pill-filter-clear:focus-visible,
 .link-badge:focus-visible,
 .src-key-btn:focus-visible,
-.src-key-clear:focus-visible {
+.nav a:focus-visible,
+.help-toggle:focus-visible,
+.topbar-logout:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+/* v0.51.79 (a11y audit): settings checkboxes were missed by the focus-visible allow-list. */
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
 }
@@ -2100,16 +2107,9 @@ body.help-mode .settings-help-about { display: block; }
 .chip-active { color: var(--green-bright); border-color: var(--green); background: rgba(var(--green-rgb), 0.06); }
 /* v1.14.56: removed `.chip-warn` + `.chip-warn.chip-active` —
    no element ever carries `chip-warn` (no JS/template ref).
-   The `chip-info` blue variant below is in active use; this
-   `chip-warn` red variant was its abandoned twin. */
-/* v1.11.96: chip-info = blue-tinted variant for "needs attention but
-   not an error" chips (UPDATES). Pairs with .title-glyph-update,
-   .tdb-pill-update, and .btn-info — all blue — so the row's ↑ arrow,
-   blue TDB pill, ACCEPT UPDATE button, and the UPDATES filter chip
-   reinforce one another visually. Kept distinct from chip-warn (red)
-   which marks actual failures / breakage. */
-.chip-info { border-color: rgba(var(--blue-rgb), 0.35); }
-.chip-info.chip-active { color: var(--blue); border-color: var(--blue); background: rgba(var(--blue-rgb), 0.08); }
+   v0.51.79 (audit): also removed the blue chip variant (never emitted)
+   — the blue "informational action" variant lives on .btn-info, and
+   the UPDATES chip uses .chip / .chip-active. */
 
 /* v1.11.34: when a chip is the sole variant for its toggle group it
    becomes a label, not a button. Disabled cursor + suppressed hover
@@ -3101,18 +3101,8 @@ body.help-mode .settings-help-about { display: block; }
   opacity: 1;
   filter: brightness(1.1);
 }
-.src-key-clear {
-  cursor: pointer;
-  background: transparent;
-  border: 1px solid var(--line);
-  padding: 2px 8px;
-  border-radius: 3px;
-  color: var(--fg-mute);
-  font-family: var(--font-mono);
-}
-@media (hover: hover) {
-.src-key-clear:hover { color: var(--fg); border-color: var(--cyan); }
-}
+/* v0.51.79 (audit): removed the dead SRC-legend clear button rule —
+   renamed to .pill-filter-clear; no live emitter remained. */
 
 .lib-legend {
   display: flex; flex-wrap: wrap; align-items: center; gap: 14px;
@@ -4309,7 +4299,7 @@ body.auth-page .auth-card { margin: 0; }
    chip has cycled through three wrong-family colors:
      - pre-v1.20.5: --violet → read as USER content (SRC=U, UB backup)
      - v1.20.5:     --blue   → read as TDB-related (TDB↑ / ACCEPT
-                               UPDATE / chip-info are all blue)
+                               UPDATE / btn-info are all blue)
    v1.20.6: --fg-dim (muted sage grey). Copy is a neutral placement
    MECHANISM, not a source — grey says "placed via the boring
    fallback, nothing to action". Off both the user-violet AND the
@@ -4691,7 +4681,7 @@ body.auth-page .auth-card { margin: 0; }
   background: transparent;
 }
 /* v1.11.96: pending-update state — ThemerrDB has a new URL for this
-   theme. Blue ties together with .title-glyph-update, .chip-info,
+   theme. Blue ties together with .title-glyph-update
    and .btn-info. Distinct from green TDB-yes so the user can scan a
    library page and immediately see which rows have updates without
    hunting for the small ↑ glyph. */
@@ -4790,16 +4780,8 @@ body.auth-page .auth-card { margin: 0; }
   border: 1px solid rgba(var(--orange-rgb), 0.55);
   background: rgba(var(--orange-rgb), 0.08);
 }
-/* v1.15.17: STATUS filter pill for cookies-needed rows. Same hue
-   as .tdb-pill-cookies + .op-tone-cookies — the three surfaces
-   share the cookies tone so the user can scan from chip → filter
-   → row pill and see the same color throughout.
-   v1.15.43: yellow → biscuit brown across all three surfaces. */
-.attn-pill-cookies {
-  color: var(--lemon);
-  border: 1px solid rgba(var(--lemon-rgb), 0.55);
-  background: rgba(var(--lemon-rgb), 0.1);
-}
+/* v0.51.79 (audit): removed the dead cookies STATUS filter-pill rule —
+   the button was dropped in v1.19.67; no live emitter remained. */
 .attn-pill-btn {
   cursor: pointer;
   font-family: var(--font-mono);
@@ -5068,7 +5050,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      the bottom") — because the rendered select's chevron extends
      below its text baseline so baseline-alignment pushes the
      control's BOX downward
-   * the IMPORTED URL cell (small text, single-line `.url-cell`)
+   * the IMPORTED URL cell (small text, single-line `.url-link`)
      sit ABOVE center (the user: "Imported URL looks a bit higher
      than centered") — because baseline-alignment of t-tiny text
      against t-base sibling cells pulls the smaller text up
@@ -5112,20 +5094,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 #import-preview-table .col-import-action {
   font-size: 0;
 }
-/* URL cells render as block-level so they take the full column
-   width + ellipsis-truncate. v1.15.70 used inline so they hugged
-   the content and overflowed the column — that's the "overlapping"
-   the user saw. The cell still gets a title= attr for hover-disclosure
-   of the full URL. */
-#import-preview-table .url-cell {
-  display: block;
-  width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--t-tiny);
-  color: var(--fg-dim);
-}
+/* v0.51.79 (audit): removed the dead import-preview URL-cell rule —
+   the imported-URL cell was replaced by .url-link in v1.15.77;
+   no live emitter remained. */
 /* v1.15.73: horizontal stack — src-letter badge + info icon side
    by side, single line. CURRENT cell + IMPORTED URL cell are now
    both single-line so they vertically align across rows (the user:

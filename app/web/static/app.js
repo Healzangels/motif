@@ -92,7 +92,13 @@
     '.pill-filter-clear',
     '.link-badge',
     '.src-key-btn',
-    '.src-key-clear',
+    // v0.51.79: the CSS audit gave the topbar help/logout glyphs their missing
+    // keyboard focus-visible rings (a11y gap); mirror them here so a click
+    // doesn't leave a sticky ring per the v1.15.130 "both blocks" contract.
+    // preventDefault on mousedown suppresses focus only — the logout <a> still
+    // navigates on click and help-toggle still toggles.
+    '.help-toggle',
+    '.topbar-logout',
   ].join(', ');
   document.addEventListener('mousedown', (e) => {
     const t = e.target.closest(NO_MOUSE_FOCUS_SEL);
@@ -6082,7 +6088,7 @@
       // v1.15.69: row rendering mirrors library.html row shape. Each
       // <td> uses the matching .col-* class from the thead so the
       // table-layout:fixed column widths line up. URL cells get
-      // .url-cell (ellipsis truncation + title-attr full URL).
+      // .url-link (ellipsis truncation + title-attr full URL).
       for (let i = 0; i < rows.length; i++) {
         const r = rows[i];
         const tr = document.createElement('tr');
@@ -10102,7 +10108,7 @@
       // Falls back to the existing danger / warn / plain styling.
       const tone = extras.tone ? ` lib-source-${extras.tone}` : '';
       // v1.11.96: extras.info = blue "informational action" variant
-      // for ACCEPT UPDATE (matches .chip-info / .tdb-pill-update /
+      // for ACCEPT UPDATE (matches .btn-info / .tdb-pill-update /
       // .title-glyph-update). danger > warn > info > plain.
       const cls = extras.danger ? `btn btn-tiny btn-danger${tone}`
                 : extras.warn   ? `btn btn-tiny btn-warn${tone}`
@@ -12865,9 +12871,10 @@
         // membership.
         { attr: 'attnPill', allAttr: 'attnPillAll', state: 'attnPills',
           activeClass: 'attn-pill-btn-active',
-          // v1.15.17: 'cookies' added — keep in sync with template
-          // (library.html attn-pill-cookies) + deep-link parser
-          // (~line 7402) per v1.14.58 cross-reference test.
+          // v1.15.17: 'cookies' added — a live no-op URL param; the
+          // v1.19.67 removal dropped the STATUS filter button, so keep
+          // in sync with the deep-link parser (~line 7402) per the
+          // v1.14.58 cross-reference test.
           // v1.24.40: 'repush' — the ⟳ ATTN chip (re-push needed). Same row
           // set as link_pills=rp; keep in sync with template + deep-link parser.
           values: ['fail', 'cookies', 'update', 'mismatch', 'await', 'broken', 'restore', 'repush'] },

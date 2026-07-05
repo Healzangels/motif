@@ -139,15 +139,19 @@ def test_import_css_column_alignment_matches_spec():
 def test_import_url_cells_are_block_level():
     """v1.15.70 used inline-flex for .current-stack which let
     long URLs grow past the cell and overlap into IMPORTED URL.
-    v1.15.71: .url-cell is display:block so it takes the cell
-    width and ellipsis-truncates inside the column boundary."""
+    v1.15.71 made the URL element take the cell width and ellipsis-
+    truncate inside the column boundary. v0.51.79 (CSS audit): the
+    element was renamed .url-cell → .url-link in v1.15.77 (the dead
+    .url-cell rule got deleted); .url-link is display:inline-block +
+    max-width:100% — same containment (fills the cell, ellipsis-clips
+    inside it) without forcing a block box."""
     css = APP_CSS.read_text()
-    rule_start = css.index("#import-preview-table .url-cell")
+    rule_start = css.index("#import-preview-table .url-link {")
     rule_end = css.index("}", rule_start)
     rule = css[rule_start:rule_end]
-    assert "display: block" in rule, (
-        "v1.15.71: .url-cell must be display:block so ellipsis "
-        "truncates inside the column instead of overflowing"
+    assert "display: inline-block" in rule and "max-width: 100%" in rule, (
+        "v0.51.79: .url-link must be inline-block + max-width:100% so "
+        "ellipsis truncates inside the column instead of overflowing"
     )
     assert "text-overflow: ellipsis" in rule
     assert "overflow: hidden" in rule

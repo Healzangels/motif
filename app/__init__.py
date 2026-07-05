@@ -3457,7 +3457,17 @@
 #   and GET /login looped /login->'/'->/login, locking out the local-login fallback.
 #   Removed the redundant redirect; the existing is_authenticated check (middleware always
 #   resolves the principal) is the correct gate. Behavioral tests, proven fail-without.
-__version__ = "0.51.78"
+# 0.51.79: CSS+login audit — CSS pass. (a) a11y: the universal :focus{outline:none}
+#   stripped keyboard focus rings; the :focus-visible allow-list missed the primary nav
+#   links, settings checkboxes/radios, and the topbar help/logout glyphs → invisible
+#   focus. Repainted them; the glyph-only logout link also got an aria-label. (b) dead
+#   CSS: four rename/redesign-residue selector clusters with ZERO live emitters
+#   (.attn-pill-cookies [STATUS chip gone v1.19.67], .chip-info [blue lives on .btn-info],
+#   #import-preview-table .url-cell [→ .url-link v1.15.77], .src-key-clear [→
+#   .pill-filter-clear]) deleted + their now-stale JS/source-pin tests updated. (c)
+#   ops.css: exact-match hardcoded sizes/radii swapped to the app.css :root tokens
+#   (zero visual change). Static guards so the rings can't vanish + dead CSS can't creep.
+__version__ = "0.51.79"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

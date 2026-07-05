@@ -114,16 +114,17 @@ def test_op_tone_cookies_topbar_chip_style_defined():
     )
 
 
-def test_attn_pill_cookies_filter_style_defined():
-    """The STATUS filter pill button needs its own cookies-family
-    style. v1.15.43: --yellow → --brown. v1.15.121: --brown → --lemon."""
+def test_attn_pill_cookies_filter_style_removed():
+    """v0.51.79 (CSS audit): the STATUS filter pill this styled was removed in
+    v1.19.67; .attn-pill-cookies then had zero live emitters and was deleted as
+    dead CSS. Was: asserted the rule existed + used --lemon (v1.15.43 --yellow →
+    --brown, v1.15.121 --brown → --lemon). Now a removal guard so it can't creep
+    back — the live cookies surfaces are pinned by test_btn_cookies_* below."""
     src = APP_CSS.read_text()
-    assert ".attn-pill-cookies {" in src, (
-        "v1.15.17: STATUS filter pill needs attn-pill-cookies CSS"
+    assert ".attn-pill-cookies {" not in src, (
+        "v0.51.79: .attn-pill-cookies is dead (STATUS chip gone v1.19.67) — "
+        "don't re-add it"
     )
-    rule_anchor = src.index(".attn-pill-cookies {")
-    rule_block = src[rule_anchor:rule_anchor + 300]
-    assert "var(--lemon)" in rule_block
 
 
 def test_btn_cookies_recovery_action_style_defined():

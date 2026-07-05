@@ -126,9 +126,12 @@ def test_app_css_url_cell_truncates_with_ellipsis():
     """URL cells must truncate with ellipsis (overflow:hidden +
     text-overflow:ellipsis + white-space:nowrap). Without these
     rules a 200-character URL would force the column wider and
-    squish neighbors back into smoosh territory."""
+    squish neighbors back into smoosh territory. v0.51.79 (CSS audit):
+    the truncating element was renamed .url-cell → .url-link in v1.15.77
+    (the .url-cell rule was dead and got deleted); the behavior lives on
+    .url-link now, so the guard follows it."""
     css = APP_CSS.read_text()
-    rule_start = css.index("#import-preview-table .url-cell")
+    rule_start = css.index("#import-preview-table .url-link {")
     rule_end = css.index("}", rule_start)
     rule = css[rule_start:rule_end]
     assert "text-overflow: ellipsis" in rule
