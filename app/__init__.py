@@ -3331,7 +3331,16 @@
 #   full scan, like /api/libraries/refresh), so the existing pipeline lock covers it.
 #   Not UI-reachable (the button always sends a concrete tab) — closes the
 #   supported-endpoint hole generically. Backend one-liner + behavioral test.
-__version__ = "0.51.65"
+# 0.51.66 — collections/library polish sweep: fix stale empty-state copy that named
+#   a button that no longer exists. Two user-facing messages told the user to "click
+#   REFRESH FROM PLEX" — but the library/collections refresh button was renamed to
+#   "// REFRESH COLLECTIONS"/"// REFRESH MOVIES"/… back in v1.13.63/v1.18.4 ("REFRESH
+#   FROM PLEX" survives only as an internal comment shorthand). The library-table
+#   empty-state (loadLibrary, renders on /collections when a section has no rows) now
+#   reads "click the // REFRESH button above"; the jobs-queue empty-state names both
+#   buttons by their real "// "-prefixed labels (// SYNC THEMERRDB, // REFRESH). Copy-
+#   only, no test pinned the old strings. Static-text guard added.
+__version__ = "0.51.66"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -5027,7 +5027,7 @@
         <span>${actionCell}</span>
       </li>
     `;
-    }).join('') || '<li class="jobs-list-empty muted center">no jobs in the queue — work appears here when you click SYNC THEMERRDB on the dashboard, REFRESH FROM PLEX on a library, or any per-row action that downloads / places / refreshes</li>';
+    }).join('') || '<li class="jobs-list-empty muted center">no jobs in the queue — work appears here when you click // SYNC THEMERRDB on the dashboard, // REFRESH on a library, or any per-row action that downloads / places / refreshes</li>';
     if (_jobsBody.dataset.lastHash !== _jobsHtml) {
       _jobsBody.innerHTML = _jobsHtml;
       _jobsBody.dataset.lastHash = _jobsHtml;
@@ -8537,7 +8537,7 @@
       } else if (filtersActive) {
         msg = 'no items match the current filters — click // CLEAR ALL above or adjust the chips to widen the view';
       } else {
-        msg = 'no items — enable the relevant Plex sections in Settings → PLEX and click REFRESH FROM PLEX';
+        msg = 'no items — enable the relevant Plex sections in Settings → PLEX, then click the // REFRESH button above';
       }
       // v1.18.86: colspan must match the 11-column header (select +
       // TITLE + ED + YEAR + TDB + SRC + DL + PL + LINK + IMDB +
