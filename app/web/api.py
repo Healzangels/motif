@@ -7835,6 +7835,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      AND status IN ('pending','running')
                      AND json_extract(payload, '$.scope') = 'cascade'
                    ) AS plex_enum_cascade_in_flight,
+                  -- v0.51.63 (the user): collections-scoped enum count. A
+                  -- /collections REFRESH enqueues plex_enum jobs tagged
+                  -- scope='collections' (api_library_refresh); a plain library-
+                  -- section refresh tags scope='movies'/'tv'/'anime'. The
+                  -- /collections REFRESH button gates on THIS (not the global
+                  -- plex_enum_in_flight) so a section-only refresh no longer locks
+                  -- it. Stays true through the job's reconcile stage (reconcile is
+                  -- a stage INSIDE the plex_enum job, so the count doesn't drop
+                  -- mid-scan the way a per-tab signal would).
+                  (SELECT COUNT(*) FROM jobs
+                   WHERE job_type = 'plex_enum'
+                     AND status IN ('pending','running')
+                     AND json_extract(payload, '$.scope') = 'collections'
+                   ) AS plex_enum_collections_in_flight,
                   -- v1.11.35: 'running' alone (no pending) so the topbar
                   -- banner only claims activity that's actually
                   -- happening right now. Pre-fix the banner said
@@ -8807,6 +8821,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # v1.13.77: cascade-only count (sync→enum follow-on,
                 # NOT user-initiated scan_all). See SQL comment above.
                 "plex_enum_cascade_in_flight": row["plex_enum_cascade_in_flight"],
+                # v0.51.63: collections-scoped enum count — powers the /collections
+                # REFRESH button lock so a plain library-section refresh doesn't
+                # lock it. See SQL comment above.
+                "plex_enum_collections_in_flight": row["plex_enum_collections_in_flight"],
                 "themerrdb_sync_running": row["themerrdb_sync_running"],
                 "plex_enum_running": row["plex_enum_running"],
                 "download_in_flight": row["download_in_flight"],

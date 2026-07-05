@@ -603,9 +603,11 @@
     const pipelineBusy = !!window.__motif_global_enum_pipeline;
     const myTabBusy = !!(
       tabKey === 'collections'
-        // v0.50.14: collections lock on ANY enum in flight (stashed) — see the
-        // refreshTopbarStatus block; they have no per-tab plex_enum_active key.
-        ? window.__motif_plex_enum_busy
+        // v0.51.63 (the user): collections lock on the COLLECTIONS-scoped enum
+        // (stashed) — NOT any enum — so a plain library-section refresh doesn't
+        // lock the /collections REFRESH button. Mirrors the refreshTopbarStatus
+        // block. Global scan_all/cascade still locks via pipelineBusy below.
+        ? window.__motif_plex_enum_collections_busy
         : (tabKey && (
             (enumActive[tabKey] && enumActive[tabKey][variantKey])
             || (enumPending[tabKey] && enumPending[tabKey][variantKey])
@@ -857,6 +859,13 @@
       // Trigger fast ops refresh on sync transitions so the
       // mini-bar lights up immediately.
       const plexEnumBusy = q.plex_enum_in_flight > 0;
+      // v0.51.63 (the user): collections-scoped enum count. The /collections
+      // REFRESH button gates on THIS (not the global plexEnumBusy) so a plain
+      // library-section refresh (scope='movies'/'tv'/'anime') doesn't lock it. A
+      // /collections refresh tags its jobs scope='collections'; the count stays
+      // true through the job's reconcile stage, so the button doesn't re-enable
+      // mid-scan (the v0.50.14 reason collections locked on the global signal).
+      const collectionsEnumBusy = q.plex_enum_collections_in_flight > 0;
       const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
       const opsBar = $('#op-mini');
       const opsHidden = !opsBar || opsBar.hidden;
@@ -1216,13 +1225,16 @@
       // without re-fetching /api/stats. globalEnumPipeline is
       // stashed separately further down (after it's computed).
       window.__motif_enum_pending = enumPending;
-      // v0.50.14: stash the any-plex_enum-in-flight flag so the collections
-      // REFRESH lock can read it at chip-toggle time too. Collections have no
-      // per-tab plex_enum_active key (their refresh enumerates the underlying
-      // movie/tv sections), and reconcile_placement_paths runs as a GLOBAL
-      // post-phase — so the per-tab signal drops before the job ends. plexEnumBusy
-      // stays true through reconcile + queued jobs.
-      window.__motif_plex_enum_busy = plexEnumBusy;
+      // v0.50.14 / v0.51.63: stash the COLLECTIONS-scoped enum flag so the
+      // collections REFRESH lock can read it at chip-toggle time too. Collections
+      // have no per-tab plex_enum_active key (their refresh enumerates the
+      // underlying movie/tv sections), so they can't use the per-tab signal.
+      // v0.51.63 (the user): narrowed from the global plexEnumBusy to the
+      // collections-scoped count so a plain library-section refresh doesn't lock
+      // this button; it still stays true through the collection refresh's own
+      // reconcile_placement_paths stage (reconcile is a stage inside the plex_enum
+      // job), so the button doesn't re-enable mid-scan.
+      window.__motif_plex_enum_collections_busy = collectionsEnumBusy;
       // v1.12.69: per-tab busy indicator. Toggle .nav-busy on each
       // managed-tab anchor whenever any of that tab's variants
       // (standard / fourk) is currently enumerating. CSS adds a
@@ -1293,10 +1305,16 @@
       const myTabBusy = !!(
         tabKey === 'collections'
           // v0.50.14: collections have no plex_enum_active key (their refresh
-          // enums the underlying movie/tv sections), so lock on ANY enum in
-          // flight — the button must stay REFRESHING… through the global
-          // reconcile phase + queued jobs (the user: it re-enabled mid-scan).
-          ? plexEnumBusy
+          // enums the underlying movie/tv sections), so they can't use the per-tab
+          // signal.
+          // v0.51.63 (the user): lock on the COLLECTIONS-scoped enum count, not
+          // the global plexEnumBusy — a plain library-section refresh
+          // (scope='movies'/'tv'/'anime') no longer locks this button. Still stays
+          // REFRESHING… through the collection refresh's own reconcile stage
+          // (reconcile is a stage inside the plex_enum job, so the scoped count
+          // doesn't drop mid-scan — the v0.50.14 re-enabled-mid-scan concern).
+          // A global scan_all/cascade still locks it via pipelineInFlight below.
+          ? collectionsEnumBusy
           : (tabKey && (
               (enumActive[tabKey] && enumActive[tabKey][variantKey])
               || (enumPending[tabKey] && enumPending[tabKey][variantKey])

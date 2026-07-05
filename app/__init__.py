@@ -3307,7 +3307,17 @@
 #   a metadata-only row's empty ON DISK leaves no dangling header. Row order within each
 #   group unchanged. CSS: .info-hero + .info-group drops the first group's redundant
 #   divider (hero already separates it). CSS+JS only, brace/paren delta 0.
-__version__ = "0.51.62"
+# 0.51.63 — a library-section refresh no longer locks the /collections REFRESH button
+#   (the user). The button gated on the global plex_enum_in_flight (ANY enum), so a
+#   plain movies/tv/anime section refresh locked it. Fix: /api/stats surfaces a
+#   COLLECTIONS-scoped count (plex_enum jobs tagged scope='collections' — a section
+#   refresh tags scope='movies'/'tv'/'anime'), and the button's myTabBusy gates on THAT
+#   at both JS sites (refreshTopbarStatus + updateLibraryRefreshBtnLabel). Stays true
+#   through the collection refresh's reconcile stage (reconcile is a stage inside the
+#   plex_enum job) so it doesn't re-enable mid-scan (the v0.50.14 concern); a global
+#   scan_all/cascade still locks it via pipelineBusy. Removed the now-dead
+#   __motif_plex_enum_busy stash.
+__version__ = "0.51.63"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

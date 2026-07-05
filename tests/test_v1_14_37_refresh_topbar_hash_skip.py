@@ -124,7 +124,9 @@ def test_refresh_topbar_status_offline_recovery_outside_hash_skip():
     # v0.50.14: 60000 → 64000 — the collections-aware myTabBusy
     # ternary + the plex_enum_busy stash pushed the OFFLINE catch a
     # few hundred chars further down. Same growth-not-regression case.
-    body = js[fn_anchor:fn_anchor + 64000]
+    # v0.51.63: 64000 → 66000 — the collections-scoped enum local +
+    # expanded lock comments grew the body again. Same case.
+    body = js[fn_anchor:fn_anchor + 66000]
     # The catch{} block sets the OFFLINE class — must be present.
     catch_anchor = body.index("} catch (e) {")
     catch_block = body[catch_anchor:catch_anchor + 1000]
