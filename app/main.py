@@ -566,7 +566,17 @@ def main() -> int:
         log_config=None,        # we configured logging already
         access_log=False,
         proxy_headers=settings.trust_forward_auth,
-        forwarded_allow_ips="*" if settings.trust_forward_auth else None,
+        # v0.51.76 (security audit — XFF-spoof): honor X-Forwarded-For only from the
+        # configured trusted proxy IP(s), not "*". With "*", uvicorn overwrites
+        # request.client.host with the attacker-controlled leftmost XFF token, so a
+        # direct-to-:5309 attacker can spoof an allowlisted IP + X-Authentik-Username
+        # and bypass forward-auth. Empty (default) keeps the historical "*" for
+        # backward-compat; set web.forward_auth_trusted_proxies to NPM's container IP
+        # to close it (a direct attacker's real peer IP then fails the allowlist).
+        forwarded_allow_ips=(
+            (",".join(settings.forward_auth_trusted_proxies) or "*")
+            if settings.trust_forward_auth else None
+        ),
     )
     server = uvicorn.Server(config)
     try:

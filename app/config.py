@@ -332,10 +332,18 @@ class Settings:
     @property
     def forward_auth_allowed_ips(self) -> list[str]:
         """v1.17.23: optional IP allowlist for the forward-auth path.
-        Empty list = legacy permissive (any IP). Non-empty enforces
-        AuthMiddleware's source-IP check before trusting
-        X-Authentik-Username / X-Forwarded-User."""
+        v1.24.12: empty list = FAIL-CLOSED (forward-auth SKIPPED), NOT
+        permissive. Non-empty enforces AuthMiddleware's source-IP check
+        before trusting X-Authentik-Username / X-Forwarded-User."""
         return list(self._cfg.web.forward_auth_allowed_ips or [])
+
+    @property
+    def forward_auth_trusted_proxies(self) -> list[str]:
+        """v0.51.76 (security audit): immediate-peer proxy IP(s) uvicorn trusts
+        to set X-Forwarded-For (mapped to uvicorn's forwarded_allow_ips). Empty
+        = "*" (historical: trust XFF from any peer). Set to NPM's container
+        IP/CIDR to close the XFF-spoof forward-auth bypass."""
+        return list(self._cfg.web.forward_auth_trusted_proxies or [])
 
     @property
     def cookie_secure(self) -> str:

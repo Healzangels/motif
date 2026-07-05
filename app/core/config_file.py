@@ -240,8 +240,9 @@ class WebConfig:
     port: int = 5309
     trust_forward_auth: bool = False
     # v1.17.23: optional IP allowlist for the forward-auth path.
-    # Empty = legacy permissive (trust the header from any IP);
-    # non-empty = AuthMiddleware checks the client IP against
+    # v1.24.12: Empty = FAIL-CLOSED — forward-auth is SKIPPED (NOT the old
+    # "trust the header from any IP"; that pre-v1.24.12 permissive default was the
+    # admin-bypass footgun). Non-empty = AuthMiddleware checks the client IP against
     # each entry before trusting X-Authentik-Username /
     # X-Forwarded-User. Entries can be IPs ("172.17.0.5") or
     # CIDRs ("172.17.0.0/16"). When the list is non-empty AND
@@ -254,6 +255,16 @@ class WebConfig:
     # allowlist closes that — the user's deploy with a known NPM
     # container IP gets a single-entry allowlist.
     forward_auth_allowed_ips: list[str] = field(default_factory=list)
+    # v0.51.76 (security audit — XFF-spoof): the immediate-peer proxy IP(s) uvicorn
+    # trusts to set X-Forwarded-For, mapped to uvicorn's forwarded_allow_ips. Empty
+    # (default) → "*" = uvicorn trusts XFF from ANY peer (historical behavior). With
+    # "*", request.client.host becomes the attacker-controlled leftmost XFF token, so a
+    # direct-to-:5309 attacker (off-path LAN host / sibling container) can spoof an
+    # allowlisted IP + X-Authentik-Username and bypass forward-auth entirely. Set this
+    # to NPM's real container IP/CIDR so uvicorn only honors XFF from NPM; a direct
+    # attacker's real peer IP then can't satisfy forward_auth_allowed_ips. Legit
+    # requests are unaffected (they arrive via NPM, whose XFF stays honored).
+    forward_auth_trusted_proxies: list[str] = field(default_factory=list)
     # v1.21.17 (security audit): controls the session cookie's Secure flag.
     # "auto" (default) = infer from X-Forwarded-Proto / URL scheme — preserves
     # the historical behavior, but that header is spoofable when uvicorn runs
@@ -494,9 +505,12 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_WEB_HOST",            "web.host",                        str),
     ("MOTIF_WEB_PORT",            "web.port",                        int),
     ("MOTIF_TRUST_FORWARD_AUTH",  "web.trust_forward_auth",          _to_bool),
-    # v1.17.23: comma-separated IPs/CIDRs allowed to set the
-    # forward-auth header. Empty = legacy permissive (any IP).
+    # v1.17.23: comma-separated IPs/CIDRs allowed to use the forward-auth header.
+    # v1.24.12: empty = FAIL-CLOSED (forward-auth skipped), not permissive.
     ("MOTIF_FORWARD_AUTH_ALLOWED_IPS", "web.forward_auth_allowed_ips", _to_csv_list),
+    # v0.51.76: comma-separated proxy IPs uvicorn trusts to set X-Forwarded-For
+    # (→ forwarded_allow_ips). Empty = "*"; set to NPM's IP to close the XFF spoof.
+    ("MOTIF_FORWARD_AUTH_TRUSTED_PROXIES", "web.forward_auth_trusted_proxies", _to_csv_list),
     # v1.21.17: "auto" | "on" | "off" — force the session cookie Secure flag.
     ("MOTIF_COOKIE_SECURE",       "web.cookie_secure",               str),
     # runtime

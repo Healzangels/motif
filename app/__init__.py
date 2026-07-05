@@ -3425,7 +3425,18 @@
 #   3 sync.py call-sites (belt-and-suspenders). /api/progress auth level deliberately
 #   UNCHANGED (would break external dashboards). Behavioral test proven to fail without
 #   the write-path scrub.
-__version__ = "0.51.75"
+# 0.51.76 — security audit fix (XFF-spoof forward-auth bypass, HIGH — code side). motif
+#   ran uvicorn with a HARDCODED forwarded_allow_ips="*" when trust_forward_auth was on,
+#   so uvicorn overwrote request.client.host with the attacker-controlled leftmost
+#   X-Forwarded-For token → a direct-to-:5309 attacker (off-path LAN/container) could
+#   spoof an allowlisted IP + X-Authentik-Username and get full unauth admin. The full
+#   close needs the operator's NPM topology (deferred to the user); this adds the CODE
+#   side: web.forward_auth_trusted_proxies (env MOTIF_FORWARD_AUTH_TRUSTED_PROXIES) →
+#   uvicorn's forwarded_allow_ips. Empty default = "*" (backward-compat, no behavior
+#   change); operator sets it to NPM's container IP to close the hole. Also fixed 3 stale
+#   comments that still called an empty forward_auth_allowed_ips "legacy permissive"
+#   (v1.24.12 made it FAIL-CLOSED). Additive knob, default unchanged; config-roundtrip test.
+__version__ = "0.51.76"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
