@@ -399,10 +399,14 @@
   {# v1.23.44: GLOSSARY — the full chip vocabulary, one durable reference.
      Colors mirror the row chips (same palette tokens). Native <dialog>: ESC +
      backdrop close; data-close buttons wired in app.js initHelpMode(). #}
-  <dialog class="dlg help-glossary-dlg" id="help-glossary">
+  <dialog class="dlg help-glossary-dlg" id="help-glossary"
+          aria-labelledby="help-glossary-title">
     <article class="dlg-body">
       <header class="dlg-head">
-        <h2 class="dlg-title">// GLOSSARY — WHAT THE CHIPS MEAN</h2>
+        {# v0.51.84 (a11y): a native <dialog> opened with showModal() does NOT
+           derive its accessible name from a descendant heading — aria-labelledby
+           points the screen-reader announcement at the title instead of "dialog". #}
+        <h2 class="dlg-title" id="help-glossary-title">// GLOSSARY — WHAT THE CHIPS MEAN</h2>
         <button class="dlg-close" type="button" data-close aria-label="Close">×</button>
       </header>
       <p class="help-text">Every status chip on a library row, decoded. The colors here match what you see on the row.</p>
@@ -544,10 +548,13 @@
      bar drawer"). Still a native <dialog> — showModal() keeps the scrim, Esc,
      focus trap + all the open/close + audio-teardown JS; only the layout +
      slide animation change (see .dlg-drawer-left in app.css). #}
-  <dialog class="dlg dlg-drawer-left" id="info-dlg">
+  <dialog class="dlg dlg-drawer-left" id="info-dlg"
+          aria-labelledby="info-dlg-title">
     <article class="dlg-body">
       <header class="dlg-head">
-        <h2 class="dlg-title">// MOTIF INFO</h2>
+        {# v0.51.84 (a11y): aria-labelledby so showModal() announces "MOTIF INFO",
+           not an unnamed dialog (a <dialog> doesn't auto-name from its heading). #}
+        <h2 class="dlg-title" id="info-dlg-title">// MOTIF INFO</h2>
         <button class="dlg-close" id="info-dlg-close" type="button" aria-label="Close dialog" title="Close">×</button>
       </header>
       <div id="info-dlg-body">

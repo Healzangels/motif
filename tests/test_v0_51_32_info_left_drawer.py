@@ -30,7 +30,9 @@ def _rule(css: str, sel: str) -> str:
 
 def test_info_dlg_is_a_left_drawer_dialog():
     # still a native <dialog> (keeps showModal/Esc/focus/audio machinery) …
-    assert '<dialog class="dlg dlg-drawer-left" id="info-dlg">' in BASE
+    # v0.51.84: attr-tolerant — the tag gained aria-labelledby (a11y) and may
+    # wrap, so pin the class+id pair, not the whole one-line tag with its `>`.
+    assert 'class="dlg dlg-drawer-left" id="info-dlg"' in BASE
     # … and NO other dialog opts into the drawer (glossary etc. stay modals):
     # the drawer class-attr appears on exactly one element.
     assert BASE.count('class="dlg dlg-drawer-left"') == 1

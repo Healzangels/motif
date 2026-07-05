@@ -3503,7 +3503,11 @@
 #   dropped it → server LIMIT 1 fallback redrew an arbitrary sibling edition's resolved/
 #   acked annotation on multi-edition titles. Pass rowRk at both sites. (Status drawer +
 #   library CSS audited clean — recurring traps all already guarded.)
-__version__ = "0.51.83"
+# 0.51.84: UI audit a11y — the #info-dlg + #help-glossary modal dialogs had no
+#   accessible name. A native <dialog> opened with showModal() does NOT derive its
+#   name from a descendant <h2>, so a screen reader announced an unnamed dialog. Added
+#   aria-labelledby on each, pointing at its (now id'd) // MOTIF INFO / // GLOSSARY title.
+__version__ = "0.51.84"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
