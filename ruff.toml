@@ -1,0 +1,6 @@
+# v0.51.73: ruff config for the CI quality gate. The block-vs-report rule split
+# lives in .github/workflows/ci.yml (via CLI --select); this file just pins the
+# target so ruff parses 3.12 syntax the way the runtime image (python:3.12-slim)
+# does. Default rule set is ruff's E4/E7/E9 + F (pyflakes) — line-length (E501) is
+# intentionally NOT enabled; this codebase uses long explanatory lines.
+target-version = "py312"

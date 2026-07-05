@@ -1,0 +1,56 @@
+# v0.51.73: CI quality gate. Runs on every branch push + PR (NOT on tags — the
+# tag build lives in release.yml and follows a branch push that already ran this).
+#
+# Two BLOCKING gates (a red run here means don't ship):
+#   1. the full pytest suite (7,000+ tests, incl. the JS-syntax + mirror-drift guards)
+#   2. ruff's pyflakes correctness rules minus 4 noise rules — clean today; this is
+#      the rule family that caught the v0.51.72 httpx NameError.
+# Three REPORT-ONLY signals (surfaced in the log, non-fatal until we ratchet):
+#   full ruff lint, mypy, and pip-audit (dependency CVE scan). The report-only
+#   tier avoids a red wall on ~300 pre-existing style/type findings while still
+#   giving visibility; flip individual ones to blocking as they're cleaned up.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: pytest (py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # matches the Dockerfile runtime
+          cache: pip
+      - name: install deps
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: pytest — full suite (BLOCKING)
+        run: PYTHONPATH=$PWD pytest -q -p no:cacheprovider
+
+  quality:
+    name: lint + types + audit (py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: install tooling
+        run: pip install -r requirements-dev.txt
+      - name: ruff — pyflakes correctness (BLOCKING)
+        run: ruff check app/ tests/ --select F --ignore F401,F811,F841,F541
+      - name: ruff — full lint (report-only)
+        run: ruff check app/ tests/ || true
+      - name: mypy (report-only)
+        run: mypy --ignore-missing-imports app/ || true
+      - name: pip-audit — dependency CVEs (report-only)
+        run: pip-audit -r requirements.txt || true

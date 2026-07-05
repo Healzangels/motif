@@ -3395,7 +3395,17 @@
 #   was unaffected (imports dulwich locally). Fix: import httpx in api_sync_probe.
 #   Behavioral test (probe a dead port → connection error, NOT NameError) proven to fail
 #   on remote+database without the fix. This is exactly why the CI gate (next) matters.
-__version__ = "0.51.72"
+# 0.51.73 — CI quality gate (the "would a staff engineer approve" ask). Pre-fix the only
+#   GitHub Actions workflow (release.yml) just built the Docker image on tag — the 7,000+
+#   tests, ruff, mypy, pip-audit ran NOWHERE automatically. New .github/workflows/ci.yml
+#   runs on every push/PR (py3.12, matching the Dockerfile) with TWO blocking gates: the
+#   full pytest suite + ruff's pyflakes-correctness rules (F minus 4 noise rules —
+#   clean today, the family that caught the v0.51.72 httpx bug) and THREE report-only
+#   signals (full ruff, mypy, pip-audit CVE scan). + requirements-dev.txt (test/tooling
+#   deps, kept out of the runtime image) + ruff.toml (target py3.12). Every CI command
+#   validated locally (ruff gate clean, pip-audit = 0 CVEs, yaml valid); GHA itself can't
+#   be run here so the first live run may need a tweak. Guard test pins the structure.
+__version__ = "0.51.73"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

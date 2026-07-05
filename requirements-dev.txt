@@ -1,0 +1,12 @@
+# motif dev / CI dependencies — NOT installed in the runtime Docker image.
+# v0.51.73: added for the CI quality gate (.github/workflows/ci.yml). These are
+# the tools the pipeline runs; the runtime image keeps only requirements.txt.
+
+# Test-runtime deps that were only in the local venv (not in requirements.txt):
+pytest==9.0.3
+quickjs==1.19.4          # tests parse app.js through a JS engine (JS-syntax guard)
+
+# Static analysis / supply-chain tooling:
+ruff==0.15.*             # lint — CI BLOCKS on the F-correctness subset, reports the rest
+mypy==2.1.*              # type check (report-only for now)
+pip-audit>=2.7           # dependency CVE scan (report-only for now)
