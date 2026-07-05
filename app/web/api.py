@@ -9192,6 +9192,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "error": f"unsupported url scheme {sch!r} "
                                  f"(http/https only)"}
         import time as _t
+        # v0.51.72: httpx is used by _probe_remote/_probe_database below but was never
+        # imported here or module-level (it's imported locally in 6 OTHER funcs) — so
+        # the remote/database probes NameError'd, swallowed by the call-site except into
+        # a bogus "NameError: name 'httpx' is not defined" test-connection error. ruff F821.
+        import httpx
         t0 = _t.monotonic()
 
         def _probe_remote():

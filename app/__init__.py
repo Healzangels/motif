@@ -3385,7 +3385,17 @@
 #   extracts the family from the stable motif-specific literals (SQL LIKE 'xx-%', JS
 #   svid.startsWith('xx-')) and asserts SQL == every JS OR-chain. Robust (specific
 #   anchors, tokens found nowhere else), proven to catch a one-sided add. Test-only.
-__version__ = "0.51.71"
+# 0.51.72 — real bug found while wiring the CI lint gate (ruff F821). api_sync_probe's
+#   nested _probe_remote/_probe_database call httpx.Client(...) but httpx was never
+#   imported in that function or module-level (it's imported LOCALLY in 6 OTHER api.py
+#   funcs). So the settings-page "test connection" for the remote + database sync
+#   transports raised NameError, swallowed by the call-site `except Exception` into a
+#   bogus "NameError: name 'httpx' is not defined" — the probe reported the transport
+#   unreachable even when fine (CLAUDE.md silent-defensive-catch class). git transport
+#   was unaffected (imports dulwich locally). Fix: import httpx in api_sync_probe.
+#   Behavioral test (probe a dead port → connection error, NOT NameError) proven to fail
+#   on remote+database without the fix. This is exactly why the CI gate (next) matters.
+__version__ = "0.51.72"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
