@@ -3377,7 +3377,15 @@
 #   .kpi, so test_v1_18_61's "/admin/orphans" docstring was stale). v1.18.61 had wasted
 #   a token-remap commit maintaining it. Removed the two now-obsolete CSS-text-pin tests
 #   that indexed the deleted selectors; left a breadcrumb + the live mismatch guards.
-__version__ = "0.51.70"
+# 0.51.71 — complexity/regression audit fix #4: additive parity guard for the SRC-letter
+#   source-video-id prefix family (mirror-drift). The "user-URL not adopt" test keys on a
+#   GROWING prefix family (sc- v1.14.0, ig- v1.20.42, fb- v1.22.90) that must be mirrored
+#   in _src_letter_sql (SQL) AND all three computeSrcLetter svid-classification blocks
+#   (JS); the v1.22.90 FB add had to touch both sides by hand, with no guard. New test
+#   extracts the family from the stable motif-specific literals (SQL LIKE 'xx-%', JS
+#   svid.startsWith('xx-')) and asserts SQL == every JS OR-chain. Robust (specific
+#   anchors, tokens found nowhere else), proven to catch a one-sided add. Test-only.
+__version__ = "0.51.71"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
