@@ -16849,14 +16849,18 @@
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
       : '';
     // v0.51.62 (the user, polish): the flat detail grid is split into labeled
-    // groups — IDS / LINKS / TIMELINE / ON DISK — reusing the .dlg-section + <h4>
-    // primitive (same as SOURCE PREVIEW) for scannability. The rows are built as
-    // consts here (same nesting depth as the old flat <dl>, so the conditional
-    // sub-templates are unchanged) and wrapped by _grp, which renders a group ONLY
-    // when it has ≥1 row — so a metadata-only title (empty ON DISK) doesn't leave a
-    // dangling header. Row ORDER within each group is identical to the old list.
+    // groups — IDENTITY / SOURCE / HISTORY / FILE & PLACEMENT — reusing the
+    // .dlg-section + <h4> primitive (same as SOURCE PREVIEW) for scannability. The
+    // rows are built as consts here (same nesting depth as the old flat <dl>, so the
+    // conditional sub-templates are unchanged) and wrapped by _grp, which renders a
+    // group ONLY when it has ≥1 row — so a metadata-only title (empty FILE &
+    // PLACEMENT) doesn't leave a dangling header. Row ORDER within each group is
+    // identical to the old list.
+    // v0.51.64 (the user: prefers the original demo labels): renamed
+    // IDS/LINKS/TIMELINE/ON DISK → IDENTITY/SOURCE/HISTORY/FILE & PLACEMENT.
+    // htmlEscape(title) so the '&' in "file & placement" is a literal ampersand.
     const _grp = (title, rows) => rows.trim()
-      ? `<div class="dlg-section info-group"><h4>${title}</h4><dl class="dlg-grid">${rows}</dl></div>`
+      ? `<div class="dlg-section info-group"><h4>${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>`
       : '';
     const _idsRows = `
         <dt>imdb</dt><dd>${imdb}</dd>
@@ -16899,10 +16903,10 @@
           <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
         </div>
       </div>
-      ${_grp('ids', _idsRows)}
-      ${_grp('links', _linksRows)}
-      ${_grp('timeline', _timelineRows)}
-      ${_grp('on disk', _onDiskRows)}
+      ${_grp('identity', _idsRows)}
+      ${_grp('source', _linksRows)}
+      ${_grp('history', _timelineRows)}
+      ${_grp('file & placement', _onDiskRows)}
       ${recoveryPlaceholder}
       ${diffSection}
       ${(() => {

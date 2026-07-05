@@ -3317,7 +3317,13 @@
 #   plex_enum job) so it doesn't re-enable mid-scan (the v0.50.14 concern); a global
 #   scan_all/cascade still locks it via pipelineBusy. Removed the now-dead
 #   __motif_plex_enum_busy stash.
-__version__ = "0.51.63"
+# 0.51.64 — INFO card group labels reverted to the original demo names (the user:
+#   "I actually like the other section labels ... the ones we first had shown in the
+#   demo"). IDS/LINKS/TIMELINE/ON DISK → IDENTITY/SOURCE/HISTORY/FILE & PLACEMENT
+#   (the 4 _grp() render-call titles). The row-const names + membership + order are
+#   unchanged. _grp now htmlEscape's the title so the '&' in "file & placement"
+#   renders as a literal ampersand. Label-only.
+__version__ = "0.51.64"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

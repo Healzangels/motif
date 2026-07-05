@@ -1,8 +1,9 @@
 """v0.51.62 — INFO card detail rows grouped into labeled sections (the user).
 
 The flat ~17-row detail <dl> is split into four .dlg-section.info-group blocks —
-IDS / LINKS / TIMELINE / ON DISK — reusing the .dlg-section + <h4> primitive (the
-same one SOURCE PREVIEW uses) for scannability. The rows are built as consts (same
+IDENTITY / SOURCE / HISTORY / FILE & PLACEMENT (renamed from IDS/LINKS/TIMELINE/ON
+DISK in v0.51.64) — reusing the .dlg-section + <h4> primitive (the same one SOURCE
+PREVIEW uses) for scannability. The rows are built as consts (same
 nesting depth as the old flat grid, so the conditional sub-templates are unchanged)
 and wrapped by _grp, which renders a group ONLY when it has >=1 row — so a
 metadata-only title (empty ON DISK) doesn't leave a dangling header. Row order
@@ -24,7 +25,8 @@ def test_grp_helper_hides_empty_groups():
     # the helper renders a group wrapper only when rows are non-empty (so an empty
     # ON DISK group on a metadata-only row leaves no dangling header).
     assert "const _grp = (title, rows) => rows.trim()" in APP_JS
-    assert '<div class="dlg-section info-group"><h4>${title}</h4><dl class="dlg-grid">${rows}</dl></div>' in APP_JS
+    # v0.51.64: title htmlEscape'd (the '&' in "file & placement").
+    assert '<div class="dlg-section info-group"><h4>${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>' in APP_JS
 
 
 def test_four_group_row_consts_defined():
@@ -33,13 +35,16 @@ def test_four_group_row_consts_defined():
 
 
 def test_four_groups_rendered_in_order():
-    calls = ["_grp('ids', _idsRows)", "_grp('links', _linksRows)",
-             "_grp('timeline', _timelineRows)", "_grp('on disk', _onDiskRows)"]
+    # v0.51.64 (the user): labels reverted to the original demo names
+    # IDENTITY/SOURCE/HISTORY/FILE & PLACEMENT (were IDS/LINKS/TIMELINE/ON DISK).
+    # The row consts keep their internal names.
+    calls = ["_grp('identity', _idsRows)", "_grp('source', _linksRows)",
+             "_grp('history', _timelineRows)", "_grp('file & placement', _onDiskRows)"]
     idxs = []
     for c in calls:
         assert c in APP_JS, f"missing group render call {c}"
         idxs.append(APP_JS.index(c))
-    assert idxs == sorted(idxs), "groups must render in IDS/LINKS/TIMELINE/ON DISK order"
+    assert idxs == sorted(idxs), "groups must render in identity/source/history/file order"
 
 
 def test_group_membership_preserved():
