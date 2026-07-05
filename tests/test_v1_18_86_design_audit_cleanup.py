@@ -81,6 +81,11 @@ def test_t1a_js_empty_state_colspan_matches_header():
     )
     # Stale colspan must not survive.
     assert 'colspan="10" class="muted center">${msg}' not in js
+    # v0.51.70: the fetch-error row (loadLibrary catch) was the drifted third
+    # sibling — loading + empty rows were colspan=11 but the error row stayed 10,
+    # leaving a trailing empty cell on the red error banner.
+    assert 'colspan="11" class="accent-red">${htmlEscape(e.message)}' in js
+    assert 'colspan="10" class="accent-red">${htmlEscape(e.message)}' not in js
 
 
 def test_t1b_accent_red_token_replaced_with_red():

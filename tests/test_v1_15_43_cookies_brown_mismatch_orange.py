@@ -184,18 +184,10 @@ def test_state_pill_mismatch_uses_orange():
     assert 'var(--amber)' not in block
 
 
-def test_scans_kind_content_mismatch_uses_orange():
-    """The /scans page's `.kind-content_mismatch` finding badge
-    must agree with the library-page mismatch surfaces. Cross-page
-    consistency — a content mismatch on /scans is the same logical
-    state as !M on /movies, so the colors should match."""
-    css = APP_CSS.read_text()
-    anchor = css.index('.kind-content_mismatch  {')
-    block = css[anchor:anchor + 200]
-    assert 'var(--orange)' in block, (
-        "v1.15.43: .kind-content_mismatch must use --orange so the "
-        "/scans page agrees with the library !M pill"
-    )
+# v0.51.70: test_scans_kind_content_mismatch_uses_orange removed — the /scans page's
+# .kind-content_mismatch badge (and the whole dead Scans-page CSS block) was deleted as
+# dead. The LIVE mismatch surfaces (.attn-pill-mismatch, .state-pill.mismatch) are still
+# guarded above; the /scans cross-page-consistency check no longer has a surface.
 
 
 def test_link_glyph_mismatch_stays_red():

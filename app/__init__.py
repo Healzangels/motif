@@ -3367,7 +3367,17 @@
 #   did, test_v1_15_23), so a UI token forgotten in _pset silently shows ALL rows; regex
 #   on stable literals, per-axis set-equality, proven to catch a dropped token. Robust
 #   checks, NOT brittle char-window source-pins.
-__version__ = "0.51.69"
+# 0.51.70 — complexity/regression audit fix #3: two safe cleanups. (a) COLSPAN — the
+#   library fetch-error row (loadLibrary catch) used colspan=10 against the 11-column
+#   header; its loading + empty siblings were 11. The drifted third row left a trailing
+#   empty cell on the red error banner. Fixed + extended test_v1_18_86's colspan guard.
+#   (b) DEAD CSS — deleted the ~79-line Scans-page block (.kind-*/.scan-filter*/.kpi*/
+#   bare .status-*/.scan-summary). Its emitting UI was removed v0.50.89; verified ZERO
+#   template/JS emitters (and orphans.html — a DIFFERENT live subsystem — never used
+#   .kpi, so test_v1_18_61's "/admin/orphans" docstring was stale). v1.18.61 had wasted
+#   a token-remap commit maintaining it. Removed the two now-obsolete CSS-text-pin tests
+#   that indexed the deleted selectors; left a breadcrumb + the live mismatch guards.
+__version__ = "0.51.70"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

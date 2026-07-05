@@ -166,16 +166,10 @@ def test_form_hint_divider_uses_defined_token():
     assert "border-top: 1px dashed var(--line)" in rule
 
 
-def test_kpi_card_uses_defined_tokens():
-    """`.kpi` (scan-results KPI cards on /admin/orphans + the
-    storage diagnostic) must use defined tokens after the
-    v1.18.61 remap."""
-    src = APP_CSS.read_text()
-    rule_idx = src.index(".kpi {")
-    rule_end = src.index("}", rule_idx)
-    rule = src[rule_idx:rule_end]
-    assert "border: 1px solid var(--line)" in rule
-    assert "background: var(--bg)" in rule
+# v0.51.70: test_kpi_card_uses_defined_tokens removed — the whole Scans-page CSS block
+# (.kpi/.kind-*/.scan-*) it pinned was deleted as dead (zero template/JS emitters; the
+# emitting UI was removed v0.50.89). The docstring's "/admin/orphans" claim was stale —
+# orphans.html never used .kpi.
 
 
 def test_audit_guard_for_undefined_tokens():

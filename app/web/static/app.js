@@ -8438,7 +8438,7 @@
       data = await api('GET', '/api/library?' + params.toString());
     } catch (e) {
       if (loadLibrary._seq !== _myToken) return;
-      tbody.innerHTML = `<tr><td colspan="10" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="11" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
       return;
     }
     if (loadLibrary._seq !== _myToken) return;
