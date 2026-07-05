@@ -8502,8 +8502,8 @@
     }
     if (dedupedItems.length === 0) {
       // v1.11.27: when an enum is actively running for this tab, show
-      // a 'scanning now' cue instead of the stale 'click REFRESH FROM
-      // PLEX' instruction. window.__motif_enum_active is updated by
+      // a 'scanning now' cue instead of the static // REFRESH
+      // instruction. window.__motif_enum_active is updated by
       // the topbar status tick (set when plex_enum_active[tab][variant]
       // is true). Until it's clear the banner sits on the same prompt
       // that's been there for first-time visitors.

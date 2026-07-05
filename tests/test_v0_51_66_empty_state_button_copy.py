@@ -48,5 +48,8 @@ def test_jobs_queue_empty_state_names_buttons_by_real_labels():
 
 
 def test_version_pin():
+    # Loose — the canonical exact pin lives in test_v1_13_79; this just
+    # guards a parseable version string (don't hard-pin our own tag number,
+    # it becomes a landmine on the next bump).
     init_py = (REPO / "app" / "__init__.py").read_text()
-    assert '__version__ = "0.51.66"' in init_py
+    assert '__version__ = "0.' in init_py

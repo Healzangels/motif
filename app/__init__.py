@@ -3340,7 +3340,13 @@
 #   reads "click the // REFRESH button above"; the jobs-queue empty-state names both
 #   buttons by their real "// "-prefixed labels (// SYNC THEMERRDB, // REFRESH). Copy-
 #   only, no test pinned the old strings. Static-text guard added.
-__version__ = "0.51.66"
+# 0.51.67 — code-review follow-up to v0.51.66: the v1.11.27 comment above the
+#   library empty-state still quoted the "click REFRESH FROM PLEX" instruction that
+#   v0.51.66 removed from the else-branch below it (the enum-active branch shows a
+#   'scanning now' cue instead of that static prompt). Updated the quote to "the
+#   static // REFRESH instruction" so the comment matches the code it describes.
+#   Comment-prose only.
+__version__ = "0.51.67"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
