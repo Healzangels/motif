@@ -39,15 +39,18 @@ def test_js_awaitingApproval_excludes_backup_only():
 
 
 def test_backend_await_predicates_exclude_backup_only():
+    # v0.51.68 widened these predicates to ALSO exclude over_ceiling; backup_only
+    # stays excluded at every backend await site. Full behavioral coverage of all
+    # four await surfaces now lives in test_v0_51_68_await_terminal_reason_mirror.
     # _LIB_AWAIT_SQL (attn filter)
     i = API_PY.index("_LIB_AWAIT_SQL = (")
     assert "IS NOT 'backup_only'" in API_PY[i:i + 1100]
     # the pl_pills=await SQL branch
     j = API_PY.index('elif p == "await":\n                # v0.51.36')
-    assert "IS NOT 'backup_only'" in API_PY[j:j + 800]
-    # _row_matches_attn await branch (Python)
-    k = API_PY.index('it.get("last_place_attempt_reason") != "backup_only"')
-    assert k > 0
+    assert "IS NOT 'backup_only'" in API_PY[j:j + 1000]
+    # _row_matches_attn / _row_matches_pl await branches (Python) — v0.51.68 replaced
+    # the bare `!= "backup_only"` with a tuple that also excludes over_ceiling.
+    assert 'not in ("backup_only", "plex_rejected:over_ceiling")' in API_PY
 
 
 # ── behavioral: the backup-only row drops out of the await filters ──

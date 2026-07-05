@@ -3346,7 +3346,18 @@
 #   'scanning now' cue instead of that static prompt). Updated the quote to "the
 #   static // REFRESH instruction" so the comment matches the code it describes.
 #   Comment-prose only.
-__version__ = "0.51.67"
+# 0.51.68 — complexity/regression audit fix #1 (the dominant "mirror-drift" class):
+#   the AWAIT predicate ("downloaded canonical, no placement, awaiting a PLACE") lives
+#   in FOUR copies that must stay byte-equivalent but drifted. _LIB_AWAIT_SQL (the
+#   canonical) excludes BOTH terminal reasons (backup_only v0.51.36 + over_ceiling
+#   v1.24.46), but: the attn post-stat fallback _row_matches_attn had only backup_only
+#   (LIVE bug — an over-ceiling row re-appeared as AWAIT + re-enqueued a doomed upload
+#   whenever attn=await+broken were multi-selected, the path the v1.24.46 guard never
+#   hit); the pl=await SQL branch had only backup_only; _row_matches_pl had NEITHER.
+#   Added the missing exclusion STRINGS to all three (no refactor into a shared helper
+#   — the audit's low-risk guidance + CLAUDE.md "no premature abstraction"). New
+#   behavioral guard exercises all four surfaces (proven to fail without the fix).
+__version__ = "0.51.68"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

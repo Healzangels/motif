@@ -2940,12 +2940,17 @@ def _library_main_query(
             elif p == "await":
                 # v0.51.36 (the user): exclude backup_only (terminal TB state) —
                 # mirrors the JS awaitingApproval + _LIB_AWAIT_SQL exclusion.
+                # v0.51.68 (complexity audit): also exclude over_ceiling, matching
+                # _LIB_AWAIT_SQL (v1.24.46) — this branch had drifted, keeping the
+                # doomed-upload terminal rows in the pl=await filter.
                 branches.append(
                     "(COALESCE(p_e.media_folder, p_g.media_folder) IS NULL "
                     " AND COALESCE(p_e.placement_kind, p_g.placement_kind) IS NULL "
                     " AND COALESCE(lf_e.file_path, lf_g.file_path) IS NOT NULL "
                     " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
-                    "     IS NOT 'backup_only')"
+                    "     IS NOT 'backup_only' "
+                    " AND COALESCE(lf_e.last_place_attempt_reason, lf_g.last_place_attempt_reason) "
+                    "     IS NOT 'plex_rejected:over_ceiling')"
                 )
             # v1.18.30: removed the pl_pills='pushed' SQL branch.
             # Its predicate was the literal same SQL as
@@ -3830,7 +3835,14 @@ def _library_main_query(
                 return True
             if p == "off" and not it.get("media_folder") and not it.get("file_path") and not is_plex_upload:
                 return True
-            if p == "await" and not it.get("media_folder") and it.get("file_path") and not is_lps and not is_plex_upload:
+            # v0.51.68 (complexity audit): exclude the terminal reasons (backup_only,
+            # over_ceiling) like _LIB_AWAIT_SQL — this pl post-stat copy had NEITHER,
+            # so both terminal states leaked into pl=await under the await+on/broken
+            # multi-select (the post-stat path).
+            if (p == "await" and not it.get("media_folder") and it.get("file_path")
+                    and not is_lps and not is_plex_upload
+                    and it.get("last_place_attempt_reason")
+                        not in ("backup_only", "plex_rejected:over_ceiling")):
                 return True
             if p == "broken" and it.get("placement_missing") and not is_lps:
                 return True
@@ -3908,11 +3920,17 @@ def _library_main_query(
                     )
                     # v0.51.36 (the user): backup_only (terminal TB) is not AWAIT —
                     # mirror the JS awaitingApproval + _LIB_AWAIT_SQL exclusion.
+                    # v0.51.68 (complexity audit): also exclude over_ceiling. This
+                    # post-stat copy (fires on attn=await+broken multi-select) drifted
+                    # from _LIB_AWAIT_SQL, which excludes BOTH terminal reasons since
+                    # v1.24.46 — so an over-ceiling row re-appeared as AWAIT here and
+                    # re-enqueued a doomed upload on click.
                     if (it.get("file_path")
                             and not it.get("media_folder")
                             and not is_lps
                             and not is_plex_upload
-                            and it.get("last_place_attempt_reason") != "backup_only"):
+                            and it.get("last_place_attempt_reason")
+                                not in ("backup_only", "plex_rejected:over_ceiling")):
                         return True
             return False
 
