@@ -25,7 +25,7 @@ from typing import Any
 import threading
 
 from .db import get_conn, transaction
-from .events import now_iso
+from .events import _redact_url_credentials, now_iso
 
 log = logging.getLogger(__name__)
 
@@ -185,7 +185,9 @@ def start_progress(
     if stage is not None:
         _begin_stage_timing(detail_obj, stage, stage_label, now)
     if activity:
-        detail_obj["activity"] = [{"ts": now, "msg": activity}]
+        # v0.51.75 (security audit): scrub URL creds on the start path too (symmetric
+        # with update_progress) so a credential-bearing activity never lands in storage.
+        detail_obj["activity"] = [{"ts": now, "msg": _redact_url_credentials(activity)}]
     detail = json.dumps(detail_obj)
     with get_conn(db_path) as conn:
         conn.execute(
@@ -250,7 +252,12 @@ def update_progress(
         throughput_buf = deque(detail.get("throughput", []),
                                maxlen=_THROUGHPUT_HISTORY)
         if activity:
-            activity_buf.appendleft({"ts": now, "msg": activity})
+            # v0.51.75 (security audit): scrub URL credentials before storing. A
+            # credential-bearing sync URL (git PAT / basic-auth pw in the userinfo)
+            # otherwise leaked verbatim into op_progress activity, readable via GET
+            # /api/progress by a read-scoped token (unlike admin-gated /api/events).
+            # Write-path catch-all so any future activity string is scrubbed by default.
+            activity_buf.appendleft({"ts": now, "msg": _redact_url_credentials(activity)})
         # Throughput sample whenever processed_total advances. Rate
         # in items/sec; UI smooths across the buffer.
         # v0.50.39: floor dt at 1.0s, not 0.001s. A fast batch (e.g. a 10k-row

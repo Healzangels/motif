@@ -3415,7 +3415,17 @@
 #   _YT_VID_RE/url_source/app.js-mirror path, and the 4 platforms are the only sources the
 #   app supports so no legitimate URL is rejected. Unit + behavioral tests (probe/download
 #   reject the SSRF URL without touching the network).
-__version__ = "0.51.74"
+# 0.51.75 — security audit fix (credential leak, medium). A credential-bearing sync
+#   URL (git PAT / basic-auth pw in the userinfo of a private ThemerrDB mirror) leaked
+#   unscrubbed into op_progress activity strings (sync.py GET/git-clone/git-fetch →
+#   progress.py), readable via GET /api/progress by a READ-scoped token (only
+#   is_authenticated — unlike admin-gated /api/events; read tokens are handed to
+#   Homepage dashboards). Scrub URL creds via events._redact_url_credentials on BOTH
+#   progress write paths (start_progress + update_progress — robust catch-all) + at the
+#   3 sync.py call-sites (belt-and-suspenders). /api/progress auth level deliberately
+#   UNCHANGED (would break external dashboards). Behavioral test proven to fail without
+#   the write-path scrub.
+__version__ = "0.51.75"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

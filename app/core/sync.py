@@ -42,7 +42,7 @@ from pathlib import Path
 import httpx
 
 from .db import get_conn, transaction
-from .events import log_event, now_iso
+from .events import _redact_url_credentials, log_event, now_iso
 from . import progress as op_progress
 from .normalize import titles_equal
 
@@ -1782,7 +1782,7 @@ class _DatabaseSnapshot:
             stage="snapshot_download",
             stage_label="Downloading ThemerrDB snapshot",
             stage_current=0, stage_total=0,
-            activity=f"GET {self.tar_url}",
+            activity=_redact_url_credentials(f"GET {self.tar_url}"),  # v0.51.75: redact URL creds
         )
         # v1.12.126 Phase A.5: conditional GET. If we have ETag /
         # Last-Modified from the prior successful download AND the
@@ -2648,7 +2648,8 @@ class _GitMirror:
             stage="git_fetch",
             stage_label="Cloning ThemerrDB mirror (first run)",
             stage_current=0, stage_total=0,
-            activity=f"git clone --bare --depth 1 -b {self.branch} {self.repo_url}",
+            activity=_redact_url_credentials(  # v0.51.75: redact URL creds
+                f"git clone --bare --depth 1 -b {self.branch} {self.repo_url}"),
         )
         # Wipe any partial state from a previous failed clone so we
         # don't try to fetch into a half-initialized dir.
@@ -2691,7 +2692,7 @@ class _GitMirror:
             stage="git_fetch",
             stage_label="Fetching ThemerrDB delta",
             stage_current=0, stage_total=0,
-            activity=f"git fetch {self.repo_url}",
+            activity=_redact_url_credentials(f"git fetch {self.repo_url}"),  # v0.51.75: redact URL creds
         )
         self._open_repo()
         # v1.13.19: parse dulwich's sideband progress so the topbar
