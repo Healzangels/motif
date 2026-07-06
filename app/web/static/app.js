@@ -7688,14 +7688,30 @@
       });
     });
 
-    // Clear-token button
+    // Clear-secret buttons. v0.51.89: was hard-coded to plex.token, so // CLEAR
+    // KEY (tmdb_api_key) + // CLEAR PROXY silently no-op'd — and since the
+    // backend keep-on-empty contract treats a blank save as "keep", there was NO
+    // way to wipe those two. The backend clears ANY of these paths on null
+    // (api.py), so drive every data-cfg-clear path generically.
+    const CLEAR_LABEL = {
+      'plex.token': 'Plex token',
+      'plex.tmdb_api_key': 'TMDB API key',
+      'downloads.proxy_url': 'download proxy',
+    };
     document.querySelectorAll('[data-cfg-clear]').forEach((btn) => {
       btn.addEventListener('click', async () => {
-        const path = btn.dataset.cfgClear;
-        if (path !== 'plex.token') return;
-        if (!confirm('Clear Plex token? Motif will lose Plex access until you set a new one.')) return;
+        const path = btn.dataset.cfgClear || '';
+        const dot = path.indexOf('.');
+        if (dot < 1) return;  // need "section.field"
+        const section = path.slice(0, dot);
+        const field = path.slice(dot + 1);
+        const label = CLEAR_LABEL[path] || field;
+        const msg = path === 'plex.token'
+          ? 'Clear Plex token? Motif will lose Plex access until you set a new one.'
+          : `Clear the ${label}? This wipes the stored value.`;
+        if (!confirm(msg)) return;
         try {
-          await api('PATCH', '/api/config', { plex: { token: null } });
+          await api('PATCH', '/api/config', { [section]: { [field]: null } });
           await loadConfigIntoForms();
         } catch (e) {
           alert('Failed: ' + e.message);

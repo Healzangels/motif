@@ -3539,7 +3539,14 @@
 #   last_seen_at is already >1h stale, so ~99% of requests write nothing — AND fail-fast +
 #   best-effort (250ms busy_timeout, lock swallowed + warned-once). cleanup_expired_sessions
 #   also reaps idle rows off the hot path (boot + scheduler sweep). Behavioral tests.
-__version__ = "0.51.88"
+# 0.51.89: settings audit — the // CLEAR KEY (tmdb_api_key) + // CLEAR PROXY buttons were
+#   dead. The clear-secret handler hard-returned for anything but plex.token, and the backend
+#   keep-on-empty contract means a blank save keeps the value — so there was NO way to wipe the
+#   TMDB key or proxy URL (the proxy hint even says "Click CLEAR PROXY to wipe"). Generalized
+#   the handler to PATCH {section:{field:null}} for any data-cfg-clear path (the backend already
+#   clears those on null). config save/load pipeline itself audited clean (silent-data-loss,
+#   masked-secret roundtrip, closed-set, partial-clobber all guarded).
+__version__ = "0.51.89"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
