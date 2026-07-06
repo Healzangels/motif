@@ -1527,7 +1527,10 @@ body.help-mode .help-mode-bar { display: flex; }
 
 /* v1.23.45: in-context library LEGEND. Hidden until help mode is on, then it
    sits above the rows decoding that tab's chips. Reuses the glossary chip
-   palette (gc-*/gd-*/gg-*). */
+   palette (gc-*, gd-*, gg-*). v0.51.91: the old '/' separators formed a
+   star-slash that closed this comment early, so the parser's error-recovery
+   swallowed the .library-legend-pill rule below (the "unstyled legend box for
+   3 deploys" symptom the notes below describe). */
 /* v1.23.49: the LEGEND toggle is a compact pill INLINE in the results header
    (next to NEEDS WORK), shown only in help mode (the user: "put the legend button
    next to needs work instead of on its own row"). Clicking it drops the chip-
@@ -6809,7 +6812,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 .dry-run-banner + .topbar { top: 0; }
 body.dry-run-on .topbar { /* nothing special needed; sticky stacks naturally */ }
 
-/* v0.51.70: dead Scans-page CSS (.kind-*/.scan-filter*/.kpi*/bare .status-*/.scan-summary) removed — its emitting UI was deleted v0.50.89; zero template/JS emitters (v1.18.61 wasted a token-remap commit on it). */
+/* v0.51.70: dead Scans-page CSS (.kind-*, .scan-filter*, .kpi*, bare .status-*, .scan-summary) removed — its emitting UI was deleted v0.50.89; zero template/JS emitters (v1.18.61 wasted a token-remap commit on it). v0.51.91: the old '/' separators formed spurious star-slash sequences that closed this comment early, so the CSS parser's error-recovery swallowed the .dash-user-hidden rule below and user-hidden dashboard sections never actually hid. */
 
 /* ─── v1.13.48: dashboard customize mode ──────────────────────────
    Toggled by the // CUSTOMIZE button in the dash hero. Shows a

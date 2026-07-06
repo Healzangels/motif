@@ -3555,7 +3555,19 @@
 #   bucket → dropped). Also corrects a v0.51.89 rider: renaming the "// Clear-token button"
 #   comment orphaned test_v1_17_5's bindConfigSaves slice-anchor (green-gate slip — the tag
 #   shipped with that one stale-anchor test red; code was correct).
-__version__ = "0.51.90"
+# 0.51.91: dashboard "hide section" never actually hid a section (RECENT ACTIVITY / SYNC
+#   HISTORY stayed visible after // done editing). Root cause was a single malformed CSS
+#   comment (app.css line ~6812): the v0.51.70 dead-Scans note listed removed selectors as
+#   ".kind-*/.scan-filter*/.kpi*/..." — those '/' separators formed spurious '*/' sequences,
+#   the FIRST of which closed the comment early. The CSS parser then hit invalid tokens and
+#   its error-recovery swallowed the very next rule, ".dash-user-hidden { display:none
+#   !important }", so the class that the customize toggle applies (and correctly persists via
+#   /api/dashboard/layout — the PUT body was right all along) had no CSS backing it at
+#   runtime. Reproduced + fixed + confirmed in a real browser (rule now parses; hidden
+#   sections compute display:none outside customize, grid/block @ opacity .45 inside). Fix:
+#   comma separators so the comment holds no '*/'. Guard test asserts no CSS comment closes
+#   early (a comment-stripper leaves zero dangling '*/') and the .dash-user-hidden rule survives.
+__version__ = "0.51.91"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
