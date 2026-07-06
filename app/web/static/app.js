@@ -9877,7 +9877,6 @@
       ? `<a href="https://www.imdb.com/title/${htmlEscape(imdb)}" target="_blank" rel="noopener">${htmlEscape(imdb)}</a>`
       : '<span class="muted">—</span>';
 
-    const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
     // v0.51.92: collections // ALL view — the owning Plex library, so a name like
     // "Action" that recurs once per library is distinguishable at a glance (the
     // user). v0.51.93: shown as the library NAME trailing the collection title
@@ -11287,7 +11286,7 @@
     // YEAR / TDB / SRC / DL / PL / LINK / IMDB / ACTIONS. Edition
     // promoted to its own <td class="col-edition"> sibling so the
     // ED filter row + ED column header share the same axis. TDB
-    // cell dropped sectionLabel ([Movies]/[Anime]/etc) — the tab
+    // cell dropped the [Movies]/[Anime] library tag — the tab
     // nav already names the active library; the cell now carries
     // just the pill.
     return `

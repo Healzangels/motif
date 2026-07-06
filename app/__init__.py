@@ -3590,7 +3590,11 @@
 #   ps.type/ps.is_anime SELECT aliases (only the dot color used them). GLOSSARY +
 #   LEGEND updated to the name pill (4K chip decode unchanged). Verified in a real
 #   browser; the 4K + neutral pill sit beside the name without breaking the flex.
-__version__ = "0.51.93"
+# 0.51.94: tidy — removed the dead `sectionLabel` const in renderLibraryRow (built
+#   a [Movies]/[Anime] title tag but UNUSED since v1.15.53 dropped it from the TDB
+#   cell; v0.51.93's libTag now owns the collections library label) + de-referenced
+#   the dead name in the v1.15.53 layout comment. No behavior change.
+__version__ = "0.51.94"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
