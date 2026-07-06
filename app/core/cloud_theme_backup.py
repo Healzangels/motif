@@ -1119,5 +1119,11 @@ def backup_cloud_theme(
         "file_path": rel_path,
         "sha1": sha1,
         "sha256": file_sha256,
+        # v0.51.86: True when a prior backup row for this edition existed (and
+        # its bytes differed — an identical one would have short-circuited to
+        # skipped_identical above). Lets the UI say "Updated (re-captured)" vs
+        # "Captured (first backup)" instead of always claiming the served theme
+        # "differed from your existing backup" even on a first-ever capture.
+        "replaced_prior": existing is not None,
         "error": None,
     }

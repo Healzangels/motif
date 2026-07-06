@@ -239,7 +239,9 @@ def test_backup_click_handler_alert_only_on_zero_zero_done():
     # 0-captured branch (proc===0), so a failed op gets the failure message,
     # not the "0 captured" one.
     i = APP_JS.index("function cloudBackupForceCapture(")
-    fn = APP_JS[i:i + 7200]
+    # v0.51.86: widened 7200→8800 — the first-capture-vs-replaced split added
+    # lines ahead of the 0-captured ("Nothing was captured") branch.
+    fn = APP_JS[i:i + 8800]
     failed_at = fn.index("fin.status === 'failed' || errs > 0")
     zero_at = fn.index("proc === 0")
     assert failed_at < zero_at, (
@@ -254,7 +256,7 @@ def test_backup_click_handler_has_failure_branch():
     message from the 0-target case."""
     # v0.51.51: the failure branch moved into cloudBackupForceCapture.
     i = APP_JS.index("function cloudBackupForceCapture(")
-    block = APP_JS[i:i + 7200]
+    block = APP_JS[i:i + 8800]  # v0.51.86: widened 7200→8800 (see above)
     assert "fin.status === 'failed' || errs > 0" in block
     # And the failure alert mentions LOGS for diagnostic.
     failed_idx = block.index("fin.status === 'failed'")

@@ -3815,16 +3815,32 @@
                   + 'reason. Your existing backup is untouched.'
                 );
               } else if (outcome && outcome.downloaded > 0) {
-                alert(
-                  'Captured — Plex was serving a theme different from '
-                  + 'your existing backup. The row now shows a PB badge.'
-                  // v1.21.35: only promise the TDB revert when the row
-                  // actually has a ThemerrDB theme (not a Kometa/orphan).
-                  + (hasTdb
-                     ? ' Re-pull the ThemerrDB theme anytime via SOURCE '
-                       + '→ DOWNLOAD TDB BACKUP.'
-                     : ' This row has no ThemerrDB theme to revert to.')
-                );
+                // v1.21.35: only promise the TDB revert when the row actually
+                // has a ThemerrDB theme (not a Kometa/orphan).
+                const tdbSuffix = hasTdb
+                  ? ' Re-pull the ThemerrDB theme anytime via SOURCE '
+                    + '→ DOWNLOAD TDB BACKUP.'
+                  : ' This row has no ThemerrDB theme to revert to.';
+                // v0.51.86: the worker stamps how many downloads REPLACED an
+                // existing backup (backup_outcome.replaced) vs were a first
+                // capture. The old copy always claimed the served theme was
+                // "different from your existing backup" — false on a first-ever
+                // backup (the common case for a NO-TDB anime never captured
+                // before; the user's confusion). Branch on it. An older worker
+                // leaves replaced undefined → falls to the neutral "Captured".
+                if (outcome.replaced > 0) {
+                  alert(
+                    'Updated — Plex was serving a theme different from your '
+                    + 'previous backup, so motif re-captured it. The row now '
+                    + 'shows a PB badge.' + tdbSuffix
+                  );
+                } else {
+                  alert(
+                    'Captured — motif saved the theme Plex is currently '
+                    + 'serving for this row as a backup. The row now shows a '
+                    + 'PB badge.' + tdbSuffix
+                  );
+                }
               } else if (outcome && outcome.skipped_identical > 0) {
                 alert(
                   'No swap — Plex was serving a theme byte-identical '

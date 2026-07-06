@@ -240,6 +240,9 @@ def test_backup_swaps_when_bytes_differ(tmp_path):
         result = backup_cloud_theme(conn, target, themes_dir, plex)
         assert result["ok"] is True
         assert not result.get("skipped_identical")
+        # v0.51.86: a prior backup row existed + its bytes differed → this is a
+        # REPLACE, not a first capture. Drives the "Updated (re-captured)" copy.
+        assert result.get("replaced_prior") is True
         row = conn.execute(
             "SELECT source_kind, last_place_attempt_reason "
             "FROM local_files WHERE tmdb_id=911"
@@ -248,6 +251,45 @@ def test_backup_swaps_when_bytes_differ(tmp_path):
             "v1.20.18: a genuine swap must relabel to plex_cloud"
         )
         assert row["last_place_attempt_reason"] == "backup_only"
+
+
+def test_backup_first_capture_reports_no_replaced_prior(tmp_path):
+    """First-ever backup (no prior local_files row) → replaced_prior False, so
+    the UI says 'Captured (first backup)' not 'Updated (re-captured)'
+    (v0.51.86)."""
+    from app.core.db import init_db
+    from app.core.cloud_theme_backup import backup_cloud_theme
+    db = tmp_path / "t.db"
+    themes_dir = tmp_path / "themes"
+    themes_dir.mkdir()
+    init_db(db)
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        # section + themes row, but NO local_files row → nothing to replace.
+        conn.execute(
+            "INSERT OR IGNORE INTO plex_sections "
+            "  (section_id, title, type, is_anime, is_4k, themes_subdir, "
+            "   included, discovered_at, last_seen_at) "
+            "VALUES ('1', 'Movies', 'movie', 0, 0, 'movies', 1, "
+            "        '2026-05-29', '2026-05-29')")
+        conn.execute(
+            "INSERT INTO themes (media_type, tmdb_id, title, "
+            "  upstream_source, last_seen_sync_at, first_seen_sync_at) "
+            "VALUES ('movie', 913, 'FirstCap', 'imdb', "
+            "        '2026-05-29', '2026-05-29')")
+        conn.commit()
+        plex = MagicMock()
+        _mock_fetch(plex, b"\x49\x44\x33first-ever-capture-bytes")
+        target = {
+            "rating_key": "rk", "guid_tmdb": 913, "media_type": "movie",
+            "section_id": "1", "title": "FirstCap", "year": "2020",
+            "entry_uri": "upload://themes/" + G40, "sha1": G40,
+        }
+        result = backup_cloud_theme(conn, target, themes_dir, plex)
+        assert result["ok"] is True, result.get("error")
+        assert not result.get("skipped_identical")
+        assert result.get("replaced_prior") is False, (
+            "v0.51.86: no prior backup row → first capture, not a replace")
 
 
 # ── endpoint + worker source pins ────────────────────────────

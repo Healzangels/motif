@@ -5043,6 +5043,9 @@ def _cloud_themes_backup_run(
                         "rk": target["rating_key"],
                         "title": target["title"],
                         "bytes": result["bytes_written"],
+                        # v0.51.86: carry whether this download REPLACED a prior
+                        # backup vs was a first capture (for the outcome message).
+                        "replaced_prior": bool(result.get("replaced_prior")),
                     })
                     _record_audit(
                         conn, actor=actor,
@@ -5132,6 +5135,11 @@ def _cloud_themes_backup_run(
             db_path, OP_ID, "backup_outcome",
             {
                 "downloaded": len(downloaded),
+                # v0.51.86: of the downloads, how many REPLACED an existing
+                # backup (vs a first-ever capture) — the UI branches its
+                # "Updated" vs "Captured" message on this.
+                "replaced": sum(
+                    1 for d in downloaded if d.get("replaced_prior")),
                 "skipped_identical": len(skipped_identical),
                 "errors": len(errors),
             },

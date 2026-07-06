@@ -3513,7 +3513,15 @@
 #   .op-pill (the disk badge keeps its legit warn). NOTE: the .info-scope-row 6px/14px the
 #   audit flagged as token-drift was DELIBERATELY LEFT — no --gap token matches (scale is
 #   4/8/12/16…), so a swap would change spacing; off-scale literals stay (v0.51.79 policy).
-__version__ = "0.51.85"
+# 0.51.86: DOWNLOAD PLEX BACKUP message — first-capture vs re-capture. The success alert
+#   always claimed "Plex was serving a theme different from your existing backup", but the
+#   "captured" branch fires on a FIRST-ever backup too (the common NO-TDB anime case) where
+#   there was no existing backup to differ from (the user's confusion). The worker already
+#   knows (its existing-local_files lookup): backup_cloud_theme now returns replaced_prior,
+#   the op stamps backup_outcome.replaced, and the UI branches "Updated — re-captured" vs
+#   "Captured — first backup". Old worker leaves replaced undefined → neutral "Captured".
+#   Behavioral (first-capture + swap) + copy-guard tests.
+__version__ = "0.51.86"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

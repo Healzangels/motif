@@ -31,7 +31,9 @@ def test_worker_stamps_outcome_before_finish():
     # ahead of the backup_outcome stamp, pushing final_status past the old window.
     # v0.51.16 (audit #26): widened 13000→15000 — the unmint_stale_orphans
     # compensation blocks (cancel-during-walk + post-loop) land before the stamp.
-    fn = API_PY[fn_idx:fn_idx + 15000]
+    # v0.51.86: widened 15000→16000 — the replaced-count stamp + its comment
+    # added lines ahead of final_status.
+    fn = API_PY[fn_idx:fn_idx + 16000]
     assert 'set_detail_field(' in fn
     assert '"backup_outcome"' in fn
     # the stamp must precede finish_progress (waitForOp returns the
@@ -41,9 +43,11 @@ def test_worker_stamps_outcome_before_finish():
     assert stamp_idx < finish_idx, (
         "v1.20.19: backup_outcome must be stamped BEFORE finish_progress"
     )
-    # outcome breakdown carries the three counts.
-    block = fn[stamp_idx:stamp_idx + 300]
+    # outcome breakdown carries the counts. v0.51.86: window 300→600 (the
+    # "replaced" key + its comment sit between downloaded and skipped_identical).
+    block = fn[stamp_idx:stamp_idx + 600]
     assert '"downloaded"' in block
+    assert '"replaced"' in block
     assert '"skipped_identical"' in block
     assert '"errors"' in block
 
@@ -82,12 +86,16 @@ def test_js_reads_definitive_outcome():
     idx = APP_JS.index("function cloudBackupForceCapture(")
     # v0.51.51: widened 5000→6800 — the helper gained the optimistic-placeholder
     # set/clear plumbing ahead of the outcome-reading branches.
-    fn = APP_JS[idx:idx + 6800]
+    # v0.51.86: widened 6800→8400 — the first-capture-vs-replaced split added
+    # lines ahead of the skipped_identical branch.
+    fn = APP_JS[idx:idx + 8400]
     # reads the stamped outcome off the finished op.
     assert "fin.detail && fin.detail.backup_outcome" in fn
     # definitive branches: captured (downloaded>0) and identical.
     assert "outcome && outcome.downloaded > 0" in fn
     assert "outcome && outcome.skipped_identical > 0" in fn
+    # v0.51.86: the captured branch now splits first-capture vs replaced.
+    assert "outcome.replaced > 0" in fn
     # the identical branch says "byte-identical ... nothing distinct".
     assert "byte-identical" in fn
 
