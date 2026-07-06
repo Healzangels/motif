@@ -2173,7 +2173,15 @@
       // and read hover live via :hover instead of a `paused` flag — a 30s poll
       // re-render of the strip mid-hover could drop the mouseleave and leave the
       // flag stuck true (autoscroll silently dead until the next enter/leave).
+      // v0.51.87: also bail while the WINDOW is unfocused (not just a hidden
+      // TAB). The posters are all fetched+decoded (verified live: loaded=40,
+      // fetching=0), but an unfocused window THROTTLES paint — this per-30ms
+      // scrollLeft churn then perpetually outruns the paint, so scrolled-in
+      // tiles show a stale blank frame until a click refocuses (the user: "not
+      // loading when not focussed"). Freezing on blur lets the loaded posters
+      // paint; the blur listener below forces the settling repaint.
       if (document.hidden
+          || !document.hasFocus()
           || strip.matches(':hover')
           || document.querySelector('dialog[open]')) return;
       if (strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1) {
@@ -2191,6 +2199,15 @@
     });
     applyScrollbarVis();
     if (cb.checked) start();
+    // v0.51.87: when the window loses focus the tick above freezes the strip;
+    // force ONE repaint so it settles on its loaded posters instead of the last
+    // throttled (blank) scroll frame. An imperceptible opacity nudge dirties the
+    // paint; setTimeout still fires for a visible-but-unfocused window (only a
+    // hidden TAB throttles timers to ~1/min). Bound once (guarded at fn top).
+    window.addEventListener('blur', () => {
+      strip.style.opacity = '0.999';
+      setTimeout(() => { strip.style.opacity = ''; }, 30);
+    });
   }
 
   // v1.24.53: SERVICES panel — live status of motif's external dependencies.

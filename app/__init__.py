@@ -3521,7 +3521,17 @@
 #   the op stamps backup_outcome.replaced, and the UI branches "Updated — re-captured" vs
 #   "Captured — first backup". Old worker leaves replaced undefined → neutral "Captured".
 #   Behavioral (first-capture + swap) + copy-guard tests.
-__version__ = "0.51.86"
+# 0.51.87: RECENTLY ADDED carousel — the posters going blank while the window is unfocused
+#   is a PAINT throttle, not a fetch stall. A live console probe proved all 40 posters were
+#   fetched+decoded the whole time unfocused (loaded=40, fetching=0) — so v0.51.82's paced
+#   loader fixed a non-issue (left in; harmless). The real cause: the per-30ms scrollLeft
+#   auto-scroll churn outran the unfocused window's throttled compositing (console: "Forced
+#   reflow" ×60), so scrolled-in tiles showed a stale blank frame until a click refocused.
+#   Fix: the tick already bailed on document.hidden (hidden TAB); now also bails on
+#   !document.hasFocus() (unfocused WINDOW), and a window blur listener nudges one repaint so
+#   the frozen strip settles on its loaded posters. Source-guard tests (paint timing of a
+#   real unfocused window — can't be exercised headless).
+__version__ = "0.51.87"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
