@@ -33,6 +33,7 @@ import hashlib
 import hmac
 import logging
 import secrets
+import sqlite3
 import threading
 import time
 from dataclasses import dataclass
@@ -56,9 +57,21 @@ log = logging.getLogger(__name__)
 # subsequent failures stay quiet (they can't auth anyway).
 _VERIFY_PASSWORD_WARNED: bool = False
 _VERIFY_TOKEN_WARNED: bool = False
+_TOUCH_LOCKED_WARNED: bool = False
 
 SESSION_COOKIE = "motif_sess"
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
+# v0.51.88: idle timeout — a session unused for longer than this is dead even
+# within the 30-day absolute TTL, so a lingering/stolen cookie can't stay live
+# indefinitely on an account nobody's touching. Activity-based: last_seen_at is
+# refreshed COARSELY (see lookup_session), never per request.
+SESSION_IDLE_TIMEOUT_SECONDS = 14 * 24 * 3600  # 14 days
+# How stale last_seen_at must be before lookup_session bothers to refresh it.
+# Coarse on purpose — at most one write per session per interval, NOT per
+# request: v1.11.37 removed the per-request UPDATE because it WAITED up to the
+# 30s busy_timeout on the writer lock during a long sync and softlocked the UI.
+# The refresh is also fail-fast + best-effort (see _touch_session_last_seen).
+SESSION_TOUCH_INTERVAL_SECONDS = 3600  # 1 hour
 
 # Routes that bypass auth entirely. Healthcheck for Docker, static assets, and
 # the auth pages themselves. v1.11.41: /api/public/stats was demoted from this
@@ -307,26 +320,77 @@ def create_session(db_path: Path, *, username: str, user_agent: str | None) -> s
     return sid
 
 
+def _parse_iso_utc(s: str | None) -> datetime | None:
+    """Parse a stored isoformat timestamp to an aware-UTC datetime, or None if
+    missing/unparseable (last_seen_at is written via isoformat, always with a
+    +00:00 offset; the tzinfo guard covers any legacy naive row)."""
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+def _touch_session_last_seen(db_path: Path, hashed_id: str, now_iso: str) -> None:
+    """Best-effort COARSE refresh of a session's last_seen_at (v0.51.88 idle
+    timeout). Fail-fast: a short busy_timeout overrides get_conn's 30s so a
+    locked DB (mid-sync) SKIPS the touch instead of blocking the request — the
+    read that just authenticated the session is authoritative, and last_seen_at
+    refreshes on a later request. This is the safe form of the write v1.11.37
+    removed: rare (≤ once per SESSION_TOUCH_INTERVAL_SECONDS) AND non-blocking."""
+    try:
+        with get_conn(db_path) as conn:
+            conn.execute("PRAGMA busy_timeout = 250")  # not the 30s default
+            conn.execute(
+                "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+                (now_iso, hashed_id),
+            )
+    except sqlite3.OperationalError:
+        # locked past 250ms → skip; the session stays valid, refresh retries
+        # next request. Warn once (class-9: a swallowed write needs a breadcrumb).
+        global _TOUCH_LOCKED_WARNED
+        if not _TOUCH_LOCKED_WARNED:
+            log.warning("_touch_session_last_seen: DB locked, skipped idle-"
+                        "timeout refresh (session still valid; retries next request)")
+            _TOUCH_LOCKED_WARNED = True
+
+
 def lookup_session(db_path: Path, session_id: str) -> str | None:
     """Return the username if the session is valid, None otherwise."""
     if not session_id:
         return None
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat(timespec="seconds")
+    hashed_id = _hash_session_id(session_id)
     with get_conn(db_path) as conn:
         row = conn.execute(
-            """SELECT username, expires_at FROM sessions
+            """SELECT username, last_seen_at FROM sessions
                WHERE id = ? AND expires_at > ?""",
-            (_hash_session_id(session_id), now_iso),
+            (hashed_id, now_iso),
         ).fetchone()
     if row is None:
         return None
-    # v1.11.37: dropped the per-request UPDATE sessions SET last_seen_at
-    # touch. Even with the v1.11.35 try/except, the UPDATE still
-    # WAITED on the writer lock during a long sync — every
-    # authenticated request blocked up to busy_timeout, making the
-    # whole UI feel softlocked. last_seen_at is diagnostic-only
-    # (no security or expiry logic depends on it); the SELECT above
-    # is authoritative for authentication.
+    # v0.51.88: idle timeout. The WHERE above enforces the 30-day ABSOLUTE TTL;
+    # this enforces the shorter ACTIVITY-based one — a session untouched for
+    # longer than SESSION_IDLE_TIMEOUT_SECONDS is dead, so a lingering/stolen
+    # cookie can't stay live indefinitely on an idle account.
+    last_seen = _parse_iso_utc(row["last_seen_at"])
+    if last_seen is None:
+        # unparseable/NULL — repair it (best-effort) rather than idle-expire on
+        # a data glitch; a valid last_seen_at makes future checks meaningful.
+        _touch_session_last_seen(db_path, hashed_id, now_iso)
+        return row["username"]
+    idle_s = (now - last_seen).total_seconds()
+    if idle_s > SESSION_IDLE_TIMEOUT_SECONDS:
+        return None
+    # v1.11.37 lesson: NEVER touch last_seen_at per request (the UPDATE waited on
+    # the writer lock during long syncs and softlocked the UI). Only refresh when
+    # it's already gone stale — so ~99% of requests do zero writes — and even
+    # then fail-fast + best-effort (see _touch_session_last_seen).
+    if idle_s > SESSION_TOUCH_INTERVAL_SECONDS:
+        _touch_session_last_seen(db_path, hashed_id, now_iso)
     return row["username"]
 
 
@@ -338,10 +402,20 @@ def destroy_session(db_path: Path, session_id: str) -> None:
 
 
 def cleanup_expired_sessions(db_path: Path) -> int:
-    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat(timespec="seconds")
+    # v0.51.88: also reap idle-timed-out sessions here, OFF the hot path (this
+    # runs at boot + on the scheduler sweep). lookup_session already rejects
+    # them immediately; this just deletes the stale rows so they don't linger
+    # to the 30-day absolute TTL. ISO-8601 sorts lexically == chronologically
+    # (all timestamps share the same +00:00 isoformat), so a string <= works.
+    idle_cutoff = datetime.fromtimestamp(
+        now.timestamp() - SESSION_IDLE_TIMEOUT_SECONDS, tz=timezone.utc,
+    ).isoformat(timespec="seconds")
     with get_conn(db_path) as conn:
         cur = conn.execute(
-            "DELETE FROM sessions WHERE expires_at <= ?", (now_iso,),
+            "DELETE FROM sessions WHERE expires_at <= ? OR last_seen_at <= ?",
+            (now_iso, idle_cutoff),
         )
         return cur.rowcount
 

@@ -3531,7 +3531,15 @@
 #   !document.hasFocus() (unfocused WINDOW), and a window blur listener nudges one repaint so
 #   the frozen strip settles on its loaded posters. Source-guard tests (paint timing of a
 #   real unfocused window — can't be exercised headless).
-__version__ = "0.51.87"
+# 0.51.88: CSS+login audit (last hardening item) — idle-session timeout. Sessions died only
+#   at the 30-day ABSOLUTE TTL; now a session untouched for >14 days (SESSION_IDLE_TIMEOUT_
+#   SECONDS) is rejected too, bounding how long a lingering/stolen cookie stays live on an
+#   idle account. The careful part (v1.11.37: the per-request last_seen_at UPDATE softlocked
+#   the UI on the writer lock during long syncs): the refresh is COARSE — only when
+#   last_seen_at is already >1h stale, so ~99% of requests write nothing — AND fail-fast +
+#   best-effort (250ms busy_timeout, lock swallowed + warned-once). cleanup_expired_sessions
+#   also reaps idle rows off the hot path (boot + scheduler sweep). Behavioral tests.
+__version__ = "0.51.88"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
