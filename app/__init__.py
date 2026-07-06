@@ -3546,7 +3546,16 @@
 #   the handler to PATCH {section:{field:null}} for any data-cfg-clear path (the backend already
 #   clears those on null). config save/load pipeline itself audited clean (silent-data-loss,
 #   masked-secret roundtrip, closed-set, partial-clobber all guarded).
-__version__ = "0.51.89"
+# 0.51.90: dashboard // DOWNLOAD ACTIVITY date alignment. The 30-bar axis was built with
+#   LOCAL date math but keyed as UTC (toISOString), while the server buckets on UTC
+#   DATE(created_at) — so in any negative-UTC zone (US) in the evening the last slot landed
+#   on TOMORROW's UTC date, mislabeling/dropping the "today" bar. Client now iterates in UTC
+#   (setUTCDate/getUTCDate); server window aligned to exactly the 30 UTC calendar dates the
+#   client renders (was a rolling 30x24h window spanning a 31st partial date with no client
+#   bucket → dropped). Also corrects a v0.51.89 rider: renaming the "// Clear-token button"
+#   comment orphaned test_v1_17_5's bindConfigSaves slice-anchor (green-gate slip — the tag
+#   shipped with that one stale-anchor test red; code was correct).
+__version__ = "0.51.90"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -199,7 +199,9 @@ def test_bindConfigSaves_dismiss_lives_in_finally():
     branch only; error messages lingered indefinitely."""
     js = APP_JS.read_text()
     fn_anchor = js.index("function bindConfigSaves()")
-    fn_end = js.index("\n    // Clear-token button", fn_anchor)
+    # v0.51.90: the end-anchor comment was renamed // Clear-token button →
+    # // Clear-secret buttons in v0.51.89 (generalized clear handler).
+    fn_end = js.index("\n    // Clear-secret buttons", fn_anchor)
     body = js[fn_anchor:fn_end]
     # Must be inside a finally block.
     assert "} finally {" in body

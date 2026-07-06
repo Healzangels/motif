@@ -9870,7 +9870,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     SELECT DATE(created_at) AS day, COUNT(*) AS n
                     FROM jobs
                     WHERE job_type = 'download'
-                      AND datetime(created_at) >= datetime('now', '-30 days')
+                      -- v0.51.90: exactly the 30 UTC calendar dates the client
+                      -- renders (today-29 … today), not a rolling 30x24h window
+                      -- (which spanned a 31st partial UTC date the 30-slot axis
+                      -- has no bucket for → that day's downloads were dropped).
+                      AND DATE(created_at) >= DATE('now', '-29 days')
                     GROUP BY DATE(created_at)
                     ORDER BY DATE(created_at) ASC
                 """).fetchall()

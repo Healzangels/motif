@@ -33,6 +33,10 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 def test_added_counts_wrap_timestamp_in_datetime():
     assert "datetime(placed_at) >= datetime('now', '-1 day')" in API_PY
     assert "datetime(placed_at) >= datetime('now', '-7 day')" in API_PY
+    # this guards has_insight_downloads (the 30-day EXISTS gate) — a rolling
+    # window that legitimately stays datetime()-wrapped. (v0.51.90 changed the
+    # SEPARATE per-day DOWNLOAD ACTIVITY chart query to a DATE()-aligned window;
+    # that's pinned by test_v0_51_90_download_activity_utc.)
     assert "datetime(created_at) >= datetime('now', '-30 days')" in API_PY
     # the bare string-compare forms (the bug) must be gone everywhere.
     assert "WHERE placed_at >= datetime('now'" not in API_PY

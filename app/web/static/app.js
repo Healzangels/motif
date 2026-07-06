@@ -3312,7 +3312,12 @@
     const days = [];
     for (let i = 29; i >= 0; i--) {
       const d = new Date(today);
-      d.setDate(d.getDate() - i);
+      // v0.51.90: iterate in UTC (setUTCDate/getUTCDate), not local. The keys
+      // are `d.toISOString().slice(0,10)` (UTC dates) and the server buckets on
+      // DATE(created_at) (also UTC), but the old local `setDate` arithmetic made
+      // the last slot land on TOMORROW's UTC date in any negative-UTC-offset
+      // zone in the evening — mislabeling/dropping the "today" bar.
+      d.setUTCDate(d.getUTCDate() - i);
       const iso = d.toISOString().slice(0, 10);
       days.push({ day: iso, count: have.get(iso) || 0 });
     }
