@@ -899,18 +899,17 @@
         </div>
       </div>
       {# v0.51.92: TITLE-cell badges beside the name. 4K = a 4K-library row (the
-         v0.51.23 amber chip). The library dot is collections-only — same-named
-         collections ("Action" ×3) from different libraries are told apart by the
-         owning library's TYPE color + a hover tooltip. Reuses the real
-         .tier-badge-4k + .lib-dot-* row classes (reuse-don't-mirror). #}
+         v0.51.23 amber chip). The library name pill is collections-only — the
+         owning Plex library's name trails the collection title so same-named
+         collections ("Action" ×3) from different libraries are told apart
+         (v0.51.93: a name pill, was a type-colored dot). Reuses the real
+         .tier-badge-4k + .lib-tag row classes (reuse-don't-mirror). #}
       <div class="help-gloss-sec">
         <h3 class="help-gloss-sec-t">TITLE — library &amp; variant</h3>
         <div class="help-gloss-grid">
           <div class="help-gloss-row"><span class="tier-badge tier-badge-4k">4K</span><span class="help-gloss-def">From a 4K library</span></div>
           {% if tab == "collections" %}
-          <div class="help-gloss-row"><span class="lib-dot lib-dot-movies"></span><span class="help-gloss-def">Owning library: Movies</span></div>
-          <div class="help-gloss-row"><span class="lib-dot lib-dot-tv"></span><span class="help-gloss-def">Owning library: TV</span></div>
-          <div class="help-gloss-row"><span class="lib-dot lib-dot-anime"></span><span class="help-gloss-def">Owning library: Anime — hover for its name</span></div>
+          <div class="help-gloss-row"><span class="lib-tag">Movies</span><span class="help-gloss-def">Owning Plex library — trails the collection name</span></div>
           {% endif %}
         </div>
       </div>

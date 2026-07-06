@@ -3153,13 +3153,6 @@ def _library_main_query(
                -- present in both the standard AND 4K sections is otherwise
                -- indistinguishable at a glance (the user).
                ps.is_4k AS section_is_4k,
-               -- v0.51.92: the owning library's type + anime flag, so the JS can
-               -- color the collections-view library dot by the dashboard accent
-               -- (movie→amber / show→blue / anime→magenta). In the collections
-               -- // ALL view a name like "Action" recurs once per library and is
-               -- otherwise indistinguishable at a glance (the user).
-               ps.type AS section_type,
-               ps.is_anime AS section_is_anime,
                t.tmdb_id AS theme_tmdb, t.media_type AS theme_media_type,
                t.title AS theme_title, t.youtube_url, t.youtube_video_id,
                -- v1.12.107: row's currently-applied URL — matches the

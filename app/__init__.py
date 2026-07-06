@@ -3581,7 +3581,16 @@
 #   decoded before) in a new "// TITLE" section of the // GLOSSARY + the
 #   in-context library LEGEND — reusing the real tier-badge-4k / lib-dot-* row
 #   classes (reuse-don't-mirror); the dot rows are gated to the collections tab.
-__version__ = "0.51.92"
+# 0.51.93: the user disliked the v0.51.92 type-colored dot — replaced it with the
+#   owning library's NAME trailing the collection title (a neutral .lib-tag pill
+#   modeled on .edition-pill; natural case so "4K Movies" vs "Movies" also read
+#   apart, which a type-color couldn't). Row: renderLibraryRow renders libTag
+#   AFTER the name (collection rows only). Info card: dropped the extra dot — the
+#   section chip already carries the library name. Removed the now-dead
+#   ps.type/ps.is_anime SELECT aliases (only the dot color used them). GLOSSARY +
+#   LEGEND updated to the name pill (4K chip decode unchanged). Verified in a real
+#   browser; the 4K + neutral pill sit beside the name without breaking the flex.
+__version__ = "0.51.93"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
