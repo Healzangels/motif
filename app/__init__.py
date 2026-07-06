@@ -3567,7 +3567,21 @@
 #   sections compute display:none outside customize, grid/block @ opacity .45 inside). Fix:
 #   comma separators so the comment holds no '*/'. Guard test asserts no CSS comment closes
 #   early (a comment-stripper leaves zero dangling '*/') and the .dash-user-hidden rule survives.
-__version__ = "0.51.91"
+# 0.51.92: collections // ALL view — a per-library dot on the row + info card.
+#   the user: several libraries can each own a collection with the SAME name
+#   ("Action" ×3, one per library) and nothing told them apart. Adds a small dot
+#   keyed to the owning library's TYPE (movie→amber / show→blue / anime→magenta,
+#   reusing the dashboard per-library accents) with the library name on hover, on
+#   the collection row (renderLibraryRow, gated on plex_media_type==='collection')
+#   AND the info card's section chip. The /api/library SELECT now aliases ps.type
+#   + ps.is_anime so the JS can pick the accent; section_title (already emitted)
+#   is the tooltip / chip text. Colors verified in a real browser against the
+#   resolved accent tokens; collections-only so the single-type tabs stay clean.
+#   Also documents both the new library dot AND the v0.51.23 4K chip (never
+#   decoded before) in a new "// TITLE" section of the // GLOSSARY + the
+#   in-context library LEGEND — reusing the real tier-badge-4k / lib-dot-* row
+#   classes (reuse-don't-mirror); the dot rows are gated to the collections tab.
+__version__ = "0.51.92"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -9878,6 +9878,18 @@
       : '<span class="muted">—</span>';
 
     const sectionLabel = it.section_title ? ` <span class="muted small">[${htmlEscape(it.section_title)}]</span>` : '';
+    // v0.51.92: collections // ALL view — a small dot keyed to the owning Plex
+    // library's TYPE (movie→amber / show→blue / anime→magenta, reusing the
+    // dashboard per-library accents), library name on hover. In the collections
+    // view a name like "Action" recurs once per library and is otherwise
+    // indistinguishable at a glance (the user); the dot + tooltip tell them
+    // apart. Collection rows only — the movies/tv/anime tabs are single-type so
+    // the dot would be noise there.
+    const libDot = it.plex_media_type === 'collection'
+      ? `<span class="lib-dot ${it.section_is_anime ? 'lib-dot-anime'
+          : it.section_type === 'movie' ? 'lib-dot-movies' : 'lib-dot-tv'}"`
+        + ` title="${htmlEscape(it.section_title || 'library')}"></span>`
+      : '';
     // v1.10.17: edition tag from folder_path so users can tell apart
     // multiple Plex entries that share title+year (Director's Cut,
     // Extended, IMAX, etc.). Renders as a yellow chip after the title.
@@ -11287,6 +11299,7 @@
         <td>
           <div class="title-cell" title="${htmlEscape(titleTooltip)}">
             ${titleGlyphs.join('')}
+            ${libDot}
             <!-- v1.13.55: pills moved out of the truncated span so
                  long titles ellipsis on the title text only.
                  v1.15.53: editionLabel hoisted out to col-edition
@@ -16855,10 +16868,17 @@
     let scopeChips = '';
     if (sc) {
       const scopeLbl = htmlEscape(sc.scope_label || '');
+      // v0.51.92: collection cards get the same library-type dot as the
+      // collections // ALL row (movie→amber / show→blue / anime→magenta), so
+      // the row's color and the card agree on which library owns it (the user).
+      const infoLibDot = (data.theme && data.theme.media_type === 'collection')
+        ? `<span class="lib-dot ${sc.is_anime ? 'lib-dot-anime'
+            : sc.type === 'movie' ? 'lib-dot-movies' : 'lib-dot-tv'}"></span>`
+        : '';
       scopeChips = `<div class="info-scope-row">`
         + (sc.section_title
             ? `<span class="info-scope-chip info-scope-chip-section"`
-              + ` title="${scopeLbl}">${htmlEscape(sc.section_title)}</span>`
+              + ` title="${scopeLbl}">${infoLibDot}${htmlEscape(sc.section_title)}</span>`
             : '')
         + (sc.edition
             ? `<span class="info-scope-chip info-scope-chip-edition">edition: ${htmlEscape(sc.edition)}</span>`

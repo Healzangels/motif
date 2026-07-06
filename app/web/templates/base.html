@@ -500,6 +500,20 @@
         </div>
       </section>
 
+      {# v0.51.92: TITLE-cell badges beside the name. 4K = the v0.51.23 amber
+         library-version chip; the library dot is the v0.51.92 collections // ALL
+         indicator. Reuses the real .tier-badge-4k + .lib-dot-* row classes
+         (v1.23.56 reuse-don't-mirror) so the decode is identical to the row. #}
+      <section class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">// TITLE — badges beside the name</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="tier-badge tier-badge-4k">4K</span><span class="help-gloss-def">4K library — this row is from a 4K section. Distinguishes a title present in BOTH the standard and 4K libraries in the // ALL view.</span></div>
+          <div class="help-gloss-row"><span class="lib-dot lib-dot-movies"></span><span class="help-gloss-def">Collections // ALL — the owning library is a <b>Movies</b> library (amber). Hover the dot on the row for its exact name.</span></div>
+          <div class="help-gloss-row"><span class="lib-dot lib-dot-tv"></span><span class="help-gloss-def">Collections // ALL — the owning library is a <b>TV</b> library (blue).</span></div>
+          <div class="help-gloss-row"><span class="lib-dot lib-dot-anime"></span><span class="help-gloss-def">Collections // ALL — the owning library is an <b>Anime</b> library (magenta). Same-named collections from different libraries are told apart by dot color + tooltip.</span></div>
+        </div>
+      </section>
+
       <section class="help-gloss-sec">
         <h3 class="help-gloss-sec-t">// TOPBAR — the status pills up top</h3>
         <div class="help-gloss-grid">

@@ -45,7 +45,8 @@ def _legend(html):
     to the legend. v1.23.49: the panel is a <div>, not a <details>."""
     i = html.index('id="library-legend"')
     # v1.23.68: widened 4000 -> 6000 for the new TDB axis section.
-    return html[i:i + 6000]
+    # v0.51.92: widened 6000 -> 7000 for the new TITLE (4K + library dot) section.
+    return html[i:i + 7000]
 
 
 # ── behavioral: the legend renders + decodes this tab's chips ──

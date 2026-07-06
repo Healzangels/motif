@@ -3245,6 +3245,25 @@ body.help-mode .settings-help-about { display: block; }
 }
 .title-cell > *:not(.title-cell-name) { flex-shrink: 0; }
 
+/* v0.51.92: collections // ALL view — a small dot keyed to the owning Plex
+   library's TYPE so same-named collections from different libraries ("Action"
+   ×3) are distinguishable at a glance (the user). Colors reuse the dashboard
+   per-library accents; the library name rides a title= tooltip on the row and
+   as the info-scope-chip's text on the card. Sized/aligned for both the flex
+   .title-cell (gap handles spacing) and the inline info scope chip. */
+.lib-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+.lib-dot-movies { background: var(--dash-movies-color); }
+.lib-dot-tv     { background: var(--dash-tv-color); }
+.lib-dot-anime  { background: var(--dash-anime-color); }
+.info-scope-chip .lib-dot { margin-right: 5px; }
+
 /* Inline glyphs prepended to a title cell to flag state. Click-as-button. */
 .title-glyph {
   background: transparent; border: 0; cursor: pointer;
