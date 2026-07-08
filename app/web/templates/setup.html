@@ -18,7 +18,8 @@
     </p>
 
     {% if error %}
-    <div class="alert alert-error">! {{ error }}</div>
+    {# v0.51.96 (a11y): role=alert so a screen reader announces the setup error. #}
+    <div class="alert alert-error" role="alert">! {{ error }}</div>
     {% endif %}
 
     <form method="post" action="/setup" class="auth-form">

@@ -3604,7 +3604,11 @@
 #   the edition_key clause to all four SSR NOT EXISTS subqueries. Behavioral test
 #   (two editions, one placed → SSR ready counts the unplaced sibling) + a
 #   mirror-drift guard pinning all four subqueries + the coverage reference.
-__version__ = "0.51.95"
+# 0.51.96: a11y — the login + first-run setup error banners (<div class="alert
+#   alert-error">, server-rendered under {% if error %}) had no ARIA role, so a
+#   screen reader never announced a failed login / setup error. Added role="alert"
+#   to both (the standard live-region role for a validation error). Markup-only.
+__version__ = "0.51.96"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
