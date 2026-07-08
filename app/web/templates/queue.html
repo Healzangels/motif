@@ -73,6 +73,10 @@
       <button class="chip" data-evfilter="3600" title="Events from the last hour.">1H</button>
       <button class="chip" data-evfilter="86400" title="Events from the last 24 hours.">24H</button>
       <button class="chip" data-evfilter="604800" title="Events from the last 7 days.">7D</button>
+      {# v0.51.97: dismissable indicator for a ?level=/?component= deep-link
+         filter (v1.22.79), which was applied invisibly with no way to clear.
+         Populated by renderEventFilters(); hidden when neither is active. #}
+      <span id="ev-active-filters" class="ev-active-filters" hidden></span>
     </div>
     <ol class="event-stream event-stream-tall" id="event-stream-full"></ol>
   </div>

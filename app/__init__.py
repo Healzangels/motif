@@ -3608,7 +3608,13 @@
 #   alert-error">, server-rendered under {% if error %}) had no ARIA role, so a
 #   screen reader never announced a failed login / setup error. Added role="alert"
 #   to both (the standard live-region role for a validation error). Markup-only.
-__version__ = "0.51.96"
+# 0.51.97: LOGS event-stream ?level=/?component= deep-link filter (v1.22.79) was
+#   applied INVISIBLY — the SINCE chips still read ALL and there was no way to clear
+#   it short of a full nav back to /queue. Now renders a dismissable amber pill per
+#   active filter (renderEventFilters); clicking it clears that var, drops the URL
+#   param (so a refresh doesn't re-apply it), and reloads. Verified render+clear in a
+#   real browser; the .chip.ev-filter-clear (0,2,0) amber beats the later .chip color.
+__version__ = "0.51.97"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

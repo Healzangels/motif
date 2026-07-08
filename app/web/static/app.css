@@ -2066,6 +2066,13 @@ body.help-mode .settings-help-about { display: block; }
   display: flex;
   align-items: center;
 }
+/* v0.51.97: active event-stream filter pills (?level=/?component= deep-links)
+   — a dismissable amber chip so the invisible filter is visible + clearable. */
+.ev-active-filters { display: inline-flex; align-items: center; gap: var(--gap-1); }
+.ev-active-filters[hidden] { display: none; }
+/* .chip.ev-filter-clear (0,2,0) so the amber wins over the later `.chip` color. */
+.chip.ev-filter-clear { color: var(--amber); border-color: var(--amber); cursor: pointer; }
+.chip.ev-filter-clear:hover { background: rgba(var(--amber-rgb), 0.12); color: var(--amber); }
 .chip {
   /* v1.15.132: inline-flex centering for predictable glyph
      placement. See .pill above for the rationale (the user's

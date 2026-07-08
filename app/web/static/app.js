@@ -4897,6 +4897,22 @@
   let eventStreamLevel = '';
   let eventStreamComponent = '';
 
+  // v0.51.97: surface the v1.22.79 ?level=/?component= deep-link filter as a
+  // dismissable pill so the operator can SEE it's active and CLEAR it — pre-fix
+  // it filtered the stream invisibly (SINCE chips still showed ALL) with no exit
+  // but a full nav back to /queue. Rendered once in bindQueue + on each clear.
+  function renderEventFilters() {
+    const box = $('#ev-active-filters');
+    if (!box) return;
+    const active = [];
+    if (eventStreamLevel) active.push(['level', eventStreamLevel]);
+    if (eventStreamComponent) active.push(['component', eventStreamComponent]);
+    box.innerHTML = active.map(([k, v]) =>
+      `<button type="button" class="chip ev-filter-clear" data-clear-evfilter="${k}"`
+      + ` title="Clear the ${k} filter">${k}: ${htmlEscape(v)} ✕</button>`).join('');
+    box.hidden = active.length === 0;
+  }
+
   // v1.22.56: LOGS view toggle. The page now shows ONE full-width panel
   // at a time (JOBS or EVENT STREAM) instead of the old side-by-side
   // split — mirrors the library STANDARD/4K resolution toggle. With no
@@ -5347,6 +5363,25 @@
     // template has promised them since the backfill banner shipped).
     eventStreamLevel = (_qp.get('level') || '').trim();
     eventStreamComponent = (_qp.get('component') || '').trim();
+    // v0.51.97: paint the active-filter pills + wire their clear (delegated on
+    // the stable container so re-renders don't drop the listener). Clearing
+    // drops the URL param too so a refresh doesn't silently re-apply it.
+    renderEventFilters();
+    const _evFilterBox = $('#ev-active-filters');
+    if (_evFilterBox) {
+      _evFilterBox.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-clear-evfilter]');
+        if (!btn) return;
+        const which = btn.dataset.clearEvfilter;
+        if (which === 'level') eventStreamLevel = '';
+        else if (which === 'component') eventStreamComponent = '';
+        const u = new URL(window.location.href);
+        u.searchParams.delete(which);
+        history.replaceState(history.state, '', u.pathname + u.search);
+        renderEventFilters();
+        loadQueue().catch(console.error);
+      });
+    }
     const allowedSince = new Set(['0', '3600', '86400', '604800']);
     const initialSince = new URLSearchParams(window.location.search).get('since');
     if (initialSince && allowedSince.has(initialSince)) {
