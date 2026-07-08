@@ -6724,10 +6724,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 AND COALESCE(t.failure_kind, '') NOT IN
                                     ('video_private', 'video_removed',
                                      'video_age_restricted', 'geo_blocked')
+                                -- v0.51.95: scope the placed-check to THIS edition
+                                -- (mirror /api/coverage/plex's `placed` EXISTS) — a
+                                -- placement on ONE edition otherwise made every sibling
+                                -- edition of the same title+section read "not ready", so
+                                -- the SSR count undershot the coverage page + the library's
+                                -- per-row unthemed (SRC=—) view for multi-edition titles.
                                 AND NOT EXISTS (SELECT 1 FROM placements p
                                                 WHERE p.media_type='movie'
                                                   AND p.tmdb_id=t.tmdb_id
-                                                  AND p.section_id=pi.section_id)
+                                                  AND p.section_id=pi.section_id
+                                                  AND p.edition_key=pi.edition_key)
                                THEN 1 ELSE 0 END)
                           AS plex_movies_ready,
                       SUM(CASE WHEN pi.media_type='show' AND ps.is_anime=0
@@ -6740,7 +6747,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 AND NOT EXISTS (SELECT 1 FROM placements p
                                                 WHERE p.media_type='tv'
                                                   AND p.tmdb_id=t.tmdb_id
-                                                  AND p.section_id=pi.section_id)
+                                                  AND p.section_id=pi.section_id
+                                                  AND p.edition_key=pi.edition_key)  -- v0.51.95: per-edition (see plex_movies_ready)
                                THEN 1 ELSE 0 END)
                           AS plex_tv_ready,
                       SUM(CASE WHEN pi.media_type IN ('show', 'movie') AND ps.is_anime=1
@@ -6754,7 +6762,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                                 WHERE p.media_type = CASE WHEN pi.media_type='movie'
                                                                           THEN 'movie' ELSE 'tv' END
                                                   AND p.tmdb_id=t.tmdb_id
-                                                  AND p.section_id=pi.section_id)
+                                                  AND p.section_id=pi.section_id
+                                                  AND p.edition_key=pi.edition_key)  -- v0.51.95: per-edition (see plex_movies_ready)
                                THEN 1 ELSE 0 END)
                           AS plex_anime_ready,
                       SUM(CASE WHEN pi.media_type='collection' AND pi.has_theme=0
@@ -6766,7 +6775,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 AND NOT EXISTS (SELECT 1 FROM placements p
                                                 WHERE p.media_type='collection'
                                                   AND p.tmdb_id=t.tmdb_id
-                                                  AND p.section_id=pi.section_id)
+                                                  AND p.section_id=pi.section_id
+                                                  AND p.edition_key=pi.edition_key)  -- v0.51.95: per-edition (see plex_movies_ready)
                                THEN 1 ELSE 0 END)
                           AS plex_collections_ready
                     FROM plex_items pi

@@ -3594,7 +3594,17 @@
 #   a [Movies]/[Anime] title tag but UNUSED since v1.15.53 dropped it from the TDB
 #   cell; v0.51.93's libTag now owns the collections library label) + de-referenced
 #   the dead name in the v1.15.53 layout comment. No behavior change.
-__version__ = "0.51.94"
+# 0.51.95: dashboard "ready to add" SSR count is now per-EDITION. The plex_*_ready
+#   aggregates checked placements by media_type+tmdb_id+section_id only, while
+#   /api/coverage/plex (the reference the SSR mirrors) scopes its `placed` flag by
+#   `p.edition_key = pi.edition_key` (the v1.21.5x edition arc). So a placement on
+#   ONE edition made every sibling edition of the same title+section read
+#   "not ready" → the dashboard undershot the coverage page + the library's
+#   per-row unthemed (SRC=—) view for multi-edition titles (mirror-drift). Added
+#   the edition_key clause to all four SSR NOT EXISTS subqueries. Behavioral test
+#   (two editions, one placed → SSR ready counts the unplaced sibling) + a
+#   mirror-drift guard pinning all four subqueries + the coverage reference.
+__version__ = "0.51.95"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
