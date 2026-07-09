@@ -1527,6 +1527,69 @@ def find_theme_sidecar_path(folder_path: str) -> Path | None:
     return None
 
 
+def sweep_stale_placement_temps(db_path: Path, *,
+                                section_ids: list[str] | None = None,
+                                older_than_secs: int = 3600) -> int:
+    """v0.51.104: delete orphaned `theme.mp3.motif-tmp` files — the atomic
+    staging temp `_safe_link_or_copy` writes and then os.replace()s to
+    theme.mp3. A crash / container restart / FS hiccup in that split-second
+    window leaves it behind. Normally the NEXT placement to that folder cleans
+    it (placement.py:206), but a folder that never gets re-placed — an edition
+    drift, a switch to plex_upload — keeps the orphan indefinitely (the user's
+    LotR {edition-theatrical} folder). A tmp older than older_than_secs
+    (default 1h) can't be a placement in flight, so it's cruft.
+
+    Walks distinct media folders (plex_items.folder_path), translating each
+    host→container path via _candidate_local_paths (same table the reaper +
+    health passes use), and unlinks any stale theme.mp3.motif-tmp. Best-effort:
+    an unreachable folder / an undeletable temp is skipped + logged. Returns the
+    count removed. Scoped by section_ids when given (default None = all)."""
+    _scope_sql, _scope_params = _section_scope_clause(section_ids)
+    try:
+        with get_conn(db_path) as conn:
+            rows = conn.execute(
+                "SELECT DISTINCT folder_path FROM plex_items "
+                "WHERE folder_path IS NOT NULL AND folder_path != ''"
+                + _scope_sql, _scope_params).fetchall()
+    except Exception as e:  # noqa: BLE001 — defensive
+        log.warning("sweep_stale_placement_temps: folder query failed: %s", e)
+        return 0
+    folders = [r["folder_path"] for r in rows]
+    if not folders:
+        return 0
+    import time as _time
+    cutoff = _time.time() - max(0, older_than_secs)
+
+    def _sweep_one(folder_path: str) -> int:
+        # First reachable candidate dir wins (mirror find_theme_sidecar_path).
+        for candidate in _candidate_local_paths(folder_path):
+            tmp = candidate / "theme.mp3.motif-tmp"
+            try:
+                st = tmp.stat()
+            except OSError:
+                continue  # not present in this candidate — try the next
+            if st.st_mtime > cutoff:
+                return 0  # too fresh — a placement may be mid-flight
+            try:
+                tmp.unlink()
+                log.info("sweep_stale_placement_temps: removed stale %s", tmp)
+                return 1
+            except OSError as e:
+                log.warning(
+                    "sweep_stale_placement_temps: could not remove %s: %s",
+                    tmp, e)
+                return 0
+        return 0
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=16) as ex:
+        total = sum(ex.map(_sweep_one, folders))
+    if total:
+        log.info("sweep_stale_placement_temps: removed %d stale .motif-tmp "
+                 "file(s) across %d media folder(s)", total, len(folders))
+    return total
+
+
 def stat_theme_sidecar(folder_path: str) -> bool | None:
     """v1.11.67: returns True if a theme.<audio-ext> exists, False
     if we successfully scanned the folder and confirmed no such

@@ -920,6 +920,23 @@ def _cleanup_sessions_job(db_path: Path) -> None:
                   message=f"Purged {purged} expired session(s)")
 
 
+def _sweep_placement_temps_job(db_path: Path) -> None:
+    """v0.51.104: daily cleanup of orphaned theme.mp3.motif-tmp files left in
+    media folders by interrupted atomic placements (a crash/restart between the
+    hardlink-copy and the os.replace). Normally cleaned on the next placement to
+    that folder, but a folder that never gets re-placed (edition drift, a switch
+    to plex_upload) keeps the orphan. No-op when there are none."""
+    from .plex_enum import sweep_stale_placement_temps
+    try:
+        removed = sweep_stale_placement_temps(db_path)
+    except Exception as e:  # noqa: BLE001 — a hygiene sweep must never crash the scheduler
+        log.warning("Stale .motif-tmp sweep job failed: %s", e)
+        return
+    if removed:
+        log_event(db_path, level="INFO", component="scheduler",
+                  message=f"Removed {removed} stale .motif-tmp placement temp(s)")
+
+
 # v1.13.10 (#15): track consecutive release-check failures across
 # scheduler invocations so we can surface persistent breakage
 # (renamed repo, sustained 5xx, missing API token, etc.) without
@@ -1209,6 +1226,17 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         _prune_history, args=[settings.db_path],
         trigger=CronTrigger(minute="15", hour="3", timezone="UTC"),
         id="history_prune", replace_existing=True, max_instances=1,
+    )
+
+    # v0.51.104: daily cleanup of orphaned theme.mp3.motif-tmp files (interrupted
+    # atomic placements). Slotted 03:20 UTC after the DB-hygiene prunes (03:05-
+    # 03:15), clear of release check (04:17) + sync (13:00). It's an FS walk, not
+    # a writer-lock job, so it doesn't contend with the DB prunes above; no-op
+    # when there are no orphans.
+    scheduler.add_job(
+        _sweep_placement_temps_job, args=[settings.db_path],
+        trigger=CronTrigger(minute="20", hour="3", timezone="UTC"),
+        id="placement_temp_sweep", replace_existing=True, max_instances=1,
     )
 
     # v1.13.54: op_progress prune every 30 minutes. Was firing on

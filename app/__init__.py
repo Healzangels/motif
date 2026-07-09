@@ -3662,7 +3662,15 @@
 #   per-row writes → short lock-holds; halves the fixed sleep tax on a large
 #   section). The resolve chunk_size/sleep are left as-is (deliberately tuned
 #   against documented writer-starvation — their 7-UPDATE chunks hold ~1-2s).
-__version__ = "0.51.103"
+# 0.51.104: stale-.motif-tmp sweep. _safe_link_or_copy stages a placement as
+#   theme.mp3.motif-tmp then os.replace()s it to theme.mp3; a crash/restart in
+#   that window orphans the temp, and it's only cleaned on the NEXT placement to
+#   that folder — a folder that never gets re-placed (edition drift, a switch to
+#   plex_upload) keeps it forever (the user found one in a LotR folder). New
+#   sweep_stale_placement_temps walks distinct plex_items.folder_path media
+#   folders (host→container translated), unlinks any theme.mp3.motif-tmp older
+#   than 1h; a daily scheduler job (03:20 UTC) runs it. No-op when none exist.
+__version__ = "0.51.104"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
