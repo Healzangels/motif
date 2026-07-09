@@ -127,10 +127,11 @@ def test_verify_caps_implausible_missing_as_mount_fault(tmp_path):
 
 
 def test_verify_wired_into_enum_cycle():
-    assert "verify_canonical_health(db_path" in PLEX_ENUM_PY
-    # guarded on themes_dir being configured.
+    assert "verify_canonical_health(" in PLEX_ENUM_PY
+    # guarded on themes_dir being configured (v0.51.101 also gates on the
+    # section scope so a no-work enum skips the pass).
     assert "_themes_dir = Settings().themes_dir" in PLEX_ENUM_PY
-    assert "if _themes_dir is not None:" in PLEX_ENUM_PY
+    assert "if _themes_dir is not None" in PLEX_ENUM_PY
 
 
 # ── 3. DL sort groups broken / on / off (behavioral) ─────────

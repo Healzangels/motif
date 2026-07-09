@@ -29,7 +29,8 @@ def test_plex_enum_transitions_to_health_before_the_health_passes():
     # ordering: reconcile stage set → health transition → verify_placement_health call
     i_reconcile = ENUM.index('stage="reconcile"')
     i_health = ENUM.index('stage="health"')
-    i_verify = ENUM.index("verify_placement_health(db_path)")
+    # v0.51.101: the call now carries section_ids=_scope_sections (scoped).
+    i_verify = ENUM.index("verify_placement_health(db_path, section_ids=")
     assert i_reconcile < i_health < i_verify, (
         "health stage must transition after reconcile is set but before the "
         "verify_placement_health pass it wraps")

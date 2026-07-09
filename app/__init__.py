@@ -3638,7 +3638,17 @@
 #   pipeline OR tdb-sync·auto_enum OR ≥2 tabs running); template var renamed
 #   pipeline_in_flight → refresh_in_flight. Behavioral tests cover per-tab lock +
 #   cross-variant/cross-tab independence + collections + cascade back-compat.
-__version__ = "0.51.100"
+# 0.51.101: plex-refresh perf (Tier-1 #1) — the three end-of-enum passes
+#   (reconcile_placement_paths + the two FS-stat health passes) ran table-wide,
+#   serial-FS, on EVERY enum, even a single-section REFRESH or an all-delta-
+#   skipped run — thousands of theme.mp3 stats over the network mount for
+#   nothing. Now run_plex_enum tracks the walked sections and SKIPS all three on
+#   a no-work run / SCOPES them to the walked-or-targeted section(s) via a new
+#   optional section_ids param (default None = table-wide, unchanged for the
+#   nightly all-sections cron). placements/local_files carry section_id in the
+#   PK so scoping is clean; the global pure-DB plex_upload staleness pass stays
+#   table-wide. O(16K)→O(section) on the common REFRESH; ~0 on a stable cron.
+__version__ = "0.51.101"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

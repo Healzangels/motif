@@ -272,6 +272,12 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 )
                 live_cca = {}
             stats["skipped_unchanged"] = 0
+            # v0.51.101: the section(s) that actually got walked this run (not
+            # contentChangedAt-skipped). Used below to scope — or skip — the
+            # three table-wide end passes (reconcile + the two FS-stat health
+            # passes) so a stable-library / partial refresh doesn't stat every
+            # section's theme.mp3 on a network mount for nothing.
+            worked_sections: set[str] = set()
             for s in managed:
                 # v1.11.36: cooperative cancellation between sections.
                 if _cancel_check():
@@ -346,6 +352,10 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                             f"enum (Plex contentChangedAt unchanged)"),
                     )
                     continue
+                # v0.51.101: this section is being walked (not delta-skipped)
+                # → its placements/local_files may change, so it needs the end
+                # passes. Record it for the scoping/skip decision below.
+                worked_sections.add(section_id)
                 # Pre-fetch: bar resets to 0 of "unknown" so it
                 # doesn't carry the previous section's fill. Label
                 # encodes section index for context.
@@ -612,6 +622,21 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                                  if verified_n else "")),
                 )
 
+        # v0.51.101: decide the scope for the three end passes (reconcile + the
+        # two FS-stat health passes). A single-section REFRESH always runs them
+        # for its target (the user asked for fresh state, even if the section
+        # delta-skipped). A full/cron run scopes to the sections that were
+        # actually walked; a no-work run (everything delta-skipped, no explicit
+        # target) skips all three — nothing motif tracks on disk changed. The
+        # nightly cron re-walks every overdue section (v1.18.92 24h bypass), so
+        # per-section scoping there still sums to full coverage over ~24h.
+        if only_section_id is not None:
+            _scope_sections: list[str] | None = [only_section_id]
+        else:
+            _scope_sections = sorted(worked_sections) or None
+        if _scope_sections is None:
+            log.info("plex_enum: no sections walked (all unchanged) — skipping "
+                     "the reconcile + health passes this run")
         op_progress.update_progress(
             db_path, "plex_enum",
             stage="reconcile",
@@ -624,7 +649,8 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
         # placed the hardlink. When they diverge, the OLD path is stale —
         # update the placement to the new path and enqueue a place job so
         # Plex finds the theme in its current folder.
-        relinked = reconcile_placement_paths(db_path)
+        relinked = (reconcile_placement_paths(db_path, section_ids=_scope_sections)
+                    if _scope_sections is not None else 0)
         stats["relinked"] = relinked
 
         # v0.50.43: distinct 'health' stage so the RUN INSIGHT waterfall breaks the
@@ -643,7 +669,12 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
         # in the PL=broken sort bucket — the live red dot is a per-render stat
         # the paginated SQL sort can't see.
         try:
-            health = verify_placement_health(db_path)
+            # v0.51.101: scoped to the walked section(s); a no-work run gets a
+            # benign empty result so the logging below stays a clean no-op.
+            health = (
+                verify_placement_health(db_path, section_ids=_scope_sections)
+                if _scope_sections is not None
+                else {"missing": 0, "checked": 0, "skipped": 0, "pruned": 0})
             stats["placements_missing"] = health["missing"]
             stats["placements_pruned"] = health.get("pruned", 0)
             _skipped = health.get("skipped", 0)
@@ -677,8 +708,10 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
         try:
             from ..config import Settings
             _themes_dir = Settings().themes_dir
-            if _themes_dir is not None:
-                chealth = verify_canonical_health(db_path, _themes_dir)
+            # v0.51.101: skip on a no-work run; scope to the walked section(s).
+            if _themes_dir is not None and _scope_sections is not None:
+                chealth = verify_canonical_health(
+                    db_path, _themes_dir, section_ids=_scope_sections)
                 stats["canonical_missing"] = chealth["missing"]
                 _cskipped = chealth.get("skipped", 0)
                 if chealth["missing"] or _cskipped:
@@ -752,7 +785,21 @@ def delete_superseded_sidecar_placement(
     return cur.rowcount
 
 
-def verify_placement_health(db_path: Path) -> dict:
+def _section_scope_clause(section_ids: list[str] | None,
+                          *, col: str = "section_id") -> tuple[str, tuple]:
+    """v0.51.101: build an ' AND <col> IN (?,…)' fragment + params so a
+    reconcile/health pass can scope to the section(s) a plex_enum actually
+    walked (or the one a single-section REFRESH targeted). Returns ('', ())
+    when section_ids is None/empty — the table-wide default the nightly
+    all-sections cron relies on for full coverage."""
+    if not section_ids:
+        return "", ()
+    ph = ",".join("?" for _ in section_ids)
+    return f" AND {col} IN ({ph})", tuple(section_ids)
+
+
+def verify_placement_health(db_path: Path, *,
+                            section_ids: list[str] | None = None) -> dict:
     """v1.23.25: stamp placements.theme_present so the library's NEEDS WORK
     (attention) + PL sorts can rank a BROKEN placement — theme.mp3 gone from
     the Plex media folder — cheaply in SQL. The red PL dot is otherwise a
@@ -782,12 +829,20 @@ def verify_placement_health(db_path: Path) -> dict:
     surfacing them. Such records are PRUNED here. A missing sidecar with NO
     plex_upload sibling is genuinely broken and still stamps theme_present=0
     (surfaces in NEEDS WORK). Returns {checked, missing, pruned}."""
+    # v0.51.101: scope the FS-stat sidecar sweep (the cost) to the walked
+    # section(s) when the caller passes section_ids — a single-section REFRESH
+    # or a partial cron no longer stats every section's theme.mp3. The
+    # pure-DB plex_upload staleness pass below stays GLOBAL (it's cheap and its
+    # rating_key-liveness check is inherently cross-section). section_ids=None
+    # keeps the table-wide default the nightly all-sections cron uses.
+    _scope_sql, _scope_params = _section_scope_clause(section_ids)
     with get_conn(db_path) as conn:
         rows = conn.execute(
             "SELECT media_type, tmdb_id, section_id, media_folder, edition_key "
             "FROM placements "
             "WHERE media_folder IS NOT NULL AND media_folder != '' "
-            "  AND placement_kind != 'plex_upload'"
+            "  AND placement_kind != 'plex_upload'" + _scope_sql,
+            _scope_params,
         ).fetchall()
         # v1.23.26: items with a live API-upload placement. A missing sidecar
         # keyed here is superseded cruft, not a broken theme — prune it.
@@ -795,10 +850,12 @@ def verify_placement_health(db_path: Path) -> dict:
             (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"])
             for r in conn.execute(
                 "SELECT media_type, tmdb_id, section_id, edition_key "
-                "FROM placements WHERE placement_kind = 'plex_upload'")
+                "FROM placements WHERE placement_kind = 'plex_upload'"
+                + _scope_sql, _scope_params)
         }
         total_placements = conn.execute(
-            "SELECT COUNT(*) FROM placements").fetchone()[0]
+            "SELECT COUNT(*) FROM placements WHERE 1=1" + _scope_sql,
+            _scope_params).fetchone()[0]
     now = now_iso()
     present_updates: list = []   # theme_present=1 — confirmed on disk
     missing_updates: list = []   # theme_present=0 — confirmed gone
@@ -946,7 +1003,8 @@ def verify_placement_health(db_path: Path) -> dict:
             "plex_upload_skipped": pu_skipped}
 
 
-def verify_canonical_health(db_path: Path, themes_dir: Path) -> dict:
+def verify_canonical_health(db_path: Path, themes_dir: Path, *,
+                            section_ids: list[str] | None = None) -> dict:
     """v1.23.37: stamp local_files.canonical_present so the library's DL sort
     can rank a BROKEN canonical — the theme.mp3 gone from motif's canonical
     storage (themes_dir/file_path) while the local_files row persists — cheaply
@@ -972,12 +1030,17 @@ def verify_canonical_health(db_path: Path, themes_dir: Path) -> dict:
     canonical-storage root (file_path is relative to it); the caller passes
     Settings().themes_dir and skips the pass when it's unconfigured. Returns
     {checked, missing, skipped}."""
+    # v0.51.101: scope the FS-stat sweep to the walked section(s) when given.
+    _scope_sql, _scope_params = _section_scope_clause(section_ids)
     with get_conn(db_path) as conn:
         rows = conn.execute(
             "SELECT media_type, tmdb_id, section_id, edition_key, file_path "
             "FROM local_files WHERE file_path IS NOT NULL AND file_path != ''"
+            + _scope_sql, _scope_params
         ).fetchall()
-        total = conn.execute("SELECT COUNT(*) FROM local_files").fetchone()[0]
+        total = conn.execute(
+            "SELECT COUNT(*) FROM local_files WHERE 1=1" + _scope_sql,
+            _scope_params).fetchone()[0]
     # v1.23.42: themes_dir liveness gate. If the canonical-storage root itself
     # isn't a live directory (the /data mount dropped), EVERY file_path stat
     # reads missing via is_file()→False (ENOENT/ENOTDIR are in pathlib's ignore
@@ -1038,7 +1101,8 @@ def verify_canonical_health(db_path: Path, themes_dir: Path) -> dict:
     return {"checked": len(updates), "missing": missing, "skipped": skipped}
 
 
-def reconcile_placement_paths(db_path: Path) -> int:
+def reconcile_placement_paths(db_path: Path, *,
+                              section_ids: list[str] | None = None) -> int:
     """Find placements whose media_folder no longer matches the current
     plex_items.folder_path for that (media_type, tmdb_id), update the
     placement to the new path, and enqueue a forced place job so the
@@ -1060,6 +1124,11 @@ def reconcile_placement_paths(db_path: Path) -> int:
     plex_enum jobs in the failed state.
     """
     enqueued = 0
+    # v0.51.101: scope the divergence-detect JOIN to the walked section(s) when
+    # given (a single-section REFRESH / partial cron). The plex_paths_by_item
+    # guard dict below stays GLOBAL — a superset only makes the "still Plex-
+    # reported" skip MORE conservative, never wrongly relinking.
+    _scope_sql, _scope_params = _section_scope_clause(section_ids, col="p.section_id")
     with get_conn(db_path) as conn:
         # DISTINCT collapses cases where the same (mt, tmdb, old, new)
         # tuple appears multiple times via different ratingKeys.
@@ -1104,7 +1173,8 @@ def reconcile_placement_paths(db_path: Path) -> int:
                WHERE pi.folder_path IS NOT NULL
                  AND pi.folder_path != ''
                  AND p.media_folder != pi.folder_path
-                 AND p.placement_kind != 'plex_upload'"""
+                 AND p.placement_kind != 'plex_upload'""" + _scope_sql,
+            _scope_params,
         ).fetchall()
         # If a placement already covers one of the candidate new_folders
         # (multi-ratingKey case), don't move that placement — just drop
