@@ -1832,11 +1832,12 @@ class PlexClient:
         - Batches default to 50 ids per call; chosen to keep
           URL length comfortably under common 8KB server
           limits (50 × ~6-digit rk + commas ≈ 350 bytes).
-        - max_concurrent_batches=4 is conservative — Plex
+        - max_concurrent_batches=8 (v0.51.102, was 4) — Plex
           tolerates at least 16 concurrent /library/metadata
-          GETs (proven by v1.13.90's per-item fallback) but
-          the per-call payload is N× larger, so 4 keeps wall-
-          clock cost low without saturating the server.
+          GETs (proven by v1.13.90's per-item fallback); with
+          the v0.51.102 excludeElements trim each batch's payload
+          is ~5-10× smaller, so 8 stays well within the server's
+          headroom while halving the fallback's wall-clock.
         """
         from urllib.parse import quote
         if not rating_keys:

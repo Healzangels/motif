@@ -182,6 +182,35 @@ def test_tdb_sync_with_auto_enum_locks(client):
     assert _locked(c, "/movies?fourk=0")
 
 
+def test_two_running_tab_enums_lock_a_third_tab(client):
+    """v0.51.100 term-3 (mirrors enumTabsActive > 1): ≥2 DISTINCT tabs each
+    running a per-section enum locks EVERY tab — including a third tab that has
+    no enum of its own (a broad refresh is clearly under way). Code-review #4:
+    this term had no behavioral coverage. Seed a running movies enum + a running
+    tv enum (2 distinct tabs), then assert the ANIME button — which has no enum —
+    still paints locked."""
+    c, db = client
+    _section(db, "1", typ="movie", is_4k=0)          # movies tab
+    _section(db, "2", typ="show", is_4k=0)           # tv tab
+    _job(db, section_id="1", status="running")
+    _job(db, section_id="2", status="running")
+    assert _locked(c, "/anime?fourk=0")              # third, enum-less tab locks
+    assert _locked(c, "/collections")                # collections locks too
+
+
+def test_two_pending_tab_enums_do_not_lock_a_third_tab(client):
+    """Term-3 is RUNNING-only (mirrors enumActive, not the pending set). Two
+    PENDING per-tab enums must NOT lock an unrelated third tab — only the tabs
+    that own them lock (via myTabBusy). Guards against widening term-3 to
+    pending, which would over-lock during a queued cascade."""
+    c, db = client
+    _section(db, "1", typ="movie", is_4k=0)
+    _section(db, "2", typ="show", is_4k=0)
+    _job(db, section_id="1", status="pending")
+    _job(db, section_id="2", status="pending")
+    assert not _locked(c, "/anime?fourk=0")          # third tab stays clickable
+
+
 # ── plumbing guard ──────────────────────────────────────────────────
 
 

@@ -3678,7 +3678,24 @@
 #   topbar poll ADAPTIVE (2s while any mutating op is active, 10s idle) off the
 #   anyMutatingOpActive signal refreshTopbarStatus already stashes — badges now
 #   track rows during ops.
-__version__ = "0.51.105"
+# 0.51.106: code-review corrective batch (findings from the v0.51.98-105 diff).
+#   #1 (CONFIRMED): verify_placement_health's mount-fault cap is an ABSOLUTE
+#   floor (max(50, total//4)). v0.51.101 made the pass runnable against a SINGLE
+#   scoped section — a /data blip that reads every sidecar of a small (<200-row)
+#   section missing has suspect < the 50 floor, so the guard never fired and the
+#   whole section false-stamped broken. A count/ratio gate can't fix it (a small
+#   mount-blip section is identical by count to a small library of genuinely-
+#   broken rows, which v1.23.30 requires to surface). The distinguisher is FOLDER
+#   LIVENESS: a mount fault takes the containing folder down too, a real theme.mp3
+#   deletion doesn't. Now trips (below the floor) only when ~all examined read
+#   missing-AND-folder-gone. verify_canonical_health untouched — its themes_dir
+#   root probe is already section-count-independent. #5: plex.py get_item_paths_
+#   bulk docstring still said "4" concurrent batches after v0.51.102 raised it to
+#   8. + behavioral tests: the folder-liveness signal (dead-folder mount fault
+#   suppressed; live-folder missing files + a few dead folders still surface) and
+#   the _lib_refresh_in_flight term-3 (≥2 running tab enums lock a third, enum-
+#   less tab — #4 had no coverage).
+__version__ = "0.51.106"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

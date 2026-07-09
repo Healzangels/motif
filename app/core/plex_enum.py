@@ -870,17 +870,28 @@ def verify_placement_health(db_path: Path, *,
 
     def _stat_present(row_r):
         try:
-            return (row_r, (Path(row_r["media_folder"]) / "theme.mp3").is_file(),
-                    None)
+            folder = Path(row_r["media_folder"])
+            present = (folder / "theme.mp3").is_file()
+            # v0.51.106: when the theme.mp3 reads missing, also probe the
+            # CONTAINING folder. A /data mount fault takes the folder down too
+            # (is_dir()→False), whereas a genuine theme.mp3 deletion leaves the
+            # folder alive. This is the signal that tells the two apart for a
+            # SMALL scoped section, where the absolute count cap can't trip
+            # (finding #1). `present or ...` short-circuits the extra stat on
+            # the healthy majority. A raised is_dir() (ESTALE) falls to the
+            # except → skipped (preserving the row), same as a raised is_file().
+            folder_alive = present or folder.is_dir()
+            return (row_r, present, folder_alive, None)
         except OSError as e:  # ESTALE/EIO/ETIMEDOUT — indeterminate
-            return (row_r, None, e)
+            return (row_r, None, None, e)
 
     if rows:
         with ThreadPoolExecutor(max_workers=16) as _ex:
             stat_results = list(_ex.map(_stat_present, rows))
     else:
         stat_results = []
-    for r, present, err in stat_results:
+    folder_gone = 0  # v0.51.106: missing sidecars whose folder is ALSO gone
+    for r, present, folder_alive, err in stat_results:
         if err is not None:
             # v1.23.30 (class-9): a RAISED stat (ESTALE/EIO/ETIMEDOUT) is
             # indeterminate — skip the row, preserving its prior value. First
@@ -896,6 +907,8 @@ def verify_placement_health(db_path: Path, *,
             prune.append((r["media_type"], r["tmdb_id"], r["section_id"],
                           r["media_folder"], r["edition_key"]))
             continue
+        if not present and not folder_alive:
+            folder_gone += 1  # missing theme.mp3 AND the folder is gone too
         row = (1 if present else 0, now, r["media_type"], r["tmdb_id"],
                r["section_id"], r["media_folder"], r["edition_key"])
         (present_updates if present else missing_updates).append(row)
@@ -917,12 +930,28 @@ def verify_placement_health(db_path: Path, *,
     # + skipped over the cap means the mount is clearly unhealthy — skip both
     # the missing-stamps AND the prune this run.
     suspect = len(missing_updates) + len(prune) + skipped
-    if suspect > cap:
+    # v0.51.106: the absolute cap can't trip on a SMALL scoped section (the
+    # v0.51.101 section scoping): a /data blip that reads every one of a
+    # 30-sidecar section missing has suspect=30 < the floor of 50, so the guard
+    # never fires and the whole section false-stamps broken. A COUNT/ratio gate
+    # can't distinguish that from a small library where 30 themes are genuinely
+    # broken (v1.23.30's contract: those MUST surface) — the two are identical
+    # by count. The distinguisher is folder liveness: a mount fault takes the
+    # CONTAINING folder down too (folder_gone), whereas a genuine theme.mp3
+    # deletion leaves the folder alive. So trip when ~all of the examined set
+    # read missing-AND-folder-gone (a live library's folders don't vanish en
+    # masse). Floored at 5 so a couple of real folder removals still stamp
+    # broken; folder-alive missing rows are never suppressed by this clause.
+    examined = len(present_updates) + suspect
+    if (suspect > cap
+            or (folder_gone >= 5 and folder_gone * 10 >= examined * 9)):
         log.warning(
-            "verify_placement_health: %d missing/superseded/skipped reads "
-            "exceed cap %d (suspected mount fault) — stamping only the %d "
-            "confirmed-present rows this run; skipping %d missing-stamps + "
-            "prune", suspect, cap, len(present_updates), len(missing_updates))
+            "verify_placement_health: suspected mount fault (%d "
+            "missing/superseded/skipped vs cap %d; %d of the missing had a "
+            "gone folder) — stamping only the %d confirmed-present rows this "
+            "run; skipping %d missing-stamps + prune",
+            suspect, cap, folder_gone, len(present_updates),
+            len(missing_updates))
         missing_updates = []
         prune = []
     updates = present_updates + missing_updates
@@ -1112,6 +1141,12 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     # RAISE (skipped), some return False (missing). Gating on missing alone let
     # a mostly-ESTALE outage, whose few False-reads stayed under the cap, stamp
     # those rows false-broken. missing + skipped over the cap = unhealthy mount.
+    # v0.51.106: the small-scoped-section blind spot that verify_placement_
+    # health's folder-liveness signal fixes does NOT apply here — the themes_dir
+    # ROOT probe above is section-count-independent (a /data mount fault fails
+    # the root stat regardless of how many rows this scoped run examines), so a
+    # small scoped canonical run is already covered. The absolute cap stays as
+    # the secondary guard for a partial subtree fault under a live root.
     if len(missing_updates) + skipped > cap:
         log.warning(
             "verify_canonical_health: %d missing + %d skipped reads exceed cap "
