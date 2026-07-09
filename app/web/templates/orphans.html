@@ -17,8 +17,12 @@
   <header class="block-head">
     <h2 class="block-title">// SCAN</h2>
     <div class="chips chips-inline">
-      <button type="button" id="orphans-run" class="btn lib-source-themerrdb">// RUN SCAN</button>
-      <span id="orphans-status" class="muted small" style="margin-left:1ch;"></span>
+      {# v0.51.99: SSR-lock the button + seed the status when a scan is already
+         running so a nav mid-scan doesn't flash clickable before pollStatus()
+         lands. Label stays // RUN SCAN (JS keeps it; the sibling span carries
+         the live "scanning…" text) so the first poll is idempotent. #}
+      <button type="button" id="orphans-run" class="btn lib-source-themerrdb"{% if orphan_scan_running %} disabled{% endif %}>// RUN SCAN</button>
+      <span id="orphans-status" class="muted small" style="margin-left:1ch;">{% if orphan_scan_running %}scanning…{% endif %}</span>
     </div>
   </header>
   <div id="orphans-summary" class="muted small" style="padding:0.5rem 0 1rem 0;">

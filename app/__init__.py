@@ -3622,7 +3622,15 @@
 #   mirrors app.js bindDashboard's page-load probe EXACTLY (tdb>0 OR autoEnum·enum>0 —
 #   the init-path authority that arms the watcher + blocks the unlock); labels match
 #   origLabel/busyLabel so the first poll is idempotent (flush >label</button>, no churn).
-__version__ = "0.51.98"
+# 0.51.99: swept the rest of the "SSR button renders clickable, a poll locks it ~1s
+#   later" class after the v0.51.98 dashboard fix. Only one more genuine flash: the
+#   orphan-scan // RUN SCAN button (orphans.html) — orphans.html's own pollStatus()
+#   locked it on status==='running' only after the init poll landed. /admin/orphans now
+#   passes orphan_scan_running (from _ORPHAN_SCAN_STATE) so the button paints disabled +
+#   the sibling span seeds "scanning…". All settings probe/reprobe buttons are SAFE
+#   (click-only lock, no poll to flash to); library REFRESH already SSR-locks via
+#   pipeline_in_flight (residual per-tab-scope gap noted, deferred).
+__version__ = "0.51.99"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

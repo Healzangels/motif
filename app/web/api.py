@@ -7425,7 +7425,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         action buttons (RE-PUSH / LET PLEX SERVE / PURGE)
         wired to motif's existing endpoints."""
         _require_admin(request)
-        return templates.TemplateResponse(request, "orphans.html")
+        # v0.51.99: SSR-lock // RUN SCAN when a scan is already draining so a
+        # nav to this page mid-scan doesn't paint the button clickable for the
+        # ~1.5s until pollStatus() lands (same click-flash class as the
+        # dashboard v0.51.98 fix). pollStatus() reconciles on first poll.
+        return templates.TemplateResponse(request, "orphans.html", {
+            "orphan_scan_running": _ORPHAN_SCAN_STATE.get("status") == "running",
+        })
 
     # --- Auth pages ---
 
