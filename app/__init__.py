@@ -3648,7 +3648,13 @@
 #   nightly all-sections cron). placements/local_files carry section_id in the
 #   PK so scoping is clean; the global pure-DB plex_upload staleness pass stays
 #   table-wide. O(16K)→O(section) on the common REFRESH; ~0 on a stable cron.
-__version__ = "0.51.101"
+# 0.51.102: plex-refresh perf (Tier-1 #3) — the per-show folder-path fallback
+#   (get_item_paths_bulk, fires every enum on builds that ignore
+#   includeLocations=1) fetched the FULL metadata tree per item just to read
+#   Location.path. Now sends the same excludeElements trim the /all listing uses
+#   (~5-10× smaller batches; Location/Media/Part kept so folder discovery is
+#   unaffected — advisory per Plex spec) + bumps max_concurrent_batches 4→8.
+__version__ = "0.51.102"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

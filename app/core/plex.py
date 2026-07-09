@@ -1797,7 +1797,11 @@ class PlexClient:
     def get_item_paths_bulk(
         self, rating_keys: list[str], *,
         batch_size: int = 50,
-        max_concurrent_batches: int = 4,
+        # v0.51.102: 4 → 8. The docstring below notes Plex tolerates ≥16
+        # concurrent /library/metadata GETs; with the v0.51.102 excludeElements
+        # trim each batch's payload is ~5-10× smaller, so 8 stays well within
+        # the server's headroom while halving the fallback's wall-clock.
+        max_concurrent_batches: int = 8,
         on_batch_complete=None,
     ) -> dict[str, str]:
         """v1.14.76: bulk variant of get_item_paths. Plex's
@@ -1848,9 +1852,23 @@ class PlexClient:
             ids = quote(",".join(batch), safe=",")
             path = f"/library/metadata/{ids}"
             _cli = getattr(_bulk_tl, "client", None) or self
-            # Same per-call timeout as the bulk-listing fetch
-            # since payloads can be comparable on big batches.
-            r = _cli._get(path, timeout=120.0)
+            # v0.51.102: trim the tag tree the same way the bulk /all
+            # listing does — this fallback reads ONLY Location.path (show
+            # folders) with a Part.file fallback, so dropping Genre/Role/
+            # Writer/… shrinks each 50-item batch ~5-10× (it fires on every
+            # enum on builds that ignore includeLocations=1 at section level).
+            # Location/Media/Part are NOT in the exclude set, so folder
+            # discovery is unaffected; per the Plex spec it's advisory, so
+            # builds that ignore it just return the full payload — no break.
+            # Same per-call timeout as the bulk-listing fetch since payloads
+            # can be comparable on big batches.
+            r = _cli._get(path, params={
+                "excludeElements": (
+                    "Genre,Writer,Director,Country,Role,Producer,"
+                    "Similar,Collection,Field,Label,Mood,Style,"
+                    "Image,Review"
+                ),
+            }, timeout=120.0)
             if r is None or r.status_code != 200:
                 # v1.15.35: include the first/last batch rks in the
                 # warning so the operator can correlate "this row's
