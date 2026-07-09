@@ -79,16 +79,16 @@
          v1.13.70: verb sync → refresh across every Plex-enum
          surface (button labels, topbar, drawer, settings copy).
          "// SYNC THEMERRDB" stays — that one IS a sync.
-         v1.13.77: also pre-render the disabled state from the
-         server-computed `pipeline_in_flight` so the button starts
-         locked when a global refresh (cascade or scan_all) is in
-         flight at page-load time. Pre-fix the button rendered
-         clickable for ~1s until the first /api/stats poll caught
-         up — long enough for a user navigating from dashboard
-         // REFRESH PLEX → /movies to hit it. Busy label matches
-         the JS busy state (// REFRESHING…). #}
+         v1.13.77: also pre-render the disabled state from a
+         server-computed busy signal so the button starts locked when a
+         refresh is already in flight at page-load time — pre-fix it
+         rendered clickable for ~1s until the first /api/stats poll caught up.
+         v0.51.100: `refresh_in_flight` is now the FULL libRefreshBusy mirror
+         (per-tab enum + tdb-sync + pipeline), not just the cascade/scan_all
+         pipeline — so a per-tab REFRESH draining on re-nav no longer flashes.
+         Busy label matches the JS busy state (// REFRESHING…). #}
       <button class="btn" id="library-refresh-btn" type="button"
-              {% if pipeline_in_flight %}disabled{% endif %}>{% if pipeline_in_flight %}// REFRESHING…{% else %}// REFRESH {% if all_res and tab != "collections" %}ALL {% elif fourk and tab != "collections" %}4K {% endif %}{{ title|upper }}{% endif %}</button>
+              {% if refresh_in_flight %}disabled{% endif %}>{% if refresh_in_flight %}// REFRESHING…{% else %}// REFRESH {% if all_res and tab != "collections" %}ALL {% elif fourk and tab != "collections" %}4K {% endif %}{{ title|upper }}{% endif %}</button>
     </div>
   </div>
   <p class="muted hero-sub" id="library-subtitle">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>

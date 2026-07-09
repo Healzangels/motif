@@ -7210,31 +7210,104 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             log.warning("_pipeline_in_flight failed: %s", e)
             return False
 
+    def _lib_refresh_in_flight(db: Path, tab: str, fourk: bool) -> bool:
+        """v0.51.100: full SSR mirror of app.js
+        `libRefreshBusy = myTabBusy || globalEnumPipeline` so the
+        // REFRESH <NAME> button paints locked on a nav while ITS enum is in
+        flight. _pipeline_in_flight (v1.13.77) only covered the cascade/scan_all
+        pipeline term — a per-tab scope=<tab> refresh, or the pre-cascade
+        tdb-sync phase, slipped through and flashed clickable for ~1s until the
+        first refreshTopbarStatus poll locked it. Predicates mirror /api/stats:
+        section→(tab,variant) via ps.is_anime/type/is_4k (api.py:8817)."""
+        # globalEnumPipeline term 1: cascade / scan_all pipeline (v1.13.77).
+        if _pipeline_in_flight(db):
+            return True
+        try:
+            with get_conn(db) as conn:
+                # term 2: a tdb sync running with auto_enum on guarantees a
+                # cascade plex_enum follows — lock every tab through the sync.
+                if settings.sync_auto_enum_after_sync:
+                    r = conn.execute(
+                        "SELECT COUNT(*) AS n FROM jobs WHERE job_type='sync' "
+                        "AND status IN ('pending','running')").fetchone()
+                    if r and r["n"]:
+                        return True
+                # term 3: ≥2 movie/tv/anime tabs with a RUNNING enum
+                # (running-only, mirroring enumActive → enumTabsActive > 1).
+                running = conn.execute(
+                    "SELECT DISTINCT ps.type, ps.is_anime FROM jobs j "
+                    "INNER JOIN plex_sections ps "
+                    "  ON ps.section_id = json_extract(j.payload, '$.section_id') "
+                    "WHERE j.job_type='plex_enum' AND j.status='running'"
+                ).fetchall()
+                tabs = set()
+                for r in running:
+                    tabs.add("anime" if r["is_anime"]
+                             else ("movies" if r["type"] == "movie" else "tv"))
+                if len(tabs) > 1:
+                    return True
+                # myTabBusy: collections lock on the collections-scoped enum;
+                # movies/tv/anime lock on THIS tab+variant's own enum
+                # (running OR pending — v1.14.73 same-tab pending awareness).
+                if tab == "collections":
+                    r = conn.execute(
+                        "SELECT COUNT(*) AS n FROM jobs "
+                        "WHERE job_type='plex_enum' "
+                        "AND status IN ('pending','running') "
+                        "AND json_extract(payload, '$.scope')='collections'"
+                    ).fetchone()
+                    return bool(r and r["n"])
+                if tab == "movies":
+                    tab_pred = "ps.is_anime=0 AND ps.type='movie'"
+                elif tab == "anime":
+                    tab_pred = "ps.is_anime=1"
+                else:  # tv
+                    tab_pred = "ps.is_anime=0 AND ps.type!='movie'"
+                r = conn.execute(
+                    "SELECT COUNT(*) AS n FROM jobs j "
+                    "INNER JOIN plex_sections ps "
+                    "  ON ps.section_id = json_extract(j.payload, '$.section_id') "
+                    "WHERE j.job_type='plex_enum' "
+                    "  AND j.status IN ('pending','running') "
+                    f"  AND {tab_pred} AND ps.is_4k = ?",
+                    (1 if fourk else 0,)).fetchone()
+                return bool(r and r["n"])
+        except Exception as e:
+            # Same safe-fallback shape as _pipeline_in_flight: on any DB error
+            # render the button clickable (the first poll re-locks it) rather
+            # than wrongly-disabled, and log so duplicate-refresh reports
+            # correlate with the underlying failure.
+            log.warning("_lib_refresh_in_flight failed: %s", e)
+            return False
+
     @app.get("/movies", response_class=HTMLResponse)
     async def movies_page(request: Request, db: Path = Depends(get_db_path)):
+        _fourk = _fourk_from_query(request)
         return templates.TemplateResponse(request, "library.html", {
             "tab": "movies", "title": "Movies",
-            "fourk": _fourk_from_query(request),
+            "fourk": _fourk,
             "all_res": _default_all_res(request, "movies"),
-            "pipeline_in_flight": _pipeline_in_flight(db),
+            "refresh_in_flight": _lib_refresh_in_flight(db, "movies", _fourk),
         })
 
     @app.get("/tv", response_class=HTMLResponse)
     async def tv_page(request: Request, db: Path = Depends(get_db_path)):
+        _fourk = _fourk_from_query(request)
         return templates.TemplateResponse(request, "library.html", {
             "tab": "tv", "title": "TV Shows",
-            "fourk": _fourk_from_query(request),
+            "fourk": _fourk,
             "all_res": _default_all_res(request, "tv"),
-            "pipeline_in_flight": _pipeline_in_flight(db),
+            "refresh_in_flight": _lib_refresh_in_flight(db, "tv", _fourk),
         })
 
     @app.get("/anime", response_class=HTMLResponse)
     async def anime_page(request: Request, db: Path = Depends(get_db_path)):
+        _fourk = _fourk_from_query(request)
         return templates.TemplateResponse(request, "library.html", {
             "tab": "anime", "title": "Anime",
-            "fourk": _fourk_from_query(request),
+            "fourk": _fourk,
             "all_res": _default_all_res(request, "anime"),
-            "pipeline_in_flight": _pipeline_in_flight(db),
+            "refresh_in_flight": _lib_refresh_in_flight(db, "anime", _fourk),
         })
 
     @app.get("/collections", response_class=HTMLResponse)
@@ -7251,7 +7324,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # v0.51.21: collections // ALL chip — combine every managed
             # section's collections into one view (section_id='').
             "all_res": _default_all_res(request, "collections"),
-            "pipeline_in_flight": _pipeline_in_flight(db),
+            "refresh_in_flight": _lib_refresh_in_flight(db, "collections", False),
         })
 
     @app.get("/coverage", response_class=HTMLResponse)

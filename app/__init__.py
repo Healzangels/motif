@@ -3630,7 +3630,15 @@
 #   the sibling span seeds "scanning…". All settings probe/reprobe buttons are SAFE
 #   (click-only lock, no poll to flash to); library REFRESH already SSR-locks via
 #   pipeline_in_flight (residual per-tab-scope gap noted, deferred).
-__version__ = "0.51.99"
+# 0.51.100: closed that residual. The // REFRESH <NAME> button's SSR lock was
+#   _pipeline_in_flight (cascade/scan_all only) — a per-tab scope=<tab> refresh, or
+#   the pre-cascade tdb-sync phase, slipped through and flashed clickable on re-nav.
+#   New _lib_refresh_in_flight(db, tab, fourk) is the FULL app.js libRefreshBusy mirror
+#   (myTabBusy per tab+variant from section is_anime/type/is_4k + globalEnumPipeline:
+#   pipeline OR tdb-sync·auto_enum OR ≥2 tabs running); template var renamed
+#   pipeline_in_flight → refresh_in_flight. Behavioral tests cover per-tab lock +
+#   cross-variant/cross-tab independence + collections + cascade back-compat.
+__version__ = "0.51.100"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

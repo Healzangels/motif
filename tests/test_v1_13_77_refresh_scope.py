@@ -142,9 +142,11 @@ def test_pipeline_count_includes_cascade_and_scan_all(db):
 
 
 def test_pipeline_count_excludes_per_section_jobs(db):
-    """Per-section // REFRESH <NAME> (no scope tag) doesn't lock
-    OTHER tabs' buttons — only its own (handled by myTabBusy on
-    the JS side, not the SSR pipeline_in_flight signal)."""
+    """The cascade/scan_all pipeline count still excludes untagged
+    per-section jobs — they don't lock OTHER tabs' buttons. (Own-tab
+    locking IS now handled at SSR too, by _lib_refresh_in_flight's
+    myTabBusy term — v0.51.100 — but that's a separate signal; this
+    guards the pipeline term stays scoped.)"""
     with sqlite3.connect(db) as conn:
         _enqueue_plex_enum(conn, scope=None)
     assert _pipeline_count(db) == 0
@@ -199,9 +201,11 @@ def test_library_template_renders_button_disabled_under_pipeline():
     match on the template — no Jinja env needed."""
     html = (Path(__file__).resolve().parent.parent
             / "app" / "web" / "templates" / "library.html").read_text()
-    # Pin the literal Jinja conditional + the busy label.
-    assert "{% if pipeline_in_flight %}disabled{% endif %}" in html
-    assert "{% if pipeline_in_flight %}// REFRESHING…" in html
+    # Pin the literal Jinja conditional + the busy label. v0.51.100 renamed
+    # the signal pipeline_in_flight → refresh_in_flight (now the full
+    # libRefreshBusy mirror, not just the cascade/scan_all pipeline term).
+    assert "{% if refresh_in_flight %}disabled{% endif %}" in html
+    assert "{% if refresh_in_flight %}// REFRESHING…" in html
 
 
 def test_api_stats_response_includes_cascade_count_field():
