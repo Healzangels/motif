@@ -3695,7 +3695,19 @@
 #   suppressed; live-folder missing files + a few dead folders still surface) and
 #   the _lib_refresh_in_flight term-3 (≥2 running tab enums lock a third, enum-
 #   less tab — #4 had no coverage).
-__version__ = "0.51.106"
+# 0.51.107: code-review findings #2 + #3. v0.51.101 moved BOTH verify_*_health
+#   passes inside run_plex_enum's per-section scope, so (#2) the plex_upload
+#   staleness 0-stamp — the RE-PUSH detector, documented to "run unconditionally"
+#   — is skipped entirely on a no-work enum (every section delta-gated), and (#3)
+#   with both auto_enum toggles off no enum fires at all → canonical + placement
+#   health never re-stamp and a broken row lags indefinitely. Added
+#   _daily_health_passes_job: a table-wide (section_ids=None) run of both passes
+#   on a daily 03:25-UTC scheduler slot, decoupled from enum config — restores
+#   the pre-v0.51.101 unconditional coverage. Best-effort (a pass failure never
+#   crashes the scheduler); skips canonical when themes_dir is unset. + behavioral
+#   tests (stale plex_upload rk → RE-PUSH; broken sidecar + canonical re-stamp;
+#   no-themes_dir clean skip; scheduler registration + table-wide guard).
+__version__ = "0.51.107"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

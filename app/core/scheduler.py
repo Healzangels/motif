@@ -937,6 +937,44 @@ def _sweep_placement_temps_job(db_path: Path) -> None:
                   message=f"Removed {removed} stale .motif-tmp placement temp(s)")
 
 
+def _daily_health_passes_job(settings: "Settings") -> None:
+    """v0.51.107: a daily FULL-TABLE run of the two verify_*_health passes,
+    decoupled from the enum. v0.51.101 moved both passes INSIDE run_plex_enum's
+    per-section scope, which left two gaps (found in code review):
+      - the plex_upload staleness 0-stamp — the RE-PUSH detector — claims to
+        'run unconditionally' but is now skipped ENTIRELY on a no-work enum
+        (every section delta-gated), so a Plex delete+re-add that destroys an
+        uploaded rating_key goes undetected until some section next changes; and
+      - with both auto_enum toggles off NO enum fires at all, so canonical +
+        placement health never re-stamp and a broken row can lag indefinitely.
+    A table-wide (section_ids=None) re-stamp once a day restores the pre-v0.51.101
+    guarantee regardless of enum config. Best-effort — a health-pass failure must
+    never crash the scheduler."""
+    from .plex_enum import verify_canonical_health, verify_placement_health
+    db_path = settings.db_path
+    try:
+        ph = verify_placement_health(db_path)  # section_ids=None → table-wide
+        if ph.get("missing") or ph.get("plex_upload_stale"):
+            log_event(db_path, level="INFO", component="scheduler",
+                      message=(f"Daily health: {ph['missing']} sidecar + "
+                               f"{ph.get('plex_upload_stale', 0)} plex_upload "
+                               f"placement(s) need attention (table-wide)"))
+    except Exception as e:  # noqa: BLE001 — a hygiene pass must never crash the scheduler
+        log.warning("Daily placement-health pass failed: %s", e)
+    themes_dir = settings.themes_dir
+    if themes_dir is None:
+        return  # themes_dir not configured yet → nothing canonical to verify
+    try:
+        ch = verify_canonical_health(db_path, themes_dir)  # table-wide
+        if ch.get("missing"):
+            log_event(db_path, level="INFO", component="scheduler",
+                      message=(f"Daily health: {ch['missing']} canonical "
+                               f"theme.mp3 file(s) missing from motif storage "
+                               f"(table-wide)"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Daily canonical-health pass failed: %s", e)
+
+
 # v1.13.10 (#15): track consecutive release-check failures across
 # scheduler invocations so we can surface persistent breakage
 # (renamed repo, sustained 5xx, missing API token, etc.) without
@@ -1237,6 +1275,19 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         _sweep_placement_temps_job, args=[settings.db_path],
         trigger=CronTrigger(minute="20", hour="3", timezone="UTC"),
         id="placement_temp_sweep", replace_existing=True, max_instances=1,
+    )
+
+    # v0.51.107: daily FULL-TABLE health re-stamp (placement + canonical),
+    # decoupled from the enum. v0.51.101 scoped both health passes to the walked
+    # section(s), which skips them on a no-work enum and never runs them at all
+    # when both auto_enum toggles are off — so the plex_upload RE-PUSH detector
+    # + the broken-row re-stamp could lag indefinitely. This restores the
+    # unconditional daily coverage. Slotted 03:25 UTC after the .motif-tmp sweep
+    # (03:20), clear of the 04:xx jobs + 13:00 sync.
+    scheduler.add_job(
+        _daily_health_passes_job, args=[settings],
+        trigger=CronTrigger(minute="25", hour="3", timezone="UTC"),
+        id="daily_health_passes", replace_existing=True, max_instances=1,
     )
 
     # v1.13.54: op_progress prune every 30 minutes. Was firing on
