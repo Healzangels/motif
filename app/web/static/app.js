@@ -19333,7 +19333,29 @@
     // Tripled traffic but the response is small (one cached query
     // bundle) and the per-action `setTimeout(refreshTopbarStatus,
     // 1100)` calls remain so explicit clicks still feel immediate.
-    setInterval(refreshTopbarStatus, 10000);
+    // v0.51.105: ADAPTIVE cadence — 2s while any mutating op is active, 10s
+    // idle. Pre-fix the fixed 10s tick left the topbar badges (RE-PUSH, FAIL,
+    // UPD) stale for up to 10s after a per-row `place`/`download` job finished:
+    // the row resolved fast via libraryRapidPoll (~2s) but a place job emits no
+    // op_progress row → no motif:ops-state-changed event → the badge waited for
+    // the next 10s tick. the user's repro: fixing a re-push resolved the row but
+    // the upper-right RE-PUSH count lingered. refreshTopbarStatus stashes
+    // anyMutatingOpActive (the same signal that gates libraryRapidPoll) each
+    // tick; read it AFTER the run to pick the next delay so badges track rows.
+    // Chromium throttles background-tab timers to ~1/min, but the
+    // visibilitychange handler above re-kicks refreshTopbarStatus on tab return
+    // (v1.16.7 class-10), so a throttled active-op tick self-heals on focus.
+    function _scheduleTopbarPoll(delayMs) {
+      setTimeout(async () => {
+        // awaited so the anyMutatingOpActive read below sees THIS tick's
+        // value; .catch-chained per the v1.15.108 unawaited-rejection contract.
+        await refreshTopbarStatus().catch(() => { /* swallow */ });
+        const active = !!(window.__motif_queue
+          && window.__motif_queue.anyMutatingOpActive);
+        _scheduleTopbarPoll(active ? 2000 : 10000);
+      }, delayMs);
+    }
+    _scheduleTopbarPoll(10000);
 
     // v1.12.108: when the ops mini-bar transitions running → idle
     // (or vice versa), force a stats refresh right away. Pre-fix

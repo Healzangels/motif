@@ -3670,7 +3670,15 @@
 #   sweep_stale_placement_temps walks distinct plex_items.folder_path media
 #   folders (host→container translated), unlinks any theme.mp3.motif-tmp older
 #   than 1h; a daily scheduler job (03:20 UTC) runs it. No-op when none exist.
-__version__ = "0.51.104"
+# 0.51.105: RE-PUSH topbar badge lingered ~10s after the row it counted was
+#   resolved. refreshTopbarStatus (owns RE-PUSH/FAIL/UPD badges) polled a FIXED
+#   10s setInterval; a per-row `place` job (a re-push) emits no op_progress row →
+#   no motif:ops-state-changed force-refresh → the badge waited for the next 10s
+#   tick while libraryRapidPoll (~2s) had already resolved the row. Made the
+#   topbar poll ADAPTIVE (2s while any mutating op is active, 10s idle) off the
+#   anyMutatingOpActive signal refreshTopbarStatus already stashes — badges now
+#   track rows during ops.
+__version__ = "0.51.105"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
