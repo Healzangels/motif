@@ -3614,7 +3614,15 @@
 #   active filter (renderEventFilters); clicking it clears that var, drops the URL
 #   param (so a refresh doesn't re-apply it), and reloads. Verified render+clear in a
 #   real browser; the .chip.ev-filter-clear (0,2,0) amber beats the later .chip color.
-__version__ = "0.51.97"
+# 0.51.98: dashboard SYNC THEMERRDB / REFRESH PLEX hero buttons flashed clickable for
+#   ~1s on nav while a sync/refresh was already running — the SSR rendered them plain
+#   and only the first refreshTopbarStatus poll (/api/stats 1s TTL) locked them. Now
+#   _dashboard_ssr_state bakes two busy flags (sync_btn_busy / refresh_plex_btn_busy)
+#   and dashboard.html paints disabled + the busy label on first paint. The SYNC lock
+#   mirrors app.js bindDashboard's page-load probe EXACTLY (tdb>0 OR autoEnum·enum>0 —
+#   the init-path authority that arms the watcher + blocks the unlock); labels match
+#   origLabel/busyLabel so the first poll is idempotent (flush >label</button>, no churn).
+__version__ = "0.51.98"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

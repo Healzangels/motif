@@ -54,9 +54,21 @@
          line up together at the right edge — without the wrapper,
          hero-row's space-between strands // SYNC THEMERRDB in the
          middle of the row when // REFRESH PLEX is present. -->
+    {# v0.51.98: SSR the two hero-button busy states (see
+       _dashboard_ssr_state). A nav to /dashboard WHILE a sync/refresh is
+       already running now paints the button disabled + busy-labelled on
+       first paint — pre-fix the SSR rendered them plain-clickable and only
+       the first refreshTopbarStatus poll (~1s) locked them, so the user saw
+       the buttons briefly clickable when they shouldn't be. The idle/busy
+       label strings mirror app.js origLabel/busyLabel exactly (autoEnum
+       spells both phases) so the first poll is idempotent — no flicker. #}
+    {% set _sync_busy = _ssr_dash.sync_btn_busy %}
+    {% set _plex_busy = _ssr_dash.refresh_plex_btn_busy %}
+    {% set _sync_idle_label = '// SYNC THEMERRDB + REFRESH PLEX' if auto_enum_after_sync else '// SYNC THEMERRDB' %}
+    {% set _sync_busy_label = '// SYNCING THEMERRDB + REFRESH PLEX…' if auto_enum_after_sync else '// SYNCING THEMERRDB…' %}
     <div class="hero-actions">
       <button class="btn" id="sync-now-btn"
-              title="Sync ThemerrDB metadata.">// SYNC THEMERRDB</button>
+              {% if _sync_busy %}disabled title="TDB sync in progress…"{% else %}title="Sync ThemerrDB metadata."{% endif %}>{{ _sync_busy_label if _sync_busy else _sync_idle_label }}</button>
       {# v1.13.63: when auto_enum_after_sync is OFF, // SYNC THEMERRDB
          runs the TDB pull alone — Plex side reconciliation needs a
          separate kick. Surface a sibling button that enums every
@@ -69,7 +81,7 @@
          `sync-plex-btn` to avoid breaking external selectors. #}
       {% if not auto_enum_after_sync %}
       <button class="btn" id="sync-plex-btn"
-              title="Re-enumerate every managed Plex section.">// REFRESH PLEX</button>
+              {% if _plex_busy %}disabled title="Plex refresh in progress…"{% else %}title="Re-enumerate every managed Plex section."{% endif %}>{{ '// REFRESHING PLEX…' if _plex_busy else '// REFRESH PLEX' }}</button>
       {% endif %}
     </div>
   </div>

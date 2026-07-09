@@ -6488,6 +6488,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "queue_pending": None,
             "queue_running": None,
             "queue_failed": None,
+            # v0.51.98: hero-button SSR busy states (no ~1s click-flash on
+            # nav). Safe default False — a briefly-idle button the poll
+            # locks beats a wrongly-disabled one on a DB error.
+            "sync_btn_busy": False,
+            "refresh_plex_btn_busy": False,
             "placements_today": None,
             "placements_week": None,
             "storage_hardlinks": None,
@@ -6628,7 +6633,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           AS storage_wasted_bytes,
                       (SELECT COUNT(*) FROM themes
                         WHERE upstream_source = 'plex_orphan')
-                          AS orphans
+                          AS orphans,
+                      -- v0.51.98: two in-flight counts feeding the hero-button
+                      -- SSR busy states (derivation below mirrors app.js
+                      -- bindDashboard's page-load probe). Pre-fix the buttons
+                      -- rendered plain-clickable until the first ~1s poll.
+                      (SELECT COUNT(*) FROM jobs
+                        WHERE job_type = 'sync'
+                          AND status IN ('pending','running'))
+                          AS themerrdb_sync_in_flight,
+                      (SELECT COUNT(*) FROM jobs
+                        WHERE job_type = 'plex_enum'
+                          AND status IN ('pending','running'))
+                          AS plex_enum_in_flight
                 """).fetchone()
                 # v1.15.50: phase-2 SSR — plex_items aggregates by
                 # section type (movie / non-anime tv / anime). Mirrors
@@ -6833,6 +6850,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             state["storage_hardlinks"] = int(row["storage_hardlinks"] or 0)
             state["storage_copies"] = int(row["storage_copies"] or 0)
             state["orphans"] = int(row["orphans"] or 0)
+            # v0.51.98: SYNC lock mirrors app.js bindDashboard's page-load
+            # probe EXACTLY — `initialBusy = autoEnum ? (tdb+enum) : tdb` —
+            # since that probe arms the sync watcher on nav and a live
+            # watcher blocks refreshTopbarStatus's unlock, so it (not the
+            # cascade-only steady-state predicate) governs the settled
+            # first-view. auto_enum OFF (both buttons visible) → the two agree.
+            _tdb_if = int(row["themerrdb_sync_in_flight"] or 0)
+            _enum_if = int(row["plex_enum_in_flight"] or 0)
+            _auto_enum = bool(settings.sync_auto_enum_after_sync)
+            state["sync_btn_busy"] = (_tdb_if > 0) or (_auto_enum and _enum_if > 0)
+            state["refresh_plex_btn_busy"] = _enum_if > 0
             # Mirror fmtBytes() in app.js so SSR + JS post-poll
             # agree on the formatted string and there's no
             # "1234567 → 1.2 MB" textual flash.

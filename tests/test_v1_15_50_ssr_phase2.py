@@ -145,7 +145,9 @@ def test_ssr_state_themed_uses_motif_available_intersection():
     possible (the bug the user screenshotted at v1.15.46)."""
     src = API_PY.read_text()
     anchor = src.index("def _dashboard_ssr_state(")
-    body = src[anchor:anchor + 12000]
+    # v0.51.98: 12000 → 14000 (hero-button SSR busy plumbing pushed the
+    # tdb_*_themed cov aggregates past the window).
+    body = src[anchor:anchor + 14000]
     # The conditional aggregation must AND has_theme with the
     # motif_available predicate clauses.
     assert ("pi.has_theme=1\n"

@@ -98,7 +98,9 @@ def test_dashboard_ssr_state_sql_matches_stats_sync_predicates():
     predicates that the author got wrong on the first draft."""
     src = API_PY.read_text()
     anchor = src.index("def _dashboard_ssr_state(")
-    body = src[anchor:anchor + 8000]
+    # v0.51.98: 8000 → 9000 (the two hero-button in-flight subqueries +
+    # busy-flag defaults pushed the storage_wasted JOIN past the window).
+    body = src[anchor:anchor + 9000]
     # media_type='tv' (not 'show') — schema uses 'tv' but it's
     # easy to mistype as 'show' since the UI labels say "TV SERIES".
     assert "media_type = 'tv'" in body, (
@@ -242,7 +244,8 @@ def test_dashboard_template_storage_wasted_uses_pre_formatted_string():
     # v1.18.20: helper grew again (collection SSR aggregates +
     # rationale comments pushed the units array past the prior
     # 14000-char window). Bump to 18000 with comfortable margin.
-    fn_body = api_src[fn_anchor:fn_anchor + 22000]
+    # v0.51.98: 22000 → 24000 (hero-button SSR busy plumbing).
+    fn_body = api_src[fn_anchor:fn_anchor + 24000]
     assert '["B", "KB", "MB", "GB", "TB"]' in fn_body, (
         "v1.15.45: SSR byte-formatter units array must match "
         "fmtBytes() in app.js so SSR + post-poll agree"
