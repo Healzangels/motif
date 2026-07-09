@@ -3654,7 +3654,15 @@
 #   Location.path. Now sends the same excludeElements trim the /all listing uses
 #   (~5-10× smaller batches; Location/Media/Part kept so folder discovery is
 #   unaffected — advisory per Plex spec) + bumps max_concurrent_batches 4→8.
-__version__ = "0.51.102"
+# 0.51.103: plex-refresh perf (Tier-1 #2 + #4). #2: verify_placement_health +
+#   verify_canonical_health now stat every theme.mp3 across a 16-worker thread
+#   pool (the cost on a network mount) — the bucketing/accounting stays serial
+#   so present/missing/skipped/prune + the mount-fault cap are byte-for-byte
+#   unchanged. #4: _UPSERT_BATCH 200→400 + inter-batch sleep 150→100ms (simple
+#   per-row writes → short lock-holds; halves the fixed sleep tax on a large
+#   section). The resolve chunk_size/sleep are left as-is (deliberately tuned
+#   against documented writer-starvation — their 7-UPDATE chunks hold ~1-2s).
+__version__ = "0.51.103"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

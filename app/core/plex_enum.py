@@ -861,17 +861,34 @@ def verify_placement_health(db_path: Path, *,
     missing_updates: list = []   # theme_present=0 — confirmed gone
     prune: list = []
     skipped = 0
-    for r in rows:
+    # v0.51.103: stat every sidecar's theme.mp3 across a bounded thread pool
+    # (mirrors _upsert_items Phase-1). The stat is the cost on a network mount;
+    # the bucketing below stays SERIAL so the skipped/present/missing/prune
+    # accounting + first-skip-warns + mount-fault cap are byte-for-byte
+    # unchanged. is_file() is GIL-releasing I/O, so the pool parallelizes it.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _stat_present(row_r):
         try:
-            present = (Path(r["media_folder"]) / "theme.mp3").is_file()
-        except OSError as e:
+            return (row_r, (Path(row_r["media_folder"]) / "theme.mp3").is_file(),
+                    None)
+        except OSError as e:  # ESTALE/EIO/ETIMEDOUT — indeterminate
+            return (row_r, None, e)
+
+    if rows:
+        with ThreadPoolExecutor(max_workers=16) as _ex:
+            stat_results = list(_ex.map(_stat_present, rows))
+    else:
+        stat_results = []
+    for r, present, err in stat_results:
+        if err is not None:
             # v1.23.30 (class-9): a RAISED stat (ESTALE/EIO/ETIMEDOUT) is
             # indeterminate — skip the row, preserving its prior value. First
             # skip warns so a mount hiccup isn't silent; the rest stay debug.
             skipped += 1
             (log.warning if skipped == 1 else log.debug)(
                 "verify_placement_health: stat %s failed (%s) — skipped "
-                "(preserving prior theme_present)", r["media_folder"], e)
+                "(preserving prior theme_present)", r["media_folder"], err)
             continue
         key = (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"])
         if not present and key in upload_keys:
@@ -1063,14 +1080,28 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     present_updates: list = []
     missing_updates: list = []
     skipped = 0
-    for r in rows:
+    # v0.51.103: parallelize the per-file stat (mirror of verify_placement_
+    # health); the bucketing below stays serial so the accounting + mount-fault
+    # cap are unchanged.
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _stat_present(row_r):
         try:
-            present = (themes_dir / r["file_path"]).is_file()
+            return (row_r, (themes_dir / row_r["file_path"]).is_file(), None)
         except OSError as e:
+            return (row_r, None, e)
+
+    if rows:
+        with ThreadPoolExecutor(max_workers=16) as _ex:
+            stat_results = list(_ex.map(_stat_present, rows))
+    else:
+        stat_results = []
+    for r, present, err in stat_results:
+        if err is not None:
             skipped += 1
             (log.warning if skipped == 1 else log.debug)(
                 "verify_canonical_health: stat %s failed (%s) — skipped "
-                "(preserving prior canonical_present)", r["file_path"], e)
+                "(preserving prior canonical_present)", r["file_path"], err)
             continue
         row = (1 if present else 0, now, r["media_type"], r["tmdb_id"],
                r["section_id"], r["edition_key"])
@@ -1292,9 +1323,13 @@ def reconcile_placement_paths(db_path: Path, *,
 
 # Tunable: how many items per write transaction. Smaller = more lock
 # release windows for concurrent API writes; larger = fewer transaction
-# round-trips. 200 keeps a 10K-item section under ~50 batches with
-# negligible perf cost vs the single-transaction baseline.
-_UPSERT_BATCH = 200
+# round-trips. v0.51.103: 200 → 400 — the upsert writes are simple per-row
+# INSERT/UPDATEs (sub-ms each), so a 400-row batch still holds BEGIN IMMEDIATE
+# only briefly, but HALVES the number of inter-batch sleep yields on a large
+# section (a 10K section: ~50 → ~25 batches → ~half the fixed sleep tax). The
+# resolve pass's chunk_size stays 500 (its 7-UPDATE chunks hold the lock ~1-2s
+# — deliberately not widened, see resolve_theme_ids' sleep note).
+_UPSERT_BATCH = 400
 
 # v1.22.65: Phase-1 sidecar-stat no-progress deadline — if NO folder
 # stat completes within this window the mount is considered stalled and
@@ -1740,12 +1775,15 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
         if cancel_check():
             from .worker import _JobCancelled
             raise _JobCancelled()
-        # v1.11.54: yield ~150ms between batches so the writer lock
-        # has gaps for concurrent claim/log_event/event-flusher
-        # writes. Pre-fix the back-to-back transactions held the
-        # writer at near-100% duty cycle through a 10K-row enum.
+        # v1.11.54: yield between batches so the writer lock has gaps for
+        # concurrent claim/log_event/event-flusher writes. Pre-fix the
+        # back-to-back transactions held the writer at near-100% duty cycle
+        # through a 10K-row enum. v0.51.103: 150ms → 100ms — the v0.51.103
+        # _UPSERT_BATCH 200→400 already halves the number of these yields, so a
+        # shorter gap still leaves ample lock headroom (a 400-row batch is a
+        # sub-second hold) while trimming the fixed sleep tax further.
         if batch_start > 0:
-            _t.sleep(0.15)
+            _t.sleep(0.10)
         batch = enriched[batch_start:batch_start + _UPSERT_BATCH]
         # Emit progress at the START of each batch — ticks the bar
         # as we work through the section's items rather than at the
