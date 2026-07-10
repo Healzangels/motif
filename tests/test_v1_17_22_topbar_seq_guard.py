@@ -90,9 +90,13 @@ def test_success_path_bails_on_stale_token():
     `_seq !== _myToken` and bail before touching the
     `_lastHash` / DOM state."""
     body = _refresh_block()
-    # Look for the guard immediately after the await.
+    # Look for the guard shortly after the await. v0.51.120: window 800 → 1700 —
+    # the pre-bail _deriveEnumStashes write (button-lock stashes only) now sits
+    # between the await and the guard. That's intentional: those stashes are kept
+    # fresh even on a superseded poll; the guard still runs before _lastHash / DOM
+    # (the actual stale-clobber targets), pinned below.
     await_idx = body.index("api('GET', '/api/stats')")
-    success_window = body[await_idx:await_idx + 800]
+    success_window = body[await_idx:await_idx + 1700]
     assert "refreshTopbarStatus._seq !== _myToken" in success_window, (
         "v1.17.22: success path must check the seq token "
         "after the await."

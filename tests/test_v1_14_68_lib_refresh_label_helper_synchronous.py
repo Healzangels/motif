@@ -131,9 +131,9 @@ def test_refresh_topbar_status_calls_helper_not_inline_block():
     or refactor can't accidentally re-inline."""
     js = JS.read_text()
     fn_start = js.index("async function refreshTopbarStatus()")
-    # Slice ~3000 chars from function start (covers the early-
-    # update area + the hash-skip).
-    body = js[fn_start:fn_start + 3000]
+    # Slice from function start (covers the early-update area + the hash-skip).
+    # v0.51.120 added the pre-bail enum-stash write, so widen the window.
+    body = js[fn_start:fn_start + 4500]
     # Helper call must be present.
     assert "updateLibraryRefreshBtnLabel()" in body
     # The pre-extraction inline form must NOT survive in this
@@ -151,7 +151,7 @@ def test_helper_is_called_above_hash_skip():
     and the bug recurs."""
     js = JS.read_text()
     fn_start = js.index("async function refreshTopbarStatus()")
-    body = js[fn_start:fn_start + 5000]
+    body = js[fn_start:fn_start + 6500]  # v0.51.120 widened (pre-bail stash write)
     helper_idx = body.index("updateLibraryRefreshBtnLabel()")
     skip_idx = body.index(
         "if (refreshTopbarStatus._lastHash === newHash) return;"

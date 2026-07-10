@@ -175,7 +175,7 @@ def test_helper_still_called_pre_hash_skip_in_refresh_topbar():
     call site."""
     js = JS.read_text()
     fn_start = js.index("async function refreshTopbarStatus()")
-    body = js[fn_start:fn_start + 5000]
+    body = js[fn_start:fn_start + 6500]  # v0.51.120 widened (pre-bail stash write)
     helper_idx = body.index("updateLibraryRefreshBtnLabel()")
     skip_idx = body.index(
         "if (refreshTopbarStatus._lastHash === newHash) return;"

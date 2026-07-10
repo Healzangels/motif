@@ -3813,7 +3813,19 @@
 #   stash (normal single switch → unlock, no over-lock). (2) MOTIF_APPLY_THEME
 #   clears the deduped UNION of preset token keys (seen-set → 14 removeProperty
 #   calls, not 7× per shared key). Both proven by the quickjs harnesses.
-__version__ = "0.51.119"
+# 0.51.120: root-cause reorder (the user) — write the library REFRESH button's
+#   lock stashes BEFORE refreshTopbarStatus's supersession bail. v0.51.119's
+#   freshness gate was a heuristic; the real cause is that the stashes
+#   (__motif_global_enum_pipeline, __motif_enum_active/pending, collections) were
+#   written only AFTER the v1.17.22 bail, so continuous fast section-switching
+#   supersedes every poll and starves them stale. Extracted a pure
+#   _deriveEnumStashes(q) and write the stashes early (even a superseded poll now
+#   keeps them fresh); the freshness gate is now an always-fresh backstop. Any
+#   minor out-of-order among recent snapshots self-corrects on the next poll — a
+#   starved stash did not. Guarded by test_v0_51_120 (writes-before-bail source
+#   order + a drift lock pinning the helper's globalEnumPipeline to the main
+#   block's identical formula + behavioral derivation).
+__version__ = "0.51.120"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

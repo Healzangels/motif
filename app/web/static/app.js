@@ -776,6 +776,26 @@
   // a follow-up refreshTopbarStatus to reconcile UPD/FAIL pills. The
   // function name is kept as a thin shim so existing callers don't
   // need rewiring.
+  // v0.51.120: pure derivation of the library REFRESH button's lock stashes from
+  // the /api/stats queue. Shared so refreshTopbarStatus can write the stashes
+  // BEFORE its supersession bail — otherwise continuous fast section-switching
+  // supersedes every poll and the stashes (read by updateLibraryRefreshBtnLabel)
+  // starve stale. The globalEnumPipeline formula here MUST match the main block's
+  // below; the test_v0_51_120 drift guard pins that.
+  function _deriveEnumStashes(q) {
+    const enumActive = q.plex_enum_active || {};
+    const enumPending = q.plex_enum_pending || {};
+    const collectionsEnumBusy = q.plex_enum_collections_in_flight > 0;
+    const themerrdbBusy = q.themerrdb_sync_in_flight > 0;
+    const autoEnum = (q.auto_enum_after_sync !== false);
+    const enumTabsActive = ['movies', 'tv', 'anime'].filter(
+      (t) => enumActive[t] && (enumActive[t].standard || enumActive[t].fourk)).length;
+    const pipelineInFlight = (q.plex_enum_pipeline_in_flight || 0) > 0;
+    const globalEnumPipeline = (themerrdbBusy && autoEnum)
+                            || enumTabsActive > 1
+                            || pipelineInFlight;
+    return { enumActive, enumPending, collectionsEnumBusy, globalEnumPipeline };
+  }
   async function refreshTopbarStatus() {
     // v1.17.22: in-flight seq guard. Class-6 mirror — CLAUDE.md
     // bug class 6 documents the "syncWatcher vs
@@ -800,6 +820,20 @@
     const _myToken = refreshTopbarStatus._seq;
     try {
       const stats = await api('GET', '/api/stats');
+      // v0.51.120: write the button-lock stashes BEFORE the supersession bail so
+      // continuous fast section-switching (which supersedes every poll) can't
+      // starve them stale — updateLibraryRefreshBtnLabel reads these on a switch.
+      // Any minor out-of-order among recent snapshots self-corrects on the next
+      // poll; a starved stash did not. The main block below recomputes the same
+      // values (via the same _deriveEnumStashes formula) for its own DOM logic.
+      {
+        const _els = _deriveEnumStashes(stats.queue || {});
+        window.__motif_enum_active = _els.enumActive;
+        window.__motif_enum_pending = _els.enumPending;
+        window.__motif_plex_enum_collections_busy = _els.collectionsEnumBusy;
+        window.__motif_global_enum_pipeline = _els.globalEnumPipeline;
+        window.__motif_enum_stash_ts = Date.now();
+      }
       // v1.17.22: bail if a newer call has superseded us.
       // Fresh call already ran updateLibraryRefreshBtnLabel
       // (or will momentarily) — running it again from a stale
@@ -1394,12 +1428,12 @@
       // (which is cached 750ms + hash-skipped when server
       // state hasn't changed).
       window.__motif_global_enum_pipeline = globalEnumPipeline;
-      // v0.51.119: stamp the button-lock stashes' freshness. This line runs only
-      // on a refreshTopbarStatus that was NOT superseded at the 803 bail, so
-      // during continuous fast section-switching (every call superseded) the ts
-      // goes stale — the section-switch's tighten-only lock reads it to tell a
-      // stale stash (hold, avoid the flash) from a fresh one (trust + unlock,
-      // avoid over-locking a switch away from a per-tab refresh).
+      // v0.51.120: these button-lock stashes + the ts are ALSO written EARLY now
+      // (before the supersession bail above) so fast-switching can't starve them.
+      // This late reconfirm is redundant on a non-superseded poll but harmless
+      // (identical values — the early write uses the same _deriveEnumStashes
+      // formula). The v0.51.119 freshness gate in updateLibraryRefreshBtnLabel is
+      // therefore an always-fresh backstop now, not the primary defense.
       window.__motif_enum_stash_ts = Date.now();
       // v1.18.51 / v1.18.52: row-refresh trigger contract.
       // -------------------------------------------------------------
