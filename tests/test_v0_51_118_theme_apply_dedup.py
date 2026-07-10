@@ -63,9 +63,10 @@ def _run(body: str) -> dict:
     quickjs = pytest.importorskip("quickjs")
     preamble = (
         "var _set = {};\n"
+        "var _removeCount = 0;\n"
         "var _r = { style: {\n"
         "  setProperty: function(k, v){ _set[k] = v; },\n"
-        "  removeProperty: function(k){ delete _set[k]; }\n"
+        "  removeProperty: function(k){ _removeCount++; delete _set[k]; }\n"
         "} };\n"
         "var document = { documentElement: _r };\n"
         "var window = { MOTIF_THEMES: {\n"
@@ -89,6 +90,14 @@ def test_switching_clears_the_prior_theme_tokens():
                "window.MOTIF_APPLY_THEME('dracula');\n"
                "JSON.stringify(_set);")
     assert out == {"--bg": "#282a36", "--accent": "#bd93f9"}
+
+
+def test_clear_is_deduped_across_presets():
+    # v0.51.119: the two mock presets share the same 2 keys (--bg, --accent), so
+    # ONE apply must call removeProperty exactly twice (deduped), not 4× (once per
+    # preset per shared key). Guards the seen-set that made the clear spotless.
+    out = _run("window.MOTIF_APPLY_THEME('plex'); JSON.stringify(_removeCount);")
+    assert out == 2
 
 
 def test_fallout_or_unknown_name_clears_to_defaults():

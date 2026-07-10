@@ -142,10 +142,17 @@
     window.MOTIF_APPLY_THEME = function (name) {
       var themes = window.MOTIF_THEMES || {};
       var r = document.documentElement;
+      // v0.51.119: clear the UNION of every preset's token keys, deduped — the
+      // presets share the same 14 keys, so a seen-set removes each once (14 calls)
+      // instead of 7× per shared key.
+      var seen = {};
       for (var t in themes) {
         if (!Object.prototype.hasOwnProperty.call(themes, t)) continue;
         for (var ck in themes[t]) {
-          if (Object.prototype.hasOwnProperty.call(themes[t], ck)) r.style.removeProperty(ck);
+          if (Object.prototype.hasOwnProperty.call(themes[t], ck) && !seen[ck]) {
+            seen[ck] = 1;
+            r.style.removeProperty(ck);
+          }
         }
       }
       var b = themes[name];

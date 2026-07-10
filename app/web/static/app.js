@@ -627,17 +627,22 @@
     const graceExp = grace[tabKey] && grace[tabKey][variantKey];
     const graceActive = !!(graceExp && graceExp > Date.now());
     const stillBusy = myTabBusy || pipelineBusy || graceActive;
+    // v0.51.119: is the global-pipeline stash FRESH? It's only rewritten by a
+    // non-superseded refreshTopbarStatus, so continuous fast section-switching
+    // lets it go stale. Fresh → trust stillBusy; stale → the switch can't rule
+    // out a refresh, so hold rather than optimistically unlock.
+    const stashFresh = (Date.now() - (window.__motif_enum_stash_ts || 0)) < 2500;
     if (stillBusy) {
       btn.disabled = true;
       btn.textContent = '// REFRESHING…';
-    } else if (!(tightenOnly && btn.disabled)) {
-      // v0.51.117: `tightenOnly` (section switch) may LOCK but never optimistically
-      // UNLOCK a currently-disabled button from the possibly-stale global-pipeline
-      // stash — a full refresh's startup / poll-lag window reads not-busy here, so
-      // the button flashed clickable for the loadLibrary duration until
-      // refreshTopbarStatus (fresh /api/stats, runs right after) re-locked it (the
-      // user: fast section-switching during a dashboard refresh). Over-locking by a
-      // fetch is self-correcting + safe; flashing clickable mid-refresh is the bug.
+    } else if (!(tightenOnly && btn.disabled && !stashFresh)) {
+      // v0.51.117/119: `tightenOnly` (section switch) may LOCK but never
+      // optimistically UNLOCK a currently-disabled button WHILE THE STASH IS STALE
+      // — during fast-switching the stash lags not-busy, so unlocking would flash
+      // the button clickable mid-refresh (the user). When the stash is FRESH (a
+      // normal single switch) we trust it and unlock, so switching away from a
+      // per-tab refresh to an idle tab doesn't leave a spurious '// REFRESHING…'
+      // (the v0.51.118 over-lock). refreshTopbarStatus still owns the real unlock.
       btn.disabled = false;
       btn.textContent = `// REFRESH ${libraryRefreshLabel()}`;
     }
@@ -1389,6 +1394,13 @@
       // (which is cached 750ms + hash-skipped when server
       // state hasn't changed).
       window.__motif_global_enum_pipeline = globalEnumPipeline;
+      // v0.51.119: stamp the button-lock stashes' freshness. This line runs only
+      // on a refreshTopbarStatus that was NOT superseded at the 803 bail, so
+      // during continuous fast section-switching (every call superseded) the ts
+      // goes stale — the section-switch's tighten-only lock reads it to tell a
+      // stale stash (hold, avoid the flash) from a fresh one (trust + unlock,
+      // avoid over-locking a switch away from a per-tab refresh).
+      window.__motif_enum_stash_ts = Date.now();
       // v1.18.51 / v1.18.52: row-refresh trigger contract.
       // -------------------------------------------------------------
       // Any backend op that can mutate visible row state (SRC / DL /

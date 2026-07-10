@@ -34,7 +34,8 @@ def _fn_src() -> str:
 
 
 def _run_btn(*, tighten: bool, disabled_init: bool,
-             pipeline: bool = False, my_tab_busy: bool = False) -> dict:
+             pipeline: bool = False, my_tab_busy: bool = False,
+             stash_fresh: bool = True) -> dict:
     """Drive the real updateLibraryRefreshBtnLabel once and return the mock
     button's resulting {disabled, text}. pipeline = the global-pipeline STASH;
     my_tab_busy = this tab's per-tab enum stash."""
@@ -53,6 +54,9 @@ def _run_btn(*, tighten: bool, disabled_init: bool,
         f"  __motif_enum_active: {json.dumps(enum_active)},\n"
         "  __motif_enum_pending: {},\n"
         f"  __motif_global_enum_pipeline: {json.dumps(pipeline)},\n"
+        # v0.51.119: stash freshness — Date.now() = just written (a normal single
+        # switch); 0 = stale (continuous fast-switching starves the stash write).
+        f"  __motif_enum_stash_ts: {'Date.now()' if stash_fresh else '0'},\n"
         "  __motif_lib_click_grace: {},\n"
         "  __motif_plex_enum_collections_busy: false,\n"
         "};\n"
@@ -79,12 +83,23 @@ def test_default_mode_unlocks_from_stale_stash_this_is_the_bug():
 
 
 def test_tighten_only_keeps_the_lock_from_stale_stash_this_is_the_fix():
-    # SAME stale-stash setup, but the section switch now passes tightenOnly=true:
-    # a currently-disabled button is never optimistically unlocked here — it stays
-    # locked until refreshTopbarStatus (fresh /api/stats) confirms.
-    out = _run_btn(tighten=True, disabled_init=True, pipeline=False)
+    # SAME stale-stash setup, tightenOnly=true, AND the stash is STALE (v0.51.119:
+    # continuous fast-switching starves the stash write) → a disabled button is
+    # never optimistically unlocked here; it stays locked until refreshTopbarStatus
+    # (fresh /api/stats) confirms. This is the flash fix.
+    out = _run_btn(tighten=True, disabled_init=True, pipeline=False, stash_fresh=False)
     assert out["disabled"] is True
     assert out["text"] == "// REFRESHING…"
+
+
+def test_tighten_only_unlocks_when_the_stash_is_fresh_no_over_lock():
+    # v0.51.119: a normal single switch keeps the stash FRESH. tightenOnly then
+    # TRUSTS it: a disabled button on a not-busy fresh stash unlocks, so switching
+    # away from a per-tab refresh to an idle tab doesn't leave a spurious
+    # '// REFRESHING…' (the v0.51.118 over-lock the review flagged).
+    out = _run_btn(tighten=True, disabled_init=True, pipeline=False, stash_fresh=True)
+    assert out["disabled"] is False
+    assert out["text"] == "// REFRESH TV SHOWS"
 
 
 # ── the fix must still LOCK, and must not over-lock an idle button ──

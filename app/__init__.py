@@ -3803,7 +3803,17 @@
 #   fresh pre-paint load). Both callers now delegate; dropped the picker's
 #   allTokens set. Behaviorally proven by a quickjs harness (apply / switch-clears-
 #   stale / fallout-clears-to-defaults).
-__version__ = "0.51.118"
+# 0.51.119: two code-review follow-ups. (1) v0.51.117's tightenOnly blanket-held
+#   the button on a section switch, over-locking a switch AWAY from a per-tab
+#   refresh to an idle tab (spurious // REFRESHING…). Root cause: the button-lock
+#   stashes are written after refreshTopbarStatus's 803 supersession bail, so
+#   continuous fast-switching starves them stale. Fix: stamp window.__motif_enum_
+#   stash_ts at the stash write; tightenOnly now holds ONLY when the stash is STALE
+#   (fast-switch → can't rule out a refresh → hold, no flash) and TRUSTS a FRESH
+#   stash (normal single switch → unlock, no over-lock). (2) MOTIF_APPLY_THEME
+#   clears the deduped UNION of preset token keys (seen-set → 14 removeProperty
+#   calls, not 7× per shared key). Both proven by the quickjs harnesses.
+__version__ = "0.51.119"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -110,7 +110,7 @@ def test_helper_idle_branch_uses_libraryRefreshLabel():
     unlocks a disabled button from a stale stash."""
     body = _helper_body()
     pattern = re.compile(
-        r"\}\s*else\s+if\s*\(!\(tightenOnly && btn\.disabled\)\)\s*\{"
+        r"\}\s*else\s+if\s*\(!\(tightenOnly && btn\.disabled && !stashFresh\)\)\s*\{"
         r"[\s\S]*?"
         r"btn\.disabled\s*=\s*false;\s*"
         r"btn\.textContent\s*=\s*`//\s*REFRESH\s*\$\{libraryRefreshLabel\(\)\}`"
