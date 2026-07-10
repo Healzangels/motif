@@ -90,3 +90,15 @@ def test_chrome_still_uses_themeable_green_alias():
     # token, so they follow the theme.
     assert ".brand-name { color: var(--green-bright); }" in APP
     assert "a { color: var(--green); text-decoration: none; }" in APP
+
+
+def test_action_buttons_follow_the_accent():
+    # v0.51.111: the generic amber action tone (SAVE / TEST / CLEAR / REBUILD)
+    # now rides the accent, so it themes instead of staying amber on a
+    # Plex/Dracula/Nord canvas. Bolder than a plain .btn (accent-bright vs accent).
+    assert ".btn-warn { color: var(--accent-bright); border-color: var(--accent); }" in APP
+    assert ".btn-warn:hover { background: rgba(var(--accent-rgb), 0.08)" in APP
+    assert "var(--amber)" not in _rule(APP, ".btn-warn ")
+    # but genuinely-semantic button tones stay FIXED (meaning, not chrome).
+    assert ".btn-danger { color: var(--red); border-color: var(--red); }" in APP
+    assert ".btn-plex { color: var(--amber); border-color: var(--amber); }" in APP

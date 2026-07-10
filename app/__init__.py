@@ -3736,7 +3736,13 @@
 #   dashboard-customize.js (the base.html pre-paint still themes every page). (2)
 #   The Plex preset was too warm/brown + too dark; real Plex is a NEUTRAL near-
 #   black charcoal (#1d1d1f) with gold (#e5a00d) — re-tuned the canvas to match.
-__version__ = "0.51.110"
+# 0.51.111: theme presets — action buttons follow the accent (the user). The
+#   generic amber action tone .btn-warn (SAVE / TEST / CLEAR / REBUILD) was stuck
+#   amber on a Plex/Dracula/Nord canvas; repointed it from --amber to
+#   --accent-bright + --accent (+ accent-rgb hover) so it themes, staying bolder
+#   than a plain .btn. Genuinely-semantic tones stay fixed: .btn-danger (red),
+#   .btn-plex (Plex amber), the SRC .lib-source-*/promote families, ENV-OVERRIDE.
+__version__ = "0.51.111"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

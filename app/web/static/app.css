@@ -862,9 +862,14 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
    workaround is no longer needed — button text no longer changes
    on idle ↔ busy (just disabled state), so the rendered label
    is constant and the natural content-width is stable too. */
-.btn-warn { color: var(--amber); border-color: var(--amber); }
+/* v0.51.111: the generic action/save tone (SAVE / TEST / CLEAR / REBUILD)
+   follows the THEME accent so it isn't stuck amber on a Plex/Dracula/Nord canvas
+   (the user). accent-bright + accent keeps it bolder than a plain button.
+   Genuinely-semantic tones stay fixed elsewhere: danger red, the Plex-amber
+   tone, the SRC source + promote chips, and the ENV-OVERRIDE badge. */
+.btn-warn { color: var(--accent-bright); border-color: var(--accent); }
 @media (hover: hover) {
-.btn-warn:hover { background: rgba(var(--amber-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.15); }
+.btn-warn:hover { background: rgba(var(--accent-rgb), 0.08); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.15); }
 }
 /* v1.11.96: btn-info = blue button variant for "informational
    actions" (ACCEPT UPDATE). Same family as
