@@ -101,11 +101,13 @@ def test_tag3_presets_signature_hexes_and_label():
 
 
 def test_prepaint_applies_saved_theme():
-    # reads the key, applies the bundle onto documentElement before app.css.
+    # v0.51.118: pre-paint reads the key + applies it via the ONE shared applier.
     assert "localStorage.getItem('motif:theme')" in BASE
-    i = BASE.index("window.MOTIF_THEMES[localStorage.getItem('motif:theme')]")
-    tail = BASE[i:i + 400]
-    assert "setProperty(k, b[k])" in tail
+    assert "window.MOTIF_APPLY_THEME(localStorage.getItem('motif:theme'))" in BASE
+    # the shared applier clears prior tokens then sets the chosen bundle.
+    assert "window.MOTIF_APPLY_THEME = function" in BASE
+    assert "r.style.setProperty(k, b[k])" in BASE
+    assert "r.style.removeProperty(" in BASE
     # runs BEFORE the deferred app.css/app.js (the head scripts are inline).
     assert BASE.index("window.MOTIF_THEMES") < BASE.index('src="/static/app.js')
 

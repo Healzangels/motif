@@ -133,15 +133,31 @@
         '--accent-deep': '#8a8a8a', '--accent-rgb': '208, 208, 208'
       }
     };
+    // v0.51.118: ONE theme-apply path shared by the pre-paint below + the
+    // Settings // THEME picker (app.js bindThemePicker) — clear every preset's
+    // tokens, then apply the chosen bundle (fallout / unknown name = clear only).
+    // The clear is a no-op on the fresh pre-paint load (no inline props yet); it
+    // only matters for a live switch FROM another theme. Single writer = a reload
+    // and an in-app switch can never drift apart.
+    window.MOTIF_APPLY_THEME = function (name) {
+      var themes = window.MOTIF_THEMES || {};
+      var r = document.documentElement;
+      for (var t in themes) {
+        if (!Object.prototype.hasOwnProperty.call(themes, t)) continue;
+        for (var ck in themes[t]) {
+          if (Object.prototype.hasOwnProperty.call(themes[t], ck)) r.style.removeProperty(ck);
+        }
+      }
+      var b = themes[name];
+      if (b) {
+        for (var k in b) {
+          if (Object.prototype.hasOwnProperty.call(b, k)) r.style.setProperty(k, b[k]);
+        }
+      }
+    };
     (function () {
       try {
-        var b = window.MOTIF_THEMES[localStorage.getItem('motif:theme')];
-        if (b) {
-          var r = document.documentElement;
-          for (var k in b) {
-            if (Object.prototype.hasOwnProperty.call(b, k)) r.style.setProperty(k, b[k]);
-          }
-        }
+        window.MOTIF_APPLY_THEME(localStorage.getItem('motif:theme'));
       } catch (e) { /* malformed / disabled localStorage → Fallout defaults */ }
     })();
   </script>

@@ -6133,17 +6133,14 @@
     const LABELS = { tokyonight: 'TOKYO NIGHT' };  // multi-word display names
     sel.innerHTML = keys.map((k) =>
       `<option value="${k}"${k === cur ? ' selected' : ''}>${LABELS[k] || k.toUpperCase()}</option>`).join('');
-    // clear every preset's tokens then apply the chosen one (fallout = clear all).
-    const allTokens = new Set();
-    Object.keys(themes).forEach((t) => Object.keys(themes[t]).forEach((tok) => allTokens.add(tok)));
     sel.addEventListener('change', () => {
       const v = sel.value;
       try { if (v === 'fallout') localStorage.removeItem('motif:theme');
             else localStorage.setItem('motif:theme', v); } catch (e) { /* private */ }
-      const r = document.documentElement;
-      allTokens.forEach((tok) => r.style.removeProperty(tok));
-      const b = themes[v];
-      if (b) Object.keys(b).forEach((tok) => r.style.setProperty(tok, b[tok]));
+      // v0.51.118: the ONE shared applier (defined in base.html) — same
+      // clear-then-apply the pre-paint uses, so a live switch and a reload
+      // can't drift apart.
+      window.MOTIF_APPLY_THEME(v);
     });
   }
 

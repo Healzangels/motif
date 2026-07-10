@@ -3794,7 +3794,16 @@
 #   disabled button; refreshTopbarStatus (fresh /api/stats) owns the unlock.
 #   Variant/status-chip toggle callers keep instant unlock. Proven by a quickjs
 #   harness driving the real fn (bug repro + fix).
-__version__ = "0.51.117"
+# 0.51.118: dedup the theme-apply logic (code-review debt). Pre-paint (base.html)
+#   + the // THEME picker (app.js bindThemePicker) applied a theme bundle via two
+#   different loops — mirror-drift risk (a reload and an in-app switch could
+#   diverge). Extracted ONE window.MOTIF_APPLY_THEME(name) in base.html (defined
+#   before the pre-paint so both reach it): clear every preset token, then apply
+#   the chosen bundle (fallout/unknown = clear only; the clear is a no-op on the
+#   fresh pre-paint load). Both callers now delegate; dropped the picker's
+#   allTokens set. Behaviorally proven by a quickjs harness (apply / switch-clears-
+#   stale / fallout-clears-to-defaults).
+__version__ = "0.51.118"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
