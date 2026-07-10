@@ -3764,7 +3764,17 @@
 #   unnoticed. New fixed-amber .btn-tone-warn carries those; the ok tier rides
 #   fixed-green .btn-tone-ok; .btn-warn stays the THEMED action tone (v0.51.111).
 #   Plus a preset hex==rgb drift guard so a re-tuned accent can't half-theme.
-__version__ = "0.51.114"
+# 0.51.115: render the FULL severity scale (code-review follow-up). The
+#   orphan-drift "needs attention" tier (motif_not_selected / nothing_selected)
+#   used lib-source-user, whose only CSS rule is .btn.lib-source-user — but the
+#   drift chip is a .btn-less .chip, so it rendered COLORLESS (v0.51.114 fixing
+#   the ok tier to actually paint made it the lone blank tier). New bare-selector
+#   .btn-tone-attn (fixed violet) carries it. Also: btn-tone-warn border → new
+#   --amber-deep so the btn-tone-* family shares one color+deep-border shape
+#   (added --amber-deep + --violet-deep). New guard asserts every DRIFT_TONE +
+#   import tone value resolves to a BARE css rule, so a .btn-gated class can't
+#   silently fail to paint again.
+__version__ = "0.51.115"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

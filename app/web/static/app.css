@@ -82,6 +82,7 @@
   --green-pale: #c2ffe0;
   --amber: #ffb84a;
   --amber-bright: #ffd47a;
+  --amber-deep: #8c6529;
   /* v1.12.21: distinct orange for the HL link-pill so it doesn't
      read as amber/yellow next to the SRC P pill. Saturated and
      warm, sits between amber and red in hue space. */
@@ -109,6 +110,7 @@
      the family connection while staying visually distinct from
      the SRC=U chip itself. */
   --violet-bright: #dba6ff;
+  --violet-deep: #6c3c8c;
   --red: #ff6b6b;
   --magenta: #ff7ad6;
   /* v1.24.65: per-library accent colors — drive BOTH the PLEX dashboard cards
@@ -2011,7 +2013,13 @@ body.help-mode .settings-help-about { display: block; }
 /* v0.51.114: fixed-amber severity tone — the warn tier of the btn-tone-* family (import CONFLICT + orphan-drift warn chips). Stays amber across every theme so the green=ok / amber=warn / red=danger scale never collapses; .btn-warn is the THEMED action tone, distinct from this. */
 .btn-tone-warn {
   color: var(--amber);
-  border-color: var(--amber);
+  border-color: var(--amber-deep);
+}
+
+/* v0.51.115: fixed-violet "needs attention" severity tone (orphan-drift not_selected / nothing_selected — motif's entry exists but the user hasn't picked one). Bare selector so it renders on a .chip; the old lib-source-user tone only had a .btn.lib-source-user rule → colorless on the .btn-less chip. */
+.btn-tone-attn {
+  color: var(--violet);
+  border-color: var(--violet-deep);
 }
 
 .btn-tone-muted {

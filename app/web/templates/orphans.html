@@ -74,12 +74,13 @@
     let activeDriftFilter = null;
     let lastFindings = [];
 
-    // v1.18.40: drift_type → tone class mapping. v0.51.114: fixed-tone
-    // severity vocab so the ok/warn/danger scale is theme-independent
-    // (btn-tone-ok green, btn-tone-warn amber, btn-danger red;
-    // lib-source-user violet = "needs attention"). Pre-v0.51.114 the ok +
-    // warn tiers rode themeable greens (--green → accent) and collapsed
-    // into one accent tone on non-Fallout themes.
+    // v1.18.40: drift_type → tone class mapping. v0.51.114/115: fixed-tone
+    // severity vocab so the whole scale is theme-independent AND actually
+    // renders on a .chip (btn-tone-ok green, btn-tone-attn violet, btn-tone-warn
+    // amber, btn-danger red — all BARE selectors). Pre-v0.51.114 the ok + warn
+    // tiers rode themeable greens (--green → accent) and collapsed on non-Fallout
+    // themes; pre-v0.51.115 the "needs attention" tier used lib-source-user,
+    // whose only rule is .btn.lib-source-user — colorless on the .btn-less chip.
     const DRIFT_TONE = {
       'ok': 'btn-tone-ok',
       'rk_lookup_failed': 'btn-danger',
@@ -87,8 +88,8 @@
       'no_plex_entries': 'btn-tone-warn',
       'motif_hash_unknown': 'btn-tone-warn',
       'motif_entry_missing': 'btn-tone-warn',
-      'motif_not_selected': 'lib-source-user',
-      'nothing_selected': 'lib-source-user',
+      'motif_not_selected': 'btn-tone-attn',
+      'nothing_selected': 'btn-tone-attn',
       // v1.18.43: orphan_sidecar_on_disk — plex_upload row
       // has a leftover theme.<ext> at the media folder from a
       // pre-v1.18.36 SWITCH file→api that didn't clean up.

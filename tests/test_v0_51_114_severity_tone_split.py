@@ -48,15 +48,44 @@ def _preset(name: str) -> str:
     return THEMES_BLK[i:THEMES_BLK.index("}", i)]
 
 
+def _class_values(block: str) -> set:
+    # class-shaped ('foo-bar') VALUES on the right of a ': ' in an object literal.
+    return set(re.findall(r":\s*'([a-z][\w-]*-[\w-]+)'", block))
+
+
+def _has_bare_rule(css: str, cls: str) -> bool:
+    # a rule where `.cls` stands alone — at a selector-list boundary, NOT gated
+    # on a co-class like `.btn.cls` (which wouldn't match a .btn-less element).
+    return bool(re.search(r"(?:^|[\s,>+~(])\." + re.escape(cls) + r"(?![\w-])",
+                          css, re.M))
+
+
 # ── the fixed-amber severity tone ────────────────────────────
 
 
 def test_btn_tone_warn_is_fixed_amber():
     rule = _rule(APP, ".btn-tone-warn {")
     assert "color: var(--amber);" in rule
-    assert "border-color: var(--amber);" in rule
+    # v0.51.115: border uses the deep variant, matching .btn-tone-ok (--ok-deep).
+    assert "border-color: var(--amber-deep);" in rule
     # fixed — never the themeable accent/green alias.
     assert "--accent" not in rule and "--green" not in rule
+
+
+def test_btn_tone_attn_is_fixed_violet():
+    # v0.51.115: the "needs attention" severity tier (orphan not_selected /
+    # nothing_selected). Bare selector + fixed violet, deep-variant border.
+    rule = _rule(APP, ".btn-tone-attn {")
+    assert "color: var(--violet);" in rule
+    assert "border-color: var(--violet-deep);" in rule
+    assert "--accent" not in rule and "--green" not in rule
+
+
+def test_deep_border_tokens_defined():
+    # the btn-tone-* borders reference these; an undefined var() renders the
+    # border transparent, silently breaking the family's outline convention.
+    assert re.search(r"--amber-deep:\s*#[0-9a-fA-F]{6};", APP)
+    assert re.search(r"--violet-deep:\s*#[0-9a-fA-F]{6};", APP)
 
 
 def test_import_conflict_uses_fixed_amber_tone():
@@ -76,15 +105,38 @@ def test_orphan_drift_severity_scale_is_theme_independent():
     for warn in ("no_plex_entries", "motif_hash_unknown",
                  "motif_entry_missing", "orphan_sidecar_on_disk"):
         assert f"'{warn}': 'btn-tone-warn'," in blk, f"{warn} must be fixed amber"
-    # no themed tone leaks into the severity map.
+    # v0.51.115: "needs attention" tier is the bare-selector violet tone.
+    assert "'motif_not_selected': 'btn-tone-attn'," in blk
+    assert "'nothing_selected': 'btn-tone-attn'," in blk
+    # nothing themed OR .btn-gated leaks into the severity map: every tone here
+    # lands on a .btn-less .chip, so no .btn.lib-source-* (which would render
+    # colorless) and no --green-aliased .btn-warn (which would theme).
     assert "'btn-warn'" not in blk
-    assert "lib-source-themerrdb" not in blk  # ok tier no longer themed green
+    assert "lib-source" not in blk
 
 
 def test_btn_warn_stays_the_themed_action_tone():
     # the SPLIT: .btn-warn keeps following the accent (SAVE / TEST / CLEAR);
     # only the SEMANTIC warn-severity uses moved off it onto .btn-tone-warn.
     assert ".btn-warn { color: var(--accent-bright); border-color: var(--accent); }" in APP
+
+
+def test_every_severity_tone_resolves_to_a_bare_css_rule():
+    # v0.51.115: a tone class lands on a .chip (orphans) / .pill (import) that
+    # carries NO .btn — so its rule must be a BARE selector (.foo {}), not one
+    # gated on a co-class it lacks (.btn.lib-source-user needs .btn → the chip
+    # renders colorless). This is exactly the trap v0.51.115 fixed; the guard
+    # locks BOTH tone maps so a future .btn.X value can't silently fail to paint.
+    drift = ORPHANS[ORPHANS.index("const DRIFT_TONE = {"):]
+    drift = drift[:drift.index("};") + 2]
+    imp = APP_JS[APP_JS.index("clean: 'btn-tone-ok'"):]
+    imp = imp[:imp.index("};") + 2]
+    values = _class_values(drift) | _class_values(imp)
+    assert values, "no tone values extracted — the map anchors/regex drifted"
+    for v in sorted(values):
+        assert _has_bare_rule(APP, v), (
+            f"tone class {v!r} has no BARE CSS rule in app.css — its only rule "
+            f"needs a co-class the .chip/.pill lacks, so it renders colorless")
 
 
 # ── preset hex == rgb drift guard ────────────────────────────
