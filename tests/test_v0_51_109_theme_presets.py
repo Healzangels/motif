@@ -1,0 +1,113 @@
+"""v0.51.109 — theme presets Tag 2: the // THEME picker + Fallout/Plex/Dracula/Nord.
+
+A preset overrides the CANVAS (--bg/--fg/--line families) + the v0.51.108 --accent
+family, applied pre-paint from localStorage 'motif:theme'. window.MOTIF_THEMES
+(base.html) is the single source of truth; the // THEME picker in the customize
+panel reads it. Fallout = no override (the :root/green defaults).
+
+The load-bearing guard: a preset must NEVER touch a SEMANTIC token — the SRC/LINK
+pill + chip colors (src-t/ok/amber/violet/blue/magenta/red/green-pale/…) stay
+fixed in every theme, per the user's "don't change the pill or chip colors".
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+BASE = (REPO / "app" / "web" / "templates" / "base.html").read_text()
+CUST = (REPO / "app" / "web" / "static" / "dashboard-customize.js").read_text()
+APP = (REPO / "app" / "web" / "static" / "app.css").read_text()
+
+# the MOTIF_THEMES object literal in base.html
+THEMES_BLK = BASE[BASE.index("window.MOTIF_THEMES = {"):
+                  BASE.index("};", BASE.index("window.MOTIF_THEMES = {")) + 2]
+
+# every token a preset is ALLOWED to set — canvas + accent only.
+CANVAS_ACCENT = [
+    "--bg", "--bg-elev", "--bg-elev-2", "--bg-rgb", "--line", "--line-bright",
+    "--line-rgb", "--fg", "--fg-dim", "--fg-mute", "--accent", "--accent-bright",
+    "--accent-deep", "--accent-rgb",
+]
+# tokens a preset must NEVER set (semantic pill/chip identity + health).
+FORBIDDEN = [
+    "--src-t", "--ok", "--amber", "--violet", "--blue", "--magenta", "--red",
+    "--orange", "--lemon", "--cyan", "--green-pale", "--green:", "--green-bright",
+    "--dash-movies", "--dash-tv", "--dash-anime", "--dash-collections",
+]
+
+
+def _preset(name: str) -> str:
+    i = THEMES_BLK.index(name + ": {")
+    return THEMES_BLK[i:THEMES_BLK.index("}", i)]
+
+
+# ── the preset bundles ───────────────────────────────────────
+
+
+def test_three_presets_defined():
+    for name in ("plex", "dracula", "nord"):
+        assert name + ": {" in THEMES_BLK, f"{name} preset missing"
+
+
+def test_each_preset_sets_the_full_canvas_and_accent():
+    for name in ("plex", "dracula", "nord"):
+        blk = _preset(name)
+        for tok in CANVAS_ACCENT:
+            assert f"'{tok}':" in blk, f"{name} is missing {tok}"
+
+
+def test_presets_never_touch_a_semantic_token():
+    # the whole point: pills/chips keep their meaning across themes.
+    for bad in FORBIDDEN:
+        assert bad not in THEMES_BLK, (
+            f"a preset sets {bad!r} — that would retint a pill/chip; presets "
+            "may only override the canvas + --accent family")
+
+
+def test_dracula_and_nord_use_their_signature_hexes():
+    assert "'--bg': '#282a36'" in _preset("dracula")
+    assert "'--accent': '#bd93f9'" in _preset("dracula")
+    assert "'--bg': '#2e3440'" in _preset("nord")
+    assert "'--accent': '#88c0d0'" in _preset("nord")
+    assert "'--accent': '#e5a00d'" in _preset("plex")  # Plex gold
+
+
+# ── pre-paint (base.html) ────────────────────────────────────
+
+
+def test_prepaint_applies_saved_theme():
+    # reads the key, applies the bundle onto documentElement before app.css.
+    assert "localStorage.getItem('motif:theme')" in BASE
+    i = BASE.index("window.MOTIF_THEMES[localStorage.getItem('motif:theme')]")
+    tail = BASE[i:i + 400]
+    assert "setProperty(k, b[k])" in tail
+    # runs BEFORE the deferred app.css/app.js (the head scripts are inline).
+    assert BASE.index("window.MOTIF_THEMES") < BASE.index('src="/static/app.js')
+
+
+# ── picker (dashboard-customize.js) ──────────────────────────
+
+
+def test_theme_picker_wired_in_customize():
+    assert "THEME_KEY = 'motif:theme'" in CUST
+    assert "// THEME" in CUST
+    assert 'id="dash-theme-select"' in CUST
+    for k in ("fallout", "plex", "dracula", "nord"):
+        assert k in CUST  # THEME_LABELS keys
+    assert "function applyTheme()" in CUST
+    assert "function onThemeChange(" in CUST
+    assert "addEventListener('change', onThemeChange)" in CUST
+    # applied on boot (idempotent with the head pre-paint).
+    assert "applyTheme();" in CUST
+
+
+def test_customize_reads_the_shared_bundle_no_duplicate():
+    # single source of truth — the picker reads window.MOTIF_THEMES, it does not
+    # carry its own copy of the hexes.
+    assert "window.MOTIF_THEMES" in CUST
+    assert "#282a36" not in CUST and "#bd93f9" not in CUST
+
+
+def test_theme_select_has_styling():
+    assert ".dash-theme-select {" in APP
+    assert ".dash-theme-row {" in APP

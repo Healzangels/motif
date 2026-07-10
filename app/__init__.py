@@ -3718,7 +3718,17 @@
 #   never themed). --green-pale (TB chip) stays fixed. Updated the semantic-token
 #   pins in 6 tests; chrome pins untouched. No behavior change — purely the
 #   token foundation for the // THEME picker + presets landing next.
-__version__ = "0.51.108"
+# 0.51.109: theme presets Tag 2 — the // THEME picker + Fallout/Plex/Dracula/Nord.
+#   window.MOTIF_THEMES (base.html) is the single source of truth: each preset
+#   overrides the canvas (--bg/--fg/--line families) + the --accent family and
+#   NOTHING else, so the semantic SRC/LINK pills+chips stay fixed. Applied
+#   pre-paint on every page from localStorage 'motif:theme' (mirrors the v1.24.65
+#   dashColors head script; Fallout/unset = the :root green defaults, no flash).
+#   A // THEME select in the customize-layout panel (sibling of // LIBRARY COLORS)
+#   live-applies + persists; the picker reads the shared bundle (no duplicate
+#   hexes). Tests guard the full canvas/accent set per preset AND that no preset
+#   ever touches a semantic token.
+__version__ = "0.51.109"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

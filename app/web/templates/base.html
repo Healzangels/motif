@@ -74,6 +74,49 @@
       } catch (e) { /* malformed / disabled localStorage → token defaults */ }
     })();
   </script>
+  {# v0.51.109: CRT phosphor THEME presets. A theme overrides the canvas
+     (--bg/--fg/--line families) + the v0.51.108 --accent family, leaving the
+     semantic SRC/LINK palette (--src-t/--ok/amber/violet/…) fixed so pills+chips
+     keep their meaning. window.MOTIF_THEMES is the ONE source of truth — the
+     // THEME picker in the customize panel reads it too. Applied pre-paint on
+     EVERY page from localStorage 'motif:theme'; 'fallout'/unset/unknown → the
+     :root defaults (no override, no flash). #}
+  <script>
+    window.MOTIF_THEMES = {
+      plex: {
+        '--bg': '#16140f', '--bg-elev': '#201d16', '--bg-elev-2': '#2b271d',
+        '--bg-rgb': '22, 20, 15', '--line': '#2e2a20', '--line-bright': '#40392c',
+        '--line-rgb': '46, 42, 32', '--fg': '#ded7c7', '--fg-dim': '#938c7c',
+        '--fg-mute': '#665f4e', '--accent': '#e5a00d', '--accent-bright': '#ffc648',
+        '--accent-deep': '#96690a', '--accent-rgb': '229, 160, 13'
+      },
+      dracula: {
+        '--bg': '#282a36', '--bg-elev': '#313442', '--bg-elev-2': '#3d4152',
+        '--bg-rgb': '40, 42, 54', '--line': '#44475a', '--line-bright': '#565a72',
+        '--line-rgb': '68, 71, 90', '--fg': '#f8f8f2', '--fg-dim': '#9aa0c4',
+        '--fg-mute': '#6272a4', '--accent': '#bd93f9', '--accent-bright': '#d9bbff',
+        '--accent-deep': '#7d5bbe', '--accent-rgb': '189, 147, 249'
+      },
+      nord: {
+        '--bg': '#2e3440', '--bg-elev': '#373e4c', '--bg-elev-2': '#434c5e',
+        '--bg-rgb': '46, 52, 64', '--line': '#4c566a', '--line-bright': '#5e6a80',
+        '--line-rgb': '76, 86, 106', '--fg': '#eceff4', '--fg-dim': '#a7b0c0',
+        '--fg-mute': '#767f92', '--accent': '#88c0d0', '--accent-bright': '#a9d4e0',
+        '--accent-deep': '#5e81ac', '--accent-rgb': '136, 192, 208'
+      }
+    };
+    (function () {
+      try {
+        var b = window.MOTIF_THEMES[localStorage.getItem('motif:theme')];
+        if (b) {
+          var r = document.documentElement;
+          for (var k in b) {
+            if (Object.prototype.hasOwnProperty.call(b, k)) r.style.setProperty(k, b[k]);
+          }
+        }
+      } catch (e) { /* malformed / disabled localStorage → Fallout defaults */ }
+    })();
+  </script>
   {# v0.50.60: pre-paint CRT-effect toggles (Settings → VISUALS). Reads localStorage
      'motif:visuals' and stamps html.viz-no-<effect> for each one the user turned
      OFF, BEFORE first paint — so a disabled scanline/equalizer/hero-wave never

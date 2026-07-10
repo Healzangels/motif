@@ -6948,6 +6948,26 @@ body.dash-customize-mode .dash-user-hidden { opacity: 0.45; }
   cursor: pointer;
 }
 .dash-color-reset { margin-left: auto; }
+/* v0.51.109: // THEME picker — full-width row above the library-color grid. */
+.dash-theme-row {
+  flex-basis: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+}
+.dash-theme-select {
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+  color: var(--fg);
+  background: var(--bg-elev);
+  border: 1px solid var(--line-bright);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+  cursor: pointer;
+}
+.dash-theme-select:hover { border-color: var(--accent-deep); }
+.dash-theme-select:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; }
 
 /* Per-section controls injected by dashboard-customize.js. Bar sits
    above the section's normal content; drag handle on the left,
