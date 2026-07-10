@@ -3748,7 +3748,12 @@
 #   canvas + --accent family. tokyonight gets a two-word 'TOKYO NIGHT' picker
 #   label. (The settings action buttons already theme as of v0.51.111 — the only
 #   fixed one is the red destructive button, which stays red by design.)
-__version__ = "0.51.112"
+# 0.51.113: theme flourishes + carousel dwell (the user). The topbar equalizer
+#   bars (.brand-mark .brand-bar) and the hero-title glyph (.title::before) were
+#   fixed --amber, reading Plex-ish on a non-green canvas; both now follow the
+#   --accent so they match every theme. Also: the dashboard RECENTLY ADDED
+#   carousel dwells 3s at the end before snapping back to the start (was instant).
+__version__ = "0.51.113"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -2159,6 +2159,7 @@
     const stored = localStorage.getItem(KEY);
     cb.checked = stored === null ? true : stored === '1';
     let timer = null;
+    let _carouselEndHold = 0;  // v0.51.113: Date.now() ms to hold at the strip's end, or 0
     // v1.24.61: hide the horizontal scrollbar while auto-scrolling — it's noise
     // when the strip drives itself (the user). Manual scroll (toggle off) keeps it.
     // overflow-x stays auto so scrollLeft still works; only the bar is hidden.
@@ -2185,8 +2186,15 @@
           || strip.matches(':hover')
           || document.querySelector('dialog[open]')) return;
       if (strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1) {
+        // v0.51.113: dwell 3s at the end before snapping back to the start (the
+        // user) — arm the hold on first arrival, then wait it out, then wrap.
+        const now = Date.now();
+        if (!_carouselEndHold) { _carouselEndHold = now + 3000; return; }
+        if (now < _carouselEndHold) return;
+        _carouselEndHold = 0;
         strip.scrollLeft = 0;
       } else {
+        _carouselEndHold = 0;  // not at the end (incl. just after wrap) → disarm
         strip.scrollLeft += 1;
       }
     }

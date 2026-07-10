@@ -164,3 +164,12 @@ def test_endpoints_and_carousel_are_wired():
     html = (repo / "app" / "web" / "templates" / "dashboard.html").read_text()
     assert 'id="recently-added-strip"' in html and "// RECENTLY ADDED" in html
     assert 'id="recent-autoscroll"' in html  # auto-scroll checkbox
+
+
+def test_carousel_dwells_3s_at_end_before_wrapping():
+    """v0.51.113: the RECENTLY ADDED strip holds ~3s at the end before snapping
+    back to the start (the user), instead of wrapping instantly."""
+    js = (Path(__file__).resolve().parent.parent
+          / "app" / "web" / "static" / "app.js").read_text()
+    assert "_carouselEndHold" in js
+    assert "now + 3000" in js  # the 3-second dwell

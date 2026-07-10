@@ -102,3 +102,12 @@ def test_action_buttons_follow_the_accent():
     # but genuinely-semantic button tones stay FIXED (meaning, not chrome).
     assert ".btn-danger { color: var(--red); border-color: var(--red); }" in APP
     assert ".btn-plex { color: var(--amber); border-color: var(--amber); }" in APP
+
+
+def test_brand_equalizer_and_hero_glyph_follow_accent():
+    # v0.51.113: the decorative flourishes — the topbar equalizer bars + the
+    # hero-title glyph — follow the theme accent (were fixed --amber, which read
+    # off-theme / Plex-ish on a non-green canvas).
+    i = APP.index(".brand-mark .brand-bar {")
+    assert "background: var(--accent);" in APP[i:APP.index("}", i)]
+    assert ".title::before { content: '▰ '; color: var(--accent);" in APP

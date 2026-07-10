@@ -46,11 +46,12 @@ def test_bands_run_at_different_durations():
     assert len(durations) >= 3, f"bands too uniform: {durations}"
 
 
-def test_brand_bars_stay_amber_and_infinite():
+def test_brand_bars_follow_accent_and_infinite():
     """Brand accent + reduced-motion coverage preserved."""
     i = APP_CSS.index(".brand-mark .brand-bar {")
     block = APP_CSS[i:APP_CSS.index("}", i)]
-    assert "var(--amber)" in block
+    # v0.51.113: the brand bars follow the THEME accent (was --amber).
+    assert "var(--accent)" in block
     assert "infinite" in block
     # full-height base (no fill-mode:forwards) → reduced-motion rests full bars.
     assert "forwards" not in block

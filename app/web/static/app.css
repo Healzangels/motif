@@ -505,7 +505,9 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 .brand-mark .brand-bar {
   width: 2px;
   height: 100%;
-  background: var(--amber);
+  /* v0.51.113: the brand equalizer follows the THEME accent (was fixed --amber,
+     which read Plex-ish on a green/purple/cyan canvas — the user). */
+  background: var(--accent);
   border-radius: 1px;
   transform-origin: bottom;
   /* v0.50.4: SLOW ambient idle drift (the user — the v0.50.2 rate "feels way too
@@ -812,7 +814,8 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
   margin-bottom: 0;
   line-height: 0.9;
 }
-.title::before { content: '▰ '; color: var(--amber); font-size: 0.6em; letter-spacing: 0.4em; vertical-align: middle; }
+/* v0.51.113: the hero-title glyph follows the THEME accent (was fixed --amber). */
+.title::before { content: '▰ '; color: var(--accent); font-size: 0.6em; letter-spacing: 0.4em; vertical-align: middle; }
 
 /* ---- Buttons ---- */
 
