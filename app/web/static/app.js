@@ -6193,13 +6193,13 @@
       }
       // v1.15.66: status pill tone matches the row's classification.
       //   clean        → green (default)
-      //   conflict     → btn-warn amber
+      //   conflict     → btn-tone-warn (fixed amber)
       //   no_match     → muted
       //   invalid_url  → btn-danger
       //   skipped      → muted
       const tone = {
         clean: 'btn-tone-ok',
-        conflict: 'btn-warn',
+        conflict: 'btn-tone-warn',
         // v1.15.73: DUPLICATE uses the muted tone — visually
         // distinct from CLEAN (green-ish) so the user reads
         // "this is a no-op match" at a glance, not "this will apply".

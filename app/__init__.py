@@ -3753,7 +3753,18 @@
 #   fixed --amber, reading Plex-ish on a non-green canvas; both now follow the
 #   --accent so they match every theme. Also: the dashboard RECENTLY ADDED
 #   carousel dwells 3s at the end before snapping back to the start (was instant).
-__version__ = "0.51.113"
+# 0.51.114: theme "Split" decision (the user) + a fixed severity tone. The user
+#   chose SPLIT — the row-table SRC/LINK pills, chips + status dots stay FIXED
+#   (scannable data grid), while the peripheral SOURCE chrome (source-menu
+#   buttons, URL links, success msgs) FOLLOWS the accent; the glossary/legend +
+#   text labels anchor the meaning, so that divergence is aesthetic, not
+#   confusing. The one carve-out: the SEVERITY scale (import CONFLICT +
+#   orphan-drift warn) is a SAFETY signal, not a source color — a CONFLICT that
+#   reads the same green as CLEAN could be applied over an existing theme
+#   unnoticed. New fixed-amber .btn-tone-warn carries those; the ok tier rides
+#   fixed-green .btn-tone-ok; .btn-warn stays the THEMED action tone (v0.51.111).
+#   Plus a preset hex==rgb drift guard so a re-tuned accent can't half-theme.
+__version__ = "0.51.114"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

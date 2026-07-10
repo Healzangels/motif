@@ -74,16 +74,19 @@
     let activeDriftFilter = null;
     let lastFindings = [];
 
-    // v1.18.40: drift_type → tone class mapping. Mirrors the
-    // SOURCE-menu lib-source-X vocab (themerrdb = green = healthy;
-    // user = violet = needs attention; danger = red = serious).
+    // v1.18.40: drift_type → tone class mapping. v0.51.114: fixed-tone
+    // severity vocab so the ok/warn/danger scale is theme-independent
+    // (btn-tone-ok green, btn-tone-warn amber, btn-danger red;
+    // lib-source-user violet = "needs attention"). Pre-v0.51.114 the ok +
+    // warn tiers rode themeable greens (--green → accent) and collapsed
+    // into one accent tone on non-Fallout themes.
     const DRIFT_TONE = {
-      'ok': 'lib-source-themerrdb',
+      'ok': 'btn-tone-ok',
       'rk_lookup_failed': 'btn-danger',
       'plex_fetch_failed': 'btn-danger',
-      'no_plex_entries': 'btn-warn',
-      'motif_hash_unknown': 'btn-warn',
-      'motif_entry_missing': 'btn-warn',
+      'no_plex_entries': 'btn-tone-warn',
+      'motif_hash_unknown': 'btn-tone-warn',
+      'motif_entry_missing': 'btn-tone-warn',
       'motif_not_selected': 'lib-source-user',
       'nothing_selected': 'lib-source-user',
       // v1.18.43: orphan_sidecar_on_disk — plex_upload row
@@ -91,7 +94,7 @@
       // pre-v1.18.36 SWITCH file→api that didn't clean up.
       // Amber: cleanup needed but not actively breaking anything
       // (Plex's API path is healthy).
-      'orphan_sidecar_on_disk': 'btn-warn',
+      'orphan_sidecar_on_disk': 'btn-tone-warn',
     };
 
     // v0.50.9: show drift types without underscores (MOTIF_ENTRY_MISSING →

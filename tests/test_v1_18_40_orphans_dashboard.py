@@ -89,12 +89,12 @@ def test_orphans_template_wires_action_buttons_to_existing_endpoints():
 
 
 def test_orphans_template_drift_type_tone_map_present():
-    """Drift-type chips use a tone map mirroring motif's
-    lib-source-X vocab so visual classification is consistent
-    with the rest of the UI."""
+    """Drift-type chips carry a severity tone map. v0.51.114: the ok/warn
+    tiers use the FIXED btn-tone-* family (green/amber) instead of themeable
+    greens, so the ok/warn/danger scale stays readable on every theme."""
     src = ORPHANS_HTML.read_text()
     assert "DRIFT_TONE" in src
-    assert "'ok': 'lib-source-themerrdb'" in src
+    assert "'ok': 'btn-tone-ok'" in src  # fixed green (was lib-source-themerrdb)
     assert "lib-source-plex" in src  # LPS action uses plex tone
 
 

@@ -2008,6 +2008,12 @@ body.help-mode .settings-help-about { display: block; }
   border-color: var(--ok-deep);
 }
 
+/* v0.51.114: fixed-amber severity tone — the warn tier of the btn-tone-* family (import CONFLICT + orphan-drift warn chips). Stays amber across every theme so the green=ok / amber=warn / red=danger scale never collapses; .btn-warn is the THEMED action tone, distinct from this. */
+.btn-tone-warn {
+  color: var(--amber);
+  border-color: var(--amber);
+}
+
 .btn-tone-muted {
   color: var(--fg-dim);
   border-color: var(--line);
