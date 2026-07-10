@@ -104,17 +104,21 @@ def test_helper_busy_branch_sets_refreshing_label():
 
 
 def test_helper_idle_branch_uses_libraryRefreshLabel():
-    """When stillBusy=false, helper sets the scope-aware
-    label via libraryRefreshLabel() (same as main block)."""
+    """When not-busy AND not (tightenOnly && already-disabled), the helper
+    sets the scope-aware label via libraryRefreshLabel() + unlocks. v0.51.117:
+    the idle branch is now gated so a section switch never optimistically
+    unlocks a disabled button from a stale stash."""
     body = _helper_body()
     pattern = re.compile(
-        r"\}\s*else\s*\{\s*"
+        r"\}\s*else\s+if\s*\(!\(tightenOnly && btn\.disabled\)\)\s*\{"
+        r"[\s\S]*?"
         r"btn\.disabled\s*=\s*false;\s*"
         r"btn\.textContent\s*=\s*`//\s*REFRESH\s*\$\{libraryRefreshLabel\(\)\}`"
     )
     assert pattern.search(body), (
         "Helper's idle branch must set disabled=false AND the "
-        "scope-aware label via libraryRefreshLabel()."
+        "scope-aware label via libraryRefreshLabel(), gated by the "
+        "v0.51.117 tightenOnly guard."
     )
 
 

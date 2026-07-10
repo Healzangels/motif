@@ -599,7 +599,7 @@
   // re-applies the SAME predicate (myTabBusy + grace +
   // globalEnumPipeline) so the toggle reflects the lock
   // synchronously, no waiting for a fresh poll.
-  function updateLibraryRefreshBtnLabel() {
+  function updateLibraryRefreshBtnLabel(tightenOnly) {
     const btn = document.getElementById('library-refresh-btn');
     if (!btn) return;
     const tabKey = libraryState.tab;
@@ -630,7 +630,14 @@
     if (stillBusy) {
       btn.disabled = true;
       btn.textContent = '// REFRESHING…';
-    } else {
+    } else if (!(tightenOnly && btn.disabled)) {
+      // v0.51.117: `tightenOnly` (section switch) may LOCK but never optimistically
+      // UNLOCK a currently-disabled button from the possibly-stale global-pipeline
+      // stash — a full refresh's startup / poll-lag window reads not-busy here, so
+      // the button flashed clickable for the loadLibrary duration until
+      // refreshTopbarStatus (fresh /api/stats, runs right after) re-locked it (the
+      // user: fast section-switching during a dashboard refresh). Over-locking by a
+      // fetch is self-correcting + safe; flashing clickable mid-refresh is the bug.
       btn.disabled = false;
       btn.textContent = `// REFRESH ${libraryRefreshLabel()}`;
     }
@@ -8494,7 +8501,7 @@
     if (push) history.pushState({ libTab: tab }, '', url.pathname + url.search);
     highlightNav();
     hydrateLibraryStateForTab(tab, url.searchParams);
-    updateLibraryRefreshBtnLabel();
+    updateLibraryRefreshBtnLabel(true);  // v0.51.117: tighten-only — never flash clickable mid-refresh
     const tbody = document.getElementById('library-body');
     if (tbody) { try { delete tbody.dataset.lastHash; } catch (_) { /* fine — forces loading… + a fresh render */ } }
     window.scrollTo(0, 0);

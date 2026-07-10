@@ -3784,7 +3784,17 @@
 #   family (user=violet, adopt/PU=cyan, plex=amber) was already fixed. Guard locks
 #   the whole .btn.lib-source-* family off the themeable aliases. NOTE: this
 #   supersedes the v0.51.114 "keep source-menu buttons themed" call.
-__version__ = "0.51.116"
+# 0.51.117: library REFRESH button no longer flashes clickable on a fast section
+#   switch mid-refresh (the user). switchLibraryTab re-applied the lock via
+#   updateLibraryRefreshBtnLabel() (SYNC, reads the possibly-stale global-pipeline
+#   stash) BEFORE the authoritative refreshTopbarStatus() (after await
+#   loadLibrary) — a full refresh's startup / poll-lag window read not-busy, so the
+#   button unlocked for the loadLibrary duration. Added a `tightenOnly` mode used
+#   only by the section switch: it may LOCK but never optimistically UNLOCK a
+#   disabled button; refreshTopbarStatus (fresh /api/stats) owns the unlock.
+#   Variant/status-chip toggle callers keep instant unlock. Proven by a quickjs
+#   harness driving the real fn (bug repro + fix).
+__version__ = "0.51.117"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -44,9 +44,10 @@ def test_helper_function_exists_at_module_scope():
     scope (next to libraryRefreshLabel) so both call sites can
     reach it without re-derivation."""
     js = JS.read_text()
-    # Function declaration.
+    # Function declaration. v0.51.117: takes a `tightenOnly` param (the section
+    # switch passes true — lock but never optimistically unlock).
     pattern = re.compile(
-        r"function\s+updateLibraryRefreshBtnLabel\s*\(\s*\)\s*\{"
+        r"function\s+updateLibraryRefreshBtnLabel\s*\(\s*tightenOnly\s*\)\s*\{"
     )
     assert pattern.search(js), (
         "v1.14.68 helper updateLibraryRefreshBtnLabel must be "
