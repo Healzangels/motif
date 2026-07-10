@@ -178,7 +178,7 @@ def test_new_tone_classes_defined_in_css():
     assert ".stat-tdb-primary" in src
     tdb_anchor = src.index(".stat-tdb-primary")
     tdb_block = src[tdb_anchor:tdb_anchor + 200]
-    assert "var(--green-bright)" in tdb_block
+    assert "var(--src-t-bright)" in tdb_block
     # plex-tv has its own dedicated tone (color value pinned by
     # the v1.15.29 test).
     assert ".stat-plex-tv" in src

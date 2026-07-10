@@ -64,7 +64,7 @@ def test_link_glyph_hardlink_color_is_green():
     used --orange (#ff7a3a) which read as amber-family on the
     filter row alongside ED, P, PS, !M etc."""
     block = _block(".link-glyph-hardlink {", size=800)
-    assert "color: var(--green);" in block
+    assert "color: var(--ok);" in block
     # The orange/amber predecessors must NOT survive in this
     # specific block. v1.15.113 migrated rgba triplets to
     # `--<color>-rgb` tokens — check for the token form too
@@ -73,8 +73,8 @@ def test_link_glyph_hardlink_color_is_green():
     assert "rgba(255,122,58" not in block          # raw orange tuple
     assert "var(--orange-rgb)" not in block        # tokenized orange
     # The green border + bg are present (post-v1.15.113 token form).
-    assert "rgba(var(--green-rgb), 0.4)" in block
-    assert "rgba(var(--green-rgb), 0.05)" in block
+    assert "rgba(var(--ok-rgb), 0.4)" in block
+    assert "rgba(var(--ok-rgb), 0.05)" in block
 
 
 def test_link_badge_hardlink_still_green():
@@ -83,8 +83,8 @@ def test_link_badge_hardlink_still_green():
     it to match the historical orange .link-glyph-hardlink color
     (the v1.14.72 direction is the OTHER way)."""
     block = _block(".link-badge-hardlink {", size=400)
-    assert "color: var(--green);" in block
-    assert "border-color: var(--green-deep);" in block
+    assert "color: var(--ok);" in block
+    assert "border-color: var(--ok-deep);" in block
 
 
 def test_v1_14_72_marker_on_hardlink_change():

@@ -30,15 +30,15 @@ APP_CSS = REPO / "app" / "web" / "static" / "app.css"
 
 
 def test_stat_tdb_primary_uses_themerrdb_green_not_orange():
-    """The .stat-tdb-primary rule must use --green-bright (the
+    """The .stat-tdb-primary rule must use --src-t-bright (the
     canonical THEMERRDB tone) for its border-left-color, not
     the off-palette --orange the v1.15.19 cut shipped."""
     css = APP_CSS.read_text()
     rule_start = css.index(".stat-tdb-primary {")
     rule_end = css.index("}", rule_start)
     rule = css[rule_start:rule_end]
-    assert "var(--green-bright)" in rule, (
-        "v1.15.72: .stat-tdb-primary must use --green-bright (the "
+    assert "var(--src-t-bright)" in rule, (
+        "v1.15.72: .stat-tdb-primary must use --src-t-bright (the "
         "link-badge-themerrdb / lib-source-themerrdb tone) so the "
         "dashboard TDB cards group visually with every other TDB "
         "surface in the app"
@@ -59,15 +59,15 @@ def test_stat_tdb_primary_matches_link_badge_themerrdb_tone():
     badge_start = css.index(".link-badge-themerrdb {")
     badge_end = css.index("}", badge_start)
     badge = css[badge_start:badge_end]
-    assert "var(--green-bright)" in badge, (
-        "Precondition: .link-badge-themerrdb must use --green-bright "
+    assert "var(--src-t-bright)" in badge, (
+        "Precondition: .link-badge-themerrdb must use --src-t-bright "
         "(asserting just to anchor the canonical tone for this test)"
     )
     # Card accent uses the same.
     tdb_start = css.index(".stat-tdb-primary {")
     tdb_end = css.index("}", tdb_start)
     tdb = css[tdb_start:tdb_end]
-    assert "var(--green-bright)" in tdb, (
+    assert "var(--src-t-bright)" in tdb, (
         "v1.15.72: dashboard TDB card accent must match the canonical "
-        "link-badge-themerrdb tone — both --green-bright"
+        "link-badge-themerrdb tone — both --src-t-bright"
     )

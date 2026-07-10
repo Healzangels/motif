@@ -253,4 +253,4 @@ def test_css_defines_results_styles():
     assert "var(--red)" in fail_block
     ok_anchor = src.index(".cookies-test-ok")
     ok_block = src[ok_anchor:ok_anchor + 400]
-    assert "var(--green)" in ok_block
+    assert "var(--ok)" in ok_block

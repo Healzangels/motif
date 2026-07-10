@@ -3707,7 +3707,18 @@
 #   crashes the scheduler); skips canonical when themes_dir is unset. + behavioral
 #   tests (stale plex_upload rk → RE-PUSH; broken sidecar + canonical re-stamp;
 #   no-themes_dir clean skip; scheduler registration + table-wide guard).
-__version__ = "0.51.107"
+# 0.51.108: theme presets Tag 1 — accent decouple (invisible refactor, Fallout
+#   renders pixel-identical). --green* was overloaded across ~155 CSS sites as
+#   BOTH the brand/chrome accent AND the fixed semantic green (SRC=T source
+#   identity + healthy/ok/present status). Split them so a future preset can
+#   retheme the accent while pills/chips keep their meaning: new --accent* is the
+#   themeable chrome accent (defaults to green); --green* are now ALIASES of
+#   --accent* so the ~125 chrome sites follow it with no mass-rename; the ~30
+#   semantic sites repoint to new FIXED tokens --src-t*/--ok* (literal green,
+#   never themed). --green-pale (TB chip) stays fixed. Updated the semantic-token
+#   pins in 6 tests; chrome pins untouched. No behavior change — purely the
+#   token foundation for the // THEME picker + presets landing next.
+__version__ = "0.51.108"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

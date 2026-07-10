@@ -74,7 +74,7 @@ def test_color_rgb_values_match_hex_tokens():
     # v1.15.121: brown → lemon (cookies tone shift; see app.css
     # :root --lemon definition for full color history).
     pairs = {
-        "green":   ("#6dffb5", "109, 255, 181"),
+        "accent":  ("#6dffb5", "109, 255, 181"),  # v0.51.108: green now aliases accent
         "amber":   ("#ffb84a", "255, 184, 74"),
         "orange":  ("#ff7a3a", "255, 122, 58"),
         "red":     ("#ff6b6b", "255, 107, 107"),

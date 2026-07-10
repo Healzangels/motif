@@ -55,9 +55,26 @@
   --fg: #c8e8d4;
   --fg-dim: #6b8779;
   --fg-mute: #4a5e54;
-  --green: #6dffb5;
-  --green-bright: #9affc9;
-  --green-deep: #2d8c5c;
+  /* v0.51.108: the --accent family is the THEMEABLE chrome accent (brand,
+     buttons, nav, focus, glows, coverage bars, links). Presets override it plus
+     the canvas (--bg, --fg, --line families) pre-paint. The --green family is
+     kept as ALIASES so the ~125 existing chrome sites follow the accent without
+     a mass-rename. The FIXED semantic green — SRC=T source identity plus the
+     healthy/ok/present status — lives in the --src-t and --ok families below and
+     never moves, so pills/chips keep their meaning in every theme. --green-pale
+     (the TB backup chip) is likewise fixed. */
+  --accent: #6dffb5;
+  --accent-bright: #9affc9;
+  --accent-deep: #2d8c5c;
+  --green: var(--accent);
+  --green-bright: var(--accent-bright);
+  --green-deep: var(--accent-deep);
+  --src-t: #6dffb5;
+  --src-t-bright: #9affc9;
+  --src-t-deep: #2d8c5c;
+  --ok: #6dffb5;
+  --ok-bright: #9affc9;
+  --ok-deep: #2d8c5c;
   /* v1.19.90: paler-than-green-bright tint for the TB (ThemerrDB
      Backup) LINK chip — parallels PB=amber-bright / UB=violet-bright
      as a lighter tint of the source color, but distinct from the
@@ -202,7 +219,10 @@
      White + black are added for the handful of `rgba(255,255,
      255, X)` overlay sites + `rgba(0,0,0, X)` shadow sites
      that have no named color token. */
-  --green-rgb:   109, 255, 181;
+  --accent-rgb:  109, 255, 181;
+  --green-rgb:   var(--accent-rgb);
+  --src-t-rgb:   109, 255, 181;
+  --ok-rgb:      109, 255, 181;
   --green-pale-rgb: 194, 255, 224;
   --amber-rgb:   255, 184, 74;
   /* v1.20.48: --amber-bright (#ffd47a) channels — the glow/shadow
@@ -626,7 +646,7 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 }
 
 .muted { color: var(--fg-mute); }
-.ok { color: var(--green); }
+.ok { color: var(--ok); }
 .accent { color: var(--amber); }
 .accent-cyan { color: var(--cyan); }
 .accent-red { color: var(--red); }
@@ -1098,7 +1118,7 @@ input[type="radio"]:focus-visible {
    lib-source-themerrdb, source-pie-T all use it. the user:
    "change the themerdb colors to match the themerrdb status
    bar color instead of orange." */
-.stat-tdb-primary { border-left-color: var(--green-bright); border-left-width: 3px; }
+.stat-tdb-primary { border-left-color: var(--src-t-bright); border-left-width: 3px; }
 .stat-plex-tv     { border-left-color: var(--dash-tv-color);   border-left-width: 3px; }
 .stat-plex-anime  { border-left-color: var(--dash-anime-color); border-left-width: 3px; }
 /* v1.18.20: Plex Collections card tone. the user: "Plex
@@ -1496,7 +1516,7 @@ body.help-mode .help-mode-bar { display: flex; }
   border-radius: 50%;
   align-self: center;
 }
-.gd-on { background: var(--green); }
+.gd-on { background: var(--ok); }
 .gd-await { background: var(--amber); }
 .gd-broken { background: var(--red); }
 .gd-off { background: var(--fg-mute); }
@@ -1976,8 +1996,8 @@ body.help-mode .settings-help-about { display: block; }
    CLEAN/DUPLICATE/NO MATCH/SKIPPED pills rendered as plain text
    because btn-tone-ok and btn-tone-muted had no CSS. */
 .btn-tone-ok {
-  color: var(--green);
-  border-color: var(--green-deep);
+  color: var(--ok);
+  border-color: var(--ok-deep);
 }
 
 .btn-tone-muted {
@@ -2974,7 +2994,7 @@ body.help-mode .settings-help-about { display: block; }
   color: var(--fg-mute);
   user-select: none;
 }
-.state-pill-btn-on   { color: var(--green); border-color: rgba(var(--green-rgb), 0.4); }
+.state-pill-btn-on   { color: var(--ok); border-color: rgba(var(--ok-rgb), 0.4); }
 /* v1.18.30: removed `.state-pill-btn-pushed`. The cyan PL FILTER
    chip resolved to the literal same SQL as the cyan LINK=PU
    chip (`placement_kind = 'plex_upload'`) — dead UI weight.
@@ -3100,14 +3120,14 @@ body.help-mode .settings-help-about { display: block; }
    themerrdb branding when selected. */
 .src-key-btn-tdb-only {
   color: var(--fg-mute);
-  border: 1px solid rgba(var(--green-rgb), 0.25);
+  border: 1px solid rgba(var(--src-t-rgb), 0.25);
   border-radius: 3px;
   opacity: 0.55;
 }
 .src-key-btn-tdb-only:hover { opacity: 0.85; }
 .src-key-btn-tdb-only.src-key-btn-active {
-  color: var(--green);
-  border-color: var(--green);
+  color: var(--src-t);
+  border-color: var(--src-t);
   opacity: 1;
   filter: brightness(1.1);
 }
@@ -3158,7 +3178,7 @@ body.help-mode .settings-help-about { display: block; }
   0%, 100% { opacity: 0.55; transform: scale(0.92); }
   50%      { opacity: 1;    transform: scale(1.08); }
 }
-.state-pill.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.state-pill.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .state-pill.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
 .state-pill.bad { background: var(--red); box-shadow: 0 0 6px var(--red); }
 /* v1.18.25: 'pushed' PL state — plex_upload placement (theme
@@ -3600,7 +3620,7 @@ body.help-mode .settings-help-about { display: block; }
 .event-level {
   text-align: center; font-weight: 600; letter-spacing: 0.1em;
 }
-.event-level-INFO { color: var(--green); }
+.event-level-INFO { color: var(--ok); }
 .event-level-WARNING { color: var(--amber); }
 .event-level-ERROR { color: var(--red); }
 .event-component { color: var(--cyan); }
@@ -3814,7 +3834,7 @@ body.help-mode .settings-help-about { display: block; }
    pending=blue (informational). Placed after .muted so the tone
    wins over .muted's --fg-dim on the shared `muted small …` spans. */
 .info-src-tag-user { color: var(--violet); }
-.info-src-tag-tdb  { color: var(--green-bright); }
+.info-src-tag-tdb  { color: var(--src-t-bright); }
 .info-tag-pending  { color: var(--blue); }
 /* v1.19.89: caption under the source thumbnail (was inline margin-top +
    text-align). The divider above it reuses .dlg-section.
@@ -4261,9 +4281,9 @@ body.auth-page .auth-card { margin: 0; }
   cursor: default;
 }
 .link-badge-hardlink {
-  color: var(--green);
-  border-color: var(--green-deep);
-  background: rgba(var(--green-rgb), 0.05);
+  color: var(--ok);
+  border-color: var(--ok-deep);
+  background: rgba(var(--ok-rgb), 0.05);
 }
 /* v1.20.6: matches .link-glyph-copy — copy is muted-sage grey across
    both the library LINK chip and this /pending placement-detail badge.
@@ -4318,9 +4338,9 @@ body.auth-page .auth-card { margin: 0; }
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--green);
-  border: 1px solid rgba(var(--green-rgb), 0.4);
-  background: rgba(var(--green-rgb), 0.05);
+  color: var(--ok);
+  border: 1px solid rgba(var(--ok-rgb), 0.4);
+  background: rgba(var(--ok-rgb), 0.05);
 }
 /* C = copy (placement_kind='copy', cross-FS fallback — motif placed
    its file but couldn't hardlink, so it copied bytes; uses double
@@ -4529,8 +4549,8 @@ body.auth-page .auth-card { margin: 0; }
   background: rgba(var(--violet-rgb), 0.10);
 }
 .link-badge-themerrdb {
-  color: var(--green-bright);
-  border-color: var(--green-deep);
+  color: var(--src-t-bright);
+  border-color: var(--src-t-deep);
 }
 .link-badge-adopt {
   color: var(--cyan);
@@ -4653,9 +4673,9 @@ body.auth-page .auth-card { margin: 0; }
   vertical-align: middle;
 }
 .tdb-pill-yes {
-  color: var(--green);
-  border: 1px solid rgba(var(--green-rgb), 0.35);
-  background: rgba(var(--green-rgb), 0.06);
+  color: var(--src-t);
+  border: 1px solid rgba(var(--src-t-rgb), 0.35);
+  background: rgba(var(--src-t-rgb), 0.06);
 }
 .tdb-pill-no {
   color: var(--fg-mute);
@@ -4827,8 +4847,8 @@ body.auth-page .auth-card { margin: 0; }
    as the regular T badge but de-emphasized — informational rows aren't
    actionable so they shouldn't compete with normal rows. */
 .link-badge-themerrdb-only {
-  color: var(--green-deep);
-  border-color: rgba(var(--green-rgb), 0.25);
+  color: var(--src-t-deep);
+  border-color: rgba(var(--src-t-rgb), 0.25);
   background: transparent;
   opacity: 0.7;
 }
@@ -6050,7 +6070,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    (`recovery-option-info-tone-${opt.tone}` in app.js:13912), so
    the gap was invisible until the v1.18.85 design audit
    surfaced it. Same shape as v1.15.93's `.btn-tone-*` close. */
-.recovery-option-info-tone-themerrdb .recovery-option-label { color: var(--green-bright); }
+.recovery-option-info-tone-themerrdb .recovery-option-label { color: var(--src-t-bright); }
 .recovery-option-info-tone-info .recovery-option-label   { color: var(--blue); }
 .recovery-option-info-tone-danger .recovery-option-label { color: var(--red); }
 .recovery-option-info-tone-magenta .recovery-option-label { color: var(--magenta); }
@@ -6314,7 +6334,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   border-radius: 2px;
   font-size: 10px;
 }
-.sync-hist-status-ok       { color: var(--green);  background: rgba(var(--green-rgb), 0.08); }
+.sync-hist-status-ok       { color: var(--ok);  background: rgba(var(--ok-rgb), 0.08); }
 .sync-hist-status-noop     { color: var(--fg-mute);background: rgba(var(--white-rgb), 0.04); }
 .sync-hist-status-fallback { color: var(--amber);  background: rgba(var(--amber-rgb), 0.08); }
 .sync-hist-status-failed   { color: var(--red);    background: rgba(var(--red-rgb), 0.08); }
@@ -6404,7 +6424,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   stroke-linecap: round;
   vector-effect: non-scaling-stroke;
 }
-.sync-mark-ok    { fill: var(--green-bright); }
+.sync-mark-ok    { fill: var(--ok-bright); }
 .sync-mark-noop  { fill: var(--fg-mute); opacity: 0.55; }
 .sync-mark-fail  { fill: var(--red); }
 .sync-spark-meta {
@@ -6505,21 +6525,21 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 }
 /* Letter palette mirrors the SRC row pills (T green, U violet,
    A cyan, M magenta, P amber, "-" muted). */
-.source-pie-T { stroke: var(--green-bright); }
+.source-pie-T { stroke: var(--src-t-bright); }
 .source-pie-U { stroke: var(--violet); }
 .source-pie-A { stroke: var(--cyan); }
 .source-pie-M { stroke: var(--magenta); }
 .source-pie-P { stroke: var(--amber); }
 .source-pie-X { stroke: var(--fg-mute); } /* "no theme" / dash */
 
-.source-pie-T-text { color: var(--green-bright); }
+.source-pie-T-text { color: var(--src-t-bright); }
 .source-pie-U-text { color: var(--violet); }
 .source-pie-A-text { color: var(--cyan); }
 .source-pie-M-text { color: var(--magenta); }
 .source-pie-P-text { color: var(--amber); }
 .source-pie-X-text { color: var(--fg-mute); }
 
-.source-legend-swatch-T { background: var(--green-bright); }
+.source-legend-swatch-T { background: var(--src-t-bright); }
 .source-legend-swatch-U { background: var(--violet); }
 .source-legend-swatch-A { background: var(--cyan); }
 .source-legend-swatch-M { background: var(--magenta); }
@@ -6706,11 +6726,11 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   color: var(--fg-dim);
   letter-spacing: 0.1em;
 }
-.form-status.ok { color: var(--green); }
+.form-status.ok { color: var(--ok); }
 .form-status.err { color: var(--red); }
 /* v1.13.2 (#3): pre-flight probe result tints. Match the OK/ERR
    palette so the visual language stays consistent. */
-.form-status.form-status-ok { color: var(--green); }
+.form-status.form-status-ok { color: var(--ok); }
 .form-status.form-status-fail { color: var(--red); }
 
 /* v1.15.8: cookies-test results checklist. Each <li> renders as
@@ -6744,7 +6764,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   color: var(--fg);
   word-break: break-word;
 }
-.cookies-test-ok .cookies-test-mark { color: var(--green); }
+.cookies-test-ok .cookies-test-mark { color: var(--ok); }
 .cookies-test-fail .cookies-test-mark { color: var(--red); }
 .cookies-test-fail .cookies-test-detail { color: var(--red); }
 
@@ -7435,7 +7455,7 @@ body.dash-customize-mode .dash-customize-link:hover {
   border-radius: 50%;
   background: var(--fg-mute);
 }
-.service-dot-ok { background: var(--green); }
+.service-dot-ok { background: var(--ok); }
 .service-dot-down { background: var(--red); }
 .service-dot-idle { background: var(--fg-mute); }
 .service-status { font-size: var(--t-small); color: var(--fg-dim); }

@@ -28,7 +28,7 @@
 
 /* v0.51.79 (audit): tokenize exact-match sizes/radii to the app.css scale. */
 :root {
-  --tone-tdb: var(--green-bright);
+  --tone-tdb: var(--src-t-bright);
   --tone-plex: var(--amber);
   --tone-queue: var(--cyan);
   --tone-fail: var(--red);
@@ -116,8 +116,8 @@
 .op-pill.op-tone-upd:hover      { box-shadow: 0 0 10px rgba(var(--blue-rgb), 0.35); }
 /* v1.19.88: tdb border cyan→green, plex border green→amber to track
    the realigned --tone-tdb / --tone-plex text colors. */
-.op-pill.op-tone-tdb      { border-color: rgba(var(--green-rgb), 0.5); color: var(--tone-tdb); }
-.op-pill.op-tone-tdb:hover      { box-shadow: 0 0 10px rgba(var(--green-rgb), 0.35); }
+.op-pill.op-tone-tdb      { border-color: rgba(var(--src-t-rgb), 0.5); color: var(--tone-tdb); }
+.op-pill.op-tone-tdb:hover      { box-shadow: 0 0 10px rgba(var(--src-t-rgb), 0.35); }
 .op-pill.op-tone-plex     { border-color: rgba(var(--amber-rgb), 0.5); color: var(--tone-plex); }
 .op-pill.op-tone-plex:hover     { box-shadow: 0 0 10px rgba(var(--amber-rgb), 0.35); }
 .op-pill.op-tone-warn     { border-color: rgba(var(--amber-rgb), 0.5); color: var(--tone-warn); }
@@ -471,14 +471,14 @@ body[data-ops-running="1"] #topbar-status-text {
    lives in one place per tone instead of being re-hardcoded in ~8
    scattered rules (which is how the cyan/green got swapped vs the
    rest of the app pre-fix). */
-.op-card.op-tone-tdb   { --ot: var(--green-bright); --ot-rgb: var(--green-rgb); box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
+.op-card.op-tone-tdb   { --ot: var(--src-t-bright); --ot-rgb: var(--src-t-rgb); box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
 .op-card.op-tone-plex  { --ot: var(--amber);        --ot-rgb: var(--amber-rgb); box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
 .op-card.op-tone-queue { --ot: var(--cyan);         --ot-rgb: var(--cyan-rgb);  box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.18); }
 .op-card.op-tone-fail  { --ot: var(--red);          --ot-rgb: var(--red-rgb);   box-shadow: inset 0 0 0 1px rgba(var(--ot-rgb), 0.30); }
 
 .op-card.op-status-running { animation: op-card-breathe 3.2s ease-in-out infinite; }
 .op-card.op-status-cancelling { opacity: 0.75; }
-.op-card.op-status-done    { border-color: rgba(var(--green-rgb), 0.30); }
+.op-card.op-status-done    { border-color: rgba(var(--ok-rgb), 0.30); }
 .op-card.op-status-failed  { border-color: rgba(var(--red-rgb), 0.40); }
 .op-card.op-status-cancelled { border-color: rgba(var(--amber-rgb), 0.30); opacity: 0.85; }
 
@@ -523,7 +523,7 @@ body[data-ops-running="1"] #topbar-status-text {
   transition: transform var(--motion-fast) ease;
 }
 .op-card.op-card-expanded .op-card-caret { transform: rotate(90deg); opacity: 0.85; }
-.op-card.op-status-done    .op-card-status { color: var(--green); }
+.op-card.op-status-done    .op-card-status { color: var(--ok); }
 .op-card.op-status-failed  .op-card-status { color: var(--red); }
 .op-card.op-status-cancelled .op-card-status { color: var(--amber); }
 .op-card.op-status-cancelling .op-card-status { color: var(--amber); }
@@ -694,7 +694,7 @@ body[data-ops-running="1"] #topbar-status-text {
 }
 
 .op-card-timeline-step.is-done {
-  background: var(--green-deep);
+  background: var(--ok-deep);
 }
 .op-card-timeline-step.is-current {
   /* v1.19.88: tone via --ot (was cyan default + green-plex override). */
@@ -1024,10 +1024,10 @@ body[data-ops-running="1"] #topbar-status-text {
   margin-top: var(--gap-2);
   padding: 6px 8px;
   border-radius: 4px;
-  background: rgba(var(--green-rgb), 0.08);
-  border-left: 2px solid var(--green);
+  background: rgba(var(--ok-rgb), 0.08);
+  border-left: 2px solid var(--ok);
   font-size: var(--t-tiny);
-  color: var(--green);
+  color: var(--ok);
   display: flex;
   gap: 6px;
   align-items: baseline;

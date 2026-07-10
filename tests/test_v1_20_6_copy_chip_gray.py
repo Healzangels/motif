@@ -65,7 +65,7 @@ def test_copy_chip_distinct_from_hardlink_and_none():
     hl = _rule(".link-glyph-hardlink")
     c = _rule(".link-glyph-copy")
     none = _rule(".link-glyph-none")
-    assert "color: var(--green);" in hl
+    assert "color: var(--ok);" in hl
     assert "color: var(--fg-dim);" in c
     # 'none' uses the DIMMER fg-mute and has no border (just a color).
     assert "var(--fg-mute)" in none

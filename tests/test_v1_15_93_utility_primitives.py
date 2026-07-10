@@ -112,8 +112,8 @@ def test_pill_warn_primitive_exists():
 def test_btn_tone_ok_primitive_exists():
     """`.btn-tone-ok` applies the green tone. Used by STATUS pill
     for CLEAN rows + any future ok-tone badges/buttons."""
-    assert _has_rule("btn-tone-ok", "var(--green"), (
-        "v1.15.93: `.btn-tone-ok` must reference var(--green) (the "
+    assert _has_rule("btn-tone-ok", "var(--ok"), (
+        "v1.15.93: `.btn-tone-ok` must reference var(--ok) (the "
         "ok tone). Used by CLEAN status pills in the import preview."
     )
 

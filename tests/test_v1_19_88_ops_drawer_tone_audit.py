@@ -46,7 +46,7 @@ OPS_JS = (REPO / "app" / "web" / "static" / "ops.js").read_text()
 
 
 def test_root_tones_realigned():
-    assert "--tone-tdb: var(--green-bright);" in OPS_CSS, (
+    assert "--tone-tdb: var(--src-t-bright);" in OPS_CSS, (
         "v1.19.88: TDB ops tone must be green-bright (matches SRC=T)"
     )
     assert "--tone-plex: var(--amber);" in OPS_CSS, (
@@ -75,7 +75,7 @@ def test_queue_kinds_use_queue_tone():
 
 def test_op_card_tone_centralized_via_ot():
     """Each tone sets --ot/--ot-rgb once; sub-elements read them."""
-    assert ".op-card.op-tone-tdb   { --ot: var(--green-bright); --ot-rgb: var(--green-rgb);" in OPS_CSS
+    assert ".op-card.op-tone-tdb   { --ot: var(--src-t-bright); --ot-rgb: var(--src-t-rgb);" in OPS_CSS
     assert ".op-card.op-tone-plex  { --ot: var(--amber);        --ot-rgb: var(--amber-rgb);" in OPS_CSS
     assert ".op-card.op-tone-queue { --ot: var(--cyan);         --ot-rgb: var(--cyan-rgb);" in OPS_CSS
     # The duplicate plex breathe keyframe is gone (one parameterized
