@@ -210,129 +210,20 @@
    The v1.15.27 // THEMERRDB CATALOG mini-card stays gone
    (the user: "I'm not sure what the therrdb catalog card is
    and why its a different color"). #}
+<!-- ============================ PLEX LIBRARY ============================ -->
 <section class="grid grid-stats" id="stats-grid"
          data-dash-section="top-stats"
-         data-dash-label="COVERAGE">
-  {# v1.23.34: the top COVERAGE row was reworked from "ThemerrDB
-     catalogue size + a downloaded/catalogue bar that filled but
-     meant nothing" (the user) into a real library-coverage tracker:
-     big number + bar = % of YOUR library themed (with_theme/total),
-     foot = "X of Y themed · Z ready to add". "ready to add" = TDB-
-     available rows not yet themed — the work motif's next run can
-     close. JS writers (setCov) live in renderPlexCoverage; SSR
-     bakes the first paint via plex_* aggregates. #}
-  <article class="stat stat-tdb-primary" data-dash-card="tdb-movies">
-    <header class="stat-head">
-      <span class="stat-label">// MOVIES THEMED</span>
-      {{ media_glyph('movies') }}
-    </header>
-    <div class="stat-num" id="cov-movies-pct">{{ ssr_pct(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}</div>
-    <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="movies" style="width: {{ ssr_pct_width(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}%"></span>
-    </div>
-    <footer class="stat-foot">
-      <span><b id="cov-movies-themed">{{ ssr_num(_ssr_dash.plex_movies_with_theme) }}</b> of <b id="cov-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</b> themed</span>
-      <span><b id="cov-movies-ready">{{ ssr_num(_ssr_dash.plex_movies_ready) }}</b> ready to add</span>
-    </footer>
-  </article>
-
-  {# v1.23.40: TV is tv-only now (was tv+anime combined) so its count
-     matches the TV SHOWS library tab; anime is its own card below,
-     matching the ANIME tab + the bottom PLEX ANIME card (the user: the
-     combined 5,444 didn't line up with the 4,200 TV tab). #}
-  <article class="stat stat-tdb-primary" data-dash-card="tdb-tv-series">
-    <header class="stat-head">
-      <span class="stat-label">// TV THEMED</span>
-      {{ media_glyph('tv') }}
-    </header>
-    <div class="stat-num" id="cov-tv-pct">{{ ssr_pct(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}</div>
-    <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="tv" style="width: {{ ssr_pct_width(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}%"></span>
-    </div>
-    <footer class="stat-foot">
-      <span><b id="cov-tv-themed">{{ ssr_num(_ssr_dash.plex_tv_with_theme) }}</b> of <b id="cov-tv-total">{{ ssr_num(_ssr_dash.plex_tv_total) }}</b> themed</span>
-      <span><b id="cov-tv-ready">{{ ssr_num(_ssr_dash.plex_tv_ready) }}</b> ready to add</span>
-    </footer>
-  </article>
-
-  {# v1.23.40: ANIME coverage card — own card so it matches the ANIME
-     library tab + the bottom PLEX ANIME card (was folded into TV). #}
-  <article class="stat stat-tdb-primary" data-dash-card="tdb-anime">
-    <header class="stat-head">
-      <span class="stat-label">// ANIME THEMED</span>
-      {{ media_glyph('anime') }}
-    </header>
-    <div class="stat-num" id="cov-anime-pct">{{ ssr_pct(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}</div>
-    <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="anime" style="width: {{ ssr_pct_width(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}%"></span>
-    </div>
-    <footer class="stat-foot">
-      <span><b id="cov-anime-themed">{{ ssr_num(_ssr_dash.plex_anime_with_theme) }}</b> of <b id="cov-anime-total">{{ ssr_num(_ssr_dash.plex_anime_total) }}</b> themed</span>
-      <span><b id="cov-anime-ready">{{ ssr_num(_ssr_dash.plex_anime_ready) }}</b> ready to add</span>
-    </footer>
-  </article>
-
-  {# v1.18.20: Collections coverage card (mirrors movies/tv).
-     v1.23.34: reworked to library coverage like its siblings. #}
-  <article class="stat stat-tdb-primary" data-dash-card="tdb-collections">
-    <header class="stat-head">
-      <span class="stat-label">// COLLECTIONS THEMED</span>
-      {{ media_glyph('collections') }}
-    </header>
-    <div class="stat-num" id="cov-collections-pct">{{ ssr_pct(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}</div>
-    <div class="stat-bar">
-      <span class="bar-fill" data-bar-fill="collections" style="width: {{ ssr_pct_width(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}%"></span>
-    </div>
-    <footer class="stat-foot">
-      <span><b id="cov-collections-themed">{{ ssr_num(_ssr_dash.plex_collections_with_theme) }}</b> of <b id="cov-collections-total">{{ ssr_num(_ssr_dash.plex_collections_total) }}</b> themed</span>
-      <span><b id="cov-collections-ready">{{ ssr_num(_ssr_dash.plex_collections_ready) }}</b> ready to add</span>
-    </footer>
-  </article>
-</section>
-{# v0.50.6: glitch-free count-up. This inline script is parser-blocking, so it
-   runs BEFORE the coverage %s paint — it stashes each SSR value in data-countup
-   and resets the text to 0%, then app.js dashCountUp() climbs 0→value with no
-   value-then-reset flash. reduced-motion users keep the static SSR value (we
-   skip the reset, so there's nothing to animate). #}
-<script>
-  (function () {
-    try {
-      // v0.50.57: the count-up always animates now (was skipped under reduced-motion
-      // — the user wants full CRT motion regardless of the OS setting).
-      ['movies', 'tv', 'anime', 'collections'].forEach(function (k) {
-        var el = document.getElementById('cov-' + k + '-pct');
-        if (el && /\d/.test(el.textContent)) {
-          el.dataset.countup = el.textContent;
-          el.textContent = '0%';
-          // v0.50.46: reset the SSR-baked bar to 0 (transition off so it doesn't
-          // animate the reset) — dashCountUp climbs it in lockstep with the %
-          // instead of it filling late when the coverage poll lands.
-          var bar = document.querySelector('[data-bar-fill="' + k + '"]');
-          if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
-        }
-      });
-    } catch (e) { /* leave the SSR values untouched on any error */ }
-  })();
-</script>
-
-{# v1.18.50: PLEX LIBRARY section relocated up to immediately
-   follow COVERAGE so both COLLECTIONS cards (TDB COLLECTIONS
-   end-of-row 1, PLEX COLLECTIONS end-of-row 2) land in the
-   top-two-rows fold. Per the user: "can we on the dashboard put
-   collections on the top two rows at the end of row." Previous
-   order was COVERAGE → OPERATIONS → ACTIVITY → PLEX LIBRARY
-   which buried PLEX COLLECTIONS in row 4. Definition of the
-   section body is unchanged — only the position moved. The
-   v1.15.31 narrative "operational flow reads what's queued →
-   what was placed → per-library coverage detail" is preserved
-   conceptually below this block (OPERATIONS still precedes
-   ACTIVITY) but the per-library detail now reads alongside
-   the catalogue stats, which is the more natural pairing
-   (TDB count next to its Plex count). #}
-<!-- ============================ PLEX LIBRARY ============================ -->
-<section class="grid grid-stats"
-         data-dash-section="plex-coverage"
          data-dash-label="PLEX LIBRARY">
+  {# v0.51.121: the two top stat rows swapped WHAT THEY SHOW (the user: "swap
+     the info in the themerrdb cards and the plex cards"). This section
+     (data-dash-section="top-stats", the top row) now renders the PLEX LIBRARY
+     reach cards; the plex-coverage section below renders the COVERAGE % cards.
+     The data-dash-section IDs stay put (top-stats first, plex-coverage second)
+     because dashboard-customize.js reorders #dash-sections BY ID against a saved
+     layout — swapping the card BODIES (not the section shells) keeps "PLEX reach
+     on top" for every user, customized or not. Each body travels whole (tone
+     class, anime/collections display:none gating, JS-target IDs, plex-foot CSS)
+     so nothing detaches. #}
   {# v1.15.31 reset: pre-v1.15.27 PLEX-card shape restored.
      Big number = library total (e.g. 10,358). No bar on the card
      itself — the v1.13.27 per-section comparison block below
@@ -341,10 +232,10 @@
      v1.23.41: foot reframed to ThemerrDB REACH — "W in ThemerrDB ·
      N not in ThemerrDB" (W = motif_avail, N = total − W). Pre-tag
      the foot was "X with theme · W ThemerrDB available", which just
-     restated the top COVERAGE card's "themed" number (the user: the
+     restated the COVERAGE card's "themed" number (the user: the
      two card rows were too similar). Reach is the distinct cut —
      how much of each library ThemerrDB's catalogue even covers,
-     vs the top row's how-much-is-themed. #}
+     vs the COVERAGE row's how-much-is-themed. #}
   <article class="stat stat-plex-primary" data-dash-card="plex-movies">
     <header class="stat-head"><span class="stat-label">// PLEX MOVIES</span>{{ media_glyph('movies') }}</header>
     <div class="stat-num" id="plex-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</div>
@@ -401,6 +292,121 @@
     </footer>
   </article>
 </section>
+
+{# v1.18.50 → v0.51.121: PLEX LIBRARY + COVERAGE are the top-two-rows fold, so
+   both COLLECTIONS cards (PLEX end-of-row-1, TDB end-of-row-2) stay in it. Per
+   the user: "can we on the dashboard put collections on the top two rows at the
+   end of row." v0.51.121 swapped which row shows which metric (PLEX reach on
+   top, COVERAGE below) but kept both in the fold. OPERATIONS still precedes
+   ACTIVITY below, preserving the v1.15.31 "what's queued → what was placed →
+   per-library detail" reading. #}
+<!-- ============================ COVERAGE ============================ -->
+<section class="grid grid-stats"
+         data-dash-section="plex-coverage"
+         data-dash-label="COVERAGE">
+  {# v1.23.34: the COVERAGE row was reworked from "ThemerrDB
+     catalogue size + a downloaded/catalogue bar that filled but
+     meant nothing" (the user) into a real library-coverage tracker:
+     big number + bar = % of YOUR library themed (with_theme/total),
+     foot = "X of Y themed · Z ready to add". "ready to add" = TDB-
+     available rows not yet themed — the work motif's next run can
+     close. JS writers (setCov) live in renderPlexCoverage; SSR
+     bakes the first paint via plex_* aggregates. #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-movies">
+    <header class="stat-head">
+      <span class="stat-label">// MOVIES THEMED</span>
+      {{ media_glyph('movies') }}
+    </header>
+    <div class="stat-num" id="cov-movies-pct">{{ ssr_pct(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="movies" style="width: {{ ssr_pct_width(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}%"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-movies-themed">{{ ssr_num(_ssr_dash.plex_movies_with_theme) }}</b> of <b id="cov-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</b> themed</span>
+      <span><b id="cov-movies-ready">{{ ssr_num(_ssr_dash.plex_movies_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+
+  {# v1.23.40: TV is tv-only now (was tv+anime combined) so its count
+     matches the TV SHOWS library tab; anime is its own card below,
+     matching the ANIME tab + the PLEX ANIME card above (the user: the
+     combined 5,444 didn't line up with the 4,200 TV tab). #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-tv-series">
+    <header class="stat-head">
+      <span class="stat-label">// TV THEMED</span>
+      {{ media_glyph('tv') }}
+    </header>
+    <div class="stat-num" id="cov-tv-pct">{{ ssr_pct(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="tv" style="width: {{ ssr_pct_width(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}%"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-tv-themed">{{ ssr_num(_ssr_dash.plex_tv_with_theme) }}</b> of <b id="cov-tv-total">{{ ssr_num(_ssr_dash.plex_tv_total) }}</b> themed</span>
+      <span><b id="cov-tv-ready">{{ ssr_num(_ssr_dash.plex_tv_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+
+  {# v1.23.40: ANIME coverage card — own card so it matches the ANIME
+     library tab + the PLEX ANIME card above (was folded into TV). #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-anime">
+    <header class="stat-head">
+      <span class="stat-label">// ANIME THEMED</span>
+      {{ media_glyph('anime') }}
+    </header>
+    <div class="stat-num" id="cov-anime-pct">{{ ssr_pct(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="anime" style="width: {{ ssr_pct_width(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}%"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-anime-themed">{{ ssr_num(_ssr_dash.plex_anime_with_theme) }}</b> of <b id="cov-anime-total">{{ ssr_num(_ssr_dash.plex_anime_total) }}</b> themed</span>
+      <span><b id="cov-anime-ready">{{ ssr_num(_ssr_dash.plex_anime_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+
+  {# v1.18.20: Collections coverage card (mirrors movies/tv).
+     v1.23.34: reworked to library coverage like its siblings. #}
+  <article class="stat stat-tdb-primary" data-dash-card="tdb-collections">
+    <header class="stat-head">
+      <span class="stat-label">// COLLECTIONS THEMED</span>
+      {{ media_glyph('collections') }}
+    </header>
+    <div class="stat-num" id="cov-collections-pct">{{ ssr_pct(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}</div>
+    <div class="stat-bar">
+      <span class="bar-fill" data-bar-fill="collections" style="width: {{ ssr_pct_width(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}%"></span>
+    </div>
+    <footer class="stat-foot">
+      <span><b id="cov-collections-themed">{{ ssr_num(_ssr_dash.plex_collections_with_theme) }}</b> of <b id="cov-collections-total">{{ ssr_num(_ssr_dash.plex_collections_total) }}</b> themed</span>
+      <span><b id="cov-collections-ready">{{ ssr_num(_ssr_dash.plex_collections_ready) }}</b> ready to add</span>
+    </footer>
+  </article>
+</section>
+{# v0.50.6: glitch-free count-up. This inline script is parser-blocking, so it
+   runs BEFORE the coverage %s paint — it stashes each SSR value in data-countup
+   and resets the text to 0%, then app.js dashCountUp() climbs 0→value with no
+   value-then-reset flash. reduced-motion users keep the static SSR value (we
+   skip the reset, so there's nothing to animate). v0.51.121: moved BELOW the
+   COVERAGE section — the cov-*-pct cards swapped down here, so the inline reset
+   must run AFTER they parse (getElementById returns null otherwise → no climb). #}
+<script>
+  (function () {
+    try {
+      // v0.50.57: the count-up always animates now (was skipped under reduced-motion
+      // — the user wants full CRT motion regardless of the OS setting).
+      ['movies', 'tv', 'anime', 'collections'].forEach(function (k) {
+        var el = document.getElementById('cov-' + k + '-pct');
+        if (el && /\d/.test(el.textContent)) {
+          el.dataset.countup = el.textContent;
+          el.textContent = '0%';
+          // v0.50.46: reset the SSR-baked bar to 0 (transition off so it doesn't
+          // animate the reset) — dashCountUp climbs it in lockstep with the %
+          // instead of it filling late when the coverage poll lands.
+          var bar = document.querySelector('[data-bar-fill="' + k + '"]');
+          if (bar) { bar.style.transition = 'none'; bar.style.width = '0%'; }
+        }
+      });
+    } catch (e) { /* leave the SSR values untouched on any error */ }
+  })();
+</script>
 
 <!-- v1.14.70: dedicated OPERATIONS section. Pre-fix these
      three mini stats sat at the end of the COVERAGE row,

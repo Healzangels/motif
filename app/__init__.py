@@ -3825,7 +3825,19 @@
 #   starved stash did not. Guarded by test_v0_51_120 (writes-before-bail source
 #   order + a drift lock pinning the helper's globalEnumPipeline to the main
 #   block's identical formula + behavioral derivation).
-__version__ = "0.51.120"
+# 0.51.121: swap the two top dashboard stat rows' metrics in place (the user, on
+#   a screenshot: "swap the info in the themerrdb cards and the plex cards" →
+#   chose "swap the metrics in place"). The top-stats section (top row) now
+#   renders the PLEX LIBRARY reach cards (total + in/not-in-ThemerrDB) and the
+#   plex-coverage section (bottom row) renders the COVERAGE % cards. The
+#   data-dash-section shells keep their ids + DOM order — dashboard-customize.js
+#   reorders #dash-sections BY id against a saved layout, so only the card BODIES
+#   swap (each travels whole: tone class, anime/collections display:none gating,
+#   JS-target ids, plex-foot CSS). The parser-blocking count-up moved below the
+#   COVERAGE section (its cov-*-pct targets swapped down there), and the //
+#   LIBRARY COLORS panel re-anchored onto top-stats (the colored --dash-*-color
+#   cards it controls moved up). Guarded by test_v0_51_121.
+__version__ = "0.51.121"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

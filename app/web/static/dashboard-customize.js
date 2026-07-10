@@ -170,7 +170,9 @@
   }
 
   function injectColorPanel() {
-    const plex = document.querySelector('[data-dash-section="plex-coverage"]');
+    // v0.51.121: anchor on top-stats — the PLEX (colored) cards this panel's
+    // --dash-*-color vars control swapped up into that section.
+    const plex = document.querySelector('[data-dash-section="top-stats"]');
     if (!plex || document.getElementById('dash-color-panel')) return;
     const saved = readDashColors();
     const panel = document.createElement('div');
@@ -199,12 +201,14 @@
   }
 
   // v1.24.77: the // LIBRARY COLORS panel is a standalone sibling injected
-  // before the plex-coverage section — reorders move sections but not the
-  // panel, detaching it from the PLEX cards it controls (the user). Re-pin it
-  // immediately before the plex section after every reorder.
+  // before the section holding the PLEX cards — reorders move sections but not
+  // the panel, detaching it from the PLEX cards it controls (the user). Re-pin
+  // it immediately before that section after every reorder.
+  // v0.51.121: the PLEX reach cards swapped up into the top-stats section
+  // (COVERAGE cards took plex-coverage), so the panel anchors on top-stats now.
   function repositionColorPanel() {
     const panel = document.getElementById('dash-color-panel');
-    const plex = document.querySelector('[data-dash-section="plex-coverage"]');
+    const plex = document.querySelector('[data-dash-section="top-stats"]');
     if (panel && plex && plex.previousElementSibling !== panel) {
       plex.parentNode.insertBefore(panel, plex);
     }

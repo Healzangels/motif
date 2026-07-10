@@ -241,17 +241,19 @@ def test_bindlibrary_calls_clear_before_hydration():
 
 
 def test_dashboard_section_order_puts_plex_library_second():
-    """The PLEX LIBRARY section must appear before OPERATIONS in
-    the dashboard template so PLEX COLLECTIONS lands in row 2."""
+    """Both stat sections must precede OPERATIONS so both COLLECTIONS
+    cards land in the top-two-rows fold. v0.51.121 swapped which of the
+    two shows which metric — PLEX LIBRARY reach is now the first (top)
+    row, COVERAGE the second — but both stay ahead of OPERATIONS."""
     src = DASH_HTML.read_text()
     # Find each section's `data-dash-label` and assert order.
     cov_idx = src.index('data-dash-label="COVERAGE"')
     plex_idx = src.index('data-dash-label="PLEX LIBRARY"')
     ops_idx = src.index('data-dash-label="OPERATIONS"')
     act_idx = src.index('data-dash-label="ACTIVITY"')
-    assert cov_idx < plex_idx < ops_idx < act_idx, (
-        "v1.18.50: dashboard section order must be "
-        "COVERAGE → PLEX LIBRARY → OPERATIONS → ACTIVITY so "
+    assert plex_idx < cov_idx < ops_idx < act_idx, (
+        "v0.51.121: dashboard section order must be "
+        "PLEX LIBRARY → COVERAGE → OPERATIONS → ACTIVITY so "
         "both COLLECTIONS cards land in the top two rows"
     )
 

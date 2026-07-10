@@ -44,7 +44,9 @@ def test_dash_pair_col_grows_table_to_fill():
 def test_color_panel_repositions_to_plex_on_reorder():
     assert "function repositionColorPanel()" in JS
     fn = JS[JS.index("function repositionColorPanel()"):][:500]
-    assert '[data-dash-section="plex-coverage"]' in fn
+    # v0.51.121: the PLEX (colored) cards moved into the top-stats section, so
+    # the // LIBRARY COLORS panel re-pins onto top-stats now (not plex-coverage).
+    assert '[data-dash-section="top-stats"]' in fn
     assert "insertBefore(panel, plex)" in fn
     # invoked from the post-reorder chokepoint (rebuildLayoutFromDOM).
     assert "repositionColorPanel();  // v1.24.77: keep colors pinned" in JS
