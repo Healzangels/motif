@@ -1682,6 +1682,17 @@
       Turn motif's CRT flourishes on or off. These are saved to <strong>this
       browser</strong> (not server config) and apply instantly — no SAVE needed.
     </p>
+    {# v0.51.110: THEME preset picker. Populated + wired by bindThemePicker() in
+       app.js from window.MOTIF_THEMES (base.html); persists to localStorage
+       'motif:theme', applied pre-paint on every page. A theme changes the
+       background + accent only — SRC/LINK pill colours stay fixed. #}
+    <label class="form-label" for="theme-select">
+      <span class="form-label-text">THEME</span>
+      <select id="theme-select" class="theme-select"></select>
+      <p class="form-hint">The CRT phosphor palette (Fallout is the classic
+        green). Retints the background + accent; your SRC / LINK pill colours
+        keep their meaning in every theme.</p>
+    </label>
     <div class="form-grid form-grid-tight">
       <label class="form-label form-checkbox">
         <input type="checkbox" data-viz-field="crtOn" checked />

@@ -17,6 +17,8 @@ REPO = Path(__file__).resolve().parent.parent
 BASE = (REPO / "app" / "web" / "templates" / "base.html").read_text()
 CUST = (REPO / "app" / "web" / "static" / "dashboard-customize.js").read_text()
 APP = (REPO / "app" / "web" / "static" / "app.css").read_text()
+APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
+SETTINGS = (REPO / "app" / "web" / "templates" / "settings.html").read_text()
 
 # the MOTIF_THEMES object literal in base.html
 THEMES_BLK = BASE[BASE.index("window.MOTIF_THEMES = {"):
@@ -72,6 +74,14 @@ def test_dracula_and_nord_use_their_signature_hexes():
     assert "'--accent': '#e5a00d'" in _preset("plex")  # Plex gold
 
 
+def test_plex_canvas_is_neutral_charcoal_not_warm_brown():
+    # v0.51.110: the user's real Plex is a NEUTRAL near-black + gold, not the
+    # warm brown of v0.51.109. bg channels stay near-equal (neutral), not R>>B.
+    blk = _preset("plex")
+    assert "'--bg': '#1d1d1f'" in blk
+    assert "'--bg': '#16140f'" not in blk  # the old warm-brown value is gone
+
+
 # ── pre-paint (base.html) ────────────────────────────────────
 
 
@@ -85,29 +95,37 @@ def test_prepaint_applies_saved_theme():
     assert BASE.index("window.MOTIF_THEMES") < BASE.index('src="/static/app.js')
 
 
-# ── picker (dashboard-customize.js) ──────────────────────────
+# ── picker lives in Settings → VISUALS (v0.51.110) ───────────
 
 
-def test_theme_picker_wired_in_customize():
-    assert "THEME_KEY = 'motif:theme'" in CUST
-    assert "// THEME" in CUST
-    assert 'id="dash-theme-select"' in CUST
-    for k in ("fallout", "plex", "dracula", "nord"):
-        assert k in CUST  # THEME_LABELS keys
-    assert "function applyTheme()" in CUST
-    assert "function onThemeChange(" in CUST
-    assert "addEventListener('change', onThemeChange)" in CUST
-    # applied on boot (idempotent with the head pre-paint).
-    assert "applyTheme();" in CUST
+def test_theme_picker_in_settings_visuals():
+    # the <select> shell lives in the VISUALS settings panel.
+    assert 'id="theme-select"' in SETTINGS
+    vis = SETTINGS[SETTINGS.index('data-panel="visuals"'):]
+    vis = vis[:vis.index("</section>")]
+    assert 'id="theme-select"' in vis, "// THEME select must be in the VISUALS panel"
+    # app.js populates + wires it from the shared bundle.
+    assert "function bindThemePicker()" in APP_JS
+    assert "bindThemePicker();" in APP_JS  # called on boot
+    assert "window.MOTIF_THEMES" in APP_JS
+    assert "localStorage.getItem('motif:theme')" in APP_JS
+    assert "removeItem('motif:theme')" in APP_JS  # fallout clears it
 
 
-def test_customize_reads_the_shared_bundle_no_duplicate():
-    # single source of truth — the picker reads window.MOTIF_THEMES, it does not
-    # carry its own copy of the hexes.
-    assert "window.MOTIF_THEMES" in CUST
-    assert "#282a36" not in CUST and "#bd93f9" not in CUST
+def test_app_js_reads_shared_bundle_no_duplicate_hexes():
+    # single source of truth — the picker reads window.MOTIF_THEMES; the preset
+    # hexes live ONLY in base.html, not duplicated in app.js.
+    blk = APP_JS[APP_JS.index("function bindThemePicker()"):]
+    blk = blk[:blk.index("\n  }\n") + 4]
+    assert "#282a36" not in blk and "#bd93f9" not in blk and "#e5a00d" not in blk
+
+
+def test_theme_picker_removed_from_dashboard_customize():
+    # relocated to Settings — the dashboard customize panel no longer owns it.
+    assert "motif:theme" not in CUST
+    assert "dash-theme-select" not in CUST
+    assert "applyTheme" not in CUST
 
 
 def test_theme_select_has_styling():
-    assert ".dash-theme-select {" in APP
-    assert ".dash-theme-row {" in APP
+    assert ".theme-select {" in APP

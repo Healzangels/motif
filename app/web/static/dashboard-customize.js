@@ -169,38 +169,6 @@
     });
   }
 
-  // v0.51.109: CRT phosphor THEME picker. A theme overrides the canvas + the
-  // --accent family (window.MOTIF_THEMES, defined in base.html so the pre-paint
-  // head script shares the SAME bundle — no drift); the semantic SRC/LINK palette
-  // stays fixed. 'fallout' = no override → the :root (green) defaults.
-  const THEME_KEY = 'motif:theme';
-  const THEME_LABELS = { fallout: 'FALLOUT', plex: 'PLEX', dracula: 'DRACULA', nord: 'NORD' };
-  function readTheme() {
-    try { return localStorage.getItem(THEME_KEY) || 'fallout'; } catch (_) { return 'fallout'; }
-  }
-  function saveTheme(v) {
-    try { if (v === 'fallout') localStorage.removeItem(THEME_KEY);
-          else localStorage.setItem(THEME_KEY, v); } catch (_) { /* disabled */ }
-  }
-  // Clear every preset's tokens then apply the current one (fallout = clear all
-  // → :root defaults). Clearing all first makes a live switch to a theme with a
-  // different token set — or back to Fallout — leave no stale inline overrides.
-  function applyTheme() {
-    const themes = window.MOTIF_THEMES || {};
-    const r = document.documentElement;
-    const all = new Set();
-    Object.keys(themes).forEach((t) => Object.keys(themes[t]).forEach((k) => all.add(k)));
-    all.forEach((k) => r.style.removeProperty(k));
-    const b = themes[readTheme()];
-    if (b) Object.keys(b).forEach((k) => r.style.setProperty(k, b[k]));
-  }
-  function onThemeChange(ev) {
-    const sel = ev.target.closest('#dash-theme-select');
-    if (!sel) return;
-    saveTheme(sel.value);
-    applyTheme();
-  }
-
   function injectColorPanel() {
     const plex = document.querySelector('[data-dash-section="plex-coverage"]');
     if (!plex || document.getElementById('dash-color-panel')) return;
@@ -208,15 +176,8 @@
     const panel = document.createElement('div');
     panel.id = 'dash-color-panel';
     panel.className = 'dash-color-panel';
-    // v0.51.109: // THEME picker at the top, then the // LIBRARY COLORS grid.
-    const curTheme = readTheme();
-    const themeOpts = ['fallout'].concat(Object.keys(window.MOTIF_THEMES || {}))
-      .map((k) => `<option value="${escAttr(k)}"${k === curTheme ? ' selected' : ''}>`
-        + `${escHtml(THEME_LABELS[k] || k.toUpperCase())}</option>`).join('');
     panel.innerHTML =
-      '<label class="dash-theme-row"><span class="dash-color-panel-title">// THEME</span>'
-      + `<select id="dash-theme-select" class="dash-theme-select">${themeOpts}</select></label>`
-      + '<span class="dash-color-panel-title">// LIBRARY COLORS</span>'
+      '<span class="dash-color-panel-title">// LIBRARY COLORS</span>'
       + DASH_COLORS.map((c) => {
         const val = isHex(saved[c.key]) ? saved[c.key] : c.def;
         return `<label class="dash-color-item"><input type="color"`
@@ -228,7 +189,6 @@
       + '// RESET COLORS</button>';
     plex.parentNode.insertBefore(panel, plex);
     panel.addEventListener('input', onColorInput);
-    panel.addEventListener('change', onThemeChange);  // v0.51.109: // THEME select
     panel.querySelector('#dash-color-reset')
       .addEventListener('click', onColorReset);
   }
@@ -854,7 +814,6 @@
   async function init() {
     if (!dashContainer()) return;  // not on dashboard
     applyDashColors();  // v1.24.65 (the head script already ran; keep in sync)
-    applyTheme();       // v0.51.109 (idempotent with the head pre-paint)
     LAYOUT = await fetchLayout();
     applyLayout();
     const btn = customizeBtn();

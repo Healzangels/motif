@@ -3728,7 +3728,15 @@
 #   live-applies + persists; the picker reads the shared bundle (no duplicate
 #   hexes). Tests guard the full canvas/accent set per preset AND that no preset
 #   ever touches a semantic token.
-__version__ = "0.51.109"
+# 0.51.110: theme presets — feedback pass. (1) Relocated the // THEME picker out
+#   of the dashboard customize-layout panel (where it read as tied to the library
+#   colours) to Settings → VISUALS, its natural home beside the CRT-effect
+#   toggles. New bindThemePicker() in app.js populates the <select> from the
+#   shared window.MOTIF_THEMES + live-applies + persists; removed the picker from
+#   dashboard-customize.js (the base.html pre-paint still themes every page). (2)
+#   The Plex preset was too warm/brown + too dark; real Plex is a NEUTRAL near-
+#   black charcoal (#1d1d1f) with gold (#e5a00d) — re-tuned the canvas to match.
+__version__ = "0.51.110"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

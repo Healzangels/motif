@@ -6101,6 +6101,36 @@
     });
   }
 
+  // v0.51.110: Settings → VISUALS // THEME picker. A preset overrides the canvas
+  // (--bg/--fg/--line) + the --accent family (v0.51.108); the semantic SRC/LINK
+  // pill palette stays fixed. window.MOTIF_THEMES (base.html) is the single
+  // source of truth — the head script applies the saved theme pre-paint; this
+  // just populates the select + live-applies on change. 'fallout' clears the
+  // override (→ the :root green defaults). Same per-browser, no-SAVE model as
+  // the CRT toggles above, keyed on localStorage 'motif:theme'.
+  function bindThemePicker() {
+    const sel = document.getElementById('theme-select');
+    if (!sel) return;
+    const themes = window.MOTIF_THEMES || {};
+    let cur = 'fallout';
+    try { cur = localStorage.getItem('motif:theme') || 'fallout'; } catch (e) { /* private */ }
+    const keys = ['fallout'].concat(Object.keys(themes));
+    sel.innerHTML = keys.map((k) =>
+      `<option value="${k}"${k === cur ? ' selected' : ''}>${k.toUpperCase()}</option>`).join('');
+    // clear every preset's tokens then apply the chosen one (fallout = clear all).
+    const allTokens = new Set();
+    Object.keys(themes).forEach((t) => Object.keys(themes[t]).forEach((tok) => allTokens.add(tok)));
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      try { if (v === 'fallout') localStorage.removeItem('motif:theme');
+            else localStorage.setItem('motif:theme', v); } catch (e) { /* private */ }
+      const r = document.documentElement;
+      allTokens.forEach((tok) => r.style.removeProperty(tok));
+      const b = themes[v];
+      if (b) Object.keys(b).forEach((tok) => r.style.setProperty(tok, b[tok]));
+    });
+  }
+
   // v1.15.66: bulk user-URL import — preview + apply pair.
   // Drives the // IMPORT settings panel. File picker → POST to
   // /api/import/preview (parse + categorize) → render results
@@ -19425,6 +19455,7 @@
     bindBadgeCycle('topbar-repush-badge', 'repushTabs', 'attn_pills=repush');
     bindSettingsTabs();
     bindVisualsToggles();
+    bindThemePicker();  // v0.51.110
     bindImportPanel();
     bindConfigSaves();
     // v0.50.89: bindScans() call removed — orphaned scans JS surface deleted.
