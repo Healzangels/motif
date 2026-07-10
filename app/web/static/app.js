@@ -6115,8 +6115,9 @@
     let cur = 'fallout';
     try { cur = localStorage.getItem('motif:theme') || 'fallout'; } catch (e) { /* private */ }
     const keys = ['fallout'].concat(Object.keys(themes));
+    const LABELS = { tokyonight: 'TOKYO NIGHT' };  // multi-word display names
     sel.innerHTML = keys.map((k) =>
-      `<option value="${k}"${k === cur ? ' selected' : ''}>${k.toUpperCase()}</option>`).join('');
+      `<option value="${k}"${k === cur ? ' selected' : ''}>${LABELS[k] || k.toUpperCase()}</option>`).join('');
     // clear every preset's tokens then apply the chosen one (fallout = clear all).
     const allTokens = new Set();
     Object.keys(themes).forEach((t) => Object.keys(themes[t]).forEach((tok) => allTokens.add(tok)));

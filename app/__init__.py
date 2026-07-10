@@ -3742,7 +3742,13 @@
 #   --accent-bright + --accent (+ accent-rgb hover) so it themes, staying bolder
 #   than a plain .btn. Genuinely-semantic tones stay fixed: .btn-danger (red),
 #   .btn-plex (Plex amber), the SRC .lib-source-*/promote families, ENV-OVERRIDE.
-__version__ = "0.51.111"
+# 0.51.112: theme presets Tag 3 — added Gruvbox (warm orange), Tokyo Night
+#   (indigo blue), Synthwave (neon pink), and Mono (grayscale) to
+#   window.MOTIF_THEMES. Additive: same machinery, each preset overrides only the
+#   canvas + --accent family. tokyonight gets a two-word 'TOKYO NIGHT' picker
+#   label. (The settings action buttons already theme as of v0.51.111 — the only
+#   fixed one is the red destructive button, which stays red by design.)
+__version__ = "0.51.112"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -24,6 +24,8 @@ SETTINGS = (REPO / "app" / "web" / "templates" / "settings.html").read_text()
 THEMES_BLK = BASE[BASE.index("window.MOTIF_THEMES = {"):
                   BASE.index("};", BASE.index("window.MOTIF_THEMES = {")) + 2]
 
+# every preset bundle in window.MOTIF_THEMES (Fallout = no entry = the defaults).
+PRESETS = ("plex", "dracula", "nord", "gruvbox", "tokyonight", "synthwave", "mono")
 # every token a preset is ALLOWED to set — canvas + accent only.
 CANVAS_ACCENT = [
     "--bg", "--bg-elev", "--bg-elev-2", "--bg-rgb", "--line", "--line-bright",
@@ -46,13 +48,13 @@ def _preset(name: str) -> str:
 # ── the preset bundles ───────────────────────────────────────
 
 
-def test_three_presets_defined():
-    for name in ("plex", "dracula", "nord"):
+def test_all_presets_defined():
+    for name in PRESETS:
         assert name + ": {" in THEMES_BLK, f"{name} preset missing"
 
 
 def test_each_preset_sets_the_full_canvas_and_accent():
-    for name in ("plex", "dracula", "nord"):
+    for name in PRESETS:
         blk = _preset(name)
         for tok in CANVAS_ACCENT:
             assert f"'{tok}':" in blk, f"{name} is missing {tok}"
@@ -80,6 +82,19 @@ def test_plex_canvas_is_neutral_charcoal_not_warm_brown():
     blk = _preset("plex")
     assert "'--bg': '#1d1d1f'" in blk
     assert "'--bg': '#16140f'" not in blk  # the old warm-brown value is gone
+
+
+def test_tag3_presets_signature_hexes_and_label():
+    # v0.51.112: the four added presets carry their recognisable signatures.
+    assert "'--bg': '#282828'" in _preset("gruvbox")        # Gruvbox dark0
+    assert "'--accent': '#fe8019'" in _preset("gruvbox")    # Gruvbox orange
+    assert "'--bg': '#1a1b26'" in _preset("tokyonight")     # Tokyo Night bg
+    assert "'--accent': '#7aa2f7'" in _preset("tokyonight")  # Tokyo blue
+    assert "'--accent': '#ff5fd2'" in _preset("synthwave")  # neon pink
+    assert "'--bg': '#0e0e0e'" in _preset("mono")           # near-pure black
+    assert "'--accent': '#d0d0d0'" in _preset("mono")       # grayscale
+    # tokyonight gets a two-word display label in the picker.
+    assert "tokyonight: 'TOKYO NIGHT'" in APP_JS
 
 
 # ── pre-paint (base.html) ────────────────────────────────────
