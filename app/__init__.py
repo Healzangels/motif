@@ -3774,7 +3774,17 @@
 #   (added --amber-deep + --violet-deep). New guard asserts every DRIFT_TONE +
 #   import tone value resolves to a BARE css rule, so a .btn-gated class can't
 #   silently fail to paint again.
-__version__ = "0.51.115"
+# 0.51.116: SOURCE/PLACE action-button colors stay FIXED across themes (the
+#   user). The menu-item color encodes the action's SOURCE (RE-DOWNLOAD TDB green
+#   = ThemerrDB, SWITCH TO SIDECAR green = HL placement) — it mirrors the FIXED
+#   SRC/LINK pill of the state the action lands the row in. lib-source-themerrdb
+#   + lib-source-place_file were the only two still riding --green (→ accent), so
+#   on a non-Fallout theme the same source read as two colors (gold button beside
+#   a green pill). Repointed to the fixed --src-t / --ok tokens; the rest of the
+#   family (user=violet, adopt/PU=cyan, plex=amber) was already fixed. Guard locks
+#   the whole .btn.lib-source-* family off the themeable aliases. NOTE: this
+#   supersedes the v0.51.114 "keep source-menu buttons themed" call.
+__version__ = "0.51.116"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

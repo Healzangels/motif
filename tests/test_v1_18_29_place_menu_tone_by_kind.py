@@ -63,18 +63,22 @@ APP_CSS = REPO / "app" / "web" / "static" / "app.css"
 
 def test_css_has_place_file_tone_rule():
     """`.btn.lib-source-place_file` must declare a green color
-    matching the HL LINK chip (uses --green-bright / --green-deep
-    variables, same pair as `.btn.lib-source-themerrdb`)."""
+    matching the HL LINK chip. v0.51.116: uses the FIXED --ok-bright /
+    --ok-deep tokens (the HL chip's tone), NOT the themeable --green
+    alias — the action color encodes the placement kind, so it must
+    stay green on every theme to keep matching the fixed HL chip."""
     css = APP_CSS.read_text()
     assert ".btn.lib-source-place_file {" in css
     # Find the rule block.
     idx = css.index(".btn.lib-source-place_file {")
     block = css[idx:idx + 400]
-    assert "var(--green-bright)" in block, (
-        "v1.18.29: place_file tone uses --green-bright to match "
-        "HL link chip color family"
+    assert "var(--ok-bright)" in block, (
+        "v0.51.116: place_file tone uses the FIXED --ok-bright to match "
+        "the HL link chip, not the themeable --green alias"
     )
-    assert "var(--green-deep)" in block
+    assert "var(--ok-deep)" in block
+    # must NOT ride the themeable green/accent aliases.
+    assert "var(--green" not in block and "var(--accent" not in block
 
 
 def test_css_has_place_api_tone_rule():

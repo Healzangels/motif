@@ -2730,13 +2730,14 @@ body.help-mode .settings-help-about { display: block; }
 /* v1.11.14: tint the SOURCE menu items so the action color matches
    the SRC column badge for the state the action lands the row in.
    Visual at-a-glance link between the action and its result. */
+/* v0.51.116: FIXED --src-t (the T-pill token), NOT the themeable --green alias — the SOURCE-menu action color encodes SOURCE (green = ThemerrDB), so it must stay green on every theme to keep matching the fixed T pill/chip. Themeing it made the same source read as two colors on a non-Fallout canvas. */
 .btn.lib-source-themerrdb {
-  color: var(--green-bright);
-  border-color: var(--green-deep);
+  color: var(--src-t-bright);
+  border-color: var(--src-t-deep);
 }
 .btn.lib-source-themerrdb:hover:not(:disabled) {
-  background: rgba(var(--green-rgb), 0.10);
-  border-color: var(--green-bright);
+  background: rgba(var(--src-t-rgb), 0.10);
+  border-color: var(--src-t-bright);
 }
 .btn.lib-source-user {
   color: var(--violet);
@@ -2786,13 +2787,14 @@ body.help-mode .settings-help-about { display: block; }
    row's green HL chip; a cyan RE-PUSH (API) pairs with the cyan
    PU chip. SWITCH TO X buttons take the TARGET kind's color (the
    color of where the placement is going, not where it is). */
+/* v0.51.116: FIXED --ok (the HL-chip token), NOT the themeable --green alias — this action lands the row on a hardlink placement, so its green must stay green on every theme to keep matching the fixed HL LINK chip (same rule as the SRC=T source button above). */
 .btn.lib-source-place_file {
-  color: var(--green-bright);
-  border-color: var(--green-deep);
+  color: var(--ok-bright);
+  border-color: var(--ok-deep);
 }
 .btn.lib-source-place_file:hover:not(:disabled) {
-  background: rgba(var(--green-rgb), 0.10);
-  border-color: var(--green-bright);
+  background: rgba(var(--ok-rgb), 0.10);
+  border-color: var(--ok-bright);
 }
 .btn.lib-source-place_api {
   color: var(--cyan);
