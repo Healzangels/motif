@@ -90,10 +90,10 @@ def test_plex_cards_have_rhyming_glyphs():
     rhyming-with-TDB contract holds — each PLEX card's label is followed by the
     matching media_glyph() call."""
     for label, kind in (
-        ("// PLEX MOVIES", "movies"),
-        ("// PLEX TV", "tv"),
-        ("// PLEX ANIME", "anime"),
-        ("// PLEX COLLECTIONS", "collections"),
+        ("// MOVIES THEMED", "movies"),
+        ("// TV THEMED", "tv"),
+        ("// ANIME THEMED", "anime"),
+        ("// COLLECTIONS THEMED", "collections"),
     ):
         assert (
             f'<span class="stat-label">{label}</span>'

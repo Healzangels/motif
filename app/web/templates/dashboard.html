@@ -214,9 +214,10 @@
          data-dash-section="top-stats"
          data-dash-label="COVERAGE">
   {# v0.51.122: the two top stat rows swapped WHICH NUMBERS they show, in place
-     (the user: "swap the info in the themerrdb cards and the plex cards … keep
-     the names where they were"). This COVERAGE section keeps its // …THEMED
-     titles + tone + tdb-* data-dash-card ids, but now renders the ThemerrDB
+     (the user: "swap the info in the themerrdb cards and the plex cards"). v0.51.131
+     then retuned the titles to match the swapped content: this COVERAGE section's
+     cards are now plain (// MOVIES / TV / ANIME / COLLECTIONS — the library total),
+     keeping their tone + tdb-* data-dash-card ids, and render the ThemerrDB
      REACH numbers (library total + in/not-in-ThemerrDB) that used to sit on the
      PLEX cards. The % + bar + ready-to-add moved to the PLEX cards below. Only
      the card BODIES (big number, bar, foot, live-update ids) swapped — the card
@@ -226,7 +227,7 @@
      #plex-anime-card by anime presence and writes plex-anime-total into it). #}
   <article class="stat stat-tdb-primary" data-dash-card="tdb-movies">
     <header class="stat-head">
-      <span class="stat-label">// MOVIES THEMED</span>
+      <span class="stat-label">// MOVIES</span>
       {{ media_glyph('movies') }}
     </header>
     <div class="stat-num" id="plex-movies-total">{{ ssr_num(_ssr_dash.plex_movies_total) }}</div>
@@ -238,7 +239,7 @@
 
   <article class="stat stat-tdb-primary" data-dash-card="tdb-tv-series">
     <header class="stat-head">
-      <span class="stat-label">// TV THEMED</span>
+      <span class="stat-label">// TV</span>
       {{ media_glyph('tv') }}
     </header>
     <div class="stat-num" id="plex-tv-total">{{ ssr_num(_ssr_dash.plex_tv_total) }}</div>
@@ -254,7 +255,7 @@
   <article class="stat stat-tdb-primary" id="plex-anime-card" data-dash-card="tdb-anime"
            {% if not _ssr_dash.plex_anime_total %}style="display:none"{% endif %}>
     <header class="stat-head">
-      <span class="stat-label">// ANIME THEMED</span>
+      <span class="stat-label">// ANIME</span>
       {{ media_glyph('anime') }}
     </header>
     <div class="stat-num" id="plex-anime-total">{{ ssr_num(_ssr_dash.plex_anime_total) }}</div>
@@ -269,7 +270,7 @@
   <article class="stat stat-tdb-primary" id="plex-collections-card" data-dash-card="tdb-collections"
            {% if not _ssr_dash.plex_collections_total %}style="display:none"{% endif %}>
     <header class="stat-head">
-      <span class="stat-label">// COLLECTIONS THEMED</span>
+      <span class="stat-label">// COLLECTIONS</span>
       {{ media_glyph('collections') }}
     </header>
     <div class="stat-num" id="plex-collections-total">{{ ssr_num(_ssr_dash.plex_collections_total) }}</div>
@@ -304,7 +305,7 @@
      hide-gate on the anime/collections cards — these coverage cards stay
      visible (the anime/collections gate moved to the reach cards above). #}
   <article class="stat stat-plex-primary" data-dash-card="plex-movies">
-    <header class="stat-head"><span class="stat-label">// PLEX MOVIES</span>{{ media_glyph('movies') }}</header>
+    <header class="stat-head"><span class="stat-label">// MOVIES THEMED</span>{{ media_glyph('movies') }}</header>
     <div class="stat-num" id="cov-movies-pct">{{ ssr_pct(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}</div>
     <div class="stat-bar">
       <span class="bar-fill" data-bar-fill="movies" style="width: {{ ssr_pct_width(_ssr_dash.plex_movies_with_theme, _ssr_dash.plex_movies_total) }}%"></span>
@@ -315,7 +316,7 @@
     </footer>
   </article>
   <article class="stat stat-plex-tv" data-dash-card="plex-tv">
-    <header class="stat-head"><span class="stat-label">// PLEX TV</span>{{ media_glyph('tv') }}</header>
+    <header class="stat-head"><span class="stat-label">// TV THEMED</span>{{ media_glyph('tv') }}</header>
     <div class="stat-num" id="cov-tv-pct">{{ ssr_pct(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}</div>
     <div class="stat-bar">
       <span class="bar-fill" data-bar-fill="tv" style="width: {{ ssr_pct_width(_ssr_dash.plex_tv_with_theme, _ssr_dash.plex_tv_total) }}%"></span>
@@ -329,7 +330,7 @@
      display:none gate — always visible like the // ANIME THEMED card was
      pre-swap; the anime hide-gate moved to the reach card above. #}
   <article class="stat stat-plex-anime" data-dash-card="plex-anime">
-    <header class="stat-head"><span class="stat-label">// PLEX ANIME</span>{{ media_glyph('anime') }}</header>
+    <header class="stat-head"><span class="stat-label">// ANIME THEMED</span>{{ media_glyph('anime') }}</header>
     <div class="stat-num" id="cov-anime-pct">{{ ssr_pct(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}</div>
     <div class="stat-bar">
       <span class="bar-fill" data-bar-fill="anime" style="width: {{ ssr_pct_width(_ssr_dash.plex_anime_with_theme, _ssr_dash.plex_anime_total) }}%"></span>
@@ -340,7 +341,7 @@
     </footer>
   </article>
   <article class="stat stat-plex-collections" data-dash-card="plex-collections">
-    <header class="stat-head"><span class="stat-label">// PLEX COLLECTIONS</span>{{ media_glyph('collections') }}</header>
+    <header class="stat-head"><span class="stat-label">// COLLECTIONS THEMED</span>{{ media_glyph('collections') }}</header>
     <div class="stat-num" id="cov-collections-pct">{{ ssr_pct(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}</div>
     <div class="stat-bar">
       <span class="bar-fill" data-bar-fill="collections" style="width: {{ ssr_pct_width(_ssr_dash.plex_collections_with_theme, _ssr_dash.plex_collections_total) }}%"></span>

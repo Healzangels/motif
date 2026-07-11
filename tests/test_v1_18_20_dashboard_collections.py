@@ -14,7 +14,7 @@ the user's ask:
 
   * Two new cards:
       - // THEMERRDB COLLECTIONS (in COVERAGE row)
-      - // PLEX COLLECTIONS (in PLEX LIBRARY row, red tone)
+      - // COLLECTIONS THEMED (in PLEX LIBRARY row, red tone)
   * Per-Section Coverage: synthetic "Collections" aggregate row
     appended (one row total, no per-section split).
   * Coverage comparison chart: handles tab='collections' with a
@@ -51,14 +51,14 @@ API_PY = REPO / "app" / "web" / "api.py"
 
 
 def test_dashboard_renders_tdb_collections_card():
-    """The // COLLECTIONS THEMED card sits in the COVERAGE grid with the
+    """The // COLLECTIONS card sits in the COVERAGE grid with the
     .stat-tdb-primary tone. v0.51.122: it now renders the ThemerrDB REACH
     (total + in/not-in-ThemerrDB) — the user swapped the numbers onto it and
-    kept the title; the coverage % + bar moved to // PLEX COLLECTIONS. The
+    kept the title; the coverage % + bar moved to // COLLECTIONS THEMED. The
     collections hide-gate (#plex-collections-card) also moved onto this card."""
     html = DASH_HTML.read_text()
-    assert "// COLLECTIONS THEMED" in html
-    idx = html.index("// COLLECTIONS THEMED")
+    assert "// COLLECTIONS" in html
+    idx = html.index("// COLLECTIONS")
     block = html[html.rindex("<article", 0, idx):html.index("</article>", idx)]
     assert "stat-tdb-primary" in block
     # Reach shape swapped in + the hide-gate that swapped onto this card.
@@ -70,13 +70,13 @@ def test_dashboard_renders_tdb_collections_card():
 
 
 def test_dashboard_renders_plex_collections_card():
-    """// PLEX COLLECTIONS card present, red tone class. v0.51.122: it now
+    """// COLLECTIONS THEMED card present, red tone class. v0.51.122: it now
     renders the coverage % + bar + "themed / ready" (the user swapped the
     numbers, kept the title); the reach total + the hide-gate moved onto the
-    // COLLECTIONS THEMED reach card, so this card stays always-visible."""
+    // COLLECTIONS reach card, so this card stays always-visible."""
     html = DASH_HTML.read_text()
-    assert "// PLEX COLLECTIONS" in html
-    idx = html.index("// PLEX COLLECTIONS")
+    assert "// COLLECTIONS THEMED" in html
+    idx = html.index("// COLLECTIONS THEMED")
     block = html[html.rindex("<article", 0, idx):html.index("</article>", idx)]
     assert "stat-plex-collections" in block, (
         "Plex Collections card must use the red tone class"

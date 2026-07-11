@@ -26,7 +26,7 @@ in his deploy) and walked back to the pre-v1.15.27 shape:
      - Header glyph (▷ for movies, ◇ for tv)
      - `.stat-tdb-primary` tone (orange)
 
-2. **PLEX cards** — `// PLEX MOVIES` + `// PLEX TV` + `// PLEX
+2. **PLEX cards** — `// MOVIES THEMED` + `// TV THEMED` + `// PLEX
    ANIME` back to the v1.15.19 shape:
      - Big number: library total (`#plex-{movies,tv,anime}-total`)
      - NO bar on the card itself
@@ -95,10 +95,10 @@ def test_top_cards_lead_with_coverage_pct():
     library-coverage tracker: big number = % of YOUR library themed
     (id=cov-movies-pct, via the ssr_pct macro). The reverted
     catalogue-size headline (data-stat="movies.total") is gone."""
-    # v0.51.122: the % swapped onto the // PLEX MOVIES card (the user kept the
-    # titles, swapped the numbers); // MOVIES THEMED carries the reach total.
+    # v0.51.122: the % swapped onto the // MOVIES THEMED card (the user kept the
+    # titles, swapped the numbers); // MOVIES carries the reach total.
     visible = _strip_comments(DASH.read_text())
-    movies_anchor = visible.index("// PLEX MOVIES")
+    movies_anchor = visible.index("// MOVIES THEMED")
     movies_card_end = visible.index("</article>", movies_anchor)
     movies_card = visible[
         visible.rfind("<article", 0, movies_anchor):movies_card_end
@@ -143,14 +143,14 @@ def test_themerrdb_top_cards_carry_tdb_primary_tone_and_glyph():
     cards. v1.21.4 swapped the glyphs to set B (▶ movies, ▭ tv)
     after the user flagged the outline/diamond set as inconsistent."""
     visible = _strip_comments(DASH.read_text())
-    movies_anchor = visible.index("// MOVIES THEMED")
+    movies_anchor = visible.index("// MOVIES")
     movies_card = visible[
         visible.rfind("<article", 0, movies_anchor):movies_anchor + 600
     ]
     assert "stat-tdb-primary" in movies_card
     assert "media_glyph('movies')" in movies_card  # v1.24.66: SVG via macro
 
-    tv_anchor = visible.index("// TV THEMED")
+    tv_anchor = visible.index("// TV")
     tv_card = visible[
         visible.rfind("<article", 0, tv_anchor):tv_anchor + 600
     ]
@@ -166,11 +166,11 @@ def test_plex_movies_card_leads_with_total_no_coverage_pct():
     (`#plex-movies-total`), not the v1.15.27 coverage % nor
     the v1.15.27 `-total-chip` header chip. v1.23.41 foot carries
     the ThemerrDB reach — "in ThemerrDB / not in ThemerrDB"."""
-    # v0.51.122: the reach total + reach foot swapped onto the // MOVIES THEMED
-    # card (the user kept the titles, swapped the numbers); // PLEX MOVIES now
+    # v0.51.122: the reach total + reach foot swapped onto the // MOVIES
+    # card (the user kept the titles, swapped the numbers); // MOVIES THEMED now
     # leads with the coverage %.
     visible = _strip_comments(DASH.read_text())
-    reach_anchor = visible.index("// MOVIES THEMED")
+    reach_anchor = visible.index("// MOVIES")
     reach_card = visible[
         visible.rfind("<article", 0, reach_anchor):visible.index("</article>", reach_anchor)
     ]
@@ -184,7 +184,7 @@ def test_plex_movies_card_leads_with_total_no_coverage_pct():
     assert "in ThemerrDB" in reach_card
     assert "not in ThemerrDB" in reach_card
     assert 'id="plex-movies-not-tdb"' in reach_card
-    # The coverage % moved off this card onto // PLEX MOVIES.
+    # The coverage % moved off this card onto // MOVIES THEMED.
     assert 'id="cov-movies-pct"' not in reach_card
 
 
@@ -192,15 +192,15 @@ def test_plex_tv_card_uses_blue_tone_and_total_lead():
     """PLEX TV card: total as big number + v1.23.41 reach foot
     (`in ThemerrDB / not in ThemerrDB`). v1.15.29's .stat-plex-tv →
     blue tone is preserved."""
-    # v0.51.122: blue tone stays on // PLEX TV; the total + reach foot swapped
-    # onto the // TV THEMED card (the user kept the titles, swapped the numbers).
+    # v0.51.122: blue tone stays on // TV THEMED; the total + reach foot swapped
+    # onto the // TV card (the user kept the titles, swapped the numbers).
     visible = _strip_comments(DASH.read_text())
-    tv_anchor = visible.index("// PLEX TV")
+    tv_anchor = visible.index("// TV THEMED")
     tv_card = visible[
         visible.rfind("<article", 0, tv_anchor):visible.index("</article>", tv_anchor)
     ]
     assert "stat-plex-tv" in tv_card
-    reach_anchor = visible.index("// TV THEMED")
+    reach_anchor = visible.index("// TV")
     reach_card = visible[
         visible.rfind("<article", 0, reach_anchor):visible.index("</article>", reach_anchor)
     ]
@@ -222,15 +222,15 @@ def test_plex_anime_card_uses_total_lead_and_magenta_tone():
     """PLEX ANIME — total as big number, no bar, v1.23.41 reach
     foot ("in ThemerrDB / not in ThemerrDB"). Magenta tone
     preserved (the user's pick)."""
-    # v0.51.122: magenta tone stays on // PLEX ANIME; the total + reach foot
-    # swapped onto the // ANIME THEMED card (the user kept the titles).
+    # v0.51.122: magenta tone stays on // ANIME THEMED; the total + reach foot
+    # swapped onto the // ANIME card (the user kept the titles).
     visible = _strip_comments(DASH.read_text())
-    anime_anchor = visible.index("// PLEX ANIME")
+    anime_anchor = visible.index("// ANIME THEMED")
     anime_card = visible[
         visible.rfind("<article", 0, anime_anchor):visible.index("</article>", anime_anchor)
     ]
     assert "stat-plex-anime" in anime_card
-    reach_anchor = visible.index("// ANIME THEMED")
+    reach_anchor = visible.index("// ANIME")
     reach_card = visible[
         visible.rfind("<article", 0, reach_anchor):visible.index("</article>", reach_anchor)
     ]
@@ -250,9 +250,9 @@ def test_plex_cards_no_per_card_bar():
     visible = _strip_comments(DASH.read_text())
     # Locate each PLEX card individually + check no `id="plex-*-bar"`.
     for label, bar_id in [
-        ("// PLEX MOVIES", "plex-movies-bar"),
-        ("// PLEX TV", "plex-tv-bar"),
-        ("// PLEX ANIME", "plex-anime-bar"),
+        ("// MOVIES THEMED", "plex-movies-bar"),
+        ("// TV THEMED", "plex-tv-bar"),
+        ("// ANIME THEMED", "plex-anime-bar"),
     ]:
         anchor = visible.index(label)
         card_end = visible.index("</article>", anchor)

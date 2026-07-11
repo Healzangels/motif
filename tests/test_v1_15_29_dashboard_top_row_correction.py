@@ -121,8 +121,8 @@ def test_themerrdb_top_row_present_with_pre_v1_15_27_label():
     toolbar matches the layout users had pre-v1.15.27."""
     visible = _strip_comments(DASH.read_text())
     # v1.23.34: relabelled to the coverage framing (was THEMERRDB *).
-    assert "// MOVIES THEMED" in visible
-    assert "// TV THEMED" in visible
+    assert "// MOVIES" in visible
+    assert "// TV" in visible
     assert 'data-dash-section="top-stats"' in visible
     assert 'data-dash-label="COVERAGE"' in visible
 
@@ -134,13 +134,13 @@ def test_top_cards_lead_with_coverage_pct():
     # v0.51.122: the coverage % + bar swapped onto the // PLEX cards (the user
     # kept the titles, swapped the numbers) — the // …THEMED cards carry reach.
     visible = _strip_comments(DASH.read_text())
-    movies_anchor = visible.index("// PLEX MOVIES")
+    movies_anchor = visible.index("// MOVIES THEMED")
     movies_card_start = visible.rfind("<article", 0, movies_anchor)
     movies_card_end = visible.index("</article>", movies_anchor)
     movies_card = visible[movies_card_start:movies_card_end]
     assert 'id="cov-movies-pct"' in movies_card
     assert 'data-stat="movies.total"' not in movies_card
-    tv_anchor = visible.index("// PLEX TV")
+    tv_anchor = visible.index("// TV THEMED")
     tv_card_start = visible.rfind("<article", 0, tv_anchor)
     tv_card_end = visible.index("</article>", tv_anchor)
     tv_card = visible[tv_card_start:tv_card_end]
@@ -157,7 +157,7 @@ def test_themerrdb_top_cards_have_bar_and_foot_stats():
     # v0.51.122: the bar + coverage foot swapped onto the // PLEX cards (the
     # user kept the titles, swapped the numbers).
     visible = _strip_comments(DASH.read_text())
-    movies_anchor = visible.index("// PLEX MOVIES")
+    movies_anchor = visible.index("// MOVIES THEMED")
     movies_card_end = visible.index("</article>", movies_anchor)
     movies_card = visible[
         visible.rfind("<article", 0, movies_anchor):movies_card_end
@@ -168,7 +168,7 @@ def test_themerrdb_top_cards_have_bar_and_foot_stats():
     assert 'id="cov-movies-ready"' in movies_card
     assert "ready to add" in movies_card
 
-    tv_anchor = visible.index("// PLEX TV")
+    tv_anchor = visible.index("// TV THEMED")
     tv_card_end = visible.index("</article>", tv_anchor)
     tv_card = visible[
         visible.rfind("<article", 0, tv_anchor):tv_card_end
@@ -183,12 +183,12 @@ def test_themerrdb_top_cards_use_tdb_primary_tone():
     // SYNC THEMERRDB family) survives onto the new TDB top
     cards — anchors the operator's eye on TDB-side surfaces."""
     visible = _strip_comments(DASH.read_text())
-    movies_anchor = visible.index("// MOVIES THEMED")
+    movies_anchor = visible.index("// MOVIES")
     movies_card = visible[
         visible.rfind("<article", 0, movies_anchor):movies_anchor
     ]
     assert "stat-tdb-primary" in movies_card
-    tv_anchor = visible.index("// TV THEMED")
+    tv_anchor = visible.index("// TV")
     tv_card = visible[
         visible.rfind("<article", 0, tv_anchor):tv_anchor
     ]

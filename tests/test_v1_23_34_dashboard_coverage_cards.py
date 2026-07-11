@@ -50,9 +50,9 @@ def _card(label: str) -> str:
 
 def test_cards_relabelled_to_coverage_framing():
     visible = _strip_comments(DASH)
-    assert "// MOVIES THEMED" in visible
-    assert "// TV THEMED" in visible
-    assert "// COLLECTIONS THEMED" in visible
+    assert "// MOVIES" in visible
+    assert "// TV" in visible
+    assert "// COLLECTIONS" in visible
     # The meaningless-catalogue framing is fully gone.
     assert "// THEMERRDB MOVIES" not in visible
     assert 'data-stat="movies.total"' not in visible
@@ -60,7 +60,7 @@ def test_cards_relabelled_to_coverage_framing():
 
 
 def test_movies_card_headline_is_coverage_pct():
-    card = _card("// PLEX MOVIES")
+    card = _card("// MOVIES THEMED")
     assert 'id="cov-movies-pct"' in card
     assert ("ssr_pct(_ssr_dash.plex_movies_with_theme, "
             "_ssr_dash.plex_movies_total)") in card
@@ -68,7 +68,7 @@ def test_movies_card_headline_is_coverage_pct():
 
 
 def test_movies_card_foot_is_themed_of_total_plus_ready():
-    card = _card("// PLEX MOVIES")
+    card = _card("// MOVIES THEMED")
     assert 'id="cov-movies-themed"' in card and "plex_movies_with_theme" in card
     assert 'id="cov-movies-total"' in card and "plex_movies_total" in card
     assert 'id="cov-movies-ready"' in card and "plex_movies_ready" in card
@@ -78,7 +78,7 @@ def test_movies_card_foot_is_themed_of_total_plus_ready():
 def test_tv_card_is_tv_only():
     # v1.23.40: TV is tv-only (anime is its own card) so it matches the
     # TV SHOWS library tab.
-    card = _card("// PLEX TV")
+    card = _card("// TV THEMED")
     assert ("ssr_pct(_ssr_dash.plex_tv_with_theme, "
             "_ssr_dash.plex_tv_total)") in card
     assert "plex_tv_ready" in card
@@ -87,7 +87,7 @@ def test_tv_card_is_tv_only():
 
 def test_anime_card_present_and_separate():
     # v1.23.40: ANIME is its own coverage card matching the ANIME tab.
-    card = _card("// PLEX ANIME")
+    card = _card("// ANIME THEMED")
     assert 'id="cov-anime-pct"' in card
     assert ("ssr_pct(_ssr_dash.plex_anime_with_theme, "
             "_ssr_dash.plex_anime_total)") in card
@@ -95,7 +95,7 @@ def test_anime_card_present_and_separate():
 
 
 def test_collections_card_coverage_shape():
-    card = _card("// PLEX COLLECTIONS")
+    card = _card("// COLLECTIONS THEMED")
     assert 'id="cov-collections-pct"' in card
     assert ("ssr_pct(_ssr_dash.plex_collections_with_theme, "
             "_ssr_dash.plex_collections_total)") in card

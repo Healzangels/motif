@@ -3920,7 +3920,18 @@
 #   breaking the form's left edge (every other field's control sits below its
 #   label). Made it display:block so the dropdown drops onto its own line, left-
 #   aligned with the rest of the form; width stays intrinsic (compact).
-__version__ = "0.51.130"
+# 0.51.131: (1) dashboard card titles retuned to match the v0.51.122 swapped
+#   content — the top-stats cards are now plain (// MOVIES / TV / ANIME /
+#   COLLECTIONS, the library total + ThemerrDB reach), the plex-coverage cards
+#   are // … THEMED (the coverage %). The old // … THEMED (top) + // PLEX …
+#   (bottom) titles no longer matched their numbers (the user). Display TEXT
+#   only — ids/sections/positions untouched, so customize stays a no-op.
+#   (2) THEME dropdown gap: dropped .theme-select's anomalous margin-top:gap-1
+#   (which .input fields don't have and which floated the dropdown down toward
+#   the hint) so it groups tight under its label like every other field.
+#   Guarded by test_v0_51_131; ~8 dashboard test files remapped their title
+#   anchors.
+__version__ = "0.51.131"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -122,9 +122,9 @@ def test_plex_reach_foot_text_present(admin_client):
     html = client.get("/", headers=AUTH).text
     # v1.24.66: the stat-glyph is now an inline SVG (~470 chars), so widen the
     # window past it to reach the card foot.
-    # v0.51.122: the reach foot swapped onto the // MOVIES THEMED card (the user
-    # kept the titles, swapped the numbers) — // PLEX MOVIES now shows the % + bar.
-    reach_section = html[html.index("// MOVIES THEMED"):html.index("// MOVIES THEMED") + 1500]
+    # v0.51.122: the reach foot swapped onto the // MOVIES card (the user
+    # kept the titles, swapped the numbers) — // MOVIES THEMED now shows the % + bar.
+    reach_section = html[html.index("// MOVIES"):html.index("// MOVIES") + 1500]
     assert "in ThemerrDB" in reach_section
     assert "not in ThemerrDB" in reach_section
 
@@ -136,8 +136,8 @@ def test_all_four_reach_cards_use_reach_foot():
     """v0.51.122: the reach foot (in/not-in-ThemerrDB + a `*-not-tdb` id)
     swapped onto the // …THEMED cards (the user kept the titles, swapped the
     numbers). Every one carries the reach phrasing + the *-not-tdb id."""
-    THEMED = {"movies": "// MOVIES THEMED", "tv": "// TV THEMED",
-              "anime": "// ANIME THEMED", "collections": "// COLLECTIONS THEMED"}
+    THEMED = {"movies": "// MOVIES", "tv": "// TV",
+              "anime": "// ANIME", "collections": "// COLLECTIONS"}
     for slug, label in THEMED.items():
         anchor = DASH_HTML.index(label)
         card = DASH_HTML[anchor:DASH_HTML.index("</article>", anchor)]

@@ -6992,7 +6992,13 @@ body.dash-customize-mode .dash-user-hidden { opacity: 0.45; }
   border: 1px solid var(--line-bright);
   border-radius: var(--radius);
   padding: 6px 10px;
-  margin-top: var(--gap-1);
+  /* v0.51.131: no margin-top — .input fields have none, and the extra gap-1 was
+     pushing the dropdown DOWN off its label (so it read as "too close to the
+     hint below"). Zeroing it groups the dropdown tight under the THEME label,
+     matching every other labelled field's rhythm. The gap above comes from the
+     label-text's margin-bottom, same as an .input; the hint's own margin-top
+     sets the gap below. */
+  margin-top: 0;
   cursor: pointer;
 }
 .theme-select:hover { border-color: var(--accent-deep); }

@@ -12,16 +12,19 @@ stuck. Result: swapped section labels + un-swapped cards (the user's screenshot:
 Swap only the NUMBERS, in place. Each card keeps its title, tone, section, and
 `data-dash-card` id — only the big number / bar / foot / live-update ids swap:
 
-  * The // …THEMED cards (top-stats section, tdb-* ids) keep their titles but
-    now render the ThemerrDB REACH (library total + in/not-in-ThemerrDB) that
-    used to sit on the PLEX cards.
-  * The // PLEX … cards (plex-coverage section, plex-* ids) keep their titles
-    but now render the COVERAGE % + bar + "X of Y themed · Z ready to add".
+  * The top-stats cards (tdb-* ids) render the ThemerrDB REACH (library total +
+    in/not-in-ThemerrDB) that used to sit on the PLEX cards.
+  * The plex-coverage cards (plex-* ids) render the COVERAGE % + bar + "X of Y
+    themed · Z ready to add".
 
 Because the cards never move by id, the saved customize layout can't undo it
 (applyLayout finds tdb-* already in top-stats, plex-* already in plex-coverage —
-a no-op). The user chose "keep titles" — so // MOVIES THEMED intentionally shows
-a total and // PLEX MOVIES shows a %.
+a no-op).
+
+v0.51.131 (title rename): the titles were retuned to match the swapped content —
+the top-stats cards are now plain (// MOVIES / TV / ANIME / COLLECTIONS, the
+library total), and the coverage cards are // … THEMED (the %). Only the display
+TEXT changed; ids/sections/positions are untouched, so customize is still a no-op.
 
 The anime/collections hide-gate (`display:none` + `#plex-anime-card` /
 `#plex-collections-card` reveal id) moved onto the REACH cards (renderPlexCoverage
@@ -56,11 +59,11 @@ def _section_body(html: str, section_id: str) -> str:
 
 
 def test_themed_cards_show_reach_numbers():
-    """The // …THEMED cards (top-stats) keep their titles but render the
-    ThemerrDB reach (total + in/not-in-ThemerrDB) — NOT the % anymore."""
+    """The top-stats cards (// MOVIES etc., v0.51.131 title) render the ThemerrDB
+    reach (total + in/not-in-ThemerrDB) — NOT the % anymore."""
     body = _section_body(DASH.read_text(), "top-stats")
     assert 'data-dash-label="COVERAGE"' in body           # section label reverted
-    assert "// MOVIES THEMED" in body                      # title kept
+    assert "// MOVIES" in body                      # title kept
     assert 'id="plex-movies-total"' in body                # reach big number
     assert "in ThemerrDB" in body and "not in ThemerrDB" in body
     # The % + bar + ready-to-add must NOT be here anymore.
@@ -70,11 +73,11 @@ def test_themed_cards_show_reach_numbers():
 
 
 def test_plex_cards_show_coverage_pct():
-    """The // PLEX … cards (plex-coverage) keep their titles but render the
+    """The plex-coverage cards (// MOVIES THEMED etc., v0.51.131 title) render the
     coverage % + bar + 'X of Y themed · Z ready to add' — NOT the reach total."""
     body = _section_body(DASH.read_text(), "plex-coverage")
     assert 'data-dash-label="PLEX LIBRARY"' in body        # section label reverted
-    assert "// PLEX MOVIES" in body                         # title kept
+    assert "// MOVIES THEMED" in body                         # title kept
     assert 'id="cov-movies-pct"' in body                    # % big number
     assert 'data-bar-fill="movies"' in body                 # bar present
     assert "themed</span>" in body and "ready to add" in body
@@ -83,16 +86,19 @@ def test_plex_cards_show_coverage_pct():
     assert "in ThemerrDB" not in body
 
 
-def test_titles_kept_in_original_positions():
-    """the user: keep the names where they were. The green THEMED titles stay
-    in top-stats, the PLEX titles stay in plex-coverage."""
+def test_titles_match_swapped_content():
+    """v0.51.131: titles retuned to match the swapped data. The top-stats cards
+    are plain (library total + ThemerrDB reach); the plex-coverage cards are
+    // … THEMED (the coverage %)."""
     html = DASH.read_text()
     top = _section_body(html, "top-stats")
     bot = _section_body(html, "plex-coverage")
+    # top cards are plain; the THEMED suffix belongs only to the % (coverage) card
+    for t in ("// MOVIES", "// TV", "// ANIME", "// COLLECTIONS"):
+        assert f'stat-label">{t}</span>' in top
+        assert f'stat-label">{t} THEMED</span>' not in top
     for t in ("// MOVIES THEMED", "// TV THEMED", "// ANIME THEMED", "// COLLECTIONS THEMED"):
-        assert t in top
-    for t in ("// PLEX MOVIES", "// PLEX TV", "// PLEX ANIME", "// PLEX COLLECTIONS"):
-        assert t in bot
+        assert f'stat-label">{t}</span>' in bot
 
 
 # ── Robustness: card ids stay in their home sections ──────────

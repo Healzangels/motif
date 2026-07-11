@@ -99,8 +99,8 @@ def test_top_themerrdb_cards_present_with_v1_15_19_labels():
     assert "MOVIES TRACKED" not in visible
     assert "TV SERIES TRACKED" not in visible
     # v1.23.34 relabelled these to the coverage framing.
-    assert "// MOVIES THEMED" in visible
-    assert "// TV THEMED" in visible
+    assert "// MOVIES" in visible
+    assert "// TV" in visible
 
 
 def test_tdb_primary_tone_preserved_on_top_cards():
@@ -113,7 +113,7 @@ def test_tdb_primary_tone_preserved_on_top_cards():
     either way — anchor on whichever cards currently carry
     the .stat-tdb-primary class."""
     html = _strip_comments(DASHBOARD_HTML.read_text())
-    movies_anchor = html.index("// MOVIES THEMED")
+    movies_anchor = html.index("// MOVIES")
     movies_card_start = html.rfind("<article", 0, movies_anchor)
     movies_card = html[movies_card_start:movies_anchor]
     assert "stat-tdb-primary" in movies_card
@@ -146,7 +146,7 @@ def test_plex_tv_card_carries_dedicated_tone():
     pin the class so the tone stays attached to the card
     regardless of the color value."""
     html = DASHBOARD_HTML.read_text()
-    tv_anchor = html.index("// PLEX TV")
+    tv_anchor = html.index("// TV THEMED")
     tv_card_start = html.rfind("<article", 0, tv_anchor)
     tv_card = html[tv_card_start:tv_anchor + 200]
     assert "stat-plex-tv" in tv_card
@@ -156,7 +156,7 @@ def test_plex_anime_card_uses_magenta_tone():
     """ANIME tone is magenta per the user's pick — distinct from
     amber (movies), green (tv), red (failure), blue (TDB ↑)."""
     html = DASHBOARD_HTML.read_text()
-    anime_anchor = html.index("// PLEX ANIME")
+    anime_anchor = html.index("// ANIME THEMED")
     anime_card_start = html.rfind("<article", 0, anime_anchor)
     anime_card = html[anime_card_start:anime_anchor + 200]
     assert "stat-plex-anime" in anime_card
