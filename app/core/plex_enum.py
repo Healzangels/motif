@@ -92,13 +92,19 @@ _PLEX_ENUM_NORMALIZE_TITLE_WARNED: bool = False
 # failing overdue check is visible at boot.
 _SECTION_ENUM_OVERDUE_WARNED: bool = False
 
-# v0.51.128: consecutive full enums a plex_items row must be MISSING from
-# Plex's section listing before the reaper DELETEs it + fires 💔 Theme lost.
-# A single miss is treated as a transient Plex glitch (partial catalog / API
-# hiccup) — the row's counter is incremented but the row survives; it only
-# reaps once the miss persists across this many enums. Reappearing resets the
-# counter. Full enums run ~daily on cron + on every manual // REFRESH PLEX,
-# so a GENUINE removal is reaped after ~one extra cycle. 2 = one grace enum.
+# v0.51.128: consecutive full (non-skipped) enums a plex_items row must be
+# MISSING from Plex's section listing before the reaper DELETEs it + fires 💔
+# Theme lost. A single miss is treated as a transient Plex glitch (partial
+# catalog / API hiccup) — the counter is incremented but the row survives; it
+# only reaps once the miss persists across this many enums. Reappearing resets
+# the counter. 2 = one grace enum.
+# v0.51.129: the counter only advances on enums that actually WALK the section
+# (a contentChangedAt-skipped enum short-circuits before the reaper). After a
+# removal bumps contentChangedAt once, later enums skip until the 24h-overdue
+# bypass — so a genuine removal would otherwise take ~24h to reap. A manual
+# REFRESH PLEX now passes force=True (bypasses the skip), so two REFRESH clicks
+# reap a genuinely-removed item + clear its phantom-P on demand; cron enums stay
+# unforced and keep the skip.
 _REAP_MISS_THRESHOLD: int = 2
 
 
@@ -168,6 +174,7 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                    *, only_section_id: str | None = None,
                    collections_only: bool = False,
                    skip_collections: bool = False,
+                   force: bool = False,
                    cancel_check=lambda: False) -> dict:
     """Enumerate Plex sections, upsert plex_items. Returns stats.
 
@@ -327,7 +334,12 @@ def run_plex_enum(db_path: Path, plex_cfg: PlexConfig,
                 # for the section is the cheapest "when did we last
                 # enumerate this section" signal that doesn't need a
                 # new schema column.
-                should_skip = bool(content_changed_at_match)
+                # v0.51.129: a user-initiated REFRESH (force=True) always walks
+                # the section — bypassing the contentChangedAt-skip — so the
+                # v0.51.128 reaper miss-counter can advance on demand (two forced
+                # refreshes reap a genuinely-removed item + clear its phantom-P).
+                # Cron / post-sync enums leave force=False and keep the skip.
+                should_skip = bool(content_changed_at_match) and not force
                 if should_skip:
                     overdue = _section_enum_overdue(
                         db_path, section_id, hours=24,
@@ -2412,12 +2424,19 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                     for _si in range(0, len(_stale_all), 500):
                         _sc = _stale_all[_si:_si + 500]
                         _sph = ",".join(["?"] * len(_sc))
+                        # v0.51.129: cap the increment at the threshold — a row
+                        # that would reap but is held by the mass-guard abort
+                        # below must not grow consecutive_missing unbounded on
+                        # every subsequent enum. >= threshold is all the reap
+                        # query needs; counting higher is meaningless.
                         conn.execute(
                             f"UPDATE plex_items SET "
                             f"consecutive_missing = consecutive_missing + 1 "
                             f"WHERE section_id = ? AND media_type = ? "
+                            f"  AND consecutive_missing < ? "
                             f"  AND rating_key IN ({_sph})",
-                            [section_id, items_media_type] + _sc,
+                            [section_id, items_media_type,
+                             _REAP_MISS_THRESHOLD] + _sc,
                         )
                     # Post-increment, only rows at >= threshold reap. Reappeared
                     # rows were zeroed above, so a >= threshold row is necessarily
@@ -2431,13 +2450,17 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                              _REAP_MISS_THRESHOLD),
                         ).fetchall()
                     )
-                    if not _reap:
+                    # v0.51.129: log the deferred rows whenever there ARE any —
+                    # NOT only when the whole batch defers. A mixed enum (some
+                    # rows reap while others are still below threshold) would
+                    # otherwise leave the held rows with no breadcrumb.
+                    _deferred = len(stale_rks) - len(_reap)
+                    if _deferred:
                         log.info(
                             "v0.51.128 reaper: %d stale plex_items in section "
-                            "%s (media_type=%s) now at 1 consecutive miss — "
-                            "deferring reap until %d consecutive misses "
-                            "(transient-glitch guard).",
-                            len(stale_rks), section_id, items_media_type,
+                            "%s (media_type=%s) below %d consecutive misses — "
+                            "deferring reap (transient-glitch guard).",
+                            _deferred, section_id, items_media_type,
                             _REAP_MISS_THRESHOLD,
                         )
                     # Narrow the reap to the threshold-crossed set — the existing

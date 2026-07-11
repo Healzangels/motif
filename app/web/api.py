@@ -11238,7 +11238,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     conn.execute(
                         "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                         "VALUES ('plex_enum', ?, 'pending', ?, ?)",
-                        (json.dumps({"section_id": sid, "scope": "scan_all"}),
+                        # v0.51.129: manual discovery+scan forces a full enum so
+                        # the v0.51.128 reaper can reap removed items on demand.
+                        (json.dumps({"section_id": sid, "scope": "scan_all",
+                                     "force": True}),
                          now_iso(), now_iso()),
                     )
                     enqueued += 1
@@ -15005,7 +15008,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cur = conn.execute(
                 "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                 "VALUES ('plex_enum', ?, 'pending', ?, ?)",
-                (json.dumps({"section_id": section_id}), now_iso(), now_iso()),
+                # v0.51.129: user-initiated refresh forces a full enum (bypass
+                # the contentChangedAt-skip) so the v0.51.128 reaper can reap a
+                # removed item + clear phantom-P on demand.
+                (json.dumps({"section_id": section_id, "force": True}),
+                 now_iso(), now_iso()),
             )
         log_event(db, level="INFO", component="api",
                   message=f"Per-section refresh ({section_id}) by {request.state.user}")
@@ -15169,6 +15176,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     job_payload: dict = {
                         "section_id": sid,
                         "scope": _scope,
+                        # v0.51.129: REFRESH FROM PLEX forces a full enum so the
+                        # v0.51.128 reaper miss-counter advances on demand.
+                        "force": True,
                     }
                     if tab == "collections":
                         job_payload["collections_only"] = True
@@ -15204,7 +15214,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cur = conn.execute(
                 "INSERT INTO jobs (job_type, payload, status, created_at, next_run_at) "
                 "VALUES ('plex_enum', ?, 'pending', ?, ?)",
-                (json.dumps({"scope": "scan_all"}), now_iso(), now_iso()),
+                # v0.51.129: manual "scan everything" forces a full enum on every
+                # section so the v0.51.128 reaper can reap removed items on demand.
+                (json.dumps({"scope": "scan_all", "force": True}),
+                 now_iso(), now_iso()),
             )
             return {"ok": True, "job_id": cur.lastrowid}
 

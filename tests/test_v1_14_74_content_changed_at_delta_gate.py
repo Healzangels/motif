@@ -214,6 +214,23 @@ def test_gate_skips_enum_when_live_equals_stored(tmp_path, monkeypatch):
     assert stats["items_seen"] == 0
 
 
+def test_force_bypasses_skip_even_when_cca_matches(tmp_path, monkeypatch):
+    """v0.51.129: a user-initiated REFRESH (force=True) must run the FULL enum
+    even when contentChangedAt is unchanged (would normally skip), so the
+    v0.51.128 reaper miss-counter can advance on demand and reap a removed item
+    + clear its phantom-P. Cron/post-sync enums leave force=False (the two skip
+    tests above) and keep the optimization."""
+    db_file = _seed_db(tmp_path, stored_cca="1700000000")
+    fake = _FakeClient(live_cca="1700000000")  # matches stored → would skip
+    monkeypatch.setattr(plex_enum, "PlexClient", lambda cfg: fake)
+    cfg = PlexConfig(url="http://x", token="t",
+                     movie_section="1", tv_section="2")
+    stats = plex_enum.run_plex_enum(db_file, cfg, force=True)
+    assert fake.enumerate_called is True
+    assert stats["skipped_unchanged"] == 0
+    assert stats["items_seen"] == 1
+
+
 def test_gate_runs_enum_when_live_differs_from_stored(tmp_path, monkeypatch):
     """When stored CCA is older than live CCA (Plex bumped it
     after the last enum), the full enum must run."""

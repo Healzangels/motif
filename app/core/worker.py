@@ -1064,6 +1064,12 @@ class Worker:
         # exclusive with collections_only at every call site.
         if payload.get("skip_collections"):
             skip_collections = True
+        # v0.51.129: a user-initiated REFRESH stamps force=true so the enum
+        # bypasses the contentChangedAt-skip and actually walks the section —
+        # letting the v0.51.128 reaper miss-counter advance on demand (two
+        # REFRESH clicks reap a genuinely-removed item + clear its phantom-P).
+        # Cron + post-sync cascade jobs omit it → force stays False → skip kept.
+        force_enum = bool(payload.get("force"))
         cfg = PlexConfig(
             url=self.settings.plex_url,
             token=self.settings.plex_token,
@@ -1074,6 +1080,7 @@ class Worker:
             self.settings.db_path, cfg, only_section_id=only_section,
             collections_only=collections_only,
             skip_collections=skip_collections,
+            force=force_enum,
             cancel_check=lambda jid=job["id"]: _is_cancelled(self.settings.db_path, jid),
         )
 

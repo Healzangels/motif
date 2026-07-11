@@ -116,7 +116,9 @@ def test_stamp_gated_on_skip_collections():
 
 def test_worker_reads_and_forwards_skip_collections():
     i = WORKER_PY.index("def _do_plex_enum(self, job:")
-    body = WORKER_PY[i:i + 2200]
+    # v0.51.129: widened from 2200 — the force-enum plumbing lengthened the fn
+    # body, pushing the run_plex_enum call (with skip_collections=) past 2200.
+    body = WORKER_PY[i:i + 2600]
     assert 'payload.get("skip_collections")' in body
     assert "skip_collections=skip_collections," in body
 

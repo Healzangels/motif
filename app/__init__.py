@@ -3903,7 +3903,19 @@
 #   fetches (v1.23.64), so this counter is the last line between a real removal
 #   and a blip. Guarded by test_v0_51_128; the 8 pre-existing reaper tier tests
 #   pre-age rows one below the threshold via _prime_reaper_grace.
-__version__ = "0.51.128"
+# 0.51.129: code-review follow-ups to v0.51.128. (1) The reaper miss-counter only
+#   advances on enums that WALK a section, but the contentChangedAt-skip short-
+#   circuits before the reaper — so after a removal a genuine reap was deferred
+#   ~24h (to the overdue bypass) and manual REFRESH couldn't force it, re-opening
+#   phantom-P (SRC=P for removed content) for that window. Now a user REFRESH
+#   stamps force=true → run_plex_enum bypasses the skip (two refreshes reap a
+#   removed item + clear phantom-P on demand); cron/post-sync stay unforced.
+#   (2) Made the test_v0_51_128 "no false alert" assertions load-bearing (the
+#   STALE row is now themed so a reap CAN dispatch 💔). (3) Defer-log fires on
+#   mixed enums + drops the hardcoded "1". (4) Cap consecutive_missing at the
+#   threshold so a mass-guard-aborted bulk removal can't grow it unbounded.
+#   Guarded by test_v0_51_129 + test_v1_14_74::test_force_bypasses_skip.
+__version__ = "0.51.129"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

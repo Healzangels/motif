@@ -72,7 +72,9 @@ def test_scan_all_scope_is_covered_by_pipeline_count():
     api_py = (REPO / "app" / "web" / "api.py").read_text()
     assert "json_extract(payload, '$.scope') IN ('cascade','scan_all')" in api_py
     # and the legacy insert now carries the tag (not the old empty payload).
-    assert '{"scope": "scan_all"}' in api_py or "'scope': 'scan_all'" in api_py
+    # v0.51.129: the payload also carries "force": True (manual refresh forces a
+    # full enum), so match the scope key as a substring, not the whole dict.
+    assert '"scope": "scan_all"' in api_py or "'scope': 'scan_all'" in api_py
 
 
 def test_v0_51_65_version_pin():

@@ -16,7 +16,6 @@ These are BEHAVIORAL tests against the real _upsert_items reaper path.
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 
 import pytest
 
@@ -26,13 +25,15 @@ from app.core.plex_enum import _REAP_MISS_THRESHOLD
 
 SEC = "1"
 NOW = "2026-07-10T00:00:00+00:00"
+STALE_TMDB = 55555  # the themed STALE row's tmdb — lets a real reap dispatch 💔
 
 
-def _item(rk, *, has_theme=False, title="Keeper", folder="/data/movies/Keeper"):
+def _item(rk, *, has_theme=False, guid_tmdb=None, title="Keeper",
+          folder="/data/movies/Keeper"):
     from app.core.plex import PlexLibraryItem
     return PlexLibraryItem(
         rating_key=rk, section_id=SEC, media_type="movie",
-        title=title, year="2020", guid_imdb=None, guid_tmdb=None,
+        title=title, year="2020", guid_imdb=None, guid_tmdb=guid_tmdb,
         guid_tvdb=None, folder_path=folder, has_theme=has_theme,
         plex_theme_uri="",
     )
@@ -52,14 +53,21 @@ def seeded(tmp_path, monkeypatch):
             "INSERT INTO plex_sections (section_id, title, type, is_anime,"
             " is_4k, themes_subdir, included, discovered_at, last_seen_at)"
             " VALUES ('1','Movies','movie',0,0,'movies',1,?,?)", (NOW, NOW))
-        for rk, title, folder in (
-                ("KEEP", "Keeper", "/data/movies/Keeper"),
-                ("STALE", "Gone", "/data/movies/Gone")):
+        # STALE is a THEMED, no-local-fallback row (has_theme=1, guid_tmdb set,
+        # local_theme_file=0) so that when the reaper DOES reap it, the v1.18.90
+        # candidate query captures it and a plex_theme_lost alert dispatches.
+        # That makes the "no false alert on a transient miss" assertions
+        # load-bearing (v0.51.129 fix — pre-fix STALE was has_theme=0 with no
+        # tmdb, so the alert could never fire and those asserts were vacuous).
+        for rk, title, folder, ht, tmdb in (
+                ("KEEP", "Keeper", "/data/movies/Keeper", 0, None),
+                ("STALE", "Gone", "/data/movies/Gone", 1, STALE_TMDB)):
             conn.execute(
                 "INSERT INTO plex_items (rating_key, section_id, media_type,"
-                " title, year, has_theme, local_theme_file, folder_path,"
-                " first_seen_at, last_seen_at) VALUES (?,'1','movie',?,'2020',"
-                "0,0,?,?,?)", (rk, title, folder, NOW, NOW))
+                " title, year, has_theme, local_theme_file, guid_tmdb,"
+                " folder_path, first_seen_at, last_seen_at) VALUES "
+                "(?,'1','movie',?,'2020',?,0,?,?,?,?)",
+                (rk, title, ht, tmdb, folder, NOW, NOW))
         conn.commit()
     calls = []
     import app.core.notify as _notify
@@ -98,13 +106,17 @@ def test_single_miss_defers_reap_and_counts(seeded):
 
 
 def test_reaches_threshold_then_reaps(seeded):
-    db, _calls = seeded
+    db, calls = seeded
     for _ in range(_REAP_MISS_THRESHOLD):
         _enum_without_stale(db)
     rows = _rows(db)
     assert "STALE" not in rows, (
         f"after {_REAP_MISS_THRESHOLD} consecutive misses the row must be reaped")
     assert rows.get("KEEP") == 0, "the keeper is untouched"
+    # The themed row's reap DOES fire 💔 — proving the alert pipe is live, so
+    # the "not in calls" suppression assertions elsewhere are meaningful.
+    assert "plex_theme_lost" in calls, (
+        "a genuine reap of a themed no-fallback row must fire the theme-lost alert")
 
 
 def test_reappearance_resets_the_counter(seeded):
@@ -114,8 +126,8 @@ def test_reappearance_resets_the_counter(seeded):
     assert _rows(db)["STALE"] == 1
     # ...then Plex returns STALE again → counter resets to 0.
     plex_enum._upsert_items(
-        db, [_item("KEEP"), _item("STALE", title="Gone",
-                                  folder="/data/movies/Gone")],
+        db, [_item("KEEP"), _item("STALE", has_theme=True, guid_tmdb=STALE_TMDB,
+                                  title="Gone", folder="/data/movies/Gone")],
         section_id=SEC)
     rows = _rows(db)
     assert rows["STALE"] == 0, "a reappearing row must reset its miss-counter"
@@ -133,13 +145,15 @@ def test_flapping_row_never_reaps(seeded):
     for _ in range(4):
         _enum_without_stale(db)
         plex_enum._upsert_items(
-            db, [_item("KEEP"), _item("STALE", title="Gone",
+            db, [_item("KEEP"), _item("STALE", has_theme=True,
+                                      guid_tmdb=STALE_TMDB, title="Gone",
                                       folder="/data/movies/Gone")],
             section_id=SEC)
     rows = _rows(db)
     assert "STALE" in rows, "a row that keeps reappearing must never be reaped"
     assert rows["STALE"] == 0
-    assert "plex_theme_lost" not in calls
+    assert "plex_theme_lost" not in calls, (
+        "a themed row that never misses twice in a row must never fire 💔")
 
 
 def test_churning_glitch_does_not_slip_past_mass_guard(tmp_path, monkeypatch):
@@ -192,8 +206,5 @@ def test_schema_has_consecutive_missing_column(seeded):
             "PRAGMA table_info(plex_items)").fetchall()}
     assert "consecutive_missing" in cols
 
-
-def test_version_pin():
-    init_py = (Path(__file__).resolve().parent.parent
-               / "app" / "__init__.py").read_text()
-    assert '__version__ = "0.' in init_py
+# v0.51.129: dropped the vacuous test_version_pin (`'__version__ = "0.'` matched
+# any 0.x) — the exact-version pin lives in test_v1_13_79_link_fixes.py.
