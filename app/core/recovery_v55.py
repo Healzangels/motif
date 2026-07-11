@@ -1037,8 +1037,13 @@ def maybe_backfill_edition_canonicals(db_path: Path) -> dict:
             "WHERE key = 'edition_canonical_coverage_done_at'").fetchone()
         if marker is not None:
             stats["skipped_reason"] = "marker_set"
-            log.info("v1.24.34 edition-coverage: marker already set — skipping. "
-                     "Remove `edition_canonical_coverage_done_at` to re-trigger.")
+            # v0.51.132: DEBUG, not INFO — this is the last recovery walker still
+            # wired at boot (v1.21.0 retired the other 15), and "already done,
+            # skipping" fired on the INFO boot log every restart. The INFO-worthy
+            # event is when it actually runs + stamps the marker (below), which
+            # stays. The breadcrumb survives at DEBUG for "why won't it re-trigger".
+            log.debug("v1.24.34 edition-coverage: marker already set — skipping. "
+                      "Remove `edition_canonical_coverage_done_at` to re-trigger.")
             return stats
         gaps = conn.execute(
             """

@@ -3864,8 +3864,13 @@ def _resolve_theme_ids_impl(
         # other workers' claim attempts. 250ms keeps the resolve
         # progressing without monopolizing the lock.
         _time.sleep(0.25)
-    log.info("resolve_theme_ids: scanned %d plex_items rows (chunk_size=%d)",
-             total, chunk_size)
+    # v0.51.132: report rows-processed AND link-writes separately. `total` is the
+    # SUM of rowcounts across the ~7 idempotent match-UPDATE passes per chunk (each
+    # re-stamps theme_id so it stays fresh), so it routinely EXCEEDS row_count — it
+    # was mislabelled "scanned N rows", which read like a runaway table scan.
+    log.info("resolve_theme_ids: done — %d rows processed, %d theme_id link-writes "
+             "across the match passes (chunk_size=%d)",
+             row_count, total, chunk_size)
 
     # v1.16.0: auto-incremental TVDB-bridge. After the standard 3
     # paths have settled, if a TMDB key is configured AND the

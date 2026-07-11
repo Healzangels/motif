@@ -3931,7 +3931,16 @@
 #   the hint) so it groups tight under its label like every other field.
 #   Guarded by test_v0_51_131; ~8 dashboard test files remapped their title
 #   anchors.
-__version__ = "0.51.131"
+# 0.51.132: log cleanups from the user's boot log. (1) recovery_v55's v1.24.34
+#   edition-coverage walker (the last recovery walker still boot-wired after
+#   v1.21.0 retired the other 15) logged "marker already set — skipping" on the
+#   INFO boot log every restart — downgraded to DEBUG. (2) resolve_theme_ids
+#   logged "scanned N plex_items rows" where N is the cumulative rowcount across
+#   its ~7 idempotent match-UPDATE passes (routinely >> row count, read like a
+#   runaway scan) — reworded to report rows-processed + link-writes separately.
+#   Guarded by test_v0_51_132. (No functional change; NOT the per-section
+#   double-resolve — that's a hot-path perf item left for a deliberate pass.)
+__version__ = "0.51.132"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
