@@ -1027,9 +1027,11 @@ def format_plex_theme_lost_body(ctx: ItemContext) -> str:
     Plex-served theme is gone (typical cause: user removed +
     re-added the item in Plex, breaking Plex's theme cache;
     or themerr-plex plugin removal). Motif has no fallback —
-    the row is now silent. Body explains the cause + names
-    both action paths the user can take from the row's INFO
-    card.
+    the row is now silent. v0.51.127: the item is no longer in
+    Plex's listing (the reaper deleted the row), so the body
+    frames the cause (the item left Plex) + the conditional
+    restore path if Plex re-added it, rather than the pre-tag
+    "open the row's INFO card" (there's no row to open).
 
     body_format='markdown' on the dispatch so Discord / Slack
     / Telegram render bullets + bold inline.
@@ -1044,14 +1046,22 @@ def format_plex_theme_lost_body(ctx: ItemContext) -> str:
     """
     # v1.19.92: dropped the "Plex was serving a theme for **{title}**"
     # lead — the title ("💔 Theme lost — {title}") already carries it.
+    # v0.51.127: this event fires from the v1.18.90 reaper — the item is no
+    # longer in Plex's section listing (removed, or removed + re-added under a
+    # new rating_key), so motif deleted the row. The pre-tag "open the row's
+    # INFO card to restore" copy was misleading: there's no row to open. Reframe
+    # around the actual state (the item left Plex) + the conditional path if it
+    # comes back (the user, after searching for a reaped row and finding nothing).
     lines = [
-        "Plex's theme for this row is no longer available, and "
-        "motif has no backup configured for it.",
+        "Plex no longer lists this item — it was removed from your "
+        "library, or Plex re-added it under a new ID — so the theme "
+        "it was serving is gone, and motif has no backup configured "
+        "for it.",
         "",
-        "**To restore:** open the row's // MOTIF INFO card "
-        "and pick one:",
-        "- // SET URL — paste a YouTube or SoundCloud URL",
-        "- // UPLOAD MP3 — upload an MP3 file directly",
+        "If Plex re-added it, motif re-detects the item on the next "
+        "// REFRESH PLEX; add a theme from its // MOTIF INFO card then "
+        "via // SET URL or // UPLOAD MP3. If it was removed for good, "
+        "no action is needed.",
         "",
         "(Detected during plex_enum. Motif rate-limits this "
         "notification to once per 24h per row.)",

@@ -3885,7 +3885,14 @@
 #   fallback (both keyed on guid_tmdb only) missed (the user searched 31991 in
 #   every section, no results). Both now ALSO match via pi.theme_id →
 #   themes.tmdb_id. Guarded by test_v0_51_126.
-__version__ = "0.51.126"
+# 0.51.127: reframe the no-backup 💔 Theme lost alert copy. The plex_theme_lost
+#   (no_fallback) event fires from the v1.18.90 reaper — the item is gone from
+#   Plex's listing (removed, or re-added under a new rating_key) so motif deleted
+#   the row — yet the body told the user to "open the row's INFO card to restore"
+#   (no row to open; the user searched a reaped row, found nothing). Reworded to
+#   frame the item as removed from Plex + the conditional path if Plex re-added
+#   it (re-detects on the next // REFRESH PLEX). Guarded by test_v0_51_127.
+__version__ = "0.51.127"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
