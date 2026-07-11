@@ -121,4 +121,5 @@ def test_explicit_fallback_title_still_wins_when_plex_missing(tmp_path):
 def test_enrich_item_queries_plex_items_for_title():
     """Guard the fallback query exists + is gated on a still-missing title."""
     assert "if not ctx.get(\"title\"):" in NOTIFY_CONTENT
-    assert "SELECT title, year FROM plex_items" in NOTIFY_CONTENT
+    # v0.51.126: query gained a `pi` alias + a theme_id-linkage branch.
+    assert "SELECT pi.title, pi.year FROM plex_items" in NOTIFY_CONTENT

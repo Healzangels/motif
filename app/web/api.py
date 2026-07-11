@@ -2300,11 +2300,20 @@ def _library_main_query(
         # via column affinity. The clause is identical in where_extra +
         # where_pi_only so the leading q-params stay aligned in every count path.
         if q.isdigit():
+            # v0.51.126: also match the theme-linkage tmdb. A 💔 Theme lost alert
+            # names a row by COALESCE(themes.tmdb_id, plex_items.guid_tmdb)
+            # (plex_enum.py:2427), so a theme-linked row with a NULL guid_tmdb
+            # (anime / non-TMDB agents) shows the THEMES tmdb_id — which the
+            # guid_tmdb match alone misses. The pi.theme_id subquery references
+            # only pi.* columns so it stays valid in the themes-less count FROM
+            # (where_pi_only) too.
             clause = (" AND (pi.title LIKE ? OR pi.guid_imdb = ? "
-                      "OR pi.guid_tmdb = ?)")
+                      "OR pi.guid_tmdb = ? "
+                      "OR pi.theme_id IN "
+                      "  (SELECT id FROM themes WHERE tmdb_id = ?))")
             where_extra += clause
             where_pi_only += clause
-            params.extend([f"%{q}%", q, q])
+            params.extend([f"%{q}%", q, q, q])
         else:
             clause = " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
             where_extra += clause

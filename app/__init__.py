@@ -3878,7 +3878,14 @@
 #   with a stray tmdb; guid_tmdb is INTEGER, the str bind coerces via affinity).
 #   The clause is identical in where_extra + where_pi_only so the leading
 #   q-params stay aligned across every count path. Guarded by test_v0_51_125.
-__version__ = "0.51.125"
+# 0.51.126: locate/title theme-linked rows by the theme's tmdb id. A 💔 Theme
+#   lost alert names a row by COALESCE(themes.tmdb_id, guid_tmdb) (plex_enum.py:
+#   2427), so a theme-linked row with a NULL guid_tmdb (anime / HAMA agents)
+#   shows the THEMES tmdb_id — which v0.51.125's search + v0.51.124's title
+#   fallback (both keyed on guid_tmdb only) missed (the user searched 31991 in
+#   every section, no results). Both now ALSO match via pi.theme_id →
+#   themes.tmdb_id. Guarded by test_v0_51_126.
+__version__ = "0.51.126"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

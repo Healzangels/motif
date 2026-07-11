@@ -312,12 +312,20 @@ def enrich_item(
             #    this lookup misses. guid_tmdb is INTEGER; the str() coercion
             #    matches via column affinity (same as the edition lookup above).
             if not ctx.get("title"):
+                # v0.51.126: match guid_tmdb OR the theme-linkage tmdb. The
+                # notification tmdb is COALESCE(themes.tmdb_id, guid_tmdb)
+                # (plex_enum.py:2427), so a theme-linked row with a NULL
+                # guid_tmdb (anime / non-TMDB agents) is only reachable via pi.theme_id →
+                # themes.tmdb_id — a bare guid_tmdb match missed it.
                 _plex_mt = "show" if media_type == "tv" else media_type
                 pr = conn.execute(
-                    "SELECT title, year FROM plex_items "
-                    "WHERE guid_tmdb = ? AND media_type = ? "
-                    "  AND (? = '' OR section_id = ?) LIMIT 1",
-                    (str(tmdb_id), _plex_mt,
+                    "SELECT pi.title, pi.year FROM plex_items pi "
+                    "WHERE (pi.guid_tmdb = ? OR pi.theme_id IN "
+                    "        (SELECT id FROM themes "
+                    "          WHERE tmdb_id = ? AND media_type = ?)) "
+                    "  AND pi.media_type = ? "
+                    "  AND (? = '' OR pi.section_id = ?) LIMIT 1",
+                    (str(tmdb_id), tmdb_id, media_type, _plex_mt,
                      section_id or "", section_id or ""),
                 ).fetchone()
                 if pr and pr["title"]:
