@@ -23,7 +23,7 @@ prompted the rule.
 | Layer | Detail |
 |---|---|
 | API + UI | FastAPI on `:5309`; Jinja2 templates in `app/web/templates/` |
-| DB | SQLite at `/config/motif.db`; current schema **v69** (`CURRENT_SCHEMA_VERSION` in `app/core/db.py`), forward-only migrations in `app/core/db.py` |
+| DB | SQLite at `/config/motif.db`; current schema **v70** (`CURRENT_SCHEMA_VERSION` in `app/core/db.py`), forward-only migrations in `app/core/db.py` |
 | Worker | APScheduler cron (sync) + custom job loop (downloads/place/refresh) |
 | Sync transport | tiered: git (dulwich differential) → snapshot (database branch tarball) → remote (per-item HTTP) |
 | Download | yt-dlp with `cookies.txt` from `/config` |

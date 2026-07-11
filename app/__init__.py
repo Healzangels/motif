@@ -3892,7 +3892,18 @@
 #   (no row to open; the user searched a reaped row, found nothing). Reworded to
 #   frame the item as removed from Plex + the conditional path if Plex re-added
 #   it (re-detects on the next // REFRESH PLEX). Guarded by test_v0_51_127.
-__version__ = "0.51.127"
+# 0.51.128: reaper consecutive-miss guard (grace before deleting + alerting). The
+#   v1.18.90 reaper DELETEd a plex_items row + fired 💔 Theme lost the instant
+#   Plex's section listing stopped returning it — so a transient Plex glitch (a
+#   partial catalog, an API hiccup, a re-add under a new rating_key mid-enum)
+#   could false-delete a live row + fire a false alert. Schema v70 adds
+#   plex_items.consecutive_missing; the reaper now increments it per miss, resets
+#   it the moment a row reappears, and reaps only at >= _REAP_MISS_THRESHOLD (2)
+#   consecutive full enums. enumerate_section_items already raises on partial
+#   fetches (v1.23.64), so this counter is the last line between a real removal
+#   and a blip. Guarded by test_v0_51_128; the 8 pre-existing reaper tier tests
+#   pre-age rows one below the threshold via _prime_reaper_grace.
+__version__ = "0.51.128"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

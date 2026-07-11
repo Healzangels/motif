@@ -41,6 +41,21 @@ def _item(rk, *, has_theme, folder):
     )
 
 
+def _prime_reaper_grace(db):
+    """v0.51.128: pre-age every plex_items row to one miss below the reaper's
+    _REAP_MISS_THRESHOLD so this single stale enum's increment crosses it. These
+    tests exercise the reaper's TIER logic (still_p suppression), not the new
+    miss-counter, so they need the pre-v0.51.128 single-pass reap. A fresh DB
+    still starts every row at 0 misses, so the transient-glitch guard stays
+    covered by its own v0.51.128 behavioral test."""
+    import sqlite3
+    from app.core.plex_enum import _REAP_MISS_THRESHOLD
+    with sqlite3.connect(db) as c:
+        c.execute("UPDATE plex_items SET consecutive_missing = ?",
+                  (_REAP_MISS_THRESHOLD - 1,))
+        c.commit()
+
+
 @pytest.fixture
 def seeded(tmp_path, monkeypatch):
     monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
@@ -84,6 +99,7 @@ def test_surviving_unlinked_themed_sibling_suppresses_lost(seeded):
     db, calls = seeded
     from app.core import plex_enum
     # Plex returns ONLY the surviving sibling, still themed. S1 is stale.
+    _prime_reaper_grace(db)
     plex_enum._upsert_items(
         db, [_item("S2", has_theme=True, folder=DCUT)], section_id=SEC)
     with sqlite3.connect(db) as conn:
@@ -99,6 +115,7 @@ def test_no_surviving_themed_sibling_still_fires(seeded):
     db, calls = seeded
     from app.core import plex_enum
     # The sibling survives but is now UNthemed → no survivor serves a theme.
+    _prime_reaper_grace(db)
     plex_enum._upsert_items(
         db, [_item("S2", has_theme=False, folder=DCUT)], section_id=SEC)
     assert "plex_theme_lost" in calls, (

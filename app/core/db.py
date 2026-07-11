@@ -617,6 +617,13 @@ CREATE TABLE IF NOT EXISTS plex_items (
     -- local_theme_file (which produces transient false positives
     -- post-place).
     plex_independent_theme  INTEGER,
+    -- v0.51.128 (v70): consecutive full enums this row has been MISSING
+    -- from Plex's section listing. The v1.18.90 reaper increments it per
+    -- miss + reaps only at >= _REAP_MISS_THRESHOLD, so a transient Plex
+    -- glitch (partial catalog / API hiccup) that drops a row for one enum
+    -- can't false-DELETE it + fire a false 💔 Theme lost. Reset to 0 the
+    -- moment the row reappears.
+    consecutive_missing     INTEGER NOT NULL DEFAULT 0,
     first_seen_at    TEXT NOT NULL,
     last_seen_at     TEXT NOT NULL
 );
@@ -919,7 +926,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 69
+CURRENT_SCHEMA_VERSION = 70
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2543,6 +2550,17 @@ def _migrate_v68_to_v69(conn: sqlite3.Connection) -> None:
     the next enum repopulates each row's editionTitle."""
     log.info("Migrating to schema v69 (plex_items.plex_edition_title — v0.50.17)")
     _add_column(conn, "plex_items", "plex_edition_title", "TEXT NOT NULL DEFAULT ''")
+
+
+def _migrate_v69_to_v70(conn: sqlite3.Connection) -> None:
+    """v70 (v0.51.128): add plex_items.consecutive_missing — the count of
+    consecutive full enums this row has been absent from Plex's section listing.
+    The v1.18.90 reaper increments it per miss and reaps only at
+    >= _REAP_MISS_THRESHOLD (plex_enum.py), so a transient Plex glitch that
+    drops a row for a single enum no longer false-DELETEs it + fires a false
+    💔 Theme lost. Idempotent via _add_column; existing rows backfill to 0."""
+    log.info("Migrating to schema v70 (plex_items.consecutive_missing — v0.51.128)")
+    _add_column(conn, "plex_items", "consecutive_missing", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4415,6 +4433,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 68:
                     _migrate_v68_to_v69(conn)
                     current = 69
+                elif current == 69:
+                    _migrate_v69_to_v70(conn)
+                    current = 70
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

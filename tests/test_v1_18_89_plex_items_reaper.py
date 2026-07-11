@@ -53,6 +53,20 @@ sys.path.insert(0, str(REPO))
 PLEX_ENUM_PY = REPO / "app" / "core" / "plex_enum.py"
 
 
+def _prime_reaper_grace(db):
+    """v0.51.128: pre-age every plex_items row to one miss below the reaper's
+    _REAP_MISS_THRESHOLD so this single stale enum's increment crosses it. These
+    tests exercise the reaper's delete + amplifier-sweep guard, not the new
+    miss-counter, so they need the pre-v0.51.128 single-pass reap. A fresh DB
+    still starts every row at 0 misses, so the transient-glitch guard stays
+    covered by its own v0.51.128 behavioral test."""
+    from app.core.plex_enum import _REAP_MISS_THRESHOLD
+    with sqlite3.connect(db) as c:
+        c.execute("UPDATE plex_items SET consecutive_missing = ?",
+                  (_REAP_MISS_THRESHOLD - 1,))
+        c.commit()
+
+
 # ── Source-level pins ────────────────────────────────────────
 
 
@@ -229,6 +243,7 @@ def test_reaper_deletes_stale_rk(db_with_stale_plex_items):
         _fake_item("709300", "Troy", "tt0332452"),
         _fake_item("500000", "Other Movie", "tt9999999"),
     ]
+    _prime_reaper_grace(db_with_stale_plex_items)
     plex_enum._upsert_items(
         db_with_stale_plex_items, items, section_id="1",
     )
@@ -305,6 +320,10 @@ def test_reaper_skips_when_ratio_exceeds_threshold(tmp_path):
         _fake_item(f"rk_{i:04d}", f"Movie {i}", f"tt{i:08d}")
         for i in range(10)
     ]
+    # v0.51.128: pre-age so the 90 stale rows cross the miss threshold this
+    # enum — otherwise the reap defers and the abort path isn't exercised. With
+    # them threshold-crossed, the instantaneous-stale mass-guard must ABORT.
+    _prime_reaper_grace(db_path)
     plex_enum._upsert_items(db_path, items, section_id="1")
     with sqlite3.connect(db_path) as conn:
         n = conn.execute(
@@ -358,6 +377,7 @@ def test_reaper_allows_small_section_with_high_ratio(tmp_path):
         _fake_item(f"rk_{i:04d}", f"Movie {i}", f"tt{i:08d}")
         for i in range(2)
     ]
+    _prime_reaper_grace(db_path)
     plex_enum._upsert_items(db_path, items, section_id="1")
     with sqlite3.connect(db_path) as conn:
         n = conn.execute(

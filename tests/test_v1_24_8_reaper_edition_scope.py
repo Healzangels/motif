@@ -41,6 +41,21 @@ def _item(rk, *, has_theme, folder):
     )
 
 
+def _prime_reaper_grace(db):
+    """v0.51.128: pre-age every plex_items row to one miss below the reaper's
+    _REAP_MISS_THRESHOLD so this single stale enum's increment crosses it. These
+    tests exercise the reaper's edition-scoped fallback classifier, not the new
+    miss-counter, so they need the pre-v0.51.128 single-pass reap. A fresh DB
+    still starts every row at 0 misses, so the transient-glitch guard stays
+    covered by its own v0.51.128 behavioral test."""
+    import sqlite3
+    from app.core.plex_enum import _REAP_MISS_THRESHOLD
+    with sqlite3.connect(db) as c:
+        c.execute("UPDATE plex_items SET consecutive_missing = ?",
+                  (_REAP_MISS_THRESHOLD - 1,))
+        c.commit()
+
+
 def _seed(tmp_path, monkeypatch, *, backup_edition):
     """Theatrical (S1, themed) is the reap candidate; a sibling S2 survives
     UNthemed so the title is fully lost (still_p None → classifier runs). A
@@ -90,6 +105,7 @@ def test_sibling_only_backup_does_not_make_lost_edition_backup_ready(
     db, calls = _seed(tmp_path, monkeypatch, backup_edition="directors cut")
     from app.core import plex_enum
     # Plex returns only S2, now UNthemed → S1 reaped, title fully lost.
+    _prime_reaper_grace(db)
     plex_enum._upsert_items(
         db, [_item("S2", has_theme=False, folder=DCUT)], section_id=SEC)
     assert "plex_theme_lost" in calls, (
@@ -104,6 +120,7 @@ def test_own_edition_backup_still_classifies_backup_ready(tmp_path, monkeypatch)
     # control: the backup is at the Theatrical edition itself → backup_ready.
     db, calls = _seed(tmp_path, monkeypatch, backup_edition="theatrical")
     from app.core import plex_enum
+    _prime_reaper_grace(db)
     plex_enum._upsert_items(
         db, [_item("S2", has_theme=False, folder=DCUT)], section_id=SEC)
     assert "theme_lost_backup_ready" in calls, (
@@ -117,6 +134,7 @@ def test_shared_standard_backup_still_recovers(tmp_path, monkeypatch):
     # the IN(this, '') fallback, so we don't create false 'no recovery' alerts.
     db, calls = _seed(tmp_path, monkeypatch, backup_edition="")
     from app.core import plex_enum
+    _prime_reaper_grace(db)
     plex_enum._upsert_items(
         db, [_item("S2", has_theme=False, folder=DCUT)], section_id=SEC)
     assert "theme_lost_backup_ready" in calls

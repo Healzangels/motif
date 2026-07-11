@@ -275,6 +275,21 @@ def test_settings_html_toggle_explains_action_paths():
 # ── End-to-end: behavioral with seeded DB ───────────────────
 
 
+def _prime_reaper_grace(db):
+    """v0.51.128: pre-age every plex_items row to one miss below the reaper's
+    _REAP_MISS_THRESHOLD so this single stale enum's increment crosses it. This
+    test exercises the reaper's candidate capture + delete, not the new
+    miss-counter, so it needs the pre-v0.51.128 single-pass reap. A fresh DB
+    still starts every row at 0 misses, so the transient-glitch guard stays
+    covered by its own v0.51.128 behavioral test."""
+    import sqlite3 as _sq
+    from app.core.plex_enum import _REAP_MISS_THRESHOLD
+    with _sq.connect(db) as c:
+        c.execute("UPDATE plex_items SET consecutive_missing = ?",
+                  (_REAP_MISS_THRESHOLD - 1,))
+        c.commit()
+
+
 @pytest.fixture
 def db_with_lost_theme(tmp_path):
     """Reproduce the user's Troy scenario: a P-row (has_theme=1)
@@ -349,6 +364,7 @@ def test_reaper_collects_candidate_when_stale_p_row_deleted(
             plex_theme_uri="",
         )
     ]
+    _prime_reaper_grace(db_with_lost_theme)
     plex_enum._upsert_items(
         db_with_lost_theme, items, section_id="1",
     )

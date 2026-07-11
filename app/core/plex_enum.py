@@ -92,6 +92,15 @@ _PLEX_ENUM_NORMALIZE_TITLE_WARNED: bool = False
 # failing overdue check is visible at boot.
 _SECTION_ENUM_OVERDUE_WARNED: bool = False
 
+# v0.51.128: consecutive full enums a plex_items row must be MISSING from
+# Plex's section listing before the reaper DELETEs it + fires 💔 Theme lost.
+# A single miss is treated as a transient Plex glitch (partial catalog / API
+# hiccup) — the row's counter is incremented but the row survives; it only
+# reaps once the miss persists across this many enums. Reappearing resets the
+# counter. Full enums run ~daily on cron + on every manual // REFRESH PLEX,
+# so a GENUINE removal is reaped after ~one extra cycle. 2 = one grace enum.
+_REAP_MISS_THRESHOLD: int = 2
+
 
 def _section_enum_overdue(
     db_path: Path, section_id: str, *, hours: int = 24,
@@ -2365,11 +2374,86 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                     ).fetchall()
                 )
                 stale_rks = current_rks - seen_rks
-                if stale_rks:
-                    pct = (
-                        100 * len(stale_rks) // max(1, len(current_rks))
+                # v0.51.128: the INSTANTANEOUS missing set THIS enum — the
+                # amplifier-sweep mass-guard (v1.18.10) keys off this, NOT the
+                # narrowed reap set below, so a churning large-scale Plex glitch
+                # (a different partial subset missing each enum) can't sneak a
+                # sub-50 threshold-crossed core past the >50/>20% abort.
+                _instantaneous_stale = set(stale_rks)
+                # v0.51.128: don't reap on a SINGLE missing enum — a transient
+                # Plex glitch (partial catalog, API hiccup) that drops a row for
+                # one enum would false-DELETE it + fire a false 💔 Theme lost.
+                # Track consecutive misses; reset any previously-flagged row that
+                # reappeared this enum; reap only rows that have now been missing
+                # for >= _REAP_MISS_THRESHOLD consecutive enums. enumerate_section
+                # _items already raises on partial fetches (v1.23.64), so a stale
+                # set here is real-or-transient, not a mid-page truncation — this
+                # counter is the grace window that tells the two apart.
+                _flagged = set(
+                    r[0] for r in conn.execute(
+                        "SELECT rating_key FROM plex_items "
+                        "WHERE section_id = ? AND media_type = ? "
+                        "  AND consecutive_missing > 0",
+                        (section_id, items_media_type),
+                    ).fetchall()
+                )
+                _reappeared = list(_flagged - stale_rks)
+                for _ri in range(0, len(_reappeared), 500):
+                    _rc = _reappeared[_ri:_ri + 500]
+                    _rph = ",".join(["?"] * len(_rc))
+                    conn.execute(
+                        f"UPDATE plex_items SET consecutive_missing = 0 "
+                        f"WHERE section_id = ? AND media_type = ? "
+                        f"  AND rating_key IN ({_rph})",
+                        [section_id, items_media_type] + _rc,
                     )
-                    if len(stale_rks) > 50 and pct > 20:
+                if stale_rks:
+                    _stale_all = list(stale_rks)
+                    for _si in range(0, len(_stale_all), 500):
+                        _sc = _stale_all[_si:_si + 500]
+                        _sph = ",".join(["?"] * len(_sc))
+                        conn.execute(
+                            f"UPDATE plex_items SET "
+                            f"consecutive_missing = consecutive_missing + 1 "
+                            f"WHERE section_id = ? AND media_type = ? "
+                            f"  AND rating_key IN ({_sph})",
+                            [section_id, items_media_type] + _sc,
+                        )
+                    # Post-increment, only rows at >= threshold reap. Reappeared
+                    # rows were zeroed above, so a >= threshold row is necessarily
+                    # a still-missing one — no need to re-filter by stale_rks.
+                    _reap = set(
+                        r[0] for r in conn.execute(
+                            "SELECT rating_key FROM plex_items "
+                            "WHERE section_id = ? AND media_type = ? "
+                            "  AND consecutive_missing >= ?",
+                            (section_id, items_media_type,
+                             _REAP_MISS_THRESHOLD),
+                        ).fetchall()
+                    )
+                    if not _reap:
+                        log.info(
+                            "v0.51.128 reaper: %d stale plex_items in section "
+                            "%s (media_type=%s) now at 1 consecutive miss — "
+                            "deferring reap until %d consecutive misses "
+                            "(transient-glitch guard).",
+                            len(stale_rks), section_id, items_media_type,
+                            _REAP_MISS_THRESHOLD,
+                        )
+                    # Narrow the reap to the threshold-crossed set — the existing
+                    # mass-guard, candidate capture + DELETE below all key off
+                    # stale_rks, so they now act only on genuinely-lost rows.
+                    stale_rks = _reap
+                if stale_rks:
+                    # v0.51.128: evaluate the mass-guard on the instantaneous
+                    # stale count, not the narrowed reap set — a heavy-churn
+                    # glitch whose threshold-crossed core is < 50 must still
+                    # abort the whole reap when the section-wide miss is large.
+                    pct = (
+                        100 * len(_instantaneous_stale)
+                        // max(1, len(current_rks))
+                    )
+                    if len(_instantaneous_stale) > 50 and pct > 20:
                         log.warning(
                             "v1.18.89 reaper: would delete %d/%d "
                             "(%d%%) stale plex_items in section %s "
@@ -2378,7 +2462,7 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                             "reap. Likely Plex returned a smaller "
                             "catalog than expected (API glitch?). "
                             "Investigate manually before re-running.",
-                            len(stale_rks), len(current_rks),
+                            len(_instantaneous_stale), len(current_rks),
                             pct, section_id, items_media_type,
                         )
                     else:

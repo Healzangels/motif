@@ -279,6 +279,21 @@ def _fake_item(rating_key, title, guid_imdb=None, media_type="show",
     )
 
 
+def _prime_reaper_grace(db):
+    """v0.51.128: pre-age every plex_items row to one miss below the reaper's
+    _REAP_MISS_THRESHOLD so this single stale enum's increment crosses it. These
+    tests exercise the reaper's media_type scoping + candidate capture, not the
+    new miss-counter, so they need the pre-v0.51.128 single-pass reap. A fresh DB
+    still starts every row at 0 misses, so the transient-glitch guard stays
+    covered by its own v0.51.128 behavioral test."""
+    import sqlite3
+    from app.core.plex_enum import _REAP_MISS_THRESHOLD
+    with sqlite3.connect(db) as c:
+        c.execute("UPDATE plex_items SET consecutive_missing = ?",
+                  (_REAP_MISS_THRESHOLD - 1,))
+        c.commit()
+
+
 def test_collection_enum_does_not_false_positive_on_shows(
     db_with_mixed_media_types,
 ):
@@ -332,6 +347,7 @@ def test_collection_enum_correctly_reaps_stale_collection_only(
                    media_type="collection")
         for i in range(8)  # 0..7, skipping coll_0008 + coll_0009
     ]
+    _prime_reaper_grace(db_with_mixed_media_types)
     plex_enum._upsert_items(
         db_with_mixed_media_types, items, section_id="2",
     )
@@ -394,6 +410,7 @@ def test_lost_theme_candidate_captured_when_theme_id_null(tmp_path):
         _fake_item("fresh_rk", "Other Movie", media_type="movie",
                    section_id="1"),
     ]
+    _prime_reaper_grace(db_path)
     plex_enum._upsert_items(db_path, items, section_id="1")
     # The stale rk should be gone (reaped).
     with sqlite3.connect(db_path) as conn:
