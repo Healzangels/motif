@@ -3940,7 +3940,17 @@
 #   runaway scan) — reworded to report rows-processed + link-writes separately.
 #   Guarded by test_v0_51_132. (No functional change; NOT the per-section
 #   double-resolve — that's a hot-path perf item left for a deliberate pass.)
-__version__ = "0.51.132"
+# 0.51.133: media_type-scope resolve_theme_ids (the per-section double-resolve
+#   from v0.51.132's note). plex_enum ran the resolve twice per section — after
+#   the items upsert AND after the collections upsert — each re-walking the WHOLE
+#   section, so a 10.5K-movie section re-resolved all its items on the collections
+#   pass. resolve_theme_ids gains a `media_type` param that narrows the scope; the
+#   plex_enum call passes the pass's media_type ('movie'/'show' vs 'collection'),
+#   so each pass only walks the rows it upserted (~2× less resolve work on a full
+#   refresh). Purely narrows the rating_key set — per-row match logic unchanged,
+#   so every row resolves identically (test_v0_51_133 proves two scoped passes ==
+#   one unscoped). sync + recovery callers pass media_type=None (stay global).
+__version__ = "0.51.133"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

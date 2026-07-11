@@ -3068,7 +3068,14 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     # movie "The Legend of Aang" sat SRC=— with a TDB theme available
     # but never downloaded.
     newly_linked: list[str] = []
-    resolve_theme_ids(db_path, section_id=section_id,
+    # v0.51.133: scope the resolve to THIS pass's media_type. _upsert_items runs
+    # once for items ('movie'/'show') and once for collections ('collection'),
+    # each on the same section — pre-fix both re-resolved the WHOLE section, so a
+    # 10.5K-movie section re-resolved all its items on the collections pass. The
+    # rows in `items` are all one media_type; scoping to it means each pass only
+    # walks the rows it just upserted (no correctness change — see resolve scope).
+    _resolve_mt = items[0].media_type if items else None
+    resolve_theme_ids(db_path, section_id=section_id, media_type=_resolve_mt,
                       cancel_check=cancel_check,
                       collect_newly_linked=newly_linked)
     # v1.21.5: theme-available push. resolve_theme_ids above stamped
@@ -3375,6 +3382,7 @@ def resolve_theme_ids(
     *,
     chunk_size: int = 500,
     section_id: str | None = None,
+    media_type: str | None = None,
     cancel_check=lambda: False,
     progress_op_id: str | None = None,
     collect_newly_linked: list[str] | None = None,
@@ -3419,7 +3427,8 @@ def resolve_theme_ids(
     with _resolve_theme_ids_lock:
         return _resolve_theme_ids_impl(
             db_path, chunk_size=chunk_size,
-            section_id=section_id, cancel_check=cancel_check,
+            section_id=section_id, media_type=media_type,
+            cancel_check=cancel_check,
             progress_op_id=progress_op_id,
             collect_newly_linked=collect_newly_linked,
         )
@@ -3433,6 +3442,7 @@ def _resolve_theme_ids_impl(
     *,
     chunk_size: int = 500,
     section_id: str | None = None,
+    media_type: str | None = None,
     progress_op_id: str | None = None,
     cancel_check=lambda: False,
     collect_newly_linked: list[str] | None = None,
@@ -3446,6 +3456,17 @@ def _resolve_theme_ids_impl(
     if section_id is not None:
         scope_clause = "AND section_id = ?"
         scope_params = (section_id,)
+    # v0.51.133: optional media_type scope. plex_enum runs the per-section
+    # resolve TWICE — once after the items upsert, once after the collections
+    # upsert — and both re-walked the WHOLE section, so a 10.5K-movie section
+    # re-resolved all its items on the collections pass. Passing the pass's
+    # media_type ('movie'/'show' for items, 'collection' for collections)
+    # restricts each call to the rows it just touched. Purely narrows the
+    # rating_key set — the per-row match logic (tmdb/imdb/title) is unchanged,
+    # so every row resolves identically. sync + recovery callers pass None.
+    if media_type is not None:
+        scope_clause += " AND media_type = ?"
+        scope_params += (media_type,)
     # v1.24.30: backfill themes.title_norm BEFORE the title-match passes below.
     # 4 of the 5 orphan-creation paths (adopt ×2, bulk import, the collection
     # SET-URL at api.py:12554) never stamped title_norm — only the v1.24.x movie
@@ -3732,9 +3753,11 @@ def _resolve_theme_ids_impl(
     total = 0
     offset = 0
     with get_conn(db_path) as conn:
-        count_sql = "SELECT COUNT(*) FROM plex_items"
-        if section_id is not None:
-            count_sql += " WHERE section_id = ?"
+        # v0.51.133: build the count from the SAME scope_clause the chunk
+        # subqueries use, so the media_type filter (and its param) stays in
+        # lockstep — a hardcoded `WHERE section_id = ?` here would mismatch
+        # scope_params once media_type is appended.
+        count_sql = f"SELECT COUNT(*) FROM plex_items WHERE 1=1 {scope_clause}"
         row_count = conn.execute(count_sql, scope_params).fetchone()[0]
     if row_count == 0:
         return 0

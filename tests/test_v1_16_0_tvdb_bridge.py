@@ -650,7 +650,7 @@ def test_resolve_theme_ids_skips_auto_bridge_without_last_run_timestamp():
     impl_start = src.index("def _resolve_theme_ids_impl(")
     # v1.18.16: widen the slice — sql_tmdb's COALESCE rationale
     # comment pushed the gate past the prior 12000 boundary.
-    impl_block = src[impl_start:impl_start + 24000]
+    impl_block = src[impl_start:impl_start + 26000]  # v0.51.133: widened, media_type-scope block grew the fn
     assert "last_tvdb_bridge_at" in impl_block, (
         "v1.16.0: auto-incremental bridge gate is missing — "
         "without checking last_tvdb_bridge_at, plex_enum would "
@@ -673,7 +673,7 @@ def test_resolve_theme_ids_auto_bridge_uses_max_rows_cap():
     impl_start = src.index("def _resolve_theme_ids_impl(")
     # v1.18.16: widen the slice — sql_tmdb's COALESCE rationale
     # comment pushed the gate past the prior 12000 boundary.
-    impl_block = src[impl_start:impl_start + 24000]
+    impl_block = src[impl_start:impl_start + 26000]  # v0.51.133: widened, media_type-scope block grew the fn
     assert "max_rows=100" in impl_block, (
         "v1.16.0: auto-incremental call must pass max_rows=100 "
         "so plex_enum's per-pass cost stays bounded."
@@ -698,7 +698,7 @@ def test_resolve_theme_ids_auto_bridge_swallows_failures():
     # fallback) added one more SQL block ahead of the bridge.
     # v1.24.30: 22000→24000 — the title_norm backfill pre-pass landed at the
     # top of the impl, ahead of every SQL block + the bridge.
-    impl_block = src[impl_start:impl_start + 24000]
+    impl_block = src[impl_start:impl_start + 26000]  # v0.51.133: widened, media_type-scope block grew the fn
     # The auto-bridge block ends with except handling.
     # v1.18.55: log line renamed HAMA → TVDB so docker logs
     # match the UI's // TVDB BRIDGE label. The internal kind
