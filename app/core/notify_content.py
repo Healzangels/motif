@@ -300,6 +300,30 @@ def enrich_item(
                 _elabel = edition_label_for_folder(
                     er["folder_path"] if er else None)
                 ctx["edition"] = _elabel or prettify_edition_key(edition_key)
+            # 6. v0.51.124: title fallback from plex_items. A row with no
+            #    `themes` entry (a Plex-cloud P-row with no ThemerrDB match) gets
+            #    no title from step 1, so a "💾 Theme backed up" / "💔 Theme
+            #    lost" notification would render the bare "media_type/tmdb_id"
+            #    id. Plex knows the title — fill it here so every titleless-row
+            #    notification names the content (the user). Runs only when
+            #    nothing above set a title; a real `themes` title always wins.
+            #    The explicit fallback_title arg (v0.51.123) still backstops the
+            #    rare case where the row was deleted between enum + dispatch and
+            #    this lookup misses. guid_tmdb is INTEGER; the str() coercion
+            #    matches via column affinity (same as the edition lookup above).
+            if not ctx.get("title"):
+                _plex_mt = "show" if media_type == "tv" else media_type
+                pr = conn.execute(
+                    "SELECT title, year FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? "
+                    "  AND (? = '' OR section_id = ?) LIMIT 1",
+                    (str(tmdb_id), _plex_mt,
+                     section_id or "", section_id or ""),
+                ).fetchone()
+                if pr and pr["title"]:
+                    ctx["title"] = pr["title"]
+                    if pr["year"] and not ctx.get("year"):
+                        ctx["year"] = pr["year"]
     except Exception as e:  # noqa: BLE001
         # v1.17.12: class-9 breadcrumb — best-effort lookup must
         # not crash the caller, but a recurring failure should be

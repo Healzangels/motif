@@ -3861,7 +3861,16 @@
 #   a fallback_title param to enrich_item (fills the gap only; a real themes title
 #   still wins) and pass it at the live dispatch + the test-trigger endpoint.
 #   Guarded by test_v0_51_123.
-__version__ = "0.51.123"
+# 0.51.124: broaden v0.51.123 so EVERY titleless-row notification names the
+#   content — most importantly "💾 Theme backed up" for cloud-backed P-rows,
+#   which flows through enrich_item (worker.py) with no explicit fallback_title
+#   (the user: "Theme backed up lets do that too"). enrich_item now looks up
+#   plex_items.title (+year) by (guid_tmdb, plex media_type, section_id) when
+#   neither the themes lookup nor fallback_title supplied a title — Plex always
+#   knows the row's title. A real themes title still wins; the bare mt/tmdb
+#   shape only shows when Plex has no matching row either (synthetic-tmdb rows).
+#   Guarded by test_v0_51_124.
+__version__ = "0.51.124"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
