@@ -3950,7 +3950,17 @@
 #   refresh). Purely narrows the rating_key set — per-row match logic unchanged,
 #   so every row resolves identically (test_v0_51_133 proves two scoped passes ==
 #   one unscoped). sync + recovery callers pass media_type=None (stay global).
-__version__ = "0.51.133"
+# 0.51.134: CSS-audit T1 (P0) — the orphans /orphans FINDINGS table was wrapped
+#   in .jobs-scroll, a dead class (its .jobs-scroll-x ancestor was removed in
+#   v1.22.56) that gives NO scroll context. With body{overflow-x:hidden} the
+#   7-col table spilled its right edge under the clip below ~760px and the ACTION
+#   column (// RE-PUSH / // LET PLEX SERVE / × PURGE / // PROBE) was unreachable
+#   on a phone. Swapped to the shared .table-scroll wrapper (overflow-x:auto at
+#   ≤1080px, the #library-table pattern). Harness-proven at a 375px layout
+#   viewport: PROBE button reachable-after-scroll false→true. Guarded by
+#   test_v0_51_134. No min-width floor — the auto-layout table's button-driven
+#   min-content already exceeds phone width, so the swipe context alone suffices.
+__version__ = "0.51.134"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

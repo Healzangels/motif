@@ -43,7 +43,14 @@
      ALL and OK chips both show the same 10 rows, but the
      status line proves the filter applied). #}
   <div id="orphans-filter-status" class="muted small" style="padding:0.25rem 0 0.5rem 0;"></div>
-  <div class="jobs-scroll">
+  {# v0.51.134: .table-scroll (not the dead .jobs-scroll — its .jobs-scroll-x
+     ancestor was removed in v1.22.56) so the 7-col FINDINGS table is swipeable
+     on a phone. Without a scroll context the row spilled under body's
+     overflow-x:hidden and the ACTION column (// RE-PUSH / // LET PLEX SERVE /
+     × PURGE / // PROBE) was clipped unreachable below ~760px. Mirrors the
+     #library-table wrapper. No min-width floor — the auto-layout table's
+     min-content is already button-driven past phone width. #}
+  <div class="table-scroll">
     <table class="table table-tight">
       <thead>
         <tr>
