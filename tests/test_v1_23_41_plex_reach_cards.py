@@ -122,24 +122,27 @@ def test_plex_reach_foot_text_present(admin_client):
     html = client.get("/", headers=AUTH).text
     # v1.24.66: the stat-glyph is now an inline SVG (~470 chars), so widen the
     # window past it to reach the card foot.
-    plex_section = html[html.index("// PLEX MOVIES"):html.index("// PLEX MOVIES") + 1500]
-    assert "in ThemerrDB" in plex_section
-    assert "not in ThemerrDB" in plex_section
+    # v0.51.122: the reach foot swapped onto the // MOVIES THEMED card (the user
+    # kept the titles, swapped the numbers) — // PLEX MOVIES now shows the % + bar.
+    reach_section = html[html.index("// MOVIES THEMED"):html.index("// MOVIES THEMED") + 1500]
+    assert "in ThemerrDB" in reach_section
+    assert "not in ThemerrDB" in reach_section
 
 
 # ── source pins: template / SSR / JS all carry the reach shape ──
 
 
-def test_all_four_plex_cards_use_reach_foot():
-    """Every PLEX card (movies/tv/anime/collections) foot uses the reach
-    phrasing + a `*-not-tdb` id, and the old foot phrasing is gone from
-    the PLEX cards."""
-    for slug in ("movies", "tv", "anime", "collections"):
-        anchor = DASH_HTML.index(f"// PLEX {slug.upper()}")
+def test_all_four_reach_cards_use_reach_foot():
+    """v0.51.122: the reach foot (in/not-in-ThemerrDB + a `*-not-tdb` id)
+    swapped onto the // …THEMED cards (the user kept the titles, swapped the
+    numbers). Every one carries the reach phrasing + the *-not-tdb id."""
+    THEMED = {"movies": "// MOVIES THEMED", "tv": "// TV THEMED",
+              "anime": "// ANIME THEMED", "collections": "// COLLECTIONS THEMED"}
+    for slug, label in THEMED.items():
+        anchor = DASH_HTML.index(label)
         card = DASH_HTML[anchor:DASH_HTML.index("</article>", anchor)]
         assert f'id="plex-{slug}-not-tdb"' in card, slug
         assert "in ThemerrDB" in card and "not in ThemerrDB" in card, slug
-        # the bottom-card "with theme" stat moved up to the COVERAGE row.
         assert f'id="plex-{slug}-with-theme"' not in card, slug
 
 

@@ -31,7 +31,9 @@ def test_stat_foot_wraps():
     assert "display: flex;" in foot
 
 
-def test_plex_cards_still_stack():
-    # the v1.21.4 plex-card treatment (stack outright) is independent + unchanged.
-    plex = _rule('[data-dash-card^="plex-"] .stat-foot')
-    assert "flex-direction: column;" in plex
+def test_reach_cards_still_stack():
+    # the v1.21.4 reach-card treatment (stack outright) is independent of the
+    # base .stat-foot wrap. v0.51.122: keyed on .stat-foot-stack now — the reach
+    # foot swapped onto the // …THEMED cards (the user kept the titles).
+    reach = _rule(".stat-foot-stack")
+    assert "flex-direction: column;" in reach

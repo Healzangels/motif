@@ -51,40 +51,43 @@ API_PY = REPO / "app" / "web" / "api.py"
 
 
 def test_dashboard_renders_tdb_collections_card():
-    """v1.23.34: the collections coverage card (// COLLECTIONS THEMED)
-    sits in the COVERAGE grid, same .stat-tdb-primary tone as
-    movies/tv, headline = coverage % + foot = themed/total + ready."""
+    """The // COLLECTIONS THEMED card sits in the COVERAGE grid with the
+    .stat-tdb-primary tone. v0.51.122: it now renders the ThemerrDB REACH
+    (total + in/not-in-ThemerrDB) — the user swapped the numbers onto it and
+    kept the title; the coverage % + bar moved to // PLEX COLLECTIONS. The
+    collections hide-gate (#plex-collections-card) also moved onto this card."""
     html = DASH_HTML.read_text()
     assert "// COLLECTIONS THEMED" in html
     idx = html.index("// COLLECTIONS THEMED")
-    block = html[max(0, idx - 500):idx + 800]
-    # Tone class.
+    block = html[html.rindex("<article", 0, idx):html.index("</article>", idx)]
     assert "stat-tdb-primary" in block
-    # SSR-baked coverage % + foot.
-    assert "ssr_pct(_ssr_dash.plex_collections_with_theme" in block
-    assert "cov-collections-themed" in block
-    assert "cov-collections-ready" in block
+    # Reach shape swapped in + the hide-gate that swapped onto this card.
+    assert 'id="plex-collections-total"' in block
+    assert 'id="plex-collections-not-tdb"' in block
+    assert "not _ssr_dash.plex_collections_total" in block
+    # The coverage % moved off this card.
+    assert 'id="cov-collections-pct"' not in block
 
 
 def test_dashboard_renders_plex_collections_card():
-    """// PLEX COLLECTIONS card present, red tone class, hidden
-    when SSR sees 0 collections."""
+    """// PLEX COLLECTIONS card present, red tone class. v0.51.122: it now
+    renders the coverage % + bar + "themed / ready" (the user swapped the
+    numbers, kept the title); the reach total + the hide-gate moved onto the
+    // COLLECTIONS THEMED reach card, so this card stays always-visible."""
     html = DASH_HTML.read_text()
     assert "// PLEX COLLECTIONS" in html
     idx = html.index("// PLEX COLLECTIONS")
-    block = html[max(0, idx - 800):idx + 800]
+    block = html[html.rindex("<article", 0, idx):html.index("</article>", idx)]
     assert "stat-plex-collections" in block, (
-        "v1.18.20: Plex Collections card must use the new red "
-        "tone class"
+        "Plex Collections card must use the red tone class"
     )
-    # Hide-when-empty SSR gate.
-    assert "not _ssr_dash.plex_collections_total" in block
-    # Stat IDs the JS hydrates. v1.23.41: foot reframed to ThemerrDB
-    # reach (in-TDB = motif, not-in-TDB) — the with-theme stat moved
-    # to the top COVERAGE card.
-    assert "plex-collections-total" in block
-    assert "plex-collections-motif" in block
-    assert "plex-collections-not-tdb" in block
+    # Coverage % shape swapped in.
+    assert 'id="cov-collections-pct"' in block
+    assert 'data-bar-fill="collections"' in block
+    assert "cov-collections-ready" in block
+    # The reach total + the hide-gate moved off this card.
+    assert 'id="plex-collections-total"' not in block
+    assert "not _ssr_dash.plex_collections_total" not in block
 
 
 def test_dashboard_source_breakdown_is_three_up():

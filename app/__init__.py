@@ -3837,7 +3837,22 @@
 #   COVERAGE section (its cov-*-pct targets swapped down there), and the //
 #   LIBRARY COLORS panel re-anchored onto top-stats (the colored --dash-*-color
 #   cards it controls moved up). Guarded by test_v0_51_121.
-__version__ = "0.51.121"
+# 0.51.122: redo the v0.51.121 swap the ROBUST way (the user's saved dashboard
+#   customize layout undid v0.51.121 — applyLayout moves cards into sections BY
+#   their data-dash-card id, so moving the card bodies between sections got
+#   reverted on load while the section-label swap stuck → mismatched labels vs
+#   cards). Fix: swap only the NUMBERS in place. The // …THEMED (tdb-*) cards keep
+#   their titles/tone/section/id but now render the ThemerrDB REACH (total +
+#   in/not-in-ThemerrDB); the // PLEX (plex-*) cards keep theirs but render the
+#   COVERAGE % + bar + ready. Cards never move by id, so the saved layout can't
+#   undo it. Reverted v0.51.121's section-label + color-panel changes (the user:
+#   "names + color control back where they were"). The anime/collections hide-gate
+#   + #plex-*-card reveal id moved onto the reach cards (renderPlexCoverage toggles
+#   them by presence); the wide-reach foot column-stack moved from
+#   [data-dash-card^="plex-"] to an explicit .stat-foot-stack class; the count-up
+#   moved below the PLEX section (cov-*-pct swapped down there). Guarded by
+#   test_v0_51_122.
+__version__ = "0.51.122"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

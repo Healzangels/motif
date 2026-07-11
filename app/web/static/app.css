@@ -1204,14 +1204,18 @@ input[type="radio"]:focus-visible {
   color: var(--fg-dim);
 }
 .stat-foot b { color: var(--fg); font-weight: 600; }
-/* v1.21.4: stack the PLEX cards' two stat lines (with-theme /
-   ThemerrDB-available) onto separate rows so all four PLEX cards match
-   regardless of number width. In the flex-ROW layout PLEX MOVIES's
-   4-digit counts (3,380 / 3,087) overflowed the narrow 4-up card and
-   wrapped MID-LABEL ("3,380 with / theme") while the smaller-number
-   cards stayed one line — the user 2026-06-01. Scoped to the plex-* cards
-   ("the related cards"); the THEMERRDB row keeps its compact foot. */
-[data-dash-card^="plex-"] .stat-foot {
+/* v1.21.4: stack a card's two ThemerrDB-reach stat lines (W in ThemerrDB /
+   N not in ThemerrDB) onto separate rows so all four reach cards match
+   regardless of number width. In the flex-ROW layout the 4-digit counts
+   (3,380 / 3,087) overflowed the narrow 4-up card and wrapped MID-LABEL
+   ("3,380 with / theme") while the smaller-number cards stayed one line —
+   the user 2026-06-01. v0.51.122: keyed on an explicit .stat-foot-stack
+   class instead of [data-dash-card^="plex-"] — the reach numbers swapped
+   onto the // …THEMED (tdb-*) cards while the % + bar swapped onto the
+   // PLEX (plex-*) cards (the user: "swap the info … keep the names"), so
+   the stack must follow the WIDE reach foot, not the card id. The % foot
+   keeps the compact base .stat-foot (single row, wrap-when-must). */
+.stat-foot-stack {
   flex-direction: column;
   gap: var(--gap-1);
 }

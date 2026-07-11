@@ -63,23 +63,28 @@ def test_old_glyphs_fully_retired():
 # ── PLEX stat-foot stacks; THEMERRDB foot stays compact ──────
 
 def test_plex_stat_foot_stacks_vertically():
-    """[data-dash-card^=\"plex-\"] .stat-foot uses flex-direction:
-    column so all four PLEX cards show a uniform two-line foot —
-    fixing the PLEX MOVIES 4-digit wrap inconsistency."""
+    """The wide ThemerrDB-reach foot uses flex-direction: column so all four
+    reach cards show a uniform two-line foot — fixing the 4-digit wrap. v0.51.122:
+    keyed on an explicit .stat-foot-stack class (was [data-dash-card^=\"plex-\"])
+    because the reach numbers swapped onto the // …THEMED (tdb-*) cards while the
+    % + bar swapped onto the // PLEX cards, so the stack follows the WIDE reach
+    foot, not the card id (the user kept the titles)."""
     css = (REPO / "app" / "web" / "static" / "app.css").read_text()
-    idx = css.index('[data-dash-card^="plex-"] .stat-foot')
+    idx = css.index('.stat-foot-stack {')
     rule = css[idx:idx + 200]
     assert "flex-direction: column" in rule, (
-        "PLEX stat-foot must stack so every PLEX card matches"
+        "the reach stat-foot must stack so every reach card matches"
     )
-    # Scoped to plex-* only — the THEMERRDB cards keep the compact
-    # one-line foot (different structure: progress bar + inline foot).
-    assert '[data-dash-card^="plex-"]' in css
+    # The old data-dash-card-scoped selector must be gone (it would wrongly
+    # column-stack the % foot now on the plex-* cards).
+    assert '[data-dash-card^="plex-"] .stat-foot {' not in css
 
 
 def test_plex_cards_carry_dash_card_attr():
-    """The stack rule keys on data-dash-card — all four PLEX cards
-    must carry the attribute or the rule never matches."""
+    """The four PLEX cards carry a data-dash-card id for the customize feature.
+    v0.51.122: the foot-stack no longer keys on this (moved to the explicit
+    .stat-foot-stack class), but the ids must persist so a saved customize
+    layout can still address the cards."""
     html = (REPO / "app" / "web" / "templates" / "dashboard.html").read_text()
     for slug in ("plex-movies", "plex-tv", "plex-anime", "plex-collections"):
         assert f'data-dash-card="{slug}"' in html, (
