@@ -3852,7 +3852,16 @@
 #   [data-dash-card^="plex-"] to an explicit .stat-foot-stack class; the count-up
 #   moved below the PLEX section (cov-*-pct swapped down there). Guarded by
 #   test_v0_51_122.
-__version__ = "0.51.122"
+# 0.51.123: "💔 Theme lost —" notifications now name the actual content instead
+#   of the bare "tv/4656" id (the user, on a Discord screenshot). Root cause:
+#   enrich_item derives display_title only from the `themes` table, so a lost
+#   P-row with no ThemerrDB match (the exact "no backup configured" case) had no
+#   title and _safe_display_title fell back to media_type/tmdb_id. The plex_enum
+#   lost-theme candidate already carries cand["title"] (plex_items.title) — added
+#   a fallback_title param to enrich_item (fills the gap only; a real themes title
+#   still wins) and pass it at the live dispatch + the test-trigger endpoint.
+#   Guarded by test_v0_51_123.
+__version__ = "0.51.123"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

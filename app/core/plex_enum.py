@@ -2804,6 +2804,12 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                         section_id=cand["section_id"],
                         # v1.21.76: name the edition (💔 lost / 🎯 ready).
                         edition_key=_disp_edition,  # v1.24.8: resolved above
+                        # v0.51.123: a lost P-row with no ThemerrDB match has no
+                        # `themes` title, so enrich_item would fall back to the
+                        # bare "tv/<tmdb>" id. The candidate carries the row's
+                        # plex_items.title — pass it so the "💔 Theme lost —"
+                        # subject names the actual content (the user).
+                        fallback_title=cand.get("title") or "",
                     )
                     # Pick body + event_kind by tier.
                     if tier == "backup_ready":

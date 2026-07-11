@@ -125,6 +125,7 @@ def enrich_item(
     media_type: str, tmdb_id: int,
     section_id: str | None = None,
     edition_key: str = "",
+    fallback_title: str = "",
 ) -> ItemContext:
     """Best-effort: load title + source + URL + thumb from DB so a
     per-item notification renders something human-readable.
@@ -315,7 +316,15 @@ def enrich_item(
         _u = ctx.get("theme_url") or ""
         if "facebook.com" in _u or "fb.watch" in _u:
             ctx["thumb_url"] = _cached_oembed_thumb(db_path, _u)
-    title = ctx.get("title")
+    # v0.51.123: fall back to the caller-supplied Plex title (e.g. a lost row's
+    # plex_items.title) when the themes lookup found no title — otherwise a
+    # TDB-less row (a lost P-row with no ThemerrDB match) renders as the bare
+    # "media_type/tmdb_id" id in the subject. the user: "Theme lost —"
+    # notifications should show the actual name of the content lost. The
+    # caller's title only fills the gap; a real themes title still wins.
+    title = ctx.get("title") or (fallback_title or None)
+    if title and not ctx.get("title"):
+        ctx["title"] = title
     year = ctx.get("year")
     if title and year:
         ctx["display_title"] = f"{title} ({year})"

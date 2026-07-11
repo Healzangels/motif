@@ -24816,6 +24816,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 db,
                 media_type=_row_mt, tmdb_id=_row_tmdb,
                 section_id=row["section_id"],
+                # v0.51.123: mirror the live plex_enum dispatch — a TDB-less
+                # lost row has no `themes` title, so pass plex_items.title so
+                # the test-trigger subject names the row like production does.
+                fallback_title=row["title"] or "",
             )
             if tier == "backup_ready":
                 _event_kind = "theme_lost_backup_ready"
