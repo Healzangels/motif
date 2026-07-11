@@ -3870,7 +3870,15 @@
 #   knows the row's title. A real themes title still wins; the bare mt/tmdb
 #   shape only shows when Plex has no matching row either (synthetic-tmdb rows).
 #   Guarded by test_v0_51_124.
-__version__ = "0.51.124"
+# 0.51.125: the library search now matches a bare TMDB id (the user: "having
+#   trouble locating the rows that were removed" — the 💔 Theme lost alerts named
+#   rows only as "tv/4656", and the search matched title + IMDb id only, so the
+#   tmdb id was un-searchable). _library_main_query ORs pi.guid_tmdb = ? into the
+#   search clause for all-digit queries (gated so a text search can't collide
+#   with a stray tmdb; guid_tmdb is INTEGER, the str bind coerces via affinity).
+#   The clause is identical in where_extra + where_pi_only so the leading
+#   q-params stay aligned across every count path. Guarded by test_v0_51_125.
+__version__ = "0.51.125"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -2291,10 +2291,25 @@ def _library_main_query(
     where_extra = ""
     where_pi_only = ""
     if q:
-        clause = " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
-        where_extra += clause
-        where_pi_only += clause
-        params.extend([f"%{q}%", q])
+        # v0.51.125: match a purely-numeric query against guid_tmdb too, so a
+        # bare TMDB id — e.g. the "tv/4656" shown in a 💔 Theme lost notification
+        # when the title couldn't resolve — locates its row from the search box.
+        # Pre-fix only title + IMDb id matched, so the tmdb id in the alert was
+        # un-searchable. Gated to all-digit queries so a text search can't
+        # collide with a stray tmdb; guid_tmdb is INTEGER, the str bind coerces
+        # via column affinity. The clause is identical in where_extra +
+        # where_pi_only so the leading q-params stay aligned in every count path.
+        if q.isdigit():
+            clause = (" AND (pi.title LIKE ? OR pi.guid_imdb = ? "
+                      "OR pi.guid_tmdb = ?)")
+            where_extra += clause
+            where_pi_only += clause
+            params.extend([f"%{q}%", q, q])
+        else:
+            clause = " AND (pi.title LIKE ? OR pi.guid_imdb = ?)"
+            where_extra += clause
+            where_pi_only += clause
+            params.extend([f"%{q}%", q])
     if status == "themed":
         where_extra += (" AND t.tmdb_id IS NOT NULL "
                         "AND t.upstream_source != 'plex_orphan'")
