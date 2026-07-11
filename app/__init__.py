@@ -3915,7 +3915,12 @@
 #   mixed enums + drops the hardcoded "1". (4) Cap consecutive_missing at the
 #   threshold so a mass-guard-aborted bulk removal can't grow it unbounded.
 #   Guarded by test_v0_51_129 + test_v1_14_74::test_force_bypasses_skip.
-__version__ = "0.51.129"
+# 0.51.130: Settings → VISUALS THEME dropdown alignment. The .theme-select was
+#   inline-block, so it sat BESIDE the THEME label with an off horizontal gap,
+#   breaking the form's left edge (every other field's control sits below its
+#   label). Made it display:block so the dropdown drops onto its own line, left-
+#   aligned with the rest of the form; width stays intrinsic (compact).
+__version__ = "0.51.130"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

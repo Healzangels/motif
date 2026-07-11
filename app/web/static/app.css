@@ -6978,6 +6978,12 @@ body.dash-customize-mode .dash-user-hidden { opacity: 0.45; }
 .dash-color-reset { margin-left: auto; }
 /* v0.51.110: Settings → VISUALS // THEME preset picker. */
 .theme-select {
+  /* v0.51.130: block (not the default inline-block) so the dropdown drops
+     onto its OWN line below the THEME label + left-aligns with the rest of
+     the form — like every .input field. Pre-fix it sat inline beside the
+     label with an off horizontal gap, breaking the form's left edge. Width
+     stays intrinsic (form controls don't stretch to 100% on display:block). */
+  display: block;
   font-family: var(--font-mono);
   font-size: var(--t-base);
   letter-spacing: 0.08em;
