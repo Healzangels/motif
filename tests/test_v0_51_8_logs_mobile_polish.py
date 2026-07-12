@@ -45,11 +45,13 @@ MOBILE = _mobile_block(APP_CSS)
 def test_jobs_grid_has_scroll_affordance():
     assert ".jobs-grid { scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent; }" in MOBILE
     assert ".jobs-grid::-webkit-scrollbar { height: 3px; }" in MOBILE
-    assert ".jobs-grid::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }" in MOBILE
+    # v0.51.139: border-radius 2px → var(--radius) (token hygiene; --radius is 2px).
+    assert ".jobs-grid::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: var(--radius); }" in MOBILE
 
 
 def test_block_head_padding_trimmed_on_mobile():
-    assert ".block-head { flex-wrap: wrap; gap: var(--gap-2); padding-left: 12px; padding-right: 12px; }" in MOBILE
+    # v0.51.139: 12px → var(--gap-3) (token hygiene; --gap-3 is 12px).
+    assert ".block-head { flex-wrap: wrap; gap: var(--gap-2); padding-left: var(--gap-3); padding-right: var(--gap-3); }" in MOBILE
 
 
 def test_desktop_block_head_padding_unchanged():

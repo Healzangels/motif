@@ -4001,7 +4001,19 @@
 #   pinned .state-pill.mismatch's colour + mislabelled it a LIVE surface — the
 #   real M surfaces (.link-glyph-mismatch, .attn-pill-mismatch) are untouched.
 #   Guarded by test_v0_51_138. Per the user (thorough over dead-but-pinned).
-__version__ = "0.51.138"
+# 0.51.139: CSS-audit T6 — token hygiene (all value-preserving, no visual change).
+#   `border-radius: 2px` ×15 → var(--radius); `font-size: 11px` ×3 → var(--t-tiny);
+#   the ≤600 .block-head `padding-left/right: 12px` → var(--gap-3). Each literal
+#   equals its token, so rendering is unchanged — this just follows the design-
+#   system rule (use tokens, never inline the value). test_v0_51_8's two pins
+#   updated to the tokenized forms. DELIBERATELY SKIPPED: minting --motion-drawer
+#   (the ops-drawer motion-fast/transform-only vs dialog motion-normal/opacity+
+#   transform aren't the same tuple — a mint here would be the premature
+#   abstraction CLAUDE.md forbids); .dlg-close 22px (test_v1_15_115 is a purpose-
+#   built "must remain 22px" guard); .missing-banner→--bg-tint-amber (its 0.05 is
+#   intentional, pinned by 2 tests — the unused --bg-tint-amber 0.04 is a dead
+#   token, a T7 item). Guarded by test_v0_51_139.
+__version__ = "0.51.139"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

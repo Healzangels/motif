@@ -1690,7 +1690,7 @@ body.help-mode .settings-help-about { display: block; }
   line-height: 1;
   padding: 2px 6px;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: var(--radius);
   transition: color var(--motion-normal) ease, border-color var(--motion-normal) ease, background var(--motion-normal) ease;
 }
 @media (hover: hover) {
@@ -1741,7 +1741,7 @@ body.help-mode .settings-help-about { display: block; }
   padding: 0;
   box-sizing: border-box;
   border: 1px solid var(--line-bright);
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--fg-mute);
   user-select: none;
   transition: color var(--motion-normal) ease, border-color var(--motion-normal) ease;
@@ -1892,7 +1892,7 @@ body.help-mode .settings-help-about { display: block; }
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 4px 10px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   cursor: pointer;
   transition: color var(--motion-normal) ease, border-color var(--motion-normal) ease;
 }
@@ -3040,7 +3040,7 @@ body.help-mode .settings-help-about { display: block; }
    as "not a state" — a square distinguishes it from the dots without
    the em-dash being misread as a separator. The em-dash glyph still
    sits inside, just inside a square frame instead of a circle. */
-.state-pill-btn-square { border-radius: 2px; }
+.state-pill-btn-square { border-radius: var(--radius); }
 .state-pill-btn-broken { color: var(--red); border-color: rgba(var(--red-rgb), 0.4); }
 /* v1.12.70: amber 'await' PL filter button — matches the amber
    .state-pill.await dot in the PL column for rows where the
@@ -4237,7 +4237,7 @@ body.auth-page .auth-card { margin: 0; }
   background: var(--bg);
   padding: 1px 6px;
   border: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--t-tiny);
 }
 .auth-form { display: flex; flex-direction: column; gap: var(--gap-4); }
 .auth-label {
@@ -4803,7 +4803,7 @@ body.auth-page .auth-card { margin: 0; }
   justify-content: center;
   margin-left: 6px;
   padding: 1px 6px;
-  font-size: 11px;
+  font-size: var(--t-tiny);
   letter-spacing: 0.10em;
   line-height: 1;
   text-transform: uppercase;
@@ -5005,7 +5005,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   gap: var(--gap-2);
   padding: var(--gap-1) var(--gap-2);
   border: 1px solid var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius);
   background: var(--bg-elev);
 }
 .backup-row-main { flex: 1; min-width: 0; }
@@ -5031,7 +5031,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   padding: var(--gap-2);
   margin-bottom: var(--gap-3);
   border: 1px solid var(--amber);
-  border-radius: 2px;
+  border-radius: var(--radius);
   background: rgba(var(--amber-rgb), 0.08);
 }
 /* v1.23.29: re-assert the hidden attribute. The `display: flex` above
@@ -5414,7 +5414,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-family: var(--font-mono);
   background: rgba(var(--cyan-rgb), 0.08);
   padding: 1px 5px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   color: var(--cyan);
 }
 .form-hint a { color: var(--cyan); }
@@ -5515,7 +5515,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   width: 120px;
   height: 68px;
   object-fit: cover;
-  border-radius: 2px;
+  border-radius: var(--radius);
   background: rgba(var(--cyan-rgb), 0.05);
 }
 .manual-url-preview-meta {
@@ -5747,7 +5747,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
             both stay visible while scrolling the section tabs. */
          padding-bottom: 6px; }
   .nav::-webkit-scrollbar { height: 3px; }
-  .nav::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }
+  .nav::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: var(--radius); }
   .nav a { padding: 12px var(--gap-4); }
   /* v0.51.6: mobile tap targets (audit A6). Several controls sat at ~10-22px —
      below the 24px WCAG-AA floor / a comfortable thumb. Bump them to ~30px on a
@@ -5849,7 +5849,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   .dash-pair-col::-webkit-scrollbar-thumb,
   .table-scroll::-webkit-scrollbar-thumb,
   .sync-history-bars::-webkit-scrollbar-thumb {
-    background: var(--green-deep); border-radius: 2px; border: 0;
+    background: var(--green-deep); border-radius: var(--radius); border: 0;
   }
   /* v0.51.26: EXISTING BACKUPS rows were a flex row [name | DOWNLOAD RESTORE
      DELETE]; the three flex-shrink:0 buttons ate the width and crushed the
@@ -5871,7 +5871,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      enough room on the LOGS header for the EVENT STREAM view's `● live` indicator
      to stay on the toggle-chip row instead of wrapping to its own line, detached
      from the // EVENT STREAM chip it annotates. */
-  .block-head { flex-wrap: wrap; gap: var(--gap-2); padding-left: 12px; padding-right: 12px; }
+  .block-head { flex-wrap: wrap; gap: var(--gap-2); padding-left: var(--gap-3); padding-right: var(--gap-3); }
   /* v0.51.38: centre the // RESULTS action group (LEGEND / NEEDS WORK / pager) on
      a phone — mirrors the v0.51.27 filterbar treatment (the user: "do centering
      similar to what we did in the filter section above"). width:100% so
@@ -5928,7 +5928,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      until you scroll, so the ACTION column read as absent. */
   .jobs-grid { scrollbar-width: thin; scrollbar-color: var(--green-deep) transparent; }
   .jobs-grid::-webkit-scrollbar { height: 3px; }
-  .jobs-grid::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: 2px; }
+  .jobs-grid::-webkit-scrollbar-thumb { background: var(--green-deep); border-radius: var(--radius); }
 
   /* v0.50.88: LOGS/EVENT STREAM — TIME(90px)+LEVEL(64px)+COMPONENT(110px)
      alone ate ~264px of a ~350px mobile content width, leaving MESSAGE a
@@ -6200,7 +6200,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-weight: 700;
   letter-spacing: 0.12em;
   padding: 1px 6px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   font-size: var(--t-tiny);
 }
 .history-level-info  { color: var(--cyan);  border: 1px solid rgba(var(--cyan-rgb), 0.35); }
@@ -6349,7 +6349,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-weight: 600;
   letter-spacing: 0.1em;
   padding: 1px 6px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   font-size: 10px;
 }
 .sync-hist-transport-git      { color: var(--cyan);    background: rgba(var(--cyan-rgb), 0.08); }
@@ -6360,7 +6360,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-weight: 600;
   letter-spacing: 0.1em;
   padding: 1px 6px;
-  border-radius: 2px;
+  border-radius: var(--radius);
   font-size: 10px;
 }
 .sync-hist-status-ok       { color: var(--ok);  background: rgba(var(--ok-rgb), 0.08); }
@@ -6415,7 +6415,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   position: relative;
   height: 8px;
   background: var(--line);
-  border-radius: 2px;
+  border-radius: var(--radius);
   overflow: hidden;
 }
 .insight-fail-bar-fill {
@@ -7067,7 +7067,7 @@ body.dash-customize-mode [data-dash-section][draggable="true"]:hover
   color: var(--fg-dim);
   width: 28px;
   height: 28px;
-  font-size: 11px;
+  font-size: var(--t-tiny);
   line-height: 1;
   cursor: pointer;
   padding: 0;
