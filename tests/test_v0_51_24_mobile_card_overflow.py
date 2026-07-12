@@ -73,10 +73,11 @@ TABLET = _tablet_block()
 
 
 def test_dash_pair_stacks_to_block_on_mobile():
-    # v0.51.136: the stack now lives in the ≤1200 block (superset of the phone tier).
-    assert re.search(r"\.dash-pair\s*\{[^}]*display:\s*block", TABLET), (
-        "v0.51.24/136: .dash-pair must drop to block flow (stack) for narrow "
-        "viewports (now ≤1200px, which includes the phone tier)")
+    # v0.51.136: the stack lives in the ≤1200 block. v0.51.140: scoped to the
+    # tables pair (.dash-pair-tables); the insight pair stacks at ≤600 instead.
+    assert re.search(r"\.dash-pair-tables\s*\{[^}]*display:\s*block", TABLET), (
+        "v0.51.24/136/140: the STATISTICS tables pair must drop to block flow "
+        "(stack) for narrow viewports (≤1200px, which includes the phone tier)")
 
 
 def test_dash_pair_col_is_a_horizontal_scroll_context_on_mobile():

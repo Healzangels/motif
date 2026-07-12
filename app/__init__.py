@@ -4013,7 +4013,17 @@
 #   built "must remain 22px" guard); .missing-banner→--bg-tint-amber (its 0.05 is
 #   intentional, pinned by 2 tests — the unused --bg-tint-amber 0.04 is a dead
 #   token, a T7 item). Guarded by test_v0_51_139.
-__version__ = "0.51.139"
+# 0.51.140: scope the v0.51.136 dash-pair stack to the STATISTICS tables pair. A
+#   /code-review found v0.51.136 restacked BOTH .dash-pair blocks at ≤1200px, but
+#   only the STATISTICS pair (COVERAGE | GENERAL) has the table-overflow that
+#   motivated it — the SYNC & DOWNLOADS insight charts are width:100% SVGs with no
+#   overflow, and v0.51.45 deliberately put those two short sparklines 2-up. So the
+#   ≤1200 rule was over-broad. Marked the STATISTICS wrapper .dash-pair-tables,
+#   scoped the ≤1200 stack to it, and gave the insight pair
+#   (.dash-pair:not(.dash-pair-tables)) its 2-up back down to 600px (stacks at the
+#   phone tier like every card). Harness-verified: at 900px the tables stack while
+#   the insight charts stay 2-up; at 375px both stack. Guarded by test_v0_51_140.
+__version__ = "0.51.140"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

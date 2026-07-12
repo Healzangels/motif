@@ -41,16 +41,20 @@ PHONE = _media_block(APP_CSS, "@media (max-width: 600px) {")
 
 
 def test_dashpair_stack_lives_in_the_1200_block():
-    # the stack + per-card swipe now triggers at ≤1200px, not ≤600px.
-    assert ".dash-pair { display: block; }" in TABLET
+    # v0.51.140: the ≤1200 stack is SCOPED to the tables pair (.dash-pair-tables);
+    # the insight-chart pair keeps 2-up until ≤600 (see test_v0_51_140).
+    assert ".dash-pair-tables { display: block; }" in TABLET
     assert "overflow-x: auto" in TABLET and ".dash-pair-col" in TABLET
-    assert ".dash-pair-col > .table { min-width: 480px; }" in TABLET
+    assert ".dash-pair-tables > .dash-pair-col > .table { min-width: 480px; }" in TABLET
 
 
 def test_dashpair_stack_removed_from_the_600_block():
-    # guard against the mirror-drift class: the stack rules must live in ONE place
-    # (≤1200), not be duplicated back into the ≤600 block.
+    # the tables stack does NOT live in the ≤600 block (it's ≤1200, tables-scoped).
+    # v0.51.140: the ≤600 block DOES carry the insight pair's stack — a DIFFERENT,
+    # narrower selector (.dash-pair:not(.dash-pair-tables)); that's the intended
+    # split, not mirror-drift. Guard the bare/tables forms stay out of ≤600.
     assert ".dash-pair { display: block; }" not in PHONE
+    assert ".dash-pair-tables { display: block; }" not in PHONE
     assert ".dash-pair-col > .table { min-width: 480px; }" not in PHONE
 
 

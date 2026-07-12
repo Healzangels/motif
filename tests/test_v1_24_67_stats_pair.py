@@ -17,14 +17,15 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 
 def test_pair_wrapper_is_the_customize_unit():
-    idx = DASH_HTML.index('<div class="dash-pair"')
+    # v0.51.140: STATISTICS wrapper gained .dash-pair-tables (scopes the ≤1200 stack).
+    idx = DASH_HTML.index('<div class="dash-pair dash-pair-tables"')
     head = DASH_HTML[idx:idx + 130]
     assert 'data-dash-section="section-coverage"' in head  # keeps the layout key
     assert 'data-dash-label="STATISTICS"' in head
 
 
 def test_both_tables_are_pair_columns_inside_the_wrapper():
-    open_idx = DASH_HTML.index('<div class="dash-pair"')
+    open_idx = DASH_HTML.index('<div class="dash-pair dash-pair-tables"')
     close_idx = DASH_HTML.index("/.dash-pair", open_idx)
     block = DASH_HTML[open_idx:close_idx]
     # both inner sections live inside the wrapper, as .dash-pair-col .block.

@@ -5664,11 +5664,15 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    INSIDE the card — the v0.50.86 SYNC HISTORY swipe pattern. Only the <table>
    overflows here (no vertical-overflow children) so overflow-x:auto doesn't hit
    the dual-axis-clip trap. The body.dash-customize-mode override (display:flex
-   !important) still forces 2-up in customize mode as before. */
+   !important) still forces 2-up in customize mode as before.
+   v0.51.140: SCOPED to .dash-pair-tables (the STATISTICS pair). The OTHER
+   .dash-pair — the SYNC & DOWNLOADS insight charts — has no table-overflow
+   problem (width:100% SVGs), so it keeps its 2-up down to 600px (v0.51.45) and
+   only stacks at the phone tier via the ≤600 block below. */
 @media (max-width: 1200px) {
-  .dash-pair { display: block; }
-  .dash-pair-col { min-width: 0; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .dash-pair-col > .table { min-width: 480px; }
+  .dash-pair-tables { display: block; }
+  .dash-pair-tables > .dash-pair-col { min-width: 0; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .dash-pair-tables > .dash-pair-col > .table { min-width: 480px; }
 }
 
 @media (max-width: 600px) {
@@ -5814,10 +5818,13 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Library toolbar: the search box no longer reserves 240px+ — it spans the row
      so the chips + // FILTERS sit on their own line below it. */
   .library-search-wrap { min-width: 0; flex-basis: 100%; max-width: none; }
-  /* v0.51.136: the .dash-pair stack+swipe moved OUT of this ≤600 block into the
-     @media (max-width: 1200px) block above — the COVERAGE/GENERAL tables spilled
-     their cards all the way through ~1130px (2-up needs ~1132px to fit the
-     ~532px coverage table), not only on phones. */
+  /* v0.51.136/140: the STATISTICS tables (.dash-pair-tables) stack from ≤1200px
+     (block above — they overflow). The OTHER .dash-pair (SYNC & DOWNLOADS insight
+     charts) has no overflow (width:100% SVGs) so it keeps 2-up until the phone
+     tier, then stacks here at ≤600 like every other card. Same stack+swipe shape
+     as the tables block; the two differ only in breakpoint. */
+  .dash-pair:not(.dash-pair-tables) { display: block; }
+  .dash-pair:not(.dash-pair-tables) > .dash-pair-col { min-width: 0; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
   /* v0.50.86: SYNC HISTORY's 5-column table (several nowrap cells: WHEN, the
      TRANSPORT/STATUS pills, DURATION) has no min-width floor on the OUTER card, so
      on a phone it just spilled past the card's right edge with no way to reach the
