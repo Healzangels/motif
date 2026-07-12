@@ -3011,8 +3011,13 @@ body.help-mode .settings-help-about { display: block; }
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  width: 22px;
-  height: 22px;
+  /* v0.51.137: 22 -> 20px so the round DL/PL filter dots are 20x20 CIRCLES.
+     The v1.12.48 pass shrank filter-pill HEIGHT 22->20 (uniform row rhythm) via
+     `.pill-filter-row .state-pill-btn { height: 20px }` but never touched this
+     base WIDTH, leaving the dots 22w x 20h ovals. state-pill-btn only ever
+     renders inside .pill-filter-row, so 20x20 here is the real rendered size. */
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   background: transparent;
   border: 1px solid var(--line);
@@ -3100,7 +3105,10 @@ body.help-mode .settings-help-about { display: block; }
   align-items: center;
   justify-content: center;
   box-sizing: border-box;
-  height: 22px;
+  /* v0.51.137: the stale `height: 22px` here (equal specificity to the v1.12.48
+     uniform `height: 20px` group above, but LATER in source → it won) made the
+     LINK filter row 2px taller than the DL/PL/SRC/ED/TDB rows. Dropped so the
+     20px group governs and all six rows scan as one grid. */
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.1em;

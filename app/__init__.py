@@ -3980,7 +3980,18 @@
 #   v1.24.66/69/77 equal-height 2-up; 375px still stacks + T3 RELINK swipes.
 #   Breakpoint = measured ~1132px 2-up-fit threshold + margin for long Plex
 #   library names; ≥1280 desktops keep 2-up. Guarded by test_v0_51_136.
-__version__ = "0.51.136"
+# 0.51.137: CSS-audit T4 (P2) — the library filter drawer had two desktop pill
+#   drifts from the v1.12.48 shrink-to-20px pass. (1) The LINK row was 2px taller
+#   than DL/PL/SRC/ED/TDB: the v1.12.48 group set `.pill-filter-row .link-glyph
+#   { height: 20px }` but the older v1.12.25 rule still set height:22px on the
+#   SAME selector (equal specificity, later in source → the stale 22px won).
+#   Dropped it → the 20px group governs, all six rows scan as one grid. (2) The
+#   round DL/PL filter dots were 22w×20h ovals: v1.12.48 shrank filter-pill
+#   HEIGHT but never the .state-pill-btn base WIDTH. Base 22→20px (state-pill-btn
+#   only ever renders inside .pill-filter-row) → 20×20 circles. Harness-proven at
+#   1400px: LINK row 22→20px, dots oval→circle; phone tier (30px touch pills)
+#   unchanged. Guarded by test_v0_51_137.
+__version__ = "0.51.137"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
