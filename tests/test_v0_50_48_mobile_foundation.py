@@ -55,5 +55,7 @@ def test_phone_breakpoint_exists_with_the_key_overrides():
     # the 260px refresh button + 240px search no longer reserve their min-width
     assert "#library-refresh-btn { min-width: 0;" in block
     assert ".library-search-wrap { min-width: 0;" in block
-    # the dashboard pair drops its 340px floor so it stacks flush
-    assert ".dash-pair-col { min-width: 0; }" in block
+    # v0.51.136: the .dash-pair-col min-width:0 floor-drop + stack+swipe MOVED out
+    # of this ≤600 block into @media (max-width: 1200px) — the tables spilled their
+    # cards through ~1130px, not just on phones. Guarded now by test_v0_51_136 +
+    # test_v0_51_24 (which read the ≤1200 block).

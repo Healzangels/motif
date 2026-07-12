@@ -5655,6 +5655,24 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   #op-mini .op-mini-bar { width: 90px; flex: 0 0 auto; }
 }
 
+/* v0.51.136: the STATISTICS .dash-pair (PER-SECTION COVERAGE | GENERAL STATISTICS)
+   sits 2-up on desktop, but each 6-7-col compact table's min-content is ~532px, so
+   below ~1132px the flex cols (min-width:340) couldn't give each table its width
+   and the wider COVERAGE table spilled ~115px past its card — hidden by
+   body{overflow-x:hidden} (the v0.51.24 fix only reached ≤600px). Stack + swipe
+   through ≤1200px (measured ~1132px 2-up-fit threshold + margin for longer Plex
+   library names); ≥1201px keeps the v1.24.66/69/77 flex 2-up equal-height layout.
+   Each card becomes its OWN horizontal-scroll context so the wide table scrolls
+   INSIDE the card — the v0.50.86 SYNC HISTORY swipe pattern. Only the <table>
+   overflows here (no vertical-overflow children) so overflow-x:auto doesn't hit
+   the dual-axis-clip trap. The body.dash-customize-mode override (display:flex
+   !important) still forces 2-up in customize mode as before. */
+@media (max-width: 1200px) {
+  .dash-pair { display: block; }
+  .dash-pair-col { min-width: 0; display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .dash-pair-col > .table { min-width: 480px; }
+}
+
 @media (max-width: 600px) {
   .diff-tiles, .diff-tiles-single { grid-template-columns: 1fr; }
   .diff-arrow { transform: rotate(90deg); padding: var(--gap-2) 0; }
@@ -5798,25 +5816,10 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   /* Library toolbar: the search box no longer reserves 240px+ — it spans the row
      so the chips + // FILTERS sit on their own line below it. */
   .library-search-wrap { min-width: 0; flex-basis: 100%; max-width: none; }
-  /* Dashboard: the COVERAGE | GENERAL pair (340px min each) overflowed a 390px
-     viewport; drop the floor so the two cards stack flush. */
-  .dash-pair-col { min-width: 0; }
-  /* v0.51.24: dropping the min-width floor alone did NOT stack them — the flex
-     items kept a calc(50%) basis and sat 2-up at ~152px each, and each 6-7-col
-     compact table (476-599px of nowrap cells) then spilled hundreds of px past
-     its card (the user: coverage + general stats "spilling out of bounds of
-     their sections" on mobile). A flex item won't shrink below its content's
-     min-content even with min-width:0, so the card grew to the table's width and
-     pushed the whole page wider than the viewport. Fix: drop to plain block flow
-     on a phone so each card is one full-width row, and make the card its OWN
-     horizontal-scroll context (min-width:0 above + overflow-x) so the wide table
-     scrolls INSIDE the card instead of spilling — the v0.50.86 SYNC HISTORY
-     swipe pattern. Only the <table> overflows vertically-safe content, so
-     overflow-x:auto doesn't hit the dual-axis-clip trap. Scoped to the phone
-     tier; desktop keeps the v1.24.66/69/77 flex 2-up equal-height layout. */
-  .dash-pair { display: block; }
-  .dash-pair-col { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  .dash-pair-col > .table { min-width: 480px; }
+  /* v0.51.136: the .dash-pair stack+swipe moved OUT of this ≤600 block into the
+     @media (max-width: 1200px) block above — the COVERAGE/GENERAL tables spilled
+     their cards all the way through ~1130px (2-up needs ~1132px to fit the
+     ~532px coverage table), not only on phones. */
   /* v0.50.86: SYNC HISTORY's 5-column table (several nowrap cells: WHEN, the
      TRANSPORT/STATUS pills, DURATION) has no min-width floor on the OUTER card, so
      on a phone it just spilled past the card's right edge with no way to reach the

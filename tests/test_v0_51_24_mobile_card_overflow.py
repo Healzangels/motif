@@ -17,9 +17,12 @@ Root cause (measured live at 375px):
     which overflowed the ~150px 2-up donut column by ~25px. Fix: let the label
     wrap the controls under the name.
 
-Both fixes are scoped to the @media (max-width: 600px) phone tier so desktop
-keeps the v1.24.66/69/77 flex 2-up equal-height layout (verified live: desktop
-dash-pair stays side-by-side, card overflow-x visible, label nowrap).
+The SOURCE BREAKDOWN label fix is scoped to the @media (max-width: 600px) phone
+tier. The dash-pair stack+swipe was later WIDENED (v0.51.136) to
+@media (max-width: 1200px) — the same tables spilled their cards all the way
+through ~1130px, not only on phones (≤600 ⊂ ≤1200, so the phone behaviour this
+test guards is unchanged). Desktop (≥1201px) keeps the v1.24.66/69/77 flex 2-up
+equal-height layout.
 """
 from __future__ import annotations
 
@@ -49,26 +52,47 @@ def _mobile_block() -> str:
 MOBILE = _mobile_block()
 
 
+def _tablet_block() -> str:
+    """The @media (max-width: 1200px) { ... } block body — where v0.51.136 moved
+    the dash-pair stack+swipe (still applies at phone width: ≤600 ⊂ ≤1200)."""
+    i = APP_CSS.index("@media (max-width: 1200px) {")
+    j = i + APP_CSS[i:].index("{")
+    depth = 0
+    for k in range(j, len(APP_CSS)):
+        c = APP_CSS[k]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return APP_CSS[j : k + 1]
+    raise AssertionError("unterminated @media (max-width: 1200px) block")
+
+
+TABLET = _tablet_block()
+
+
 def test_dash_pair_stacks_to_block_on_mobile():
-    assert re.search(r"\.dash-pair\s*\{[^}]*display:\s*block", MOBILE), (
-        "v0.51.24: .dash-pair must drop to block flow (stack) on the phone tier")
+    # v0.51.136: the stack now lives in the ≤1200 block (superset of the phone tier).
+    assert re.search(r"\.dash-pair\s*\{[^}]*display:\s*block", TABLET), (
+        "v0.51.24/136: .dash-pair must drop to block flow (stack) for narrow "
+        "viewports (now ≤1200px, which includes the phone tier)")
 
 
 def test_dash_pair_col_is_a_horizontal_scroll_context_on_mobile():
-    # there are two .dash-pair-col rules in the mobile block (the legacy
-    # min-width:0 + the v0.51.24 block/scroll rule); assert one carries both.
-    bodies = re.findall(r"\.dash-pair-col\s*\{([^}]*)\}", MOBILE)
+    # v0.51.136: the col becomes its own swipe context in the ≤1200 block.
+    bodies = re.findall(r"\.dash-pair-col\s*\{([^}]*)\}", TABLET)
     assert any("display: block" in b and "overflow-x: auto" in b for b in bodies), (
-        "v0.51.24: a .dash-pair-col mobile rule must set display:block (not "
+        "v0.51.24/136: a .dash-pair-col rule must set display:block (not "
         "flex, so it respects width) AND overflow-x:auto (its own scroll "
         "context so the wide table scrolls inside the card instead of spilling)")
 
 
 def test_dash_pair_table_keeps_a_readable_min_width_floor():
     assert re.search(r"\.dash-pair-col\s*>\s*\.table\s*\{[^}]*min-width:\s*480px",
-                     MOBILE), (
-        "v0.51.24: the compact table needs a min-width floor so its columns stay "
-        "readable and it scrolls rather than crushing")
+                     TABLET), (
+        "v0.51.24/136: the compact table needs a min-width floor so its columns "
+        "stay readable and it scrolls rather than crushing")
 
 
 def test_source_pie_label_wraps_controls_on_mobile():

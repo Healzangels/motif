@@ -3968,7 +3968,19 @@
 #   Harness-proven at 375px: page horizontal overflow gone (scrollWidth 375) +
 #   // RELINK reachable-after-swipe true. (// RE-LINK ALL in the header is
 #   always visible regardless.) Guarded by test_v0_51_135.
-__version__ = "0.51.135"
+# 0.51.136: CSS-audit T2 (P1) — the dashboard STATISTICS .dash-pair (PER-SECTION
+#   COVERAGE | GENERAL STATISTICS) sat 2-up, but each 6-7-col compact table's
+#   min-content is ~532px so below ~1132px the flex cols (min-width:340) couldn't
+#   give each table its width and the wider COVERAGE table spilled ~115px past its
+#   card — hidden by body{overflow-x:hidden}. The v0.51.24 stack fix only covered
+#   ≤600px, leaving the whole 601-1130px band broken. Moved the dash-pair
+#   stack+swipe rules OUT of the ≤600 block into a new @media (max-width:1200px)
+#   block (≤600 ⊂ ≤1200, phone unchanged). Harness-proven: 900px & 1080px went
+#   from 2-up-with-spill to clean stack (no page overflow); 1250px keeps the
+#   v1.24.66/69/77 equal-height 2-up; 375px still stacks + T3 RELINK swipes.
+#   Breakpoint = measured ~1132px 2-up-fit threshold + margin for long Plex
+#   library names; ≥1280 desktops keep 2-up. Guarded by test_v0_51_136.
+__version__ = "0.51.136"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
