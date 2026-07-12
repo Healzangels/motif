@@ -785,12 +785,19 @@
       then click RE-LINK ALL to convert copies → hardlinks without re-downloading.
     </p>
   </div>
-  <table class="table">
-    <thead>
-      <tr><th>TITLE</th><th>YEAR</th><th>DESTINATION</th><th class="col-year">SIZE</th><th class="col-actions">ACT</th></tr>
-    </thead>
-    <tbody id="copies-body"></tbody>
-  </table>
+  {# v0.51.135: .table-scroll swipe context so the 5-col table (long DESTINATION
+     paths) is swipeable instead of pushing // RELINK off-screen right under
+     body's overflow-x:hidden below ~500px — the row spilled the whole page wide
+     and the per-row button was unreachable. Mirrors the #library-table wrapper.
+     (// RE-LINK ALL in the header is always visible regardless.) #}
+  <div class="table-scroll">
+    <table class="table">
+      <thead>
+        <tr><th>TITLE</th><th>YEAR</th><th>DESTINATION</th><th class="col-year">SIZE</th><th class="col-actions">ACT</th></tr>
+      </thead>
+      <tbody id="copies-body"></tbody>
+    </table>
+  </div>
 </section>
 
 <!-- v1.13.21: LAST SYNC pre-block removed. The hero has the

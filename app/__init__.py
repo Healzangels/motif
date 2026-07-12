@@ -3960,7 +3960,15 @@
 #   viewport: PROBE button reachable-after-scroll false→true. Guarded by
 #   test_v0_51_134. No min-width floor — the auto-layout table's button-driven
 #   min-content already exceeds phone width, so the swipe context alone suffices.
-__version__ = "0.51.134"
+# 0.51.135: CSS-audit T3 (P1/2) — the dashboard // STORAGE WASTE table had no
+#   scroll wrapper, so its long DESTINATION container-path cell pushed the 5-col
+#   table ~486px wide and the per-row // RELINK off-screen right under
+#   body{overflow-x:hidden} below ~500px (also spilling the whole page wide).
+#   Wrapped it in the shared .table-scroll (dashboard.html) like #library-table.
+#   Harness-proven at 375px: page horizontal overflow gone (scrollWidth 375) +
+#   // RELINK reachable-after-swipe true. (// RE-LINK ALL in the header is
+#   always visible regardless.) Guarded by test_v0_51_135.
+__version__ = "0.51.135"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
