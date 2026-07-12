@@ -3991,7 +3991,17 @@
 #   only ever renders inside .pill-filter-row) → 20×20 circles. Harness-proven at
 #   1400px: LINK row 22→20px, dots oval→circle; phone tier (30px touch pills)
 #   unchanged. Guarded by test_v0_51_137.
-__version__ = "0.51.137"
+# 0.51.138: CSS-audit T5 — removed 4 provably-dead library rules. `.form-label-row`
+#   (v1.22.55 settings redesign retired the wrapper; no live markup uses it —
+#   test_v1_22_55/test_v1_17_8 already assert its absence). `.state-pill.warn`,
+#   `.state-pill.bad`, `.state-pill.mismatch` — the DL/PL dot suffix only ever
+#   computes on/broken/pushed/await/'' (dl=broken|on|''; pl=broken|pushed|on|
+#   await|''); 'mismatch' was retired as a dot state in v1.12.81, warn/bad never
+#   stamped, so all three styled nothing. Also corrected test_v1_15_43, which
+#   pinned .state-pill.mismatch's colour + mislabelled it a LIVE surface — the
+#   real M surfaces (.link-glyph-mismatch, .attn-pill-mismatch) are untouched.
+#   Guarded by test_v0_51_138. Per the user (thorough over dead-but-pinned).
+__version__ = "0.51.138"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -3215,8 +3215,9 @@ body.help-mode .settings-help-about { display: block; }
   50%      { opacity: 1;    transform: scale(1.08); }
 }
 .state-pill.on { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
-.state-pill.warn { background: var(--amber); box-shadow: 0 0 6px var(--amber); }
-.state-pill.bad { background: var(--red); box-shadow: 0 0 6px var(--red); }
+/* v0.51.138: removed dead `.state-pill.warn` + `.state-pill.bad`. The DL/PL dot
+   suffix (renderLibraryRow) only ever computes on/broken/pushed/await/'' — never
+   warn/bad — so these two never rendered. */
 /* v1.18.25: 'pushed' PL state — plex_upload placement (theme
    uploaded via /library/metadata API instead of laid as a
    sidecar file). Cyan matches the LINK=PU chip so the API-push
@@ -3263,19 +3264,11 @@ body.help-mode .settings-help-about { display: block; }
   background: var(--red);
   box-shadow: 0 0 6px var(--red);
 }
-/* v1.11.99: mismatch DL — canonical exists but doesn't match the
-   placement file (user uploaded / set URL over an existing placement
-   without resolving). Visually nags but isn't an actual error.
-   v1.15.43: amber → orange. the user: "does !M make sense being the
-   plex hue given what it does or does a another color make more
-   sense?" — mismatch is about content divergence, not a Plex
-   action, so the Plex amber was misleading. Orange sits between
-   amber (warning) and red (error) — the right semantic notch for
-   "needs your attention but isn't blocking." */
-.state-pill.mismatch {
-  background: var(--orange);
-  box-shadow: 0 0 6px var(--orange);
-}
+/* v0.51.138: removed dead `.state-pill.mismatch` (v1.11.99, orange in v1.15.43).
+   v1.12.81 retired 'mismatch' as a DL/PL dot state — the content-divergence
+   signal lives on the LINK column's M glyph (.link-glyph-mismatch /
+   attn-pills=mismatch), so the dot suffix never computes 'mismatch'. The live M
+   surfaces are untouched. */
 /* v1.21.14: the .link-glyph-mismatch rule moved DOWN to sit with the
    other LINK variants (after the .link-glyph base) — see below. It used
    to live here, BEFORE the base rule, so the base's font-size:14px
@@ -5367,12 +5360,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   font-family: var(--font-mono);
   font-size: var(--t-small);
 }
-.form-label-row {
-  display: flex;
-  align-items: center;
-  gap: var(--gap-3);
-  margin-bottom: 6px;
-}
+/* v0.51.138: removed dead `.form-label-row` — the v1.22.55 settings redesign
+   retired the label-row wrapper (scalar fields now use .field-row); no live
+   markup references it (guarded by test_v1_22_55 + test_v1_17_8). */
 .form-label-text {
   display: inline-block;
   font-size: var(--t-tiny);

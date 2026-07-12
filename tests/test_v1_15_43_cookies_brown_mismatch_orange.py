@@ -168,23 +168,17 @@ def test_attn_pill_mismatch_uses_orange():
     )
 
 
-def test_state_pill_mismatch_uses_orange():
-    """The DL state pill for mismatch (`.state-pill.mismatch`)
-    must pair with the filter chip. Both surfaces describe the
-    same row state; splitting hues across surfaces invites the
-    same v1.15.17 → v1.15.43 cycle that bit cookies."""
-    block = _rule_body(APP_CSS.read_text(), '.state-pill.mismatch')
-    assert 'var(--orange)' in block, (
-        "v1.15.43: .state-pill.mismatch must use --orange to match "
-        ".attn-pill-mismatch"
-    )
-    assert 'var(--amber)' not in block
-
+# v0.51.138: test_state_pill_mismatch_uses_orange removed — `.state-pill.mismatch`
+# was deleted as dead CSS (CSS-audit T5). v1.12.81 retired 'mismatch' as a DL/PL dot
+# state, so renderLibraryRow's dot suffix never computes it (only on/broken/pushed/
+# await/'') and the rule styled nothing. The ACTUAL live mismatch surfaces are the
+# LINK-column M glyph (.link-glyph-mismatch — test_link_glyph_mismatch_stays_red
+# below) + the !M filter chip (.attn-pill-mismatch — test_attn_pill_mismatch_uses_orange
+# above); both stay guarded. Removal is pinned by test_v0_51_138.
 
 # v0.51.70: test_scans_kind_content_mismatch_uses_orange removed — the /scans page's
 # .kind-content_mismatch badge (and the whole dead Scans-page CSS block) was deleted as
-# dead. The LIVE mismatch surfaces (.attn-pill-mismatch, .state-pill.mismatch) are still
-# guarded above; the /scans cross-page-consistency check no longer has a surface.
+# dead; the /scans cross-page-consistency check no longer has a surface.
 
 
 def test_link_glyph_mismatch_stays_red():
