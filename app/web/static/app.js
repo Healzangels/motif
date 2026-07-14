@@ -19277,6 +19277,24 @@
     if (!dlg) return;
     document.getElementById('upload-dlg-close')?.addEventListener('click', closeUploadDialog);
     document.getElementById('upload-cancel')?.addEventListener('click', closeUploadDialog);
+    // v0.51.141: pre-flight size hint on pick — themes are short loops (~1-3 MB). A reverse proxy/WAF commonly caps request bodies (~10 MiB) and 403s the upload before it reaches motif; motif's own hard cap is 50 MiB. Warn early instead of after a failed upload.
+    const uFile = document.getElementById('upload-file');
+    const uStatus = document.getElementById('upload-status');
+    uFile?.addEventListener('change', () => {
+      if (!uStatus) return;
+      uStatus.classList.remove('err', 'ok');
+      const f = uFile.files && uFile.files[0];
+      if (!f) { uStatus.textContent = ''; return; }
+      const mb = (f.size / (1024 * 1024)).toFixed(1);
+      if (f.size > 50 * 1024 * 1024) {
+        uStatus.textContent = `✗ ${mb} MB exceeds motif's 50 MB limit — trim/re-encode the theme smaller.`;
+        uStatus.classList.add('err');
+      } else if (f.size > 9 * 1024 * 1024) {
+        uStatus.textContent = `⚠ ${mb} MB — themes are short loops; large files may be blocked by a reverse proxy/WAF. Consider trimming/re-encoding to a smaller MP3.`;
+      } else {
+        uStatus.textContent = `${f.name} · ${mb} MB`;
+      }
+    });
     const form = document.getElementById('upload-form');
     // v1.22.89 (class 3 double-fire): same in-flight guard as the
     // manual-url dialog — a double-click during the upload await or
@@ -19314,7 +19332,15 @@
         });
         if (!r.ok) {
           const t = await r.text().catch(() => '');
-          throw new Error(`${r.status}: ${t || r.statusText}`);
+          const ct = r.headers.get('content-type') || '';
+          // v0.51.141: a reverse proxy / WAF (CrowdSec / nginx / Cloudflare) can 403/413 the upload BEFORE it reaches motif — the body is its HTML error page, not motif's JSON. Show an actionable message instead of dumping the whole page (the user's CrowdSec 10 MiB body-limit ban).
+          if (ct.includes('text/html') || /^\s*</.test(t)) {
+            throw new Error(`${r.status}: blocked by a reverse proxy / WAF before reaching motif — the theme likely exceeds its request-body limit. Trim/re-encode it smaller, upload on your LAN, or raise the proxy limit (nginx client_max_body_size / CrowdSec SecRequestBodyLimit).`);
+          }
+          // motif's own error is JSON with a `detail`; surface just that, not the raw JSON.
+          let detail = t;
+          try { const j = JSON.parse(t); if (j && j.detail) detail = j.detail; } catch (_) { /* non-JSON body */ }
+          throw new Error(`${r.status}: ${detail || r.statusText}`);
         }
         status.textContent = downloadOnly
           ? '✓ uploaded · backup saved (Plex untouched)'

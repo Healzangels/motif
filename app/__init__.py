@@ -4023,7 +4023,17 @@
 #   (.dash-pair:not(.dash-pair-tables)) its 2-up back down to 600px (stacks at the
 #   phone tier like every card). Harness-verified: at 900px the tables stack while
 #   the insight charts stay 2-up; at 375px both stack. Guarded by test_v0_51_140.
-__version__ = "0.51.140"
+# 0.51.141: theme-upload UX for reverse-proxy body limits (the user hit a CrowdSec
+#   AppSec 10 MiB body cap that 403'd the upload with a full HTML ban page before it
+#   reached motif). (A) the upload fetch handler now detects an HTML/non-JSON error
+#   body (a proxy/WAF block, not motif) and shows an actionable one-line message
+#   instead of dumping the page; it also surfaces motif's own JSON `detail` (e.g.
+#   413 "file > 50 MiB") rather than raw JSON. (B) a pre-flight size hint on file
+#   pick: >50 MiB → will be rejected (motif's cap); >9 MiB → warn it may be
+#   proxy-blocked + nudge to trim/re-encode (themes are short loops). Sibling
+#   database-restore upload (via api()) left for a follow-up. Guarded by
+#   test_v0_51_141.
+__version__ = "0.51.141"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
