@@ -4071,7 +4071,16 @@
 #   reject + disable / >1 MB proxy warn) AND routes its error path through the shared
 #   describeProxyOrHttpError decoder + a non-JSON-200 guard (kills the raw-HTML slice /
 #   "Unexpected token '<'"). Guarded by test_v0_51_145.
-__version__ = "0.51.145"
+# 0.51.146: reverse-proxy audit tag 3/3 — gateway-timeout messaging (429 already
+#   landed via the shared decoder in tag 1). The slow DB-admin endpoints (backup
+#   create, restore-from-backup, restore-upload) run in the threadpool and usually
+#   FINISH even when a reverse proxy 502/503/504-times-out the client — but the client
+#   read that as a hard failure and dumped the proxy's HTML page. New gatewayTimeoutNote()
+#   reframes 502-504 as "motif may still be finishing — verify before retrying" and the
+#   three catches now refresh the backup list / restore-pending banner so a completed-
+#   but-timed-out action surfaces instead of tempting a needless retry. Guarded by
+#   test_v0_51_146.
+__version__ = "0.51.146"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

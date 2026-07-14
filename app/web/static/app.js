@@ -379,6 +379,16 @@
     const looksHtml = (contentType || '').includes('text/html') || /^\s*</.test(bodyText || '');
     return looksHtml ? proxyStatusHint(status) : null;
   }
+  // v0.51.146: a 502/503/504 on a slow admin endpoint (DB backup / restore) is a proxy
+  // read-timeout — motif keeps running in the threadpool and usually FINISHES, so the
+  // action likely succeeded. Returns a "still finishing, verify before retrying" note
+  // for those statuses (callers then refresh the relevant view), else null.
+  function gatewayTimeoutNote(err) {
+    const s = err && err.status;
+    return (s >= 502 && s <= 504)
+      ? `${s}: the reverse proxy timed out, but motif may still be finishing — verify before retrying.`
+      : null;
+  }
 
   async function api(method, path, body) {
     const opts = { method, headers: {} };
@@ -7222,7 +7232,11 @@
         const r = await api('POST', '/api/admin/database-restore', { name });
         showStaged(r && r.message);
       } catch (e) {
-        alert('Restore failed: ' + (e && e.message ? e.message : 'error'));
+        // v0.51.146: a gateway timeout likely means staging finished server-side —
+        // reframe + refresh so the restore-pending banner appears if it did.
+        const gw = gatewayTimeoutNote(e);
+        alert('Restore failed: ' + (gw || (e && e.message ? e.message : 'error')));
+        if (gw) refreshPending();
       }
     }
 
@@ -7311,7 +7325,10 @@
             // doesn't parse) — the v0.51.143 status-only check wrongly dumped that raw
             // page. A 200 SSO/HTML page throws inside r.json() with neither field.
             let msg;
-            if (e && e.detail != null) {
+            const gw = gatewayTimeoutNote(e);
+            if (gw) {
+              msg = gw; refreshPending();             // v0.51.146: staging may have finished — surface the banner
+            } else if (e && e.detail != null) {
               msg = String(e.detail);                 // motif's own error, e.g. "file > 500 MiB"
             } else if (e && typeof e.status === 'number') {
               msg = proxyStatusHint(e.status);        // numeric status, non-JSON body ⇒ proxy page
@@ -7365,10 +7382,13 @@
         }
         await refreshList();
       } catch (e) {
+        // v0.51.146: a proxy gateway-timeout likely means the backup DID finish server-side.
+        const gw = gatewayTimeoutNote(e);
         if (status) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
-          status.classList.add('form-status-fail');
+          status.textContent = (gw ? '⚠ ' : '✗ ') + (gw || (e && e.message ? e.message : 'failed'));
+          status.classList.add(gw ? 'warn' : 'form-status-fail');
         }
+        refreshList().catch(() => {});   // surface a backup that landed despite the timeout
       } finally {
         createBtn.disabled = false;
         createBtn.textContent = orig;
