@@ -6270,8 +6270,20 @@
 
     fileInput.addEventListener('change', () => {
       previewBtn.disabled = !fileInput.files || !fileInput.files.length;
-      previewStatus.textContent = fileInput.files && fileInput.files.length
-        ? fileInput.files[0].name : '';
+      const f = fileInput.files && fileInput.files[0];
+      if (!f) { previewStatus.textContent = ''; return; }
+      // v0.51.145: pre-flight size hint. motif caps the CSV at 5 MB; a large library
+      // export (~10 MB per 200K rows) is rejected, and even a 1–5 MB file can trip a
+      // reverse proxy/WAF body cap before it reaches motif.
+      const mb = (f.size / (1024 * 1024)).toFixed(1);
+      if (f.size > 5 * 1024 * 1024) {
+        previewStatus.textContent = `✗ ${f.name} · ${mb} MB exceeds motif's 5 MB limit — split the CSV.`;
+        previewBtn.disabled = true;
+      } else if (f.size > 1 * 1024 * 1024) {
+        previewStatus.textContent = `⚠ ${f.name} · ${mb} MB — large CSVs may be blocked by a reverse proxy/WAF before reaching motif.`;
+      } else {
+        previewStatus.textContent = `${f.name} · ${mb} MB`;
+      }
     });
 
     function renderPreviewTable(rows) {
@@ -6521,7 +6533,15 @@
         });
         if (!resp.ok) {
           const detail = await resp.text();
-          throw new Error(`HTTP ${resp.status}: ${detail.slice(0, 200)}`);
+          // v0.51.145: an HTML body (413/403 body cap, WAF, SSO) means a proxy answered,
+          // not motif — show the shared decoder's message instead of a raw HTML slice.
+          throw new Error(describeProxyOrHttpError(resp.status, resp.headers.get('content-type'), detail)
+            || `HTTP ${resp.status}: ${detail.slice(0, 200)}`);
+        }
+        // v0.51.145: a proxy 302→200 SSO/login page is also resp.ok — confirm motif's
+        // JSON before parsing, else resp.json() throws a cryptic "Unexpected token '<'".
+        if (!(resp.headers.get('content-type') || '').includes('application/json')) {
+          throw new Error(proxyStatusHint(resp.status));
         }
         const data = await resp.json();
         renderPreviewTable(data.rows || []);
@@ -7237,6 +7257,26 @@
     const uploadBtn = document.getElementById('database-restore-upload-btn');
     const fileInput = document.getElementById('database-restore-file');
     if (uploadBtn && fileInput) {
+      // v0.51.145: pre-flight size hint. A real motif.db is routinely tens–hundreds of
+      // MB and almost always exceeds a reverse proxy/WAF body cap (nginx 1 MB, CrowdSec
+      // ~10 MiB) before it reaches motif; motif's own cap is 500 MiB. Warn on pick so
+      // the operator restores on the LAN instead of hitting the proxy wall after upload.
+      fileInput.addEventListener('change', () => {
+        if (!restoreStatus) return;
+        const f = fileInput.files && fileInput.files[0];
+        if (!f) { restoreStatus.textContent = ''; restoreStatus.className = 'form-status'; return; }
+        const mb = (f.size / (1024 * 1024)).toFixed(1);
+        if (f.size > 500 * 1024 * 1024) {
+          restoreStatus.textContent = `✗ ${mb} MB exceeds motif's 500 MB limit.`;
+          restoreStatus.className = 'form-status form-status-fail';
+        } else if (f.size > 9 * 1024 * 1024) {
+          restoreStatus.textContent = `⚠ ${mb} MB — a database this size is very likely blocked by a reverse proxy/WAF (common cap ~10 MiB) before reaching motif. Restore on your LAN, or raise nginx client_max_body_size / CrowdSec SecRequestBodyLimit.`;
+          restoreStatus.className = 'form-status warn';
+        } else {
+          restoreStatus.textContent = `${f.name} · ${mb} MB`;
+          restoreStatus.className = 'form-status';
+        }
+      });
       uploadBtn.addEventListener('click', async () => {
         const file = fileInput.files && fileInput.files[0];
         if (!file) {

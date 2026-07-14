@@ -4063,7 +4063,15 @@
 #   413/403 HTML page (e.detail is null there), so the status-only check dumped the raw
 #   page for the MOST likely restore failure. Now keys on e.detail (motif error) →
 #   e.status (proxy) → neither (network/SSO). Guarded by test_v0_51_144.
-__version__ = "0.51.144"
+# 0.51.145: reverse-proxy audit tag 2/3 — pre-flight size hints on the other two
+#   uploads (theme upload already had one). (1) DB restore (500 MiB cap, a real DB
+#   nearly always exceeds a proxy body cap): file-pick hint → >500 MB reject / >9 MB
+#   "very likely blocked by a proxy, restore on your LAN" amber warn. (2) Import-preview
+#   (5 MB cap, direct fetch, previously zero proxy handling): file-pick size hint (>5 MB
+#   reject + disable / >1 MB proxy warn) AND routes its error path through the shared
+#   describeProxyOrHttpError decoder + a non-JSON-200 guard (kills the raw-HTML slice /
+#   "Unexpected token '<'"). Guarded by test_v0_51_145.
+__version__ = "0.51.145"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
