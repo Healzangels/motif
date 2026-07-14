@@ -79,8 +79,12 @@ def test_no_hardcoded_active_jobfilter_chip():
 
 
 def _binding(anchor: str) -> str:
+    # v0.51.142 grew the upload error block (status-branched proxy message), pushing
+    # the catch re-arm to offset ~3892 from the anchor — window widened 3600 → 4200
+    # so all three `<var>Submitting = false;` re-arms stay in view (manual-url's last
+    # is at ~2715, still comfortably inside).
     i = APP_JS.index(anchor)
-    return APP_JS[i:i + 3600]
+    return APP_JS[i:i + 4200]
 
 
 def test_manual_url_dialog_has_submit_guard():

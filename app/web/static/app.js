@@ -19282,15 +19282,21 @@
     const uStatus = document.getElementById('upload-status');
     uFile?.addEventListener('change', () => {
       if (!uStatus) return;
-      uStatus.classList.remove('err', 'ok');
+      uStatus.classList.remove('err', 'ok', 'warn');
       const f = uFile.files && uFile.files[0];
       if (!f) { uStatus.textContent = ''; return; }
       const mb = (f.size / (1024 * 1024)).toFixed(1);
       if (f.size > 50 * 1024 * 1024) {
-        uStatus.textContent = `✗ ${mb} MB exceeds motif's 50 MB limit — trim/re-encode the theme smaller.`;
+        // v0.51.142: ceil the shown size so the copy can't read "50.0 MB exceeds
+        // 50 MB" at the boundary (toFixed rounds a 50.04 MiB file down to "50.0").
+        const over = Math.ceil(f.size / (1024 * 1024));
+        uStatus.textContent = `✗ ~${over} MB exceeds motif's 50 MB limit — trim/re-encode the theme smaller.`;
         uStatus.classList.add('err');
       } else if (f.size > 9 * 1024 * 1024) {
+        // v0.51.142: .warn (amber) so the proxy-cap caution reads as a warning,
+        // not the same dim tone as the plain "<name> · <size>" info line.
         uStatus.textContent = `⚠ ${mb} MB — themes are short loops; large files may be blocked by a reverse proxy/WAF. Consider trimming/re-encoding to a smaller MP3.`;
+        uStatus.classList.add('warn');
       } else {
         uStatus.textContent = `${f.name} · ${mb} MB`;
       }
@@ -19320,7 +19326,7 @@
       const downloadOnlyInput = document.getElementById('upload-download-only');
       const downloadOnly = !!(downloadOnlyInput && downloadOnlyInput.checked);
       status.textContent = 'uploading…';
-      status.classList.remove('err', 'ok');
+      status.classList.remove('err', 'ok', 'warn');
       uploadSubmitting = true;
       if (submitBtn) submitBtn.disabled = true;
       const fd = new FormData();
@@ -19333,9 +19339,27 @@
         if (!r.ok) {
           const t = await r.text().catch(() => '');
           const ct = r.headers.get('content-type') || '';
-          // v0.51.141: a reverse proxy / WAF (CrowdSec / nginx / Cloudflare) can 403/413 the upload BEFORE it reaches motif — the body is its HTML error page, not motif's JSON. Show an actionable message instead of dumping the whole page (the user's CrowdSec 10 MiB body-limit ban).
+          // v0.51.141/142: an HTML / `<`-leading body means a reverse proxy / WAF
+          // (CrowdSec / nginx / Cloudflare / SSO) answered BEFORE the request reached
+          // motif — motif always replies to /api/ with JSON. Diagnose by status rather
+          // than always blaming request size: a 502 during a redeploy or a 401 SSO
+          // timeout is not an oversized file, and mislabelling it sends the operator
+          // to trim a theme that was never the problem.
           if (ct.includes('text/html') || /^\s*</.test(t)) {
-            throw new Error(`${r.status}: blocked by a reverse proxy / WAF before reaching motif — the theme likely exceeds its request-body limit. Trim/re-encode it smaller, upload on your LAN, or raise the proxy limit (nginx client_max_body_size / CrowdSec SecRequestBodyLimit).`);
+            const proxied = 'a reverse proxy / WAF answered before reaching motif';
+            let hint;
+            if (r.status === 413) {
+              hint = 'the theme exceeds the request-body limit — trim/re-encode it smaller, upload on your LAN, or raise it (nginx client_max_body_size / CrowdSec SecRequestBodyLimit)';
+            } else if (r.status === 403) {
+              hint = 'blocked by a WAF rule or an oversized body (e.g. CrowdSec) — trim/re-encode smaller, upload on your LAN, or check the proxy/WAF';
+            } else if (r.status === 401) {
+              hint = 'the proxy/SSO session expired — reload the page and sign in again';
+            } else if (r.status >= 502 && r.status <= 504) {
+              hint = 'motif is unreachable (it may be restarting) — retry in a moment';
+            } else {
+              hint = 'check the proxy';
+            }
+            throw new Error(`${r.status}: ${proxied} — ${hint}.`);
           }
           // motif's own error is JSON with a `detail`; surface just that, not the raw JSON.
           let detail = t;

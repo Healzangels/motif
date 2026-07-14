@@ -6764,6 +6764,9 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 }
 .form-status.ok { color: var(--ok); }
 .form-status.err { color: var(--red); }
+/* v0.51.142: caution tone for the upload size-hint's >9 MiB proxy-cap warning —
+   semantic amber, sibling to .ok/.err so the warning reads as one. */
+.form-status.warn { color: var(--amber); }
 /* v1.13.2 (#3): pre-flight probe result tints. Match the OK/ERR
    palette so the visual language stays consistent. */
 .form-status.form-status-ok { color: var(--ok); }

@@ -22,8 +22,10 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 def _upload_handler() -> str:
     # the theme-upload fetch flow (the direct fetch to /upload-theme + its error path).
+    # v0.51.142 widened the error block (status-branched proxy message), so the
+    # window grew from 1400 → 2200 to still reach the JSON `detail` branch.
     i = APP_JS.index("/upload-theme`, {")
-    return APP_JS[i - 200:i + 1400]
+    return APP_JS[i - 200:i + 2200]
 
 
 def test_upload_detects_proxy_block_and_stops_dumping_html():

@@ -4033,7 +4033,16 @@
 #   proxy-blocked + nudge to trim/re-encode (themes are short loops). Sibling
 #   database-restore upload (via api()) left for a follow-up. Guarded by
 #   test_v0_51_141.
-__version__ = "0.51.141"
+# 0.51.142: code-review follow-ups on v0.51.141's theme-upload UX (3 message/UX
+#   fixes, no behavior/data change). (1) the proxy-block error no longer hard-blames
+#   request size — it branches on r.status so a 502 during a redeploy ("motif is
+#   unreachable — retry"), a 401 SSO timeout ("session expired — sign in again"), a
+#   403 WAF block, and a 413 body-limit each get the right prose instead of "trim
+#   the theme." (2) the pre-flight >9 MiB proxy-cap warning gets a .warn (amber)
+#   class so it reads as a warning, not the same dim tone as the plain info line.
+#   (3) the >50 MiB reject ceils the shown size so it can't read "50.0 MB exceeds
+#   50 MB" at the boundary. Guarded by test_v0_51_142.
+__version__ = "0.51.142"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
