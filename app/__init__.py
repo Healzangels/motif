@@ -4042,7 +4042,16 @@
 #   class so it reads as a warning, not the same dim tone as the plain info line.
 #   (3) the >50 MiB reject ceils the shown size so it can't read "50.0 MB exceeds
 #   50 MB" at the boundary. Guarded by test_v0_51_142.
-__version__ = "0.51.142"
+# 0.51.143: close the code-review #4 false-success (deferred from v0.51.142). The
+#   theme-upload used a direct fetch and declared "✓ uploaded" on r.ok alone — a
+#   reverse proxy that intercepts the POST and answers a 302→200 HTML page (e.g. an
+#   SSO login page) is also r.ok, so a theme that never reached motif reported
+#   success. Now the success path confirms motif's JSON body ({ok:true}) before
+#   declaring success. Sibling: the database-restore upload goes through api() (which
+#   already throws on a non-JSON 200, so no false success there) — reframed its catch
+#   so a proxy HTML 200 / network drop shows "could not reach motif…" instead of a
+#   cryptic "Unexpected token '<'". Guarded by test_v0_51_143.
+__version__ = "0.51.143"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

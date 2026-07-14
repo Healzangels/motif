@@ -7225,7 +7225,15 @@
           fileInput.value = '';
         } catch (e) {
           if (restoreStatus) {
-            restoreStatus.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+            // v0.51.143: motif's own errors carry err.status (set by api() on !r.ok);
+            // a plain throw with no .status means the 200 body wasn't motif's JSON —
+            // a reverse proxy answered the upload with an HTML page (SSO login / error),
+            // or the network dropped. Reframe instead of surfacing "Unexpected token '<'".
+            // (Sibling: the theme-upload success-body guard.)
+            const reachedMotif = e && typeof e.status === 'number';
+            restoreStatus.textContent = '✗ ' + (reachedMotif
+              ? (e.message || 'failed')
+              : 'could not reach motif — a reverse proxy / WAF may have returned a non-motif page (SSO login or a size/security block), or the network dropped. Reload, sign in, then retry.');
             restoreStatus.className = 'form-status form-status-fail';
           }
         } finally {
@@ -19365,6 +19373,16 @@
           let detail = t;
           try { const j = JSON.parse(t); if (j && j.detail) detail = j.detail; } catch (_) { /* non-JSON body */ }
           throw new Error(`${r.status}: ${detail || r.statusText}`);
+        }
+        // v0.51.143: r.ok alone isn't proof the upload reached motif — a reverse
+        // proxy that intercepts the POST and answers a 302→200 HTML page (e.g. an
+        // SSO login page) is also r.ok, and the theme never landed. Confirm motif's
+        // JSON success body ({ok:true}) before declaring success, else the operator
+        // sees "✓ uploaded" for a no-op. (Sibling: the database-restore catch.)
+        const okCt = r.headers.get('content-type') || '';
+        const okBody = okCt.includes('application/json') ? await r.json().catch(() => null) : null;
+        if (!okBody || okBody.ok !== true) {
+          throw new Error('got a 200 but not from motif — a reverse proxy / WAF likely returned an SSO or error page. Reload the page, sign in again, then retry.');
         }
         status.textContent = downloadOnly
           ? '✓ uploaded · backup saved (Plex untouched)'
