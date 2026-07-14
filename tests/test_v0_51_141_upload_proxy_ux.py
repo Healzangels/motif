@@ -30,10 +30,12 @@ def _upload_handler() -> str:
 
 def test_upload_detects_proxy_block_and_stops_dumping_html():
     block = _upload_handler()
-    # detects an HTML / non-JSON body (a proxy/WAF page, not motif's JSON) ...
-    assert "text/html" in block
-    assert "reverse proxy" in block and "reaching motif" in block
-    # ... and no longer just throws the raw response text as the message.
+    # v0.51.144: the HTML/non-JSON detection moved into the shared
+    # describeProxyOrHttpError helper; the upload block now delegates to it
+    # (helper contents are covered by test_v0_51_144).
+    assert "describeProxyOrHttpError(" in block
+    assert "if (proxyMsg) throw" in block
+    # ... and it still never re-throws the raw response text as the message.
     assert "${r.status}: ${t || r.statusText}" not in block
 
 

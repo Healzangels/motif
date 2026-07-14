@@ -357,6 +357,29 @@
   const _RX_LINK_BADGE_TITLE = /^(<span class="link-badge[^"]*)("[^>]*title=")([^"]*)/;
   const _RX_LINK_BADGE_CLASS = /class="link-badge/;
 
+  // v0.51.144: shared reverse-proxy / WAF / SSO error decoder (was inlined in the
+  // theme-upload handler in v0.51.141/142). motif always answers /api/ with JSON, so
+  // an HTML / `<`-leading body on an /api/ call means a proxy (CrowdSec / nginx /
+  // Cloudflare / Authentik) answered BEFORE the request reached motif.
+  //   proxyStatusHint(status)                      → an actionable sentence for a status.
+  //   describeProxyOrHttpError(status, ct, body)   → that sentence IFF the body looks
+  //     like a proxy page, else null (caller then keeps handling motif's own JSON).
+  function proxyStatusHint(status) {
+    const proxied = 'a reverse proxy / WAF answered before reaching motif';
+    let hint;
+    if (status === 413) hint = 'the request body exceeds the proxy limit — send a smaller file, upload on your LAN, or raise it (nginx client_max_body_size / CrowdSec SecRequestBodyLimit)';
+    else if (status === 403) hint = 'blocked by a WAF / CrowdSec rule (or an oversized body) — retry on your LAN, or check the proxy/WAF';
+    else if (status === 401) hint = 'the proxy/SSO session expired — reload the page and sign in again';
+    else if (status === 429) hint = 'rate-limited (CrowdSec / proxy) — slow down and retry in a bit';
+    else if (status >= 502 && status <= 504) hint = 'motif is unreachable (it may be restarting) — retry in a moment';
+    else hint = 'reload and sign in, then retry';
+    return `${status}: ${proxied} — ${hint}.`;
+  }
+  function describeProxyOrHttpError(status, contentType, bodyText) {
+    const looksHtml = (contentType || '').includes('text/html') || /^\s*</.test(bodyText || '');
+    return looksHtml ? proxyStatusHint(status) : null;
+  }
+
   async function api(method, path, body) {
     const opts = { method, headers: {} };
     if (body) {
@@ -4212,7 +4235,13 @@
       );
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        throw new Error(`${resp.status}: ${text || resp.statusText}`);
+        throw new Error(describeProxyOrHttpError(resp.status, resp.headers.get('content-type'), text)
+          || `${resp.status}: ${text || resp.statusText}`);
+      }
+      // v0.51.144: a proxy 302→200 SSO/login page is also resp.ok — confirm motif's
+      // JSON before claiming QUEUED, else the push never actually reached motif.
+      if (!(resp.headers.get('content-type') || '').includes('application/json')) {
+        throw new Error(proxyStatusHint(resp.status));
       }
       if (btn) btn.textContent = 'QUEUED';
       if (typeof libraryRapidPoll === 'function'
@@ -4246,7 +4275,12 @@
       );
       if (!r.ok) {
         const text = await r.text().catch(() => '');
-        throw new Error(`${r.status}: ${text || r.statusText}`);
+        throw new Error(describeProxyOrHttpError(r.status, r.headers.get('content-type'), text)
+          || `${r.status}: ${text || r.statusText}`);
+      }
+      // v0.51.144: confirm motif's JSON before claiming QUEUED (proxy SSO-200 guard).
+      if (!(r.headers.get('content-type') || '').includes('application/json')) {
+        throw new Error(proxyStatusHint(r.status));
       }
       if (btn) btn.textContent = 'QUEUED';
       if (typeof libraryRapidPoll === 'function'
@@ -4331,7 +4365,13 @@
       const r = await fetch(url, { method: 'POST' });
       if (!r.ok && r.status !== 204) {
         const t = await r.text().catch(() => '');
-        throw new Error(`${r.status}: ${t || r.statusText}`);
+        throw new Error(describeProxyOrHttpError(r.status, r.headers.get('content-type'), t)
+          || `${r.status}: ${t || r.statusText}`);
+      }
+      // v0.51.144: a proxy 200 HTML page also passes !r.ok — confirm motif's JSON
+      // (or the legit 204) so PURGE can't silently no-op on an SSO/login interception.
+      if (r.status !== 204 && !(r.headers.get('content-type') || '').includes('application/json')) {
+        throw new Error(proxyStatusHint(r.status));
       }
     } catch (e) {
       alert('Purge failed: ' + e.message);
@@ -7225,15 +7265,20 @@
           fileInput.value = '';
         } catch (e) {
           if (restoreStatus) {
-            // v0.51.143: motif's own errors carry err.status (set by api() on !r.ok);
-            // a plain throw with no .status means the 200 body wasn't motif's JSON —
-            // a reverse proxy answered the upload with an HTML page (SSO login / error),
-            // or the network dropped. Reframe instead of surfacing "Unexpected token '<'".
-            // (Sibling: the theme-upload success-body guard.)
-            const reachedMotif = e && typeof e.status === 'number';
-            restoreStatus.textContent = '✗ ' + (reachedMotif
-              ? (e.message || 'failed')
-              : 'could not reach motif — a reverse proxy / WAF may have returned a non-motif page (SSO login or a size/security block), or the network dropped. Reload, sign in, then retry.');
+            // v0.51.144: three-way (fixes v0.51.143, which only handled the no-status
+            // case). api() attaches e.detail (motif's JSON {detail}) AND e.status. A
+            // proxy 413/403 HTML page has a numeric e.status but e.detail === null (HTML
+            // doesn't parse) — the v0.51.143 status-only check wrongly dumped that raw
+            // page. A 200 SSO/HTML page throws inside r.json() with neither field.
+            let msg;
+            if (e && e.detail != null) {
+              msg = String(e.detail);                 // motif's own error, e.g. "file > 500 MiB"
+            } else if (e && typeof e.status === 'number') {
+              msg = proxyStatusHint(e.status);        // numeric status, non-JSON body ⇒ proxy page
+            } else {
+              msg = 'could not reach motif — a reverse proxy / WAF may have returned a non-motif page (SSO login or a size/security block), or the network dropped. Reload, sign in, then retry.';
+            }
+            restoreStatus.textContent = '✗ ' + msg;
             restoreStatus.className = 'form-status form-status-fail';
           }
         } finally {
@@ -19346,30 +19391,11 @@
         });
         if (!r.ok) {
           const t = await r.text().catch(() => '');
-          const ct = r.headers.get('content-type') || '';
-          // v0.51.141/142: an HTML / `<`-leading body means a reverse proxy / WAF
-          // (CrowdSec / nginx / Cloudflare / SSO) answered BEFORE the request reached
-          // motif — motif always replies to /api/ with JSON. Diagnose by status rather
-          // than always blaming request size: a 502 during a redeploy or a 401 SSO
-          // timeout is not an oversized file, and mislabelling it sends the operator
-          // to trim a theme that was never the problem.
-          if (ct.includes('text/html') || /^\s*</.test(t)) {
-            const proxied = 'a reverse proxy / WAF answered before reaching motif';
-            let hint;
-            if (r.status === 413) {
-              hint = 'the theme exceeds the request-body limit — trim/re-encode it smaller, upload on your LAN, or raise it (nginx client_max_body_size / CrowdSec SecRequestBodyLimit)';
-            } else if (r.status === 403) {
-              hint = 'blocked by a WAF rule or an oversized body (e.g. CrowdSec) — trim/re-encode smaller, upload on your LAN, or check the proxy/WAF';
-            } else if (r.status === 401) {
-              hint = 'the proxy/SSO session expired — reload the page and sign in again';
-            } else if (r.status >= 502 && r.status <= 504) {
-              hint = 'motif is unreachable (it may be restarting) — retry in a moment';
-            } else {
-              hint = 'check the proxy';
-            }
-            throw new Error(`${r.status}: ${proxied} — ${hint}.`);
-          }
-          // motif's own error is JSON with a `detail`; surface just that, not the raw JSON.
+          // v0.51.144: was an inlined status-branch here (v0.51.141/142) — now the
+          // shared describeProxyOrHttpError decoder. Non-null ⇒ a proxy/WAF/SSO page,
+          // not motif; null ⇒ motif's own JSON error, surface its `detail`.
+          const proxyMsg = describeProxyOrHttpError(r.status, r.headers.get('content-type'), t);
+          if (proxyMsg) throw new Error(proxyMsg);
           let detail = t;
           try { const j = JSON.parse(t); if (j && j.detail) detail = j.detail; } catch (_) { /* non-JSON body */ }
           throw new Error(`${r.status}: ${detail || r.statusText}`);

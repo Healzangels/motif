@@ -28,8 +28,10 @@ def _upload_success() -> str:
 
 
 def _restore_upload() -> str:
+    # v0.51.144 grew the catch to a three-way discriminator — window 900 → 1500 so
+    # the "could not reach motif" branch (offset ~1163) stays in view.
     i = APP_JS.index("'/api/admin/database-restore/upload'")
-    return APP_JS[i - 200:i + 900]
+    return APP_JS[i - 200:i + 1500]
 
 
 # ── theme upload: confirm motif's JSON body before success ───

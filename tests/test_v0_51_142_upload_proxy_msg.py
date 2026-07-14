@@ -33,20 +33,27 @@ def _size_hint() -> str:
     return APP_JS[i:i + 2200]
 
 
+def _proxy_helper() -> str:
+    # v0.51.144: the status-branch moved from the upload handler into the shared
+    # proxyStatusHint / describeProxyOrHttpError decoder.
+    i = APP_JS.index("function proxyStatusHint")
+    return APP_JS[i:i + 1400]
+
+
 # ── #1: proxy message branches on status ─────────────────────
 
 def test_proxy_message_branches_on_status():
-    block = _upload_handler()
+    block = _proxy_helper()
     # each distinct proxy cause is diagnosed by status code, not a single
     # "exceeds request-body limit" catch-all.
-    assert "r.status === 413" in block
-    assert "r.status === 403" in block
-    assert "r.status === 401" in block
-    assert "r.status >= 502 && r.status <= 504" in block
+    assert "status === 413" in block
+    assert "status === 403" in block
+    assert "status === 401" in block
+    assert "status >= 502 && status <= 504" in block
 
 
 def test_proxy_message_no_longer_hardblames_size_for_every_html_body():
-    block = _upload_handler()
+    block = _proxy_helper()
     # the old v0.51.141 wording asserted the body-limit cause unconditionally.
     assert "the theme likely exceeds its request-body limit" not in block
     # the 5xx branch tells the operator to retry (motif restarting), not to shrink.
@@ -56,11 +63,12 @@ def test_proxy_message_no_longer_hardblames_size_for_every_html_body():
 
 
 def test_proxy_branch_still_detects_html_and_surfaces_json_detail():
-    # v0.51.141 invariants preserved: HTML detection + motif JSON `detail` surfacing.
-    block = _upload_handler()
-    assert "text/html" in block
-    assert "JSON.parse(t)" in block
-    assert "j.detail" in block
+    # v0.51.144: HTML detection lives in the helper; the upload handler keeps the
+    # motif-JSON `detail` surfacing inline.
+    assert "text/html" in _proxy_helper()
+    handler = _upload_handler()
+    assert "JSON.parse(t)" in handler
+    assert "j.detail" in handler
 
 
 # ── #2: >9 MiB warning gets an amber .warn class ─────────────

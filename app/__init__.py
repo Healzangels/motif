@@ -4051,7 +4051,19 @@
 #   already throws on a non-JSON 200, so no false success there) — reframed its catch
 #   so a proxy HTML 200 / network drop shows "could not reach motif…" instead of a
 #   cryptic "Unexpected token '<'". Guarded by test_v0_51_143.
-__version__ = "0.51.143"
+# 0.51.144: reverse-proxy audit — correctness batch (all three-tag audit, tag 1/3).
+#   (1) New shared `describeProxyOrHttpError(status, ct, body)` / `proxyStatusHint(status)`
+#   decoder next to api() — one home for the proxy/WAF/SSO messaging that v0.51.141/142
+#   inlined; adds a 429 (rate-limited) branch; theme-upload now delegates to it.
+#   (2) Three false-success guards: PUSH/REPLACE and SWITCH PLACEMENT set the button to
+#   "QUEUED" on r.ok alone, and PURGE (/forget) passed on !r.ok — a proxy 302→200 SSO
+#   page is r.ok, so each claimed success though nothing reached motif. They now confirm
+#   motif's JSON content-type (PURGE still allows the legit 204) before claiming success.
+#   (3) Fixes the v0.51.143 DB-restore discriminator: api() sets e.status even for a proxy
+#   413/403 HTML page (e.detail is null there), so the status-only check dumped the raw
+#   page for the MOST likely restore failure. Now keys on e.detail (motif error) →
+#   e.status (proxy) → neither (network/SSO). Guarded by test_v0_51_144.
+__version__ = "0.51.144"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
