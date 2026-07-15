@@ -122,7 +122,8 @@ def test_dispatch_without_ctx_stores_null(tmp_path):
 
 def test_appjs_row_click_through_deeplink():
     i = APP_JS.index("function bindNotifInbox()")
-    body = APP_JS[i:i + 6000]
+    # v0.51.154: slice the whole binder (grouping pushed the click handler deeper).
+    body = APP_JS[i:APP_JS.index("function bindUploadDialog()", i)]
     # per-item rows get identity data-attrs + the clickable class
     assert "notif-clickable" in body
     assert "data-mt=" in body and "data-tid=" in body

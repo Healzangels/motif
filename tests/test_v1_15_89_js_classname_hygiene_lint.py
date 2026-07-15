@@ -76,6 +76,12 @@ ALLOWLIST: dict[str, str] = {
         "selector hook only. Documented in app.css ~line 2572."
     ),
     # ── JS state classes / structural-only marker classes ─────
+    "notif-x-group": (
+        "v0.51.154 notification-group dismiss-all button — a behaviour-only "
+        "click-delegation hook. Its visual styling comes from the sibling "
+        ".notif-x rule (it is `class=\"notif-x notif-x-group\"`); the group "
+        "variant carries no distinct CSS."
+    ),
     "history-section-empty": (
         "JS-only state marker on the history-section element when "
         "empty (used by the structural <details> rendering). No "

@@ -106,7 +106,7 @@ def test_appjs_marks_seen_on_open():
     # lives in load(), gated on there being an unseen row so a re-open of an
     # all-seen inbox doesn't re-POST.
     idx = APP_JS.index("function bindNotifInbox()")
-    body = APP_JS[idx:idx + 5000]
+    body = APP_JS[idx:APP_JS.index("function bindUploadDialog()", idx)]
     assert "items.some((i) => !i.seen)" in body
     assert "/api/notifications/seen" in body
 

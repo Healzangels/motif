@@ -1139,6 +1139,43 @@ body[data-ops-running="1"] #topbar-status-text {
 .notif-row.unread { background: rgba(var(--ok-rgb), 0.04); }
 .notif-row.seen .notif-title { color: var(--fg-dim); }
 
+/* v0.51.154: smart grouping — a burst of same-kind notifications collapses into
+   one expandable group. The group carries the tier stripe + unread wash; its
+   header is a click-to-expand summary, its children (revealed on expand) are
+   normal clickable rows indented under it. */
+.notif-group { border-left: 2px solid transparent; }
+.notif-group + .notif-group,
+.notif-group + .notif-row,
+.notif-row + .notif-group { border-top: 1px solid var(--line); }
+.notif-group.tier-add   { border-left-color: var(--ok); }
+.notif-group.tier-avail { border-left-color: var(--cyan); }
+.notif-group.tier-fyi   { border-left-color: var(--amber); }
+.notif-group.unread { background: rgba(var(--ok-rgb), 0.04); }
+.notif-group.seen .notif-group-head .notif-title { color: var(--fg-dim); }
+.notif-group-head {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 11px 16px;
+  cursor: pointer;
+}
+/* v0.51.154: the group header's summary emoji (single rows carry their emoji in
+   the stored title, but the synthetic group title has none — so it renders one). */
+.notif-emoji { font-size: var(--t-small); line-height: 1.4; }
+.notif-group-head:hover { background: rgba(var(--ok-rgb), 0.05); }
+.notif-caret {
+  display: inline-block;
+  color: var(--fg-mute);
+  font-size: var(--t-tiny);
+  transform: rotate(0deg);
+}
+.notif-group-head.is-open .notif-caret { transform: rotate(90deg); }
+.notif-group-children { list-style: none; margin: 0; padding: 0; }
+/* children: the group carries the stripe, so indent them + drop their own. */
+.notif-group-children .notif-row { border-left: 0; padding-left: 34px; }
+.notif-group-children .notif-row + .notif-row { border-top: 1px solid var(--line); }
+
 .notif-main { min-width: 0; }
 .notif-title {
   color: var(--fg);

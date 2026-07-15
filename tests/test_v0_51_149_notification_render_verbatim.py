@@ -37,13 +37,16 @@ def test_kind_map_is_tier_only():
 
 
 def test_row_renders_title_verbatim_no_emoji_or_phrase():
-    body = _bind_body()
+    # scope to the single-row renderer: groups DO carry an emoji header (v0.51.154),
+    # so check rowHtml specifically, not the whole binder.
+    i = APP_JS.index("function rowHtml(n)")
+    row = APP_JS[i:APP_JS.index("function renderEmpty(", i)]
     # the stored title is rendered as-is …
-    assert "notif-title" in body and "htmlEscape(n.title" in body
+    assert "notif-title" in row and "htmlEscape(n.title" in row
     # … and the row no longer synthesises its own emoji span or phrase sub-line.
-    assert "notif-emoji" not in body
-    assert 'class="notif-sub"' not in body
-    assert "notif-sub" not in body
+    assert "notif-emoji" not in row
+    assert 'class="notif-sub"' not in row
+    assert "notif-sub" not in row
 
 
 def test_ops_css_two_column_grid_and_dead_rules_removed():
@@ -52,8 +55,10 @@ def test_ops_css_two_column_grid_and_dead_rules_removed():
     grid_line = row_rule[:row_rule.index("}")]
     assert "grid-template-columns: 1fr auto;" in grid_line
     assert "20px 1fr auto" not in grid_line
-    # the emoji/sub rules are gone (`.notif-empty-sub` stays — different class).
-    assert ".notif-emoji" not in OPS_CSS
+    # the .notif-sub phrase rule is gone (`.notif-empty-sub` stays — different
+    # class). NOTE: .notif-emoji CAME BACK in v0.51.154 for the group-header
+    # summary (single rows still don't use it — see the rowHtml guard above), so
+    # it is intentionally NOT asserted absent here.
     assert ".notif-sub {" not in OPS_CSS
     assert ".notif-empty-sub" in OPS_CSS  # empty-state hint kept
 

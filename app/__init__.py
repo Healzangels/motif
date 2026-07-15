@@ -4145,7 +4145,17 @@
 #   nav ~4px MORE room (no extra wrap). Mobile (≤600px) gives INBOX its own row-1 area
 #   ("brand inbox status" / "nav nav nav"). Verified in a topbar harness at desktop width
 #   (INBOX always visible with op-mini running, no horizontal overflow). Guard test_v0_51_153.
-__version__ = "0.51.153"
+# 0.51.154: notification center — smart batch grouping in the drawer (build phase 4,
+#   final). A burst of same-kind notifications (a bulk sync's adds, a mass theme-lost)
+#   collapses into ONE expandable group row so the drawer isn't flooded — client-side
+#   in bindNotifInbox (groupRows: adjacent same-event_kind runs within 10 min, length
+#   >=3), so no backend change + it PRESERVES v0.51.151 click-through (children stay
+#   individually clickable + dismissable when expanded). Group header = tier stripe +
+#   emoji + "N <noun>" + caret + dismiss-all ×; per-child × ticks the count, group ×
+#   clears the unit. Runs of 1-2 stay individual. .notif-group* CSS in ops.css.
+#   Verified in a browser harness (burst→group, expand, child/group dismiss). Guard
+#   test_v0_51_154. Completes the notification center (see the plan memory).
+__version__ = "0.51.154"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

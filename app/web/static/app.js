@@ -19432,6 +19432,73 @@
       plex_theme_lost:              'tier-fyi',
     };
 
+    // v0.51.154: smart grouping — a burst of same-kind notifications (a bulk sync's
+    // adds, a mass theme-lost) collapses into ONE expandable group row so the drawer
+    // isn't flooded. event_kind → [group emoji, plural noun]. Groups default
+    // COLLAPSED; expanding reveals the children, which stay individually clickable
+    // (click-through) + dismissable (v0.51.151 preserved).
+    const GROUP = {
+      theme_added:                  ['🎵', 'themes added'],
+      plex_item_arrived_themed:     ['📺', 'new items already themed'],
+      theme_auto_restored:          ['🛠', 'themes restored'],
+      new_tdb_theme_available:      ['✨', 'themes available to add'],
+      backup_ready_to_deploy:       ['🎯', 'backups ready to deploy'],
+      theme_lost_backup_ready:      ['💔', 'themes lost — backup ready'],
+      theme_lost_sidecar_available: ['💔', 'themes lost — still playing'],
+      plex_theme_lost:              ['💔', 'themes lost'],
+    };
+    const GROUP_MIN = 3;            // collapse only real bursts (2 stays as singles)
+    const GROUP_WINDOW_MS = 600000; // adjacent same-kind rows within 10 min group
+
+    const _ts = (iso) => Date.parse(iso) || 0;
+
+    // Collapse maximal runs of adjacent same-event_kind rows (each within the
+    // window of its predecessor) of length >= GROUP_MIN into a group; shorter runs
+    // stay as individual rows. items arrive newest-first.
+    function groupRows(items) {
+      const out = [];
+      let run = [];
+      const flush = () => {
+        if (run.length >= GROUP_MIN) {
+          out.push({ group: true, kind: run[0].event_kind, children: run.slice() });
+        } else {
+          run.forEach((n) => out.push({ group: false, n }));
+        }
+        run = [];
+      };
+      for (const n of items) {
+        const prev = run[run.length - 1];
+        if (prev && prev.event_kind === n.event_kind
+            && Math.abs(_ts(prev.ts) - _ts(n.ts)) <= GROUP_WINDOW_MS) {
+          run.push(n);
+        } else {
+          flush();
+          run = [n];
+        }
+      }
+      flush();
+      return out;
+    }
+
+    function groupHtml(g) {
+      const tier = TIER[g.kind] || '';
+      const meta = GROUP[g.kind] || ['•', 'notifications'];
+      const anyUnread = g.children.some((c) => !c.seen);
+      const cls = ['notif-group', tier, anyUnread ? 'unread' : 'seen']
+        .filter(Boolean).join(' ');
+      return `<li class="${cls}">`
+        + `<div class="notif-group-head" role="button" tabindex="0" aria-expanded="false">`
+        +   `<span class="notif-emoji" aria-hidden="true">${meta[0]}</span>`
+        +   `<div class="notif-main"><div class="notif-title">`
+        +     `${g.children.length} ${htmlEscape(meta[1])}</div></div>`
+        +   `<div class="notif-meta">`
+        +     `<span class="notif-caret" aria-hidden="true">&#9656;</span>`
+        +     `<button class="notif-x notif-x-group" type="button" aria-label="Dismiss all">&times;</button>`
+        +   `</div></div>`
+        + `<ul class="notif-group-children" hidden>${g.children.map(rowHtml).join('')}</ul>`
+        + `</li>`;
+    }
+
     function rowHtml(n) {
       const tier = TIER[n.event_kind] || '';
       // v0.51.151: per-item rows (media_type + tmdb_id present) click through to
@@ -19467,7 +19534,8 @@
         const items = (data && data.notifications) || [];
         if (!listEl) return;
         if (!items.length) { renderEmpty(); return; }
-        listEl.innerHTML = items.map(rowHtml).join('');
+        listEl.innerHTML = groupRows(items)
+          .map((x) => (x.group ? groupHtml(x) : rowHtml(x.n))).join('');
         if (clearBtn) clearBtn.hidden = false;
         // snapshot-mark the unread set seen → badge clears on the next poll;
         // clear the glow now too so the pill dims immediately (rows keep their
@@ -19501,8 +19569,27 @@
     }
 
     async function dismiss(id, li) {
+      // v0.51.154: if this row lives inside a group, tidy the group after removal
+      // (drop the group when its last child goes; else tick the header count down).
+      const groupLi = li && li.closest('.notif-group');
       try { await api('POST', `/api/notifications/${id}/dismiss`); } catch (_) { /* gone is fine */ }
       if (li) li.remove();
+      if (groupLi) {
+        const rem = groupLi.querySelectorAll('.notif-row').length;
+        if (!rem) groupLi.remove();
+        else {
+          const t = groupLi.querySelector('.notif-group-head .notif-title');
+          if (t) t.textContent = t.textContent.replace(/^\d+/, String(rem));
+        }
+      }
+      if (listEl && !listEl.querySelector('.notif-row')) renderEmpty();
+    }
+    async function dismissGroup(groupLi) {
+      // v0.51.154: dismiss every child of a collapsed group as a unit.
+      const kids = [...groupLi.querySelectorAll('.notif-row')];
+      groupLi.remove();
+      await Promise.all(kids.map((li) =>
+        api('POST', `/api/notifications/${li.dataset.nid}/dismiss`).catch(() => {})));
       if (listEl && !listEl.querySelector('.notif-row')) renderEmpty();
     }
     async function clearAll() {
@@ -19515,10 +19602,27 @@
     if (scrim) scrim.addEventListener('click', close);
     if (clearBtn) clearBtn.addEventListener('click', clearAll);
     if (listEl) listEl.addEventListener('click', (e) => {
+      // v0.51.154: group dismiss-all (×) — check before the single-× branch.
+      const gx = e.target.closest('.notif-x-group');
+      if (gx) {
+        const groupLi = gx.closest('.notif-group');
+        if (groupLi) dismissGroup(groupLi);
+        return;
+      }
       const x = e.target.closest('.notif-x');
       if (x) {
         const li = x.closest('.notif-row');
         if (li) dismiss(li.dataset.nid, li);
+        return;
+      }
+      // v0.51.154: expand/collapse a group header (reveals the clickable children).
+      const head = e.target.closest('.notif-group-head');
+      if (head) {
+        const kids = head.parentElement.querySelector('.notif-group-children');
+        const opening = kids.hidden;
+        kids.hidden = !opening;
+        head.setAttribute('aria-expanded', String(opening));
+        head.classList.toggle('is-open', opening);
         return;
       }
       // v0.51.151: click-through — navigate to the row's INFO card via the
