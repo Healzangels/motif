@@ -488,11 +488,11 @@ a:hover { color: var(--green-bright); text-shadow: 0 0 8px rgba(var(--green-rgb)
 .topbar {
   position: sticky; top: 0; z-index: 10;
   display: grid;
-  /* v0.51.153: brand · nav(1fr) · INBOX · status-cluster. The INBOX pill gets its
-     OWN column (3rd) so a running-job op-mini growing the status cluster (4th)
-     can't push it off-screen. gap trimmed gap-7→gap-5 so the extra 4th column
-     doesn't squeeze the nav (1fr) into wrapping when a job is running. */
-  grid-template-columns: auto 1fr auto auto;
+  /* v0.51.161: brand · nav(1fr) · status-cluster. INBOX moved back INTO the status
+     cluster (between IDLE and // HELP, the user's ask) — a running-job op-mini renders
+     to INBOX's LEFT (before IDLE) so it still can't push INBOX out. gap stays gap-5
+     (trimmed from gap-7 in v0.51.153) so the cluster doesn't wrap the nav. */
+  grid-template-columns: auto 1fr auto;
   align-items: center;
   gap: var(--gap-5);
   padding: 14px 28px;
@@ -5715,13 +5715,12 @@ html[data-settings-tab] #settings-tabs .tab:hover {
     padding: 10px 12px;
     column-gap: var(--gap-3);
     row-gap: var(--gap-2);
-    /* v0.51.153: INBOX gets its own column between brand and status on row 1
-       (op-mini is pulled to a bottom strip on mobile, so the cluster can't push
-       it — but it still needs an explicit grid cell, not an implicit auto one). */
-    grid-template-columns: minmax(0, auto) auto 1fr;
-    grid-template-areas: "brand inbox status" "nav nav nav";
+    /* v0.51.161: INBOX moved back into .topbar-status (op-mini is pulled to a bottom
+       strip on mobile, so the cluster can't push it), so the row-1 grid is just
+       brand · status again. */
+    grid-template-columns: minmax(0, auto) 1fr;
+    grid-template-areas: "brand status" "nav nav";
   }
-  #topbar-inbox-badge { grid-area: inbox; }
   /* min-width:0 shrink floor so a long version + update badge can't overflow the
      brand column and re-widen the topbar (mobile audit A9). */
   .brand { grid-area: brand; min-width: 0; }

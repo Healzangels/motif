@@ -101,7 +101,7 @@ def test_topbar_nav_column_floored_on_mobile():
     # gets its own full-width second row. The floored-column grid is gone; the
     # new 2-row layout is asserted in test_v0_51_3_mobile_nav_row.
     assert "grid-template-columns: auto minmax(24px, 1fr) auto;" not in MOBILE_APP_CSS
-    assert 'grid-template-areas: "brand inbox status" "nav nav nav";' in MOBILE_APP_CSS  # v0.51.153: + INBOX
+    assert 'grid-template-areas: "brand status" "nav nav";' in MOBILE_APP_CSS  # v0.51.161: INBOX back in cluster
 
 
 # ── 2. LOGS/JOBS + LOGS/EVENT STREAM unreadable on mobile ───────────────

@@ -4226,7 +4226,16 @@
 #   loudnorm-on-downloaded-mp3 abort; a no-op on audio-only files so no regression), + the
 #   parse-failure debug log now includes ffmpeg's last stderr line so any remaining failure
 #   is diagnosable. Guard test_v0_51_160.
-__version__ = "0.51.160"
+# 0.51.161: topbar — move the INBOX pill to between the IDLE status pill and // HELP (the
+#   user: "between the idle status pill and the //HELP with proper spacing"). Moved the
+#   button back INTO .topbar-status (right after IDLE, before help-toggle; spaced by the
+#   single cluster flex gap), reverting the v0.51.153 own-column. Still safe from op-mini
+#   push-out — a running-job op-mini renders to INBOX's LEFT (before IDLE) on desktop and
+#   drops to a bottom strip on mobile, so it grows away from INBOX, never over it. Desktop
+#   grid back to 3 cols (auto 1fr auto); mobile row-1 back to "brand status" (INBOX rides
+#   the cluster, its own grid-area removed). Updated test_v0_50_88 / test_v0_51_3 /
+#   test_v0_51_153 pins.
+__version__ = "0.51.161"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

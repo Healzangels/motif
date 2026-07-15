@@ -354,17 +354,6 @@
       <a href="/queue" data-nav="queue">LOGS</a>
       <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
     </nav>
-    {# v0.51.153: INBOX pill — opens the in-app notification drawer. A <button>
-       (unlike the attention pills, which are filter deep-links). Always visible,
-       dim at rest; JS lights it green (.has-unread) + shows the unread count on
-       each /api/stats poll. Deliberately its OWN topbar grid column (not inside
-       .topbar-status) so a running-job op-mini growing the status cluster can't
-       push it out of view. #}
-    <button class="op-pill op-notif" id="topbar-inbox-badge" type="button"
-            title="Notifications" aria-label="Notifications">
-      <span class="op-pill-count" id="topbar-inbox-count" hidden>0</span>
-      <span class="op-pill-label">INBOX</span>
-    </button>
     <div class="topbar-status" id="topbar-status">
       <!-- v1.12.106: unified op-pill vocabulary (cf. ops.css).
            UPD / FAIL / OPS now read consistently — same shape,
@@ -499,6 +488,19 @@
          data-ops-trigger title="No active ops — click to view recent history.">
         <span class="op-pill-label">IDLE</span>
       </a>
+      {# v0.51.161: INBOX pill — opens the in-app notification drawer. A <button>
+         (unlike the attention pills, which are filter deep-links). Always visible,
+         dim at rest; JS lights it green (.has-unread) + shows the unread count on
+         each /api/stats poll. The user wants it between the IDLE status pill and
+         // HELP; placed here inside .topbar-status right after IDLE, spaced by the
+         single cluster flex gap. Still safe from op-mini push-out: a running-job
+         op-mini renders BEFORE IDLE (to INBOX's left) on desktop and drops to a
+         bottom strip on mobile, so it grows away from INBOX, never over it. #}
+      <button class="op-pill op-notif" id="topbar-inbox-badge" type="button"
+              title="Notifications" aria-label="Notifications">
+        <span class="op-pill-count" id="topbar-inbox-count" hidden>0</span>
+        <span class="op-pill-label">INBOX</span>
+      </button>
       {# v1.23.49: HELP toggle grouped at the right with the logout control
          (was floating at the LEFT of the cluster, crammed against IDLE).
          v1.23.52: IDLE / // HELP / logout are spaced evenly by the single
