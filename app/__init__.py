@@ -4110,7 +4110,17 @@
 #   1fr/auto grid, and the title renders verbatim. Dropped the dead .notif-emoji /
 #   .notif-sub CSS. A clean bare-title field is the later enrichment tag. Guard
 #   test_v0_51_149.
-__version__ = "0.51.149"
+# 0.51.150: in-app notification center — the plex_item_arrived_themed event (build
+#   phase 3). New FYI: fires when a GENUINELY-NEW Plex item arrives ALREADY themed by
+#   Plex (has_theme=1) that motif doesn't own (no placement / local file). Hooked in
+#   plex_enum._upsert_items after the theme-available push, over the rks inserted THIS
+#   enum, BASELINE-GATED on updated>0 so a section's first enum (all inserts) stays
+#   silent instead of flooding. Per-(media_type, tmdb) 30-day deduped. New
+#   notify_content.format_arrived_themed_{title,body,batch_*}; config event
+#   plex_item_arrived_themed (default OFF for Discord) + settings toggle +
+#   _EVENT_NOTIFY_TYPE entry. OFF for Apprise but records to the in-app INBOX
+#   unconditionally (the primary surface). Guard test_v0_51_150.
+__version__ = "0.51.150"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

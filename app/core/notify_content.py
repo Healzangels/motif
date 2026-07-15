@@ -936,6 +936,37 @@ def format_theme_available_batch_body(labels: list[str],
     return _format_batch_body(labels, buckets=buckets)
 
 
+def format_arrived_themed_title(ctx: ItemContext) -> str:
+    """v0.51.150: subject for `plex_item_arrived_themed` — a genuinely-new Plex
+    item that arrived ALREADY themed by Plex (has_theme=1) and that motif doesn't
+    own. 📺 emoji = "new content in Plex" (distinct from ✨ theme-available, which
+    is an ACTIONABLE suggestion; this is a pure FYI). The title carries identity;
+    no CTA, since there is nothing to do."""
+    return f"📺 New in Plex, already themed — {_safe_display_title(ctx)}"
+
+
+def format_arrived_themed_body(ctx: ItemContext) -> str:
+    """v0.51.150: short FYI body. No CTA — Plex is already serving a theme, so
+    the operator needs to do nothing; the message just surfaces that it happened
+    (title already carries identity, v1.19.92 no-duplication copy standard)."""
+    return (
+        "A new item in your Plex library already has a theme playing — Plex is "
+        "serving one, so there's nothing to do. Just letting you know it arrived "
+        "already themed."
+    )
+
+
+def format_arrived_themed_batch_title(n: int) -> str:
+    """v0.51.150: digest subject when one refresh surfaces several new
+    already-themed arrivals at once."""
+    return f"📺 {n} new items arrived already themed"
+
+
+def format_arrived_themed_batch_body(labels: list[str],
+                                     buckets: dict | None = None) -> str:
+    return _format_batch_body(labels, buckets=buckets)
+
+
 def format_theme_deleted_title(
     ctx: ItemContext, *, action: str,
 ) -> str:

@@ -69,6 +69,9 @@ _THEME_LOST_DISPATCH_OUTER_WARNED: bool = False
 # _upsert_items). Same first-occurrence-warn / subsequent-debug
 # class-9 pattern as the theme-lost flags above.
 _THEME_AVAIL_NOTIFY_WARNED: bool = False
+# v0.51.150: warn-once flag for the plex_item_arrived_themed FYI dispatch (same
+# class-9 pattern — a notify failure logs once then downgrades to debug).
+_ARRIVED_THEMED_NOTIFY_WARNED: bool = False
 
 # v1.21.5: ~fire-once dedupe window per (media_type, tmdb_id) for the
 # theme-available push. The sweep only ever sees a row on the enum
@@ -3089,6 +3092,13 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     candidate_rks = list(dict.fromkeys(new_item_rks + newly_linked))
     if candidate_rks and updated > 0:
         _maybe_notify_theme_available(db_path, candidate_rks)
+    # v0.51.150: FYI when a genuinely-new Plex item arrives ALREADY themed by Plex
+    # (has_theme=1) that motif doesn't own. Scoped to NEW inserts only (an
+    # "arrival" is a fresh rk, not a late-link), and gated on updated>0 by the same
+    # baseline logic as the theme-available push above — the FIRST enum of a section
+    # is all inserts (updated=0) so the whole seed stays silent instead of flooding.
+    if new_item_rks and updated > 0:
+        _maybe_notify_arrived_themed(db_path, new_item_rks)
     return inserted, updated
 
 
@@ -3262,6 +3272,119 @@ def _maybe_notify_theme_available(
             log.debug(
                 "new_tdb_theme_available notify dispatch suppressed: %s",
                 _e,
+            )
+
+
+def _maybe_notify_arrived_themed(
+    db_path: Path, new_item_rks: list[str],
+) -> None:
+    """v0.51.150: FYI dispatch for genuinely-new Plex items that arrived ALREADY
+    themed by Plex (has_theme=1) and that motif doesn't own (no placement, no
+    local file for the (media_type, tmdb_id)). This is the "new content showed up
+    already themed — nothing to do" signal, the inverse of
+    _maybe_notify_theme_available (which fires for new items with NO theme).
+
+    Baseline-gated by the caller (updated>0), so a section's first enum — all
+    inserts — stays silent instead of flooding the inbox with the whole library.
+    Per-(media_type, tmdb_id) 30-day deduped so a Plex remove+re-add (new rk)
+    doesn't re-ping. Records to the in-app INBOX unconditionally of the Apprise
+    toggle (notify.dispatch records INBOX_EVENT_KINDS before the send gate — the
+    inbox is the primary surface for this passive FYI). Best-effort (class-9): a
+    notify failure never disturbs the enum."""
+    try:
+        from ..config import Settings
+        _settings = Settings()
+        # (media_type, tmdb_id) -> (title, year, section_id). The dict collapses
+        # multi-edition rows (same tmdb across standard/4K) to one candidate.
+        cand: dict[tuple[str, int], tuple[str, int | None, str | None]] = {}
+        with get_conn(db_path) as conn:
+            for i in range(0, len(new_item_rks), 400):
+                chunk = new_item_rks[i:i + 400]
+                ph = ",".join("?" * len(chunk))
+                # Plex serves a theme (has_theme=1) on a brand-new item that motif
+                # has no managed theme for. edition-blind OK (v0.51.150): the NOT
+                # EXISTS subqueries are (mt, tmdb) title-global BY DESIGN — a theme
+                # motif owns for ANY edition suppresses this FYI (it's not "arrived
+                # externally themed" if motif put a theme on the title), and the
+                # notify is a passive digest, not an edition-scoped mutation.
+                rows = conn.execute(
+                    "SELECT pi.media_type AS mt, pi.guid_tmdb AS tmdb_id, "
+                    "       COALESCE(t.title, pi.title) AS title, "
+                    "       COALESCE(t.year, pi.year) AS year, "
+                    "       pi.section_id AS section_id "
+                    "  FROM plex_items pi "
+                    "  LEFT JOIN themes t ON t.id = pi.theme_id "
+                    f" WHERE pi.rating_key IN ({ph}) "
+                    "   AND pi.has_theme = 1 "
+                    "   AND pi.guid_tmdb IS NOT NULL "
+                    "   AND NOT EXISTS (SELECT 1 FROM local_files lf "
+                    "        WHERE lf.media_type = pi.media_type "
+                    "          AND lf.tmdb_id = pi.guid_tmdb) "
+                    "   AND NOT EXISTS (SELECT 1 FROM placements p "
+                    "        WHERE p.media_type = pi.media_type "
+                    "          AND p.tmdb_id = pi.guid_tmdb)",
+                    chunk,
+                ).fetchall()
+                for r in rows:
+                    cand[(r["mt"], r["tmdb_id"])] = (
+                        r["title"], r["year"], r["section_id"],
+                    )
+        if not cand:
+            return
+        from . import notify as _notify
+        from . import notify_content as _nc
+        from . import notify_dedupe as _ndedupe
+        notif = _settings.cfg.notifications
+        # Dedupe-filter: only (mt, tmdb) not fired inside the window.
+        fresh: list[tuple[str, int, str, int | None, str | None, str]] = []
+        for (mt, tid), (title, year, section_id) in cand.items():
+            key = f"plex_item_arrived_themed:{mt}:{tid}"
+            if _ndedupe.should_fire(
+                    db_path, key,
+                    rate_limit_seconds=_THEME_AVAIL_DEDUPE_SECONDS):
+                fresh.append((mt, tid, title, year, section_id, key))
+        if not fresh:
+            return
+        # dispatch() is called unconditionally of the Apprise toggle — it records
+        # the inbox row for this INBOX_EVENT_KIND before the send gate, then skips
+        # the Discord send if the toggle is off (the OFF default).
+        if len(fresh) == 1:
+            mt, tid, _title, _year, section_id, _key = fresh[0]
+            _ctx = _nc.enrich_item(
+                db_path, media_type=mt, tmdb_id=tid, section_id=section_id,
+            )
+            _notify.dispatch(
+                db_path, notif,
+                event_kind="plex_item_arrived_themed",
+                title=_nc.format_arrived_themed_title(_ctx),
+                body=_nc.format_arrived_themed_body(_ctx),
+                body_format="markdown",
+            )
+        else:
+            labels = [
+                f"{title} ({year})" if year else f"{title}"
+                for _mt, _tid, title, year, _sec, _key in fresh
+            ]
+            _notify.dispatch(
+                db_path, notif,
+                event_kind="plex_item_arrived_themed",
+                title=_nc.format_arrived_themed_batch_title(len(fresh)),
+                body=_nc.format_arrived_themed_batch_body(labels),
+                body_format="markdown",
+            )
+        for _mt, _tid, _title, _year, _sec, key in fresh:
+            _ndedupe.record_fire(db_path, key)
+    except Exception as _e:  # noqa: BLE001
+        global _ARRIVED_THEMED_NOTIFY_WARNED
+        if not _ARRIVED_THEMED_NOTIFY_WARNED:
+            log.warning(
+                "v0.51.150: plex_item_arrived_themed notify dispatch failed: "
+                "%s. Subsequent failures downgrade to debug.", _e,
+            )
+            _ARRIVED_THEMED_NOTIFY_WARNED = True
+        else:
+            log.debug(
+                "plex_item_arrived_themed notify dispatch suppressed: %s", _e,
             )
 
 

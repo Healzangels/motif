@@ -365,6 +365,16 @@ _DEFAULT_NOTIFY_EVENTS: dict[str, bool] = {
     # (_maybe_notify_theme_available, post-resolve) which is sparse
     # and naturally rate-limited.
     "new_tdb_theme_available": False,
+    # v0.51.150: OFF-by-default (Apprise). Fires when a GENUINELY-NEW Plex item
+    # arrives ALREADY themed by Plex (has_theme=1) that motif doesn't own (no
+    # placement / local file) — an FYI "new content showed up already themed,
+    # nothing to do." Baseline-gated (only after a section's first enum) + per-
+    # (media_type, tmdb) 30-day deduped, so it can't flood on the initial seed or
+    # on Plex remove+re-add churn. OFF for Discord like new_tdb_theme_available —
+    # but it still records to the in-app INBOX unconditionally of this toggle
+    # (notify.dispatch records INBOX_EVENT_KINDS before the Apprise gate), which
+    # is the primary surface for it (see notify_inbox.INBOX_EVENT_KINDS).
+    "plex_item_arrived_themed": False,
     # v1.18.80: ON-by-default. Fires when Plex's theme transitions
     # 1→0 on a row with user_overrides.intent='backup'. Rare
     # (Plex doesn't drop its own themes often) AND actionable

@@ -87,6 +87,8 @@ _EVENT_NOTIFY_TYPE: dict[str, NotifyType] = {
     "theme_pushed":            "info",
     "theme_deleted":           "info",
     "new_tdb_theme_available": "info",
+    # v0.51.150: FYI — a new Plex item arrived already themed by Plex.
+    "plex_item_arrived_themed": "info",
     "release_available":       "info",
     # v1.18.80: fires when Plex stops serving its own theme on a row
     # with user_overrides.intent='backup'. The user's backup file is
