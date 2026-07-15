@@ -51,12 +51,14 @@
   <div class="loud-target">
     <label class="loud-target-head" for="loud-target">
       <span class="field-name">TARGET PREVIEW</span>
-      <span class="muted small">drag to see what normalizing to a target would do — dry-run, nothing is changed</span>
+      <span class="muted small" id="loud-target-hint">drag to see what normalizing to a target would do — dry-run, nothing is changed</span>
     </label>
     <div class="loud-target-row">
       <input type="range" id="loud-target" class="loud-slider"
              min="-31" max="-12" step="0.5" value="-18" />
       <output class="loud-target-val" id="loud-target-val">−18.0 LUFS</output>
+      <button type="button" class="btn btn-tiny" id="loud-target-rec" style="display:none"
+              title="Snap the target back to the recommended level.">// USE RECOMMENDED</button>
     </div>
     <div class="loud-preview" id="loud-preview"></div>
   </div>

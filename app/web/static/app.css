@@ -7715,6 +7715,8 @@ body.dash-customize-mode .dash-customize-link:hover {
 .loud-stat { display: flex; flex-direction: column; gap: var(--gap-1); }
 .loud-stat-label { font-size: var(--t-small); color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em; }
 .loud-stat-val { font-size: var(--t-large); color: var(--accent); font-variant-numeric: tabular-nums; }
+/* v0.51.162: the recommended-target tile leads the strip — brighter accent to pop. */
+.loud-stat.is-rec .loud-stat-val { color: var(--accent-bright); }
 .loud-hist { display: flex; flex-direction: column; gap: var(--gap-1); }
 .loud-hist-row { display: grid; grid-template-columns: 5.5ch 1fr 4ch; align-items: center; gap: var(--gap-2); }
 .loud-hist-label { text-align: right; color: var(--fg-dim); font-variant-numeric: tabular-nums; }

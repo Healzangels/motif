@@ -7626,10 +7626,13 @@
     const slider = document.getElementById('loud-target');
     const targetVal = document.getElementById('loud-target-val');
     const previewEl = document.getElementById('loud-preview');
+    const hintEl = document.getElementById('loud-target-hint');
+    const recBtn = document.getElementById('loud-target-rec');   // v0.51.162
     if (!slider || !previewEl) return;
     let values = [];
-    let sliderSeeded = false;   // v0.51.160: seed the slider to the median ONCE, so a
-                                // live refresh mid-run doesn't yank it off the operator's drag
+    let recommended = null;      // v0.51.162: server-recommended target LUFS
+    let sliderSeeded = false;   // v0.51.160: seed the slider ONCE (to the recommendation),
+                                // so a live refresh mid-run doesn't yank it off the operator's drag
     // a real normalizer respects a true-peak ceiling, so a quiet track with little
     // peak headroom can't reach a loud target — the preview models that.
     const PEAK_CEIL = -1.0;   // dBTP
@@ -7641,14 +7644,22 @@
         + `<span class="loud-stat-label">${label}</span></div>`;
     }
 
-    function renderStats(s) {
-      statsEl.innerHTML = s ? [
+    function renderStats(s, rec) {
+      if (!s) { statsEl.innerHTML = ''; return; }
+      const parts = [];
+      // v0.51.162: lead with the recommended target — the headline number.
+      if (rec != null) {
+        parts.push(`<div class="loud-stat is-rec"><span class="loud-stat-val">${fmtLufs(rec)} LUFS</span>`
+          + '<span class="loud-stat-label">recommended</span></div>');
+      }
+      parts.push(
         tile(fmtLufs(s.median) + ' LUFS', 'median'),
         tile(fmtLufs(s.p10) + ' … ' + fmtLufs(s.p90), 'spread (p10–p90)'),
         tile(fmtLufs(s.min), 'quietest'),
         tile(fmtLufs(s.max), 'loudest'),
         tile(String(s.count), 'measured'),
-      ].join('') : '';
+      );
+      statsEl.innerHTML = parts.join('');
     }
 
     function renderHist(hist, median) {
@@ -7714,16 +7725,24 @@
         if (outliersBlock) outliersBlock.style.display = 'none';
         return;
       }
-      renderStats(rep.stats);
+      renderStats(rep.stats, rep.recommended);
       renderHist(rep.histogram, rep.stats && rep.stats.median);
-      // seed the slider to the median ONCE so the dry-run starts somewhere sensible;
+      // v0.51.162: the recommended target is the sensible starting point (falls back
+      // to the median if the server didn't send one).
+      recommended = (rep.recommended != null) ? rep.recommended
+        : (rep.stats ? rep.stats.median : null);
+      // seed the slider to the recommendation ONCE so the dry-run starts there;
       // subsequent (live) refreshes keep the operator's chosen target.
-      if (!sliderSeeded && rep.stats && rep.stats.median != null) {
+      if (!sliderSeeded && recommended != null) {
         sliderSeeded = true;
-        const m = Math.round(rep.stats.median * 2) / 2;
         slider.value = String(Math.max(parseFloat(slider.min),
-          Math.min(parseFloat(slider.max), m)));
+          Math.min(parseFloat(slider.max), recommended)));
       }
+      if (hintEl && recommended != null) {
+        hintEl.textContent = `recommended ${fmtLufs(recommended)} LUFS `
+          + '— a comfortable hover level that pulls loud/clipping themes down; drag to explore';
+      }
+      if (recBtn && recommended != null) recBtn.style.display = '';
       renderPreview();
       if (outliersBlock) {
         quietestEl.innerHTML = (rep.quietest || []).map(outRow).join('');
@@ -7733,6 +7752,14 @@
     }
 
     slider.addEventListener('input', renderPreview);
+    if (recBtn) {
+      recBtn.addEventListener('click', () => {   // v0.51.162: snap back to the recommendation
+        if (recommended == null) return;
+        slider.value = String(Math.max(parseFloat(slider.min),
+          Math.min(parseFloat(slider.max), recommended)));
+        renderPreview();
+      });
+    }
     window.__loudRefreshReport = refresh;   // audit-complete hook calls this
     refresh();
   }

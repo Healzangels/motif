@@ -4235,7 +4235,17 @@
 #   grid back to 3 cols (auto 1fr auto); mobile row-1 back to "brand status" (INBOX rides
 #   the cluster, its own grid-area removed). Updated test_v0_50_88 / test_v0_51_3 /
 #   test_v0_51_153 pins.
-__version__ = "0.51.161"
+# 0.51.162: loudness report — a RECOMMENDED target LUFS (the user: "create a recommended
+#   loudness"). loudness_audit.build_report() now returns `recommended` = the library
+#   median clamped to a comfortable ambient-hover band [-23, -18] + rounded to 0.5. For a
+#   loud/clipping library (median > -18, e.g. the user's ~-15.9) it lands at -18:
+#   attenuation is lossless-safe + pulls hot peaks back under 0 dBTP, without boosting the
+#   quiet tail into its peak ceiling. The /admin/loudness report leads the stat strip with
+#   a // RECOMMENDED tile (bright accent), SEEDS the target-preview slider there (not the
+#   raw median), names it in the slider hint, + adds a // USE RECOMMENDED snap-back button.
+#   bindLoudnessReport in app.js. Guard test_v0_51_162. The slider still lets the operator
+#   override — the recommendation is only where the dry-run starts.
+__version__ = "0.51.162"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

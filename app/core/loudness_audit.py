@@ -102,6 +102,28 @@ def record_measurement(conn, row, m: dict, measured_at: str) -> None:
     )
 
 
+# comfortable ambient-hover loudness band. Themes play UNDER browsing, so the
+# recommendation never goes louder than -18 LUFS (unobtrusive) nor quieter than -23
+# (too faint to hear). Within that band it anchors to the library's own median so it's
+# data-aware, not a blind constant.
+_REC_CEIL = -18.0   # loudest we'd recommend for hover
+_REC_FLOOR = -23.0  # quietest
+
+
+def _recommended_target(median: float | None) -> float | None:
+    """A sensible starting target LUFS from the measured distribution: the library
+    median clamped into the comfortable hover band [-23, -18] and rounded to 0.5.
+
+    For a loud library (median > -18, e.g. this one at ~-15.9) it lands at -18 — most
+    themes attenuate (always lossless-safe) + the clipping ones get pulled back under
+    0 dBTP, without boosting the quiet tail into its peak ceiling. The slider still
+    lets the operator override; this is only where it starts."""
+    if median is None:
+        return None
+    m = round(median * 2) / 2
+    return max(_REC_FLOOR, min(_REC_CEIL, m))
+
+
 def _percentile(sorted_vals: list[float], frac: float) -> float | None:
     """Nearest-rank percentile of a pre-sorted list (fine for a diagnostic —
     no interpolation). frac in [0,1]. None on empty."""
@@ -180,6 +202,7 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
         "unmeasured": max(0, counts["total"] - len(loudness)),
         "skipped_no_sha": counts["skipped_no_sha"],
         "stats": stats,
+        "recommended": _recommended_target(stats["median"] if stats else None),
         "histogram": histogram,
         "loudest": _outliers("DESC"),   # highest LUFS first
         "quietest": _outliers("ASC"),   # lowest (most-negative) LUFS first
