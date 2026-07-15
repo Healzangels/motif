@@ -82,7 +82,7 @@ def test_flush_all_coalesced_drains_pending_tail(monkeypatch):
     calls = []
 
     def _mock_dispatch(db_path, notifications, *, event_kind, title, body,
-                       body_format="text", _sync=False):
+                       body_format="text", _sync=False, **_kw):
         calls.append({"title": title, "_sync": _sync})
 
     monkeypatch.setattr(notify, "dispatch", _mock_dispatch)

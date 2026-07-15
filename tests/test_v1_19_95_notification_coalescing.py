@@ -46,7 +46,7 @@ def notify_mod(monkeypatch):
     sent = []
     monkeypatch.setattr(
         n, "dispatch",
-        lambda db, cfg, *, event_kind, title, body, body_format="text":
+        lambda db, cfg, *, event_kind, title, body, body_format="text", **_kw:
             sent.append({"event_kind": event_kind, "title": title,
                          "body": body, "body_format": body_format}),
     )

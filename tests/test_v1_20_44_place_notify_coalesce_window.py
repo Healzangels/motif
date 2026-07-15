@@ -73,7 +73,9 @@ def notify_harness(monkeypatch):
     sent: list[dict] = []
     sent_lock = threading.Lock()
 
-    def _capture(db, cfg, *, event_kind, title, body, body_format="text"):
+    def _capture(db, cfg, *, event_kind, title, body, body_format="text", **_kw):
+        # **_kw tolerates dispatch()'s real kwargs (attach_url, _sync, _record_inbox
+        # v0.51.147) so the mock stays faithful as the signature grows.
         with sent_lock:
             sent.append({"kind": event_kind, "title": title, "batch": False})
 

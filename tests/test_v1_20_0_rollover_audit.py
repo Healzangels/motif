@@ -101,7 +101,7 @@ def notify_mod(monkeypatch):
     sent = []
     sent_lock = threading.Lock()
 
-    def _capture(db, cfg, *, event_kind, title, body, body_format="text"):
+    def _capture(db, cfg, *, event_kind, title, body, body_format="text", **_kw):
         with sent_lock:
             sent.append({"title": title})
     monkeypatch.setattr(n, "dispatch", _capture)

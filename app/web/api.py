@@ -54,6 +54,7 @@ from ..core.auth import (
 )
 from ..core.config_file import validate as validate_config
 from ..core import db_backup
+from ..core import notify_inbox
 from ..core.db import get_conn, transaction
 from ..core.editions import (
     edition_key_for_folder, edition_key_for_rating_key,
@@ -8908,6 +8909,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
          drops_tab_breakdown_rows,
          repush_tab_breakdown_rows,  # v1.24.44
          enum_pending_rows) = await run_in_threadpool(_stats_sync, db)
+        # v0.51.147: unread in-app notification count for the topbar INBOX badge.
+        # Its own off-loop read (not folded into _stats_sync's tuple) — cheap COUNT,
+        # rides the same 1s TTL cache as the rest of /api/stats.
+        notifications_unread = await run_in_threadpool(notify_inbox.count_unread, db)
         # v1.11.27: aggregate the per-section enum_running rows into a
         # tab-variant map and a section_id list so the UI can lock
         # buttons granularly.
@@ -9174,6 +9179,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "placements_today": row["placements_today"],
                 "placements_week": row["placements_week"],
             },
+            # v0.51.147: topbar INBOX badge — count of undismissed, unseen in-app
+            # notifications (auto-adds + FYI). The drawer + endpoints land in the UI tag.
+            "notifications_unread": notifications_unread,
             # v1.13.21: theme-source distribution for the dashboard
             # source pie. Per-letter buckets (T/A/U/M/P/-) split by
             # plex_media_type so the JS can show all-media or filter
@@ -22372,6 +22380,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with get_conn(db) as conn:
             rows = conn.execute(sql, params).fetchall()
         return {"events": [dict(r) for r in rows]}
+
+    # v0.51.147: in-app notification inbox (the topbar INBOX drawer). Reads the
+    # `notifications` table written at the notify dispatch chokepoint (notify_inbox.py),
+    # independent of the Apprise send-toggles. DB work is offloaded (event-loop rule).
+    @app.get("/api/notifications")
+    async def api_notifications(
+        request: Request,
+        limit: int = Query(50, ge=1, le=200),
+        db: Path = Depends(get_db_path),
+    ):
+        _require_admin(request)
+        items = await run_in_threadpool(notify_inbox.list_notifications, db, limit)
+        unread = await run_in_threadpool(notify_inbox.count_unread, db)
+        return {"ok": True, "notifications": items, "unread": unread}
+
+    @app.post("/api/notifications/seen")
+    async def api_notifications_seen(request: Request, db: Path = Depends(get_db_path)):
+        """Mark every undismissed, unseen notification as seen (drawer-open → the
+        badge clears; rows stay until dismissed)."""
+        _require_admin(request)
+        marked = await run_in_threadpool(notify_inbox.mark_seen, db)
+        return {"ok": True, "marked": marked}
+
+    @app.post("/api/notifications/dismiss-all")
+    async def api_notifications_dismiss_all(request: Request, db: Path = Depends(get_db_path)):
+        """Clear all — dismiss every currently-undismissed notification."""
+        _require_admin(request)
+        dismissed = await run_in_threadpool(notify_inbox.dismiss_all, db)
+        return {"ok": True, "dismissed": dismissed}
+
+    @app.post("/api/notifications/{notification_id}/dismiss")
+    async def api_notifications_dismiss(
+        request: Request, notification_id: int, db: Path = Depends(get_db_path),
+    ):
+        """Dismiss one notification by id (idempotent)."""
+        _require_admin(request)
+        dismissed = await run_in_threadpool(
+            notify_inbox.dismiss_notification, db, notification_id)
+        return {"ok": True, "dismissed": dismissed}
 
     @app.get("/api/ops/{op_id}/events")
     async def api_op_events(

@@ -586,6 +586,7 @@ def dispatch(
     body_format: BodyFormat = "text",
     attach_url: str | None = None,
     _sync: bool = False,
+    _record_inbox: bool = True,
 ) -> None:
     """Best-effort notification dispatch. Returns immediately —
     the actual send happens in the module thread pool. Never
@@ -622,8 +623,21 @@ def dispatch(
                     "_DEFAULT_NOTIFY_EVENTS in config_file.py",
                     event_kind)
         return
+    # v0.51.147: record the in-app INBOX row for inbox kinds UNCONDITIONALLY, before
+    # the per-event Apprise toggle gate below — so an auto-add shows in the topbar
+    # drawer even when that kind's Discord/Apprise toggle is off. The coalescer records
+    # per-item itself and passes _record_inbox=False on its own dispatch()/flush sends
+    # so a bulk burst isn't double-counted.
+    if _record_inbox:
+        from . import notify_inbox
+        if event_kind in notify_inbox.INBOX_EVENT_KINDS:
+            notify_inbox.record_notification(
+                db_path, event_kind=event_kind,
+                severity=_EVENT_NOTIFY_TYPE.get(event_kind, "info"),
+                title=title, body=body,
+            )
     if not notifications.events.get(event_kind, False):
-        return  # event disabled by user
+        return  # event disabled by user (Apprise send only — inbox already recorded)
     urls = [u for u in (notifications.apprise_urls or []) if u]
     external_url = notifications.apprise_external_url or ""
     if not urls and not external_url:
@@ -767,6 +781,17 @@ def dispatch_coalesced(
         log.warning("notify.dispatch_coalesced unknown event_kind=%r; "
                     "defaulting to OFF", event_kind)
         return
+    # v0.51.147: record the PER-ITEM inbox row here (single_title/single_body),
+    # before the toggle gate, so a bulk sync's auto-adds each get their own inbox
+    # row even when the Apprise toggle is off. The dispatch()/flush sends below pass
+    # _record_inbox=False so the item isn't double-counted.
+    from . import notify_inbox
+    if event_kind in notify_inbox.INBOX_EVENT_KINDS:
+        notify_inbox.record_notification(
+            db_path, event_kind=event_kind,
+            severity=_EVENT_NOTIFY_TYPE.get(event_kind, "info"),
+            title=single_title, body=single_body,
+        )
     if not notifications.events.get(event_kind, False):
         return
     urls = [u for u in (notifications.apprise_urls or []) if u]
@@ -780,9 +805,10 @@ def dispatch_coalesced(
     if not bulk:
         _akw = ({"attach_url": single_attach_url}
                 if single_attach_url else {})
+        # _record_inbox=False: the inbox row was already recorded above (per-item).
         dispatch(db_path, notifications, event_kind=event_kind,
                  title=single_title, body=single_body,
-                 body_format=body_format, **_akw)
+                 body_format=body_format, _record_inbox=False, **_akw)
         return
     # v1.21.46: resolve the trailing window per-kind unless the caller passed
     # an explicit override.
@@ -864,9 +890,11 @@ def _dispatch_batch(db_path, notifications, event_kind, items,
             # v1.22.94: attach_url only when set (v1.20.63 convention).
             _akw = ({"attach_url": it["attach_url"]}
                     if it.get("attach_url") else {})
+            # _record_inbox=False: buffered items were recorded per-item in dispatch_coalesced.
             dispatch(db_path, notifications, event_kind=event_kind,
                      title=it["title"], body=it["body"],
-                     body_format=it["body_format"], **_akw, **sync_kw)
+                     body_format=it["body_format"], _record_inbox=False,
+                     **_akw, **sync_kw)
             return
         labels = [it["label"] for it in items]
         # v1.23.75: group the bulk batch by Plex library (v1.22.45 sectioning,
@@ -882,7 +910,7 @@ def _dispatch_batch(db_path, notifications, event_kind, items,
             db_path, notifications, event_kind=event_kind,
             title=items[0]["batch_title_fn"](len(items)),
             body=items[0]["batch_body_fn"](labels, buckets or None),
-            body_format="markdown", **sync_kw,
+            body_format="markdown", _record_inbox=False, **sync_kw,
         )
     except Exception as e:
         log.warning(

@@ -316,6 +316,30 @@ CREATE INDEX IF NOT EXISTS idx_events_item ON events (media_type, tmdb_id, ts DE
 CREATE INDEX IF NOT EXISTS idx_events_item_section
     ON events (media_type, tmdb_id, section_id, ts DESC);
 
+-- v0.51.147 (schema v71): the in-app notification inbox. A curated subset of
+-- notification-worthy events (INBOX_EVENT_KINDS in notify_inbox.py) is recorded
+-- here at the notify dispatch chokepoint, UNCONDITIONALLY of the per-event Apprise
+-- send-toggle, so the topbar INBOX drawer surfaces auto-added themes even when that
+-- kind's Discord/Apprise toggle is off. media_type/tmdb_id/section_id/batch_id are
+-- nullable — dispatch() carries only title/body today; a later tag threads item +
+-- batch identity for precise click-through + smart grouping.
+CREATE TABLE IF NOT EXISTS notifications (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           TEXT NOT NULL,
+    event_kind   TEXT NOT NULL,
+    severity     TEXT NOT NULL DEFAULT 'info',
+    title        TEXT NOT NULL,
+    body         TEXT,
+    media_type   TEXT,
+    tmdb_id      INTEGER,
+    section_id   TEXT,
+    batch_id     TEXT,
+    seen_at      TEXT,
+    dismissed_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_notifications_open
+    ON notifications (dismissed_at, ts DESC);
+
 CREATE TABLE IF NOT EXISTS sync_runs (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at      TEXT NOT NULL,
@@ -926,7 +950,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 70
+CURRENT_SCHEMA_VERSION = 71
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2561,6 +2585,34 @@ def _migrate_v69_to_v70(conn: sqlite3.Connection) -> None:
     💔 Theme lost. Idempotent via _add_column; existing rows backfill to 0."""
     log.info("Migrating to schema v70 (plex_items.consecutive_missing — v0.51.128)")
     _add_column(conn, "plex_items", "consecutive_missing", "INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_v70_to_v71(conn: sqlite3.Connection) -> None:
+    """v71 (v0.51.147): add the `notifications` table — the in-app INBOX store.
+    Purely additive new table (no FK, no data touched), idempotent via
+    CREATE TABLE IF NOT EXISTS; the end-of-migration SCHEMA run also backfills it.
+    Existing installs get an empty inbox that fills from the next dispatch."""
+    log.info("Migrating to schema v71 (notifications inbox table — v0.51.147)")
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS notifications (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts           TEXT NOT NULL,
+            event_kind   TEXT NOT NULL,
+            severity     TEXT NOT NULL DEFAULT 'info',
+            title        TEXT NOT NULL,
+            body         TEXT,
+            media_type   TEXT,
+            tmdb_id      INTEGER,
+            section_id   TEXT,
+            batch_id     TEXT,
+            seen_at      TEXT,
+            dismissed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_notifications_open
+            ON notifications (dismissed_at, ts DESC);
+        """
+    )
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4436,6 +4488,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 69:
                     _migrate_v69_to_v70(conn)
                     current = 70
+                elif current == 70:
+                    _migrate_v70_to_v71(conn)
+                    current = 71
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

@@ -4080,7 +4080,18 @@
 #   three catches now refresh the backup list / restore-pending banner so a completed-
 #   but-timed-out action surfaces instead of tempting a needless retry. Guarded by
 #   test_v0_51_146.
-__version__ = "0.51.146"
+# 0.51.147: in-app notification center — backend foundation (build phase 1 of the
+#   planned INBOX drawer). New schema v71 `notifications` table + `notify_inbox.py`
+#   module (record + list/dismiss/dismiss-all/seen/count helpers). notify.dispatch and
+#   dispatch_coalesced record an inbox row for the Additions+FYI event kinds
+#   (INBOX_EVENT_KINDS) UNCONDITIONALLY of the per-event Apprise send-toggle — so the
+#   inbox surfaces auto-added themes even when that kind's Discord toggle is off; a
+#   `_record_inbox` flag on the coalescer's own sends prevents double-counting a bulk
+#   burst. Endpoints GET /api/notifications + POST .../{id}/dismiss + .../dismiss-all +
+#   .../seen; `notifications_unread` added to /api/stats for the topbar badge. The
+#   drawer UI + the plex_item_arrived_themed event are later tags. Guarded by
+#   test_v0_51_147.
+__version__ = "0.51.147"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
