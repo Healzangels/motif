@@ -29,10 +29,12 @@ API = (REPO / "app" / "web" / "api.py").read_text()
 
 def test_attach_url_at_backup_ready_and_reaper():
     # backup_ready_to_deploy + the four-way theme-lost reaper now attach.
+    # v0.51.151: windows widened (700→820 / 500→600) after the item_ctx=_ctx
+    # click-through line landed between event_kind and attach_url in both calls.
     bi = PLEX_ENUM.index('event_kind="backup_ready_to_deploy"')
-    assert "attach_url=_nc.attachment_thumb_url(" in PLEX_ENUM[bi:bi + 700]
+    assert "attach_url=_nc.attachment_thumb_url(" in PLEX_ENUM[bi:bi + 820]
     ri = PLEX_ENUM.index("event_kind=_event_kind")
-    assert "attach_url=_nc.attachment_thumb_url(_ctx)" in PLEX_ENUM[ri:ri + 500]
+    assert "attach_url=_nc.attachment_thumb_url(_ctx)" in PLEX_ENUM[ri:ri + 600]
 
 
 def test_attach_url_at_theme_deleted_and_test_trigger():

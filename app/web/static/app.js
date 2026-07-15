@@ -19434,9 +19434,17 @@
 
     function rowHtml(n) {
       const tier = TIER[n.event_kind] || '';
-      const cls = ['notif-row', tier, n.seen ? 'seen' : 'unread']
-        .filter(Boolean).join(' ');
-      return `<li class="${cls}" data-nid="${n.id}">`
+      // v0.51.151: per-item rows (media_type + tmdb_id present) click through to
+      // the row's INFO card; batch digests have no identity → non-clickable.
+      const clickable = !!(n.media_type && n.tmdb_id);
+      const cls = ['notif-row', tier, n.seen ? 'seen' : 'unread',
+        clickable ? 'notif-clickable' : ''].filter(Boolean).join(' ');
+      const idAttrs = clickable
+        ? ` data-mt="${htmlEscape(String(n.media_type))}"`
+          + ` data-tid="${htmlEscape(String(n.tmdb_id))}"`
+          + (n.section_id ? ` data-sec="${htmlEscape(String(n.section_id))}"` : '')
+        : '';
+      return `<li class="${cls}" data-nid="${n.id}"${idAttrs}>`
         + `<div class="notif-main"><div class="notif-title">`
         +   `${htmlEscape(n.title || '')}</div></div>`
         + `<div class="notif-meta">`
@@ -19508,9 +19516,22 @@
     if (clearBtn) clearBtn.addEventListener('click', clearAll);
     if (listEl) listEl.addEventListener('click', (e) => {
       const x = e.target.closest('.notif-x');
-      if (!x) return;
-      const li = x.closest('.notif-row');
-      if (li) dismiss(li.dataset.nid, li);
+      if (x) {
+        const li = x.closest('.notif-row');
+        if (li) dismiss(li.dataset.nid, li);
+        return;
+      }
+      // v0.51.151: click-through — navigate to the row's INFO card via the
+      // info_open deep-link (the same mechanism /queue's REPROBE OPEN ROW uses,
+      // so closing the card leaves the user on the library row).
+      const row = e.target.closest('.notif-row.notif-clickable');
+      if (!row || !row.dataset.mt || !row.dataset.tid) return;
+      const tab = row.dataset.mt === 'movie' ? '/movies' : '/tv';
+      const params = new URLSearchParams();
+      params.set('info_open', row.dataset.tid);
+      params.set('info_mt', row.dataset.mt);
+      if (row.dataset.sec) params.set('info_section', row.dataset.sec);
+      window.location.href = `${tab}?${params.toString()}`;
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !drawer.hidden) close();

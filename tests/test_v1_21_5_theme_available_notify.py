@@ -181,7 +181,7 @@ def _patch(monkeypatch, *, enabled: bool):
                         _make_fake_settings(enabled))
     captured: list[dict] = []
 
-    def _cap(db, notif, *, event_kind, title, body, body_format="text"):
+    def _cap(db, notif, *, event_kind, title, body, body_format="text", **_kw):  # **_kw: absorb item_ctx (v0.51.151)
         captured.append({"event_kind": event_kind, "title": title,
                          "body": body})
 

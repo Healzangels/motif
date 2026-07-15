@@ -2263,6 +2263,7 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                         db_path,
                                         _settings.cfg.notifications,
                                         event_kind="backup_ready_to_deploy",
+                                        item_ctx=_ctx,  # v0.51.151: click-through
                                         title=_nc.format_backup_ready_title(_ctx),
                                         body=_nc.format_backup_ready_body(
                                             _ctx, override_url=_ovr_url),
@@ -2960,6 +2961,7 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                         db_path,
                         _settings.cfg.notifications,
                         event_kind=_event_kind,
+                        item_ctx=_ctx,  # v0.51.151: click-through identity
                         title=_title,
                         body=_body,
                         body_format="markdown",
@@ -3240,6 +3242,7 @@ def _maybe_notify_theme_available(
             _notify.dispatch(
                 db_path, notif,
                 event_kind="new_tdb_theme_available",
+                item_ctx=_ctx,  # v0.51.151: click-through identity
                 title=_nc.format_theme_available_title(_ctx),
                 body=_nc.format_theme_available_body(_ctx),
                 body_format="markdown",
@@ -3356,6 +3359,7 @@ def _maybe_notify_arrived_themed(
             _notify.dispatch(
                 db_path, notif,
                 event_kind="plex_item_arrived_themed",
+                item_ctx=_ctx,  # v0.51.151: click-through identity
                 title=_nc.format_arrived_themed_title(_ctx),
                 body=_nc.format_arrived_themed_body(_ctx),
                 body_format="markdown",

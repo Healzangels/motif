@@ -94,7 +94,7 @@ def _patch(monkeypatch, *, auto_dl, notify_on):
     monkeypatch.setattr(_appconfig, "Settings", _FakeSettings)
     captured = []
 
-    def _cap(db, notif, *, event_kind, title, body, body_format="text"):
+    def _cap(db, notif, *, event_kind, title, body, body_format="text", **_kw):  # **_kw: absorb item_ctx (v0.51.151)
         captured.append(event_kind)
     monkeypatch.setattr(_notify, "dispatch", _cap)
     return captured

@@ -4120,7 +4120,19 @@
 #   plex_item_arrived_themed (default OFF for Discord) + settings toggle +
 #   _EVENT_NOTIFY_TYPE entry. OFF for Apprise but records to the in-app INBOX
 #   unconditionally (the primary surface). Guard test_v0_51_150.
-__version__ = "0.51.150"
+# 0.51.151: in-app notification center — drawer click-through to the INFO card (build
+#   phase 4, enrichment). Per-item notifications now carry the item's identity
+#   (media_type / tmdb_id / section_id) so a drawer row clicks through to that row's
+#   INFO card via the ?info_open= deep-link (the /queue REPROBE OPEN ROW mechanism);
+#   batch digests carry no identity and stay non-clickable. Threaded via a new item_ctx
+#   param on notify.dispatch + single_item_ctx on dispatch_coalesced (the ItemContext
+#   dict already has the ids), passed to record_notification which stores them on the
+#   (already-nullable) notifications columns. Wired at all 8 per-item inbox dispatch
+#   sites (4 worker coalesced + 4 plex_enum single). list_notifications returns the ids;
+#   app.js row-body click builds the deep-link (× still dismisses). Guard test_v0_51_151;
+#   click-through verified end-to-end in a browser harness. Smart batch grouping + a
+#   prune job are the remaining Phase-4 items.
+__version__ = "0.51.151"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

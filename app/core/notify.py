@@ -587,6 +587,7 @@ def dispatch(
     body: str,
     body_format: BodyFormat = "text",
     attach_url: str | None = None,
+    item_ctx: dict | None = None,
     _sync: bool = False,
     _record_inbox: bool = True,
 ) -> None:
@@ -633,10 +634,15 @@ def dispatch(
     if _record_inbox:
         from . import notify_inbox
         if event_kind in notify_inbox.INBOX_EVENT_KINDS:
+            # v0.51.151: carry item identity (from the per-item ctx) so the drawer
+            # can click through to the row's INFO card. None on batch digests.
+            _ic = item_ctx or {}
             notify_inbox.record_notification(
                 db_path, event_kind=event_kind,
                 severity=_EVENT_NOTIFY_TYPE.get(event_kind, "info"),
                 title=title, body=body,
+                media_type=_ic.get("media_type"), tmdb_id=_ic.get("tmdb_id"),
+                section_id=_ic.get("section_id"),
             )
     if not notifications.events.get(event_kind, False):
         return  # event disabled by user (Apprise send only — inbox already recorded)
@@ -757,6 +763,7 @@ def dispatch_coalesced(
     body_format: BodyFormat = "text",
     window_seconds: float | None = None,
     single_attach_url: str | None = None,
+    single_item_ctx: dict | None = None,
     bulk: bool = False,
     section: str = "",
 ) -> None:
@@ -789,10 +796,15 @@ def dispatch_coalesced(
     # _record_inbox=False so the item isn't double-counted.
     from . import notify_inbox
     if event_kind in notify_inbox.INBOX_EVENT_KINDS:
+        # v0.51.151: per-item identity for the drawer click-through (this records
+        # the SINGLE item; the batch flush sends carry no per-item ctx).
+        _sic = single_item_ctx or {}
         notify_inbox.record_notification(
             db_path, event_kind=event_kind,
             severity=_EVENT_NOTIFY_TYPE.get(event_kind, "info"),
             title=single_title, body=single_body,
+            media_type=_sic.get("media_type"), tmdb_id=_sic.get("tmdb_id"),
+            section_id=_sic.get("section_id"),
         )
     if not notifications.events.get(event_kind, False):
         return

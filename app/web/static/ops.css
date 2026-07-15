@@ -1126,6 +1126,10 @@ body[data-ops-running="1"] #topbar-status-text {
   border-left: 2px solid transparent;
 }
 .notif-row + .notif-row { border-top: 1px solid var(--line); }
+/* v0.51.151: per-item rows click through to the INFO card; batch digests don't. */
+.notif-row.notif-clickable { cursor: pointer; }
+.notif-row.notif-clickable:hover { background: rgba(var(--ok-rgb), 0.06); }
+.notif-row.notif-clickable:hover .notif-title { color: var(--green-bright); }
 .notif-row.tier-add   { border-left-color: var(--ok); }
 .notif-row.tier-avail { border-left-color: var(--cyan); }
 .notif-row.tier-fyi   { border-left-color: var(--amber); }

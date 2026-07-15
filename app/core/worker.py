@@ -3223,6 +3223,7 @@ class Worker:
                         self.settings.db_path,
                         self.settings.cfg.notifications,
                         event_kind="theme_auto_restored",
+                        single_item_ctx=ctx,  # v0.51.151: click-through identity
                         item_label=_nc.format_theme_auto_restored_item(ctx),
                         single_title=_nc.format_theme_auto_restored_title(ctx),
                         single_body=_nc.format_theme_auto_restored_body(ctx),
@@ -3274,6 +3275,7 @@ class Worker:
                         self.settings.db_path,
                         self.settings.cfg.notifications,
                         event_kind="theme_added",
+                        single_item_ctx=ctx,  # v0.51.151: click-through identity
                         item_label=_nc.format_theme_added_item(ctx),
                         single_title=_nc.format_theme_added_title(ctx),
                         single_body=_nc.format_theme_added_body(ctx),
@@ -4197,6 +4199,7 @@ class Worker:
                     self.settings.db_path,
                     self.settings.cfg.notifications,
                     event_kind="theme_auto_restored",
+                    single_item_ctx=ctx,  # v0.51.151: click-through identity
                     item_label=_nc.format_theme_auto_restored_item(ctx),
                     single_title=_nc.format_theme_auto_restored_title(ctx),
                     single_body=_nc.format_theme_auto_restored_body(ctx),
@@ -4245,6 +4248,7 @@ class Worker:
                     self.settings.db_path,
                     self.settings.cfg.notifications,
                     event_kind="theme_added",
+                    single_item_ctx=ctx,  # v0.51.151: click-through identity
                     item_label=_nc.format_theme_added_item(ctx),
                     single_title=_nc.format_theme_added_title(ctx),
                     single_body=_nc.format_theme_added_body(ctx),

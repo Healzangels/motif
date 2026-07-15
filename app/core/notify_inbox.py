@@ -50,6 +50,9 @@ def record_notification(
     severity: str,
     title: str,
     body: str | None = None,
+    media_type: str | None = None,
+    tmdb_id: int | None = None,
+    section_id: str | None = None,
 ) -> None:
     """Insert one inbox row. Best-effort — never raises (a failed inbox write
     must not break notification dispatch). Scrubs title/body through the events
@@ -59,11 +62,18 @@ def record_notification(
     try:
         safe_title = _scrub_text(title or "")
         safe_body = _scrub_text(body) if body else None
+        # v0.51.151: media_type/tmdb_id/section_id enable the drawer's click-
+        # through to the row's INFO card (via the info_open deep-link). Only
+        # per-item dispatches carry them; batch digests store NULL (non-clickable,
+        # since a batch has no single item to open). These are identity ids, not
+        # secrets, so they skip the text scrubber.
         sql = (
-            "INSERT INTO notifications (ts, event_kind, severity, title, body) "
-            "VALUES (?, ?, ?, ?, ?)"
+            "INSERT INTO notifications (ts, event_kind, severity, title, body,"
+            " media_type, tmdb_id, section_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
         )
-        params = (now_iso(), event_kind, severity or "info", safe_title, safe_body)
+        params = (now_iso(), event_kind, severity or "info", safe_title, safe_body,
+                  media_type, tmdb_id, section_id)
         last_err: Exception | None = None
         for attempt in range(3):
             try:
@@ -97,7 +107,8 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
     try:
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
-            "SELECT id, ts, event_kind, severity, title, body, seen_at "
+            "SELECT id, ts, event_kind, severity, title, body, seen_at, "
+            "       media_type, tmdb_id, section_id "
             "FROM notifications WHERE dismissed_at IS NULL "
             "ORDER BY ts DESC, id DESC LIMIT ?",
             (limit,),
@@ -113,6 +124,11 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
             "title": r["title"],
             "body": r["body"],
             "seen": r["seen_at"] is not None,
+            # v0.51.151: identity for the drawer's click-through (NULL on batch
+            # digests → the row renders non-clickable).
+            "media_type": r["media_type"],
+            "tmdb_id": r["tmdb_id"],
+            "section_id": r["section_id"],
         }
         for r in rows
     ]
