@@ -1080,6 +1080,23 @@
           updBadge.hidden = true;
         }
       }
+      // v0.51.148: INBOX pill — unread count from the notification inbox.
+      // Unlike the attention pills it is ALWAYS visible (dim at rest); it
+      // lights green + shows the count when there are unread notifications,
+      // and dims back to a bare "INBOX" at zero. Opening the drawer marks the
+      // set seen, so the next poll lands here with 0 and clears the glow.
+      const inboxBadge = $('#topbar-inbox-badge');
+      if (inboxBadge) {
+        const n = stats.notifications_unread || 0;
+        const inboxCount = $('#topbar-inbox-count');
+        if (n > 0) {
+          if (inboxCount) { inboxCount.textContent = n; inboxCount.hidden = false; }
+          inboxBadge.classList.add('has-unread');
+        } else {
+          if (inboxCount) inboxCount.hidden = true;
+          inboxBadge.classList.remove('has-unread');
+        }
+      }
       // Failures badge — v1.12.106: op-pill primitive, [hidden] attr.
       // Driver unified with per-row glyph: count every unacked
       // failure_kind, not just the four 'unavailable' kinds.
@@ -19385,6 +19402,122 @@
     else dlg.removeAttribute('open');
   }
 
+  // v0.51.148: notification inbox drawer — opened by the INBOX topbar pill.
+  // Reuses the LIVE-OPS drawer shell (.ops-drawer / .is-open / [hidden]); this
+  // owns the open/close animation handshake + the row list + dismiss/clear-all.
+  function bindNotifInbox() {
+    const drawer = document.getElementById('notif-drawer');
+    const pill = document.getElementById('topbar-inbox-badge');
+    if (!drawer || !pill) return;
+    const listEl = document.getElementById('notif-list');
+    const clearBtn = document.getElementById('notif-clear-all');
+    const scrim = drawer.querySelector('.ops-drawer-scrim');
+    const closeBtn = drawer.querySelector('.ops-drawer-close');
+    let closeTimer = null;
+
+    // event_kind → [tier stripe class, emoji, one-line kind phrase]. The tiers
+    // are FIXED semantic tones (add / available / FYI-loss), not themed accents
+    // — see motif_theme_split_intentional. Mirrors notify_inbox.INBOX_EVENT_KINDS.
+    const KIND = {
+      theme_added:                  ['tier-add',   '🎵', 'auto-added'],
+      plex_item_arrived_themed:     ['tier-add',   '📺', 'arrived already themed'],
+      theme_auto_restored:          ['tier-add',   '🛠', 'auto-restored after Plex dropped it'],
+      new_tdb_theme_available:      ['tier-avail', '✨', 'new ThemerrDB theme available'],
+      backup_ready_to_deploy:       ['tier-avail', '🎯', 'backup ready to deploy'],
+      theme_lost_backup_ready:      ['tier-fyi',   '💔', 'theme lost — backup ready'],
+      theme_lost_sidecar_available: ['tier-fyi',   '💔', 'theme lost — sidecar available'],
+      plex_theme_lost:              ['tier-fyi',   '💔', 'theme lost'],
+    };
+
+    function rowHtml(n) {
+      const meta = KIND[n.event_kind]
+        || ['', '•', (n.event_kind || '').replace(/_/g, ' ')];
+      const cls = ['notif-row', meta[0], n.seen ? 'seen' : 'unread']
+        .filter(Boolean).join(' ');
+      return `<li class="${cls}" data-nid="${n.id}">`
+        + `<span class="notif-emoji" aria-hidden="true">${meta[1]}</span>`
+        + `<div class="notif-main">`
+        +   `<div class="notif-title">${htmlEscape(n.title || '')}</div>`
+        +   `<div class="notif-sub">${htmlEscape(meta[2])}</div>`
+        + `</div>`
+        + `<div class="notif-meta">`
+        +   `<span class="notif-time">${htmlEscape(fmtRelativePast(n.ts))}</span>`
+        +   `<button class="notif-x" type="button" aria-label="Dismiss">&times;</button>`
+        + `</div></li>`;
+    }
+
+    function renderEmpty() {
+      if (listEl) listEl.innerHTML =
+        '<li class="notif-empty">// no new activity'
+        + '<span class="notif-empty-sub">auto-added themes and alerts land here'
+        + '</span></li>';
+      if (clearBtn) clearBtn.hidden = true;
+    }
+
+    async function load() {
+      try {
+        const data = await api('GET', '/api/notifications');
+        const items = (data && data.notifications) || [];
+        if (!listEl) return;
+        if (!items.length) { renderEmpty(); return; }
+        listEl.innerHTML = items.map(rowHtml).join('');
+        if (clearBtn) clearBtn.hidden = false;
+        // snapshot-mark the unread set seen → badge clears on the next poll;
+        // clear the glow now too so the pill dims immediately (rows keep their
+        // unread highlight for this viewing, then read as seen next open).
+        if (items.some((i) => !i.seen)) {
+          api('POST', '/api/notifications/seen').catch(() => {});
+          const inboxCount = document.getElementById('topbar-inbox-count');
+          if (inboxCount) inboxCount.hidden = true;
+          pill.classList.remove('has-unread');
+        }
+      } catch (_) {
+        if (listEl) listEl.innerHTML =
+          '<li class="notif-empty">// could not load notifications</li>';
+      }
+    }
+
+    function open() {
+      if (closeTimer) { clearTimeout(closeTimer); closeTimer = null; }
+      drawer.hidden = false;
+      drawer.setAttribute('aria-hidden', 'false');
+      // let the un-transformed frame paint before .is-open so the panel slides
+      // in (mirrors the ops-drawer open handshake).
+      requestAnimationFrame(() => drawer.classList.add('is-open'));
+      load();
+    }
+    function close() {
+      drawer.classList.remove('is-open');
+      drawer.setAttribute('aria-hidden', 'true');
+      // keep the panel displayed through the 280ms slide-out, then hide.
+      closeTimer = setTimeout(() => { drawer.hidden = true; }, 300);
+    }
+
+    async function dismiss(id, li) {
+      try { await api('POST', `/api/notifications/${id}/dismiss`); } catch (_) { /* gone is fine */ }
+      if (li) li.remove();
+      if (listEl && !listEl.querySelector('.notif-row')) renderEmpty();
+    }
+    async function clearAll() {
+      try { await api('POST', '/api/notifications/dismiss-all'); } catch (_) { /* best-effort */ }
+      renderEmpty();
+    }
+
+    pill.addEventListener('click', open);
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    if (scrim) scrim.addEventListener('click', close);
+    if (clearBtn) clearBtn.addEventListener('click', clearAll);
+    if (listEl) listEl.addEventListener('click', (e) => {
+      const x = e.target.closest('.notif-x');
+      if (!x) return;
+      const li = x.closest('.notif-row');
+      if (li) dismiss(li.dataset.nid, li);
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !drawer.hidden) close();
+    });
+  }
+
   function bindUploadDialog() {
     const dlg = document.getElementById('upload-dlg');
     if (!dlg) return;
@@ -19682,6 +19815,7 @@
     bindUploadDialog();
     bindManualUrlDialog();
     bindInfoDialog();
+    bindNotifInbox();  // v0.51.148: INBOX pill → notification drawer
 
     // TMDB test key handler
     const tmdbBtn = document.getElementById('tmdb-test-btn');

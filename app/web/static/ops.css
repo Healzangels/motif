@@ -1074,3 +1074,115 @@ body[data-ops-running="1"] #topbar-status-text {
    `#op-mini` ID (0,1,1,0) for the same two properties in the same breakpoint,
    so it always won. Removed the dead caps to avoid a contradictory second
    source of truth. */
+
+/* ─────────────────────────────────────────────────────────────────────────
+   v0.51.148: NOTIFICATIONS — the INBOX pill + the notification drawer.
+   The drawer (#notif-drawer) reuses the .ops-drawer shell above (scrim/panel/
+   head/[hidden]/is-open animation) per reuse-don't-mirror; only the pill tone
+   and the row list below are notification-specific.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/* INBOX pill: always visible, dim at rest (base .op-pill). JS adds .has-unread
+   on each /api/stats poll to light it green + reveal the count. The green is a
+   generic "you have unread" signal, NOT a source-identity colour, so it tracks
+   the OK accent (see motif_theme_split_intentional). */
+.op-pill.op-notif.has-unread { border-color: rgba(var(--ok-rgb), 0.5); color: var(--ok); }
+.op-pill.op-notif.has-unread:hover { box-shadow: 0 0 10px rgba(var(--ok-rgb), 0.35); }
+.op-pill.op-notif .op-pill-count[hidden] { display: none; }
+
+.notif-head-actions { display: flex; align-items: center; gap: var(--gap-3); }
+
+.notif-clear-all {
+  background: none;
+  border: 0;
+  color: var(--fg-mute);
+  font-family: inherit;
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+.notif-clear-all:hover { color: var(--red); }
+.notif-clear-all[hidden] { display: none; }
+
+.notif-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  flex: 1 1 auto;
+}
+
+/* row: [emoji] [title + kind phrase] [time + ×]. The left stripe encodes the
+   tier — a FIXED semantic tone (green add · cyan available · amber lost/FYI),
+   NOT a themed accent (motif_theme_split_intentional). */
+.notif-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 10px;
+  align-items: start;
+  padding: 11px 16px;
+  border-left: 2px solid transparent;
+}
+.notif-row + .notif-row { border-top: 1px solid var(--line); }
+.notif-row.tier-add   { border-left-color: var(--ok); }
+.notif-row.tier-avail { border-left-color: var(--cyan); }
+.notif-row.tier-fyi   { border-left-color: var(--amber); }
+
+/* unread = faint green wash + bright title; opening the drawer marks the set
+   seen, so rows dim to "seen" and stay until dismissed with ×. */
+.notif-row.unread { background: rgba(var(--ok-rgb), 0.04); }
+.notif-row.seen .notif-title { color: var(--fg-dim); }
+
+.notif-emoji { font-size: var(--t-small); line-height: 1.5; }
+.notif-main { min-width: 0; }
+.notif-title {
+  color: var(--fg);
+  font-size: var(--t-small);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.notif-sub {
+  color: var(--fg-mute);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.04em;
+  margin-top: 2px;
+}
+.notif-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--gap-2);
+  white-space: nowrap;
+}
+.notif-time { color: var(--fg-mute); font-size: var(--t-tiny); }
+.notif-x {
+  background: none;
+  border: 0;
+  color: var(--fg-mute);
+  font-size: var(--t-small);
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  opacity: 0.7;
+}
+.notif-x:hover { opacity: 1; color: var(--red); }
+
+.notif-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 30px 18px;
+  color: var(--fg-mute);
+  font-size: var(--t-small);
+  letter-spacing: 0.1em;
+  text-align: center;
+}
+.notif-empty-sub { color: var(--fg-dim); font-size: var(--t-tiny); letter-spacing: 0.04em; }
+
+/* mobile: the reused .ops-drawer panel is already 92vw (near full-width) at
+   ≤600px; just enlarge the touch targets to ≥44px (the v0.50.88 tap-target
+   rule). A full bottom-sheet treatment is a possible later refinement. */
+@media (max-width: 600px) {
+  .notif-x { padding: 10px 12px; }
+  .notif-clear-all { padding: 8px 10px; }
+}

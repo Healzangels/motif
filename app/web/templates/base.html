@@ -421,6 +421,15 @@
         <span class="op-pill-count" id="topbar-disk-free">{{ _ssr_top.disk_free_mb if _ssr_top.disk_free_mb is not none else 0 }}</span>
         <span class="op-pill-label">DISK</span>
       </a>
+      {# v0.51.148: INBOX pill — opens the in-app notification drawer. Unlike the
+         attention pills (filter deep-links) this is a <button>. Always visible, dim
+         at rest; JS lights it green (.has-unread) + shows the unread count on each
+         /api/stats poll (notifications_unread). #}
+      <button class="op-pill op-notif" id="topbar-inbox-badge" type="button"
+              title="Notifications" aria-label="Notifications">
+        <span class="op-pill-count" id="topbar-inbox-count" hidden>0</span>
+        <span class="op-pill-label">INBOX</span>
+      </button>
       {# v1.15.55: SSR the op-mini visibility + content so the
          topbar live-ops bar persists across tab navs. Pre-fix the
          element started hidden on every page load + ops.js
@@ -641,6 +650,26 @@
       <div class="ops-drawer-body" id="ops-drawer-body">
         <div class="ops-drawer-empty">// loading…</div>
       </div>
+    </aside>
+  </div>
+
+  {# v0.51.148: NOTIFICATIONS drawer — the INBOX pill opens this. Reuses the
+     LIVE-OPS drawer shell (.ops-drawer/.is-open/[hidden] animation, scrim, panel)
+     per reuse-don't-mirror; only the row list is notification-specific. #}
+  <div id="notif-drawer" class="ops-drawer" hidden aria-hidden="true">
+    <div class="ops-drawer-scrim"></div>
+    <aside class="ops-drawer-panel" role="dialog" aria-label="Notifications">
+      <header class="ops-drawer-head">
+        <h2 class="ops-drawer-title">// NOTIFICATIONS</h2>
+        <div class="notif-head-actions">
+          <button class="notif-clear-all" type="button" id="notif-clear-all"
+                  hidden>// CLEAR ALL</button>
+          <button class="ops-drawer-close" type="button" aria-label="Close">&times;</button>
+        </div>
+      </header>
+      <ul class="notif-list" id="notif-list">
+        <li class="notif-empty">// loading&hellip;</li>
+      </ul>
     </aside>
   </div>
   {% endif %}

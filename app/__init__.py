@@ -4091,7 +4091,17 @@
 #   .../seen; `notifications_unread` added to /api/stats for the topbar badge. The
 #   drawer UI + the plex_item_arrived_themed event are later tags. Guarded by
 #   test_v0_51_147.
-__version__ = "0.51.147"
+# 0.51.148: in-app notification center — the INBOX pill + drawer UI (build phase 2).
+#   Turns the v0.51.147 plumbing into something you can see: an always-visible INBOX
+#   op-pill in the topbar that lights green + shows the unread count (from /api/stats
+#   notifications_unread) whenever there are unread notifications, and a slide-in
+#   NOTIFICATIONS drawer (reuses the LIVE-OPS drawer shell) listing each notification
+#   with a fixed tier stripe (green add · cyan available · amber loss/FYI), emoji, kind
+#   phrase, relative time, and per-row × dismiss, plus a CLEAR ALL. Opening the drawer
+#   marks the unread set seen (badge → 0). New: bindNotifInbox() in app.js + the .notif-*
+#   / .op-notif CSS in ops.css. Grouping (batch_id) + click-through are later tags.
+#   Guarded by test_v0_51_148.
+__version__ = "0.51.148"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
