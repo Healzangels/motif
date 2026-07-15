@@ -7565,6 +7565,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "orphan_scan_running": _ORPHAN_SCAN_STATE.get("status") == "running",
         })
 
+    @app.get("/admin/loudness", response_class=HTMLResponse)
+    async def admin_loudness_page(request: Request):
+        """v0.51.159: the LOUDNESS AUDIT report dashboard (Phase 0 of the loudness
+        feature). Hosts the RUN AUDIT trigger + renders the stored measurements as a
+        histogram + median/spread + loudest/quietest outliers (→ INFO cards) + a
+        client-side target-preview slider. Read-only diagnostic — the audit measures
+        without touching files, and this page never mutates. Mirrors /admin/orphans."""
+        _require_admin(request)
+        # SSR-lock // RUN AUDIT when one is already draining (same nav-flash class as
+        # the orphans page v0.51.99 fix); the first status poll reconciles.
+        return templates.TemplateResponse(request, "loudness.html", {
+            "loudness_audit_running": _LOUDNESS_AUDIT_STATE.get("status") == "running",
+        })
+
     # --- Auth pages ---
 
     @app.get("/setup", response_class=HTMLResponse)
@@ -25661,6 +25675,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         with _LOUDNESS_AUDIT_LOCK:
             return dict(_LOUDNESS_AUDIT_STATE)
+
+    @app.get("/api/admin/loudness-report")
+    async def api_admin_loudness_report(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.159: the read side of the loudness audit — aggregate the stored
+        measurements into distribution stats + a histogram + loudest/quietest
+        outliers + a compact value array for the target-preview slider. Pure read
+        (no measure, no mutation); the /admin/loudness report page renders it."""
+        _require_admin(request)
+        from ..core.loudness_audit import build_report
+        from ..core.db import get_conn
+        with get_conn(db) as conn:
+            return build_report(conn)
 
     @app.post("/api/admin/orphan-scan/cleanup-dead-rk")
     async def api_admin_orphan_cleanup_dead_rk(

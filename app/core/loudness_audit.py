@@ -102,6 +102,91 @@ def record_measurement(conn, row, m: dict, measured_at: str) -> None:
     )
 
 
+def _percentile(sorted_vals: list[float], frac: float) -> float | None:
+    """Nearest-rank percentile of a pre-sorted list (fine for a diagnostic —
+    no interpolation). frac in [0,1]. None on empty."""
+    if not sorted_vals:
+        return None
+    idx = int(round(frac * (len(sorted_vals) - 1)))
+    return sorted_vals[max(0, min(idx, len(sorted_vals) - 1))]
+
+
+def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
+    """Aggregate the stored loudness measurements for the report view — the read
+    side of the audit (writes nothing). Returns everything the page needs from one
+    payload: distribution stats, a fixed-bin histogram, the loudest/quietest N rows
+    (with title/year + PK for INFO-card deep-links), and a compact [loudness_i,
+    true_peak] array for the client-side target-preview slider (exact per-theme
+    counts without shipping identity for every row)."""
+    counts = audit_counts(conn)
+    rows = conn.execute(
+        "SELECT loudness_i, loudness_tp FROM local_files WHERE loudness_i IS NOT NULL"
+    ).fetchall()
+    vals = [(r["loudness_i"], r["loudness_tp"]) for r in rows]
+    loudness = sorted(v[0] for v in vals)
+
+    stats = None
+    histogram: list[dict] = []
+    if loudness:
+        lo = loudness[0]
+        hi = loudness[-1]
+        stats = {
+            "count": len(loudness),
+            "min": lo, "max": hi,
+            "mean": sum(loudness) / len(loudness),
+            "median": _percentile(loudness, 0.5),
+            "p10": _percentile(loudness, 0.10),
+            "p90": _percentile(loudness, 0.90),
+        }
+        # fixed-width LUFS bins spanning floor(min)..ceil(max). Themes cluster in a
+        # narrow band, so a per-run span keeps the histogram legible.
+        import math
+        start = math.floor(lo / bin_width) * bin_width
+        end = math.ceil(hi / bin_width) * bin_width
+        n_bins = max(1, int(round((end - start) / bin_width)))
+        bins = [0] * n_bins
+        for v in loudness:
+            b = int((v - start) / bin_width)
+            bins[max(0, min(b, n_bins - 1))] += 1
+        histogram = [
+            {"lo": round(start + i * bin_width, 2),
+             "hi": round(start + (i + 1) * bin_width, 2), "count": c}
+            for i, c in enumerate(bins)
+        ]
+
+    def _outliers(order: str) -> list[dict]:
+        q = conn.execute(
+            "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+            "       lf.loudness_i, lf.loudness_tp, t.title, t.year "
+            "FROM local_files lf "
+            "LEFT JOIN themes t ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
+            "WHERE lf.loudness_i IS NOT NULL "
+            f"ORDER BY lf.loudness_i {order} LIMIT ?",
+            (outlier_n,),
+        ).fetchall()
+        return [
+            {"media_type": r["media_type"], "tmdb_id": r["tmdb_id"],
+             "section_id": r["section_id"], "edition_key": r["edition_key"],
+             "title": r["title"] or f'{r["media_type"]}/{r["tmdb_id"]}',
+             "year": r["year"], "loudness_i": r["loudness_i"],
+             "true_peak": r["loudness_tp"]}
+            for r in q
+        ]
+
+    # LUFS is negative; HIGHER (closer to 0) = LOUDER, lower (more negative) = quieter.
+    return {
+        "measured": len(loudness),
+        "total_local_bytes": counts["total"],
+        "unmeasured": max(0, counts["total"] - len(loudness)),
+        "skipped_no_sha": counts["skipped_no_sha"],
+        "stats": stats,
+        "histogram": histogram,
+        "loudest": _outliers("DESC"),   # highest LUFS first
+        "quietest": _outliers("ASC"),   # lowest (most-negative) LUFS first
+        "values": [[v[0], v[1]] for v in vals],
+    }
+
+
 def run_loudness_audit(
     db_path, themes_dir: Path | None, *,
     progress_cb=None, max_workers: int = _DEFAULT_MAX_WORKERS,

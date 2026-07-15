@@ -7559,6 +7559,9 @@
             status.className = 'form-status form-status-ok';
             renderSummary(st.summary);
             _autoDismissOpStatus(status, 6000);
+            // v0.51.159: refresh the report on the same page (if present) so the
+            // histogram / outliers / slider reflect the just-measured rows.
+            if (window.__loudRefreshReport) window.__loudRefreshReport();
           } else if (st && st.status === 'failed') {
             status.textContent = '✗ ' + (st.error || 'audit failed');
             status.className = 'form-status form-status-fail';
@@ -7596,6 +7599,130 @@
       if (st.status === 'running') poll();
       else if (st.status === 'done') renderSummary(st.summary);
     }).catch(() => {});
+  }
+
+  // v0.51.159: /admin/loudness report — renders the stored measurements as a
+  // histogram + median/spread stat tiles + loudest/quietest outliers (→ INFO cards)
+  // + a client-side target-preview slider (pure dry-run: drag a target LUFS, see how
+  // many themes would move, from report.values — no files touched). Gated on the
+  // report container so it only fires on that page.
+  function bindLoudnessReport() {
+    const container = document.getElementById('loudness-report');
+    if (!container) return;
+    const countEl = document.getElementById('loud-report-count');
+    const statsEl = document.getElementById('loud-stats');
+    const histEl = document.getElementById('loud-hist');
+    const outliersBlock = document.getElementById('loud-outliers-block');
+    const quietestEl = document.getElementById('loud-quietest');
+    const loudestEl = document.getElementById('loud-loudest');
+    const slider = document.getElementById('loud-target');
+    const targetVal = document.getElementById('loud-target-val');
+    const previewEl = document.getElementById('loud-preview');
+    if (!slider || !previewEl) return;
+    let values = [];
+    // a real normalizer respects a true-peak ceiling, so a quiet track with little
+    // peak headroom can't reach a loud target — the preview models that.
+    const PEAK_CEIL = -1.0;   // dBTP
+    const TOL = 1.0;          // ±1 dB = "close enough, leave it"
+    const fmtLufs = (v) => (v == null ? '—' : (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(1));
+
+    function tile(val, label) {
+      return `<div class="loud-stat"><span class="loud-stat-val">${val}</span>`
+        + `<span class="loud-stat-label">${label}</span></div>`;
+    }
+
+    function renderStats(s) {
+      statsEl.innerHTML = s ? [
+        tile(fmtLufs(s.median) + ' LUFS', 'median'),
+        tile(fmtLufs(s.p10) + ' … ' + fmtLufs(s.p90), 'spread (p10–p90)'),
+        tile(fmtLufs(s.min), 'quietest'),
+        tile(fmtLufs(s.max), 'loudest'),
+        tile(String(s.count), 'measured'),
+      ].join('') : '';
+    }
+
+    function renderHist(hist, median) {
+      if (!hist || !hist.length) { histEl.innerHTML = ''; return; }
+      const maxC = Math.max(...hist.map((b) => b.count), 1);
+      histEl.innerHTML = hist.map((b) => {
+        const pct = Math.round((b.count / maxC) * 100);
+        const isMed = median != null && median >= b.lo && median < b.hi;
+        return `<div class="loud-hist-row${isMed ? ' is-median' : ''}">`
+          + `<span class="loud-hist-label">${fmtLufs(b.lo)}</span>`
+          + `<span class="loud-hist-bar"><span class="loud-hist-fill" style="width:${pct}%"></span></span>`
+          + `<span class="loud-hist-count">${b.count}</span></div>`;
+      }).join('');
+    }
+
+    function outRow(r) {
+      const tab = r.media_type === 'movie' ? '/movies'
+        : r.media_type === 'collection' ? '/collections' : '/tv';
+      const p = new URLSearchParams();
+      p.set('info_open', String(r.tmdb_id));
+      p.set('info_mt', String(r.media_type));
+      if (r.section_id) p.set('info_section', String(r.section_id));
+      if (r.title) p.set('q', r.title);
+      const yr = r.year ? ` <span class="muted">(${r.year})</span>` : '';
+      return `<tr><td><a href="${tab}?${p.toString()}">${htmlEscape(r.title)}</a>${yr}</td>`
+        + `<td class="loud-num">${fmtLufs(r.loudness_i)}</td>`
+        + `<td class="loud-num">${fmtLufs(r.true_peak)}</td></tr>`;
+    }
+
+    function renderPreview() {
+      const target = parseFloat(slider.value);
+      targetVal.textContent = fmtLufs(target) + ' LUFS';
+      let louder = 0; let quieter = 0; let within = 0; let limited = 0;
+      for (const [i, tp] of values) {
+        const need = target - i;
+        if (Math.abs(need) <= TOL) { within += 1; continue; }
+        if (need < 0) { quieter += 1; continue; }
+        const headroom = PEAK_CEIL - (tp == null ? PEAK_CEIL : tp);
+        if (headroom >= need - TOL) louder += 1;
+        else limited += 1;
+      }
+      previewEl.innerHTML = [
+        [louder, 'would get louder'],
+        [quieter, 'would get quieter'],
+        [within, 'already within ±1 dB'],
+        [limited, 'peak-limited (lands below)'],
+      ].map(([n, l]) => `<div class="loud-preview-item"><span class="loud-preview-n">${n}</span>`
+        + `<span class="loud-preview-label">${l}</span></div>`).join('');
+    }
+
+    async function refresh() {
+      let rep;
+      try { rep = await api('GET', '/api/admin/loudness-report'); }
+      catch (e) { return; }
+      values = rep.values || [];
+      countEl.textContent = `${rep.measured} measured · ${rep.unmeasured} not yet measured`
+        + (rep.skipped_no_sha ? ` · ${rep.skipped_no_sha} no hash` : '');
+      container.style.display = '';
+      if (!rep.measured) {
+        statsEl.innerHTML = '<span class="muted small">No measurements yet — run the audit above.</span>';
+        histEl.innerHTML = '';
+        previewEl.innerHTML = '';
+        if (outliersBlock) outliersBlock.style.display = 'none';
+        return;
+      }
+      renderStats(rep.stats);
+      renderHist(rep.histogram, rep.stats && rep.stats.median);
+      // seed the slider to the median so the dry-run starts somewhere sensible.
+      if (rep.stats && rep.stats.median != null) {
+        const m = Math.round(rep.stats.median * 2) / 2;
+        slider.value = String(Math.max(parseFloat(slider.min),
+          Math.min(parseFloat(slider.max), m)));
+      }
+      renderPreview();
+      if (outliersBlock) {
+        quietestEl.innerHTML = (rep.quietest || []).map(outRow).join('');
+        loudestEl.innerHTML = (rep.loudest || []).map(outRow).join('');
+        outliersBlock.style.display = '';
+      }
+    }
+
+    slider.addEventListener('input', renderPreview);
+    window.__loudRefreshReport = refresh;   // audit-complete hook calls this
+    refresh();
   }
 
   // DIAGNOSTICS tab. Title fragments → POST → render JSON.
@@ -20201,6 +20328,7 @@
     bindReprobeTdbFailures();
     bindProbePlexThemes();
     bindLoudnessAudit();
+    bindLoudnessReport();
     bindTestCookies();
     bindTestNotification();
     bindTestPlex();

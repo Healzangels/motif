@@ -4202,7 +4202,20 @@
 #   (bindLoudnessAudit polls status → live "measuring X / N…" + summary). Guard
 #   test_v0_51_158 (module logic + endpoint contract). Next: tag D = the report view
 #   (histogram + outliers + target-preview slider) reading the stored columns.
-__version__ = "0.51.158"
+# 0.51.159: theme loudness — the LOUDNESS AUDIT report view (Phase 0 / tag D, finishes
+#   Phase 0). loudness_audit.build_report() aggregates the stored v72 measurements into
+#   distribution stats + a fixed-bin histogram + loudest/quietest-40 outliers (title/year
+#   + PK) + a compact [loudness_i, true_peak] array; GET /api/admin/loudness-report serves
+#   it (pure read). New /admin/loudness dashboard (loudness.html, mirrors /admin/orphans)
+#   hosts the RUN AUDIT trigger + renders: stat tiles (median/spread/min/max), a CSS-bar
+#   histogram (median bin highlighted), a CLIENT-SIDE target-preview slider (drag a target
+#   LUFS → live louder/quieter/within-±1dB/peak-limited counts, a pure dry-run modelling a
+#   true-peak ceiling — zero files touched), and quietest/loudest outlier tables deep-
+#   linking to INFO cards (info_open param). bindLoudnessReport in app.js; the Settings→
+#   Diagnostics block becomes a link-out (// OPEN LOUDNESS AUDIT ▸). Themed neutral chrome
+#   (--accent, not source-encoded — theme-SPLIT). Guard test_v0_51_159. Engine choice
+#   (mp3gain vs loudnorm) + Phase 1 normalize/undo stay a post-Phase-0 gate.
+__version__ = "0.51.159"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

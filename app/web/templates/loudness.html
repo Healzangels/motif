@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Loudness Audit{% endblock %}
+{% block content %}
+{# v0.51.159: operator dashboard for the loudness audit (Phase 0 of the loudness
+   feature). Hosts the RUN AUDIT trigger (the /api/admin/loudness-audit/{start,
+   status} in-memory op from v0.51.158) + renders the stored measurements as a
+   histogram + median/spread + loudest/quietest outliers (→ INFO cards) + a
+   client-side target-preview slider (pure dry-run from the stored numbers — zero
+   files touched). Read-only diagnostic; no normalization happens here. All render
+   logic is bindLoudnessAudit + bindLoudnessReport in app.js, gated on these ids so
+   it only fires on this page. Mirrors orphans.html. #}
+<section class="hero">
+  <h1 class="title">// LOUDNESS AUDIT</h1>
+  <p class="muted hero-sub">how loud each theme plays · read-only · ffmpeg EBU R128, no files touched</p>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// RUN</h2>
+    <div class="chips chips-inline">
+      {# SSR-lock the button when an audit is already draining so a nav mid-run
+         doesn't flash it clickable before the first status poll lands. #}
+      <button type="button" id="loudness-audit-btn" class="btn lib-source-themerrdb"{% if loudness_audit_running %} disabled{% endif %}>// RUN LOUDNESS AUDIT</button>
+      <span id="loudness-audit-status" class="form-status"{% if loudness_audit_running %} data-running="1"{% endif %}></span>
+    </div>
+  </header>
+  <p class="form-hint block-intro">
+    Measures every theme motif stores locally (ThemerrDB / user-URL / adopted /
+    manual-sidecar + cloud backups) with ffmpeg's EBU R128 <code>loudnorm</code>
+    analysis and records the numbers — <strong>without re-encoding or touching a
+    single file</strong>. Incremental + <code>sha256</code>-keyed: a re-run only
+    measures new or changed themes.
+  </p>
+  <p class="form-hint" id="loudness-audit-summary" style="display:none"></p>
+</section>
+
+{# The report — hidden until a measurement exists (JS reveals). #}
+<section class="block" id="loudness-report" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// DISTRIBUTION</h2>
+    <span class="muted small" id="loud-report-count"></span>
+  </header>
+
+  <div id="loud-stats" class="loud-stats"></div>
+
+  <div class="loud-hist" id="loud-hist"></div>
+
+  {# target-preview: a pure client-side dry-run — drag a target LUFS, see how many
+     themes would get louder / quieter / stay put / hit the peak ceiling. Nothing is
+     applied; this only reads the stored measurements. #}
+  <div class="loud-target">
+    <label class="loud-target-head" for="loud-target">
+      <span class="field-name">TARGET PREVIEW</span>
+      <span class="muted small">drag to see what normalizing to a target would do — dry-run, nothing is changed</span>
+    </label>
+    <div class="loud-target-row">
+      <input type="range" id="loud-target" class="loud-slider"
+             min="-31" max="-12" step="0.5" value="-18" />
+      <output class="loud-target-val" id="loud-target-val">−18.0 LUFS</output>
+    </div>
+    <div class="loud-preview" id="loud-preview"></div>
+  </div>
+</section>
+
+{# outliers — the extremes are what an operator wants to eyeball first. Each links
+   to the row's INFO card via the library search deep-link (?q=). #}
+<section class="block loud-outliers" id="loud-outliers-block" style="display:none">
+  <div class="loud-outlier-col">
+    <header class="block-head"><h2 class="block-title">// QUIETEST</h2></header>
+    <div class="table-scroll">
+      <table class="table table-compact">
+        <thead><tr><th>THEME</th><th class="loud-num">LUFS</th><th class="loud-num">PEAK</th></tr></thead>
+        <tbody id="loud-quietest"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="loud-outlier-col">
+    <header class="block-head"><h2 class="block-title">// LOUDEST</h2></header>
+    <div class="table-scroll">
+      <table class="table table-compact">
+        <thead><tr><th>THEME</th><th class="loud-num">LUFS</th><th class="loud-num">PEAK</th></tr></thead>
+        <tbody id="loud-loudest"></tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}

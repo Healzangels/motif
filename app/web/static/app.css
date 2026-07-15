@@ -7703,3 +7703,41 @@ body.dash-customize-mode .dash-customize-link:hover {
     justify-self: center;
   }
 }
+
+/* v0.51.159: LOUDNESS AUDIT report (/admin/loudness). Generic diagnostic chrome —
+   histogram / stats / slider are THEMED neutral accent (not source-encoded), per the
+   theme-SPLIT rule. */
+.loud-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gap-6);
+  margin-bottom: var(--gap-5);
+}
+.loud-stat { display: flex; flex-direction: column; gap: var(--gap-1); }
+.loud-stat-label { font-size: var(--t-small); color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.08em; }
+.loud-stat-val { font-size: var(--t-large); color: var(--accent); font-variant-numeric: tabular-nums; }
+.loud-hist { display: flex; flex-direction: column; gap: var(--gap-1); }
+.loud-hist-row { display: grid; grid-template-columns: 5.5ch 1fr 4ch; align-items: center; gap: var(--gap-2); }
+.loud-hist-label { text-align: right; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.loud-hist-bar { height: 14px; background: rgba(var(--accent-rgb), 0.08); border-radius: var(--radius); overflow: hidden; }
+.loud-hist-fill { height: 100%; min-width: 2px; background: rgba(var(--accent-rgb), 0.72); border-radius: var(--radius); }
+.loud-hist-row.is-median .loud-hist-fill { background: var(--accent); }
+.loud-hist-count { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.loud-target { margin-top: var(--gap-6); padding-top: var(--gap-5); border-top: 1px solid rgba(var(--accent-rgb), 0.15); }
+.loud-target-head { display: flex; flex-direction: column; gap: var(--gap-1); margin-bottom: var(--gap-3); }
+.loud-target-row { display: flex; align-items: center; gap: var(--gap-3); }
+.loud-slider { flex: 1; accent-color: var(--accent); }
+.loud-target-val { color: var(--accent); font-variant-numeric: tabular-nums; min-width: 9ch; text-align: right; }
+.loud-preview { display: flex; flex-wrap: wrap; gap: var(--gap-6); margin-top: var(--gap-4); }
+.loud-preview-item { display: flex; flex-direction: column; gap: var(--gap-1); }
+.loud-preview-n { font-size: var(--t-large); color: var(--fg); font-variant-numeric: tabular-nums; }
+.loud-preview-label { font-size: var(--t-small); color: var(--fg-dim); }
+.loud-outliers { display: grid; grid-template-columns: 1fr 1fr; gap: var(--gap-5); }
+.loud-outlier-col { min-width: 0; }
+.loud-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 600px) {
+  /* stack the two outlier tables — placed AFTER the base rule so it wins at equal
+     specificity (the mid-file @media block would lose on source order). */
+  .loud-outliers { grid-template-columns: 1fr; }
+}
