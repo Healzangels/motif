@@ -86,7 +86,12 @@ def measure_loudness(file_path: Path | str,
     p = str(file_path)
     # -hide_banner -nostats keep stderr to the loudnorm JSON + errors; -f null
     # discards the (unwritten) output; `-` sink. No re-encode, no file written.
-    cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", p,
+    # v0.51.160: -vn drops any embedded cover-art / video stream. yt-dlp-extracted
+    # theme.mp3s often carry an attached picture (mjpeg); with it present the audio
+    # filtergraph + null muxer can abort before loudnorm prints its JSON (ffmpeg
+    # rc=254, "no measurement parsed" on the real prod library — Star Wars, Amadeus,
+    # Empire, …). -vn is a no-op on audio-only files, so it can't regress them.
+    cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", p, "-vn",
            "-af", "loudnorm=print_format=json", "-f", "null", "-"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -110,6 +115,10 @@ def measure_loudness(file_path: Path | str,
     if result is None:
         # ffmpeg ran but we couldn't read the numbers (non-audio, empty file, a
         # loudnorm quirk) — log a breadcrumb, don't silently swallow (class-9).
-        log.debug("loudness: no loudnorm measurement parsed for %s (rc=%s)",
-                  p, proc.returncode)
+        # v0.51.160: include ffmpeg's last stderr line so the actual error is
+        # diagnosable (this is a cold path — a measurement gap the operator can't
+        # otherwise see the cause of).
+        tail = [ln for ln in (proc.stderr or "").splitlines() if ln.strip()]
+        log.debug("loudness: no loudnorm measurement parsed for %s (rc=%s): %s",
+                  p, proc.returncode, tail[-1] if tail else "(no stderr)")
     return result

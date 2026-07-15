@@ -7520,6 +7520,7 @@
     const summary = document.getElementById('loudness-audit-summary');
     if (!btn || !status || !summary) return;
     let polling = false;
+    let lastReportRefresh = 0;   // v0.51.160: throttle live report refresh during a run
     const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString());
 
     function setBusy(busy) {
@@ -7550,6 +7551,13 @@
             const total = st.total || 0;
             status.textContent = total ? `measuring ${fmt(done)} / ${fmt(total)}…` : 'starting…';
             status.className = 'form-status';
+            // v0.51.160: refresh the distribution/histogram/outliers LIVE as rows
+            // land (the user: it only updated on completion). Throttled — the report
+            // query scans every measured row, so ~every 3s not every 1.2s poll.
+            if (window.__loudRefreshReport && Date.now() - lastReportRefresh > 3000) {
+              lastReportRefresh = Date.now();
+              window.__loudRefreshReport();
+            }
             await new Promise((r) => setTimeout(r, 1200));
             continue;
           }
@@ -7620,6 +7628,8 @@
     const previewEl = document.getElementById('loud-preview');
     if (!slider || !previewEl) return;
     let values = [];
+    let sliderSeeded = false;   // v0.51.160: seed the slider to the median ONCE, so a
+                                // live refresh mid-run doesn't yank it off the operator's drag
     // a real normalizer respects a true-peak ceiling, so a quiet track with little
     // peak headroom can't reach a loud target — the preview models that.
     const PEAK_CEIL = -1.0;   // dBTP
@@ -7706,8 +7716,10 @@
       }
       renderStats(rep.stats);
       renderHist(rep.histogram, rep.stats && rep.stats.median);
-      // seed the slider to the median so the dry-run starts somewhere sensible.
-      if (rep.stats && rep.stats.median != null) {
+      // seed the slider to the median ONCE so the dry-run starts somewhere sensible;
+      // subsequent (live) refreshes keep the operator's chosen target.
+      if (!sliderSeeded && rep.stats && rep.stats.median != null) {
+        sliderSeeded = true;
         const m = Math.round(rep.stats.median * 2) / 2;
         slider.value = String(Math.max(parseFloat(slider.min),
           Math.min(parseFloat(slider.max), m)));

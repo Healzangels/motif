@@ -4215,7 +4215,18 @@
 #   Diagnostics block becomes a link-out (// OPEN LOUDNESS AUDIT ▸). Themed neutral chrome
 #   (--accent, not source-encoded — theme-SPLIT). Guard test_v0_51_159. Engine choice
 #   (mp3gain vs loudnorm) + Phase 1 normalize/undo stay a post-Phase-0 gate.
-__version__ = "0.51.159"
+# 0.51.160: loudness audit — real-world-testing follow-ups (the user ran the audit against
+#   the full prod library). (1) LIVE report: the /admin/loudness distribution / histogram /
+#   outliers only refreshed on completion — now bindLoudnessAudit's poll loop refreshes the
+#   report every ~3s while measuring (throttled — the report query scans every measured row),
+#   and bindLoudnessReport seeds the target slider to the median ONCE so a live refresh can't
+#   yank it off the operator's drag. (2) MEASURE robustness: many prod theme.mp3s failed with
+#   ffmpeg rc=254 / "no measurement parsed" (Star Wars, Amadeus, Empire, …) — added `-vn` to
+#   the loudnorm command to drop an embedded cover-art / mjpeg stream (the classic
+#   loudnorm-on-downloaded-mp3 abort; a no-op on audio-only files so no regression), + the
+#   parse-failure debug log now includes ffmpeg's last stderr line so any remaining failure
+#   is diagnosable. Guard test_v0_51_160.
+__version__ = "0.51.160"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
