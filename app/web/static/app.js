@@ -19402,6 +19402,25 @@
     else dlg.removeAttribute('open');
   }
 
+  // v0.51.155: UI SCALE picker (Settings → VISUALS). Reads/writes localStorage
+  // 'motif:uiScale' and applies live via the shared MOTIF_APPLY_UI_SCALE (base.html):
+  // a fixed % sets an inline html.zoom that wins over the app.css viewport ladder;
+  // 'auto' clears it so the ladder applies. Mirrors the theme picker's persistence.
+  function bindUiScale() {
+    const sel = document.getElementById('ui-scale-select');
+    if (!sel) return;
+    const KEY = 'motif:uiScale';
+    let cur = 'auto';
+    try { cur = localStorage.getItem(KEY) || 'auto'; } catch (_) { /* disabled */ }
+    if (![...sel.options].some((o) => o.value === cur)) cur = 'auto';
+    sel.value = cur;
+    sel.addEventListener('change', () => {
+      const v = sel.value;
+      try { localStorage.setItem(KEY, v); } catch (_) { /* disabled */ }
+      if (window.MOTIF_APPLY_UI_SCALE) window.MOTIF_APPLY_UI_SCALE(v);
+    });
+  }
+
   // v0.51.148: notification inbox drawer — opened by the INBOX topbar pill.
   // Reuses the LIVE-OPS drawer shell (.ops-drawer / .is-open / [hidden]); this
   // owns the open/close animation handshake + the row list + dismiss/clear-all.
@@ -19926,6 +19945,7 @@
     bindSettingsTabs();
     bindVisualsToggles();
     bindThemePicker();  // v0.51.110
+    bindUiScale();      // v0.51.155
     bindImportPanel();
     bindConfigSaves();
     // v0.50.89: bindScans() call removed — orphaned scans JS surface deleted.

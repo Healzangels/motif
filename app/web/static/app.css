@@ -47,6 +47,9 @@
 }
 
 :root {
+  /* v0.51.155: display-scale factor (root `zoom`). Default 1×; the @media ladder
+     above bumps it on large panels; a manual override sets an inline html.zoom. */
+  --ui-zoom: 1;
   --bg: #0a0d0c;
   --bg-elev: #111614;
   --bg-elev-2: #161e1b;
@@ -286,7 +289,22 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* v0.51.155: display scaling. motif's whole size scale is px (--t-*, --gap-*),
+   so on a large NATIVE panel (2560px+ at 100%) the UI renders physically small.
+   A root `zoom` scales EVERYTHING — text, layout, AND poster bitmaps (which
+   re-rasterize, de-pixelating them; a pure rem refactor could NOT fix images).
+   `zoom` behaves like browser zoom, so sticky/fixed/vw all stay correct. Auto
+   only fires on genuinely large panels — a laptop / 1080p / OS-scaled display
+   reports a smaller CSS viewport and stays 1×. A manual override (Settings →
+   VISUALS) sets an inline html.zoom that WINS over this ladder (app.js /
+   base.html MOTIF_APPLY_UI_SCALE); 'Auto' clears the inline so this applies. The
+   --ui-zoom default lives in the :root token block; `html { zoom }` is folded into
+   the html rule below — only the @media overrides sit here (no dup top-level rule). */
+@media (min-width: 2400px) { :root { --ui-zoom: 1.25; } }
+@media (min-width: 3600px) { :root { --ui-zoom: 1.5; } }
+
 html {
+  zoom: var(--ui-zoom);
   background: var(--bg);
   /* v1.15.127: Gecko scrollbar styling (WebKit form lives at
      `::-webkit-scrollbar*` below the body rule).

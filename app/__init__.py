@@ -4155,7 +4155,18 @@
 #   clears the unit. Runs of 1-2 stay individual. .notif-group* CSS in ops.css.
 #   Verified in a browser harness (burst→group, expand, child/group dismiss). Guard
 #   test_v0_51_154. Completes the notification center (see the plan memory).
-__version__ = "0.51.154"
+# 0.51.155: display / UI scaling (the user: motif renders small on a 2560×1440 panel;
+#   125% browser zoom "feels normal" + de-pixelates posters). The size scale is px, so
+#   the UI doesn't scale with the display, and the poster sharpness is an image-
+#   rasterization effect only browser-zoom-style scaling fixes (rem would miss images).
+#   Fix = a root `zoom` (scales text + layout + re-rasterizes posters): app.css AUTO
+#   ladder (--ui-zoom media queries: ≥2400px→1.25, ≥3600px→1.5; laptops/1080p/OS-scaled
+#   stay 1×) + a MANUAL override in Settings→VISUALS (Auto/100/110/125/150%) that sets
+#   an inline html.zoom winning over the ladder, persisted localStorage 'motif:uiScale',
+#   applied pre-paint (base.html MOTIF_APPLY_UI_SCALE) + wired by app.js bindUiScale.
+#   Verified in a harness that zoom keeps sticky/fixed/vw correct + no overflow. Guard
+#   test_v0_51_155.
+__version__ = "0.51.155"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

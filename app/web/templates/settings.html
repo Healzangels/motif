@@ -1704,6 +1704,25 @@
         green). Retints the background + accent; your SRC / LINK pill colours
         keep their meaning in every theme.</p>
     </label>
+    {# v0.51.155: UI SCALE — display-scaling override. motif's design is px-based,
+       so it renders small on a large native panel (2560px+); an auto zoom ladder
+       (app.css) enlarges it there, and this picker overrides that per browser.
+       Persists to localStorage 'motif:uiScale', applied pre-paint (base.html
+       MOTIF_APPLY_UI_SCALE), wired by bindUiScale() in app.js. #}
+    <label class="form-label" for="ui-scale-select">
+      <span class="form-label-text">UI SCALE</span>
+      <select id="ui-scale-select" class="theme-select">
+        <option value="auto">Auto (by display size)</option>
+        <option value="100">100%</option>
+        <option value="110">110%</option>
+        <option value="125">125%</option>
+        <option value="150">150%</option>
+      </select>
+      <p class="form-hint">Scales the whole interface — text, layout, and poster
+        art — like the browser's own zoom. <strong>Auto</strong> enlarges it on
+        large / high-resolution monitors (a 2560px-wide panel or bigger) and stays
+        1× on laptops and 1080p displays. Saved to this browser.</p>
+    </label>
     <div class="form-grid form-grid-tight">
       <label class="form-label form-checkbox">
         <input type="checkbox" data-viz-field="crtOn" checked />

@@ -189,6 +189,26 @@
       } catch (e) { /* malformed / disabled localStorage → all effects on */ }
     })();
   </script>
+  {# v0.51.155: UI SCALE — the manual display-scaling override (Settings →
+     VISUALS). A fixed choice (100/110/125/150) sets an inline html.zoom that WINS
+     over the app.css auto ladder; 'auto'/unset clears it so the ladder applies.
+     Applied pre-paint (before first render) so a saved scale never flashes at 1×
+     then jumps. Shared writer with the picker (app.js bindUiScale). #}
+  <script>
+    window.MOTIF_APPLY_UI_SCALE = function (v) {
+      var r = document.documentElement;
+      var pct = parseInt(v, 10);
+      if (v && v !== 'auto' && pct >= 50 && pct <= 300) {
+        r.style.zoom = String(pct / 100);
+      } else {
+        r.style.removeProperty('zoom');
+      }
+    };
+    (function () {
+      try { window.MOTIF_APPLY_UI_SCALE(localStorage.getItem('motif:uiScale')); }
+      catch (e) { /* disabled localStorage → auto ladder */ }
+    })();
+  </script>
   {# v0.50.70: phase-sync the hero wave to the WALL CLOCK so it never visibly
      RESETS when changing sections (the user — dashboard/logs/settings are full-
      page reloads that restarted the CSS animation at phase 0 while the library
