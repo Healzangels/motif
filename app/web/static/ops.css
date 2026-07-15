@@ -1113,12 +1113,13 @@ body[data-ops-running="1"] #topbar-status-text {
   flex: 1 1 auto;
 }
 
-/* row: [emoji] [title + kind phrase] [time + ×]. The left stripe encodes the
-   tier — a FIXED semantic tone (green add · cyan available · amber lost/FYI),
-   NOT a themed accent (motif_theme_split_intentional). */
+/* row: [title] [time + ×]. The left stripe encodes the tier — a FIXED semantic
+   tone (green add · cyan available · amber lost/FYI), NOT a themed accent
+   (motif_theme_split_intentional). v0.51.149: the stored title already carries
+   its own emoji + descriptor, so there is no separate emoji column. */
 .notif-row {
   display: grid;
-  grid-template-columns: 20px 1fr auto;
+  grid-template-columns: 1fr auto;
   gap: 10px;
   align-items: start;
   padding: 11px 16px;
@@ -1134,19 +1135,12 @@ body[data-ops-running="1"] #topbar-status-text {
 .notif-row.unread { background: rgba(var(--ok-rgb), 0.04); }
 .notif-row.seen .notif-title { color: var(--fg-dim); }
 
-.notif-emoji { font-size: var(--t-small); line-height: 1.5; }
 .notif-main { min-width: 0; }
 .notif-title {
   color: var(--fg);
   font-size: var(--t-small);
   line-height: 1.4;
   overflow-wrap: anywhere;
-}
-.notif-sub {
-  color: var(--fg-mute);
-  font-size: var(--t-tiny);
-  letter-spacing: 0.04em;
-  margin-top: 2px;
 }
 .notif-meta {
   display: flex;

@@ -19415,31 +19415,30 @@
     const closeBtn = drawer.querySelector('.ops-drawer-close');
     let closeTimer = null;
 
-    // event_kind → [tier stripe class, emoji, one-line kind phrase]. The tiers
-    // are FIXED semantic tones (add / available / FYI-loss), not themed accents
-    // — see motif_theme_split_intentional. Mirrors notify_inbox.INBOX_EVENT_KINDS.
-    const KIND = {
-      theme_added:                  ['tier-add',   '🎵', 'auto-added'],
-      plex_item_arrived_themed:     ['tier-add',   '📺', 'arrived already themed'],
-      theme_auto_restored:          ['tier-add',   '🛠', 'auto-restored after Plex dropped it'],
-      new_tdb_theme_available:      ['tier-avail', '✨', 'new ThemerrDB theme available'],
-      backup_ready_to_deploy:       ['tier-avail', '🎯', 'backup ready to deploy'],
-      theme_lost_backup_ready:      ['tier-fyi',   '💔', 'theme lost — backup ready'],
-      theme_lost_sidecar_available: ['tier-fyi',   '💔', 'theme lost — sidecar available'],
-      plex_theme_lost:              ['tier-fyi',   '💔', 'theme lost'],
+    // event_kind → tier stripe class. The tiers are FIXED semantic tones (add /
+    // available / FYI-loss), not themed accents — see motif_theme_split_intentional.
+    // v0.51.149: the stored notification title already carries its own emoji +
+    // descriptor (e.g. "🎵 Theme added — <item>", "💔 Theme lost — <item>"), so the
+    // row renders that VERBATIM — no re-derived emoji/phrase here (that double-
+    // rendered against real data). Mirrors notify_inbox.INBOX_EVENT_KINDS.
+    const TIER = {
+      theme_added:                  'tier-add',
+      plex_item_arrived_themed:     'tier-add',
+      theme_auto_restored:          'tier-add',
+      new_tdb_theme_available:      'tier-avail',
+      backup_ready_to_deploy:       'tier-avail',
+      theme_lost_backup_ready:      'tier-fyi',
+      theme_lost_sidecar_available: 'tier-fyi',
+      plex_theme_lost:              'tier-fyi',
     };
 
     function rowHtml(n) {
-      const meta = KIND[n.event_kind]
-        || ['', '•', (n.event_kind || '').replace(/_/g, ' ')];
-      const cls = ['notif-row', meta[0], n.seen ? 'seen' : 'unread']
+      const tier = TIER[n.event_kind] || '';
+      const cls = ['notif-row', tier, n.seen ? 'seen' : 'unread']
         .filter(Boolean).join(' ');
       return `<li class="${cls}" data-nid="${n.id}">`
-        + `<span class="notif-emoji" aria-hidden="true">${meta[1]}</span>`
-        + `<div class="notif-main">`
-        +   `<div class="notif-title">${htmlEscape(n.title || '')}</div>`
-        +   `<div class="notif-sub">${htmlEscape(meta[2])}</div>`
-        + `</div>`
+        + `<div class="notif-main"><div class="notif-title">`
+        +   `${htmlEscape(n.title || '')}</div></div>`
         + `<div class="notif-meta">`
         +   `<span class="notif-time">${htmlEscape(fmtRelativePast(n.ts))}</span>`
         +   `<button class="notif-x" type="button" aria-label="Dismiss">&times;</button>`

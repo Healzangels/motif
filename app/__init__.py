@@ -4101,7 +4101,16 @@
 #   marks the unread set seen (badge → 0). New: bindNotifInbox() in app.js + the .notif-*
 #   / .op-notif CSS in ops.css. Grouping (batch_id) + click-through are later tags.
 #   Guarded by test_v0_51_148.
-__version__ = "0.51.148"
+# 0.51.149: notification drawer renders stored titles verbatim (fix v0.51.148 double-
+#   render). Every inbox notification title already carries its own emoji + descriptor
+#   (notify_content formatters: "🎵 Theme added — <item>", "💔 Theme lost — <item>",
+#   etc.), so the v0.51.148 drawer's own KIND emoji + phrase sub-line double-rendered
+#   against real data (the harness used bare sample titles so it never showed). Now the
+#   KIND map is tier-only (event_kind → stripe class), the row is [title][time+×] on a
+#   1fr/auto grid, and the title renders verbatim. Dropped the dead .notif-emoji /
+#   .notif-sub CSS. A clean bare-title field is the later enrichment tag. Guard
+#   test_v0_51_149.
+__version__ = "0.51.149"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
