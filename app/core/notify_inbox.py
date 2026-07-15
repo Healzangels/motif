@@ -192,3 +192,29 @@ def mark_seen(db_path: Path) -> int:
         return cur.rowcount
     finally:
         conn.close()
+
+
+# v0.51.152: retention prune for the in-app inbox. The drawer only ever shows
+# UNDISMISSED rows (list_notifications filters dismissed_at IS NULL), so a
+# dismissed row is pure DB weight — prune it after a short grace. Any row (even
+# undismissed) older than the hard cap rotates out too, so an operator who never
+# opens the inbox can't grow the table unbounded (mirrors the events 30-day cap).
+_PRUNE_DISMISSED_DAYS = 7
+_PRUNE_MAX_AGE_DAYS = 30
+
+
+def prune_notifications(db_path: Path) -> int:
+    """Delete dismissed rows older than 7 days + any row older than 30 days.
+    Returns rows deleted. Called by the scheduler's daily maintenance sweep."""
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    try:
+        with conn:
+            cur = conn.execute(
+                "DELETE FROM notifications "
+                "WHERE (dismissed_at IS NOT NULL "
+                f"       AND dismissed_at < datetime('now', '-{_PRUNE_DISMISSED_DAYS} days')) "
+                f"   OR ts < datetime('now', '-{_PRUNE_MAX_AGE_DAYS} days')"
+            )
+        return cur.rowcount or 0
+    finally:
+        conn.close()

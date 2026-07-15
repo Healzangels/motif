@@ -811,6 +811,24 @@ def _prune_events(db_path: Path) -> None:
                   message=f"Pruned {n} events row(s) older than 30 days")
 
 
+def _prune_notifications(db_path: Path) -> None:
+    """v0.51.152: daily sweep of the in-app `notifications` inbox. The topbar
+    drawer only ever shows UNDISMISSED rows, so a dismissed row is pure DB weight
+    — pruned 7 days after dismissal; any row (even undismissed) rotates out after
+    30 days so an operator who never opens the inbox can't grow it unbounded
+    (mirrors the events 30-day cap). Delegates to notify_inbox, which owns the
+    table."""
+    try:
+        from .notify_inbox import prune_notifications
+        n = prune_notifications(db_path)
+    except Exception as e:
+        log.warning("notifications prune failed: %s", e)
+        return
+    if n:
+        log_event(db_path, level="INFO", component="scheduler",
+                  message=f"Pruned {n} notification inbox row(s)")
+
+
 def _prune_history(db_path: Path) -> None:
     """v1.17.11: unified retention prune for the five append-forever
     history tables flagged in the v1.17.9 audit (Tier B).
@@ -1253,6 +1271,13 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
         _prune_events, args=[settings.db_path],
         trigger=CronTrigger(minute="10", hour="3", timezone="UTC"),
         id="events_prune", replace_existing=True, max_instances=1,
+    )
+    # v0.51.152: notifications inbox retention — 03:12, between events_prune
+    # (03:10) and prune_history (03:15).
+    scheduler.add_job(
+        _prune_notifications, args=[settings.db_path],
+        trigger=CronTrigger(minute="12", hour="3", timezone="UTC"),
+        id="notifications_prune", replace_existing=True, max_instances=1,
     )
 
     # v1.17.11: unified history prune for five append-forever

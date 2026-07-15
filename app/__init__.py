@@ -4132,7 +4132,13 @@
 #   app.js row-body click builds the deep-link (× still dismisses). Guard test_v0_51_151;
 #   click-through verified end-to-end in a browser harness. Smart batch grouping + a
 #   prune job are the remaining Phase-4 items.
-__version__ = "0.51.151"
+# 0.51.152: in-app notification center — inbox retention prune (build phase 4). The
+#   `notifications` table was record-only (grew forever). New notify_inbox.
+#   prune_notifications deletes dismissed rows >7 days old (the drawer only shows
+#   UNDISMISSED rows, so dismissed = pure DB weight) + any row >30 days old (rotation
+#   cap, mirrors events_prune). Wired as a daily scheduler job _prune_notifications at
+#   03:12 UTC (between events_prune 03:10 and prune_history 03:15). Guard test_v0_51_152.
+__version__ = "0.51.152"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
