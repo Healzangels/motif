@@ -334,6 +334,17 @@
       <a href="/queue" data-nav="queue">LOGS</a>
       <a href="/settings" data-nav="settings">SETTINGS<span class="nav-attn" id="nav-attn-settings" style="display:none">●</span></a>
     </nav>
+    {# v0.51.153: INBOX pill — opens the in-app notification drawer. A <button>
+       (unlike the attention pills, which are filter deep-links). Always visible,
+       dim at rest; JS lights it green (.has-unread) + shows the unread count on
+       each /api/stats poll. Deliberately its OWN topbar grid column (not inside
+       .topbar-status) so a running-job op-mini growing the status cluster can't
+       push it out of view. #}
+    <button class="op-pill op-notif" id="topbar-inbox-badge" type="button"
+            title="Notifications" aria-label="Notifications">
+      <span class="op-pill-count" id="topbar-inbox-count" hidden>0</span>
+      <span class="op-pill-label">INBOX</span>
+    </button>
     <div class="topbar-status" id="topbar-status">
       <!-- v1.12.106: unified op-pill vocabulary (cf. ops.css).
            UPD / FAIL / OPS now read consistently — same shape,
@@ -421,15 +432,6 @@
         <span class="op-pill-count" id="topbar-disk-free">{{ _ssr_top.disk_free_mb if _ssr_top.disk_free_mb is not none else 0 }}</span>
         <span class="op-pill-label">DISK</span>
       </a>
-      {# v0.51.148: INBOX pill — opens the in-app notification drawer. Unlike the
-         attention pills (filter deep-links) this is a <button>. Always visible, dim
-         at rest; JS lights it green (.has-unread) + shows the unread count on each
-         /api/stats poll (notifications_unread). #}
-      <button class="op-pill op-notif" id="topbar-inbox-badge" type="button"
-              title="Notifications" aria-label="Notifications">
-        <span class="op-pill-count" id="topbar-inbox-count" hidden>0</span>
-        <span class="op-pill-label">INBOX</span>
-      </button>
       {# v1.15.55: SSR the op-mini visibility + content so the
          topbar live-ops bar persists across tab navs. Pre-fix the
          element started hidden on every page load + ops.js

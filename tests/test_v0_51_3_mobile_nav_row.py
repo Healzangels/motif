@@ -39,10 +39,10 @@ MOBILE = _mobile_block(APP_CSS)
 
 
 def test_topbar_is_two_row_areas_grid_on_mobile():
-    assert 'grid-template-areas: "brand status" "nav nav";' in MOBILE, \
-        "nav must span its own full-width second row"
-    # 2 columns now (brand auto-with-shrink-floor, status 1fr), not the old 3.
-    assert "grid-template-columns: minmax(0, auto) 1fr;" in MOBILE
+    assert 'grid-template-areas: "brand inbox status" "nav nav nav";' in MOBILE, \
+        "nav must span its own full-width second row (v0.51.153: + INBOX on row 1)"
+    # v0.51.153: 3 columns now (brand shrink-floor, INBOX auto, status 1fr).
+    assert "grid-template-columns: minmax(0, auto) auto 1fr;" in MOBILE
 
 
 def test_the_crushed_middle_column_grid_is_gone():
@@ -69,11 +69,12 @@ def test_nav_row_has_scroll_affordance_and_tap_targets():
 
 
 def test_desktop_topbar_grid_unchanged():
-    # the base rule stays the 3-col single row — the 2-row layout is a phone-tier
-    # override only (motif_mobile_css_scope_breakpoint).
+    # v0.51.153: the base rule is a 4-col single row (brand · nav · INBOX ·
+    # status) — the 2-row layout is a phone-tier override only
+    # (motif_mobile_css_scope_breakpoint).
     base = APP_CSS[APP_CSS.index(".topbar {"):]
     base = base[:base.index("}")]
-    assert "grid-template-columns: auto 1fr auto;" in base
+    assert "grid-template-columns: auto 1fr auto auto;" in base
     assert "grid-template-areas" not in base
 
 

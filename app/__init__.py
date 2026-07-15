@@ -4138,7 +4138,14 @@
 #   UNDISMISSED rows, so dismissed = pure DB weight) + any row >30 days old (rotation
 #   cap, mirrors events_prune). Wired as a daily scheduler job _prune_notifications at
 #   03:12 UTC (between events_prune 03:10 and prune_history 03:15). Guard test_v0_51_152.
-__version__ = "0.51.152"
+# 0.51.153: topbar — the INBOX pill gets its OWN grid column (the user: keep it visible
+#   when a sync/refresh op-mini inflates the status cluster). Moved the pill out of
+#   .topbar-status to a direct .topbar grid child before the cluster; desktop grid 3→4
+#   cols (brand · nav(1fr) · INBOX · status), gap gap-7→gap-5 so the 4th column nets the
+#   nav ~4px MORE room (no extra wrap). Mobile (≤600px) gives INBOX its own row-1 area
+#   ("brand inbox status" / "nav nav nav"). Verified in a topbar harness at desktop width
+#   (INBOX always visible with op-mini running, no horizontal overflow). Guard test_v0_51_153.
+__version__ = "0.51.153"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
