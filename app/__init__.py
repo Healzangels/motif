@@ -4166,7 +4166,19 @@
 #   applied pre-paint (base.html MOTIF_APPLY_UI_SCALE) + wired by app.js bindUiScale.
 #   Verified in a harness that zoom keeps sticky/fixed/vw correct + no overflow. Guard
 #   test_v0_51_155.
-__version__ = "0.51.155"
+# 0.51.156: theme loudness — the read-only MEASUREMENT primitive (loudness feature,
+#   Phase 0 / tag A). New app/core/loudness.py: measure_loudness() shells out to
+#   ffmpeg's EBU R128 loudnorm filter in ANALYSIS mode (print_format=json -f null,
+#   no re-encode / no file written) + _parse_loudnorm_json() reads the integrated
+#   loudness / true-peak / loudness-range from ffmpeg's stderr JSON. Best-effort
+#   (missing ffmpeg / non-audio / timeout → None, never raises; class-9 warn-once).
+#   The leaf everything else builds on — the LOUDNESS AUDIT op (stores per local_files
+#   row) + eventual normalize/undo (engine TBD post-audit: mp3gain vs loudnorm) are
+#   later tags. ffmpeg is container-only, so the parser is unit-tested vs a real
+#   loudnorm sample + the subprocess stubbed. Guard test_v0_51_156. Motivation: the
+#   download→transcode pipeline does ZERO loudness conditioning → mixed-source hover
+#   volume is the #1 perceived-quality defect (see motif_loudness_normalization_plan).
+__version__ = "0.51.156"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
