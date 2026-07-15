@@ -1112,6 +1112,41 @@
   </div>
 </section>
 
+{# v0.51.158: LOUDNESS AUDIT block (Phase 0 of the loudness feature) —
+   read-only measurement sweep. Measures every local-bytes theme with
+   ffmpeg's EBU R128 loudnorm analysis (no re-encode, no file written)
+   and stores integrated loudness / true peak / loudness range on the
+   local_files row. The spread it reveals decides whether motif should
+   normalize + what target LUFS. Runs as a page-scoped background op
+   (bindLoudnessAudit in app.js polls /api/admin/loudness-audit/status).
+   The rich report view (histogram + outliers + target-preview slider)
+   is a later tag; this block proves the measurement pipe + is useful on
+   its own (kick it, watch the columns fill). #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// LOUDNESS AUDIT</h2>
+    <span class="muted small">measure how loud each theme is (read-only, no files touched)</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      motif's download pipeline does no loudness conditioning, so themes
+      from different sources play back at different volumes on Plex hover.
+      This measures every theme motif stores locally
+      (<code>ThemerrDB</code> / user-URL / adopted / manual-sidecar +
+      cloud backups) with ffmpeg's EBU R128 <code>loudnorm</code> analysis
+      and records the numbers — <strong>without re-encoding or touching a
+      single file</strong>. Incremental + <code>sha256</code>-keyed: a
+      re-run only measures new or changed themes. Read-only diagnostic; no
+      normalization happens here.
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="loudness-audit-btn" type="button">// RUN LOUDNESS AUDIT</button>
+      <span class="form-status" id="loudness-audit-status"></span>
+    </div>
+    <p class="form-hint" id="loudness-audit-summary" style="display:none"></p>
+  </div>
+</section>
+
 {# v1.18.85: PROBE PLEX THEME API block — characterise Plex's
    theme endpoint responses across the four P sub-flavors
    (themerr-plex embed / user upload / Plex Pass cloud / sidecar)

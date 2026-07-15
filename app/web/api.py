@@ -6249,6 +6249,40 @@ def _orphan_scan_run(settings: "Settings", db_path: Path) -> None:
             _ORPHAN_SCAN_STATE.update(status="failed", error=str(e))
 
 
+# v0.51.158: LOUDNESS AUDIT — the same page-scoped in-memory background-op shape as
+# orphan scan (read-only diagnostic, survives a page reload not a container restart,
+# single uvicorn worker → one authoritative dict). Deliberately NOT an op_progress
+# kind: that would need the op_progress.kind CHECK-widen migration (CLAUDE.md flags
+# _widen_check_constraint as the most dangerous op — the v1.18.0 data-loss class) for
+# zero benefit here (a read-only measure mutates no library-row chip state).
+_LOUDNESS_AUDIT_LOCK = threading.Lock()
+_LOUDNESS_AUDIT_STATE: dict = {"status": "idle"}
+
+
+def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
+    from ..core.loudness_audit import run_loudness_audit
+
+    def _cb(done: int, total: int) -> None:
+        with _LOUDNESS_AUDIT_LOCK:
+            _LOUDNESS_AUDIT_STATE["done"] = done
+            _LOUDNESS_AUDIT_STATE["total"] = total
+
+    try:
+        summary = run_loudness_audit(
+            db_path, themes_dir=settings.themes_dir, progress_cb=_cb,
+        )
+        with _LOUDNESS_AUDIT_LOCK:
+            _LOUDNESS_AUDIT_STATE.update(
+                status="done", summary=summary,
+                total=summary["to_measure"], done=summary["to_measure"],
+                scanned_at=now_iso(), error=None,
+            )
+    except Exception as e:  # noqa: BLE001
+        log.exception("loudness audit failed")
+        with _LOUDNESS_AUDIT_LOCK:
+            _LOUDNESS_AUDIT_STATE.update(status="failed", error=str(e))
+
+
 # -------- App factory --------
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -25593,6 +25627,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         with _ORPHAN_SCAN_LOCK:
             return dict(_ORPHAN_SCAN_STATE)
+
+    @app.post("/api/admin/loudness-audit/start")
+    async def api_admin_loudness_audit_start(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.158: kick off the read-only LOUDNESS AUDIT as a page-scoped
+        background op. Returns immediately; the Diagnostics panel polls
+        /api/admin/loudness-audit/status for live "X / N measured" + the summary.
+        Measures each local-bytes theme with ffmpeg (no re-encode, no file
+        written) and stores the result on the local_files row — the only DB
+        writes are the measurements; no library-row state is mutated."""
+        _require_admin(request)
+        with _LOUDNESS_AUDIT_LOCK:
+            if _LOUDNESS_AUDIT_STATE.get("status") == "running":
+                return {"ok": True, "started": False, "already_running": True}
+            _LOUDNESS_AUDIT_STATE.clear()
+            _LOUDNESS_AUDIT_STATE.update(
+                status="running", done=0, total=0, summary=None,
+                scanned_at=None, error=None,
+            )
+        t = threading.Thread(
+            target=_loudness_audit_run, args=(settings, db),
+            name="loudness-audit", daemon=True,
+        )
+        t.start()
+        return {"ok": True, "started": True}
+
+    @app.get("/api/admin/loudness-audit/status")
+    async def api_admin_loudness_audit_status(request: Request):
+        """v0.51.158: current loudness-audit state for the Diagnostics poll +
+        on-load restore. `summary` is populated only when status=='done'."""
+        _require_admin(request)
+        with _LOUDNESS_AUDIT_LOCK:
+            return dict(_LOUDNESS_AUDIT_STATE)
 
     @app.post("/api/admin/orphan-scan/cleanup-dead-rk")
     async def api_admin_orphan_cleanup_dead_rk(

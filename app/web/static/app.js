@@ -7509,6 +7509,95 @@
   }
 
   // v1.18.85: PROBE PLEX THEME API — diagnostic under the
+  // v0.51.158: DIAGNOSTICS tab // LOUDNESS AUDIT — kick the read-only measurement
+  // sweep, then poll status for live "measuring X / N…" + the final summary. The
+  // audit runs as a page-scoped background op (POST /start returns immediately);
+  // matches the orphan-scan poll shape. On-load it reflects an in-flight or
+  // just-finished run so a settings reload mid-audit doesn't lose the progress.
+  function bindLoudnessAudit() {
+    const btn = document.getElementById('loudness-audit-btn');
+    const status = document.getElementById('loudness-audit-status');
+    const summary = document.getElementById('loudness-audit-summary');
+    if (!btn || !status || !summary) return;
+    let polling = false;
+    const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString());
+
+    function setBusy(busy) {
+      btn.disabled = busy;
+      btn.textContent = busy ? '// MEASURING…' : '// RUN LOUDNESS AUDIT';
+    }
+
+    function renderSummary(s) {
+      if (!s) { summary.style.display = 'none'; return; }
+      const parts = [`measured ${fmt(s.measured)} of ${fmt(s.to_measure)} that needed it`];
+      if (s.failed) parts.push(`${fmt(s.failed)} couldn’t be measured`);
+      parts.push(`${fmt(s.already_current)} already current`);
+      if (s.skipped_no_sha) parts.push(`${fmt(s.skipped_no_sha)} skipped (no hash yet)`);
+      parts.push(`${fmt(s.total_local_bytes)} local themes total`);
+      summary.textContent = parts.join(' · ');
+      summary.style.display = '';
+    }
+
+    async function poll() {
+      if (polling) return;
+      polling = true;
+      try {
+        for (;;) {
+          const st = await api('GET', '/api/admin/loudness-audit/status');
+          if (st && st.status === 'running') {
+            setBusy(true);
+            const done = st.done || 0;
+            const total = st.total || 0;
+            status.textContent = total ? `measuring ${fmt(done)} / ${fmt(total)}…` : 'starting…';
+            status.className = 'form-status';
+            await new Promise((r) => setTimeout(r, 1200));
+            continue;
+          }
+          setBusy(false);
+          if (st && st.status === 'done') {
+            status.textContent = '✓ audit complete';
+            status.className = 'form-status form-status-ok';
+            renderSummary(st.summary);
+            _autoDismissOpStatus(status, 6000);
+          } else if (st && st.status === 'failed') {
+            status.textContent = '✗ ' + (st.error || 'audit failed');
+            status.className = 'form-status form-status-fail';
+          }
+          break;
+        }
+      } catch (e) {
+        setBusy(false);
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed');
+        status.className = 'form-status form-status-fail';
+      } finally {
+        polling = false;
+      }
+    }
+
+    btn.addEventListener('click', async () => {
+      summary.style.display = 'none';
+      status.textContent = '';
+      status.className = 'form-status';
+      setBusy(true);
+      try {
+        await api('POST', '/api/admin/loudness-audit/start');
+      } catch (e) {
+        setBusy(false);
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'failed to start');
+        status.className = 'form-status form-status-fail';
+        return;
+      }
+      poll();
+    });
+
+    // On-load restore: reflect a run already in flight / just finished.
+    api('GET', '/api/admin/loudness-audit/status').then((st) => {
+      if (!st || st.status === 'idle') return;
+      if (st.status === 'running') poll();
+      else if (st.status === 'done') renderSummary(st.summary);
+    }).catch(() => {});
+  }
+
   // DIAGNOSTICS tab. Title fragments → POST → render JSON.
   // Used to characterise Plex's theme response shape across
   // the four P sub-flavors (themerr-plex embed / user upload
@@ -20111,6 +20200,7 @@
     bindBulkProbeTdb();
     bindReprobeTdbFailures();
     bindProbePlexThemes();
+    bindLoudnessAudit();
     bindTestCookies();
     bindTestNotification();
     bindTestPlex();

@@ -4187,7 +4187,22 @@
 #   (never measured) until the audit op (tag C) runs. Nothing here touches a file.
 #   Guard test_v0_51_157. Next: tag C = the loudness_audit background op (iterate
 #   local-bytes rows, measure, store) + Diagnostics trigger + ops.js maps.
-__version__ = "0.51.157"
+# 0.51.158: theme loudness — the LOUDNESS AUDIT op + runner + trigger (Phase 0 / tag C).
+#   New app/core/loudness_audit.py walks every local-bytes theme (every local_files
+#   row IS motif's canonical file → T/U/A/M + plex_cloud backups; pure-P has no
+#   local_files row → excluded for free), measures each via loudness.measure_loudness
+#   (ffmpeg, no re-encode, no file written) over a ThreadPoolExecutor, and stores the
+#   v72 columns. sha256-keyed/incremental (skip rows whose loudness_measured_sha256 ==
+#   file_sha256); edition-scoped per-row store. Wired as an in-memory page-scoped
+#   background op (_LOUDNESS_AUDIT_STATE + POST/GET /api/admin/loudness-audit/
+#   {start,status}) on the ORPHAN-SCAN template — deliberately NOT an op_progress kind,
+#   so NO op_progress.kind CHECK-widen migration (CLAUDE.md's most dangerous op, the
+#   v1.18.0 data-loss class) + no ops.js maps + no row-refresh exclusion (mutates no
+#   library-row chip state). Trigger = // LOUDNESS AUDIT block in Settings→Diagnostics
+#   (bindLoudnessAudit polls status → live "measuring X / N…" + summary). Guard
+#   test_v0_51_158 (module logic + endpoint contract). Next: tag D = the report view
+#   (histogram + outliers + target-preview slider) reading the stored columns.
+__version__ = "0.51.158"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
