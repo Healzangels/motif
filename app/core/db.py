@@ -162,6 +162,19 @@ CREATE TABLE IF NOT EXISTS local_files (
     -- otherwise a per-render filesystem stat the paginated sort can't see.
     canonical_present INTEGER,
     canonical_health_checked_at TEXT,
+    -- v0.51.157 (schema v72): read-only loudness audit (Phase 0 of the loudness
+    -- feature). ffmpeg's EBU R128 loudnorm analysis (app/core/loudness.py) measures
+    -- each local-bytes theme WITHOUT re-encoding; these persist the result so the
+    -- report + eventual normalize can rank the spread in SQL. loudness_i = integrated
+    -- loudness (LUFS), loudness_tp = true peak (dBTP), loudness_lra = loudness range.
+    -- loudness_measured_sha256 pins WHICH bytes were measured — a re-download/replace
+    -- changes file_sha256, so a stale measurement is detected (sha mismatch) + re-run.
+    -- NULL across all = never measured. Nothing here mutates a file.
+    loudness_i        REAL,
+    loudness_tp       REAL,
+    loudness_lra      REAL,
+    loudness_measured_at     TEXT,
+    loudness_measured_sha256 TEXT,
     -- v1.21.51 (schema v62): per-edition theme isolation. Movies can
     -- carry multiple editions (Theatrical/Extended/custom) that share
     -- one tmdb_id; edition_key (the normalized {edition-X} folder tag,
@@ -950,7 +963,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 71
+CURRENT_SCHEMA_VERSION = 72
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2613,6 +2626,21 @@ def _migrate_v70_to_v71(conn: sqlite3.Connection) -> None:
             ON notifications (dismissed_at, ts DESC);
         """
     )
+
+
+def _migrate_v71_to_v72(conn: sqlite3.Connection) -> None:
+    """v72 (v0.51.157): add local_files loudness columns — the read-only LOUDNESS
+    AUDIT store (Phase 0 of the loudness feature). Five additive columns hold the
+    ffmpeg EBU R128 measurement (integrated loudness / true peak / loudness range)
+    plus when + which bytes (sha256) it measured, so a stale measurement after a
+    re-download is detectable. Purely additive, idempotent via _add_column; existing
+    rows read NULL (never measured) until the audit op runs. No file is touched."""
+    log.info("Migrating to schema v72 (local_files loudness columns — v0.51.157)")
+    _add_column(conn, "local_files", "loudness_i", "REAL")
+    _add_column(conn, "local_files", "loudness_tp", "REAL")
+    _add_column(conn, "local_files", "loudness_lra", "REAL")
+    _add_column(conn, "local_files", "loudness_measured_at", "TEXT")
+    _add_column(conn, "local_files", "loudness_measured_sha256", "TEXT")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4491,6 +4519,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 70:
                     _migrate_v70_to_v71(conn)
                     current = 71
+                elif current == 71:
+                    _migrate_v71_to_v72(conn)
+                    current = 72
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

@@ -108,7 +108,7 @@ def test_column_exists_at_current_schema(client):
     with get_conn(db) as c:
         cols = {r[1] for r in c.execute("PRAGMA table_info(plex_items)")}
     assert "plex_edition_title" in cols
-    assert CURRENT_SCHEMA_VERSION == 71  # v0.51.147: notifications inbox table (v71)
+    assert CURRENT_SCHEMA_VERSION == 72  # v0.51.157: local_files loudness columns (v72)
 
 
 # ── guards: capture, migrate, render ─────────────────────────────────────────

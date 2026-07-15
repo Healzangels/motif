@@ -40,7 +40,8 @@ def test_fresh_db_has_notifications_table_at_v71(tmp_path):
         assert conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifications'"
         ).fetchone()
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 71
+        # v0.51.157: a fresh DB runs the whole chain → current schema (now v72).
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 72
     finally:
         conn.close()
 
@@ -61,7 +62,9 @@ def test_migration_v70_to_v71_creates_the_table(tmp_path):
         assert conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifications'"
         ).fetchone()
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 71
+        # the v70→v71 step still creates the table; the chain then advances to the
+        # current head (v72 as of v0.51.157) — assert full migration, not just v71.
+        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 72
     finally:
         conn.close()
 

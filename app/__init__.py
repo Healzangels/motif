@@ -4178,7 +4178,16 @@
 #   loudnorm sample + the subprocess stubbed. Guard test_v0_51_156. Motivation: the
 #   download→transcode pipeline does ZERO loudness conditioning → mixed-source hover
 #   volume is the #1 perceived-quality defect (see motif_loudness_normalization_plan).
-__version__ = "0.51.156"
+# 0.51.157: theme loudness — schema v72 audit STORE (loudness feature, Phase 0 / tag B).
+#   local_files gains 5 additive columns (loudness_i / loudness_tp / loudness_lra +
+#   loudness_measured_at / loudness_measured_sha256) to persist the read-only ffmpeg
+#   measurement. sha256 pins WHICH bytes were measured so a re-download/replace makes
+#   the row's measurement stale (sha mismatch) + re-measurable. Migration _migrate_v71
+#   _to_v72 is purely additive (idempotent via _add_column); existing rows read NULL
+#   (never measured) until the audit op (tag C) runs. Nothing here touches a file.
+#   Guard test_v0_51_157. Next: tag C = the loudness_audit background op (iterate
+#   local-bytes rows, measure, store) + Diagnostics trigger + ops.js maps.
+__version__ = "0.51.157"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
