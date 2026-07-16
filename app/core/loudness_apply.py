@@ -269,7 +269,8 @@ def probe_mp3gain(theme_path: Path | str) -> dict:
 # write. Reversibility is proven bit-exact per the v0.51.165 probe; undo VERIFIES it.
 
 def normalize_file(path: Path | str, target_lufs: float,
-                   measured_i: float, true_peak: float | None) -> dict:
+                   measured_i: float | None, true_peak: float | None,
+                   *, expect_sha: str | None = None) -> dict:
     """Apply mp3gain gain to move `path` toward `target_lufs`, then RE-MEASURE. Mutates
     the file in place (writes the MP3GAIN_UNDO tag so undo_file can reverse it). Never
     raises — returns an outcome dict the endpoint stamps onto the row:
@@ -278,7 +279,14 @@ def normalize_file(path: Path | str, target_lufs: float,
          old_sha, new_sha, new_i, new_tp, new_lra}
 
     steps==0 (already within a step of target) is a successful NO-OP: nothing is written,
-    old_sha == new_sha, changed=False."""
+    old_sha == new_sha, changed=False.
+
+    `expect_sha` (v0.51.169) is the file_sha256 the caller's `measured_i` was measured at.
+    If the bytes on disk no longer hash to it the measurement is STALE (a re-download /
+    UPLOAD MP3 landed since the audit) and the gain derived from it would be wrong — so we
+    REFUSE rather than act on a stale number. This is the same staleness key
+    loudness_audit.rows_needing_measure uses; it must not be dropped on the path that
+    actually mutates."""
     from .loudness import measure_loudness
 
     path = Path(path)
@@ -287,10 +295,19 @@ def normalize_file(path: Path | str, target_lufs: float,
         "note": None, "error": None, "old_sha": None, "new_sha": None,
         "new_i": None, "new_tp": None, "new_lra": None,
     }
+    # v0.51.169: enforce the contract here rather than trust every caller — the docstring
+    # promises "never raises", and `target - None` would raise before any guard ran.
+    if measured_i is None:
+        out["error"] = "no loudness measurement — run the LOUDNESS AUDIT first"
+        return out
     if not path.is_file():
         out["error"] = f"canonical file missing: {path}"
         return out
     out["old_sha"] = _sha256(path)
+    if expect_sha is not None and out["old_sha"] != expect_sha:
+        out["error"] = ("file changed since it was measured (sha mismatch) — re-run the "
+                        "LOUDNESS AUDIT before normalizing")
+        return out
 
     steps = gain_steps_for_target(target_lufs, measured_i, true_peak)
     out["steps"] = steps

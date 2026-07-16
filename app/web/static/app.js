@@ -7966,6 +7966,44 @@
 
     const fmt = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed(1));
 
+    // v0.51.169: the UNDO affordance is driven by SERVER state, not just an in-memory
+    // variable. Pre-fix a page reload dropped lastRow and hid // UNDO while the theme
+    // stayed normalized — no UI path back, which breaks the audition's whole promise.
+    function armUndo(rowId) {
+      lastRow = rowId;
+      undoBtn.style.display = '';
+      btn.style.display = 'none';
+    }
+    function disarmUndo() {
+      lastRow = null;
+      undoBtn.style.display = 'none';
+      btn.style.display = '';
+    }
+
+    // Re-arm from the DB: on load, and after any response that says the file changed —
+    // so a normalized theme is always undoable no matter which path got us here.
+    async function refreshNormalizedState({ quiet } = {}) {
+      try {
+        const rep = await api('GET', '/api/admin/loudness/normalized');
+        if (rep && rep.normalized) {
+          armUndo(rep.normalized.row);
+          if (!quiet) {
+            const n = rep.normalized;
+            status.textContent = '• ' + (n.title || 'theme') + ' is normalized ('
+              + (n.norm_gain_db > 0 ? '+' : '') + fmt(n.norm_gain_db) + ' dB → '
+              + fmt(n.loudness_i) + ' LUFS). Hear it in Plex, then // UNDO.'
+              + (rep.count > 1 ? ' [' + rep.count + ' normalized total]' : '');
+            status.className = 'form-status form-status-ok';
+          }
+        }
+      } catch (e) {
+        // diagnostics-only affordance — leave the default (raw) state, but leave a
+        // breadcrumb rather than swallowing silently.
+        console.error('loudness: could not read normalized state', e);
+      }
+    }
+    refreshNormalizedState();
+
     btn.addEventListener('click', async () => {
       btn.disabled = true;
       undoBtn.disabled = true;
@@ -7980,13 +8018,14 @@
         if (!rep.ok) {
           status.textContent = '✗ ' + (rep.error || 'normalize failed');
           status.classList.add('form-status-fail');
+          // the lost-a-race path DID mutate the file — arm UNDO from server state so the
+          // "press // UNDO" the error asks for is actually available.
+          if (rep.changed) refreshNormalizedState({ quiet: true });
         } else if (!rep.changed) {
           status.textContent = '• ' + (rep.title || 'theme') + ': ' + (rep.note || 'no change');
           status.classList.add('form-status-ok');
         } else {
-          lastRow = rep.row;
-          undoBtn.style.display = '';
-          btn.style.display = 'none';
+          armUndo(rep.row);
           status.textContent = '✓ ' + (rep.title || 'theme') + ': '
             + fmt(rep.before.loudness_i) + ' → ' + fmt(rep.after.loudness_i)
             + ' LUFS (' + (rep.applied_db > 0 ? '+' : '') + Number(rep.applied_db).toFixed(1)
@@ -8021,9 +8060,7 @@
           status.textContent = '✓ restored ' + (rep.title || 'theme') + ' to '
             + fmt(rep.restored.loudness_i) + ' LUFS' + exact;
           status.className = 'form-status ' + (rep.bit_exact === false ? 'form-status-fail' : 'form-status-ok');
-          lastRow = null;
-          undoBtn.style.display = 'none';
-          btn.style.display = '';
+          disarmUndo();
         }
       } catch (e) {
         status.textContent = '✗ ' + (e && e.message ? e.message : 'undo failed');

@@ -25796,6 +25796,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return {"ok": False, "error": "no measured theme to probe — run the "
                         "LOUDNESS AUDIT first"}
             fp = Path(row["file_path"])
+            # v0.51.169: themes_dir is None until configured (config.py: "None if not yet
+            # set on first run") — joining it would TypeError into a 500.
+            if not fp.is_absolute() and settings.themes_dir is None:
+                return {"ok": False, "error": "themes_dir is not configured — set it in "
+                        "Settings first"}
             theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
             return probe_mp3gain(theme)
 
@@ -25822,6 +25827,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = await request.json()
         except Exception:  # noqa: BLE001 — auto-pick allows an empty body
             body = {}
+        if not isinstance(body, dict):
+            body = {}   # v0.51.169: a list/str body would AttributeError on .get → 500
         try:
             target = float(body.get("target")) if body.get("target") is not None else -18.0
         except (TypeError, ValueError):
@@ -25833,8 +25840,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         def _run():
             with get_conn(db) as conn:
                 cols = ("lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
-                        "lf.file_path, lf.file_sha256, lf.loudness_i, lf.loudness_tp, "
-                        "lf.norm_state, t.title, t.year")
+                        "lf.file_path, lf.file_sha256, lf.loudness_measured_sha256, "
+                        "lf.loudness_i, lf.loudness_tp, lf.norm_state, t.title, t.year")
                 if want_id is not None and want_mt:
                     row = conn.execute(
                         f"SELECT {cols} FROM local_files lf "
@@ -25845,7 +25852,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          body.get("edition_key") or ""),
                     ).fetchone()
                 else:
-                    # auto-pick: loudest measured, not-yet-normalized, HARDLINK-placed row
+                    # auto-pick: loudest measured, RAW, HARDLINK-placed row whose
+                    # measurement is CURRENT for its bytes. v0.51.169: the
+                    # loudness_measured_sha256 = file_sha256 key is the same staleness
+                    # test rows_needing_measure uses — dropping it here let a re-download
+                    # since the audit drive the gain off a stale loudness.
                     row = conn.execute(
                         f"SELECT {cols} FROM local_files lf "
                         "JOIN placements p ON p.media_type=lf.media_type "
@@ -25853,21 +25864,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "  AND p.edition_key=lf.edition_key AND p.placement_kind='hardlink' "
                         "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
                         "WHERE lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
-                        "  AND (lf.norm_state IS NULL OR lf.norm_state != 'normalized') "
+                        "  AND lf.norm_state IS NULL "
                         "  AND lf.file_sha256 IS NOT NULL "
+                        "  AND lf.loudness_measured_sha256 = lf.file_sha256 "
                         "ORDER BY lf.loudness_i DESC LIMIT 1",
                     ).fetchone()
                 if row is None:
-                    return {"ok": False, "error": "no eligible measured hardlink-placed "
-                            "theme to normalize — run the LOUDNESS AUDIT first"}
+                    return {"ok": False, "error": "no eligible theme to normalize — needs a "
+                            "measured (current) hardlink-placed raw row; run the LOUDNESS "
+                            "AUDIT first"}
                 if row["loudness_i"] is None:
                     return {"ok": False, "error": "target row has no loudness measurement"}
                 if row["norm_state"] == "normalized":
                     return {"ok": False, "error": "already normalized — undo it first"}
+                # v0.51.169: same staleness gate for a body-named row (the auto-pick does
+                # it in SQL). A measurement taken at different bytes yields the wrong gain.
+                if (row["file_sha256"] is None
+                        or row["loudness_measured_sha256"] != row["file_sha256"]):
+                    return {"ok": False, "error": "loudness measurement is stale for the "
+                            "current bytes — re-run the LOUDNESS AUDIT first"}
                 fp = Path(row["file_path"])
+                # v0.51.169: themes_dir is None until configured — guard the join (500).
+                if not fp.is_absolute() and settings.themes_dir is None:
+                    return {"ok": False, "error": "themes_dir is not configured — set it "
+                            "in Settings first"}
                 theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
 
-            res = normalize_file(theme, target, row["loudness_i"], row["loudness_tp"])
+            # expect_sha: refuse if the bytes on disk aren't the ones we measured (the
+            # DB row could have been stamped before an out-of-band replace).
+            res = normalize_file(theme, target, row["loudness_i"], row["loudness_tp"],
+                                 expect_sha=row["file_sha256"])
             if not res["ok"]:
                 return {"ok": False, "error": res.get("error") or "normalize failed",
                         "title": row["title"]}
@@ -25875,20 +25901,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # loudness cols reflect the re-measure; if it failed (None), NULL the
                 # measured_sha too so the audit re-measures rather than trusting a gap.
                 measured_sha = res["new_sha"] if res["new_i"] is not None else None
-                measured_at = now_iso() if res["new_i"] is not None else None
+                ts = now_iso()   # v0.51.169: one instant for one operation
+                measured_at = ts if res["new_i"] is not None else None
                 with get_conn(db) as wconn:
-                    wconn.execute(
+                    # v0.51.169: `AND norm_state IS NULL` makes the WRITE the guard, not
+                    # the earlier read on a since-closed connection. If two normalizes
+                    # race, only the first stamps norm_orig_sha256 — so it keeps the TRUE
+                    # pre-normalize sha and undo still verifies bit-exact (mp3gain's undo
+                    # tag accumulates, so -u reverses BOTH applications).
+                    cur = wconn.execute(
                         "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
                         "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
                         "  norm_state='normalized', norm_gain_db=?, norm_target=?, norm_at=?, "
                         "  norm_orig_sha256=? "
-                        "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                        "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=? "
+                        "  AND norm_state IS NULL",
                         (res["new_i"], res["new_tp"], res["new_lra"], measured_at,
-                         measured_sha, res["new_sha"], res["applied_db"], target, now_iso(),
+                         measured_sha, res["new_sha"], res["applied_db"], target, ts,
                          res["old_sha"], row["media_type"], row["tmdb_id"],
                          row["section_id"], row["edition_key"]),
                     )
                     wconn.commit()
+                    if cur.rowcount == 0:
+                        # another normalize claimed this row while ours was in flight —
+                        # say so instead of reporting a success whose numbers are wrong.
+                        log.warning("loudness normalize: lost the race on %s/%s — the row "
+                                    "was already normalized; gain was applied twice and "
+                                    "should be undone", row["media_type"], row["tmdb_id"])
+                        return {"ok": False, "changed": True, "title": row["title"],
+                                "error": "another normalize won the race for this theme — "
+                                         "it may now be double-adjusted; press // UNDO"}
             return {
                 "ok": True, "changed": res["changed"], "note": res.get("note"),
                 "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
@@ -25898,6 +25940,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "after": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]},
                 "row": {"media_type": row["media_type"], "tmdb_id": row["tmdb_id"],
                         "section_id": row["section_id"], "edition_key": row["edition_key"]},
+            }
+
+        return await run_in_threadpool(_run)
+
+    @app.get("/api/admin/loudness/normalized")
+    async def api_admin_loudness_normalized(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.169: the currently-normalized theme (most recent), so // AUDITION
+        NORMALIZE can re-arm its // UNDO after a page reload. Pre-fix the undo target
+        lived only in a JS variable, so reloading the page stranded a normalized theme
+        with no UI path back — which breaks the audition's whole promise. Pure read."""
+        _require_admin(request)
+        from ..core.db import get_conn
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                    "  lf.norm_gain_db, lf.norm_target, lf.norm_at, lf.loudness_i, "
+                    "  t.title FROM local_files lf "
+                    "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
+                    "WHERE lf.norm_state = 'normalized' "
+                    "ORDER BY lf.norm_at DESC LIMIT 1"
+                ).fetchone()
+                total = conn.execute(
+                    "SELECT COUNT(*) FROM local_files WHERE norm_state = 'normalized'"
+                ).fetchone()[0]
+            if row is None:
+                return {"normalized": None, "count": 0}
+            return {
+                "count": total,
+                "normalized": {
+                    "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
+                    "loudness_i": row["loudness_i"], "norm_gain_db": row["norm_gain_db"],
+                    "norm_target": row["norm_target"], "norm_at": row["norm_at"],
+                    "row": {"media_type": row["media_type"], "tmdb_id": row["tmdb_id"],
+                            "section_id": row["section_id"],
+                            "edition_key": row["edition_key"]},
+                },
             }
 
         return await run_in_threadpool(_run)
@@ -25919,6 +26001,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             body = await request.json()
         except Exception:  # noqa: BLE001
             body = {}
+        if not isinstance(body, dict):
+            body = {}   # v0.51.169: a list/str body would AttributeError on .get → 500
         want_mt = body.get("media_type")
         want_id = body.get("tmdb_id")
         if not (want_mt and want_id is not None):
@@ -25943,6 +26027,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if row["norm_state"] != "normalized":
                     return {"ok": False, "error": "row is not normalized — nothing to undo"}
                 fp = Path(row["file_path"])
+                # v0.51.169: themes_dir is None until configured — guard the join (500).
+                if not fp.is_absolute() and settings.themes_dir is None:
+                    return {"ok": False, "error": "themes_dir is not configured — set it "
+                            "in Settings first"}
                 theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
                 expect = row["norm_orig_sha256"]
 

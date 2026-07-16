@@ -4313,7 +4313,26 @@
 #   canonical inode with the Plex sidecar, so Plex plays the normalized theme immediately and
 #   the undo is equally live — an honest "hear it, then undo it". One theme at a time (the
 #   button flips to // UNDO). Guard test_v0_51_168. NEXT: per-item INFO card, then bulk.
-__version__ = "0.51.168"
+# 0.51.169: code-review follow-ups on the v0.51.168 normalize path, before the first real
+#   audition. (1) STALE-MEASUREMENT: normalize-one never checked that the loudness it
+#   derives gain from was measured at the CURRENT bytes — a re-download since the audit
+#   would drive the gain off a stale number (worst case a big boost onto an already-loud
+#   file). The auto-pick now carries the same `loudness_measured_sha256 = file_sha256` key
+#   rows_needing_measure uses, a body-named row gets the same gate in Python, and
+#   normalize_file takes expect_sha + REFUSES if the bytes on disk don't hash to it.
+#   (2) RELOAD STRANDED A NORMALIZED THEME: the undo target lived only in a JS variable, so
+#   reloading Settings hid // UNDO while the theme stayed normalized — no UI path back,
+#   which breaks the audition's whole promise. New GET /api/admin/loudness/normalized +
+#   refreshNormalizedState() re-arms // UNDO from the DB on load (and after a lost race).
+#   (3) RACE: the norm_state guard was read on a since-closed connection; the UPDATE now
+#   carries `AND norm_state IS NULL` so the WRITE is the guard — the first normalize keeps
+#   the true norm_orig_sha256 (undo still verifies bit-exact, since mp3gain's undo tag
+#   accumulates), and the loser reports honestly instead of returning wrong numbers.
+#   (4) a non-dict JSON body 500'd on .get → isinstance guard. (5) normalize_file promised
+#   "never raises" but a None measured_i raised TypeError → guarded at the leaf.
+#   (6) one now_iso() per operation instead of two. Guard test_v0_51_169 (behavioral:
+#   stale rows excluded, expect_sha refusal, race guard, normalized lookup).
+__version__ = "0.51.169"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
