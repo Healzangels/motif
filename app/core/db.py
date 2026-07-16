@@ -187,6 +187,14 @@ CREATE TABLE IF NOT EXISTS local_files (
     norm_target       REAL,
     norm_at           TEXT,
     norm_orig_sha256  TEXT,
+    -- v0.51.170 (schema v74): the DECODED-PCM hash of the original. norm_orig_sha256 is
+    -- the FILE hash, and mp3gain leaves its APE tag behind on undo, so a restored file can
+    -- never sha-match the pre-normalize file — v0.51.165's probe measured exactly that
+    -- (restored_file_bit_exact=false + restored_diff_is_tag_only=true) and the v0.51.168
+    -- undo check was built on the file hash anyway, so a CORRECT restore reported
+    -- "not bit-exact". The audio layer is the one that decides: hash the samples before
+    -- applying gain, compare after undo. NULL = normalized by an older build (unknown).
+    norm_orig_pcm_sha256 TEXT,
     -- v1.21.51 (schema v62): per-edition theme isolation. Movies can
     -- carry multiple editions (Theatrical/Extended/custom) that share
     -- one tmdb_id; edition_key (the normalized {edition-X} folder tag,
@@ -975,7 +983,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 73
+CURRENT_SCHEMA_VERSION = 74
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2678,6 +2686,21 @@ def _migrate_v72_to_v73(conn: sqlite3.Connection) -> None:
     _add_column(conn, "local_files", "norm_target", "REAL")
     _add_column(conn, "local_files", "norm_at", "TEXT")
     _add_column(conn, "local_files", "norm_orig_sha256", "TEXT")
+
+
+def _migrate_v73_to_v74(conn: sqlite3.Connection) -> None:
+    """v74 (v0.51.170): add local_files.norm_orig_pcm_sha256 — the DECODED-PCM hash of the
+    original, captured before gain is applied.
+
+    v73's norm_orig_sha256 is the FILE hash, and undo compared against it. But mp3gain
+    leaves its APE tag on the file, so a restored file can NEVER sha-match the pre-normalize
+    file — v0.51.165's probe measured precisely that (restored_file_bit_exact=false,
+    restored_diff_is_tag_only=true) and the check was built on the file hash regardless, so
+    a perfectly correct undo reported "not bit-exact" on the operator's first real audition.
+    The audio layer is the one that decides. Additive + idempotent; NULL on rows normalized
+    by an older build (undo reports audio_restored=None = unknown, never a false alarm)."""
+    log.info("Migrating to schema v74 (local_files.norm_orig_pcm_sha256 — v0.51.170)")
+    _add_column(conn, "local_files", "norm_orig_pcm_sha256", "TEXT")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4562,6 +4585,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 72:
                     _migrate_v72_to_v73(conn)
                     current = 73
+                elif current == 73:
+                    _migrate_v73_to_v74(conn)
+                    current = 74
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

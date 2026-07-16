@@ -112,6 +112,7 @@ def test_autopick_prefers_loudest_row_with_a_CURRENT_measurement(client, monkeyp
         captured.update(measured_i=measured_i, expect_sha=expect_sha)
         return {"ok": True, "changed": False, "steps": 0, "applied_db": 0.0,
                 "note": "no change", "old_sha": "same", "new_sha": "same",
+                "old_pcm_sha": "pcm-same",
                 "new_i": measured_i, "new_tp": true_peak, "new_lra": None}
 
     monkeypatch.setattr("app.core.loudness_apply.normalize_file", _fake)
@@ -196,6 +197,7 @@ def test_normalize_update_is_guarded_by_norm_state_is_null(client, monkeypatch):
     def _fake(path, target, measured_i, true_peak, *, expect_sha=None):
         return {"ok": True, "changed": True, "steps": -2, "applied_db": -3.01,
                 "note": None, "old_sha": "orig", "new_sha": "gained",
+                "old_pcm_sha": "pcm-orig",
                 "new_i": -18.0, "new_tp": -5.0, "new_lra": 6.0}
 
     monkeypatch.setattr("app.core.loudness_apply.normalize_file", _fake)
@@ -207,6 +209,10 @@ def test_normalize_update_is_guarded_by_norm_state_is_null(client, monkeypatch):
         orig_sha = x.execute("SELECT norm_orig_sha256 FROM local_files "
                              "WHERE tmdb_id=3").fetchone()[0]
     assert orig_sha == "orig"     # the TRUE pre-normalize sha is recorded
+    with sqlite3.connect(db) as x:
+        pcm = x.execute("SELECT norm_orig_pcm_sha256 FROM local_files "
+                        "WHERE tmdb_id=3").fetchone()[0]
+    assert pcm == "pcm-orig"      # v0.51.170: the AUDIO reference undo verifies against
 
     # a second call on the same row is refused by the pre-check; the UPDATE's
     # `AND norm_state IS NULL` is the backstop if two ever interleave.
@@ -239,6 +245,7 @@ def test_non_dict_json_body_does_not_500(client, monkeypatch):
         "app.core.loudness_apply.normalize_file",
         lambda *a, **k: {"ok": True, "changed": False, "steps": 0, "applied_db": 0.0,
                          "note": "no change", "old_sha": "s", "new_sha": "s",
+                         "old_pcm_sha": "pcm-s",
                          "new_i": -14.5, "new_tp": -2.0, "new_lra": None})
     for bad in ([1, 2], "nope", 5):
         r = c.post("/api/admin/loudness/normalize-one", json=bad, headers=AUTH)

@@ -40,8 +40,9 @@ def _local_files_cols(conn: sqlite3.Connection) -> dict[str, str]:
 
 # ── schema v73 ───────────────────────────────────────────────────────────────
 
-def test_schema_version_is_73():
-    assert core_db.CURRENT_SCHEMA_VERSION == 73
+def test_schema_version_is_at_least_73():
+    # floor, not exact head — an exact pin breaks this guard on every later migration
+    assert core_db.CURRENT_SCHEMA_VERSION >= 73
 
 
 def test_fresh_db_has_normalization_columns(tmp_path: Path):
@@ -179,7 +180,10 @@ def test_normalize_remeasure_failure_leaves_loudness_unstamped(tmp_path, monkeyp
 
 # ── undo_file ────────────────────────────────────────────────────────────────
 
-def test_undo_verifies_bit_exact_restore(tmp_path, monkeypatch):
+def test_undo_reports_file_bit_exact_informationally(tmp_path, monkeypatch):
+    # v0.51.170: file_bit_exact is INFORMATIONAL only — the verdict moved to
+    # audio_restored (see test_v0_51_170). Real mp3gain leaves an APE tag, so this is
+    # expected False in production; here the stub doesn't, so it reads True.
     theme = _theme(tmp_path)
     orig_sha = la._sha256(theme)
     monkeypatch.setattr(la, "undo_via_tag", lambda p, timeout=None: True)
@@ -187,20 +191,22 @@ def test_undo_verifies_bit_exact_restore(tmp_path, monkeypatch):
 
     res = la.undo_file(theme, expect_sha=orig_sha)
     assert res["ok"] is True
-    assert res["bit_exact"] is True           # restored bytes match the pre-normalize sha
+    assert res["file_bit_exact"] is True
     assert res["new_i"] == -14.5
 
 
-def test_undo_flags_non_bit_exact_restore(tmp_path, monkeypatch):
-    """If mp3gain -u does NOT return the original bytes, say so loudly — the whole safety
-    case rests on this being true, so it must never pass silently."""
+def test_undo_file_sha_diff_is_not_treated_as_failure(tmp_path, monkeypatch):
+    """v0.51.170: a differing FILE sha must NOT be the failure signal — mp3gain's APE tag
+    guarantees it differs on a perfectly good restore, and treating it as the verdict cried
+    wolf on the operator's first real audition."""
     theme = _theme(tmp_path)
     monkeypatch.setattr(la, "undo_via_tag", lambda p, timeout=None: True)
     _stub_measure(monkeypatch, {"loudness_i": -14.5, "true_peak": -2.0, "lra": 7.0})
 
     res = la.undo_file(theme, expect_sha="a-different-sha")
     assert res["ok"] is True
-    assert res["bit_exact"] is False
+    assert res["file_bit_exact"] is False      # informational
+    assert res["audio_restored"] is None       # no PCM reference given → unknown, not False
 
 
 def test_undo_failure_is_reported(tmp_path, monkeypatch):

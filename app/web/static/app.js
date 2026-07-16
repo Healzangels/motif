@@ -8056,10 +8056,17 @@
           status.textContent = '✗ ' + (rep.error || 'undo failed');
           status.className = 'form-status form-status-fail';
         } else {
-          const exact = rep.bit_exact === false ? ' (WARNING: not bit-exact — check logs)' : '';
+          // v0.51.170: the verdict is audio_restored (decoded samples vs the original's
+          // PCM hash). file_bit_exact is EXPECTED false — mp3gain leaves its APE tag — and
+          // warning on it cried wolf on a perfectly good restore.
+          const bad = rep.audio_restored === false;
+          const unknown = rep.audio_restored === null || rep.audio_restored === undefined;
+          const note = bad
+            ? ' (WARNING: the AUDIO did not come back — check logs)'
+            : (unknown ? ' (audio check unavailable — normalized by an older build)' : '');
           status.textContent = '✓ restored ' + (rep.title || 'theme') + ' to '
-            + fmt(rep.restored.loudness_i) + ' LUFS' + exact;
-          status.className = 'form-status ' + (rep.bit_exact === false ? 'form-status-fail' : 'form-status-ok');
+            + fmt(rep.restored.loudness_i) + ' LUFS' + note;
+          status.className = 'form-status ' + (bad ? 'form-status-fail' : 'form-status-ok');
           disarmUndo();
         }
       } catch (e) {

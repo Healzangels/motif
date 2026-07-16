@@ -4332,7 +4332,24 @@
 #   "never raises" but a None measured_i raised TypeError → guarded at the leaf.
 #   (6) one now_iso() per operation instead of two. Guard test_v0_51_169 (behavioral:
 #   stale rows excluded, expect_sha refusal, race guard, normalized lookup).
-__version__ = "0.51.169"
+# 0.51.170: undo verified the WRONG LAYER — a correct restore reported "not bit-exact" on
+#   the first real audition. The operator normalized a tv theme (-5.15 -> -18.7 LUFS, -9
+#   steps), pressed // UNDO, and got bit_exact=false even though the fresh re-measure came
+#   back -5.15 / +2.6 dBTP — identical to the original, to the decimal. Cause: undo_file
+#   compared the whole-FILE sha256 against norm_orig_sha256, but mp3gain leaves its APE tag
+#   behind, so a restored file can NEVER byte-match the pre-normalize file. v0.51.165's
+#   probe had already MEASURED this on these very files (restored_file_bit_exact=false +
+#   restored_diff_is_tag_only=true) — the same layer mistake v0.51.164 made, repeated on the
+#   undo path after being fixed in the probe. Fix: schema v74 adds
+#   local_files.norm_orig_pcm_sha256 (the DECODED-PCM hash of the original, taken before
+#   gain is applied); undo_file compares the restored samples against it and reports
+#   `audio_restored` as the verdict, with file_bit_exact demoted to informational (expected
+#   false). Legacy rows read NULL -> audio_restored=None (unknown), never a false alarm.
+#   ALSO: the probe only ever tested ±2 steps while the first real normalize applied -9 —
+#   magnitude is exactly what decides global_gain clamping, so `ok` now additionally
+#   requires attenuate_deep_reversible_audio (-9 steps ≈ -13.5 dB, the production case).
+#   Guard test_v0_51_170. RE-RUN // PROBE MP3GAIN: it now proves the deep path.
+__version__ = "0.51.170"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

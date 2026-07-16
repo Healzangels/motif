@@ -25913,12 +25913,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
                         "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
                         "  norm_state='normalized', norm_gain_db=?, norm_target=?, norm_at=?, "
-                        "  norm_orig_sha256=? "
+                        "  norm_orig_sha256=?, norm_orig_pcm_sha256=? "
                         "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=? "
                         "  AND norm_state IS NULL",
                         (res["new_i"], res["new_tp"], res["new_lra"], measured_at,
                          measured_sha, res["new_sha"], res["applied_db"], target, ts,
-                         res["old_sha"], row["media_type"], row["tmdb_id"],
+                         res["old_sha"], res["old_pcm_sha"],
+                         row["media_type"], row["tmdb_id"],
                          row["section_id"], row["edition_key"]),
                     )
                     wconn.commit()
@@ -26015,7 +26016,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with get_conn(db) as conn:
                 row = conn.execute(
                     "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
-                    "  lf.file_path, lf.norm_state, lf.norm_orig_sha256, t.title "
+                    "  lf.file_path, lf.norm_state, lf.norm_orig_sha256, "
+                    "  lf.norm_orig_pcm_sha256, t.title "
                     "FROM local_files lf "
                     "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
                     "WHERE lf.media_type=? AND lf.tmdb_id=? AND lf.section_id=? "
@@ -26033,8 +26035,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "in Settings first"}
                 theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
                 expect = row["norm_orig_sha256"]
+                expect_pcm = row["norm_orig_pcm_sha256"]
 
-            res = undo_file(theme, expect_sha=expect)
+            res = undo_file(theme, expect_sha=expect, expect_pcm_sha=expect_pcm)
             if not res["ok"]:
                 return {"ok": False, "error": res.get("error") or "undo failed",
                         "title": row["title"]}
@@ -26045,14 +26048,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
                     "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
                     "  norm_state=NULL, norm_gain_db=NULL, norm_target=NULL, norm_at=NULL, "
-                    "  norm_orig_sha256=NULL "
+                    "  norm_orig_sha256=NULL, norm_orig_pcm_sha256=NULL "
                     "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
                     (res["new_i"], res["new_tp"], res["new_lra"], measured_at, measured_sha,
                      res["new_sha"], row["media_type"], row["tmdb_id"],
                      row["section_id"], row["edition_key"]),
                 )
                 wconn.commit()
-            return {"ok": True, "bit_exact": res["bit_exact"],
+            # v0.51.170: audio_restored is the verdict; file_bit_exact is informational
+            # (mp3gain's APE tag means a correct restore is NOT byte-identical).
+            return {"ok": True, "audio_restored": res["audio_restored"],
+                    "file_bit_exact": res["file_bit_exact"],
                     "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
                     "restored": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]}}
 

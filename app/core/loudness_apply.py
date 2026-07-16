@@ -50,6 +50,10 @@ _TIMEOUT_S = 120
 # exact stderr _run returns when the binary is absent (FileNotFoundError) — the one
 # signal that unambiguously means "mp3gain isn't installed" (vs a non-zero exit).
 _NOT_FOUND = "mp3gain not found on PATH"
+# v0.51.170: the probe must exercise the magnitude production actually applies. The real
+# spread's loudest themes need ~-9 steps (≈-13.5 dB) to reach -18; only a deep attenuation
+# can push a quiet frame's global_gain to its floor, where `mp3gain -u` over-restores.
+_DEEP_PROBE_STEPS = 9
 
 
 def gain_steps_for_target(target_lufs: float, measured_i: float,
@@ -192,6 +196,7 @@ def probe_mp3gain(theme_path: Path | str) -> dict:
         "apply_changes_audio": None,
         "attenuate_reversible_audio": None,
         "attenuate_reversible_inverse_g": None,
+        "attenuate_deep_reversible_audio": None,
         "boost_reversible_audio": None,
         "error": None,
     }
@@ -239,6 +244,11 @@ def probe_mp3gain(theme_path: Path | str) -> dict:
             atten_u = _cycle("atten_u", -2, "u")
             atten_g = _cycle("atten_g", -2, "inverse")
             boost_u = _cycle("boost_u", 2, "u")
+            # v0.51.170: ±2 is NOT the magnitude production uses. This library's loudest
+            # themes need ~-9 steps (-13.5 dB) to reach -18, and a deep attenuation is the
+            # case that can drive a quiet frame's global_gain to its floor and clamp —
+            # which -u then over-restores. Probing only ±2 proved the easy case.
+            atten_deep = _cycle("atten_deep", -_DEEP_PROBE_STEPS, "u")
 
             report["apply_changes_bytes"] = atten_u["applied_bytes_changed"]
             report["apply_changes_audio"] = (
@@ -246,6 +256,7 @@ def probe_mp3gain(theme_path: Path | str) -> dict:
                 and atten_u["applied_pcm"] != orig_pcm)
             report["attenuate_reversible_audio"] = atten_u["restored_pcm"] == orig_pcm
             report["attenuate_reversible_inverse_g"] = atten_g["restored_pcm"] == orig_pcm
+            report["attenuate_deep_reversible_audio"] = atten_deep["restored_pcm"] == orig_pcm
             report["boost_reversible_audio"] = boost_u["restored_pcm"] == orig_pcm
             report["restored_file_bit_exact"] = atten_u["restored_file_exact"]
             report["restored_diff_is_tag_only"] = atten_u["restored_tag_only"]
@@ -255,11 +266,15 @@ def probe_mp3gain(theme_path: Path | str) -> dict:
 
     # Safety verdict: the production-dominant op is ATTENUATION (target below the loud
     # median), applied + reversed via the `mp3gain -u` undo tag. Require THAT path to
-    # restore the AUDIO bit-exactly. (boost_reversible_audio is surfaced separately so
-    # we decide whether to allow the quiet-tail boost — it's the direction that can clamp.)
+    # restore the AUDIO bit-exactly — at BOTH a shallow (-2) and a production-DEEP
+    # (-9 ≈ -13.5 dB) magnitude, since only the deep one can hit the global_gain floor
+    # (v0.51.170: the first real audition applied -9, which the ±2 probe never covered).
+    # (boost_reversible_audio is surfaced separately so we decide whether to allow the
+    # quiet-tail boost — it's the direction that can clamp at the ceiling.)
     report["ok"] = bool(
         report["apply_changes_audio"]
-        and report["attenuate_reversible_audio"])
+        and report["attenuate_reversible_audio"]
+        and report["attenuate_deep_reversible_audio"])
     return report
 
 
@@ -293,7 +308,7 @@ def normalize_file(path: Path | str, target_lufs: float,
     out: dict = {
         "ok": False, "changed": False, "steps": 0, "applied_db": 0.0,
         "note": None, "error": None, "old_sha": None, "new_sha": None,
-        "new_i": None, "new_tp": None, "new_lra": None,
+        "old_pcm_sha": None, "new_i": None, "new_tp": None, "new_lra": None,
     }
     # v0.51.169: enforce the contract here rather than trust every caller — the docstring
     # promises "never raises", and `target - None` would raise before any guard ran.
@@ -308,6 +323,10 @@ def normalize_file(path: Path | str, target_lufs: float,
         out["error"] = ("file changed since it was measured (sha mismatch) — re-run the "
                         "LOUDNESS AUDIT before normalizing")
         return out
+    # v0.51.170: hash the ORIGINAL's decoded samples before touching it — this is the only
+    # reference undo can honestly verify against (the file hash can't: mp3gain leaves its
+    # APE tag, so a restored file never matches the pre-normalize bytes).
+    out["old_pcm_sha"] = _decode_pcm_sha(path)
 
     steps = gain_steps_for_target(target_lufs, measured_i, true_peak)
     out["steps"] = steps
@@ -339,16 +358,27 @@ def normalize_file(path: Path | str, target_lufs: float,
     return out
 
 
-def undo_file(path: Path | str, expect_sha: str | None = None) -> dict:
-    """Reverse a prior normalize via the MP3GAIN_UNDO tag (mp3gain -u), then RE-MEASURE.
-    If `expect_sha` (the pre-normalize file_sha256) is given, VERIFIES the restore is
-    bit-exact — the safety assertion that mp3gain returned the original bytes. Never
-    raises. Returns {ok, bit_exact, new_sha, new_i, new_tp, new_lra, error?}."""
+def undo_file(path: Path | str, expect_sha: str | None = None,
+              expect_pcm_sha: str | None = None) -> dict:
+    """Reverse a prior normalize via the MP3GAIN_UNDO tag (mp3gain -u), then RE-MEASURE
+    and VERIFY the restore. Never raises. Returns
+    {ok, audio_restored, file_bit_exact, new_sha, new_i, new_tp, new_lra, error?}.
+
+    **audio_restored is the verdict** (v0.51.170): the restored file's decoded samples vs
+    `expect_pcm_sha`, the hash normalize_file took of the original before applying gain.
+    None = unknown (row normalized by a build that didn't record it, or ffmpeg can't decode).
+
+    `file_bit_exact` (vs the pre-normalize FILE hash) is INFORMATIONAL ONLY and is EXPECTED
+    to be False: mp3gain leaves its APE tag behind, so the restored file legitimately
+    differs from the original by a few hundred bytes of tag metadata. v0.51.168 treated
+    that as the safety criterion and cried wolf on the first real audition — a correct
+    restore reported "not bit-exact". Same layer mistake v0.51.164's probe made; the probe
+    was fixed in v0.51.165 and this path wasn't."""
     from .loudness import measure_loudness
 
     path = Path(path)
     out: dict = {
-        "ok": False, "bit_exact": None, "new_sha": None,
+        "ok": False, "audio_restored": None, "file_bit_exact": None, "new_sha": None,
         "new_i": None, "new_tp": None, "new_lra": None, "error": None,
     }
     if not path.is_file():
@@ -359,10 +389,16 @@ def undo_file(path: Path | str, expect_sha: str | None = None) -> dict:
         return out
     out["new_sha"] = _sha256(path)
     if expect_sha is not None:
-        out["bit_exact"] = out["new_sha"] == expect_sha
-        if not out["bit_exact"]:
-            log.warning("loudness undo: restored bytes differ from pre-normalize sha "
-                        "on %s (expected %s, got %s)", path, expect_sha, out["new_sha"])
+        # informational: a tag-only diff makes this False on a perfectly good restore.
+        out["file_bit_exact"] = out["new_sha"] == expect_sha
+    if expect_pcm_sha is not None:
+        restored_pcm = _decode_pcm_sha(path)
+        if restored_pcm is not None:
+            out["audio_restored"] = restored_pcm == expect_pcm_sha
+            if not out["audio_restored"]:
+                log.warning("loudness undo: the restored AUDIO differs from the original "
+                            "on %s — mp3gain did not return the original samples (a deep "
+                            "attenuation can clamp global_gain and be irreversible)", path)
     m = measure_loudness(path)
     if m is not None:
         out["new_i"] = m["loudness_i"]
