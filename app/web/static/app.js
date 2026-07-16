@@ -7556,7 +7556,7 @@
       const c = rep.counts || {};
       if (rep.redownloadable && rep.redownloadable.length) {
         rdBody.innerHTML = rep.redownloadable.map((r) =>
-          `<tr><td>${link(r)}</td><td>${src(r)}</td></tr>`).join('');
+          `<tr><td>${link(r)}</td><td class="col-src">${src(r)}</td></tr>`).join('');
         rdCount.textContent = `${fmt(c.redownloadable)} with a source URL`;
         rdBlock.style.display = '';
       } else {
@@ -7567,7 +7567,7 @@
           const hint = r.has_live_placement
             ? '<span class="muted">RESTORE FROM PLEX ▸</span>'
             : '<span class="muted">re-place from INFO ▸</span>';
-          return `<tr><td>${link(r)}</td><td>${src(r)}</td><td>${hint}</td></tr>`;
+          return `<tr><td>${link(r)}</td><td class="col-src">${src(r)}</td><td>${hint}</td></tr>`;
         }).join('');
         missCount.textContent = `${fmt(c.canonical_missing)} with no source URL`;
         missBlock.style.display = '';

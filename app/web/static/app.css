@@ -2387,6 +2387,10 @@ body.help-mode .settings-help-about { display: block; }
 #library-table td.col-edition { padding-left: var(--gap-2); padding-right: var(--gap-2); }
 #library-table th.col-edition { padding-left: var(--gap-2); padding-right: var(--gap-2); }
 .col-year { width: 60px; text-align: center; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+/* v0.51.172: SRC column on the CANONICAL HEALTH tables. Follows the col-X
+   convention (width + text-align per data column). Sized to the longest value
+   (THEMERRDB) so URL / UPLOAD / ADOPT centre against the same budget. */
+.col-src { width: 110px; text-align: center; color: var(--fg-dim); white-space: nowrap; }
 .col-actions { width: 320px; text-align: right; }
 /* v1.13.6: bump col-actions left padding so the right-aligned
    action cluster sits with extra breathing room from the IMDB

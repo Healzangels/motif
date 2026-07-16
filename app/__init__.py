@@ -4366,7 +4366,14 @@
 #   compares against the canonical's stored loudness. // WHAT IS PLEX SERVING? in the
 #   audition block. Read-only wrt Plex and the theme; threadpool (class-12). This also
 #   answers the placement question Phase 2 bulk depends on. Guard test_v0_51_171.
-__version__ = "0.51.171"
+# 0.51.172: CANONICAL HEALTH — centre the SRC column (the user: "can we make the SRC list
+#   centered in it's column"). The headers were already centred (.table thead th), so only
+#   the VALUES were left-aligned against a centred label. New .col-src primitive follows the
+#   documented col-X convention (DESIGN_SYSTEM: "Each declares width + text-align"), sized
+#   110px to the longest value (THEMERRDB) so URL centres against the same budget. Applied
+#   to both canonical-health tables (re-downloadable + canonical-missing), th + td.
+#   .table td sets no text-align, so the single-class rule wins on the cells uncontested.
+__version__ = "0.51.172"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
