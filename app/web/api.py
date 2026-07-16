@@ -6294,6 +6294,7 @@ def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
 
 # v0.51.173: Plex's metadata refresh is async — poll the measurement instead of
 # sleeping once and guessing whether the agent got there.
+_CONTROL_SAMPLE = 6   # v0.51.179: one row can't answer a library-wide question
 _REREAD_POLLS = 4
 _REREAD_POLL_S = 5
 
@@ -26427,18 +26428,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "SELECT media_type, tmdb_id, section_id, edition_key FROM local_files "
                     "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
                 ).fetchone()
-                # A row motif has never normalized AND never uploaded to (hardlink
-                # placement ⇒ Plex ingested it from the sidecar, so its entry is a
-                # metadata:// one) — the natural state.
-                control = conn.execute(
-                    "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key "
-                    "FROM local_files lf JOIN placements p "
+                # v0.51.179: SAMPLE untouched hardlink-placed rows, resolving the
+                # rating_key IN SQL. v0.51.178 took ONE candidate (ORDER BY tmdb_id
+                # LIMIT 1) and gave up if it had no plex_items row — which on a real
+                # library is guaranteed to fail: synthetic orphan ids are NEGATIVE
+                # (adopt.py mints `MIN(tmdb_id) - 1`), so the lowest tmdb_id row is
+                # always an orphan, and an orphan by definition has no Plex row. The
+                # control never had a chance. Resolve in the JOIN and take several, so
+                # one odd row can't decide the question either.
+                controls = conn.execute(
+                    "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                    "       pi.rating_key, pi.title "
+                    "FROM local_files lf "
+                    "JOIN placements p "
                     "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
                     " AND p.section_id=lf.section_id "
                     " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
-                    "WHERE lf.norm_state IS NULL AND p.placement_kind='hardlink' "
-                    "ORDER BY lf.tmdb_id LIMIT 1"
-                ).fetchone()
+                    " AND p.placement_kind='hardlink' "
+                    "JOIN plex_items pi "
+                    "  ON pi.media_type = CASE lf.media_type WHEN 'tv' THEN 'show' "
+                    "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
+                    " AND pi.guid_tmdb = lf.tmdb_id AND pi.section_id = lf.section_id "
+                    " AND COALESCE(pi.edition_key,'') = COALESCE(lf.edition_key,'') "
+                    "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0 "
+                    "ORDER BY lf.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
+                ).fetchall()
+                # v0.51.179: v0.51.178's one error message covered two different causes
+                # ("no such rows" vs "rows existed but none resolved"), so it could not
+                # say which had happened. Count them apart.
+                candidate_rows = conn.execute(
+                    "SELECT COUNT(*) c FROM local_files lf JOIN placements p "
+                    "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
+                    " AND p.section_id=lf.section_id "
+                    " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
+                    " AND p.placement_kind='hardlink' "
+                    "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0"
+                ).fetchone()["c"]
 
                 def _rk(row):
                     if row is None:
@@ -26455,7 +26480,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return (str(got["rating_key"]), plex_mt) if got else (None, plex_mt)
 
                 audition_rk, audition_mt = _rk(audition) if audition else (None, None)
-                control_rk, control_mt = _rk(control) if control else (None, None)
 
             if not settings.plex_url or not settings.plex_token:
                 return {"ok": False, "error": "Plex is not configured"}
@@ -26467,30 +26491,45 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             out: dict = {"ok": True}
             with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                # ── the control: the natural lock state of an untouched sidecar row
-                if control_rk:
-                    locks = plex.get_field_locks(rating_key=control_rk)
-                    entry = None
-                    got = plex.get_themes(rating_key=control_rk)
+                # ── the control: the natural lock state of untouched sidecar rows
+                rows = []
+                for cr in controls:
+                    rk = str(cr["rating_key"])
+                    locks = plex.get_field_locks(rating_key=rk)
+                    got = plex.get_themes(rating_key=rk)
                     b = got.get("body")
                     meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
                         if isinstance(b, dict) else []
                     sel = next((m for m in meta if m.get("selected")), None)
-                    if sel:
-                        entry = str(sel.get("ratingKey") or sel.get("key"))
-                    out["control"] = {
-                        "rating_key": control_rk, "media_type": control_mt,
-                        "tmdb_id": control["tmdb_id"],
+                    entry = str(sel.get("ratingKey") or sel.get("key")) if sel else None
+                    rows.append({
+                        "rating_key": rk, "tmdb_id": cr["tmdb_id"],
+                        "media_type": cr["media_type"], "title": cr["title"],
                         "theme_locked": locks["theme_locked"],
                         "locked_fields": locks["locked_fields"],
                         "read_error": locks["error"],
-                        # a metadata:// entry confirms this really is a sidecar-ingested
-                        # row and not something motif already uploaded to.
+                        # a metadata:// entry is what proves this row really is
+                        # sidecar-ingested and not something motif already uploaded to —
+                        # an upload:// row's lock says nothing about the natural state.
                         "selected_entry": entry,
-                    }
-                else:
-                    out["control"] = {"error": "no untouched hardlink-placed row with a "
-                                               "plex_items rating_key to use as a control"}
+                        "is_sidecar_entry": bool(entry and entry.startswith("metadata://")),
+                    })
+                sidecar = [r for r in rows
+                           if r["is_sidecar_entry"] and r["theme_locked"] is not None]
+                locked_n = sum(1 for r in sidecar if r["theme_locked"])
+                out["control"] = {
+                    "candidate_rows": candidate_rows, "sampled": len(rows), "rows": rows,
+                    "sidecar_rows_read": len(sidecar), "sidecar_rows_locked": locked_n,
+                    # None when nothing readable — an unread flag decides nothing.
+                    # Conservative: ANY locked sidecar row keeps the lock alive as an
+                    # explanation rather than closing the door early.
+                    "theme_locked": (None if not sidecar else locked_n > 0),
+                }
+                if not rows:
+                    out["control"]["error"] = (
+                        "no untouched hardlink-placed row resolved to a plex_items "
+                        "rating_key" if candidate_rows else
+                        "no untouched hardlink-placed rows exist at all")
 
                 # ── the audition row + the shape test
                 if not audition_rk:

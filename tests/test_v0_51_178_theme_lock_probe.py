@@ -179,7 +179,8 @@ def test_locked_control_keeps_unlock_plus_refresh_alive(client, monkeypatch):
 
     b = c.post("/api/admin/loudness/theme-lock-probe", headers=AUTH).json()
     assert b["control"]["theme_locked"] is True
-    assert b["control"]["locked_fields"] == ["theme"]
+    # v0.51.179: the control samples rows, so per-row detail lives under rows[]
+    assert b["control"]["rows"][0]["locked_fields"] == ["theme"]
     assert "UNLOCK + REFRESH is untested" in b["verdict"]
 
 
@@ -220,10 +221,11 @@ def test_control_is_a_row_motif_never_normalized(client, monkeypatch):
     _stub_plex(monkeypatch, control_locked=False)
 
     b = c.post("/api/admin/loudness/theme-lock-probe", headers=AUTH).json()
-    assert b["control"]["rating_key"] == "999"
+    assert [r["rating_key"] for r in b["control"]["rows"]] == ["999"]
     assert b["audition"]["rating_key"] == "261711"
     # a metadata:// entry confirms it really is sidecar-ingested, not already uploaded to
-    assert b["control"]["selected_entry"].startswith("metadata://")
+    assert b["control"]["rows"][0]["selected_entry"].startswith("metadata://")
+    assert b["control"]["rows"][0]["is_sidecar_entry"] is True
 
 
 # ── self-restoring: the probe leaves the field as it found it ────────────
