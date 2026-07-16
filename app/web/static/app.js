@@ -8075,6 +8075,38 @@
       });
     }
 
+    // v0.51.173: does a Plex metadata refresh make it re-read the changed sidecar?
+    // MEASURED, not assumed — the probe re-checks what Plex serves after refreshing.
+    const rereadBtn = document.getElementById('loud-plex-reread-btn');
+    if (rereadBtn) {
+      rereadBtn.addEventListener('click', async () => {
+        rereadBtn.disabled = true;
+        const o = rereadBtn.textContent;
+        rereadBtn.textContent = '// REFRESHING + RE-CHECKING…';
+        try {
+          const rep = await api('POST', '/api/admin/loudness/plex-reread');
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 'refresh probe failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            const good = rep.already_current || rep.refresh_propagates;
+            status.textContent = (good ? '✓ ' : '✗ ') + rep.verdict
+              + (rep.after && rep.after.plex_loudness_i !== undefined
+                 ? ' — Plex now ' + fmt(rep.after.plex_loudness_i) + ' LUFS.' : '');
+            status.className = 'form-status ' + (good ? 'form-status-ok' : 'form-status-fail');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'refresh probe failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          rereadBtn.disabled = false;
+          rereadBtn.textContent = o;
+        }
+      });
+    }
+
     undoBtn.addEventListener('click', async () => {
       if (!lastRow) return;
       undoBtn.disabled = true;

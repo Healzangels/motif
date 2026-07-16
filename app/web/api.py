@@ -6292,6 +6292,83 @@ def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
 
 # -------- App factory --------
 
+# v0.51.173: Plex's metadata refresh is async — poll the measurement instead of
+# sleeping once and guessing whether the agent got there.
+_REREAD_POLLS = 4
+_REREAD_POLL_S = 5
+
+
+def _measure_plex_serving(settings, *, rk: str, canonical_i, norm_gain_db=None) -> dict:
+    """v0.51.171: what is Plex ACTUALLY serving for this item's theme?
+
+    v0.51.168 assumed a hardlinked sidecar meant Plex played the new bytes live. It
+    doesn't: Local Media Assets INGESTS theme.mp3 into Plex's own store at scan time
+    (hence metadata://themes/<sha1>, keyed by CONTENT hash), so mutating the sidecar
+    changes nothing Plex plays. Measured on the real library: canonical -18.7 LUFS,
+    Plex still serving -5.15 — a 13.5 dB gap the operator could hear (or rather,
+    couldn't). This fetches the SELECTED entry's bytes and measures them, so the
+    question is answered with a number instead of an ear.
+
+    Shared by // WHAT IS PLEX SERVING? and the re-read probe. Blocking (HTTP + ffmpeg)
+    — call from a thread (class-12). Never raises."""
+    import tempfile
+    from ..core.loudness import measure_loudness
+
+    if not settings.plex_url or not settings.plex_token:
+        return {"ok": False, "error": "Plex is not configured"}
+    cfg = PlexConfig(
+        url=settings.plex_url, token=settings.plex_token,
+        movie_section=settings.plex_movie_section,
+        tv_section=settings.plex_tv_section, enabled=True,
+    )
+    entry_uri = None
+    with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+        entries = plex.get_themes(rating_key=rk)
+        if not entries.get("ok"):
+            return {"ok": False, "rating_key": rk,
+                    "error": f"Plex /themes failed: "
+                             f"{entries.get('error') or entries.get('http_status')}"}
+        meta = []
+        b = entries.get("body")
+        if isinstance(b, dict):
+            meta = (b.get("MediaContainer") or {}).get("Metadata") or []
+        if not meta:
+            return {"ok": False, "rating_key": rk,
+                    "error": "Plex lists no theme entries for this item"}
+        # the SELECTED entry is what Plex actually plays (CLAUDE.md: singular /theme is
+        # the association; plural /themes is the collection).
+        sel = next((m for m in meta if m.get("selected")), meta[0])
+        entry_uri = sel.get("ratingKey") or sel.get("key")
+        fetched = plex.fetch_theme_bytes(item_rating_key=rk, entry_uri=str(entry_uri))
+    if not fetched.get("ok") or not fetched.get("bytes"):
+        return {"ok": False, "rating_key": rk, "entry_uri": entry_uri,
+                "error": f"could not fetch Plex's bytes: {fetched.get('error')}"}
+
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td) / "plex_theme.mp3"
+        tmp.write_bytes(fetched["bytes"])
+        m = measure_loudness(tmp)
+    if m is None:
+        return {"ok": False, "rating_key": rk, "entry_uri": entry_uri,
+                "error": "ffmpeg could not measure Plex's bytes"}
+
+    plex_i = m["loudness_i"]
+    # within half an mp3gain step ⇒ Plex is serving what motif has on disk.
+    serving_normalized = (canonical_i is not None and abs(plex_i - canonical_i) < 0.75)
+    return {
+        "ok": True, "rating_key": rk, "entry_uri": entry_uri, "entries": len(meta),
+        "canonical_loudness_i": canonical_i,
+        "plex_loudness_i": plex_i, "plex_true_peak": m["true_peak"],
+        "norm_gain_db": norm_gain_db,
+        "serving_normalized": serving_normalized,
+        "verdict": ("Plex is serving the NORMALIZED theme"
+                    if serving_normalized else
+                    "Plex is serving the PRE-normalize theme — the sidecar changed but "
+                    "Plex still plays its ingested copy (needs a metadata refresh to "
+                    "re-read it)"),
+    }
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Motif", docs_url=None, redoc_url=None)
@@ -26049,6 +26126,67 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return {"ok": False, "error": "no plex_items row for this theme — "
                         "run REFRESH PLEX first"}
 
+            return _measure_plex_serving(settings, rk=str(rks[0]),
+                                         canonical_i=row["loudness_i"],
+                                         norm_gain_db=row["norm_gain_db"])
+
+        return await run_in_threadpool(_run)
+
+    @app.post("/api/admin/loudness/plex-reread")
+    async def api_admin_loudness_plex_reread(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.173: can a Plex metadata REFRESH make Plex re-read a normalized sidecar?
+
+        // WHAT IS PLEX SERVING? proved the gap on the real library (canonical -18.7,
+        Plex still serving -5.15) — Plex plays its ingested copy, not the file. The
+        remaining unknown is how to propagate. Two candidates:
+          - REFRESH (this): re-run Local Media Assets so it re-ingests the changed
+            sidecar. Native — keeps the row a sidecar row. UNPROVEN.
+          - RE-UPLOAD: POST the normalized bytes to /themes. Plex content-dedupes by
+            SHA-1 and auto-selects (PROVEN — v1.18.35 probe / v1.18.36 production), but
+            it turns the entry into an upload:// one, changing the row's nature.
+
+        Try the native one first and MEASURE the outcome rather than assume it — the
+        assumption is what cost three tags. Refresh is async, so poll the measurement a
+        few times before calling it. Threadpool (class-12); mutates nothing but Plex's
+        own metadata."""
+        _require_admin(request)
+        from ..core.db import get_conn
+        import time as _t   # module-local, matching the file's existing pattern
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT media_type, tmdb_id, section_id, edition_key, loudness_i, "
+                    "  norm_gain_db FROM local_files "
+                    "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
+                ).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "no normalized theme to check — "
+                            "normalize one first"}
+                plex_mt = {"tv": "show", "collection": "collection"}.get(
+                    row["media_type"], "movie")
+                rk_row = conn.execute(
+                    "SELECT rating_key FROM plex_items "
+                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                    "  AND COALESCE(edition_key,'')=? LIMIT 1",
+                    (plex_mt, row["tmdb_id"], row["section_id"],
+                     row["edition_key"] or ""),
+                ).fetchone()
+            if rk_row is None:
+                return {"ok": False, "error": "no plex_items row for this theme"}
+            rk = str(rk_row["rating_key"])
+
+            before = _measure_plex_serving(settings, rk=rk,
+                                           canonical_i=row["loudness_i"],
+                                           norm_gain_db=row["norm_gain_db"])
+            if before.get("serving_normalized"):
+                return {"ok": True, "already_current": True, "refreshed": False,
+                        "after": before,
+                        "verdict": "Plex was already serving the normalized theme — "
+                                   "nothing to do"}
+
             if not settings.plex_url or not settings.plex_token:
                 return {"ok": False, "error": "Plex is not configured"}
             cfg = PlexConfig(
@@ -26056,57 +26194,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 movie_section=settings.plex_movie_section,
                 tv_section=settings.plex_tv_section, enabled=True,
             )
-            rk = str(rks[0])
             with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                entries = plex.get_themes(rating_key=rk)
-                if not entries.get("ok"):
-                    return {"ok": False, "rating_key": rk,
-                            "error": f"Plex /themes failed: "
-                                     f"{entries.get('error') or entries.get('http_status')}"}
-                meta = []
-                b = entries.get("body")
-                if isinstance(b, dict):
-                    meta = (b.get("MediaContainer") or {}).get("Metadata") or []
-                if not meta:
-                    return {"ok": False, "rating_key": rk,
-                            "error": "Plex lists no theme entries for this item"}
-                # the SELECTED entry is what Plex actually plays (CLAUDE.md: singular
-                # /theme is the association; plural /themes is the collection).
-                sel = next((m for m in meta if m.get("selected")), meta[0])
-                entry_uri = sel.get("ratingKey") or sel.get("key")
-                fetched = plex.fetch_theme_bytes(item_rating_key=rk,
-                                                 entry_uri=str(entry_uri))
-            if not fetched.get("ok") or not fetched.get("bytes"):
-                return {"ok": False, "rating_key": rk, "entry_uri": entry_uri,
-                        "error": f"could not fetch Plex's bytes: {fetched.get('error')}"}
+                refreshed = plex.refresh(rk)
 
-            import tempfile
-            with tempfile.TemporaryDirectory() as td:
-                tmp = Path(td) / "plex_theme.mp3"
-                tmp.write_bytes(fetched["bytes"])
-                m = measure_loudness(tmp)
-            if m is None:
-                return {"ok": False, "rating_key": rk,
-                        "error": "ffmpeg could not measure Plex's bytes"}
+            # Plex's refresh is async — the agent re-scans in its own time. Poll the
+            # MEASUREMENT rather than sleeping once and guessing.
+            after = before
+            for _ in range(_REREAD_POLLS):
+                _t.sleep(_REREAD_POLL_S)
+                after = _measure_plex_serving(settings, rk=rk,
+                                              canonical_i=row["loudness_i"],
+                                              norm_gain_db=row["norm_gain_db"])
+                if after.get("serving_normalized"):
+                    break
 
-            canon = row["loudness_i"]
-            plex_i = m["loudness_i"]
-            # within half a mp3gain step ⇒ Plex is serving what motif has on disk.
-            serving_normalized = (canon is not None
-                                  and abs(plex_i - canon) < 0.75)
+            worked = bool(after.get("serving_normalized"))
+            if not worked:
+                log.warning("loudness: a Plex refresh did NOT make rk=%s re-read the "
+                            "normalized sidecar (Plex still at %s LUFS vs canonical %s) "
+                            "— the re-upload path is the remaining candidate",
+                            rk, after.get("plex_loudness_i"), row["loudness_i"])
             return {
-                "ok": True, "rating_key": rk, "entry_uri": entry_uri,
-                "entries": len(meta),
-                "canonical_loudness_i": canon,
-                "plex_loudness_i": plex_i,
-                "plex_true_peak": m["true_peak"],
-                "norm_gain_db": row["norm_gain_db"],
-                "serving_normalized": serving_normalized,
-                "verdict": ("Plex is serving the NORMALIZED theme"
-                            if serving_normalized else
-                            "Plex is serving the PRE-normalize theme — the sidecar changed "
-                            "but Plex still plays its ingested copy (needs a metadata "
-                            "refresh to re-read it)"),
+                "ok": True, "already_current": False, "refreshed": refreshed,
+                "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
+                "before_plex_loudness_i": before.get("plex_loudness_i"),
+                "after": after,
+                "refresh_propagates": worked,
+                "verdict": ("a Plex refresh DID make it re-read the sidecar — refresh is "
+                            "the propagation step"
+                            if worked else
+                            "a Plex refresh did NOT make it re-read the sidecar (it may "
+                            "still be scanning; re-check // WHAT IS PLEX SERVING?). If it "
+                            "stays put, re-upload is the remaining path"),
             }
 
         return await run_in_threadpool(_run)

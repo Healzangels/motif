@@ -4373,7 +4373,19 @@
 #   110px to the longest value (THEMERRDB) so URL centres against the same budget. Applied
 #   to both canonical-health tables (re-downloadable + canonical-missing), th + td.
 #   .table td sets no text-align, so the single-class rule wins on the cells uncontested.
-__version__ = "0.51.172"
+# 0.51.173: CONFIRMED by measurement, and the propagation probe. // WHAT IS PLEX SERVING?
+#   on the real library: canonical -18.7 LUFS, Plex serving -5.15, serving_normalized=false,
+#   entry_uri=metadata://themes/<sha1>, entries=1. So Plex plays its INGESTED copy, not the
+#   file — mutating a hardlinked sidecar changes nothing it serves, and v0.51.168's "hardlink
+#   -> Plex plays it immediately" was false. The operator's ears were right; three tags of
+#   green checks weren't. Remaining unknown = how to propagate. Two candidates: REFRESH
+#   (native, keeps the row a sidecar row, UNPROVEN) vs RE-UPLOAD (v1.18.35/36 PROVED Plex
+#   content-dedupes by SHA-1 + auto-selects, but makes it an upload:// entry). Try the native
+#   one and MEASURE: POST /api/admin/loudness/plex-reread refreshes the rk then POLLS the
+#   measurement (refresh is async) and reports whether Plex actually flipped to -18.7.
+#   // MAKE PLEX RE-READ IT in the audition block. The v0.51.171 fetch+measure block is now a
+#   shared _measure_plex_serving helper both probes call. Guard test_v0_51_173.
+__version__ = "0.51.173"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
