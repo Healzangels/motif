@@ -25696,9 +25696,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ):
         """v0.51.164: characterize mp3gain before Phase-1 normalization is built on it.
         Picks one measured local-bytes theme, and (on a THROWAWAY COPY, never the real
-        file) proves apply→undo is bit-exact + reports the binary version + which restore
-        path works. Read-only wrt every real theme. Off-loaded to a thread (subprocess +
-        file copy/hash would block the event loop — CLAUDE.md class-12)."""
+        file) proves apply→undo restores the AUDIO bit-exactly. v0.51.165: the criterion is
+        decoded PCM, not whole-file bytes — mp3gain appends an APE undo tag so the file
+        always differs even when the samples are restored. Read-only wrt every real theme.
+        Off-loaded to a thread (subprocess + decode/hash would block the event loop —
+        CLAUDE.md class-12)."""
         _require_admin(request)
         from ..core.loudness_apply import probe_mp3gain
         from ..core.db import get_conn

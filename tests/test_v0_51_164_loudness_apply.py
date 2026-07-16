@@ -79,49 +79,12 @@ def test_apply_gain_missing_binary_returns_false(monkeypatch):
     assert la.apply_gain("/x/theme.mp3", 3) is False
 
 
-# ── the reversibility probe (faithful reversible stub) ───────────────────────
-
-def _install_reversible_mp3gain(monkeypatch):
-    """Stub la._run so mp3gain -g N appends N bytes (N>0) / truncates |N| (N<0), and
-    -u truncates the last applied amount — a genuinely reversible byte op, so the
-    probe's sha256 bit-exact comparisons run for real."""
-    applied = {"n": 0}
-
-    def _run(cmd, timeout=None):
-        if cmd[:2] == ["mp3gain", "-v"]:
-            return True, "mp3gain 1.6.2 ...\n", ""
-        if cmd[1] == "-g":
-            n = int(cmd[2]); p = Path(cmd[3]); data = p.read_bytes()
-            if n > 0:
-                p.write_bytes(data + b"\x00" * n)
-            elif n < 0:
-                p.write_bytes(data[:len(data) + n])
-            applied["n"] += n
-            return True, "", ""
-        if cmd[1] == "-u":
-            p = Path(cmd[2]); data = p.read_bytes()
-            p.write_bytes(data[:len(data) - applied["n"]])
-            applied["n"] = 0
-            return True, "", ""
-        return True, "", ""
-
-    monkeypatch.setattr(la, "_run", _run)
-
-
-def test_probe_reports_bit_exact_reversibility(tmp_path, monkeypatch):
-    _install_reversible_mp3gain(monkeypatch)
-    theme = tmp_path / "theme.mp3"
-    theme.write_bytes(b"ID3fake-mp3-bytes" * 100)
-    orig = theme.read_bytes()
-
-    rep = la.probe_mp3gain(theme)
-    assert rep["mp3gain_present"] is True
-    assert rep["apply_changes_bytes"] is True     # -g actually mutated the copy
-    assert rep["inverse_g_bit_exact"] is True      # +N then -N restored bit-exact
-    assert rep["undo_tag_bit_exact"] is True        # -u restored bit-exact
-    assert rep["ok"] is True
-    assert theme.read_bytes() == orig              # the REAL theme was never touched
-
+# ── the reversibility probe ──────────────────────────────────────────────────
+# NOTE: the whole-file bit-exact probe test that used to live here was removed in
+# v0.51.165 — its premise (a restored file sha256-matches the original) is wrong for
+# real mp3gain, which appends an APEv2 undo tag. The AUDIO-level probe (decoded PCM)
+# is exercised by tests/test_v0_51_165_loudness_probe_v2.py. Only the mp3gain-ABSENT
+# branch (independent of the audio layer) is kept here.
 
 def test_probe_reports_mp3gain_absent(tmp_path, monkeypatch):
     # the real absence signal: _run's FileNotFoundError sentinel.

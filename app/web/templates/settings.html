@@ -1150,20 +1150,24 @@
 </section>
 
 {# v0.51.164: PROBE MP3GAIN — the Phase-1 pre-flight. Confirms mp3gain is in the
-   container + proves apply→undo is BIT-EXACT on a throwaway copy of one real theme,
-   before any normalization code touches a real file. Read-only wrt every real theme. #}
+   container + proves apply→undo restores the audio on a throwaway copy of one real
+   theme, before any normalization code touches a real file. Read-only wrt every theme.
+   v0.51.165: criterion is decoded PCM (audio), not whole-file bytes — mp3gain appends
+   an APE undo tag so the FILE always differs even when the SAMPLES are restored. #}
 <section class="block tab-panel" data-panel="diagnostics" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// PROBE MP3GAIN</h2>
-    <span class="muted small">pre-flight for loudness normalization — is undo bit-exact?</span>
+    <span class="muted small">pre-flight for loudness normalization — does undo restore the audio?</span>
   </header>
   <div class="block-body">
     <p class="form-hint block-intro">
       Loudness normalization (mp3gain) is lossless + reversible <em>in theory</em> — this
       proves it on <strong>your</strong> files. Picks one measured theme, copies it to a
-      temp file, applies a test gain, undoes it, and checks the bytes are
-      <strong>identical</strong> to the original. Nothing touches a real theme. Run this
-      once after deploying a build with mp3gain, before we build the actual normalize.
+      temp file, applies a test gain, undoes it, and decodes both to raw audio to check the
+      <strong>samples are identical</strong> — mp3gain writes an undo tag so the file bytes
+      differ, but the sound must come back exactly. Tests the attenuate direction we
+      actually use. Nothing touches a real theme. Run this once after deploying a build
+      with mp3gain, before we build the actual normalize.
     </p>
     <div class="form-actions">
       <button class="btn btn-warn" id="mp3gain-probe-btn" type="button">// PROBE MP3GAIN</button>

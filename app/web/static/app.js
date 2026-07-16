@@ -7795,15 +7795,22 @@
         const rep = await api('POST', '/api/admin/mp3gain-probe');
         out.textContent = JSON.stringify(rep, null, 2);
         out.style.display = '';
-        const revOk = rep.inverse_g_bit_exact || rep.undo_tag_bit_exact;
-        if (rep.ok && revOk) {
-          status.textContent = '✓ mp3gain present + apply→undo is BIT-EXACT — safe to normalize';
-          status.classList.add('form-status-ok');
-        } else if (!rep.mp3gain_present) {
+        // v0.51.165: the verdict is AUDIO-level (decoded PCM), not whole-file bytes —
+        // mp3gain appends an APE undo tag so the file always differs; the samples don't.
+        if (!rep.mp3gain_present) {
           status.textContent = '✗ mp3gain not in the container — redeploy a build that has it';
           status.classList.add('form-status-fail');
+        } else if (!rep.ffmpeg_present) {
+          status.textContent = '✗ ffmpeg could not decode — audio reversibility unverifiable';
+          status.classList.add('form-status-fail');
+        } else if (rep.ok) {
+          const boost = rep.boost_reversible_audio
+            ? 'boost also reversible'
+            : 'NOTE: boost not bit-exact (quiet-tail boosts will be excluded)';
+          status.textContent = '✓ attenuate→undo restores the AUDIO bit-exactly — safe to normalize (' + boost + ')';
+          status.classList.add('form-status-ok');
         } else {
-          status.textContent = '✗ ' + (rep.error || 'reversibility check FAILED — do not normalize');
+          status.textContent = '✗ ' + (rep.error || 'attenuate→undo did NOT restore the audio — do not normalize');
           status.classList.add('form-status-fail');
         }
       } catch (e) {

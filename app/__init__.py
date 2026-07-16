@@ -4270,7 +4270,18 @@
 #   + a // PROBE MP3GAIN button in Settings->Diagnostics. mp3gain is container-only so
 #   nothing is trusted blind. Guard test_v0_51_164. NEXT: per-item // NORMALIZE / // UNDO
 #   on the info card once the probe passes.
-__version__ = "0.51.164"
+# 0.51.165: loudness probe v2 — FIX a false-negative in the v0.51.164 probe. On the user's
+#   real files it read ok=false with inverse_g/undo_tag NOT bit-exact — but the criterion
+#   was WRONG: mp3gain appends an APEv2 undo tag, so a restored FILE always differs from the
+#   original by that tag even when every audio sample is restored. The safety layer is the
+#   decoded PCM, not the container bytes. probe_mp3gain now decodes both files with ffmpeg
+#   and compares the SAMPLES; tests the ATTENUATE direction production uses (target below the
+#   loud median → global_gain moves away from the clamp ceiling a boost can hit) and keys the
+#   verdict on that path; surfaces boost reversibility separately + corroborates at the byte
+#   layer that the file diff is tag-only. app.js/settings.html verdict + copy follow.
+#   Guard test_v0_51_165 (faithful stub models mp3gain's global_gain-clamp irreversibility +
+#   ffmpeg decode). Still read-only wrt every real theme; re-run // PROBE MP3GAIN to re-gate.
+__version__ = "0.51.165"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
