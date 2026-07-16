@@ -4429,7 +4429,8 @@
 #   it beat loudnorm — and v0.51.170 proved the restore is audio-bit-exact.)
 #   Guard test_v0_51_176.
 # 0.51.177: probe the last propagation candidate — delete the theme selection, unlock the field the delete bolts shut, then refresh so Local Media Assets re-ingests the changed sidecar; verdict off a re-measurement + the selected flag, and only ever on an under-ceiling theme re-upload could recover.
-__version__ = "0.51.177"
+# 0.51.178: read Plex's theme-field lock flag instead of inferring it from a 200 — v0.51.177's unlock may have been a silent no-op, and if sidecar rows are locked by default that lock explains v0.51.173's dead refresh and puts a ceiling-free unlock+refresh back on the table.
+__version__ = "0.51.178"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

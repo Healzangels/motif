@@ -8113,6 +8113,40 @@
       });
     }
 
+    // v0.51.178: reads the theme field's lock flag rather than trusting a status code.
+    // v0.51.177's unlock returned 200 and may still have been a no-op — if sidecar rows
+    // are locked by default, that lock explains v0.51.173's dead refresh and unlock +
+    // refresh becomes a live, ceiling-free path. Read-only wrt the theme; self-restoring.
+    const lockBtn = document.getElementById('loud-theme-lock-btn');
+    if (lockBtn) {
+      lockBtn.addEventListener('click', async () => {
+        lockBtn.disabled = true;
+        const o = lockBtn.textContent;
+        lockBtn.textContent = '// READING LOCK FLAGS…';
+        try {
+          const rep = await api('POST', '/api/admin/loudness/theme-lock-probe');
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 'lock probe failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            // the CONTROL row's flag is the answer; an unread flag is not a pass.
+            const known = rep.control && rep.control.theme_locked !== undefined
+              && rep.control.theme_locked !== null;
+            status.textContent = (known ? '✓ ' : '✗ ') + rep.verdict;
+            status.className = 'form-status ' + (known ? 'form-status-ok' : 'form-status-fail');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'lock probe failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          lockBtn.disabled = false;
+          lockBtn.textContent = o;
+        }
+      });
+    }
+
     // v0.51.177: the ceiling-free propagation candidate. Delete the selection so Plex
     // LACKS a theme, unlock the field the delete bolted shut, then refresh — Local Media
     // Assets ingests assets it lacks. If it works it beats re-upload everywhere (all

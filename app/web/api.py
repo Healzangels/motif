@@ -6298,6 +6298,27 @@ _REREAD_POLLS = 4
 _REREAD_POLL_S = 5
 
 
+def _lock_verdict(control_locked, working_shape) -> str:
+    """v0.51.178: the CONTROL row's natural lock state decides whether unlock+refresh is
+    still a live propagation candidate. Never let an unread flag (None) read as a pass."""
+    if control_locked is None:
+        return ("could not read the control row's theme lock — NO verdict. Without that "
+                "flag nothing here is decided; do not read this as a pass.")
+    if control_locked:
+        return ("sidecar rows ARE theme-locked by default — so the field was locked when "
+                "v0.51.173's refresh failed to re-read the changed sidecar, and the lock "
+                "is a live explanation for it. UNLOCK + REFRESH is untested and worth the "
+                "next tag: it would be ceiling-free and reach all 2,821 themes."
+                + ("" if working_shape else
+                   " Fix the unlock first — neither shape moved the flag here."))
+    return ("sidecar rows are NOT theme-locked — the field was already unlocked when "
+            "v0.51.173's refresh ran, and it still did not re-read the sidecar. The lock "
+            "was never the blocker, so unlock+refresh cannot be the answer either. "
+            "RE-UPLOAD is the propagation mechanism."
+            + ("" if working_shape is None else
+               f" (The {working_shape} shape does move the flag.)"))
+
+
 def _measure_plex_serving(settings, *, rk: str, canonical_i, norm_gain_db=None) -> dict:
     """v0.51.171: what is Plex ACTUALLY serving for this item's theme?
 
@@ -26362,6 +26383,186 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "ingesting — re-check // WHAT IS PLEX SERVING?). If it stays "
                             "put, there is no propagation path and bulk must not proceed."),
             }
+
+        return await run_in_threadpool(_run)
+
+    @app.post("/api/admin/loudness/theme-lock-probe")
+    async def api_admin_loudness_theme_lock_probe(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.178: is Plex's `theme` field LOCKED, and does an unlock actually work?
+
+        The open question. v0.51.173 measured a refresh failing to re-read a changed
+        sidecar. v0.51.177 then concluded the lock was not the cause — off an unlock PUT
+        that returned 200. But a 200 is not evidence the flag moved: that unlock uses the
+        metadata-endpoint shape, while Plex's field-lock API conventionally goes through
+        the SECTION endpoint with type= + id=, so it may have been a silent no-op. If it
+        WAS, then the theme field was locked the whole time, the lock explains the dead
+        refresh, and unlock+refresh is an untested, ceiling-free path to all 2,821 themes.
+        Reporting a probe off a status code is the mistake this arc keeps repeating — so
+        this reads the flag instead.
+
+        Two rows, because they answer different halves:
+          - CONTROL: a row motif has never normalized or uploaded to. Its lock state is
+            the NATURAL state of a sidecar-ingested theme — i.e. what was true when
+            v0.51.173's refresh ran. This is the one that decides the question.
+          - AUDITION: the normalized row. Contaminated (v0.51.177 deleted, "unlocked" and
+            pushed it), so it can't answer the natural-state question — but it's the
+            subject for the shape test.
+
+        The shape test flips the flag, RE-READS to see if it actually moved, then flips it
+        back and re-reads again to confirm the restore. Self-restoring: the probe leaves
+        the field as it found it. Read-only wrt the theme bytes and Plex's selection —
+        nothing here can strand an item the way delete+re-detect did. Threadpool
+        (class-12)."""
+        _require_admin(request)
+        from ..core.db import get_conn
+
+        # Plex's section endpoint keys the lock by item type, not by media_type string.
+        plex_type_of = {"movie": 1, "show": 2, "collection": 18}
+
+        def _run():
+            with get_conn(db) as conn:
+                audition = conn.execute(
+                    "SELECT media_type, tmdb_id, section_id, edition_key FROM local_files "
+                    "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
+                ).fetchone()
+                # A row motif has never normalized AND never uploaded to (hardlink
+                # placement ⇒ Plex ingested it from the sidecar, so its entry is a
+                # metadata:// one) — the natural state.
+                control = conn.execute(
+                    "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key "
+                    "FROM local_files lf JOIN placements p "
+                    "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
+                    " AND p.section_id=lf.section_id "
+                    " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
+                    "WHERE lf.norm_state IS NULL AND p.placement_kind='hardlink' "
+                    "ORDER BY lf.tmdb_id LIMIT 1"
+                ).fetchone()
+
+                def _rk(row):
+                    if row is None:
+                        return None
+                    plex_mt = {"tv": "show", "collection": "collection"}.get(
+                        row["media_type"], "movie")
+                    got = conn.execute(
+                        "SELECT rating_key FROM plex_items "
+                        "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                        "  AND COALESCE(edition_key,'')=? LIMIT 1",
+                        (plex_mt, row["tmdb_id"], row["section_id"],
+                         row["edition_key"] or ""),
+                    ).fetchone()
+                    return (str(got["rating_key"]), plex_mt) if got else (None, plex_mt)
+
+                audition_rk, audition_mt = _rk(audition) if audition else (None, None)
+                control_rk, control_mt = _rk(control) if control else (None, None)
+
+            if not settings.plex_url or not settings.plex_token:
+                return {"ok": False, "error": "Plex is not configured"}
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True,
+            )
+
+            out: dict = {"ok": True}
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                # ── the control: the natural lock state of an untouched sidecar row
+                if control_rk:
+                    locks = plex.get_field_locks(rating_key=control_rk)
+                    entry = None
+                    got = plex.get_themes(rating_key=control_rk)
+                    b = got.get("body")
+                    meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
+                        if isinstance(b, dict) else []
+                    sel = next((m for m in meta if m.get("selected")), None)
+                    if sel:
+                        entry = str(sel.get("ratingKey") or sel.get("key"))
+                    out["control"] = {
+                        "rating_key": control_rk, "media_type": control_mt,
+                        "tmdb_id": control["tmdb_id"],
+                        "theme_locked": locks["theme_locked"],
+                        "locked_fields": locks["locked_fields"],
+                        "read_error": locks["error"],
+                        # a metadata:// entry confirms this really is a sidecar-ingested
+                        # row and not something motif already uploaded to.
+                        "selected_entry": entry,
+                    }
+                else:
+                    out["control"] = {"error": "no untouched hardlink-placed row with a "
+                                               "plex_items rating_key to use as a control"}
+
+                # ── the audition row + the shape test
+                if not audition_rk:
+                    out["audition"] = {"error": "no normalized theme — normalize one "
+                                                "first to run the shape test"}
+                    out["verdict"] = _lock_verdict(out["control"].get("theme_locked"),
+                                                   None)
+                    return out
+
+                before = plex.get_field_locks(rating_key=audition_rk)
+                out["audition"] = {
+                    "rating_key": audition_rk,
+                    "theme_locked": before["theme_locked"],
+                    "locked_fields": before["locked_fields"],
+                    "read_error": before["error"],
+                    "note": "contaminated by v0.51.177 (deleted + unlocked + pushed) — "
+                            "the CONTROL row is what answers the natural-state question",
+                }
+                original = before["theme_locked"]
+                if original is None:
+                    out["shape_test"] = {"error": "could not read the flag, so nothing "
+                                                  "here could be verified — no shape test"}
+                    out["verdict"] = _lock_verdict(out["control"].get("theme_locked"),
+                                                   None)
+                    return out
+
+                want = not original
+                tried, working = [], None
+                for shape in ("metadata", "section"):
+                    status = plex.set_theme_field_lock(
+                        rating_key=audition_rk, locked=want, shape=shape,
+                        section_id=audition["section_id"],
+                        plex_type=plex_type_of.get(audition_mt),
+                    )
+                    after = plex.get_field_locks(rating_key=audition_rk)["theme_locked"]
+                    moved = after is not None and after == want
+                    tried.append({"shape": shape, "http_status": status,
+                                  "flag_after": after, "flag_moved": moved})
+                    if moved:
+                        working = shape
+                        break
+
+                # restore with whatever actually worked; leaving the operator's field
+                # flipped is a side effect nobody asked for.
+                restored = None
+                if working:
+                    plex.set_theme_field_lock(
+                        rating_key=audition_rk, locked=original, shape=working,
+                        section_id=audition["section_id"],
+                        plex_type=plex_type_of.get(audition_mt),
+                    )
+                    restored = plex.get_field_locks(
+                        rating_key=audition_rk)["theme_locked"]
+                    if restored != original:
+                        log.warning("theme-lock-probe: rk=%s could NOT be restored to "
+                                    "locked=%s (now %s) — the probe changed Plex state "
+                                    "it could not put back", audition_rk, original,
+                                    restored)
+
+                out["shape_test"] = {
+                    "original_locked": original, "flipped_to": want,
+                    "tried": tried, "working_shape": working,
+                    "restored_locked": restored,
+                    "restored_ok": (restored == original) if working else True,
+                }
+                if working is None:
+                    log.warning("theme-lock-probe: NEITHER unlock shape moved the theme "
+                                "flag on rk=%s (statuses %s) — v0.51.177's unlock was a "
+                                "silent no-op and its 200 meant nothing", audition_rk,
+                                [t["http_status"] for t in tried])
+                out["verdict"] = _lock_verdict(out["control"].get("theme_locked"), working)
+            return out
 
         return await run_in_threadpool(_run)
 

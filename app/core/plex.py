@@ -1247,18 +1247,69 @@ class PlexClient:
         )
         return ok2, r2.status_code, r2_body_snip
 
-    def set_theme_field_lock(self, *, rating_key: str, locked: bool) -> int | None:
-        """v0.51.177: lock/unlock the item's `theme` field.
+    def get_field_locks(self, *, rating_key: str) -> dict:
+        """v0.51.178: READ which metadata fields Plex has locked on this item.
+
+        Exists because v0.51.177 asserted the theme field's lock was not what stopped a
+        refresh from re-reading a changed sidecar — and based that on an unlock PUT
+        returning 200. A 200 is not evidence the flag moved; it is the same
+        status-code-as-proof mistake this whole arc keeps making. So read the flag.
+
+        `theme_locked` is a TRISTATE: None means "could not read", which must never be
+        allowed to read as "unlocked" (class-9). Never raises."""
+        try:
+            r = self._client.get(self._rk_path(rating_key, ""),
+                                 headers=self._headers, timeout=30.0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("get_field_locks: rk=%s transport error: %s", rating_key, e)
+            return {"ok": False, "http_status": None, "error": f"transport: {e!r}",
+                    "locked_fields": None, "theme_locked": None}
+        try:
+            body = r.json()
+        except (ValueError, json.JSONDecodeError):
+            return {"ok": False, "http_status": r.status_code,
+                    "error": "non-JSON body", "locked_fields": None,
+                    "theme_locked": None}
+        meta = ((body.get("MediaContainer") or {}).get("Metadata") or []) \
+            if isinstance(body, dict) else []
+        if not meta:
+            return {"ok": False, "http_status": r.status_code,
+                    "error": "no Metadata for this rating_key",
+                    "locked_fields": None, "theme_locked": None}
+        locked = [f.get("name") for f in (meta[0].get("Field") or []) if f.get("locked")]
+        return {"ok": 200 <= r.status_code < 300, "http_status": r.status_code,
+                "error": None, "locked_fields": locked,
+                "theme_locked": "theme" in locked}
+
+    def set_theme_field_lock(self, *, rating_key: str, locked: bool,
+                             shape: str = "metadata", section_id: str | None = None,
+                             plex_type: int | None = None) -> int | None:
+        """v0.51.177 / v0.51.178: lock/unlock the item's `theme` field.
 
         Needed because delete_collection_theme's own docstring records that Plex's DELETE
         on singular /theme "will also lock the field". A LOCKED field is precisely what
-        stops an agent from writing it — so delete→refresh could never make Local Media
-        Assets re-ingest a changed sidecar: the delete itself bolts the door. The upload
-        path never noticed because a POST to plural /themes overrides the lock (v1.18.33).
+        stops an agent from writing it — so a locked theme could be why v0.51.173 measured
+        a refresh failing to re-read a changed sidecar. The upload path never noticed
+        because a POST to plural /themes overrides the lock (v1.18.33).
+
+        v0.51.178: `shape`. v0.51.177 only ever tried the metadata-endpoint form and
+        trusted its 200, but Plex's field-lock API conventionally goes through the SECTION
+        endpoint with type= + id=, so the metadata form may be a silent no-op. Which one
+        actually moves the flag is an empirical question — callers MUST verify with
+        get_field_locks. The status code proves nothing.
 
         Returns the HTTP status (None on transport error). Best-effort, never raises."""
-        return self._put(self._rk_path(rating_key, ""),
-                         params={"theme.locked": "1" if locked else "0"})
+        val = "1" if locked else "0"
+        if shape == "section":
+            if section_id is None or plex_type is None:
+                log.warning("set_theme_field_lock: section shape needs section_id + "
+                            "plex_type; got %r/%r", section_id, plex_type)
+                return None
+            from urllib.parse import quote
+            return self._put(f"/library/sections/{quote(str(section_id), safe='')}/all",
+                             params={"type": plex_type, "id": rating_key,
+                                     "theme.locked": val})
+        return self._put(self._rk_path(rating_key, ""), params={"theme.locked": val})
 
     def delete_collection_theme(self, *, rating_key: str) -> bool:
         """v1.18.0 / v1.18.36: clear the currently-serving theme
