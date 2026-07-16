@@ -25985,6 +25985,132 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
+    @app.post("/api/admin/loudness/plex-serving")
+    async def api_admin_loudness_plex_serving(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.171: MEASURE what Plex is actually serving for a normalized theme, instead
+        of judging by ear.
+
+        v0.51.168's audition claimed "hardlink → Plex plays the normalized theme
+        immediately". The inode reasoning is right but the premise may not be: Plex's Local
+        Media Assets agent INGESTS theme.mp3 into its own metadata store at scan time (hence
+        metadata://themes/<sha1> entries keyed by CONTENT hash), so mutating the sidecar
+        likely does NOT change what Plex plays until a refresh re-runs the agent. The
+        operator normalized -13.5 dB and heard no difference — that assumption was never
+        verified, so verify it: pull the bytes Plex serves, measure them with ffmpeg, and
+        compare against the canonical's stored loudness. Read-only wrt Plex and the theme.
+
+        Threadpool: HTTP + decode + measure all block (class-12)."""
+        _require_admin(request)
+        from ..core.db import get_conn
+        from ..core.loudness import measure_loudness
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — defaults to the normalized row
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+
+        def _run():
+            with get_conn(db) as conn:
+                if body.get("tmdb_id") is not None and body.get("media_type"):
+                    row = conn.execute(
+                        "SELECT media_type, tmdb_id, section_id, edition_key, loudness_i, "
+                        "  norm_state, norm_gain_db FROM local_files "
+                        "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                        (body["media_type"], body["tmdb_id"],
+                         body.get("section_id") or "", body.get("edition_key") or ""),
+                    ).fetchone()
+                else:
+                    row = conn.execute(
+                        "SELECT media_type, tmdb_id, section_id, edition_key, loudness_i, "
+                        "  norm_state, norm_gain_db FROM local_files "
+                        "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
+                    ).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "no normalized theme to check — "
+                            "normalize one first"}
+                # edition-scoped: the rating_key(s) for THIS edition only.
+                # plex_items stores PLEX's media_type ('show'), local_files stores motif's
+                # ('tv') — the same _PLEX_MT_MAP translation CLAUDE.md documents. Querying
+                # with the raw local_files value silently matches nothing on every tv row.
+                plex_mt = {"tv": "show", "collection": "collection"}.get(
+                    row["media_type"], "movie")
+                rks = [r["rating_key"] for r in conn.execute(
+                    "SELECT rating_key FROM plex_items "
+                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                    "  AND COALESCE(edition_key,'')=?",
+                    (plex_mt, row["tmdb_id"], row["section_id"],
+                     row["edition_key"] or ""),
+                ).fetchall()]
+            if not rks:
+                return {"ok": False, "error": "no plex_items row for this theme — "
+                        "run REFRESH PLEX first"}
+
+            if not settings.plex_url or not settings.plex_token:
+                return {"ok": False, "error": "Plex is not configured"}
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True,
+            )
+            rk = str(rks[0])
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                entries = plex.get_themes(rating_key=rk)
+                if not entries.get("ok"):
+                    return {"ok": False, "rating_key": rk,
+                            "error": f"Plex /themes failed: "
+                                     f"{entries.get('error') or entries.get('http_status')}"}
+                meta = []
+                b = entries.get("body")
+                if isinstance(b, dict):
+                    meta = (b.get("MediaContainer") or {}).get("Metadata") or []
+                if not meta:
+                    return {"ok": False, "rating_key": rk,
+                            "error": "Plex lists no theme entries for this item"}
+                # the SELECTED entry is what Plex actually plays (CLAUDE.md: singular
+                # /theme is the association; plural /themes is the collection).
+                sel = next((m for m in meta if m.get("selected")), meta[0])
+                entry_uri = sel.get("ratingKey") or sel.get("key")
+                fetched = plex.fetch_theme_bytes(item_rating_key=rk,
+                                                 entry_uri=str(entry_uri))
+            if not fetched.get("ok") or not fetched.get("bytes"):
+                return {"ok": False, "rating_key": rk, "entry_uri": entry_uri,
+                        "error": f"could not fetch Plex's bytes: {fetched.get('error')}"}
+
+            import tempfile
+            with tempfile.TemporaryDirectory() as td:
+                tmp = Path(td) / "plex_theme.mp3"
+                tmp.write_bytes(fetched["bytes"])
+                m = measure_loudness(tmp)
+            if m is None:
+                return {"ok": False, "rating_key": rk,
+                        "error": "ffmpeg could not measure Plex's bytes"}
+
+            canon = row["loudness_i"]
+            plex_i = m["loudness_i"]
+            # within half a mp3gain step ⇒ Plex is serving what motif has on disk.
+            serving_normalized = (canon is not None
+                                  and abs(plex_i - canon) < 0.75)
+            return {
+                "ok": True, "rating_key": rk, "entry_uri": entry_uri,
+                "entries": len(meta),
+                "canonical_loudness_i": canon,
+                "plex_loudness_i": plex_i,
+                "plex_true_peak": m["true_peak"],
+                "norm_gain_db": row["norm_gain_db"],
+                "serving_normalized": serving_normalized,
+                "verdict": ("Plex is serving the NORMALIZED theme"
+                            if serving_normalized else
+                            "Plex is serving the PRE-normalize theme — the sidecar changed "
+                            "but Plex still plays its ingested copy (needs a metadata "
+                            "refresh to re-read it)"),
+            }
+
+        return await run_in_threadpool(_run)
+
     @app.post("/api/admin/loudness/undo-one")
     async def api_admin_loudness_undo_one(
         request: Request, db: Path = Depends(get_db_path),

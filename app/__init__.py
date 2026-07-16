@@ -4349,7 +4349,24 @@
 #   magnitude is exactly what decides global_gain clamping, so `ok` now additionally
 #   requires attenuate_deep_reversible_audio (-9 steps ≈ -13.5 dB, the production case).
 #   Guard test_v0_51_170. RE-RUN // PROBE MP3GAIN: it now proves the deep path.
-__version__ = "0.51.170"
+# 0.51.171: MEASURE what Plex actually serves — the audition's core claim was never
+#   verified. // PROBE MP3GAIN came back fully green on the real library
+#   (attenuate_deep_reversible_audio=true, so the -9-step path IS reversible;
+#   audio_restored=true on undo), but the operator normalized -13.5 dB and could not hear a
+#   difference in Plex. -13.5 dB is a 4-5x loudness drop, so the likely explanation is that
+#   Plex never played the new bytes: v0.51.168 claimed "hardlink -> Plex plays it
+#   immediately", which is right about the inode but assumes Plex reads theme.mp3 at
+#   PLAYBACK. It doesn't — Local Media Assets INGESTS the sidecar into Plex's own store at
+#   scan time (hence the metadata://themes/<sha1> entries keyed by CONTENT hash), so
+#   mutating the sidecar changes nothing Plex plays until a refresh re-runs the agent.
+#   Rather than crank the gain and judge by ear (same conclusion, more mutation, subjective
+#   call), measure it: PlexClient.fetch_theme_bytes (full GET, no Range — the existing probe
+#   caps at 4KB) + POST /api/admin/loudness/plex-serving resolves the edition-scoped
+#   rating_key, GETs the SELECTED theme entry's bytes, measures them with ffmpeg, and
+#   compares against the canonical's stored loudness. // WHAT IS PLEX SERVING? in the
+#   audition block. Read-only wrt Plex and the theme; threadpool (class-12). This also
+#   answers the placement question Phase 2 bulk depends on. Guard test_v0_51_171.
+__version__ = "0.51.171"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

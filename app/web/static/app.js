@@ -8042,6 +8042,39 @@
       }
     });
 
+    // v0.51.171: MEASURE what Plex serves rather than judging by ear. The audition
+    // assumed a hardlinked sidecar means Plex plays the new bytes live — but Plex ingests
+    // theme.mp3 into its own store at scan time, so it may still play the old copy.
+    const serveBtn = document.getElementById('loud-plex-serving-btn');
+    if (serveBtn) {
+      serveBtn.addEventListener('click', async () => {
+        serveBtn.disabled = true;
+        const o = serveBtn.textContent;
+        serveBtn.textContent = '// CHECKING…';
+        try {
+          const rep = await api('POST', '/api/admin/loudness/plex-serving', lastRow || {});
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 'check failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            status.textContent = (rep.serving_normalized ? '✓ ' : '✗ ') + rep.verdict
+              + ' — Plex ' + fmt(rep.plex_loudness_i) + ' LUFS vs canonical '
+              + fmt(rep.canonical_loudness_i) + ' LUFS.';
+            status.className = 'form-status '
+              + (rep.serving_normalized ? 'form-status-ok' : 'form-status-fail');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'check failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          serveBtn.disabled = false;
+          serveBtn.textContent = o;
+        }
+      });
+    }
+
     undoBtn.addEventListener('click', async () => {
       if (!lastRow) return;
       undoBtn.disabled = true;

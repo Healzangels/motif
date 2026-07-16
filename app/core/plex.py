@@ -1670,6 +1670,33 @@ class PlexClient:
             "body": body,
         }
 
+    def fetch_theme_bytes(self, *, item_rating_key: str, entry_uri: str) -> dict:
+        """v0.51.171: the FULL audio bytes Plex is serving for a theme entry — no Range
+        (probe_theme_entry_bytes caps at 4KB; measuring loudness needs the whole file).
+
+        This exists to answer "is Plex actually playing the normalized theme?" by
+        MEASURING what Plex serves rather than judging by ear. motif places a theme as a
+        hardlinked sidecar, but Plex's Local Media Assets agent INGESTS it into its own
+        metadata store at scan time (hence the metadata://themes/<sha1> entries) — so
+        mutating the sidecar's bytes does NOT change what Plex plays until a refresh
+        re-runs the agent. That assumption was never verified; this measures it.
+
+        Full-buffering matches cloud_theme_backup (themes are ~1MB, ≤~9MB per the v1.18.85
+        probe). Never raises. Returns {ok, http_status, bytes, error?}."""
+        from urllib.parse import quote
+        url = (f"{self._rk_path(item_rating_key, '/file')}"
+               f"?url={quote(entry_uri, safe='')}")
+        try:
+            r = self._client.get(url, headers=self._headers, timeout=60.0)
+        except Exception as e:  # noqa: BLE001 — diagnostic, never break the caller
+            return {"ok": False, "http_status": None, "bytes": None,
+                    "error": f"transport: {e!r}"}
+        if not (200 <= r.status_code < 300):
+            return {"ok": False, "http_status": r.status_code, "bytes": None,
+                    "error": f"HTTP {r.status_code}"}
+        return {"ok": True, "http_status": r.status_code, "bytes": r.content,
+                "error": None}
+
     def probe_theme_entry_bytes(
         self, *, item_rating_key: str, entry_uri: str,
         range_bytes: int = 4096,

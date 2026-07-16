@@ -190,8 +190,10 @@ def test_probe_verdict_requires_the_deep_path(monkeypatch, tmp_path):
 def test_ui_warns_on_audio_restored_not_on_file_sha():
     js = (Path(__file__).resolve().parent.parent / "app" / "web" / "static"
           / "app.js").read_text()
-    i = js.index("function bindLoudnessAudition")
-    block = js[i:i + 5200]
+    # anchor on the UNDO handler, not a byte offset from the function start — a fixed
+    # window silently slides out of range as the function grows (it did, one tag later).
+    i = js.index("undoBtn.addEventListener")
+    block = js[i:i + 2600]
     assert "rep.audio_restored === false" in block
     # the old file-sha criterion must not drive the warning any more
     assert "rep.bit_exact === false" not in block
