@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import logging
+import math
 from pathlib import Path
 
 from .events import now_iso
@@ -144,7 +145,11 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
     rows = conn.execute(
         "SELECT loudness_i, loudness_tp FROM local_files WHERE loudness_i IS NOT NULL"
     ).fetchall()
-    vals = [(r["loudness_i"], r["loudness_tp"]) for r in rows]
+    # v0.51.163: exclude non-finite loudness_i. A silent theme measured as -inf (by an
+    # earlier build, before loudness.py's finite guard) would otherwise crash the
+    # histogram (math.floor(-inf) → OverflowError) + serialise to invalid JSON. This
+    # makes the report robust to any -inf already sitting in the DB.
+    vals = [(r["loudness_i"], r["loudness_tp"]) for r in rows if math.isfinite(r["loudness_i"])]
     loudness = sorted(v[0] for v in vals)
 
     stats = None
@@ -162,7 +167,6 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
         }
         # fixed-width LUFS bins spanning floor(min)..ceil(max). Themes cluster in a
         # narrow band, so a per-run span keeps the histogram legible.
-        import math
         start = math.floor(lo / bin_width) * bin_width
         end = math.ceil(hi / bin_width) * bin_width
         n_bins = max(1, int(round((end - start) / bin_width)))
@@ -183,6 +187,7 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
             "FROM local_files lf "
             "LEFT JOIN themes t ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
             "WHERE lf.loudness_i IS NOT NULL "
+            "  AND lf.loudness_i > -1e30 AND lf.loudness_i < 1e30 "   # v0.51.163: exclude ±inf
             f"ORDER BY lf.loudness_i {order} LIMIT ?",
             (outlier_n,),
         ).fetchall()
@@ -191,7 +196,10 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
              "section_id": r["section_id"], "edition_key": r["edition_key"],
              "title": r["title"] or f'{r["media_type"]}/{r["tmdb_id"]}',
              "year": r["year"], "loudness_i": r["loudness_i"],
-             "true_peak": r["loudness_tp"]}
+             # v0.51.163: a -inf peak on an otherwise-finite row → null (valid JSON).
+             "true_peak": (r["loudness_tp"]
+                           if r["loudness_tp"] is not None and math.isfinite(r["loudness_tp"])
+                           else None)}
             for r in q
         ]
 
@@ -206,7 +214,10 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
         "histogram": histogram,
         "loudest": _outliers("DESC"),   # highest LUFS first
         "quietest": _outliers("ASC"),   # lowest (most-negative) LUFS first
-        "values": [[v[0], v[1]] for v in vals],
+        # v0.51.163: guard true_peak too — a -inf tp serialises to invalid JSON
+        # ("-Infinity") that the browser's JSON.parse rejects, killing the whole render.
+        "values": [[v[0], (v[1] if v[1] is not None and math.isfinite(v[1]) else None)]
+                   for v in vals],
     }
 
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import subprocess
 from pathlib import Path
 
@@ -66,13 +67,21 @@ def _parse_loudnorm_json(stderr_text: str) -> dict | None:
     except (ValueError, TypeError):
         return None
     try:
-        return {
+        out = {
             "loudness_i": float(d["input_i"]),
             "true_peak": float(d["input_tp"]),
             "lra": float(d["input_lra"]),
         }
     except (KeyError, ValueError, TypeError):
         return None
+    # v0.51.163: a SILENT / near-silent theme measures as -inf LUFS (ffmpeg prints
+    # "input_i": "-inf"), and float('-inf') is poison downstream — it crashes the
+    # histogram (math.floor(-inf) → OverflowError) and serialises to "-Infinity"
+    # (invalid JSON the browser rejects). Reject any non-finite figure: an unmeasurable
+    # loudness is a measurement GAP (None), not a stored value.
+    if not all(math.isfinite(v) for v in out.values()):
+        return None
+    return out
 
 
 def measure_loudness(file_path: Path | str,

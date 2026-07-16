@@ -4245,7 +4245,20 @@
 #   raw median), names it in the slider hint, + adds a // USE RECOMMENDED snap-back button.
 #   bindLoudnessReport in app.js. Guard test_v0_51_162. The slider still lets the operator
 #   override — the recommendation is only where the dry-run starts.
-__version__ = "0.51.162"
+# 0.51.163: loudness report — FIX: the distribution never appeared during a real prod scan
+#   (the user: "still not seeing the breakdown"). Root cause (reproduced): a SILENT theme
+#   measures as -inf LUFS (ffmpeg loudnorm "input_i":"-inf"), and -inf is poison —
+#   build_report crashed on math.floor(-inf) (OverflowError → the /api/admin/loudness-report
+#   500'd) AND -inf serialises to "-Infinity" (invalid JSON the browser rejects). Either
+#   killed the report; data-dependent, so it only bit after a silent theme got measured
+#   (worked at 484 rows, broke later). Three layers: (1) loudness._parse_loudnorm_json
+#   rejects any non-finite figure → -inf is a measurement GAP, never stored; (2) build_report
+#   filters non-finite loudness_i from the scan/histogram/outliers + nulls a non-finite
+#   true_peak in the values array → robust to -inf ALREADY in the DB, valid strict JSON;
+#   (3) bindLoudnessReport no longer swallows a failed fetch silently (class-9) — it reveals
+#   the section + "retrying…" + console.error, and the live poll recovers. Guard
+#   test_v0_51_163 (reproduces the -inf crash + the strict-JSON + parse-reject).
+__version__ = "0.51.163"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

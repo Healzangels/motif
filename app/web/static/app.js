@@ -7631,6 +7631,7 @@
     if (!slider || !previewEl) return;
     let values = [];
     let recommended = null;      // v0.51.162: server-recommended target LUFS
+    let hasRendered = false;     // v0.51.163: has the report ever loaded (for error UX)
     let sliderSeeded = false;   // v0.51.160: seed the slider ONCE (to the recommendation),
                                 // so a live refresh mid-run doesn't yank it off the operator's drag
     // a real normalizer respects a true-peak ceiling, so a quiet track with little
@@ -7713,11 +7714,21 @@
     async function refresh() {
       let rep;
       try { rep = await api('GET', '/api/admin/loudness-report'); }
-      catch (e) { return; }
+      catch (e) {
+        // v0.51.163: don't vanish silently (class-9) — reveal the section + say so, and
+        // let the live poll (or a reload) retry. Keeps prior good data if we had any.
+        console.error('loudness report load failed:', e);
+        container.style.display = '';
+        if (!hasRendered) {
+          statsEl.innerHTML = '<span class="muted small">Couldn’t load the distribution — retrying…</span>';
+        }
+        return;
+      }
       values = rep.values || [];
       countEl.textContent = `${rep.measured} measured · ${rep.unmeasured} not yet measured`
         + (rep.skipped_no_sha ? ` · ${rep.skipped_no_sha} no hash` : '');
       container.style.display = '';
+      hasRendered = true;
       if (!rep.measured) {
         statsEl.innerHTML = '<span class="muted small">No measurements yet — run the audit above.</span>';
         histEl.innerHTML = '';
