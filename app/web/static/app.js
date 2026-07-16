@@ -8121,6 +8121,42 @@
       });
     }
 
+    // v0.51.181: the INTERVENTION that settles the lock lead on one named row. The probe
+    // can only find rows LOCKED with no theme, and that shape has innocent explanations
+    // (nothing was ever pushed; the known stale-upload/RP class) — correlation can't
+    // separate them. Unlock, refresh, and see if a theme appears where none could before.
+    const unlockBtn = document.getElementById('loud-unlock-test-btn');
+    if (unlockBtn) {
+      unlockBtn.addEventListener('click', async () => {
+        const rk = prompt('rating_key to test (from lock_lead.locked_with_no_theme):');
+        if (!rk) return;
+        unlockBtn.disabled = true;
+        const o = unlockBtn.textContent;
+        unlockBtn.textContent = '// UNLOCKING + WATCHING…';
+        try {
+          const rep = await api('POST', '/api/admin/plex/theme-unlock-experiment',
+                                { rating_key: rk.trim() });
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 'unlock experiment failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            // gaining a theme CONFIRMS the lead — which is bad news, so it is not a ✓.
+            status.textContent = (rep.gained_a_theme ? '✗ ' : '✓ ') + rep.verdict;
+            status.className = 'form-status '
+              + (rep.gained_a_theme ? 'form-status-fail' : 'form-status-ok');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'experiment failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          unlockBtn.disabled = false;
+          unlockBtn.textContent = o;
+        }
+      });
+    }
+
     // v0.51.174: refresh?force=1 provably does NOT propagate a CHANGED theme (measured:
     // Plex sat at -5.15 vs a -18.7 canonical, same entry, minutes later). Re-upload is the
     // proven path (v1.18.35/36 sha1-dedup + auto-select) — push and MEASURE.

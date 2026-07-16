@@ -6320,30 +6320,45 @@ def _lock_verdict(control_locked, working_shape) -> str:
                f" (The {working_shape} shape does move the flag.)"))
 
 
-def _lock_lead_verdict(every, locked_bare, locked_serving) -> str:
-    """v0.51.180: motif locks the theme field on every delete_theme and NEVER unlocks it
-    (set_theme_field_lock has no production caller). LET PLEX SERVE and the SWITCH
-    api→file teardown both delete and then rely on an agent writing the theme — which a
-    locked field is exactly what prevents. Whether it actually bites is measured here,
-    not asserted: an unread sample proves nothing either way."""
+def _lock_lead_verdict(every, locked_bare, locked_serving, placed_themeless=None) -> str:
+    """v0.51.180 / v0.51.181: report what was OBSERVED about the theme-lock lead.
+
+    The lead: motif locks the theme field on every delete_theme (Plex's DELETE does it)
+    and NEVER unlocks it — set_theme_field_lock has no production caller. LET PLEX SERVE
+    and the SWITCH api→file teardown both delete and then rely on an AGENT writing the
+    theme, which a locked field is what prevents.
+
+    v0.51.181 rewrote this string because it ASSERTED that causation — "the agent cannot
+    write a locked field, SO these items cannot get a theme back" — off a single sampled
+    row. That is a conclusion, not a measurement, and the operator's one hit (rk 3487,
+    Star Wars) is consistent with at least two innocent explanations: it was on the
+    14-broken-canonicals list (motif may have had no bytes to push), and it has the
+    signature of the known stale-plex_upload/RP class (v1.24.28), which motif already
+    surfaces. Baking an inference into the verdict is the exact habit this whole arc has
+    been correcting; the string now describes the finding and names what would settle it.
+    """
     readable = [r for r in every if r["theme_locked"] is not None]
     if not readable:
         return ("no rows readable — NO verdict on the lock lead. Do not read this as "
                 "'no problem found'.")
+    scale = ("" if placed_themeless is None else
+             f" Library-wide, {placed_themeless} row(s) are motif-placed but Plex reports "
+             f"no theme — that is the CEILING on how many this could affect, not a count "
+             f"of confirmed cases.")
     if locked_bare:
-        return (f"SMOKING GUN: {len(locked_bare)} sampled row(s) have a LOCKED theme "
-                f"field and NO theme selected. Plex's agent cannot write a locked field, "
-                f"so these items cannot get a theme back on their own. Every motif "
-                f"delete_theme locks the field and nothing ever unlocks it — LET PLEX "
-                f"SERVE and the SWITCH api→file teardown both depend on an agent writing "
-                f"after that delete.")
+        return (f"{len(locked_bare)} sampled row(s) are LOCKED with NO theme selected. "
+                f"That is the shape the lead predicts, but the CAUSE is not established: "
+                f"a row with no theme may simply never have had one pushed (e.g. a broken "
+                f"canonical), or be the known stale-plex_upload class motif already "
+                f"surfaces as RP. Settle it per row with // TEST UNLOCK ON A ROW: unlock, "
+                f"refresh, and see whether a theme appears.{scale}")
     if not any(r["theme_locked"] for r in readable):
         return (f"no locked rows in the sample ({len(readable)} read) — INCONCLUSIVE. "
                 f"The cohorts sampled may simply not include a row motif deleted from; "
-                f"this is not evidence the lock is harmless.")
+                f"this is not evidence the lock is harmless.{scale}")
     return (f"every locked row sampled ({locked_serving}) IS serving a theme, and none "
-            f"was found locked-and-themeless — no evidence the lock strands anything. "
-            f"The lead is not confirmed on this sample.")
+            f"was found locked-and-themeless — no evidence the lock strands anything on "
+            f"this sample.{scale}")
 
 
 def _measure_plex_serving(settings, *, rk: str, canonical_i, norm_gain_db=None) -> dict:
@@ -26315,6 +26330,121 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
+    @app.post("/api/admin/plex/theme-unlock-experiment")
+    async def api_admin_plex_theme_unlock_experiment(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.181: on ONE named row — does unlocking let Plex supply a theme again?
+
+        This is the only thing that can settle the lock lead. The probe can find rows that
+        are LOCKED with no theme, but that shape has innocent explanations too (motif never
+        had bytes to push; the known stale-plex_upload/RP class). Correlation on a sample
+        cannot separate them. An intervention can: unlock the field, refresh, and see
+        whether a theme appears where none could before.
+
+          - a theme appears  → the lock WAS blocking recovery. LET PLEX SERVE and the
+            SWITCH api→file teardown are degraded for every row motif ever deleted from,
+            and the fix is to unlock after every delete_theme.
+          - nothing appears  → the lock is not what is stopping this row. The lead dies
+            and the row's problem is elsewhere (canonical missing, needs a re-push).
+
+        Deliberately per-row and operator-named: nothing here should sweep the library on
+        a hunch. Restores the original lock state either way, so the experiment leaves no
+        residue — a theme that arrived is not un-arrived by re-locking. Never deletes,
+        never uploads: it cannot strand an item. Threadpool (class-12)."""
+        _require_admin(request)
+        import time as _t
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        rk = str((body or {}).get("rating_key") or "").strip()
+        if not rk:
+            return {"ok": False, "error": "name a rating_key — this experiment is "
+                                          "deliberately one row at a time"}
+
+        def _run():
+            if not settings.plex_url or not settings.plex_token:
+                return {"ok": False, "error": "Plex is not configured"}
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True,
+            )
+
+            def _state(plex):
+                locks = plex.get_field_locks(rating_key=rk)
+                got = plex.get_themes(rating_key=rk)
+                b = got.get("body")
+                meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
+                    if isinstance(b, dict) else []
+                sel = next((m for m in meta if m.get("selected")), None)
+                return (locks["theme_locked"],
+                        str(sel.get("ratingKey") or sel.get("key")) if sel else None,
+                        len(meta))
+
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                was_locked, entry_before, entries_before = _state(plex)
+                if was_locked is None:
+                    return {"ok": False, "rating_key": rk,
+                            "error": "could not read the lock flag — nothing to conclude"}
+                if not was_locked:
+                    return {"ok": True, "rating_key": rk, "already_unlocked": True,
+                            "theme_locked_before": False,
+                            "selected_entry_before": entry_before,
+                            "verdict": "this row's theme field is NOT locked, so the lock "
+                                       "cannot be what stops Plex supplying a theme here. "
+                                       "Pick a row the probe reported as locked."}
+                unlock_status = plex.set_theme_field_lock(rating_key=rk, locked=False)
+                # the status proves nothing (v0.51.178) — re-read it.
+                now_locked, _, _ = _state(plex)
+                if now_locked:
+                    return {"ok": False, "rating_key": rk,
+                            "unlock_http_status": unlock_status,
+                            "error": "the unlock did not move the flag, so the experiment "
+                                     "never ran — no verdict"}
+                refreshed = plex.refresh(rk)
+                entry_after, entries_after = entry_before, entries_before
+                for _ in range(_REREAD_POLLS):
+                    _t.sleep(_REREAD_POLL_S)
+                    _, entry_after, entries_after = _state(plex)
+                    if entry_after and entry_after != entry_before:
+                        break
+                gained = bool(entry_after) and entry_after != entry_before
+                # restore: measure, don't change things. A theme that arrived stays.
+                plex.set_theme_field_lock(rating_key=rk, locked=True)
+                restored, _, _ = _state(plex)
+
+            if gained:
+                log.warning("theme-unlock-experiment: rk=%s gained a theme (%s) once the "
+                            "field was UNLOCKED — the lock was blocking recovery. Every "
+                            "motif delete_theme locks the field and nothing unlocks it.",
+                            rk, entry_after)
+            return {
+                "ok": True, "rating_key": rk, "already_unlocked": False,
+                "theme_locked_before": True, "unlock_http_status": unlock_status,
+                "refreshed": refreshed, "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
+                "selected_entry_before": entry_before,
+                "selected_entry_after": entry_after,
+                "entries_before": entries_before, "entries_after": entries_after,
+                "gained_a_theme": gained,
+                "lock_restored": restored,
+                "verdict": (
+                    "UNLOCKING WORKED — Plex supplied a theme once the field was open. "
+                    "The lock WAS blocking recovery, so LET PLEX SERVE and the SWITCH "
+                    "api→file teardown are degraded on every row motif deleted from; the "
+                    "fix is to unlock after every delete_theme."
+                    if gained else
+                    "no theme appeared while unlocked, so on this row the lock is NOT "
+                    "what's stopping Plex — the lead is not supported here. The row's "
+                    "problem is elsewhere (no canonical to push, or a stale upload needing "
+                    "a re-push). Plex's agent may also simply have no theme to give; try "
+                    "another locked row before concluding."),
+            }
+
+        return await run_in_threadpool(_run)
+
     @app.post("/api/admin/loudness/theme-lock-probe")
     async def api_admin_loudness_theme_lock_probe(
         request: Request, db: Path = Depends(get_db_path),
@@ -26356,82 +26486,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "SELECT media_type, tmdb_id, section_id, edition_key FROM local_files "
                     "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
                 ).fetchone()
-                # v0.51.179: SAMPLE untouched hardlink-placed rows, resolving the
-                # rating_key IN SQL. v0.51.178 took ONE candidate (ORDER BY tmdb_id
-                # LIMIT 1) and gave up if it had no plex_items row — which on a real
-                # library is guaranteed to fail: synthetic orphan ids are NEGATIVE
-                # (adopt.py mints `MIN(tmdb_id) - 1`), so the lowest tmdb_id row is
-                # always an orphan, and an orphan by definition has no Plex row. The
-                # control never had a chance. Resolve in the JOIN and take several, so
-                # one odd row can't decide the question either.
-                controls = conn.execute(
-                    "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
-                    "       pi.rating_key, pi.title "
-                    "FROM local_files lf "
-                    "JOIN placements p "
-                    "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
-                    " AND p.section_id=lf.section_id "
-                    " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
-                    " AND p.placement_kind='hardlink' "
-                    "JOIN plex_items pi "
-                    "  ON pi.media_type = CASE lf.media_type WHEN 'tv' THEN 'show' "
-                    "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
-                    " AND pi.guid_tmdb = lf.tmdb_id AND pi.section_id = lf.section_id "
-                    " AND COALESCE(pi.edition_key,'') = COALESCE(lf.edition_key,'') "
-                    "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0 "
-                    "ORDER BY lf.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
-                ).fetchall()
-                # v0.51.179: v0.51.178's one error message covered two different causes
-                # ("no such rows" vs "rows existed but none resolved"), so it could not
-                # say which had happened. Count them apart.
-                # v0.51.180: the cohorts most likely to BE locked. Nothing in motif
-                # ever unlocks the theme field (set_theme_field_lock has no production
-                # caller), and delete_collection_theme locks it, so every path that
-                # deletes leaves it locked forever. Two of those paths then rely on
-                # someone ELSE writing the theme afterwards — LET PLEX SERVE wants Plex's
-                # agent to supply one, and the SWITCH api→file teardown wants Local Media
-                # Assets to ingest a new sidecar. A locked field is exactly what stops an
-                # agent writing. UNVERIFIED, so sample and look rather than assert.
-                uploads = conn.execute(
-                    "SELECT p.media_type, p.tmdb_id, pi.rating_key, pi.title "
-                    "FROM placements p JOIN plex_items pi "
-                    "  ON pi.media_type = CASE p.media_type WHEN 'tv' THEN 'show' "
-                    "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
-                    " AND pi.guid_tmdb = p.tmdb_id AND pi.section_id = p.section_id "
-                    " AND COALESCE(pi.edition_key,'') = COALESCE(p.edition_key,'') "
-                    "WHERE p.placement_kind='plex_upload' AND p.tmdb_id > 0 "
-                    "ORDER BY p.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
-                ).fetchall()
-                # Plex supplies the theme and motif placed nothing — the cohort that
-                # contains any LET PLEX SERVE'd row, i.e. rows motif DELETED from.
-                # The "motif placed nothing" half is matched in Python, not SQL: joining
-                # placements on pi.guid_tmdb is a known bug class (collections carry
-                # guid_tmdb=NULL while their placement keys on the theme's synthetic
-                # tmdb_id, so the join silently matches nothing and the row reads as
-                # unplaced — the v1.23.39 regression, now lint-guarded). This cohort
-                # excludes collections anyway, but keeping the two id meanings apart in
-                # plain code beats re-introducing the shape the lint exists to stop.
-                placed_keys = {
-                    (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"] or "")
+
+                # Every cohort below needs "what does motif think it placed here?", and
+                # the answer separates "Plex lost our theme" from "motif never had one to
+                # give" — the difference the v0.51.180 report could not express about
+                # rk 3487. Keyed the way placements are keyed: on the THEME tmdb_id, not
+                # plex_items.guid_tmdb (NULL for collections — the v1.23.39 bug class its
+                # lint now guards). That is also why every plex_items→placements match
+                # below is done in plain Python: the two ids mean different things and
+                # the SQL shape that conflates them is exactly what the lint forbids.
+                placed_kind = {
+                    (r["media_type"], r["tmdb_id"], r["section_id"],
+                     r["edition_key"] or ""): r["placement_kind"]
                     for r in conn.execute(
-                        "SELECT media_type, tmdb_id, section_id, edition_key "
-                        "FROM placements").fetchall()
+                        "SELECT media_type, tmdb_id, section_id, edition_key, "
+                        "       placement_kind FROM placements").fetchall()
                 }
-                pserved = []
-                for r in conn.execute(
-                    "SELECT pi.media_type, pi.guid_tmdb AS tmdb_id, pi.rating_key, "
-                    "       pi.title, pi.section_id, pi.edition_key FROM plex_items pi "
-                    "WHERE pi.has_theme = 1 AND pi.guid_tmdb IS NOT NULL "
-                    "  AND pi.guid_tmdb > 0 ORDER BY pi.guid_tmdb LIMIT 500"
-                ).fetchall():
-                    motif_mt = {"show": "tv", "collection": "collection"}.get(
-                        r["media_type"], "movie")
-                    if (motif_mt, r["tmdb_id"], r["section_id"],
-                            r["edition_key"] or "") in placed_keys:
-                        continue
-                    pserved.append(r)
-                    if len(pserved) >= _CONTROL_SAMPLE:
-                        break
+                _motif_mt_of = {"show": "tv", "collection": "collection"}
+
+                def _cand(r, *, motif_mt):
+                    return {"rating_key": str(r["rating_key"]), "tmdb_id": r["tmdb_id"],
+                            "media_type": r["media_type"], "title": r["title"],
+                            "motif_placement": placed_kind.get(
+                                (motif_mt, r["tmdb_id"], r["section_id"],
+                                 r["edition_key"] or ""))}
+
+                # ── CONTROL: rows motif has never normalized or uploaded to. Their lock
+                # state is the NATURAL one — what was true when v0.51.173's refresh ran.
+                # v0.51.179: resolve the rating_key IN the JOIN and take several.
+                # v0.51.178 took ONE candidate (ORDER BY tmdb_id LIMIT 1) and gave up if
+                # it had no plex_items row — guaranteed to fail on a real library, since
+                # synthetic orphan ids are NEGATIVE (adopt.py mints MIN(tmdb_id) - 1), so
+                # the lowest tmdb_id row is always an orphan and an orphan by definition
+                # has no Plex row. It never had a chance.
+                controls = [
+                    _cand(r, motif_mt=r["media_type"]) for r in conn.execute(
+                        "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                        "       pi.rating_key, pi.title "
+                        "FROM local_files lf "
+                        "JOIN placements p "
+                        "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
+                        " AND p.section_id=lf.section_id "
+                        " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
+                        " AND p.placement_kind='hardlink' "
+                        "JOIN plex_items pi "
+                        "  ON pi.media_type = CASE lf.media_type WHEN 'tv' THEN 'show' "
+                        "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
+                        " AND pi.guid_tmdb = lf.tmdb_id AND pi.section_id = lf.section_id "
+                        " AND COALESCE(pi.edition_key,'') = COALESCE(lf.edition_key,'') "
+                        "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0 "
+                        "ORDER BY lf.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
+                    ).fetchall()
+                ]
+                # v0.51.179: one error string covered two causes ("no such rows" vs "rows
+                # existed but none resolved"), so the operator's failure couldn't be read.
                 candidate_rows = conn.execute(
                     "SELECT COUNT(*) c FROM local_files lf JOIN placements p "
                     "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
@@ -26440,6 +26548,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     " AND p.placement_kind='hardlink' "
                     "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0"
                 ).fetchone()["c"]
+
+                # ── MOTIF'S OWN UPLOADS: a POST locks the theme field (measured).
+                uploads = [
+                    _cand(r, motif_mt=r["media_type"]) for r in conn.execute(
+                        "SELECT p.media_type, p.tmdb_id, p.section_id, p.edition_key, "
+                        "       pi.rating_key, pi.title "
+                        "FROM placements p JOIN plex_items pi "
+                        "  ON pi.media_type = CASE p.media_type WHEN 'tv' THEN 'show' "
+                        "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
+                        " AND pi.guid_tmdb = p.tmdb_id AND pi.section_id = p.section_id "
+                        " AND COALESCE(pi.edition_key,'') = COALESCE(p.edition_key,'') "
+                        "WHERE p.placement_kind='plex_upload' AND p.tmdb_id > 0 "
+                        "ORDER BY p.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
+                    ).fetchall()
+                ]
+
+                # ── PLEX SERVES IT, MOTIF PLACED NOTHING: contains any LPS'd row, i.e.
+                # rows motif DELETED from — and the delete is what locks the field.
+                pserved = []
+                for r in conn.execute(
+                    "SELECT pi.media_type, pi.guid_tmdb AS tmdb_id, pi.rating_key, "
+                    "       pi.title, pi.section_id, pi.edition_key FROM plex_items pi "
+                    "WHERE pi.has_theme = 1 AND pi.guid_tmdb IS NOT NULL "
+                    "  AND pi.guid_tmdb > 0 ORDER BY pi.guid_tmdb LIMIT 500"
+                ).fetchall():
+                    mt = _motif_mt_of.get(r["media_type"], "movie")
+                    if (mt, r["tmdb_id"], r["section_id"],
+                            r["edition_key"] or "") in placed_kind:
+                        continue
+                    pserved.append(_cand(r, motif_mt=mt))
+                    if len(pserved) >= _CONTROL_SAMPLE:
+                        break
+
+                # ── v0.51.181: SIZE the lead before treating it as an emergency — the
+                # move that correctly sized the upload ceiling (v0.51.176). A row can only
+                # be locked-with-no-theme if Plex has no theme for it, and motif already
+                # tracks that as plex_items.has_theme=0, so the COUNT is a local read.
+                # Only the lock needs Plex, so that stays a sample. This is also the
+                # cohort that can actually answer the lead: v0.51.180 found rk 3487 only
+                # by luck of the ordering.
+                stale_uploads = conn.execute(
+                    "SELECT COUNT(*) c FROM placements "
+                    "WHERE placement_kind='plex_upload' AND theme_present=0"
+                ).fetchone()["c"]
+                themeless_cands, plex_themeless, motif_placed_themeless = [], 0, 0
+                for r in conn.execute(
+                    "SELECT media_type, guid_tmdb AS tmdb_id, rating_key, title, "
+                    "       section_id, edition_key FROM plex_items "
+                    "WHERE has_theme = 0 AND guid_tmdb IS NOT NULL ORDER BY guid_tmdb"
+                ).fetchall():
+                    plex_themeless += 1
+                    mt = _motif_mt_of.get(r["media_type"], "movie")
+                    if (mt, r["tmdb_id"], r["section_id"],
+                            r["edition_key"] or "") not in placed_kind:
+                        continue        # motif placed nothing — no theme is expected
+                    motif_placed_themeless += 1
+                    if len(themeless_cands) < _CONTROL_SAMPLE:
+                        themeless_cands.append(_cand(r, motif_mt=mt))
 
                 def _rk(row):
                     if row is None:
@@ -26468,10 +26634,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             out: dict = {"ok": True}
             with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
                 # ── read lock + serving state for a set of rows
+                # v0.51.181: `motif_placement` on every sampled row. rk 3487 took three
+                # separate lookups to interpret and the report carried none of them, so
+                # a candidate could not be triaged without a second round trip.
+                def _cand(r, *, motif_mt):
+                    return {"rating_key": str(r["rating_key"]), "tmdb_id": r["tmdb_id"],
+                            "media_type": r["media_type"], "title": r["title"],
+                            "motif_placement": placed_kind.get(
+                                (motif_mt, r["tmdb_id"], r["section_id"],
+                                 r["edition_key"] or ""))}
+
                 def _sample(cands):
                     got_rows = []
                     for cr in cands:
-                        rk = str(cr["rating_key"])
+                        rk = cr["rating_key"]
                         locks = plex.get_field_locks(rating_key=rk)
                         got = plex.get_themes(rating_key=rk)
                         b = got.get("body")
@@ -26482,6 +26658,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         got_rows.append({
                             "rating_key": rk, "tmdb_id": cr["tmdb_id"],
                             "media_type": cr["media_type"], "title": cr["title"],
+                            # what motif thinks it placed here — the difference between
+                            # "Plex lost our theme" and "motif never had one to give".
+                            "motif_placement": cr["motif_placement"],
                             "theme_locked": locks["theme_locked"],
                             "locked_fields": locks["locked_fields"],
                             "read_error": locks["error"],
@@ -26507,12 +26686,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "theme_locked": (None if not sidecar else locked_n > 0),
                 }
                 # v0.51.180: does a locked theme field leave an item Plex CANNOT fill?
+                # v0.51.181: the cohort that can actually answer it is Plex-says-themeless
+                # AND motif-placed. The v0.51.180 sample found one such row (rk 3487,
+                # Star Wars) purely by luck of the ordering.
                 upload_rows, pserved_rows = _sample(uploads), _sample(pserved)
+                themeless_rows = _sample(themeless_cands)
                 out["motif_uploaded_rows"] = upload_rows
                 out["plex_served_rows"] = pserved_rows
-                every = rows + upload_rows + pserved_rows
+                out["plex_themeless_rows"] = themeless_rows
+                every = rows + upload_rows + pserved_rows + themeless_rows
                 locked_bare = [
-                    {"rating_key": r["rating_key"], "title": r["title"]}
+                    # v0.51.181: enough to TRIAGE a candidate without a second round trip.
+                    # rk 3487 needed three separate facts to interpret and the report
+                    # carried none of them.
+                    {"rating_key": r["rating_key"], "title": r["title"],
+                     "tmdb_id": r["tmdb_id"], "media_type": r["media_type"],
+                     "locked_fields": r["locked_fields"],
+                     "motif_placement": r.get("motif_placement")}
                     for r in every if r["theme_locked"] and not r["selected_entry"]
                 ]
                 locked_serving = sum(
@@ -26521,7 +26711,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "rows_read": sum(1 for r in every if r["theme_locked"] is not None),
                     "locked_and_serving": locked_serving,
                     "locked_with_no_theme": locked_bare,
-                    "verdict": _lock_lead_verdict(every, locked_bare, locked_serving),
+                    # local, library-wide — the ceiling of how big this could possibly be
+                    "library": {
+                        "plex_items_with_no_theme": plex_themeless,
+                        "motif_placed_but_plex_themeless": motif_placed_themeless,
+                        "known_stale_plex_uploads": stale_uploads,
+                    },
+                    "verdict": _lock_lead_verdict(every, locked_bare, locked_serving,
+                                                  motif_placed_themeless),
                 }
                 if not rows:
                     out["control"]["error"] = (

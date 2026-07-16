@@ -102,14 +102,30 @@ def _motif_upload(db, *, tmdb_id, rating_key):
         c.commit()
 
 
-def _plex_served(db, *, tmdb_id, rating_key):
+def _plex_served(db, *, tmdb_id, rating_key, has_theme=1):
     """Plex supplies the theme; motif placed nothing — the LET PLEX SERVE'd cohort."""
     with sqlite3.connect(db) as c:
         c.execute("PRAGMA foreign_keys = OFF")
         c.execute("INSERT INTO plex_items (rating_key, media_type, section_id, title, "
                   " guid_tmdb, edition_key, has_theme, first_seen_at, last_seen_at) "
-                  "VALUES (?, 'movie', '1', ?, ?, '', 1, ?, ?)",
-                  (rating_key, f"Served{tmdb_id}", tmdb_id, NOW, NOW))
+                  "VALUES (?, 'movie', '1', ?, ?, '', ?, ?, ?)",
+                  (rating_key, f"Served{tmdb_id}", tmdb_id, has_theme, NOW, NOW))
+        c.commit()
+
+
+def _themeless_placed(db, *, tmdb_id, rating_key):
+    """motif placed a theme; Plex reports none — rk 3487's shape, and the only cohort
+    that can answer the lead."""
+    with sqlite3.connect(db) as c:
+        c.execute("PRAGMA foreign_keys = OFF")
+        c.execute("INSERT INTO placements (media_type, tmdb_id, section_id, media_folder, "
+                  " edition_key, placement_kind, placed_at) "
+                  "VALUES ('movie', ?, '1', ?, '', 'hardlink', ?)",
+                  (tmdb_id, f"/data/movies/{tmdb_id}", NOW))
+        c.execute("INSERT INTO plex_items (rating_key, media_type, section_id, title, "
+                  " guid_tmdb, edition_key, has_theme, first_seen_at, last_seen_at) "
+                  "VALUES (?, 'movie', '1', ?, ?, '', 0, ?, ?)",
+                  (rating_key, f"Themeless{tmdb_id}", tmdb_id, NOW, NOW))
         c.commit()
 
 
@@ -157,8 +173,9 @@ def _stub(monkeypatch, *, locks, entries=None):
 # ── the smoking gun ──────────────────────────────────────────────────────
 
 def test_locked_row_with_no_theme_is_called_out(client, monkeypatch):
-    """An item with a LOCKED theme field and NOTHING selected cannot get a theme back on
-    its own — the agent can't write a locked field. That is the lead confirmed."""
+    """A LOCKED row with NOTHING selected is the shape the lead predicts, so it must be
+    surfaced. v0.51.181: surfaced as a CANDIDATE — see the next test for why the verdict
+    must not call it a confirmed cause."""
     c, db = client
     _sidecar(db, tmdb_id=1, rating_key="1")
     _plex_served(db, tmdb_id=50, rating_key="50")          # LPS'd-shaped row
@@ -167,7 +184,74 @@ def test_locked_row_with_no_theme_is_called_out(client, monkeypatch):
     b = c.post("/api/admin/loudness/theme-lock-probe", headers=AUTH).json()
     gun = b["lock_lead"]["locked_with_no_theme"]
     assert [g["rating_key"] for g in gun] == ["50"]
-    assert "SMOKING GUN" in b["lock_lead"]["verdict"]
+    assert "LOCKED with NO theme selected" in b["lock_lead"]["verdict"]
+
+
+def test_the_verdict_does_not_assert_causation(client, monkeypatch):
+    """v0.51.181. v0.51.180's string said the agent "cannot write a locked field, SO these
+    items cannot get a theme back" — a conclusion drawn from one sampled row, printed as a
+    finding. The operator's single hit (rk 3487) was consistent with two innocent
+    explanations (a broken canonical with nothing to push; the known stale-plex_upload/RP
+    class). Reporting an inference as a measurement is the habit this whole arc has been
+    correcting, so it gets an executable guard."""
+    c, db = client
+    _sidecar(db, tmdb_id=1, rating_key="1")
+    _plex_served(db, tmdb_id=50, rating_key="50")
+    _stub(monkeypatch, locks={"1": False, "50": True}, entries={"50": None})
+
+    v = c.post("/api/admin/loudness/theme-lock-probe",
+               headers=AUTH).json()["lock_lead"]["verdict"]
+    assert "cannot get a theme back on their own" not in v
+    assert "CAUSE is not established" in v
+    assert "// TEST UNLOCK ON A ROW" in v      # names what would settle it
+
+
+def test_candidates_carry_enough_to_triage_without_a_round_trip(client, monkeypatch):
+    """rk 3487 needed three separate lookups to interpret and the report carried none of
+    them. motif_placement is the load-bearing one: it separates "Plex lost our theme"
+    from "motif never had one to give"."""
+    c, db = client
+    _sidecar(db, tmdb_id=1, rating_key="1")
+    _plex_served(db, tmdb_id=50, rating_key="50")
+    _stub(monkeypatch, locks={"1": False, "50": True}, entries={"50": None})
+
+    g = c.post("/api/admin/loudness/theme-lock-probe",
+               headers=AUTH).json()["lock_lead"]["locked_with_no_theme"][0]
+    for k in ("rating_key", "title", "tmdb_id", "media_type", "locked_fields",
+              "motif_placement"):
+        assert k in g, f"{k} missing — a candidate must be triageable from the report"
+
+
+def test_library_wide_count_sizes_the_lead(client, monkeypatch):
+    """v0.51.176 sized the ceiling before designing around it; same move. A row can only
+    be locked-with-no-theme if Plex has no theme, which motif already tracks locally — so
+    the CEILING on the blast radius is a local count, no Plex round trip per row."""
+    c, db = client
+    _sidecar(db, tmdb_id=1, rating_key="1")
+    _themeless_placed(db, tmdb_id=70, rating_key="70")     # motif placed, Plex has none
+    _plex_served(db, tmdb_id=80, rating_key="80", has_theme=0)   # motif placed nothing
+    _stub(monkeypatch, locks={"1": False, "70": True})
+
+    lib = c.post("/api/admin/loudness/theme-lock-probe",
+                 headers=AUTH).json()["lock_lead"]["library"]
+    assert lib["plex_items_with_no_theme"] == 2
+    # only the motif-placed one is a candidate; where motif placed nothing, no theme is
+    # expected and its absence means nothing.
+    assert lib["motif_placed_but_plex_themeless"] == 1
+    assert "known_stale_plex_uploads" in lib
+
+
+def test_themeless_cohort_is_sampled(client, monkeypatch):
+    """The cohort that can actually answer the lead. v0.51.180 hit rk 3487 by luck of the
+    ordering; this targets it."""
+    c, db = client
+    _sidecar(db, tmdb_id=1, rating_key="1")
+    _themeless_placed(db, tmdb_id=70, rating_key="70")
+    _stub(monkeypatch, locks={"1": False, "70": True})
+
+    b = c.post("/api/admin/loudness/theme-lock-probe", headers=AUTH).json()
+    assert [r["rating_key"] for r in b["plex_themeless_rows"]] == ["70"]
+    assert b["plex_themeless_rows"][0]["motif_placement"] == "hardlink"
 
 
 def test_locked_but_serving_is_not_called_a_problem(client, monkeypatch):
@@ -274,3 +358,134 @@ def test_measurement_helper_is_still_shared_not_copy_pasted():
     outlived the probe it was written for."""
     assert API.count("def _measure_plex_serving(") == 1
     assert API.count("_measure_plex_serving(settings") >= 2
+
+
+# ── v0.51.181: the intervention that settles causation ───────────────────
+# The probe finds CORRELATION (locked + themeless). Only an intervention separates "the
+# lock blocks recovery" from "nothing was ever pushed here".
+
+def _unlock_stub(monkeypatch, *, locked, entry_before, entry_after_unlock,
+                 unlock_works=True):
+    from app.web import api as api_mod
+    st = {"locked": locked, "entry": entry_before, "unlocked_at": None, "refreshed": 0}
+
+    class _FakePlex:
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get_field_locks(self, *, rating_key):
+            if st["locked"] is None:
+                return {"ok": False, "http_status": None, "error": "boom",
+                        "locked_fields": None, "theme_locked": None}
+            return {"ok": True, "http_status": 200, "error": None,
+                    "locked_fields": (["theme"] if st["locked"] else []),
+                    "theme_locked": st["locked"]}
+
+        def set_theme_field_lock(self, *, rating_key, locked, shape="metadata",
+                                 section_id=None, plex_type=None):
+            if unlock_works:
+                st["locked"] = locked
+            return 200            # a 200 regardless — only the re-read tells the truth
+
+        def refresh(self, rating_key):
+            st["refreshed"] += 1
+            # Plex's agent only fills the field when it is OPEN.
+            if not st["locked"]:
+                st["entry"] = entry_after_unlock
+            return True
+
+        def get_themes(self, *, rating_key):
+            if st["entry"] is None:
+                return {"ok": True, "http_status": 200, "error": None,
+                        "body": {"MediaContainer": {"Metadata": []}}}
+            return {"ok": True, "http_status": 200, "error": None, "body": {
+                "MediaContainer": {"Metadata": [
+                    {"ratingKey": st["entry"], "selected": True}]}}}
+
+    monkeypatch.setattr(api_mod, "PlexClient", _FakePlex)
+    monkeypatch.setattr("time.sleep", lambda *_a: None)
+    return st
+
+
+def test_unlocking_that_yields_a_theme_confirms_the_lead(client, monkeypatch):
+    c, _ = client
+    _unlock_stub(monkeypatch, locked=True, entry_before=None,
+                 entry_after_unlock="metadata://themes/new")
+
+    b = c.post("/api/admin/plex/theme-unlock-experiment",
+               headers=AUTH, json={"rating_key": "3487"}).json()
+    assert b["gained_a_theme"] is True
+    assert "UNLOCKING WORKED" in b["verdict"]
+    assert "degraded on every row motif deleted from" in b["verdict"]
+
+
+def test_unlocking_that_yields_nothing_does_not_confirm_the_lead(client, monkeypatch):
+    """And must not be read as 'the lock is fine everywhere' — Plex's agent may simply
+    have nothing to give for this title."""
+    c, _ = client
+    _unlock_stub(monkeypatch, locked=True, entry_before=None, entry_after_unlock=None)
+
+    b = c.post("/api/admin/plex/theme-unlock-experiment",
+               headers=AUTH, json={"rating_key": "3487"}).json()
+    assert b["gained_a_theme"] is False
+    assert "the lead is not supported here" in b["verdict"]
+    assert "try another locked row before concluding" in b["verdict"]
+
+
+def test_the_experiment_restores_the_lock(client, monkeypatch):
+    """Measure, don't change things. A theme that arrived is not un-arrived by re-locking."""
+    c, _ = client
+    st = _unlock_stub(monkeypatch, locked=True, entry_before=None,
+                      entry_after_unlock="metadata://themes/new")
+
+    b = c.post("/api/admin/plex/theme-unlock-experiment",
+               headers=AUTH, json={"rating_key": "3487"}).json()
+    assert b["lock_restored"] is True
+    assert st["locked"] is True
+
+
+def test_an_unlock_that_does_not_move_the_flag_yields_no_verdict(client, monkeypatch):
+    """If the flag never opened, the experiment never ran. Reporting the refresh result
+    would be measuring nothing (v0.51.178's lesson, one layer up)."""
+    c, _ = client
+    _unlock_stub(monkeypatch, locked=True, entry_before=None,
+                 entry_after_unlock="metadata://themes/new", unlock_works=False)
+
+    b = c.post("/api/admin/plex/theme-unlock-experiment",
+               headers=AUTH, json={"rating_key": "3487"}).json()
+    assert b["ok"] is False
+    assert "never ran" in b["error"]
+    assert "gained_a_theme" not in b
+
+
+def test_an_already_unlocked_row_is_the_wrong_subject(client, monkeypatch):
+    c, _ = client
+    _unlock_stub(monkeypatch, locked=False, entry_before=None, entry_after_unlock=None)
+
+    b = c.post("/api/admin/plex/theme-unlock-experiment",
+               headers=AUTH, json={"rating_key": "999"}).json()
+    assert b["already_unlocked"] is True
+    assert "cannot be what stops Plex" in b["verdict"]
+
+
+def test_experiment_requires_a_named_row(client):
+    """No library sweeps on a hunch."""
+    c, _ = client
+    b = c.post("/api/admin/plex/theme-unlock-experiment", headers=AUTH, json={}).json()
+    assert b["ok"] is False
+    assert "name a rating_key" in b["error"]
+
+
+def test_experiment_never_deletes_or_uploads():
+    i = API.index('@app.post("/api/admin/plex/theme-unlock-experiment")')
+    body = API[i:API.index('@app.post("/api/admin/loudness/theme-lock-probe")', i)]
+    for mutating in ("delete_theme(", "delete_collection_theme(", "upload_theme(",
+                     "upload_collection_theme("):
+        assert mutating not in body, f"the experiment must not call {mutating}"
+    assert "def _run():" in body and "run_in_threadpool(_run)" in body   # class-12
