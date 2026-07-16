@@ -4032,7 +4032,14 @@ def _annotate_canonical_state(items: list[dict], *, themes_dir: Path | None) -> 
             it["canonical_missing"] = False
         else:
             try:
-                it["canonical_missing"] = not (themes_dir / rel).is_file()
+                cpath = themes_dir / rel
+                # v0.51.167: a 0-byte theme.mp3 is a corrupt/failed download
+                # (downloader.py:589 removes + re-downloads one), functionally
+                # missing. Mirror verify_canonical_health's zero-byte check so the
+                # live red DL dot + dl_pills=broken filter agree with the stored
+                # canonical_present flag (the two paths MUST match — CLAUDE.md).
+                it["canonical_missing"] = (
+                    not cpath.is_file() or cpath.stat().st_size == 0)
             except OSError as e:
                 it["canonical_missing"] = True
                 _warn_canon_fs("canonical", themes_dir / rel, e)
@@ -7578,6 +7585,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return templates.TemplateResponse(request, "loudness.html", {
             "loudness_audit_running": _LOUDNESS_AUDIT_STATE.get("status") == "running",
         })
+
+    @app.get("/admin/canonical-health", response_class=HTMLResponse)
+    async def admin_canonical_health_page(request: Request):
+        """v0.51.167: CANONICAL HEALTH dashboard — lists local_files rows whose
+        canonical theme.mp3 is missing/0-byte on disk (the loudness audit's rc=254
+        cohort), split into re-downloadable (REPAIR ALL re-fetches from the recorded
+        URL) vs canonical-missing (no URL — re-place manually from the INFO card).
+        The check + repair both run synchronously from the browser; no SSR lock
+        needed. Mirrors /admin/loudness."""
+        _require_admin(request)
+        return templates.TemplateResponse(request, "canonical_health.html", {})
 
     # --- Auth pages ---
 
@@ -25689,6 +25707,68 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from ..core.db import get_conn
         with get_conn(db) as conn:
             return build_report(conn)
+
+    @app.get("/api/admin/canonical-health/report")
+    async def api_admin_canonical_health_report(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.167: read side of CANONICAL HEALTH — the broken canonicals
+        (local_files.canonical_present=0) split into re-downloadable vs
+        canonical-missing. Pure read from the LAST-stamped canonical_present (as
+        fresh as the last enum / hourly scheduler / RUN CHECK); the page loads this
+        on open, then RUN CHECK re-stamps + refreshes."""
+        _require_admin(request)
+        from ..core.canonical_health import broken_canonical_report
+        from ..core.db import get_conn
+        with get_conn(db) as conn:
+            return broken_canonical_report(conn)
+
+    @app.post("/api/admin/canonical-health/check")
+    async def api_admin_canonical_health_check(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.167: re-stat every local_files canonical NOW (fresh, 0-byte-aware
+        via verify_canonical_health) then return the refreshed report. Filesystem
+        stat only — fast, but off-loaded to a thread so it never blocks the event
+        loop (CLAUDE.md class-12). Skips the stamp when themes_dir is unset (no
+        canonical storage configured)."""
+        _require_admin(request)
+        from ..core.canonical_health import broken_canonical_report
+        from ..core.plex_enum import verify_canonical_health
+        from ..core.db import get_conn
+
+        def _run():
+            if settings.is_paths_ready() and settings.themes_dir:
+                verify_canonical_health(db, settings.themes_dir)
+            with get_conn(db) as conn:
+                return broken_canonical_report(conn)
+
+        return await run_in_threadpool(_run)
+
+    @app.post("/api/admin/canonical-health/repair")
+    async def api_admin_canonical_health_repair(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.167: re-download every re-downloadable broken canonical (auto-place
+        + force, same as /redownload) so the missing bytes are restored. No-URL rows
+        (upload / adopt / plex_cloud / no resolvable URL) are left surfaced for
+        manual re-place — never auto-overwritten. Returns the enqueue summary; the
+        page re-fetches /report afterwards to show what's left."""
+        _require_admin(request)
+        from ..core.canonical_health import enqueue_canonical_repairs
+
+        with get_conn(db) as conn, transaction(conn):
+            summary = enqueue_canonical_repairs(conn)
+            _record_audit(
+                conn, actor=request.state.user, action="canonical_repair",
+                details=summary,
+            )
+        log_event(db, level="INFO", component="api",
+                  message=f"Canonical repair by {request.state.user}: "
+                          f"{summary['repaired_rows']} re-downloaded "
+                          f"({summary['enqueued_sections']} sections), "
+                          f"{summary['surfaced']} surfaced (no URL)")
+        return {"ok": True, **summary}
 
     @app.post("/api/admin/mp3gain-probe")
     async def api_admin_mp3gain_probe(

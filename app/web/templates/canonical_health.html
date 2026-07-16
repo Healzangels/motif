@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}Canonical Health{% endblock %}
+{% block content %}
+{# v0.51.167: operator dashboard for CANONICAL HEALTH — the local_files rows whose
+   canonical theme.mp3 is missing / 0-byte on disk (surfaced by the loudness audit's
+   rc=254 "No such file" cohort). RUN CHECK re-stats every canonical (fresh, 0-byte
+   aware via verify_canonical_health); the report splits the broken rows into
+   RE-DOWNLOADABLE (REPAIR re-fetches from the recorded URL) vs CANONICAL MISSING
+   (no URL — open INFO to SET URL / UPLOAD MP3 / RESTORE FROM PLEX). All render logic
+   is bindCanonicalHealth in app.js, gated on these ids so it only fires here.
+   Mirrors loudness.html. #}
+<section class="hero">
+  <h1 class="title">// CANONICAL HEALTH</h1>
+  <p class="muted hero-sub">themes missing from motif's storage · re-download or re-place</p>
+</section>
+
+<section class="block">
+  <header class="block-head">
+    <h2 class="block-title">// CHECK</h2>
+    <div class="chips chips-inline">
+      <button type="button" id="canon-check-btn" class="btn lib-source-themerrdb">// RUN CHECK</button>
+      <span id="canon-check-status" class="form-status"></span>
+    </div>
+  </header>
+  <p class="form-hint block-intro">
+    Re-stats every theme motif tracks and flags any whose canonical
+    <code>theme.mp3</code> is gone or 0-byte — a file deleted by an external
+    sweep, a moved library, or a failed download that left a stub. A missing
+    canonical means motif can no longer re-place or condition that theme.
+    <strong>Read-only</strong> — the check only stats files; nothing is
+    re-downloaded until you press REPAIR.
+  </p>
+  <p class="form-hint" id="canon-summary" style="display:none"></p>
+</section>
+
+{# RE-DOWNLOADABLE — the recorded source is a re-fetchable URL (ThemerrDB / user
+   URL), so REPAIR restores them byte-for-byte. Hidden until the report loads. #}
+<section class="block" id="canon-redownload-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// RE-DOWNLOADABLE</h2>
+    <div class="chips chips-inline">
+      <span class="muted small" id="canon-redownload-count"></span>
+      <button type="button" id="canon-repair-btn" class="btn btn-warn">// REPAIR ALL</button>
+      <span id="canon-repair-status" class="form-status"></span>
+    </div>
+  </header>
+  <p class="form-hint">
+    Each has a recorded source URL. REPAIR re-downloads + re-places every one
+    (force, so the fresh bytes overwrite whatever remains). Scoped per section +
+    edition — a re-download never bleeds into a sibling edition's folder.
+  </p>
+  <div class="table-scroll">
+    <table class="table table-compact">
+      <thead><tr><th>THEME</th><th>SRC</th></tr></thead>
+      <tbody id="canon-redownload-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+{# CANONICAL MISSING — no re-fetchable URL (uploaded MP3 / adopted sidecar /
+   Plex-cloud backup, or a dropped orphan). The operator re-places from the INFO
+   card; a surviving Plex-folder copy means RESTORE FROM PLEX is available. #}
+<section class="block" id="canon-missing-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// CANONICAL MISSING</h2>
+    <span class="muted small" id="canon-missing-count"></span>
+  </header>
+  <p class="form-hint">
+    These have no source URL to re-fetch — the bytes came from an upload, an
+    adopted sidecar, or a Plex-cloud backup. Open each theme's INFO card to
+    re-place it (SET URL / UPLOAD MP3, or RESTORE FROM PLEX where a Plex copy
+    survives).
+  </p>
+  <div class="table-scroll">
+    <table class="table table-compact">
+      <thead><tr><th>THEME</th><th>SRC</th><th>REPAIR</th></tr></thead>
+      <tbody id="canon-missing-tbody"></tbody>
+    </table>
+  </div>
+</section>
+
+{# All-clear state — shown when a check finds zero broken canonicals. #}
+<section class="block" id="canon-clear-block" style="display:none">
+  <p class="form-hint">✓ Every tracked canonical is present. Nothing to repair.</p>
+</section>
+{% endblock %}

@@ -1140,7 +1140,15 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
 
     def _stat_present(row_r):
         try:
-            return (row_r, (themes_dir / row_r["file_path"]).is_file(), None)
+            p = themes_dir / row_r["file_path"]
+            if not p.is_file():
+                return (row_r, False, None)
+            # v0.51.167: a 0-byte theme.mp3 is a corrupt/failed download — the
+            # downloader itself removes + re-downloads one (downloader.py:589), and
+            # ffmpeg can't measure it (the loudness audit's rc=254 "No such file"
+            # cohort). Functionally missing, so stamp canonical_present=0 and let the
+            # CANONICAL HEALTH repair surface it instead of ranking it healthy.
+            return (row_r, p.stat().st_size > 0, None)
         except OSError as e:
             return (row_r, None, e)
 

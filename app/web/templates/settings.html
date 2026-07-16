@@ -1149,6 +1149,38 @@
   </div>
 </section>
 
+{# v0.51.167: CANONICAL HEALTH block — finds local_files rows whose canonical
+   theme.mp3 is missing / 0-byte on disk (the loudness audit's rc=254 "No such
+   file" cohort) and decides the repair: re-download from the recorded URL, or
+   surface for manual re-place. Read-only until the operator presses REPAIR;
+   links out to the /admin/canonical-health dashboard. Mirrors ORPHAN SCAN. #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// CANONICAL HEALTH</h2>
+    <span class="muted small">themes that vanished from motif's storage — re-download or re-place</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Motif's canonical copy of a theme can go missing — an external sweep
+      deletes it, a library folder moves, or a failed download leaves a 0-byte
+      stub. A missing canonical means motif can no longer re-place or condition
+      that theme, and it shows as a red <code>DL</code> dot in the library. This
+      check re-stats every tracked theme, then splits the broken ones into
+      <strong>re-downloadable</strong> (a recorded ThemerrDB / user URL — one
+      click re-fetches them) and <strong>canonical missing</strong> (uploaded /
+      adopted / cloud-backed — re-place from the INFO card). Read-only until you
+      press REPAIR.
+    </p>
+    <p class="form-hint">
+      Opens the full canonical-health dashboard — run the check, then repair the
+      re-downloadable set or open each missing theme to re-place it.
+    </p>
+    <div class="form-actions">
+      <a class="btn btn-warn" href="/admin/canonical-health">// OPEN CANONICAL HEALTH ▸</a>
+    </div>
+  </div>
+</section>
+
 {# v0.51.164: PROBE MP3GAIN — the Phase-1 pre-flight. Confirms mp3gain is in the
    container + proves apply→undo restores the audio on a throwaway copy of one real
    theme, before any normalization code touches a real file. Read-only wrt every theme.

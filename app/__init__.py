@@ -4281,7 +4281,23 @@
 #   layer that the file diff is tag-only. app.js/settings.html verdict + copy follow.
 #   Guard test_v0_51_165 (faithful stub models mp3gain's global_gain-clamp irreversibility +
 #   ffmpeg decode). Still read-only wrt every real theme; re-run // PROBE MP3GAIN to re-gate.
-__version__ = "0.51.165"
+# 0.51.167: CANONICAL HEALTH — find + repair themes missing from motif's storage. The loudness
+#   audit surfaced ~14 items whose canonical theme.mp3 was GONE from disk (ffmpeg rc=254 "No
+#   such file"); a vanished/0-byte canonical is a storage-health problem, not loudness. (1)
+#   verify_canonical_health + _annotate_canonical_state now treat a 0-BYTE theme.mp3 as missing
+#   (a failed download that left a stub is functionally gone — the downloader itself removes +
+#   re-downloads one), so both the stored canonical_present flag and the live red DL dot /
+#   dl_pills=broken filter flag it. (2) app/core/canonical_health.py classifies each
+#   canonical_present=0 row by the download worker's own URL resolution: RE-DOWNLOADABLE (a
+#   recorded ThemerrDB / user-override URL → one-click re-fetch) vs CANONICAL MISSING (upload /
+#   adopt / plex_cloud — no re-fetchable URL, so re-downloading TDB would SWAP the operator's
+#   content; surface for manual re-place). Edition-scoped throughout. (3) /admin/canonical-health
+#   dashboard (Diagnostics card, mirrors LOUDNESS AUDIT): RUN CHECK re-stats fresh, REPAIR ALL
+#   re-downloads the re-downloadable set (force-place, same as /redownload), the missing set
+#   deep-links to each INFO card (SET URL / UPLOAD MP3 / RESTORE FROM PLEX — a surviving Plex
+#   copy is hinted). Endpoints /api/admin/canonical-health/{report,check,repair};
+#   bindCanonicalHealth in app.js. Guard test_v0_51_166.
+__version__ = "0.51.167"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

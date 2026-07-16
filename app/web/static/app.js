@@ -7514,6 +7514,134 @@
   // audit runs as a page-scoped background op (POST /start returns immediately);
   // matches the orphan-scan poll shape. On-load it reflects an in-flight or
   // just-finished run so a settings reload mid-audit doesn't lose the progress.
+  // v0.51.167: /admin/canonical-health — list the broken canonicals (theme.mp3
+  // missing / 0-byte on disk, canonical_present=0), split into re-downloadable
+  // (REPAIR re-fetches from the recorded URL) vs canonical-missing (no URL — open
+  // INFO to re-place). RUN CHECK re-stats fresh (POST /check); REPAIR ALL enqueues
+  // re-downloads (POST /repair). Filesystem-stat only, so both are synchronous —
+  // no background-op poll like the loudness audit needs. Gated on the CHECK button
+  // so it only fires on that page. Deep-links reuse the loudness outlier ?info_open
+  // pattern.
+  function bindCanonicalHealth() {
+    const checkBtn = document.getElementById('canon-check-btn');
+    if (!checkBtn) return;
+    const checkStatus = document.getElementById('canon-check-status');
+    const summary = document.getElementById('canon-summary');
+    const repairBtn = document.getElementById('canon-repair-btn');
+    const repairStatus = document.getElementById('canon-repair-status');
+    const rdBlock = document.getElementById('canon-redownload-block');
+    const rdCount = document.getElementById('canon-redownload-count');
+    const rdBody = document.getElementById('canon-redownload-tbody');
+    const missBlock = document.getElementById('canon-missing-block');
+    const missCount = document.getElementById('canon-missing-count');
+    const missBody = document.getElementById('canon-missing-tbody');
+    const clearBlock = document.getElementById('canon-clear-block');
+    const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString());
+
+    function link(r) {
+      const tab = r.media_type === 'movie' ? '/movies'
+        : r.media_type === 'collection' ? '/collections' : '/tv';
+      const p = new URLSearchParams();
+      p.set('info_open', String(r.tmdb_id));
+      p.set('info_mt', String(r.media_type));
+      if (r.section_id) p.set('info_section', String(r.section_id));
+      if (r.title) p.set('q', r.title);
+      const yr = r.year ? ` <span class="muted">(${htmlEscape(String(r.year))})</span>` : '';
+      return `<a href="${tab}?${p.toString()}">${htmlEscape(r.title)}</a>${yr}`;
+    }
+    const src = (r) => htmlEscape((r.source_kind || '—').toUpperCase());
+
+    function render(rep) {
+      if (!rep) return;
+      const c = rep.counts || {};
+      if (rep.redownloadable && rep.redownloadable.length) {
+        rdBody.innerHTML = rep.redownloadable.map((r) =>
+          `<tr><td>${link(r)}</td><td>${src(r)}</td></tr>`).join('');
+        rdCount.textContent = `${fmt(c.redownloadable)} with a source URL`;
+        rdBlock.style.display = '';
+      } else {
+        rdBlock.style.display = 'none';
+      }
+      if (rep.canonical_missing && rep.canonical_missing.length) {
+        missBody.innerHTML = rep.canonical_missing.map((r) => {
+          const hint = r.has_live_placement
+            ? '<span class="muted">RESTORE FROM PLEX ▸</span>'
+            : '<span class="muted">re-place from INFO ▸</span>';
+          return `<tr><td>${link(r)}</td><td>${src(r)}</td><td>${hint}</td></tr>`;
+        }).join('');
+        missCount.textContent = `${fmt(c.canonical_missing)} with no source URL`;
+        missBlock.style.display = '';
+      } else {
+        missBlock.style.display = 'none';
+      }
+      const broken = c.broken || 0;
+      if (broken) {
+        summary.textContent =
+          `${fmt(broken)} broken canonical${broken === 1 ? '' : 's'} · `
+          + `${fmt(c.redownloadable)} re-downloadable · `
+          + `${fmt(c.canonical_missing)} need manual re-place`;
+        summary.style.display = '';
+        clearBlock.style.display = 'none';
+      } else {
+        summary.style.display = 'none';
+        clearBlock.style.display = '';
+      }
+    }
+
+    async function load() {
+      try { render(await api('GET', '/api/admin/canonical-health/report')); }
+      catch (e) { console.error('canonical health report load failed:', e); }
+    }
+
+    checkBtn.addEventListener('click', async () => {
+      const orig = checkBtn.textContent;
+      checkBtn.disabled = true;
+      checkBtn.textContent = '// CHECKING…';
+      checkStatus.textContent = '';
+      checkStatus.className = 'form-status';
+      try {
+        render(await api('POST', '/api/admin/canonical-health/check'));
+        checkStatus.textContent = '✓ check complete';
+        checkStatus.className = 'form-status form-status-ok';
+        _autoDismissOpStatus(checkStatus, 6000);
+      } catch (e) {
+        checkStatus.textContent = '✗ ' + (e && e.message ? e.message : 'check failed');
+        checkStatus.className = 'form-status form-status-fail';
+      } finally {
+        checkBtn.disabled = false;
+        checkBtn.textContent = orig;
+      }
+    });
+
+    if (repairBtn) {
+      repairBtn.addEventListener('click', async () => {
+        const orig = repairBtn.textContent;
+        repairBtn.disabled = true;
+        repairBtn.textContent = '// REPAIRING…';
+        repairStatus.textContent = '';
+        repairStatus.className = 'form-status';
+        try {
+          const res = await api('POST', '/api/admin/canonical-health/repair');
+          // Re-downloads run in the worker — the rows stay listed until the bytes
+          // land + a later RUN CHECK re-stats. Say so rather than implying it's done.
+          repairStatus.textContent =
+            `✓ queued ${fmt(res.repaired_rows)} re-download${res.repaired_rows === 1 ? '' : 's'} `
+            + `(${fmt(res.enqueued_sections)} sections) — RUN CHECK again once they finish`;
+          repairStatus.className = 'form-status form-status-ok';
+          _autoDismissOpStatus(repairStatus, 9000);
+        } catch (e) {
+          repairStatus.textContent = '✗ ' + (e && e.message ? e.message : 'repair failed');
+          repairStatus.className = 'form-status form-status-fail';
+        } finally {
+          repairBtn.disabled = false;
+          repairBtn.textContent = orig;
+        }
+      });
+    }
+
+    load();
+  }
+
   function bindLoudnessAudit() {
     const btn = document.getElementById('loudness-audit-btn');
     const status = document.getElementById('loudness-audit-status');
@@ -20428,6 +20556,7 @@
     bindProbePlexThemes();
     bindLoudnessAudit();
     bindLoudnessReport();
+    bindCanonicalHealth();
     bindMp3gainProbe();
     bindTestCookies();
     bindTestNotification();
