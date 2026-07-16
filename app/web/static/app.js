@@ -8113,6 +8113,41 @@
       });
     }
 
+    // v0.51.177: the ceiling-free propagation candidate. Delete the selection so Plex
+    // LACKS a theme, unlock the field the delete bolted shut, then refresh — Local Media
+    // Assets ingests assets it lacks. If it works it beats re-upload everywhere (all
+    // 2,821 themes, no 10MB ceiling, no bandwidth). Reports off the re-measurement plus
+    // the entry's selected flag, never a status code.
+    const redetectBtn = document.getElementById('loud-plex-redetect-btn');
+    if (redetectBtn) {
+      redetectBtn.addEventListener('click', async () => {
+        redetectBtn.disabled = true;
+        const o = redetectBtn.textContent;
+        redetectBtn.textContent = '// DELETING + RE-DETECTING…';
+        try {
+          const rep = await api('POST', '/api/admin/loudness/plex-redetect');
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 're-detect probe failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            const good = rep.already_current || rep.redetect_propagates;
+            status.textContent = (good ? '✓ ' : '✗ ') + rep.verdict
+              + (rep.after && rep.after.plex_loudness_i !== undefined
+                 ? ' — Plex now ' + fmt(rep.after.plex_loudness_i) + ' LUFS.' : '');
+            status.className = 'form-status ' + (good ? 'form-status-ok' : 'form-status-fail');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 're-detect probe failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          redetectBtn.disabled = false;
+          redetectBtn.textContent = o;
+        }
+      });
+    }
+
     // v0.51.174: refresh?force=1 provably does NOT propagate a CHANGED theme (measured:
     // Plex sat at -5.15 vs a -18.7 canonical, same entry, minutes later). Re-upload is the
     // proven path (v1.18.35/36 sha1-dedup + auto-select) — push and MEASURE.

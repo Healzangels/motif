@@ -1247,6 +1247,19 @@ class PlexClient:
         )
         return ok2, r2.status_code, r2_body_snip
 
+    def set_theme_field_lock(self, *, rating_key: str, locked: bool) -> int | None:
+        """v0.51.177: lock/unlock the item's `theme` field.
+
+        Needed because delete_collection_theme's own docstring records that Plex's DELETE
+        on singular /theme "will also lock the field". A LOCKED field is precisely what
+        stops an agent from writing it — so delete→refresh could never make Local Media
+        Assets re-ingest a changed sidecar: the delete itself bolts the door. The upload
+        path never noticed because a POST to plural /themes overrides the lock (v1.18.33).
+
+        Returns the HTTP status (None on transport error). Best-effort, never raises."""
+        return self._put(self._rk_path(rating_key, ""),
+                         params={"theme.locked": "1" if locked else "0"})
+
     def delete_collection_theme(self, *, rating_key: str) -> bool:
         """v1.18.0 / v1.18.36: clear the currently-serving theme
         association via DELETE on the SINGULAR

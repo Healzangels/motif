@@ -65,8 +65,12 @@ def client(tmp_path, monkeypatch):
 
 
 def _seed(db, *, tmdb_id, loudness_i, file_sha, measured_sha, norm_state=None,
-          kind="hardlink"):
-    """One themed movie with a hardlink placement + a loudness measurement."""
+          kind="hardlink", file_size=1_000_000):
+    """One themed movie with a hardlink placement + a loudness measurement.
+
+    v0.51.177 added file_size to the auto-pick's eligibility (a NULL size is an UNKNOWN,
+    not a small file — same rule as the v0.51.176 cohort count), so the seed has to carry
+    one or every row here is ineligible."""
     with sqlite3.connect(db) as c:
         c.execute("PRAGMA foreign_keys = OFF")
         c.execute("INSERT OR IGNORE INTO themes (id, media_type, tmdb_id, title, year, "
@@ -75,10 +79,11 @@ def _seed(db, *, tmdb_id, loudness_i, file_sha, measured_sha, norm_state=None,
                   (tmdb_id, tmdb_id, f"Movie{tmdb_id}", NOW, NOW))
         c.execute("INSERT INTO local_files (media_type, tmdb_id, section_id, edition_key, "
                   " file_path, file_sha256, downloaded_at, source_video_id, loudness_i, "
-                  " loudness_tp, loudness_measured_sha256, loudness_measured_at, norm_state) "
-                  "VALUES ('movie', ?, '1', '', ?, ?, ?, 'vid', ?, -2.0, ?, ?, ?)",
+                  " loudness_tp, loudness_measured_sha256, loudness_measured_at, "
+                  " norm_state, file_size) "
+                  "VALUES ('movie', ?, '1', '', ?, ?, ?, 'vid', ?, -2.0, ?, ?, ?, ?)",
                   (tmdb_id, f"movies/{tmdb_id}/theme.mp3", file_sha, NOW, loudness_i,
-                   measured_sha, NOW, norm_state))
+                   measured_sha, NOW, norm_state, file_size))
         c.execute("INSERT INTO placements (media_type, tmdb_id, section_id, media_folder, "
                   " edition_key, placement_kind, placed_at) "
                   "VALUES ('movie', ?, '1', ?, '', ?, ?)",

@@ -25944,6 +25944,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "  AND lf.norm_state IS NULL "
                         "  AND lf.file_sha256 IS NOT NULL "
                         "  AND lf.loudness_measured_sha256 = lf.file_sha256 "
+                        # v0.51.177: don't audition a theme we can't propagate. The first
+                        # real audition picked the loudest row — which was 10.5MB, over
+                        # Plex's upload ceiling — so it was a dead end before it started.
+                        "  AND lf.file_size IS NOT NULL "
+                        "  AND lf.file_size <= " + str(THEME_UPLOAD_CEILING_BYTES) + " "
                         "ORDER BY lf.loudness_i DESC LIMIT 1",
                     ).fetchone()
                 if row is None:
@@ -26356,6 +26361,160 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             "re-upload did NOT flip Plex either (it may still be "
                             "ingesting — re-check // WHAT IS PLEX SERVING?). If it stays "
                             "put, there is no propagation path and bulk must not proceed."),
+            }
+
+        return await run_in_threadpool(_run)
+
+    @app.post("/api/admin/loudness/plex-redetect")
+    async def api_admin_loudness_plex_redetect(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.177: the only CEILING-FREE propagation candidate — make Plex treat the
+        changed sidecar as NEW so Local Media Assets ingests it again.
+
+        Where this sits: refresh alone is measured dead (v0.51.173). Re-upload works but
+        Plex 500s over ~10MB, which is 82 of this library's 2,821 themes (v0.51.176). If
+        this path works it beats re-upload everywhere: all 2,821 covered, zero bandwidth,
+        and the entry stays metadata:// instead of flipping to upload://.
+
+        The chain, and every link's status:
+          1. DELETE singular /theme  — clears the active selection (PROVEN, v1.18.33).
+          2. UNLOCK theme.locked=0   — the DELETE also LOCKS the field (documented in
+             delete_collection_theme). A locked field is exactly what stops an agent from
+             writing it, so without this the refresh could never work. UNPROVEN.
+          3. refresh?force=1         — re-run Local Media Assets. It ingests assets it
+             LACKS, and after step 1 it lacks one. UNPROVEN in this combination.
+          4. RE-MEASURE what Plex serves — the verdict. Never the status codes.
+
+        SAFETY: only picks an UNDER-ceiling row, so if this strands Plex (serving its own
+        cloud theme, or nothing) // PUSH NORMALIZED TO PLEX is available as recovery. The
+        canonical file is never touched. Threadpool (class-12)."""
+        _require_admin(request)
+        from ..core.db import get_conn
+        import time as _t
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT media_type, tmdb_id, section_id, edition_key, loudness_i, "
+                    "  norm_state, norm_gain_db, file_size FROM local_files "
+                    "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
+                ).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "no normalized theme to test — "
+                            "normalize one first"}
+                plex_mt = {"tv": "show", "collection": "collection"}.get(
+                    row["media_type"], "movie")
+                rk_row = conn.execute(
+                    "SELECT rating_key FROM plex_items "
+                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                    "  AND COALESCE(edition_key,'')=? LIMIT 1",
+                    (plex_mt, row["tmdb_id"], row["section_id"],
+                     row["edition_key"] or ""),
+                ).fetchone()
+            if rk_row is None:
+                return {"ok": False, "error": "no plex_items row for this theme"}
+            rk = str(rk_row["rating_key"])
+
+            # refuse to gamble on a row we couldn't recover: re-upload is the only undo
+            # for a stranded selection, and it can't carry an over-ceiling theme.
+            size = row["file_size"]
+            if size is not None and size > THEME_UPLOAD_CEILING_BYTES:
+                return {"ok": False, "rating_key": rk, "bytes": size,
+                        "error": f"this theme is {size / 1048576:.1f}MB — OVER the upload "
+                                 f"ceiling, so re-upload could not recover a stranded "
+                                 f"selection. Test this path on an under-ceiling theme."}
+
+            if not settings.plex_url or not settings.plex_token:
+                return {"ok": False, "error": "Plex is not configured"}
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True,
+            )
+            before = _measure_plex_serving(settings, rk=rk,
+                                           canonical_i=row["loudness_i"],
+                                           norm_gain_db=row["norm_gain_db"])
+            if before.get("serving_normalized"):
+                return {"ok": True, "already_current": True, "after": before,
+                        "verdict": "Plex was already serving the normalized theme — "
+                                   "nothing to do"}
+
+            # the DELETE leaves the collection's entries in place and only clears the
+            # `selected` flag (v1.18.33). _measure_plex_serving falls back to meta[0]
+            # when nothing is selected, so its number alone can't tell "re-ingested and
+            # selected" from "nothing selected, here's entry 0" — and entry 0 could be a
+            # NEW un-selected re-ingest, which would read as a false success. Measure the
+            # selection state directly rather than inferring it from the loudness.
+            def _selection():
+                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as p:
+                    got = p.get_themes(rating_key=rk)
+                if not got.get("ok"):
+                    return None, 0
+                b = got.get("body")
+                meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
+                    if isinstance(b, dict) else []
+                sel = next((m for m in meta if m.get("selected")), None)
+                return (str(sel.get("ratingKey") or sel.get("key")) if sel else None,
+                        len(meta))
+
+            entry_before, _ = _selection()
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                deleted = plex.delete_theme(rating_key=rk)
+                # the DELETE locks theme; an agent won't write a locked field.
+                unlock_status = plex.set_theme_field_lock(rating_key=rk, locked=False)
+                refreshed = plex.refresh(rk)
+
+            after = before
+            entry_after, entries_after = _selection()
+            for _ in range(_REREAD_POLLS):
+                _t.sleep(_REREAD_POLL_S)
+                entry_after, entries_after = _selection()
+                if entry_after is None:
+                    continue          # nothing selected yet — the scan hasn't landed
+                after = _measure_plex_serving(settings, rk=rk,
+                                              canonical_i=row["loudness_i"],
+                                              norm_gain_db=row["norm_gain_db"])
+                if after.get("serving_normalized"):
+                    break
+
+            # both halves required: a selected entry AND it measures as the canonical.
+            worked = bool(entry_after) and bool(after.get("serving_normalized"))
+            stranded = entry_after is None
+            if not worked:
+                log.warning("loudness: delete+re-detect did NOT make rk=%s serve the "
+                            "normalized sidecar (deleted=%s unlock=%s refreshed=%s; "
+                            "selected entry %s; Plex now %s vs canonical %s). Recover "
+                            "with // PUSH NORMALIZED TO PLEX%s", rk, deleted,
+                            unlock_status, refreshed, entry_after,
+                            after.get("plex_loudness_i"), row["loudness_i"],
+                            " — NOTHING is selected, this item has no theme right now"
+                            if stranded else ".")
+            return {
+                "ok": True, "already_current": False, "rating_key": rk,
+                "deleted_association": deleted,
+                "unlock_http_status": unlock_status,
+                "refreshed": refreshed,
+                "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
+                "before_plex_loudness_i": before.get("plex_loudness_i"),
+                "selected_entry_before": entry_before,
+                "selected_entry_after": entry_after,
+                "entries_after": entries_after,
+                "after": after,
+                "redetect_propagates": worked,
+                "plex_has_no_theme_now": stranded,
+                "verdict": ("delete + re-detect WORKS — Plex re-ingested the normalized "
+                            "sidecar. This is the propagation step: no ceiling, no "
+                            "upload, all 2,821 themes reachable."
+                            if worked else
+                            ("delete + re-detect left this item with NO theme selected "
+                             "— Plex did not re-ingest the sidecar. Recover now with "
+                             "// PUSH NORMALIZED TO PLEX."
+                             if stranded else
+                             "delete + re-detect did NOT make Plex serve the normalized "
+                             "sidecar (it may still be scanning — re-check // WHAT IS "
+                             "PLEX SERVING?). If it stays put, re-upload is the "
+                             "mechanism for the 2,739 under-ceiling themes.")),
             }
 
         return await run_in_threadpool(_run)
