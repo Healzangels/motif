@@ -149,6 +149,15 @@ class PlexParseError(Exception):
     bookkeeping (last_enum_content_changed_at stamping)."""
 
 
+# v0.51.175: Plex 500s on a theme POST above ~10MB. This was known and guarded at THREE
+# separate sites (worker._PLEX_THEME_UPLOAD_CEILING_MB, orphan_scan._UPLOAD_CEILING_BYTES,
+# and set_active_theme_via_reupload's inline copy — v1.21.99, after the operator's Watchmen
+# re-upload 500'd and LPS "looked like it did nothing"). v0.51.174's loudness push was a
+# FOURTH upload path written without the guard, so it fired the doomed POST and surfaced a
+# raw 500. One constant, enforced at the chokepoint below, so every caller inherits it.
+THEME_UPLOAD_CEILING_BYTES = 10 * 1024 * 1024
+
+
 class PlexClient:
     def __init__(self, cfg: PlexConfig, plus_mode: PlusMode = "separator"):
         self.cfg = cfg
@@ -1144,6 +1153,19 @@ class PlexClient:
         import time as _t
         url = f"/library/metadata/{rating_key}/themes"
         body_size = len(audio_bytes)
+        # v0.51.175: refuse a POST Plex will 500 on. Callers that already pre-check
+        # (worker place, orphan_scan, set_active_theme_via_reupload) never reach this —
+        # it's the backstop that stops the next new upload path repeating v0.51.174.
+        if body_size > THEME_UPLOAD_CEILING_BYTES:
+            log.warning(
+                "upload_collection_theme: rk=%s SKIPPED — %d bytes is over Plex's ~%dMB "
+                "theme-upload ceiling; Plex answers these with HTTP 500",
+                rating_key, body_size, THEME_UPLOAD_CEILING_BYTES // (1024 * 1024),
+            )
+            return (False, None,
+                    f"over_ceiling: {body_size} bytes exceeds Plex's "
+                    f"~{THEME_UPLOAD_CEILING_BYTES // (1024 * 1024)}MB theme-upload "
+                    f"ceiling (Plex answers these with HTTP 500)")
         log.info(
             "upload_collection_theme: rk=%s starting upload "
             "(url=%s, body=%d bytes, content_type=%s)",
@@ -1515,8 +1537,8 @@ class PlexClient:
         # 500'd, restore "failed", LPS looked like it did nothing) and report
         # it distinctly so the caller logs "Plex's own theme serves" instead
         # of a scary upload 500.
-        _reupload_ceiling = 10 * 1024 * 1024
-        if len(audio_bytes) > _reupload_ceiling:
+        # v0.51.175: one constant now (was an inline 4th copy of the same 10MB).
+        if len(audio_bytes) > THEME_UPLOAD_CEILING_BYTES:
             return {
                 "ok": False,
                 "step_failed": "over_ceiling",

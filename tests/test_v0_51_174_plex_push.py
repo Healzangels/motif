@@ -180,7 +180,11 @@ def test_missing_canonical_file_is_a_clean_error(client, monkeypatch):
 def test_push_polls_the_measurement_not_the_status_code():
     src = (REPO / "app" / "web" / "api.py").read_text()
     i = src.index('@app.post("/api/admin/loudness/plex-push")')
-    block = src[i:i + 6000]
+    # bound by the NEXT endpoint, not a byte count — a fixed window silently slides out of
+    # range the moment this endpoint grows (it did, one tag later, for the third time this
+    # arc). See motif_upload_test_slice_windows.
+    j = src.index('@app.post("/api/admin/loudness/undo-one")', i)
+    block = src[i:j]
     assert "for _ in range(_REREAD_POLLS)" in block
     assert "_measure_plex_serving" in block
     # the verdict keys on the re-measurement

@@ -4399,7 +4399,21 @@
 #   POST /api/admin/loudness/plex-push uploads the normalized canonical + POLLS the
 #   measurement (never trusts the 2xx). // PUSH NORMALIZED TO PLEX. Still a probe: it proves
 #   the propagation step the per-item card + bulk will both depend on. Guard test_v0_51_174.
-__version__ = "0.51.174"
+# 0.51.175: the push 500'd — and it's a KNOWN ceiling my new code didn't guard. Plex 500s
+#   on a theme POST over ~10MB; motif has known this since v1.21.99 (the operator's Watchmen
+#   re-upload 500'd and LPS "looked like it did nothing") and guarded it at THREE sites:
+#   worker._PLEX_THEME_UPLOAD_CEILING_MB, orphan_scan._UPLOAD_CEILING_BYTES, and an inline
+#   copy in set_active_theme_via_reupload. v0.51.174's loudness push was a FOURTH upload
+#   path written without the check — CLAUDE.md's mirror-drift class exactly (a rule at N
+#   sites; the new site misses it). Fixed at the ALTITUDE instead of adding a 4th copy: one
+#   module-level plex.THEME_UPLOAD_CEILING_BYTES, enforced inside upload_collection_theme
+#   (the chokepoint every caller shares) so it refuses the doomed POST with a clear
+#   over_ceiling message; the inline copy is retired to the constant. ALSO: v0.51.174 only
+#   reported bytes_sent on SUCCESS, so a real 500 arrived missing the one number that
+#   diagnoses it — plex-push now reports bytes_sent + ceiling_bytes + over_ceiling on EVERY
+#   path, and distinguishes over-ceiling from a 500 that is NOT the size cap.
+#   Guard test_v0_51_175.
+__version__ = "0.51.175"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

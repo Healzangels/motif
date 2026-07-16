@@ -61,7 +61,7 @@ from ..core.editions import (
     edition_label_for_folder,
 )
 from ..core.events import log_event, now_iso
-from ..core.plex import PlexClient, PlexConfig
+from ..core.plex import PlexClient, PlexConfig, THEME_UPLOAD_CEILING_BYTES
 from ..core.runtime import is_dry_run, set_dry_run
 from ..core.sections import (
     list_sections, refresh_sections, set_section_inclusion,
@@ -26285,6 +26285,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not theme.is_file():
                 return {"ok": False, "error": f"canonical file missing: {theme}"}
             audio = theme.read_bytes()
+            # v0.51.175: report the SIZE on every path. v0.51.174 only reported bytes_sent
+            # on success, so a real 500 arrived with the one number that diagnoses it
+            # missing — Plex 500s on a theme POST over ~10MB (known since v1.21.99).
+            size = len(audio)
+            over_ceiling = size > THEME_UPLOAD_CEILING_BYTES
+            if over_ceiling:
+                return {
+                    "ok": False, "rating_key": rk, "uploaded": False,
+                    "bytes_sent": size, "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
+                    "over_ceiling": True,
+                    "error": f"this theme is {size / 1048576:.1f}MB — over Plex's "
+                             f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB theme-upload "
+                             f"ceiling, which Plex answers with HTTP 500. Re-upload "
+                             f"cannot propagate a theme this large.",
+                }
 
             if not settings.plex_url or not settings.plex_token:
                 return {"ok": False, "error": "Plex is not configured"}
@@ -26300,9 +26315,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ok, status, body = plex.upload_theme(rating_key=rk, audio_bytes=audio)
             if not ok:
                 return {"ok": False, "rating_key": rk, "uploaded": False,
-                        "http_status": status,
-                        "error": f"Plex rejected the upload (HTTP {status}): "
-                                 f"{(body or '')[:200]}"}
+                        "http_status": status, "bytes_sent": size,
+                        "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
+                        "over_ceiling": False,
+                        "error": f"Plex rejected the upload (HTTP {status}) at "
+                                 f"{size / 1048576:.1f}MB — UNDER the "
+                                 f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB ceiling, so "
+                                 f"this is not the size cap: {(body or '')[:200]}"}
 
             # Plex ingests the upload asynchronously — poll the MEASUREMENT, never trust
             # the 2xx (a POST that 200s while Plex keeps serving the old entry is the
@@ -26324,7 +26343,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             after.get("plex_loudness_i"), row["loudness_i"])
             return {
                 "ok": True, "rating_key": rk, "uploaded": True, "http_status": status,
-                "bytes_sent": len(audio),
+                "bytes_sent": size, "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
+                "over_ceiling": False,
                 "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
                 "before_plex_loudness_i": before.get("plex_loudness_i"),
                 "before_entry_uri": before.get("entry_uri"),
