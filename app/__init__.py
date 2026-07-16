@@ -4385,7 +4385,21 @@
 #   measurement (refresh is async) and reports whether Plex actually flipped to -18.7.
 #   // MAKE PLEX RE-READ IT in the audition block. The v0.51.171 fetch+measure block is now a
 #   shared _measure_plex_serving helper both probes call. Guard test_v0_51_173.
-__version__ = "0.51.173"
+# 0.51.174: REFRESH IS OUT — measured. // MAKE PLEX RE-READ IT on the real library:
+#   refreshed=true, waited 20s, and re-checked minutes later — Plex STILL -5.15 vs a -18.7
+#   canonical, SAME metadata://themes/<sha1> entry, entries=1. plex.refresh already sends
+#   PUT /refresh?force=1 with an /analyze fallback (the strongest native primitive motif
+#   has), and its own docstring quotes Plex: it's for "Added local media assets". That's the
+#   mechanism — Plex's agent ADDS assets it lacks; it will not replace a theme entry it
+#   already holds. So a changed sidecar is a dead letter and the sidecar can never carry an
+#   update. Remaining path = the PROVEN one: POST the bytes to /themes; Plex content-dedupes
+#   by SHA-1, so NEW bytes make a new entry and auto-select it (v1.18.35 probe / v1.18.36
+#   production). Bonus: UNDO falls out free — re-uploading the ORIGINAL bytes hashes back to
+#   the EXISTING metadata:// entry, so Plex re-selects it instead of accumulating junk.
+#   POST /api/admin/loudness/plex-push uploads the normalized canonical + POLLS the
+#   measurement (never trusts the 2xx). // PUSH NORMALIZED TO PLEX. Still a probe: it proves
+#   the propagation step the per-item card + bulk will both depend on. Guard test_v0_51_174.
+__version__ = "0.51.174"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

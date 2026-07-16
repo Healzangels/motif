@@ -26230,6 +26230,116 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
+    @app.post("/api/admin/loudness/plex-push")
+    async def api_admin_loudness_plex_push(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.174: push the NORMALIZED canonical bytes to Plex, then re-measure.
+
+        A `refresh?force=1` (+ /analyze fallback) provably does NOT propagate a CHANGED
+        theme: measured on the real library, Plex sat at -5.15 LUFS against a -18.7
+        canonical, same metadata://themes/<sha1> entry, minutes after the refresh. Plex's
+        agent ADDS local assets it doesn't have (its own docs say "Added local media
+        assets"); it won't replace a theme entry it already holds. So the sidecar is a
+        dead letter for updates, and the only remaining path is the PROVEN one:
+
+        POST the bytes to /library/metadata/{rk}/themes. Plex content-dedupes by SHA-1 —
+        NEW bytes make a new entry and select it (v1.18.35 probe / v1.18.36 production).
+        This also gives undo for free: re-uploading the ORIGINAL bytes hashes back to the
+        EXISTING metadata:// entry, so Plex re-selects it rather than accumulating junk.
+
+        Cost: the entry becomes upload://, so Plex-side flavour changes (motif's SRC axis
+        is unaffected — it reads local_files/placements, not Plex's entry kind). Still a
+        probe, not the production wiring: it MEASURES the outcome so the bulk design rests
+        on a fact. Threadpool (class-12)."""
+        _require_admin(request)
+        from ..core.db import get_conn
+        import time as _t
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT media_type, tmdb_id, section_id, edition_key, file_path, "
+                    "  loudness_i, norm_state, norm_gain_db FROM local_files "
+                    "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
+                ).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "no normalized theme to push — "
+                            "normalize one first"}
+                plex_mt = {"tv": "show", "collection": "collection"}.get(
+                    row["media_type"], "movie")
+                rk_row = conn.execute(
+                    "SELECT rating_key FROM plex_items "
+                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                    "  AND COALESCE(edition_key,'')=? LIMIT 1",
+                    (plex_mt, row["tmdb_id"], row["section_id"],
+                     row["edition_key"] or ""),
+                ).fetchone()
+                if rk_row is None:
+                    return {"ok": False, "error": "no plex_items row for this theme"}
+                fp = Path(row["file_path"])
+                if not fp.is_absolute() and settings.themes_dir is None:
+                    return {"ok": False, "error": "themes_dir is not configured"}
+                theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+            rk = str(rk_row["rating_key"])
+            if not theme.is_file():
+                return {"ok": False, "error": f"canonical file missing: {theme}"}
+            audio = theme.read_bytes()
+
+            if not settings.plex_url or not settings.plex_token:
+                return {"ok": False, "error": "Plex is not configured"}
+            cfg = PlexConfig(
+                url=settings.plex_url, token=settings.plex_token,
+                movie_section=settings.plex_movie_section,
+                tv_section=settings.plex_tv_section, enabled=True,
+            )
+            before = _measure_plex_serving(settings, rk=rk,
+                                           canonical_i=row["loudness_i"],
+                                           norm_gain_db=row["norm_gain_db"])
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                ok, status, body = plex.upload_theme(rating_key=rk, audio_bytes=audio)
+            if not ok:
+                return {"ok": False, "rating_key": rk, "uploaded": False,
+                        "http_status": status,
+                        "error": f"Plex rejected the upload (HTTP {status}): "
+                                 f"{(body or '')[:200]}"}
+
+            # Plex ingests the upload asynchronously — poll the MEASUREMENT, never trust
+            # the 2xx (a POST that 200s while Plex keeps serving the old entry is the
+            # fake-success this whole arc has been about).
+            after = before
+            for _ in range(_REREAD_POLLS):
+                _t.sleep(_REREAD_POLL_S)
+                after = _measure_plex_serving(settings, rk=rk,
+                                              canonical_i=row["loudness_i"],
+                                              norm_gain_db=row["norm_gain_db"])
+                if after.get("serving_normalized"):
+                    break
+
+            worked = bool(after.get("serving_normalized"))
+            if not worked:
+                log.warning("loudness: re-upload did NOT make rk=%s serve the normalized "
+                            "theme (Plex still %s vs canonical %s) — no propagation path "
+                            "left; bulk must not proceed", rk,
+                            after.get("plex_loudness_i"), row["loudness_i"])
+            return {
+                "ok": True, "rating_key": rk, "uploaded": True, "http_status": status,
+                "bytes_sent": len(audio),
+                "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
+                "before_plex_loudness_i": before.get("plex_loudness_i"),
+                "before_entry_uri": before.get("entry_uri"),
+                "after": after,
+                "upload_propagates": worked,
+                "verdict": ("re-upload WORKS — Plex now serves the normalized theme. This "
+                            "is the propagation step for per-item + bulk."
+                            if worked else
+                            "re-upload did NOT flip Plex either (it may still be "
+                            "ingesting — re-check // WHAT IS PLEX SERVING?). If it stays "
+                            "put, there is no propagation path and bulk must not proceed."),
+            }
+
+        return await run_in_threadpool(_run)
+
     @app.post("/api/admin/loudness/undo-one")
     async def api_admin_loudness_undo_one(
         request: Request, db: Path = Depends(get_db_path),

@@ -8107,6 +8107,39 @@
       });
     }
 
+    // v0.51.174: refresh?force=1 provably does NOT propagate a CHANGED theme (measured:
+    // Plex sat at -5.15 vs a -18.7 canonical, same entry, minutes later). Re-upload is the
+    // proven path (v1.18.35/36 sha1-dedup + auto-select) — push and MEASURE.
+    const pushBtn = document.getElementById('loud-plex-push-btn');
+    if (pushBtn) {
+      pushBtn.addEventListener('click', async () => {
+        pushBtn.disabled = true;
+        const o = pushBtn.textContent;
+        pushBtn.textContent = '// PUSHING + RE-CHECKING…';
+        try {
+          const rep = await api('POST', '/api/admin/loudness/plex-push');
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 'push failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            status.textContent = (rep.upload_propagates ? '✓ ' : '✗ ') + rep.verdict
+              + (rep.after && rep.after.plex_loudness_i !== undefined
+                 ? ' — Plex now ' + fmt(rep.after.plex_loudness_i) + ' LUFS.' : '');
+            status.className = 'form-status '
+              + (rep.upload_propagates ? 'form-status-ok' : 'form-status-fail');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'push failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          pushBtn.disabled = false;
+          pushBtn.textContent = o;
+        }
+      });
+    }
+
     undoBtn.addEventListener('click', async () => {
       if (!lastRow) return;
       undoBtn.disabled = true;
