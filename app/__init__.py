@@ -4296,8 +4296,24 @@
 #   re-downloads the re-downloadable set (force-place, same as /redownload), the missing set
 #   deep-links to each INFO card (SET URL / UPLOAD MP3 / RESTORE FROM PLEX — a surviving Plex
 #   copy is hinted). Endpoints /api/admin/canonical-health/{report,check,repair};
-#   bindCanonicalHealth in app.js. Guard test_v0_51_166.
-__version__ = "0.51.167"
+#   bindCanonicalHealth in app.js. Guard test_v0_51_167.
+# 0.51.168: theme loudness NORMALIZE / UNDO — Phase 1's first tag that MUTATES a theme, on
+#   the smallest safe surface. // PROBE MP3GAIN passed on the real library (attenuate AND
+#   boost both restore the AUDIO bit-exactly; the only byte diff is mp3gain's own undo tag),
+#   so the engine is proven and the audition can start. Schema v72->v73: five additive
+#   local_files columns (norm_state / norm_gain_db / norm_target / norm_at +
+#   norm_orig_sha256 — the pre-normalize sha, so UNDO can PROVE it restored the original
+#   bytes rather than assume it). loudness_apply.normalize_file (gain -> re-measure, steps==0
+#   is a clean no-op) + undo_file (mp3gain -u -> re-measure, verifies bit-exact vs
+#   norm_orig_sha256). Endpoints /api/admin/loudness/{normalize-one,undo-one} — threadpool
+#   (class-12), edition-scoped writes on the full local_files PK so a normalize never bleeds
+#   onto a sibling edition; a failed re-measure NULLs measured_sha (audit re-measures) rather
+#   than storing a gap as truth (class-9). // AUDITION NORMALIZE in Settings->Diagnostics
+#   auto-picks the loudest measured, un-normalized, HARDLINK-placed row: a hardlink shares the
+#   canonical inode with the Plex sidecar, so Plex plays the normalized theme immediately and
+#   the undo is equally live — an honest "hear it, then undo it". One theme at a time (the
+#   button flips to // UNDO). Guard test_v0_51_168. NEXT: per-item INFO card, then bulk.
+__version__ = "0.51.168"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -7952,6 +7952,90 @@
     });
   }
 
+  // v0.51.168: AUDITION NORMALIZE — Phase 1's first file mutation on the smallest safe
+  // surface. Normalize the loudest measured hardlink-placed theme (so Plex plays it
+  // live), show before/after, and undo it bit-exact. One theme at a time: the button
+  // flips to UNDO after a normalize so an audition can't accidentally normalize a fleet.
+  function bindLoudnessAudition() {
+    const btn = document.getElementById('loud-audition-btn');
+    const undoBtn = document.getElementById('loud-audition-undo-btn');
+    const status = document.getElementById('loud-audition-status');
+    const out = document.getElementById('loud-audition-output');
+    if (!btn || !undoBtn || !status || !out) return;
+    let lastRow = null;   // the row identity to undo (from the normalize response)
+
+    const fmt = (v) => (v === null || v === undefined ? '—' : Number(v).toFixed(1));
+
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      undoBtn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// NORMALIZING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      try {
+        const rep = await api('POST', '/api/admin/loudness/normalize-one');
+        out.textContent = JSON.stringify(rep, null, 2);
+        out.style.display = '';
+        if (!rep.ok) {
+          status.textContent = '✗ ' + (rep.error || 'normalize failed');
+          status.classList.add('form-status-fail');
+        } else if (!rep.changed) {
+          status.textContent = '• ' + (rep.title || 'theme') + ': ' + (rep.note || 'no change');
+          status.classList.add('form-status-ok');
+        } else {
+          lastRow = rep.row;
+          undoBtn.style.display = '';
+          btn.style.display = 'none';
+          status.textContent = '✓ ' + (rep.title || 'theme') + ': '
+            + fmt(rep.before.loudness_i) + ' → ' + fmt(rep.after.loudness_i)
+            + ' LUFS (' + (rep.applied_db > 0 ? '+' : '') + Number(rep.applied_db).toFixed(1)
+            + ' dB). Hear it in Plex, then // UNDO.';
+          status.classList.add('form-status-ok');
+        }
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'normalize failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        undoBtn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+
+    undoBtn.addEventListener('click', async () => {
+      if (!lastRow) return;
+      undoBtn.disabled = true;
+      btn.disabled = true;
+      const orig = undoBtn.textContent;
+      undoBtn.textContent = '// UNDOING…';
+      try {
+        const rep = await api('POST', '/api/admin/loudness/undo-one', lastRow);
+        out.textContent = JSON.stringify(rep, null, 2);
+        out.style.display = '';
+        if (!rep.ok) {
+          status.textContent = '✗ ' + (rep.error || 'undo failed');
+          status.className = 'form-status form-status-fail';
+        } else {
+          const exact = rep.bit_exact === false ? ' (WARNING: not bit-exact — check logs)' : '';
+          status.textContent = '✓ restored ' + (rep.title || 'theme') + ' to '
+            + fmt(rep.restored.loudness_i) + ' LUFS' + exact;
+          status.className = 'form-status ' + (rep.bit_exact === false ? 'form-status-fail' : 'form-status-ok');
+          lastRow = null;
+          undoBtn.style.display = 'none';
+          btn.style.display = '';
+        }
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'undo failed');
+        status.className = 'form-status form-status-fail';
+      } finally {
+        undoBtn.disabled = false;
+        btn.disabled = false;
+        undoBtn.textContent = orig;
+      }
+    });
+  }
+
   // DIAGNOSTICS tab. Title fragments → POST → render JSON.
   // Used to characterise Plex's theme response shape across
   // the four P sub-flavors (themerr-plex embed / user upload
@@ -20558,6 +20642,7 @@
     bindLoudnessReport();
     bindCanonicalHealth();
     bindMp3gainProbe();
+    bindLoudnessAudition();
     bindTestCookies();
     bindTestNotification();
     bindTestPlex();

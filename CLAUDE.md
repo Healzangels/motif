@@ -23,7 +23,7 @@ prompted the rule.
 | Layer | Detail |
 |---|---|
 | API + UI | FastAPI on `:5309`; Jinja2 templates in `app/web/templates/` |
-| DB | SQLite at `/config/motif.db`; current schema **v72** (`CURRENT_SCHEMA_VERSION` in `app/core/db.py`), forward-only migrations in `app/core/db.py` |
+| DB | SQLite at `/config/motif.db`; current schema **v73** (`CURRENT_SCHEMA_VERSION` in `app/core/db.py`), forward-only migrations in `app/core/db.py` |
 | Worker | APScheduler cron (sync) + custom job loop (downloads/place/refresh) |
 | Sync transport | tiered: git (dulwich differential) → snapshot (database branch tarball) → remote (per-item HTTP) |
 | Download | yt-dlp with `cookies.txt` from `/config` |
@@ -83,12 +83,12 @@ this list grows, audit every existing site.
 
 | Site | File:line | Purpose |
 |---|---|---|
-| `computeSrcLetter` | `app.js:~9832` | SRC pill T/U/A vs P/– classification |
-| `renderLibraryRow` inline-SRC | `app.js:~10036` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
-| `updateLibrarySelectionUi` selection bucket | `app.js:~12150` | themed-vs-not counts for bulk-bar (v1.18.24) |
-| `isPlexAgentRow` | `app.js:~15975` | "Plex already supplying" confirm prompt gate (v1.18.75) |
-| Bulk PUSH predicates (3 sites) | `app.js:~12307` / `~12456` / `~12679` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
-| Bulk LPS M-sidecar gate | `app.js:~12338` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
+| `computeSrcLetter` | `app.js:~10051` | SRC pill T/U/A vs P/– classification |
+| `renderLibraryRow` inline-SRC | `app.js:~10255` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
+| `updateLibrarySelectionUi` selection bucket | `app.js:~12369` | themed-vs-not counts for bulk-bar (v1.18.24) |
+| `isPlexAgentRow` | `app.js:~16194` | "Plex already supplying" confirm prompt gate (v1.18.75) |
+| Bulk PUSH predicates (3 sites) | `app.js:~12526` / `~12675` / `~12898` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
+| Bulk LPS M-sidecar gate | `app.js:~12557` | excludes M sidecars from bulk LET PLEX SERVE; must mirror the lpsOnlyCount bucket (v1.22.80 fix — bare `!media_folder` skipped plex_upload rows the bucket counted) |
 | SRC SQL | `api.py:_SRC_LETTER_SQL` | DB-side equivalent — must agree with JS |
 
 The forgetting cost is **silent UX wrong-classification**:

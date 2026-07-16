@@ -25801,6 +25801,175 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
+    @app.post("/api/admin/loudness/normalize-one")
+    async def api_admin_loudness_normalize_one(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.168: normalize ONE canonical theme toward the target LUFS via mp3gain —
+        the FIRST tag that mutates a theme (proven bit-exact-reversible by // PROBE
+        MP3GAIN). Reads the row, applies gain, RE-MEASURES, and stamps the edition-scoped
+        local_files PK. With no body it auto-picks the loudest measured, un-normalized,
+        HARDLINK-placed row: a hardlink shares the canonical inode with the Plex sidecar,
+        so Plex plays the normalized theme immediately + undo is fully live (the honest
+        'audition'). A body may name a specific row. Fully reversible via undo-one.
+        Threadpool (subprocess + hash + re-measure block the loop — class-12)."""
+        _require_admin(request)
+        from ..core.loudness_apply import normalize_file
+        from ..core.db import get_conn
+        from ..core.events import now_iso
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — auto-pick allows an empty body
+            body = {}
+        try:
+            target = float(body.get("target")) if body.get("target") is not None else -18.0
+        except (TypeError, ValueError):
+            target = -18.0
+        target = max(-31.0, min(-6.0, target))   # clamp to a sane hover band
+        want_mt = body.get("media_type")
+        want_id = body.get("tmdb_id")
+
+        def _run():
+            with get_conn(db) as conn:
+                cols = ("lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                        "lf.file_path, lf.file_sha256, lf.loudness_i, lf.loudness_tp, "
+                        "lf.norm_state, t.title, t.year")
+                if want_id is not None and want_mt:
+                    row = conn.execute(
+                        f"SELECT {cols} FROM local_files lf "
+                        "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
+                        "WHERE lf.media_type=? AND lf.tmdb_id=? AND lf.section_id=? "
+                        "  AND lf.edition_key=?",
+                        (want_mt, want_id, body.get("section_id") or "",
+                         body.get("edition_key") or ""),
+                    ).fetchone()
+                else:
+                    # auto-pick: loudest measured, not-yet-normalized, HARDLINK-placed row
+                    row = conn.execute(
+                        f"SELECT {cols} FROM local_files lf "
+                        "JOIN placements p ON p.media_type=lf.media_type "
+                        "  AND p.tmdb_id=lf.tmdb_id AND p.section_id=lf.section_id "
+                        "  AND p.edition_key=lf.edition_key AND p.placement_kind='hardlink' "
+                        "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
+                        "WHERE lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
+                        "  AND (lf.norm_state IS NULL OR lf.norm_state != 'normalized') "
+                        "  AND lf.file_sha256 IS NOT NULL "
+                        "ORDER BY lf.loudness_i DESC LIMIT 1",
+                    ).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "no eligible measured hardlink-placed "
+                            "theme to normalize — run the LOUDNESS AUDIT first"}
+                if row["loudness_i"] is None:
+                    return {"ok": False, "error": "target row has no loudness measurement"}
+                if row["norm_state"] == "normalized":
+                    return {"ok": False, "error": "already normalized — undo it first"}
+                fp = Path(row["file_path"])
+                theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+
+            res = normalize_file(theme, target, row["loudness_i"], row["loudness_tp"])
+            if not res["ok"]:
+                return {"ok": False, "error": res.get("error") or "normalize failed",
+                        "title": row["title"]}
+            if res["changed"]:
+                # loudness cols reflect the re-measure; if it failed (None), NULL the
+                # measured_sha too so the audit re-measures rather than trusting a gap.
+                measured_sha = res["new_sha"] if res["new_i"] is not None else None
+                measured_at = now_iso() if res["new_i"] is not None else None
+                with get_conn(db) as wconn:
+                    wconn.execute(
+                        "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
+                        "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+                        "  norm_state='normalized', norm_gain_db=?, norm_target=?, norm_at=?, "
+                        "  norm_orig_sha256=? "
+                        "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                        (res["new_i"], res["new_tp"], res["new_lra"], measured_at,
+                         measured_sha, res["new_sha"], res["applied_db"], target, now_iso(),
+                         res["old_sha"], row["media_type"], row["tmdb_id"],
+                         row["section_id"], row["edition_key"]),
+                    )
+                    wconn.commit()
+            return {
+                "ok": True, "changed": res["changed"], "note": res.get("note"),
+                "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
+                "year": row["year"], "target": target, "steps": res["steps"],
+                "applied_db": res["applied_db"],
+                "before": {"loudness_i": row["loudness_i"], "true_peak": row["loudness_tp"]},
+                "after": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]},
+                "row": {"media_type": row["media_type"], "tmdb_id": row["tmdb_id"],
+                        "section_id": row["section_id"], "edition_key": row["edition_key"]},
+            }
+
+        return await run_in_threadpool(_run)
+
+    @app.post("/api/admin/loudness/undo-one")
+    async def api_admin_loudness_undo_one(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.168: reverse a per-item normalize via the MP3GAIN_UNDO tag (mp3gain -u)
+        and re-measure. Verifies the restore is bit-exact against the pre-normalize
+        sha (norm_orig_sha256). Edition-scoped; the body echoes the row identity from
+        normalize-one. Threadpool (class-12)."""
+        _require_admin(request)
+        from ..core.loudness_apply import undo_file
+        from ..core.db import get_conn
+        from ..core.events import now_iso
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001
+            body = {}
+        want_mt = body.get("media_type")
+        want_id = body.get("tmdb_id")
+        if not (want_mt and want_id is not None):
+            return {"ok": False, "error": "row identity (media_type, tmdb_id, section_id, "
+                    "edition_key) is required to undo"}
+        sec = body.get("section_id") or ""
+        edn = body.get("edition_key") or ""
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                    "  lf.file_path, lf.norm_state, lf.norm_orig_sha256, t.title "
+                    "FROM local_files lf "
+                    "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
+                    "WHERE lf.media_type=? AND lf.tmdb_id=? AND lf.section_id=? "
+                    "  AND lf.edition_key=?",
+                    (want_mt, want_id, sec, edn),
+                ).fetchone()
+                if row is None:
+                    return {"ok": False, "error": "row not found"}
+                if row["norm_state"] != "normalized":
+                    return {"ok": False, "error": "row is not normalized — nothing to undo"}
+                fp = Path(row["file_path"])
+                theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+                expect = row["norm_orig_sha256"]
+
+            res = undo_file(theme, expect_sha=expect)
+            if not res["ok"]:
+                return {"ok": False, "error": res.get("error") or "undo failed",
+                        "title": row["title"]}
+            measured_sha = res["new_sha"] if res["new_i"] is not None else None
+            measured_at = now_iso() if res["new_i"] is not None else None
+            with get_conn(db) as wconn:
+                wconn.execute(
+                    "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
+                    "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+                    "  norm_state=NULL, norm_gain_db=NULL, norm_target=NULL, norm_at=NULL, "
+                    "  norm_orig_sha256=NULL "
+                    "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                    (res["new_i"], res["new_tp"], res["new_lra"], measured_at, measured_sha,
+                     res["new_sha"], row["media_type"], row["tmdb_id"],
+                     row["section_id"], row["edition_key"]),
+                )
+                wconn.commit()
+            return {"ok": True, "bit_exact": res["bit_exact"],
+                    "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
+                    "restored": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]}}
+
+        return await run_in_threadpool(_run)
+
     @app.post("/api/admin/orphan-scan/cleanup-dead-rk")
     async def api_admin_orphan_cleanup_dead_rk(
         request: Request,

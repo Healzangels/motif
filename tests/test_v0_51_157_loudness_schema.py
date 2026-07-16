@@ -33,8 +33,10 @@ def _local_files_cols(conn: sqlite3.Connection) -> dict[str, str]:
     return {r[1]: r[2] for r in conn.execute("PRAGMA table_info(local_files)")}
 
 
-def test_schema_version_is_72():
-    assert CURRENT_SCHEMA_VERSION == 72
+def test_schema_version_is_at_least_72():
+    # v0.51.168 added v73 (normalization state); this tag's columns must survive every
+    # later migration, so pin the FLOOR + assert the columns below, not an exact head.
+    assert CURRENT_SCHEMA_VERSION >= 72
 
 
 def test_fresh_db_has_loudness_columns(tmp_path: Path):
@@ -47,14 +49,16 @@ def test_fresh_db_has_loudness_columns(tmp_path: Path):
             assert cols[name].upper() == decl, f"{name} should be {decl}, got {cols[name]}"
 
 
-def test_fresh_db_stamps_v72(tmp_path: Path):
+def test_fresh_db_stamps_at_least_v72(tmp_path: Path):
     db_path = tmp_path / "motif.db"
     init_db(db_path)
     with get_conn(db_path) as conn:
         v = conn.execute(
             "SELECT MAX(version) FROM schema_version"
         ).fetchone()[0]
-        assert v == 72
+        # a fresh DB runs the whole chain → the CURRENT head (v73 as of v0.51.168), not
+        # this tag's v72. Assert the floor; the columns are what this tag actually guards.
+        assert v >= 72
 
 
 def test_migration_is_idempotent(tmp_path: Path):

@@ -1209,6 +1209,34 @@
   </div>
 </section>
 
+{# v0.51.168: AUDITION NORMALIZE — Phase 1's first file mutation, on the smallest safe
+   surface. Normalizes ONE canonical theme (auto-picks the loudest measured, hardlink-
+   placed one so Plex plays it live) to the target LUFS via mp3gain, shows before/after,
+   and undoes it bit-exact. The "try one, hear it, undo it" gate before the per-item INFO
+   card + bulk. Only touches the one theme you audition; fully reversible. #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// AUDITION NORMALIZE</h2>
+    <span class="muted small">normalize one real theme to the target, hear it, undo it</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      The first step of loudness normalization: pick the <strong>loudest</strong> measured
+      theme that's hardlink-placed (so Plex plays it immediately), pull it to
+      <strong id="loud-audition-target">−18</strong> LUFS with mp3gain, and show the
+      before/after. Then <strong>hear it in Plex</strong> and hit <em>// UNDO</em> to
+      restore the original bytes exactly. Only the one theme you audition is touched —
+      run the LOUDNESS AUDIT first so there's a measurement to act on.
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="loud-audition-btn" type="button">// NORMALIZE LOUDEST THEME</button>
+      <button class="btn" id="loud-audition-undo-btn" type="button" style="display:none">// UNDO</button>
+      <span class="form-status" id="loud-audition-status"></span>
+    </div>
+    <pre id="loud-audition-output" class="codeblock" style="display:none"></pre>
+  </div>
+</section>
+
 {# v1.18.85: PROBE PLEX THEME API block — characterise Plex's
    theme endpoint responses across the four P sub-flavors
    (themerr-plex embed / user upload / Plex Pass cloud / sidecar)

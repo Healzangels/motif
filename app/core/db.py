@@ -175,6 +175,18 @@ CREATE TABLE IF NOT EXISTS local_files (
     loudness_lra      REAL,
     loudness_measured_at     TEXT,
     loudness_measured_sha256 TEXT,
+    -- v0.51.168 (schema v73): loudness NORMALIZATION state — Phase 1, the first thing
+    -- that MUTATES a theme (mp3gain gain, proven bit-exact-reversible by // PROBE
+    -- MP3GAIN). norm_state='normalized' when gain is applied (NULL = raw, never
+    -- normalized); norm_gain_db = the dB actually applied; norm_target = the LUFS aimed
+    -- at; norm_at = when. norm_orig_sha256 is the PRE-normalize file_sha256 — UNDO
+    -- (mp3gain -u) compares the restored bytes against it to PROVE the original came
+    -- back rather than assume the undo tag worked. Written edition-scoped (full PK).
+    norm_state        TEXT,
+    norm_gain_db      REAL,
+    norm_target       REAL,
+    norm_at           TEXT,
+    norm_orig_sha256  TEXT,
     -- v1.21.51 (schema v62): per-edition theme isolation. Movies can
     -- carry multiple editions (Theatrical/Extended/custom) that share
     -- one tmdb_id; edition_key (the normalized {edition-X} folder tag,
@@ -963,7 +975,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 72
+CURRENT_SCHEMA_VERSION = 73
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2641,6 +2653,31 @@ def _migrate_v71_to_v72(conn: sqlite3.Connection) -> None:
     _add_column(conn, "local_files", "loudness_lra", "REAL")
     _add_column(conn, "local_files", "loudness_measured_at", "TEXT")
     _add_column(conn, "local_files", "loudness_measured_sha256", "TEXT")
+
+
+def _migrate_v72_to_v73(conn: sqlite3.Connection) -> None:
+    """v73 (v0.51.168): add local_files loudness-NORMALIZATION state — Phase 1 of the
+    loudness feature (the first tag that MUTATES theme bytes, via mp3gain, proven
+    bit-exact-reversible by the v0.51.164/165 probe). Five additive columns record a
+    per-row normalize so it's visible + fully undoable:
+
+        norm_state         -- 'normalized' when mp3gain gain is applied; NULL = raw
+        norm_gain_db       -- the dB actually applied (REAL; for display)
+        norm_target        -- the target LUFS used (REAL)
+        norm_at            -- when (TEXT ISO)
+        norm_orig_sha256   -- the file_sha256 BEFORE normalize, so UNDO can VERIFY it
+                              restored the original bytes exactly (the safety assertion)
+
+    Purely additive, idempotent via _add_column; existing rows read NULL (raw, never
+    normalized). Edition-scoped writes (keyed on the full local_files PK) come from the
+    endpoint, mirroring record_measurement — a normalize never bleeds onto a sibling
+    edition. Nothing here touches a file; the migration only widens the row."""
+    log.info("Migrating to schema v73 (local_files loudness-normalization state — v0.51.168)")
+    _add_column(conn, "local_files", "norm_state", "TEXT")
+    _add_column(conn, "local_files", "norm_gain_db", "REAL")
+    _add_column(conn, "local_files", "norm_target", "REAL")
+    _add_column(conn, "local_files", "norm_at", "TEXT")
+    _add_column(conn, "local_files", "norm_orig_sha256", "TEXT")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4522,6 +4559,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 71:
                     _migrate_v71_to_v72(conn)
                     current = 72
+                elif current == 72:
+                    _migrate_v72_to_v73(conn)
+                    current = 73
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

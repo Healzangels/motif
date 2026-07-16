@@ -261,3 +261,95 @@ def probe_mp3gain(theme_path: Path | str) -> dict:
         report["apply_changes_audio"]
         and report["attenuate_reversible_audio"])
     return report
+
+
+# ── normalize / undo one canonical file (Phase 1 tag 2 — the first real mutation) ────
+# These are the DB-free orchestration leaves: mutate the file in place + RE-MEASURE so
+# the caller can stamp the new loudness + sha. The endpoint owns the (edition-scoped) DB
+# write. Reversibility is proven bit-exact per the v0.51.165 probe; undo VERIFIES it.
+
+def normalize_file(path: Path | str, target_lufs: float,
+                   measured_i: float, true_peak: float | None) -> dict:
+    """Apply mp3gain gain to move `path` toward `target_lufs`, then RE-MEASURE. Mutates
+    the file in place (writes the MP3GAIN_UNDO tag so undo_file can reverse it). Never
+    raises — returns an outcome dict the endpoint stamps onto the row:
+
+        {ok, changed, steps, applied_db, note?, error?,
+         old_sha, new_sha, new_i, new_tp, new_lra}
+
+    steps==0 (already within a step of target) is a successful NO-OP: nothing is written,
+    old_sha == new_sha, changed=False."""
+    from .loudness import measure_loudness
+
+    path = Path(path)
+    out: dict = {
+        "ok": False, "changed": False, "steps": 0, "applied_db": 0.0,
+        "note": None, "error": None, "old_sha": None, "new_sha": None,
+        "new_i": None, "new_tp": None, "new_lra": None,
+    }
+    if not path.is_file():
+        out["error"] = f"canonical file missing: {path}"
+        return out
+    out["old_sha"] = _sha256(path)
+
+    steps = gain_steps_for_target(target_lufs, measured_i, true_peak)
+    out["steps"] = steps
+    if steps == 0:
+        out["ok"] = True
+        out["note"] = "already within one mp3gain step of target — no change made"
+        out["new_sha"] = out["old_sha"]
+        out["new_i"] = measured_i
+        out["new_tp"] = true_peak
+        return out
+
+    if not apply_gain(path, steps):
+        out["error"] = "mp3gain apply failed (see logs)"
+        return out
+
+    out["changed"] = True
+    out["applied_db"] = applied_db(steps)
+    out["new_sha"] = _sha256(path)
+    m = measure_loudness(path)
+    if m is not None:
+        out["new_i"] = m["loudness_i"]
+        out["new_tp"] = m["true_peak"]
+        out["new_lra"] = m["lra"]
+    else:
+        # applied fine (undo tag is in place → still reversible) but re-measure failed;
+        # surface it rather than store a fake loudness (class-9).
+        out["note"] = "gain applied, but re-measure failed — loudness left unstamped"
+    out["ok"] = True
+    return out
+
+
+def undo_file(path: Path | str, expect_sha: str | None = None) -> dict:
+    """Reverse a prior normalize via the MP3GAIN_UNDO tag (mp3gain -u), then RE-MEASURE.
+    If `expect_sha` (the pre-normalize file_sha256) is given, VERIFIES the restore is
+    bit-exact — the safety assertion that mp3gain returned the original bytes. Never
+    raises. Returns {ok, bit_exact, new_sha, new_i, new_tp, new_lra, error?}."""
+    from .loudness import measure_loudness
+
+    path = Path(path)
+    out: dict = {
+        "ok": False, "bit_exact": None, "new_sha": None,
+        "new_i": None, "new_tp": None, "new_lra": None, "error": None,
+    }
+    if not path.is_file():
+        out["error"] = f"canonical file missing: {path}"
+        return out
+    if not undo_via_tag(path):
+        out["error"] = "mp3gain undo failed (see logs)"
+        return out
+    out["new_sha"] = _sha256(path)
+    if expect_sha is not None:
+        out["bit_exact"] = out["new_sha"] == expect_sha
+        if not out["bit_exact"]:
+            log.warning("loudness undo: restored bytes differ from pre-normalize sha "
+                        "on %s (expected %s, got %s)", path, expect_sha, out["new_sha"])
+    m = measure_loudness(path)
+    if m is not None:
+        out["new_i"] = m["loudness_i"]
+        out["new_tp"] = m["true_peak"]
+        out["new_lra"] = m["lra"]
+    out["ok"] = True
+    return out
