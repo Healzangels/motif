@@ -7775,6 +7775,48 @@
     refresh();
   }
 
+  // v0.51.164: PROBE MP3GAIN — Phase-1 pre-flight. POST → the server proves apply→undo
+  // is bit-exact on a throwaway copy of one real theme → render the report + a plain-
+  // English verdict. The whole mp3gain engine choice rests on reversibility, and mp3gain
+  // is container-only (untestable on the dev box), so this is how we confirm it for real.
+  function bindMp3gainProbe() {
+    const btn = document.getElementById('mp3gain-probe-btn');
+    const status = document.getElementById('mp3gain-probe-status');
+    const out = document.getElementById('mp3gain-probe-output');
+    if (!btn || !status || !out) return;
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const orig = btn.textContent;
+      btn.textContent = '// PROBING…';
+      status.textContent = '';
+      status.className = 'form-status';
+      out.style.display = 'none';
+      try {
+        const rep = await api('POST', '/api/admin/mp3gain-probe');
+        out.textContent = JSON.stringify(rep, null, 2);
+        out.style.display = '';
+        const revOk = rep.inverse_g_bit_exact || rep.undo_tag_bit_exact;
+        if (rep.ok && revOk) {
+          status.textContent = '✓ mp3gain present + apply→undo is BIT-EXACT — safe to normalize';
+          status.classList.add('form-status-ok');
+        } else if (!rep.mp3gain_present) {
+          status.textContent = '✗ mp3gain not in the container — redeploy a build that has it';
+          status.classList.add('form-status-fail');
+        } else {
+          status.textContent = '✗ ' + (rep.error || 'reversibility check FAILED — do not normalize');
+          status.classList.add('form-status-fail');
+        }
+      } catch (e) {
+        status.textContent = '✗ ' + (e && e.message ? e.message : 'probe failed');
+        status.classList.add('form-status-fail');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = orig;
+        _autoDismissOpStatus(status, 8000);
+      }
+    });
+  }
+
   // DIAGNOSTICS tab. Title fragments → POST → render JSON.
   // Used to characterise Plex's theme response shape across
   // the four P sub-flavors (themerr-plex embed / user upload
@@ -20379,6 +20421,7 @@
     bindProbePlexThemes();
     bindLoudnessAudit();
     bindLoudnessReport();
+    bindMp3gainProbe();
     bindTestCookies();
     bindTestNotification();
     bindTestPlex();

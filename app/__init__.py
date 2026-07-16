@@ -4258,7 +4258,19 @@
 #   (3) bindLoudnessReport no longer swallows a failed fetch silently (class-9) — it reveals
 #   the section + "retrying…" + console.error, and the live poll recovers. Guard
 #   test_v0_51_163 (reproduces the -inf crash + the strict-JSON + parse-reject).
-__version__ = "0.51.163"
+# 0.51.164: theme loudness NORMALIZATION begins (Phase 1/1) — the mp3gain apply/undo
+#   primitive + a reversibility PROBE. Engine = mp3gain (the user picked it off the real
+#   spread: median -14.5 LUFS, wide, lots of +dBTP clipping → attenuation-dominant, which
+#   mp3gain does losslessly + reversibly). Dockerfile adds mp3gain (tolerant install so a
+#   repo hiccup can't brick the image). app/core/loudness_apply.py: gain_steps_for_target
+#   (LUFS delta → mp3gain -g steps, boost capped by true-peak headroom so it never clips;
+#   we use ffmpeg's LUFS/peak, NOT mp3gain's ReplayGain analysis), apply_gain/undo_via_tag,
+#   + probe_mp3gain (copies ONE real theme to a temp file, proves apply->undo is BIT-EXACT
+#   via sha256 without touching the real file). POST /api/admin/mp3gain-probe (threadpool)
+#   + a // PROBE MP3GAIN button in Settings->Diagnostics. mp3gain is container-only so
+#   nothing is trusted blind. Guard test_v0_51_164. NEXT: per-item // NORMALIZE / // UNDO
+#   on the info card once the probe passes.
+__version__ = "0.51.164"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

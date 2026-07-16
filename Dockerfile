@@ -64,6 +64,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN ffmpeg -version | head -1 | grep -qE 'version (7|8|9|[1-9][0-9])\.' \
     || (echo "FATAL: ffmpeg < 7.x — Debian bookworm 5.x is UNPATCHED for CVE-2026-8461 (PixelSmash). Use a trixie+ base." && exit 1)
 
+# v0.51.164: mp3gain for loudness normalization (Phase 1). Lossless gain-only MP3
+# adjustment — it edits each frame's global_gain field (no re-encode) and is reversible
+# via its MP3GAIN_UNDO / APEv2 tag (`mp3gain -u`). TOLERANT install (|| echo) so a repo
+# or package-name hiccup can't brick the image build — the `// PROBE MP3GAIN` diagnostic
+# reports whether the binary is actually present + whether apply→undo is bit-exact before
+# any real file is touched.
+RUN apt-get update \
+    && (apt-get install -y --no-install-recommends mp3gain \
+        || echo "WARN: mp3gain not installed — loudness normalize will be unavailable") \
+    && rm -rf /var/lib/apt/lists/*
+
 # Non-root user, default UID/GID matches Unraid's "nobody" so hardlinks across
 # mounts don't end up with root-owned files.
 ARG PUID=99

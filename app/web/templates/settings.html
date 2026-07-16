@@ -1149,6 +1149,30 @@
   </div>
 </section>
 
+{# v0.51.164: PROBE MP3GAIN — the Phase-1 pre-flight. Confirms mp3gain is in the
+   container + proves apply→undo is BIT-EXACT on a throwaway copy of one real theme,
+   before any normalization code touches a real file. Read-only wrt every real theme. #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// PROBE MP3GAIN</h2>
+    <span class="muted small">pre-flight for loudness normalization — is undo bit-exact?</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Loudness normalization (mp3gain) is lossless + reversible <em>in theory</em> — this
+      proves it on <strong>your</strong> files. Picks one measured theme, copies it to a
+      temp file, applies a test gain, undoes it, and checks the bytes are
+      <strong>identical</strong> to the original. Nothing touches a real theme. Run this
+      once after deploying a build with mp3gain, before we build the actual normalize.
+    </p>
+    <div class="form-actions">
+      <button class="btn btn-warn" id="mp3gain-probe-btn" type="button">// PROBE MP3GAIN</button>
+      <span class="form-status" id="mp3gain-probe-status"></span>
+    </div>
+    <pre id="mp3gain-probe-output" class="codeblock" style="display:none"></pre>
+  </div>
+</section>
+
 {# v1.18.85: PROBE PLEX THEME API block — characterise Plex's
    theme endpoint responses across the four P sub-flavors
    (themerr-plex embed / user upload / Plex Pass cloud / sidecar)

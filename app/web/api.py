@@ -25690,6 +25690,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with get_conn(db) as conn:
             return build_report(conn)
 
+    @app.post("/api/admin/mp3gain-probe")
+    async def api_admin_mp3gain_probe(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.164: characterize mp3gain before Phase-1 normalization is built on it.
+        Picks one measured local-bytes theme, and (on a THROWAWAY COPY, never the real
+        file) proves apply→undo is bit-exact + reports the binary version + which restore
+        path works. Read-only wrt every real theme. Off-loaded to a thread (subprocess +
+        file copy/hash would block the event loop — CLAUDE.md class-12)."""
+        _require_admin(request)
+        from ..core.loudness_apply import probe_mp3gain
+        from ..core.db import get_conn
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT file_path FROM local_files "
+                    "WHERE loudness_i IS NOT NULL AND file_path IS NOT NULL "
+                    "  AND file_path != '' ORDER BY tmdb_id LIMIT 1"
+                ).fetchone()
+            if row is None:
+                return {"ok": False, "error": "no measured theme to probe — run the "
+                        "LOUDNESS AUDIT first"}
+            fp = Path(row["file_path"])
+            theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+            return probe_mp3gain(theme)
+
+        return await run_in_threadpool(_run)
+
     @app.post("/api/admin/orphan-scan/cleanup-dead-rk")
     async def api_admin_orphan_cleanup_dead_rk(
         request: Request,
