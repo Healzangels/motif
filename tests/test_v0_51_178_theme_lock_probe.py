@@ -275,7 +275,7 @@ def test_probe_never_deletes_or_uploads(client, monkeypatch):
     i = (REPO / "app" / "web" / "api.py").read_text().index(
         '@app.post("/api/admin/loudness/theme-lock-probe")')
     src = (REPO / "app" / "web" / "api.py").read_text()
-    body = src[i:src.index('@app.post("/api/admin/loudness/plex-redetect")', i)]
+    body = src[i:src.index('@app.post("/api/admin/loudness/undo-one")', i)]
     for mutating in ("delete_theme(", "delete_collection_theme(",
                      "upload_theme(", "upload_collection_theme("):
         assert mutating not in body, f"the lock probe must not call {mutating}"
@@ -357,6 +357,6 @@ def test_button_and_bind_exist():
 
 def test_bind_treats_an_unread_control_flag_as_a_failure():
     i = APP_JS.index("const lockBtn = document.getElementById('loud-theme-lock-btn')")
-    src = APP_JS[i:APP_JS.index("// v0.51.177: the ceiling-free propagation candidate", i)]
+    src = APP_JS[i:APP_JS.index("// v0.51.174: refresh?force=1 provably does NOT", i)]
     assert "theme_locked !== null" in src, (
         "an unread flag must not render as a green ✓ — it decides nothing")

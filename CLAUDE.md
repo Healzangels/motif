@@ -304,6 +304,42 @@ not line numbers — they don't go stale.
       succeeding most of the time." Latent-bug subclass of
       class 9: best-effort returns that nothing asserts on
       hide failures indefinitely.
+    - **Propagating a CHANGED theme: only re-upload works (v0.51.171-180).**
+      Plex INGESTS `theme.mp3` at scan time into its own store (hence
+      `metadata://themes/<sha1>`, keyed by CONTENT hash), so mutating
+      the sidecar changes nothing Plex plays. Three ways to tell it
+      otherwise were tried against the real library; two are DEAD and
+      should not be re-probed:
+        - `refresh?force=1` (+ `/analyze`) — **DEAD** (v0.51.173).
+          Canonical -18.7, Plex still served -5.15 minutes later.
+          v0.51.179 then proved the theme field was UNLOCKED when that
+          ran (6/6 sampled untouched sidecar rows unlocked, 694
+          candidates), so the field lock is not the excuse.
+        - DELETE singular `/theme` then refresh ("make Plex lack it so
+          the agent re-ingests") — **DEAD** (v0.51.177). The DELETE only
+          clears the `selected` flag; the entry SURVIVES in the
+          collection (`entries_after: 1`), so Plex never lacks the asset
+          and Local Media Assets has nothing to do. It cannot be fixed
+          by unlocking (the probe unlocked, verified by re-read, and
+          Plex still did nothing) and cannot be fixed by removing the
+          entry (no DELETE handler on plural `/themes`; all four URL
+          shapes 404 — v1.18.32). It strands the item with NO theme.
+        - **RE-UPLOAD — WORKS.** POST the new bytes to plural `/themes`;
+          content-dedup selects them. This is the propagation step. Cost:
+          the entry flips `metadata://` → `upload://`, and Plex **500s
+          over ~10MB** — 82 of 2,821 themes on the operator's library
+          (v0.51.176), which must be skipped EXPLICITLY, never silently.
+      **A POST to `/themes` LOCKS the item's `theme` field** (measured,
+      rk 261711: `locked_fields: [thumb, theme, collection]`). Naturally
+      Plex locks `thumb`/`collection`/`label` but NOT `theme`. Nothing in
+      motif ever UNLOCKS it (`set_theme_field_lock` exists but has no
+      production caller), and `delete_collection_theme` locks it too — so
+      every `delete_theme` call leaves the field locked forever. **Open
+      question (v0.51.180)**: LET PLEX SERVE and the SWITCH api→file
+      teardown both delete and then rely on an agent writing the theme,
+      which a locked field is exactly what prevents. The `theme-lock-probe`
+      admin endpoint samples for the smoking gun (a row locked AND with no
+      selected entry).
     - **Investigation cadence pattern (v1.18.31-40)**: 6 read-
       mostly probe tags before any production change. Each
       probe characterized one piece of Plex's behavior (GET

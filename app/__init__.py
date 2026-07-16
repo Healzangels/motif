@@ -4431,7 +4431,8 @@
 # 0.51.177: probe the last propagation candidate — delete the theme selection, unlock the field the delete bolts shut, then refresh so Local Media Assets re-ingests the changed sidecar; verdict off a re-measurement + the selected flag, and only ever on an under-ceiling theme re-upload could recover.
 # 0.51.178: read Plex's theme-field lock flag instead of inferring it from a 200 — v0.51.177's unlock may have been a silent no-op, and if sidecar rows are locked by default that lock explains v0.51.173's dead refresh and puts a ceiling-free unlock+refresh back on the table.
 # 0.51.179: fix the control picker — it took ONE candidate ordered by tmdb_id, and synthetic orphan ids are NEGATIVE, so it always landed on an orphan with no plex_items row and reported "no control" on a library full of them; now resolves the rating_key in SQL, skips orphans, and samples several rows.
-__version__ = "0.51.179"
+# 0.51.180: propagation settled — delete+re-detect and refresh are MEASURED dead and are removed (the delete only cleared the selection, stranding the item and buying nothing); re-upload is the mechanism. Chases the lead the lock probe exposed: motif locks the theme field on every delete and never unlocks it, and LET PLEX SERVE / SWITCH api-to-file both delete then rely on an agent writing.
+__version__ = "0.51.180"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

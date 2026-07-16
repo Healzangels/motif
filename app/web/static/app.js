@@ -8083,40 +8083,10 @@
 
     // v0.51.173: does a Plex metadata refresh make it re-read the changed sidecar?
     // MEASURED, not assumed — the probe re-checks what Plex serves after refreshing.
-    const rereadBtn = document.getElementById('loud-plex-reread-btn');
-    if (rereadBtn) {
-      rereadBtn.addEventListener('click', async () => {
-        rereadBtn.disabled = true;
-        const o = rereadBtn.textContent;
-        rereadBtn.textContent = '// REFRESHING + RE-CHECKING…';
-        try {
-          const rep = await api('POST', '/api/admin/loudness/plex-reread');
-          out.textContent = JSON.stringify(rep, null, 2);
-          out.style.display = '';
-          if (!rep.ok) {
-            status.textContent = '✗ ' + (rep.error || 'refresh probe failed');
-            status.className = 'form-status form-status-fail';
-          } else {
-            const good = rep.already_current || rep.refresh_propagates;
-            status.textContent = (good ? '✓ ' : '✗ ') + rep.verdict
-              + (rep.after && rep.after.plex_loudness_i !== undefined
-                 ? ' — Plex now ' + fmt(rep.after.plex_loudness_i) + ' LUFS.' : '');
-            status.className = 'form-status ' + (good ? 'form-status-ok' : 'form-status-fail');
-          }
-        } catch (e) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 'refresh probe failed');
-          status.className = 'form-status form-status-fail';
-        } finally {
-          rereadBtn.disabled = false;
-          rereadBtn.textContent = o;
-        }
-      });
-    }
-
     // v0.51.178: reads the theme field's lock flag rather than trusting a status code.
-    // v0.51.177's unlock returned 200 and may still have been a no-op — if sidecar rows
-    // are locked by default, that lock explains v0.51.173's dead refresh and unlock +
-    // refresh becomes a live, ceiling-free path. Read-only wrt the theme; self-restoring.
+    // The control rows answer the natural-state question; v0.51.180 also samples the
+    // cohorts most likely to BE locked, because motif locks the field on every
+    // delete_theme and never unlocks it.
     const lockBtn = document.getElementById('loud-theme-lock-btn');
     if (lockBtn) {
       lockBtn.addEventListener('click', async () => {
@@ -8134,8 +8104,12 @@
             // the CONTROL row's flag is the answer; an unread flag is not a pass.
             const known = rep.control && rep.control.theme_locked !== undefined
               && rep.control.theme_locked !== null;
-            status.textContent = (known ? '✓ ' : '✗ ') + rep.verdict;
-            status.className = 'form-status ' + (known ? 'form-status-ok' : 'form-status-fail');
+            const lead = rep.lock_lead && rep.lock_lead.locked_with_no_theme
+              && rep.lock_lead.locked_with_no_theme.length;
+            status.textContent = (known && !lead ? '✓ ' : '✗ ') + rep.verdict
+              + (lead ? ' — ' + rep.lock_lead.verdict : '');
+            status.className = 'form-status '
+              + (known && !lead ? 'form-status-ok' : 'form-status-fail');
           }
         } catch (e) {
           status.textContent = '✗ ' + (e && e.message ? e.message : 'lock probe failed');
@@ -8143,41 +8117,6 @@
         } finally {
           lockBtn.disabled = false;
           lockBtn.textContent = o;
-        }
-      });
-    }
-
-    // v0.51.177: the ceiling-free propagation candidate. Delete the selection so Plex
-    // LACKS a theme, unlock the field the delete bolted shut, then refresh — Local Media
-    // Assets ingests assets it lacks. If it works it beats re-upload everywhere (all
-    // 2,821 themes, no 10MB ceiling, no bandwidth). Reports off the re-measurement plus
-    // the entry's selected flag, never a status code.
-    const redetectBtn = document.getElementById('loud-plex-redetect-btn');
-    if (redetectBtn) {
-      redetectBtn.addEventListener('click', async () => {
-        redetectBtn.disabled = true;
-        const o = redetectBtn.textContent;
-        redetectBtn.textContent = '// DELETING + RE-DETECTING…';
-        try {
-          const rep = await api('POST', '/api/admin/loudness/plex-redetect');
-          out.textContent = JSON.stringify(rep, null, 2);
-          out.style.display = '';
-          if (!rep.ok) {
-            status.textContent = '✗ ' + (rep.error || 're-detect probe failed');
-            status.className = 'form-status form-status-fail';
-          } else {
-            const good = rep.already_current || rep.redetect_propagates;
-            status.textContent = (good ? '✓ ' : '✗ ') + rep.verdict
-              + (rep.after && rep.after.plex_loudness_i !== undefined
-                 ? ' — Plex now ' + fmt(rep.after.plex_loudness_i) + ' LUFS.' : '');
-            status.className = 'form-status ' + (good ? 'form-status-ok' : 'form-status-fail');
-          }
-        } catch (e) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 're-detect probe failed');
-          status.className = 'form-status form-status-fail';
-        } finally {
-          redetectBtn.disabled = false;
-          redetectBtn.textContent = o;
         }
       });
     }
