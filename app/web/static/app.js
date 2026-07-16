@@ -7773,7 +7773,7 @@
         + `<span class="loud-stat-label">${label}</span></div>`;
     }
 
-    function renderStats(s, rec) {
+    function renderStats(s, rec, ceiling) {
       if (!s) { statsEl.innerHTML = ''; return; }
       const parts = [];
       // v0.51.162: lead with the recommended target — the headline number.
@@ -7788,6 +7788,12 @@
         tile(fmtLufs(s.max), 'loudest'),
         tile(String(s.count), 'measured'),
       );
+      // v0.51.176: how much of the library re-upload can't reach. Plex 500s on a theme
+      // POST over ~10MB and a refresh provably won't re-read a changed sidecar, so this
+      // number decides the propagation design — not a guess.
+      if (ceiling && ceiling.over_ceiling != null) {
+        parts.push(tile(String(ceiling.over_ceiling), 'over 10MB (un-pushable)'));
+      }
       statsEl.innerHTML = parts.join('');
     }
 
@@ -7864,7 +7870,7 @@
         if (outliersBlock) outliersBlock.style.display = 'none';
         return;
       }
-      renderStats(rep.stats, rep.recommended);
+      renderStats(rep.stats, rep.recommended, rep.upload_ceiling);
       renderHist(rep.histogram, rep.stats && rep.stats.median);
       // v0.51.162: the recommended target is the sensible starting point (falls back
       // to the median if the server didn't send one).

@@ -70,6 +70,47 @@ def rows_needing_measure(conn, *, remeasure_all: bool = False) -> list:
     ).fetchall()
 
 
+# v0.51.176: Plex 500s on a theme POST over ~10MB (plex.THEME_UPLOAD_CEILING_BYTES,
+# known since v1.21.99). Re-upload is one of only two ways to tell Plex a theme's bytes
+# changed — and the other (refresh) is measured DEAD — so this ceiling decides whether
+# re-upload is a strategy for this library or just for part of it. Sized here from
+# file_size rather than designed around a guess.
+_UPLOAD_CEILING_BYTES = 10 * 1024 * 1024
+
+
+def upload_ceiling_counts(conn) -> dict:
+    """How much of the library is out of re-upload's reach.
+
+    Every loudness change AFTER Plex has ingested a theme (the ~2,800 backfill, but also
+    every undo / re-apply of a download-normalized theme, forever) needs a propagation
+    step. Re-upload is proven but ceiling-capped; the operator's first audition target was
+    10.5MB and 500'd. So count the cohort before choosing a mechanism.
+
+    Read-only. `unknown_size` is surfaced rather than folded into `under` — a NULL
+    file_size is an unknown, not a small file (class-9: don't let a gap read as a pass)."""
+    over = conn.execute(
+        "SELECT COUNT(*) FROM local_files "
+        "WHERE file_size IS NOT NULL AND file_size > ?", (_UPLOAD_CEILING_BYTES,)
+    ).fetchone()[0]
+    under = conn.execute(
+        "SELECT COUNT(*) FROM local_files "
+        "WHERE file_size IS NOT NULL AND file_size <= ?", (_UPLOAD_CEILING_BYTES,)
+    ).fetchone()[0]
+    unknown = conn.execute(
+        "SELECT COUNT(*) FROM local_files WHERE file_size IS NULL"
+    ).fetchone()[0]
+    biggest = conn.execute(
+        "SELECT MAX(file_size) FROM local_files WHERE file_size IS NOT NULL"
+    ).fetchone()[0]
+    return {
+        "ceiling_bytes": _UPLOAD_CEILING_BYTES,
+        "over_ceiling": over,
+        "under_ceiling": under,
+        "unknown_size": unknown,
+        "largest_bytes": biggest,
+    }
+
+
 def audit_counts(conn) -> dict:
     """Universe sizing for the audit summary — total measurable rows, how many
     already carry a current measurement, how many lack a sha (can't stale-detect)."""
@@ -142,6 +183,7 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
     true_peak] array for the client-side target-preview slider (exact per-theme
     counts without shipping identity for every row)."""
     counts = audit_counts(conn)
+    ceiling = upload_ceiling_counts(conn)
     rows = conn.execute(
         "SELECT loudness_i, loudness_tp FROM local_files WHERE loudness_i IS NOT NULL"
     ).fetchall()
@@ -210,6 +252,10 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
         "unmeasured": max(0, counts["total"] - len(loudness)),
         "skipped_no_sha": counts["skipped_no_sha"],
         "stats": stats,
+        # v0.51.176: sizes the propagation constraint — re-upload is capped at ~10MB and
+        # refresh is measured dead, so this says how much of the library either mechanism
+        # can actually reach.
+        "upload_ceiling": ceiling,
         "recommended": _recommended_target(stats["median"] if stats else None),
         "histogram": histogram,
         "loudest": _outliers("DESC"),   # highest LUFS first

@@ -4413,7 +4413,22 @@
 #   diagnoses it — plex-push now reports bytes_sent + ceiling_bytes + over_ceiling on EVERY
 #   path, and distinguishes over-ceiling from a 500 that is NOT the size cap.
 #   Guard test_v0_51_175.
-__version__ = "0.51.175"
+# 0.51.176: SIZE THE PROPAGATION CONSTRAINT before designing around it. The audition's
+#   first target was 10.5MB and blew Plex's ~10MB upload ceiling — and re-upload is one of
+#   only TWO ways to tell Plex a theme's bytes changed, the other (refresh) being measured
+#   dead. So the ceiling decides the design, and guessing its blast radius is exactly the
+#   mistake that cost the last four tags. loudness_audit.upload_ceiling_counts (read-only,
+#   off local_files.file_size) counts over/under/unknown + the largest theme; build_report
+#   ships it as `upload_ceiling`; the report shows an "over 10MB (un-pushable)" tile.
+#   unknown_size is surfaced separately, NOT folded into under — a NULL size is an unknown,
+#   not a small file (class-9). ALSO reframed by the operator's catch: normalize-at-download
+#   only avoids propagation for the FIRST delivery — every later UNDO / re-apply of a
+#   download-normalized theme still has to tell Plex, so propagation is a permanent
+#   first-class primitive, not a one-off backfill chore. (The revert-to-source ask needs no
+#   new machinery: mp3gain's undo tag already carries the original IN the file — the reason
+#   it beat loudnorm — and v0.51.170 proved the restore is audio-bit-exact.)
+#   Guard test_v0_51_176.
+__version__ = "0.51.176"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
