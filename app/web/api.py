@@ -6301,6 +6301,82 @@ _REREAD_POLLS = 4
 _REREAD_POLL_S = 5
 
 
+def _push_theme_to_plex(settings, *, rk: str, theme: Path, canonical_i,
+                       norm_gain_db=None) -> dict:
+    """v0.51.185: THE propagation step — the only one that works.
+
+    Plex ingests theme.mp3 at scan time and plays its own copy, so changing the file is
+    inaudible until Plex is told. Of the three ways to tell it, two are measured dead
+    (refresh, v0.51.173; delete + re-detect, v0.51.177) and this one — re-upload, whose
+    content-dedup selects the new bytes — is what's left (v0.51.176-183, CLAUDE.md § 11).
+
+    One chokepoint on purpose. normalize, undo and // PUSH NORMALIZED TO PLEX all need it,
+    and three copies of "upload then check" is exactly the mirror-drift shape that made the
+    upload ceiling a 4th un-guarded site (v0.51.175). The ceiling lives at the POST inside
+    upload_collection_theme; this reports the size on EVERY path because a 500 without it
+    is undiagnosable.
+
+    Verdict comes from RE-MEASURING what Plex serves — never the 2xx. A POST that 200s
+    while Plex keeps serving the old entry is the fake success this whole arc was about.
+    Blocking (HTTP + ffmpeg + sleeps): call from a thread (class-12). Never raises."""
+    import time as _t
+
+    if not settings.plex_url or not settings.plex_token:
+        return {"ok": False, "error": "Plex is not configured"}
+    if not theme.is_file():
+        return {"ok": False, "error": f"canonical file missing: {theme}"}
+    audio = theme.read_bytes()
+    size = len(audio)
+    if size > THEME_UPLOAD_CEILING_BYTES:
+        return {"ok": False, "rating_key": rk, "uploaded": False, "bytes_sent": size,
+                "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES, "over_ceiling": True,
+                "error": f"this theme is {size / 1048576:.1f}MB — over Plex's "
+                         f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB theme-upload "
+                         f"ceiling, which Plex answers with HTTP 500. Re-upload cannot "
+                         f"propagate a theme this large."}
+    cfg = PlexConfig(
+        url=settings.plex_url, token=settings.plex_token,
+        movie_section=settings.plex_movie_section,
+        tv_section=settings.plex_tv_section, enabled=True,
+    )
+    before = _measure_plex_serving(settings, rk=rk, canonical_i=canonical_i,
+                                  norm_gain_db=norm_gain_db)
+    with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+        ok, status, body = plex.upload_theme(rating_key=rk, audio_bytes=audio)
+    if not ok:
+        return {"ok": False, "rating_key": rk, "uploaded": False, "http_status": status,
+                "bytes_sent": size, "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
+                "over_ceiling": False,
+                "error": f"Plex rejected the upload (HTTP {status}) at "
+                         f"{size / 1048576:.1f}MB — UNDER the "
+                         f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB ceiling, so this is "
+                         f"not the size cap: {(body or '')[:200]}"}
+    after = before
+    for _ in range(_REREAD_POLLS):
+        _t.sleep(_REREAD_POLL_S)
+        after = _measure_plex_serving(settings, rk=rk, canonical_i=canonical_i,
+                                     norm_gain_db=norm_gain_db)
+        if after.get("serving_normalized"):
+            break
+    worked = bool(after.get("serving_normalized"))
+    if not worked:
+        log.warning("loudness: re-upload did NOT make rk=%s serve the intended theme "
+                    "(Plex %s vs canonical %s) — there is no propagation path left, so "
+                    "bulk must not proceed on this", rk, after.get("plex_loudness_i"),
+                    canonical_i)
+    return {
+        "ok": True, "rating_key": rk, "uploaded": True, "http_status": status,
+        "bytes_sent": size, "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
+        "over_ceiling": False, "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
+        "before_plex_loudness_i": before.get("plex_loudness_i"),
+        "before_entry_uri": before.get("entry_uri"),
+        "after": after, "serving_normalized": worked,
+        "verdict": ("Plex now serves the pushed theme" if worked else
+                    "the upload was accepted but Plex is NOT serving it — do not treat "
+                    "this as propagated"),
+    }
+
+
 def _measure_plex_serving(settings, *, rk: str, canonical_i, norm_gain_db=None) -> dict:
     """v0.51.171: what is Plex ACTUALLY serving for this item's theme?
 
@@ -25974,6 +26050,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return {"ok": False, "error": "themes_dir is not configured — set it "
                             "in Settings first"}
                 theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+                # v0.51.185: the rk, so the gain can be PROPAGATED rather than left on a
+                # file Plex never re-reads. plex_items stores PLEX's media_type.
+                plex_mt = {"tv": "show", "collection": "collection"}.get(
+                    row["media_type"], "movie")
+                rk_row = conn.execute(
+                    "SELECT rating_key FROM plex_items "
+                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                    "  AND COALESCE(edition_key,'')=? LIMIT 1",
+                    (plex_mt, row["tmdb_id"], row["section_id"],
+                     row["edition_key"] or ""),
+                ).fetchone()
+
+            # v0.51.185: refuse a theme we cannot propagate, BEFORE touching its bytes.
+            # Re-upload is the only propagation step (v0.51.176-183) and Plex 500s over
+            # ~10MB, so normalizing one of the 82 over-ceiling themes would change the
+            # file and change nothing the operator can hear — the exact dead end the first
+            # audition hit. The auto-pick already excludes them; a body-named row can
+            # still land here. Skipped EXPLICITLY, never silently.
+            if theme.is_file():
+                _sz = theme.stat().st_size
+                if _sz > THEME_UPLOAD_CEILING_BYTES:
+                    return {"ok": False, "title": row["title"], "bytes": _sz,
+                            "over_ceiling": True,
+                            "error": f"this theme is {_sz / 1048576:.1f}MB — over Plex's "
+                                     f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB upload "
+                                     f"ceiling. Re-upload is the only way to tell Plex the "
+                                     f"bytes changed, so normalizing this would alter the "
+                                     f"file and change nothing you can hear."}
+            if rk_row is None:
+                return {"ok": False, "title": row["title"],
+                        "error": "no plex_items row for this theme, so the gain could not "
+                                 "be propagated — run REFRESH PLEX first"}
+            rk = str(rk_row["rating_key"])
+
+            # What Plex serves NOW, recorded before we change anything. UNDO needs it:
+            # mp3gain's APE tag makes the restored file's hash differ from the original's,
+            # so pushing the restored file mints a THIRD entry instead of re-selecting the
+            # first. Fetching THIS entry's bytes and re-posting them content-dedupes back
+            # onto it (v1.18.36), so a normalize/undo cycle leaves no residue.
+            entry_before = None
+            if settings.plex_url and settings.plex_token:
+                _cfg = PlexConfig(
+                    url=settings.plex_url, token=settings.plex_token,
+                    movie_section=settings.plex_movie_section,
+                    tv_section=settings.plex_tv_section, enabled=True,
+                )
+                with PlexClient(_cfg, plus_mode=settings.plus_equiv_mode) as _p:
+                    _got = _p.get_themes(rating_key=rk)
+                _b = _got.get("body")
+                _meta = ((_b.get("MediaContainer") or {}).get("Metadata") or []) \
+                    if isinstance(_b, dict) else []
+                _sel = next((m for m in _meta if m.get("selected")), None)
+                if _sel:
+                    entry_before = str(_sel.get("ratingKey") or _sel.get("key"))
 
             # expect_sha: refuse if the bytes on disk aren't the ones we measured (the
             # DB row could have been stamped before an out-of-band replace).
@@ -25998,12 +26128,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
                         "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
                         "  norm_state='normalized', norm_gain_db=?, norm_target=?, norm_at=?, "
-                        "  norm_orig_sha256=?, norm_orig_pcm_sha256=? "
+                        "  norm_orig_sha256=?, norm_orig_pcm_sha256=?, "
+                        "  norm_plex_entry_uri=? "
                         "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=? "
                         "  AND norm_state IS NULL",
                         (res["new_i"], res["new_tp"], res["new_lra"], measured_at,
                          measured_sha, res["new_sha"], res["applied_db"], target, ts,
-                         res["old_sha"], res["old_pcm_sha"],
+                         res["old_sha"], res["old_pcm_sha"], entry_before,
                          row["media_type"], row["tmdb_id"],
                          row["section_id"], row["edition_key"]),
                     )
@@ -26017,6 +26148,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         return {"ok": False, "changed": True, "title": row["title"],
                                 "error": "another normalize won the race for this theme — "
                                          "it may now be double-adjusted; press // UNDO"}
+            # v0.51.185: PROPAGATE. Plex ingests theme.mp3 at scan time and plays its own
+            # copy, so a gain applied to the file is inaudible until it is pushed — the
+            # operator normalized -13.5 dB and heard nothing (v0.51.171). Refresh and
+            # delete+re-detect are both measured dead; re-upload is the only step that
+            # works (v0.51.176-183). Doing it here is the whole point: the file and Plex
+            # agree when the button returns, instead of leaving a second click as the
+            # difference between "normalized" and "actually quieter".
+            push = None
+            if res["changed"]:
+                push = _push_theme_to_plex(settings, rk=rk, theme=theme,
+                                           canonical_i=res["new_i"],
+                                           norm_gain_db=res["applied_db"])
+                if not push.get("serving_normalized"):
+                    log.warning("loudness normalize: %s/%s was normalized on disk but Plex "
+                                "is NOT serving it (%s) — the row is quieter in the file "
+                                "and unchanged to the ear until // PUSH NORMALIZED TO PLEX "
+                                "succeeds", row["media_type"], row["tmdb_id"],
+                                push.get("error") or push.get("verdict"))
             return {
                 "ok": True, "changed": res["changed"], "note": res.get("note"),
                 "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
@@ -26024,6 +26173,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "applied_db": res["applied_db"],
                 "before": {"loudness_i": row["loudness_i"], "true_peak": row["loudness_tp"]},
                 "after": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]},
+                "rating_key": rk,
+                "plex_entry_before": entry_before,
+                "propagated": push,
+                # the honest headline: normalized on disk is NOT the same as audible.
+                "plex_is_serving_it": bool(push and push.get("serving_normalized")),
                 "row": {"media_type": row["media_type"], "tmdb_id": row["tmdb_id"],
                         "section_id": row["section_id"], "edition_key": row["edition_key"]},
             }
@@ -26192,81 +26346,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return {"ok": False, "error": "themes_dir is not configured"}
                 theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
             rk = str(rk_row["rating_key"])
-            if not theme.is_file():
-                return {"ok": False, "error": f"canonical file missing: {theme}"}
-            audio = theme.read_bytes()
-            # v0.51.175: report the SIZE on every path. v0.51.174 only reported bytes_sent
-            # on success, so a real 500 arrived with the one number that diagnoses it
-            # missing — Plex 500s on a theme POST over ~10MB (known since v1.21.99).
-            size = len(audio)
-            over_ceiling = size > THEME_UPLOAD_CEILING_BYTES
-            if over_ceiling:
-                return {
-                    "ok": False, "rating_key": rk, "uploaded": False,
-                    "bytes_sent": size, "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
-                    "over_ceiling": True,
-                    "error": f"this theme is {size / 1048576:.1f}MB — over Plex's "
-                             f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB theme-upload "
-                             f"ceiling, which Plex answers with HTTP 500. Re-upload "
-                             f"cannot propagate a theme this large.",
-                }
-
-            if not settings.plex_url or not settings.plex_token:
-                return {"ok": False, "error": "Plex is not configured"}
-            cfg = PlexConfig(
-                url=settings.plex_url, token=settings.plex_token,
-                movie_section=settings.plex_movie_section,
-                tv_section=settings.plex_tv_section, enabled=True,
-            )
-            before = _measure_plex_serving(settings, rk=rk,
-                                           canonical_i=row["loudness_i"],
-                                           norm_gain_db=row["norm_gain_db"])
-            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                ok, status, body = plex.upload_theme(rating_key=rk, audio_bytes=audio)
-            if not ok:
-                return {"ok": False, "rating_key": rk, "uploaded": False,
-                        "http_status": status, "bytes_sent": size,
-                        "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
-                        "over_ceiling": False,
-                        "error": f"Plex rejected the upload (HTTP {status}) at "
-                                 f"{size / 1048576:.1f}MB — UNDER the "
-                                 f"~{THEME_UPLOAD_CEILING_BYTES // 1048576}MB ceiling, so "
-                                 f"this is not the size cap: {(body or '')[:200]}"}
-
-            # Plex ingests the upload asynchronously — poll the MEASUREMENT, never trust
-            # the 2xx (a POST that 200s while Plex keeps serving the old entry is the
-            # fake-success this whole arc has been about).
-            after = before
-            for _ in range(_REREAD_POLLS):
-                _t.sleep(_REREAD_POLL_S)
-                after = _measure_plex_serving(settings, rk=rk,
-                                              canonical_i=row["loudness_i"],
-                                              norm_gain_db=row["norm_gain_db"])
-                if after.get("serving_normalized"):
-                    break
-
-            worked = bool(after.get("serving_normalized"))
-            if not worked:
-                log.warning("loudness: re-upload did NOT make rk=%s serve the normalized "
-                            "theme (Plex still %s vs canonical %s) — no propagation path "
-                            "left; bulk must not proceed", rk,
-                            after.get("plex_loudness_i"), row["loudness_i"])
-            return {
-                "ok": True, "rating_key": rk, "uploaded": True, "http_status": status,
-                "bytes_sent": size, "ceiling_bytes": THEME_UPLOAD_CEILING_BYTES,
-                "over_ceiling": False,
-                "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
-                "before_plex_loudness_i": before.get("plex_loudness_i"),
-                "before_entry_uri": before.get("entry_uri"),
-                "after": after,
-                "upload_propagates": worked,
-                "verdict": ("re-upload WORKS — Plex now serves the normalized theme. This "
-                            "is the propagation step for per-item + bulk."
-                            if worked else
-                            "re-upload did NOT flip Plex either (it may still be "
-                            "ingesting — re-check // WHAT IS PLEX SERVING?). If it stays "
-                            "put, there is no propagation path and bulk must not proceed."),
-            }
+            # v0.51.185: one chokepoint. This endpoint, normalize and undo all propagate
+            # the same way, and three copies of "upload then check" is the mirror-drift
+            # that left the upload ceiling un-guarded at a 4th site (v0.51.175).
+            out = _push_theme_to_plex(settings, rk=rk, theme=theme,
+                                      canonical_i=row["loudness_i"],
+                                      norm_gain_db=row["norm_gain_db"])
+            out["upload_propagates"] = bool(out.get("serving_normalized"))
+            return out
 
         return await run_in_threadpool(_run)
 

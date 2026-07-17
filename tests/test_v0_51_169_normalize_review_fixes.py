@@ -88,6 +88,13 @@ def _seed(db, *, tmdb_id, loudness_i, file_sha, measured_sha, norm_state=None,
                   " edition_key, placement_kind, placed_at) "
                   "VALUES ('movie', ?, '1', ?, '', ?, ?)",
                   (tmdb_id, f"/data/movies/{tmdb_id}", kind, NOW))
+        # v0.51.185: normalize now PROPAGATES, so it needs the rk. Without a plex_items
+        # row there is nothing to push to and the gain would be inaudible — the endpoint
+        # refuses rather than change the file for nothing.
+        c.execute("INSERT OR IGNORE INTO plex_items (rating_key, media_type, section_id, "
+                  " title, guid_tmdb, edition_key, has_theme, first_seen_at, last_seen_at) "
+                  "VALUES (?, 'movie', '1', ?, ?, '', 1, ?, ?)",
+                  (700000 + tmdb_id, f"Movie{tmdb_id}", tmdb_id, NOW, NOW))
         c.commit()
 
 
@@ -187,7 +194,7 @@ def test_ui_rearms_undo_from_server_state_on_load():
     assert "/api/admin/loudness/normalized'" in APP_JS
     # armUndo is driven by the fetched row, and called at bind time (not only on click)
     i = APP_JS.index("function bindLoudnessAudition")
-    block = APP_JS[i:i + 4500]
+    block = APP_JS[i:APP_JS.index("// v0.51.174:", i)]
     assert "refreshNormalizedState();" in block
 
 
@@ -235,7 +242,10 @@ def test_normalize_update_is_guarded_by_norm_state_is_null(client, monkeypatch):
 def test_update_carries_the_norm_state_guard():
     api_py = (REPO / "app" / "web" / "api.py").read_text()
     i = api_py.index('@app.post("/api/admin/loudness/normalize-one")')
-    block = api_py[i:i + 9000]
+    # v0.51.185: bound by the NEXT endpoint, not a byte count — an i+9000
+    # window silently truncated as soon as the handler grew, which is a
+    # test that stops testing rather than an invariant that broke.
+    block = api_py[i:api_py.index('@app.get("/api/admin/loudness/normalized")', i)]
     assert "AND norm_state IS NULL" in block
     assert "rowcount == 0" in block
 
@@ -289,7 +299,10 @@ def test_normalize_file_never_raises_on_none_measurement(tmp_path):
 def test_one_timestamp_per_operation():
     api_py = (REPO / "app" / "web" / "api.py").read_text()
     i = api_py.index('@app.post("/api/admin/loudness/normalize-one")')
-    block = api_py[i:i + 9000]
+    # v0.51.185: bound by the NEXT endpoint, not a byte count — an i+9000
+    # window silently truncated as soon as the handler grew, which is a
+    # test that stops testing rather than an invariant that broke.
+    block = api_py[i:api_py.index('@app.get("/api/admin/loudness/normalized")', i)]
     assert "ts = now_iso()" in block
     # the UPDATE binds the single ts, not two independent now_iso() calls
     assert block.count("now_iso()") == 1

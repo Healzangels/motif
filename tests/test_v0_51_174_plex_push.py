@@ -130,7 +130,7 @@ def test_upload_that_propagates_is_the_answer(client, monkeypatch):
     assert b["upload_propagates"] is True
     assert b["before_plex_loudness_i"] == -5.15
     assert b["after"]["plex_loudness_i"] == -18.7
-    assert "re-upload WORKS" in b["verdict"]
+    assert "Plex now serves the pushed theme" in b["verdict"]
     # it pushed the NORMALIZED canonical bytes, to the right rk
     assert seen["uploads"] == ["451936"]
     assert seen["bytes"] == b"NORMALIZED-BYTES"
@@ -147,7 +147,7 @@ def test_upload_2xx_that_changes_nothing_is_not_success(client, monkeypatch):
     assert b["ok"] is True
     assert b["uploaded"] is True          # Plex accepted it...
     assert b["upload_propagates"] is False  # ...and served the old copy anyway
-    assert "no propagation path" in b["verdict"]
+    assert "NOT serving it" in b["verdict"]
 
 
 def test_rejected_upload_is_reported(client, monkeypatch):
@@ -178,14 +178,27 @@ def test_missing_canonical_file_is_a_clean_error(client, monkeypatch):
 
 
 def test_push_polls_the_measurement_not_the_status_code():
+    """v0.51.185: the poll moved into _push_theme_to_plex — ONE chokepoint now shared by
+    the push button, normalize and undo. Three copies of "upload then check" is the
+    mirror-drift that left the upload ceiling un-guarded at a 4th site (v0.51.175), so the
+    invariant is asserted where the code lives rather than duplicated per caller.
+
+    Bound by the next def, not a byte count — a fixed window silently slides out of range
+    the moment the function grows, which is a test that quietly stops testing. See
+    motif_upload_test_slice_windows."""
+    src = (REPO / "app" / "web" / "api.py").read_text()
+    i = src.index("def _push_theme_to_plex(")
+    block = src[i:src.index("def _measure_plex_serving(", i)]
+    assert "for _ in range(_REREAD_POLLS)" in block
+    assert "_measure_plex_serving(" in block
+    # the verdict keys on the re-measurement, never the 2xx
+    assert 'after.get("serving_normalized")' in block
+
+
+def test_push_endpoint_delegates_rather_than_copying_the_step():
+    """The chokepoint only helps if the callers actually route through it."""
     src = (REPO / "app" / "web" / "api.py").read_text()
     i = src.index('@app.post("/api/admin/loudness/plex-push")')
-    # bound by the NEXT endpoint, not a byte count — a fixed window silently slides out of
-    # range the moment this endpoint grows (it did, one tag later, for the third time this
-    # arc). See motif_upload_test_slice_windows.
-    j = src.index('@app.post("/api/admin/loudness/undo-one")', i)
-    block = src[i:j]
-    assert "for _ in range(_REREAD_POLLS)" in block
-    assert "_measure_plex_serving" in block
-    # the verdict keys on the re-measurement
-    assert 'after.get("serving_normalized")' in block
+    block = src[i:src.index('@app.post("/api/admin/loudness/undo-one")', i)]
+    assert "_push_theme_to_plex(" in block
+    assert "upload_theme(" not in block, "the endpoint must not re-implement the upload"

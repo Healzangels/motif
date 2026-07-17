@@ -71,6 +71,11 @@ def _seed_row(db, *, tmdb_id, loudness_i, file_size):
                   " edition_key, placement_kind, placed_at) "
                   "VALUES ('movie', ?, '1', ?, '', 'hardlink', ?)",
                   (tmdb_id, f"/data/movies/{tmdb_id}", NOW))
+        # v0.51.185: normalize propagates now, so it needs an rk to push to.
+        c.execute("INSERT OR IGNORE INTO plex_items (rating_key, media_type, section_id, "
+                  " title, guid_tmdb, edition_key, has_theme, first_seen_at, last_seen_at) "
+                  "VALUES (?, 'movie', '1', ?, ?, '', 1, ?, ?)",
+                  (800000 + tmdb_id, f"Movie{tmdb_id}", tmdb_id, NOW, NOW))
         c.commit()
 
 

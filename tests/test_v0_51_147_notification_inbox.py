@@ -16,6 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core import db as dbmod
+from app.core.db import CURRENT_SCHEMA_VERSION
 from app.core import notify, notify_inbox
 
 REPO = Path(__file__).resolve().parent.parent
@@ -40,8 +41,11 @@ def test_fresh_db_has_notifications_table_at_v71(tmp_path):
         assert conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifications'"
         ).fetchone()
-        # v0.51.168: a fresh DB runs the whole chain → current schema (now v74).
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 74
+        # v0.51.168: a fresh DB runs the whole chain → the current head. v0.51.185:
+        # key off the CONSTANT, not a literal — the invariant is 'reaches the head',
+        # and a hardcoded number just makes every schema tag edit this file.
+        assert (conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+                == CURRENT_SCHEMA_VERSION)
     finally:
         conn.close()
 
@@ -63,8 +67,9 @@ def test_migration_v70_to_v71_creates_the_table(tmp_path):
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notifications'"
         ).fetchone()
         # the v70→v71 step still creates the table; the chain then advances to the
-        # current head (v74 as of v0.51.170) — assert full migration, not just v71.
-        assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 74
+        # the current head — assert FULL migration, not just v71.
+        assert (conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0]
+                == CURRENT_SCHEMA_VERSION)
     finally:
         conn.close()
 

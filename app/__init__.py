@@ -4436,7 +4436,8 @@
 # 0.51.182: settle the lock lead on the case that matters — an AGENT-SERVED row proves Plex has a theme to give, so delete it (the LPS operation) and refresh locked-then-unlocked to isolate the lock as the only variable; bytes captured first. Also refuses an unlock subject that already HAS a theme (v0.51.181 accepted rk 497736 and answered an unanswerable question).
 # 0.51.183: close the lock arc (measured dead: the agent restored nothing locked OR unlocked) and retire its probes; ask the last question the v0.51.182 result raised — Plex's agent never re-selects after a delete, so does Plex play an UNSELECTED collection entry (LPS always worked) or nothing (LPS strands items)? Reads the serving association, not the selected flag.
 # 0.51.184: v0.51.183 printed "REAL BUG" off ONE row whose entry it never checked was alive — a dead entry serves nothing regardless of the flag, which is the same symptom with an innocent cause. Verify the entry has playable bytes before it counts, sample the whole cohort instead of 6, and say n=1 out loud.
-__version__ = "0.51.184"
+# 0.51.185: normalize now PROPAGATES. Plex plays its own ingested copy, so a gain applied to the file was inaudible until you clicked PUSH by hand — the operator normalized -13.5dB and heard nothing. Re-upload is the only step that works (v0.51.176-183), so normalize does it and verifies by re-measuring. Schema v75 records the pre-normalize entry so UNDO can re-select it instead of minting a new one every cycle.
+__version__ = "0.51.185"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

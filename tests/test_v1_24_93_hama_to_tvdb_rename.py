@@ -54,7 +54,7 @@ def test_schema_version_and_check_renamed():
     db = (REPO / "app" / "core" / "db.py").read_text()
     # v0.51.128: schema bumped to v70 (plex_items.consecutive_missing). The
     # v68 hama→tvdb rename migration + its renamed CHECK still stand.
-    assert "CURRENT_SCHEMA_VERSION = 74" in db
+    assert "CURRENT_SCHEMA_VERSION = 75" in db
     assert "def _migrate_v67_to_v68" in db
     # the CURRENT (live) op_progress CHECK clause lists tvdb_bridge, not
     # hama_bridge (the surrounding comment keeps a rename breadcrumb that

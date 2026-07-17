@@ -43,8 +43,8 @@ def _stub_measure(monkeypatch, result=None):
 
 # ── schema v74 ───────────────────────────────────────────────────────────────
 
-def test_schema_version_is_74():
-    assert core_db.CURRENT_SCHEMA_VERSION == 74
+def test_schema_version_is_75():
+    assert core_db.CURRENT_SCHEMA_VERSION == 75
 
 
 def test_fresh_db_has_the_pcm_reference_column(tmp_path: Path):

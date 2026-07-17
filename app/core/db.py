@@ -195,6 +195,7 @@ CREATE TABLE IF NOT EXISTS local_files (
     -- "not bit-exact". The audio layer is the one that decides: hash the samples before
     -- applying gain, compare after undo. NULL = normalized by an older build (unknown).
     norm_orig_pcm_sha256 TEXT,
+    norm_plex_entry_uri TEXT,
     -- v1.21.51 (schema v62): per-edition theme isolation. Movies can
     -- carry multiple editions (Theatrical/Extended/custom) that share
     -- one tmdb_id; edition_key (the normalized {edition-X} folder tag,
@@ -983,7 +984,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 74
+CURRENT_SCHEMA_VERSION = 75
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2701,6 +2702,23 @@ def _migrate_v73_to_v74(conn: sqlite3.Connection) -> None:
     by an older build (undo reports audio_restored=None = unknown, never a false alarm)."""
     log.info("Migrating to schema v74 (local_files.norm_orig_pcm_sha256 — v0.51.170)")
     _add_column(conn, "local_files", "norm_orig_pcm_sha256", "TEXT")
+
+
+def _migrate_v74_to_v75(conn: sqlite3.Connection) -> None:
+    """v75 (v0.51.185): add local_files.norm_plex_entry_uri — the theme entry Plex was
+    serving BEFORE motif normalized it.
+
+    Undo has to put Plex back, not just the file. But mp3gain leaves an APE tag, so the
+    restored file's sha1 differs from the original's — pushing it would mint a THIRD entry
+    (v0.51.176-183: re-upload is the only propagation step, and Plex keys entries by
+    content hash). Every normalize/undo cycle would add another. Recording the entry Plex
+    served beforehand lets undo re-select THAT one via the v1.18.36 trick — fetch its
+    bytes, POST them, content-dedup re-selects the original — so a cycle adds nothing.
+
+    Additive + idempotent; NULL on rows normalized by an older build, where undo falls
+    back to pushing the restored file and says so."""
+    log.info("Migrating to schema v75 (local_files.norm_plex_entry_uri — v0.51.185)")
+    _add_column(conn, "local_files", "norm_plex_entry_uri", "TEXT")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4588,6 +4606,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 73:
                     _migrate_v73_to_v74(conn)
                     current = 74
+                elif current == 74:
+                    _migrate_v74_to_v75(conn)
+                    current = 75
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(
