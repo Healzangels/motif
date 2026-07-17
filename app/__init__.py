@@ -905,6 +905,8 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.195: Phase 2 Tag 2 — schema v76 (op_progress.kind += bulk_normalize) + the
+# bulk_normalize background op (serial, loudest-first, per-row _normalize_one_row) + start endpoint.
 # 0.51.194: Phase 2 groundwork — extract the per-row normalize into a shared
 # _normalize_one_row chokepoint so // NORMALIZE and the coming bulk op share ONE impl.
 # 0.51.193: code-review follow-ups on the loudness UI — one hover-band for the target
@@ -4452,7 +4454,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.194"
+__version__ = "0.51.195"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

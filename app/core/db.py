@@ -465,12 +465,21 @@ CREATE TABLE IF NOT EXISTS op_progress (
                        -- route → threading.Thread → worker
                        -- thread runs identify_c1_rows +
                        -- backup_cloud_theme with progress + cancel.
+                       -- v0.51.195 (schema v76): widened to include
+                       -- 'bulk_normalize' — the Phase-2 bulk op that
+                       -- mp3gain-levels the eligible library and re-uploads
+                       -- each. try_acquire('bulk-normalize',
+                       -- 'bulk_normalize') → threading.Thread →
+                       -- _bulk_normalize_run (serial, loudest-first,
+                       -- per-row _normalize_one_row, cancel + progress).
+                       -- Mutates local_files.norm_state → row-refresh kind.
                        CHECK (kind IN ('tdb_sync', 'plex_enum',
                                        'reprobe_plex_themes',
                                        'bulk_probe_tdb',
                                        'bulk_lps',
                                        'tvdb_bridge',
-                                       'cloud_themes_backup')),
+                                       'cloud_themes_backup',
+                                       'bulk_normalize')),
     status          TEXT NOT NULL DEFAULT 'running'
                        -- v1.15.48 (schema v48): widened to include
                        -- 'pending'. v1.15.37's try_acquire helper
@@ -984,7 +993,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 75
+CURRENT_SCHEMA_VERSION = 76
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2719,6 +2728,57 @@ def _migrate_v74_to_v75(conn: sqlite3.Connection) -> None:
     back to pushing the restored file and says so."""
     log.info("Migrating to schema v75 (local_files.norm_plex_entry_uri — v0.51.185)")
     _add_column(conn, "local_files", "norm_plex_entry_uri", "TEXT")
+
+
+def _migrate_v75_to_v76(conn: sqlite3.Connection) -> None:
+    """v76 (v0.51.195): widen op_progress.kind to include 'bulk_normalize' — the Phase-2
+    bulk op that mp3gain-levels the eligible library and re-uploads each theme.
+
+    Mirrors _migrate_v58_to_v59's op_progress rebuild (a full-table executescript, NOT
+    _widen_check_constraint): op_progress has no FK relationships, so there is no
+    foreign_keys dance to do. The CHECK list carries the CURRENT kinds verbatim (v68
+    renamed hama_bridge → tvdb_bridge) plus 'bulk_normalize'. Preserves every existing
+    row; idempotent on re-run (the CHECK already accepting the value is harmless — a
+    second rebuild reproduces the same schema)."""
+    log.info("Migrating to schema v76 "
+             "(op_progress.kind CHECK widened to include 'bulk_normalize' — v0.51.195)")
+    conn.executescript("""
+        BEGIN;
+        CREATE TABLE op_progress_new (
+            op_id           TEXT PRIMARY KEY,
+            kind            TEXT NOT NULL
+                               CHECK (kind IN ('tdb_sync', 'plex_enum',
+                                               'reprobe_plex_themes',
+                                               'bulk_probe_tdb',
+                                               'bulk_lps',
+                                               'tvdb_bridge',
+                                               'cloud_themes_backup',
+                                               'bulk_normalize')),
+            status          TEXT NOT NULL DEFAULT 'running'
+                               CHECK (status IN ('pending', 'running',
+                                                 'cancelling',
+                                                 'done', 'failed', 'cancelled')),
+            started_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            stage           TEXT,
+            stage_label     TEXT,
+            stage_current   INTEGER NOT NULL DEFAULT 0,
+            stage_total     INTEGER NOT NULL DEFAULT 0,
+            processed_total INTEGER NOT NULL DEFAULT 0,
+            processed_est   INTEGER NOT NULL DEFAULT 0,
+            error_count     INTEGER NOT NULL DEFAULT 0,
+            detail_json     TEXT
+        );
+        INSERT INTO op_progress_new SELECT * FROM op_progress;
+        DROP TABLE op_progress;
+        ALTER TABLE op_progress_new RENAME TO op_progress;
+        CREATE INDEX IF NOT EXISTS idx_op_progress_status
+            ON op_progress (status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_op_progress_finished
+            ON op_progress (finished_at);
+        COMMIT;
+    """)
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4609,6 +4669,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 74:
                     _migrate_v74_to_v75(conn)
                     current = 75
+                elif current == 75:
+                    _migrate_v75_to_v76(conn)
+                    current = 76
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

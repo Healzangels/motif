@@ -94,6 +94,12 @@
       { key: 'download', label: 'Download',
         long: 'Download Plex\'s cloud theme bytes and stage them as a backup.' },
     ],
+    // v0.51.195: BULK NORMALIZE — single stage; each row runs the full
+    // _normalize_one_row (mp3gain-level → re-upload) serially, loudest first.
+    bulk_normalize: [
+      { key: 'normalize', label: 'Normalize',
+        long: 'mp3gain-level each eligible theme toward the target and re-upload it to Plex so Plex serves the leveled copy.' },
+    ],
     // Queue ops have no fixed stage timeline — just a single
     // indeterminate stage that pulses for as long as work remains.
     download_queue: [],
@@ -143,6 +149,7 @@
     // all different event types."
     bulk_probe_tdb: 'tdb',
     bulk_lps:       'plex',
+    bulk_normalize: 'plex',   // v0.51.195: re-uploads to Plex
     // v1.19.45: cloud_themes_backup walks Plex's /themes endpoint +
     // downloads bytes from Plex. Plex-family operation (motif
     // talking to Plex's API on the user's behalf) so 'plex' tone
@@ -172,6 +179,7 @@
     plex_enum:           3,  // library refresh
     plex_enum_pending:   3,  // queued refresh shares its parent's slot
     bulk_probe_tdb:      4,  // probe TDB URLs
+    bulk_normalize:      4,  // v0.51.195: user-initiated bulk mutation
     // v1.18.51: bulk_lps shares the bulk-probe slot — both are
     // user-initiated bulk operations that surface in the mini-
     // bar; sitting just above plex sidecar probe keeps the
@@ -252,6 +260,7 @@
     // (api.py:3492 — v1.15.28's bulk version of LPS).
     bulk_probe_tdb: 'BULK PROBE TDB',
     bulk_lps:       'BULK LET PLEX SERVE',
+    bulk_normalize: 'BULK NORMALIZE',
     // v1.19.45: cloud-themes-backup walker (v1.19.42 feature).
     // v1.19.48: label renamed to mirror the bulk-bar button +
     // SOURCE-menu entry (DOWNLOAD PLEX BACKUP). The drawer card

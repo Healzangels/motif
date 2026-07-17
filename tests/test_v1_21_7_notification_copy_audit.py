@@ -47,11 +47,10 @@ def test_bulk_hint_no_longer_overclaims():
 
 
 def test_bulk_action_completed_still_only_two_dispatch_sites():
-    """Guard: bulk_action_completed fires from exactly 2 sites
-    (PROBE TDB + LET PLEX SERVE). If a third lands (e.g. a real bulk
-    download/adopt summary), the settings copy above must be revisited
-    so it stops being a lie."""
-    assert API_PY.count('event_kind="bulk_action_completed"') == 2
+    """Guard: bulk_action_completed fires from exactly 3 sites (PROBE TDB + LET PLEX
+    SERVE + v0.51.195 BULK NORMALIZE). If a fourth lands (e.g. a real bulk download/adopt
+    summary), the settings copy must be revisited so it stops being a lie."""
+    assert API_PY.count('event_kind="bulk_action_completed"') == 3
 
 
 def test_theme_available_body_uses_click_verb():

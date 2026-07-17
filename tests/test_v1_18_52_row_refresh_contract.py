@@ -80,6 +80,11 @@ ROW_MUTATING_KINDS = {
     # post-op state lands without waiting for the 30s background
     # tick.
     "cloud_themes_backup",
+    # v0.51.195: bulk_normalize mp3gain-levels each eligible row and stamps
+    # local_files.norm_state='normalized' + re-uploads to Plex. Row chips change
+    # (the v0.51.192 leveled marker appears), so it MUST fire the row-refresh
+    # contract like every other mutating op — it is NOT filtered from /api/stats.
+    "bulk_normalize",
 }
 
 

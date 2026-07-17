@@ -6619,6 +6619,113 @@ def _normalize_one_row(db: Path, settings, row, target: float) -> dict:
     }
 
 
+def _bulk_normalize_run(db: Path, settings, *, max_rows: int | None = None) -> None:
+    """v0.51.195: the Phase-2 bulk op — mp3gain-level the eligible library toward the
+    configured target, loudest first, re-uploading each theme so Plex actually serves it.
+
+    SERIAL by design: it mutates real files + the DB + Plex, so one-at-a-time avoids
+    write contention and is gentle on Plex, and loudest-first (ORDER BY loudness_i DESC)
+    means an early cancel has already fixed the worst offenders (the clipping tail). Every
+    row goes through the SAME _normalize_one_row chokepoint // NORMALIZE uses — no second
+    implementation to drift. Idempotent: re-running skips already-normalized rows (they
+    fall out of the eligible set), so a cancel-then-resume just continues.
+
+    Eligible set = the auto-pick predicate minus LIMIT 1 (measured-current, raw,
+    hardlink-placed, under Plex's upload ceiling). Cancelable at every row via the generic
+    POST /api/progress/bulk-normalize/cancel."""
+    from ..core import progress as op_progress
+    from ..core.db import get_conn
+    OP_ID = "bulk-normalize"
+    target = settings.loudness_target_lufs   # the clamped hover-band value (v0.51.193)
+
+    def _cancel() -> bool:
+        return op_progress.is_cancelled(db, OP_ID)
+
+    try:
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                " lf.file_path, lf.file_sha256, lf.loudness_measured_sha256, "
+                " lf.loudness_i, lf.loudness_tp, lf.norm_state, t.title, t.year "
+                "FROM local_files lf "
+                "JOIN placements p ON p.media_type=lf.media_type "
+                "  AND p.tmdb_id=lf.tmdb_id AND p.section_id=lf.section_id "
+                "  AND p.edition_key=lf.edition_key AND p.placement_kind='hardlink' "
+                "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
+                "WHERE lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
+                "  AND lf.norm_state IS NULL "
+                "  AND lf.file_sha256 IS NOT NULL "
+                "  AND lf.loudness_measured_sha256 = lf.file_sha256 "
+                "  AND lf.file_size IS NOT NULL "
+                "  AND lf.file_size <= " + str(THEME_UPLOAD_CEILING_BYTES) + " "
+                "ORDER BY lf.loudness_i DESC"
+                + (" LIMIT " + str(int(max_rows)) if max_rows else ""),
+            ).fetchall()
+        n = len(rows)
+        # v1.22.82: start INSIDE the try so a failed start can't strand the pending row.
+        op_progress.start_progress(
+            db, op_id=OP_ID, kind="bulk_normalize",
+            stage="normalize",
+            stage_label=f"Leveling {n} theme(s) toward {target:.0f} LUFS",
+            stage_total=n, processed_est=n,
+        )
+        n_leveled = n_skipped = n_failed = n_not_serving = 0
+        for i, row in enumerate(rows):
+            if _cancel():
+                op_progress.finish_progress(db, OP_ID, status="cancelled")
+                return
+            try:
+                res = _normalize_one_row(db, settings, row, target)
+            except Exception as e:  # noqa: BLE001 — one bad row must not kill the batch
+                n_failed += 1
+                log.warning("bulk normalize: %s/%s errored: %s",
+                            row["media_type"], row["tmdb_id"], e)
+                res = None
+            if res and res.get("ok"):
+                n_leveled += 1
+                # normalized on disk is NOT the same as audible — the chokepoint already
+                # WARNs per row; count it so the done_summary is honest.
+                if not res.get("plex_is_serving_it"):
+                    n_not_serving += 1
+            elif res is not None:
+                # a row that slipped the selector (over-ceiling / stale / lost a race):
+                # the chokepoint refused it. Skipped, not failed — the batch continues.
+                n_skipped += 1
+            done = i + 1
+            if done % 5 == 0 or done == n:
+                op_progress.update_progress(
+                    db, OP_ID, stage_current=done, processed_total=done,
+                    activity=(f"{done}/{n} — leveled={n_leveled}, "
+                              f"skipped={n_skipped}, failed={n_failed}"),
+                )
+        _ds = [{"l": "leveled", "v": n_leveled}]
+        if n_skipped:
+            _ds.append({"l": "skipped", "v": n_skipped})
+        if n_failed:
+            _ds.append({"l": "failed", "v": n_failed})
+        if n_not_serving:
+            _ds.append({"l": "not-serving", "v": n_not_serving})
+        op_progress.set_detail_field(db, OP_ID, "done_summary", _ds)
+        op_progress.finish_progress(db, OP_ID, status="done")
+        if n > 0:
+            try:
+                from ..core import notify as _notify
+                _notify.dispatch(
+                    db, settings.cfg.notifications,
+                    event_kind="bulk_action_completed",
+                    title=f"✅ Bulk normalize done — {n_leveled} leveled",
+                    body=(f"leveled={n_leveled}/{n} toward {target:.0f} LUFS"
+                          + (f", skipped={n_skipped}" if n_skipped else "")
+                          + (f", failed={n_failed}" if n_failed else "")
+                          + (f", not-serving={n_not_serving}" if n_not_serving else "")),
+                )
+            except Exception as e:  # v1.17.1 (class 9): log breadcrumb on swallow.
+                log.debug("notify dispatch (bulk-normalize) suppressed: %s", e)
+    except Exception as e:
+        log.exception("BULK NORMALIZE failed")
+        op_progress.finish_progress(db, OP_ID, status="failed", error_message=str(e))
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Motif", docs_url=None, redoc_url=None)
@@ -6794,6 +6901,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         WHEN 'bulk_probe_tdb'      THEN 3
                         WHEN 'bulk_lps'            THEN 3
                         WHEN 'cloud_themes_backup' THEN 3
+                        WHEN 'bulk_normalize'      THEN 3
                         WHEN 'reprobe_plex_themes' THEN 4
                         WHEN 'tvdb_bridge'         THEN 4
                         ELSE 99
@@ -6816,6 +6924,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "bulk_lps": "plex",
                     "tvdb_bridge": "tdb",
                     "cloud_themes_backup": "plex",
+                    "bulk_normalize": "plex",   # v0.51.195
                 }
                 kind_label = {
                     "tdb_sync": "THEMERRDB SYNC",
@@ -6825,6 +6934,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "bulk_lps": "BULK LET PLEX SERVE",
                     "tvdb_bridge": "TVDB BRIDGE",
                     "cloud_themes_backup": "DOWNLOAD PLEX BACKUP",
+                    "bulk_normalize": "BULK NORMALIZE",   # v0.51.195
                 }
                 state["op_running"] = True
                 state["op_tone"] = tone_by_kind.get(kind, "tdb")
@@ -26189,6 +26299,49 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _normalize_one_row(db, settings, row, target)
 
         return await run_in_threadpool(_run)
+
+    @app.post("/api/admin/loudness/bulk-normalize")
+    async def api_admin_loudness_bulk_normalize(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.195: start the Phase-2 bulk normalize — mp3gain-level the eligible
+        library toward the configured target, loudest first, re-uploading each. Backend
+        only for now (no button; triggered via API). Cancel via the generic
+        POST /api/progress/bulk-normalize/cancel. Optional body {max_rows: N} to level
+        only the N loudest (e.g. the clipping outliers)."""
+        _require_admin(request)
+        if not (settings.plex_enabled and settings.plex_url and settings.plex_token):
+            # re-upload is the only propagation step (CLAUDE.md § 11); with no Plex the op
+            # would mutate files that stay inaudible. Refuse EXPLICITLY.
+            raise HTTPException(status_code=400,
+                                detail="Plex is not configured — normalize must re-upload")
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — an empty body means "the whole eligible set"
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        max_rows = body.get("max_rows")
+        try:
+            max_rows = int(max_rows) if max_rows is not None else None
+            if max_rows is not None and max_rows <= 0:
+                max_rows = None
+        except (TypeError, ValueError):
+            max_rows = None
+        from ..core import progress as op_progress
+        # v1.21.40: claim AFTER validation so a 400 can't leak the op slot.
+        if not await run_in_threadpool(
+                op_progress.try_acquire, db, "bulk-normalize", "bulk_normalize"):
+            raise HTTPException(status_code=409, detail="bulk normalize already running")
+        log_event(db, level="INFO", component="api",
+                  message=(f"BULK NORMALIZE started by {request.state.user}"
+                           + (f" (max_rows={max_rows})" if max_rows else "")))
+        import threading
+        t = threading.Thread(
+            target=_bulk_normalize_run, args=(db, settings),
+            kwargs={"max_rows": max_rows}, name="bulk-normalize", daemon=True)
+        t.start()
+        return {"ok": True, "op_id": "bulk-normalize"}
 
     @app.get("/api/admin/loudness/normalized")
     async def api_admin_loudness_normalized(
