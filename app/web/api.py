@@ -165,6 +165,13 @@ _ALLOWED_TOP_LEVEL = {
     # v1.23.16: DatabaseBackupConfig — scheduled backup cron + retention.
     # Persisted via /settings → DATABASE tab.
     "database_backup",
+    # v0.51.188: LoudnessConfig — normalize-at-download + target.
+    # Persisted via /settings → DOWNLOADS tab. THIRD time a new section had to
+    # be remembered here (placement v1.13.26 silently 400'd every save;
+    # notifications.events v1.17.10 dropped new keys for six tags), so
+    # test_v0_51_189_config_section_lint now walks MotifConfig's fields and
+    # fails if a section is missing rather than waiting for a 400 in the field.
+    "loudness",
 }
 
 

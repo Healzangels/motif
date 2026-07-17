@@ -642,6 +642,39 @@
         </span>
       </label>
 
+      {# v0.51.188: theme conditioning. Sits with LAME quality because both shape the
+         bytes a download produces. #}
+      <p class="form-subhead">// THEME CONDITIONING</p>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="loudness.normalize_on_download" />
+        <span class="form-label-text">NORMALIZE LOUDNESS ON DOWNLOAD</span>
+        <p class="form-hint">
+          Levels each new theme to the target below as it arrives, with
+          <code>mp3gain</code> — lossless (it edits the MP3 gain field, no re-encode)
+          and gain-only, so dynamics are preserved. Plex hovers play whatever it
+          ingested at scan time, so conditioning BEFORE placement means Plex only ever
+          sees the leveled copy — no re-push needed.
+          <strong class="warn">Only affects NEW downloads</strong>; existing themes are
+          untouched until you normalize them from their INFO card.
+          A theme that can't reach the target within its peak headroom lands
+          <em>below</em> it rather than being compressed.
+        </p>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">TARGET LOUDNESS (LUFS)</span>
+        <span class="field-control">
+          <input class="input" type="number" min="-70" max="0" step="0.5"
+                 data-cfg-field="loudness.target_lufs" />
+          <p class="form-hint">
+            <code>-18</code> suits ambient hover themes. Check your own library's spread
+            first — the <a href="/admin/loudness">LOUDNESS report</a>'s target slider
+            models the effect on every theme before you touch a byte.
+          </p>
+        </span>
+      </label>
+
       <p class="form-subhead">// REGIONAL BYPASS</p>
 
       <label class="form-label form-checkbox">
@@ -698,7 +731,11 @@
       </label>
     </div>
     <div class="form-actions">
-      <button class="btn btn-warn" data-save="downloads">// SAVE DOWNLOADS</button>
+      {# v0.51.188: "downloads loudness" — collectFieldsForTab selects
+   [data-cfg-field^="<tab>."], so a bare data-save="downloads" would collect only
+   downloads.* and the THEME CONDITIONING controls would render, accept a click,
+   and silently never save. The v1.21.12 multi-section form is the fix. #}
+      <button class="btn btn-warn" data-save="downloads loudness">// SAVE DOWNLOADS</button>
       <span class="form-status" data-save-status="downloads"></span>
     </div>
   </div>
