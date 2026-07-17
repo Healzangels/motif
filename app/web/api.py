@@ -6294,71 +6294,9 @@ def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
 
 # v0.51.173: Plex's metadata refresh is async — poll the measurement instead of
 # sleeping once and guessing whether the agent got there.
-_CONTROL_SAMPLE = 6   # v0.51.179: one row can't answer a library-wide question
+_UNSELECTED_SAMPLE = 6   # v0.51.183: one row can't answer a library-wide question
 _REREAD_POLLS = 4
 _REREAD_POLL_S = 5
-
-
-def _lock_verdict(control_locked, working_shape) -> str:
-    """v0.51.178: the CONTROL row's natural lock state decides whether unlock+refresh is
-    still a live propagation candidate. Never let an unread flag (None) read as a pass."""
-    if control_locked is None:
-        return ("could not read the control row's theme lock — NO verdict. Without that "
-                "flag nothing here is decided; do not read this as a pass.")
-    if control_locked:
-        return ("sidecar rows ARE theme-locked by default — so the field was locked when "
-                "v0.51.173's refresh failed to re-read the changed sidecar, and the lock "
-                "is a live explanation for it. UNLOCK + REFRESH is untested and worth the "
-                "next tag: it would be ceiling-free and reach all 2,821 themes."
-                + ("" if working_shape else
-                   " Fix the unlock first — neither shape moved the flag here."))
-    return ("sidecar rows are NOT theme-locked — the field was already unlocked when "
-            "v0.51.173's refresh ran, and it still did not re-read the sidecar. The lock "
-            "was never the blocker, so unlock+refresh cannot be the answer either. "
-            "RE-UPLOAD is the propagation mechanism."
-            + ("" if working_shape is None else
-               f" (The {working_shape} shape does move the flag.)"))
-
-
-def _lock_lead_verdict(every, locked_bare, locked_serving, placed_themeless=None) -> str:
-    """v0.51.180 / v0.51.181: report what was OBSERVED about the theme-lock lead.
-
-    The lead: motif locks the theme field on every delete_theme (Plex's DELETE does it)
-    and NEVER unlocks it — set_theme_field_lock has no production caller. LET PLEX SERVE
-    and the SWITCH api→file teardown both delete and then rely on an AGENT writing the
-    theme, which a locked field is what prevents.
-
-    v0.51.181 rewrote this string because it ASSERTED that causation — "the agent cannot
-    write a locked field, SO these items cannot get a theme back" — off a single sampled
-    row. That is a conclusion, not a measurement, and the operator's one hit (rk 3487,
-    Star Wars) is consistent with at least two innocent explanations: it was on the
-    14-broken-canonicals list (motif may have had no bytes to push), and it has the
-    signature of the known stale-plex_upload/RP class (v1.24.28), which motif already
-    surfaces. Baking an inference into the verdict is the exact habit this whole arc has
-    been correcting; the string now describes the finding and names what would settle it.
-    """
-    readable = [r for r in every if r["theme_locked"] is not None]
-    if not readable:
-        return ("no rows readable — NO verdict on the lock lead. Do not read this as "
-                "'no problem found'.")
-    scale = ("" if placed_themeless is None else
-             f" Library-wide, {placed_themeless} row(s) are motif-placed but Plex reports "
-             f"no theme — that is the CEILING on how many this could affect, not a count "
-             f"of confirmed cases.")
-    if locked_bare:
-        return (f"{len(locked_bare)} sampled row(s) are LOCKED with NO theme selected. "
-                f"That is the shape the lead predicts, but the CAUSE is not established: "
-                f"a row with no theme may simply never have had one pushed (e.g. a broken "
-                f"canonical), or be the known stale-plex_upload class motif already "
-                f"surfaces as RP. Settle it per row with // TEST UNLOCK ON A ROW: unlock, "
-                f"refresh, and see whether a theme appears.{scale}")
-    if not any(r["theme_locked"] for r in readable):
-        return (f"no locked rows in the sample ({len(readable)} read) — INCONCLUSIVE. "
-                f"The cohorts sampled may simply not include a row motif deleted from; "
-                f"this is not evidence the lock is harmless.{scale}")
-    return (f"every locked row sampled ({locked_serving}) IS serving a theme, and none "
-            f"was found locked-and-themeless — no evidence the lock strands anything on "
-            f"this sample.{scale}")
 
 
 def _measure_plex_serving(settings, *, rk: str, canonical_i, norm_gain_db=None) -> dict:
@@ -26330,715 +26268,143 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
-    @app.post("/api/admin/plex/lps-lock-experiment")
-    async def api_admin_plex_lps_lock_experiment(
+    @app.post("/api/admin/plex/unselected-serves-probe")
+    async def api_admin_plex_unselected_serves_probe(
         request: Request, db: Path = Depends(get_db_path),
     ):
-        """v0.51.182: THE decisive test of the lock lead, on the case that matters.
+        """v0.51.183: the last thread. Does Plex serve a theme with NOTHING selected?
 
-        Everything measured so far dances around the real question. LET PLEX SERVE
-        deletes motif's theme and expects PLEX'S AGENT to supply one; the delete LOCKS
-        the theme field; a locked field is what stops an agent writing. Every witness so
-        far was unusable: rows that were locked-and-serving (nothing to supply), or
-        locked-and-themeless for their own reasons (a broken canonical), or unlocked
-        entirely. v0.51.181's sample even showed 6/6 motif-placed-but-themeless rows
-        UNLOCKED, which says the lock isn't what ails THEM — but says nothing about a row
-        the delete just locked.
+        v0.51.182 settled the lock (dead: identical outcome locked and unlocked) but
+        turned up something bigger — Plex's agent does NOT re-select or re-add an entry
+        after a delete. So LET PLEX SERVE cannot work the way its name implies. Either:
 
-        The subject that CAN answer it: a row Plex's own agent is currently serving
-        (metadata://themes/tv.plex.agents.*). That is proof Plex has a theme to give for
-        this title — the thing every previous witness lacked. So do the LPS operation and
-        watch, holding everything else constant:
+          - Plex plays whatever is in the /themes collection regardless of the `selected`
+            flag ⇒ LPS has always worked, just not via the agent re-writing; or
+          - it plays nothing ⇒ every LPS delete leaves the item silently themeless, which
+            would be a real bug in a shipped feature.
 
-          1. capture the bytes (the safety net) — refuse if we can't, no gamble without one
-          2. DELETE the theme (exactly what LPS does), then RE-READ the flag to confirm
-             the delete really locks it
-          3. refresh while LOCKED → did the agent restore it?
-               YES → the lock does not block the agent. LEAD DEAD.
-          4. if not: unlock (verified by re-read), refresh again → back now?
-               YES → THE LOCK BLOCKS THE AGENT. LEAD CONFIRMED — LPS is broken for every
-                     row motif ever deleted from, and the fix is to unlock after delete.
-               NO  → the agent never re-supplies after a delete, lock or not. A different
-                     finding, and LPS rests on something else entirely.
-          5. recover if still bare: POST the captured bytes back. NOTE this re-selects
-             them as an upload:// entry, not the original metadata:// one — same audio,
-             different provenance. That is the price of the failure path, on one row.
+        Everything measured so far reads the `selected` FLAG, which is not the same as
+        "does Plex serve audio" — _measure_plex_serving even falls back to meta[0] when
+        nothing is selected, so it cannot tell the two apart. verify_theme_claim can: it
+        HEADs singular /theme, which is the serving association itself (200 = Plex really
+        delivers, 404 = it does not, None = transient).
 
-        MUTATES a real row. Guards: agent-served only, motif must own no placement on it,
-        bytes captured and under the ceiling. Threadpool (class-12)."""
+        The subject: rows where Plex reports NO theme but motif placed one. If such a row
+        still has entries in its collection, it is the exact state an LPS delete produces,
+        already sitting there — so this answers the question with ZERO mutation. A row
+        with no entries cannot answer it and is reported as such rather than counted.
+        Read-only. Threadpool (class-12)."""
         _require_admin(request)
         from ..core.db import get_conn
-        import time as _t
 
         try:
             body = await request.json()
         except Exception:  # noqa: BLE001
             body = {}
-        rk = str((body or {}).get("rating_key") or "").strip()
-        if not rk:
-            return {"ok": False, "error": "name a rating_key — pick an agent-served row "
-                                          "from the lock probe's plex_served_rows"}
+        named = str((body or {}).get("rating_key") or "").strip()
 
         def _run():
             if not settings.plex_url or not settings.plex_token:
                 return {"ok": False, "error": "Plex is not configured"}
+            with get_conn(db) as conn:
+                if named:
+                    cands = conn.execute(
+                        "SELECT rating_key, title, media_type FROM plex_items "
+                        "WHERE rating_key = ?", (named,)).fetchall()
+                    if not cands:
+                        return {"ok": False, "error": f"rk {named} is not in plex_items"}
+                else:
+                    placed = {
+                        (r["media_type"], r["tmdb_id"], r["section_id"],
+                         r["edition_key"] or "")
+                        for r in conn.execute(
+                            "SELECT media_type, tmdb_id, section_id, edition_key "
+                            "FROM placements").fetchall()
+                    }
+                    cands = []
+                    for r in conn.execute(
+                        "SELECT rating_key, title, media_type, guid_tmdb, section_id, "
+                        "       edition_key FROM plex_items "
+                        "WHERE has_theme = 0 AND guid_tmdb IS NOT NULL "
+                        "ORDER BY guid_tmdb"
+                    ).fetchall():
+                        mt = {"show": "tv", "collection": "collection"}.get(
+                            r["media_type"], "movie")
+                        if (mt, r["guid_tmdb"], r["section_id"],
+                                r["edition_key"] or "") in placed:
+                            cands.append(r)
+                        if len(cands) >= _UNSELECTED_SAMPLE:
+                            break
+            if not cands:
+                return {"ok": False, "error": "no motif-placed row with has_theme=0 to "
+                                              "look at — nothing here can answer it"}
+
             cfg = PlexConfig(
                 url=settings.plex_url, token=settings.plex_token,
                 movie_section=settings.plex_movie_section,
                 tv_section=settings.plex_tv_section, enabled=True,
             )
-            # never experiment on a row motif owns — deleting motif's own theme is not
-            # the LPS case and would be destroying real work.
-            with get_conn(db) as conn:
-                pi = conn.execute(
-                    "SELECT media_type, guid_tmdb, section_id, edition_key "
-                    "FROM plex_items WHERE rating_key = ?", (rk,)
-                ).fetchone()
-                if pi is None:
-                    return {"ok": False, "error": f"rk {rk} is not in plex_items"}
-                motif_mt = {"show": "tv", "collection": "collection"}.get(
-                    pi["media_type"], "movie")
-                owned = conn.execute(
-                    "SELECT placement_kind FROM placements WHERE media_type=? "
-                    "  AND tmdb_id=? AND section_id=? AND COALESCE(edition_key,'')=?",
-                    (motif_mt, pi["guid_tmdb"], pi["section_id"],
-                     pi["edition_key"] or ""),
-                ).fetchone()
-            if owned is not None:
-                return {"ok": False, "rating_key": rk,
-                        "error": f"motif owns a '{owned['placement_kind']}' placement here "
-                                 f"— that is not the LET PLEX SERVE case, and deleting "
-                                 f"motif's own theme would destroy real work. Pick a row "
-                                 f"with motif_placement: null."}
-
-            def _state(plex):
-                locks = plex.get_field_locks(rating_key=rk)
-                got = plex.get_themes(rating_key=rk)
-                b = got.get("body")
-                meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
-                    if isinstance(b, dict) else []
-                sel = next((m for m in meta if m.get("selected")), None)
-                return (locks["theme_locked"],
-                        str(sel.get("ratingKey") or sel.get("key")) if sel else None,
-                        len(meta))
-
-            steps: list = []
+            rows = []
             with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                was_locked, entry_before, entries_before = _state(plex)
-                if was_locked is None:
-                    return {"ok": False, "rating_key": rk,
-                            "error": "could not read the lock flag — nothing to conclude"}
-                if not entry_before:
-                    return {"ok": False, "rating_key": rk,
-                            "error": "this row has no theme selected, so there is nothing "
-                                     "to delete and nothing to learn. Pick an "
-                                     "agent-served row."}
-                if not entry_before.startswith("metadata://"):
-                    return {"ok": False, "rating_key": rk,
-                            "entry": entry_before,
-                            "error": "this theme is an upload:// entry (motif's or a "
-                                     "user's), not one Plex's agent supplied — the agent "
-                                     "was never going to restore it, so the test could "
-                                     "not answer anything."}
+                for cr in cands:
+                    rk = str(cr["rating_key"])
+                    got = plex.get_themes(rating_key=rk)
+                    b = got.get("body")
+                    meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
+                        if isinstance(b, dict) else []
+                    sel = next((m for m in meta if m.get("selected")), None)
+                    # the ONLY question that matters, and the flag cannot answer it:
+                    # does Plex actually deliver bytes for this item's theme?
+                    serves = plex.verify_theme_claim(rk)
+                    rows.append({
+                        "rating_key": rk, "title": cr["title"],
+                        "entries": len(meta),
+                        "selected_entry": (str(sel.get("ratingKey") or sel.get("key"))
+                                           if sel else None),
+                        "plex_serves_a_theme": serves,
+                        # entries in the collection + nothing selected = exactly the state
+                        # an LPS delete leaves behind. Anything else can't answer.
+                        "answers_the_question": bool(meta) and sel is None
+                                                and serves is not None,
+                    })
 
-                # ── the safety net, BEFORE touching anything
-                fetched = plex.fetch_theme_bytes(item_rating_key=rk,
-                                                 entry_uri=entry_before)
-                blob = fetched.get("bytes") if fetched.get("ok") else None
-                if not blob:
-                    return {"ok": False, "rating_key": rk,
-                            "error": f"could not capture this theme's bytes "
-                                     f"({fetched.get('error')}) — without a way back this "
-                                     f"experiment is not worth running."}
-                if len(blob) > THEME_UPLOAD_CEILING_BYTES:
-                    return {"ok": False, "rating_key": rk, "bytes": len(blob),
-                            "error": f"this theme is {len(blob) / 1048576:.1f}MB — over "
-                                     f"the upload ceiling, so a re-upload could not "
-                                     f"restore it. Pick a smaller row."}
-                steps.append({"step": "captured_bytes", "bytes": len(blob)})
-
-                # ── 1. the LPS operation itself
-                deleted = plex.delete_theme(rating_key=rk)
-                locked_now, entry_now, _ = _state(plex)
-                steps.append({"step": "deleted", "ok": deleted,
-                              "theme_locked_after_delete": locked_now,
-                              "selected_entry_after_delete": entry_now})
-
-                # ── 2. refresh while LOCKED — the LPS path exactly as it ships today
-                plex.refresh(rk)
-                entry_locked_phase = entry_now
-                for _ in range(_REREAD_POLLS):
-                    _t.sleep(_REREAD_POLL_S)
-                    _, entry_locked_phase, _ = _state(plex)
-                    if entry_locked_phase:
-                        break
-                steps.append({"step": "refresh_while_locked",
-                              "selected_entry": entry_locked_phase,
-                              "agent_restored": bool(entry_locked_phase)})
-
-                # ── 3. only if that failed: the same refresh with the field OPEN
-                entry_unlocked_phase, unlock_took = None, None
-                if not entry_locked_phase:
-                    plex.set_theme_field_lock(rating_key=rk, locked=False)
-                    unlock_took = plex.get_field_locks(
-                        rating_key=rk)["theme_locked"] is False
-                    steps.append({"step": "unlocked", "flag_moved": unlock_took})
-                    if unlock_took:
-                        plex.refresh(rk)
-                        for _ in range(_REREAD_POLLS):
-                            _t.sleep(_REREAD_POLL_S)
-                            _, entry_unlocked_phase, _ = _state(plex)
-                            if entry_unlocked_phase:
-                                break
-                        steps.append({"step": "refresh_while_unlocked",
-                                      "selected_entry": entry_unlocked_phase,
-                                      "agent_restored": bool(entry_unlocked_phase)})
-
-                # ── 4. recover if Plex still has nothing
-                recovered, recover_entry = None, None
-                if not entry_locked_phase and not entry_unlocked_phase:
-                    ok_up, status, _snip = plex.upload_theme(
-                        rating_key=rk, audio_bytes=blob)
-                    _t.sleep(_REREAD_POLL_S)
-                    _, recover_entry, _ = _state(plex)
-                    recovered = bool(recover_entry)
-                    steps.append({"step": "recovered_by_reupload", "ok": ok_up,
-                                  "http_status": status,
-                                  "selected_entry": recover_entry,
-                                  "note": "re-selected as upload:// — same audio, "
-                                          "different provenance than the agent's "
-                                          "metadata:// entry"})
-                    if not recovered:
-                        log.error("lps-lock-experiment: rk=%s has NO theme and the "
-                                  "re-upload recovery FAILED (http %s). Its captured "
-                                  "bytes are gone with this request — restore by hand.",
-                                  rk, status)
-
-                # leave the flag as we found it
-                plex.set_theme_field_lock(rating_key=rk, locked=was_locked)
-                final_locked, final_entry, final_entries = _state(plex)
-
-            if entry_locked_phase:
-                verdict = ("LEAD DEAD: Plex's agent restored the theme WHILE THE FIELD "
-                           "WAS LOCKED. The lock does not stop the agent, so LET PLEX "
-                           "SERVE and the SWITCH api→file teardown are not degraded by "
-                           "it, and motif does not need to unlock after delete_theme.")
-            elif entry_unlocked_phase:
-                verdict = ("LEAD CONFIRMED: the theme came back ONLY once the field was "
-                           "UNLOCKED. The lock left by every motif delete_theme is what "
-                           "stops Plex's agent from supplying a theme — LET PLEX SERVE "
-                           "and the SWITCH api→file teardown have been degraded for every "
-                           "row motif ever deleted from. Fix: unlock after every delete.")
+            useful = [r for r in rows if r["answers_the_question"]]
+            served = [r for r in useful if r["plex_serves_a_theme"]]
+            bare = [r for r in useful if not r["plex_serves_a_theme"]]
+            if not useful:
+                verdict = ("no row here could answer it — every sampled row either has an "
+                           "empty theme collection (so Plex has nothing to serve, "
+                           "selected or not) or could not be read. INCONCLUSIVE, not a "
+                           "pass. Run the LPS lock test on an agent-served row to create "
+                           "the state deliberately.")
+            elif bare and not served:
+                verdict = (f"Plex serves NOTHING on {len(bare)} row(s) that still have "
+                           f"entries in the collection with nothing selected. That is the "
+                           f"exact state a LET PLEX SERVE delete leaves behind — so LPS "
+                           f"strands the item silently, and the entries surviving the "
+                           f"delete are cold comfort. REAL BUG.")
+            elif served and not bare:
+                verdict = (f"Plex DOES serve a theme on {len(served)} row(s) with entries "
+                           f"and nothing selected — the `selected` flag is not what makes "
+                           f"it play. LET PLEX SERVE has always worked; it just never "
+                           f"depended on the agent re-writing after the delete. Nothing "
+                           f"to fix.")
             else:
-                verdict = ("NEITHER: the agent did not restore the theme locked OR "
-                           "unlocked, so the lock is not the variable here — Plex simply "
-                           "does not re-supply a deleted theme on refresh. That is its "
-                           "own finding: LET PLEX SERVE cannot be relying on the agent "
-                           "re-writing after the delete." +
-                           ("" if recovered else
-                            " WARNING: the recovery re-upload did NOT take — this row has "
-                            "no theme right now and needs a manual restore."))
-            if entry_unlocked_phase:
-                log.warning("lps-lock-experiment: rk=%s regained a theme ONLY after "
-                            "unlocking — the delete's lock blocks Plex's agent.", rk)
+                verdict = (f"MIXED: {len(served)} unselected row(s) serve, {len(bare)} do "
+                           f"not. The flag alone does not decide it — something else "
+                           f"differs between them and is worth finding before trusting "
+                           f"LPS.")
+            if bare:
+                log.warning("unselected-serves-probe: %s row(s) have theme entries but "
+                            "Plex serves nothing (rks %s) — the state an LPS delete "
+                            "leaves.", len(bare), [r["rating_key"] for r in bare])
             return {
-                "ok": True, "rating_key": rk,
-                "theme_locked_before": was_locked,
-                "entry_before": entry_before, "entries_before": entries_before,
-                "captured_bytes": len(blob),
-                "steps": steps,
-                "agent_restored_while_locked": bool(entry_locked_phase),
-                "agent_restored_once_unlocked": bool(entry_unlocked_phase),
-                "unlock_flag_moved": unlock_took,
-                "recovered_by_reupload": recovered,
-                "final_theme_locked": final_locked,
-                "final_selected_entry": final_entry,
-                "final_entries": final_entries,
-                "row_has_a_theme_now": bool(final_entry),
+                "ok": True, "sampled": len(rows), "rows": rows,
+                "rows_that_answer": len(useful),
+                "unselected_and_served": len(served),
+                "unselected_and_bare": len(bare),
                 "verdict": verdict,
             }
-
-        return await run_in_threadpool(_run)
-
-    @app.post("/api/admin/plex/theme-unlock-experiment")
-    async def api_admin_plex_theme_unlock_experiment(
-        request: Request, db: Path = Depends(get_db_path),
-    ):
-        """v0.51.181: on ONE named row — does unlocking let Plex supply a theme again?
-
-        This is the only thing that can settle the lock lead. The probe can find rows that
-        are LOCKED with no theme, but that shape has innocent explanations too (motif never
-        had bytes to push; the known stale-plex_upload/RP class). Correlation on a sample
-        cannot separate them. An intervention can: unlock the field, refresh, and see
-        whether a theme appears where none could before.
-
-          - a theme appears  → the lock WAS blocking recovery. LET PLEX SERVE and the
-            SWITCH api→file teardown are degraded for every row motif ever deleted from,
-            and the fix is to unlock after every delete_theme.
-          - nothing appears  → the lock is not what is stopping this row. The lead dies
-            and the row's problem is elsewhere (canonical missing, needs a re-push).
-
-        Deliberately per-row and operator-named: nothing here should sweep the library on
-        a hunch. Restores the original lock state either way, so the experiment leaves no
-        residue — a theme that arrived is not un-arrived by re-locking. Never deletes,
-        never uploads: it cannot strand an item. Threadpool (class-12)."""
-        _require_admin(request)
-        import time as _t
-
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
-        rk = str((body or {}).get("rating_key") or "").strip()
-        if not rk:
-            return {"ok": False, "error": "name a rating_key — this experiment is "
-                                          "deliberately one row at a time"}
-
-        def _run():
-            if not settings.plex_url or not settings.plex_token:
-                return {"ok": False, "error": "Plex is not configured"}
-            cfg = PlexConfig(
-                url=settings.plex_url, token=settings.plex_token,
-                movie_section=settings.plex_movie_section,
-                tv_section=settings.plex_tv_section, enabled=True,
-            )
-
-            def _state(plex):
-                locks = plex.get_field_locks(rating_key=rk)
-                got = plex.get_themes(rating_key=rk)
-                b = got.get("body")
-                meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
-                    if isinstance(b, dict) else []
-                sel = next((m for m in meta if m.get("selected")), None)
-                return (locks["theme_locked"],
-                        str(sel.get("ratingKey") or sel.get("key")) if sel else None,
-                        len(meta))
-
-            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                was_locked, entry_before, entries_before = _state(plex)
-                if was_locked is None:
-                    return {"ok": False, "rating_key": rk,
-                            "error": "could not read the lock flag — nothing to conclude"}
-                if not was_locked:
-                    return {"ok": True, "rating_key": rk, "already_unlocked": True,
-                            "theme_locked_before": False,
-                            "selected_entry_before": entry_before,
-                            "verdict": "this row's theme field is NOT locked, so the lock "
-                                       "cannot be what stops Plex supplying a theme here. "
-                                       "Pick a row the probe reported as locked."}
-                # v0.51.182: the subject must be THEMELESS. v0.51.181 accepted rk 497736,
-                # which was locked and already SERVING, then reported gained_a_theme:false
-                # — trivially true and totally uninformative. "Did a theme appear?" is
-                # unanswerable where one was already there; a probe that answers anyway is
-                # the same gap-reads-as-a-result shape this arc keeps hitting.
-                if entry_before:
-                    return {"ok": False, "rating_key": rk,
-                            "selected_entry_before": entry_before,
-                            "error": "this row ALREADY has a theme selected, so 'did a "
-                                     "theme appear while unlocked?' cannot answer "
-                                     "anything. Pick a row that is locked AND has no "
-                                     "theme (lock_lead.locked_with_no_theme)."}
-                unlock_status = plex.set_theme_field_lock(rating_key=rk, locked=False)
-                # the status proves nothing (v0.51.178) — re-read it.
-                now_locked, _, _ = _state(plex)
-                if now_locked:
-                    return {"ok": False, "rating_key": rk,
-                            "unlock_http_status": unlock_status,
-                            "error": "the unlock did not move the flag, so the experiment "
-                                     "never ran — no verdict"}
-                refreshed = plex.refresh(rk)
-                entry_after, entries_after = entry_before, entries_before
-                for _ in range(_REREAD_POLLS):
-                    _t.sleep(_REREAD_POLL_S)
-                    _, entry_after, entries_after = _state(plex)
-                    if entry_after and entry_after != entry_before:
-                        break
-                gained = bool(entry_after) and entry_after != entry_before
-                # restore: measure, don't change things. A theme that arrived stays.
-                plex.set_theme_field_lock(rating_key=rk, locked=True)
-                restored, _, _ = _state(plex)
-
-            if gained:
-                log.warning("theme-unlock-experiment: rk=%s gained a theme (%s) once the "
-                            "field was UNLOCKED — the lock was blocking recovery. Every "
-                            "motif delete_theme locks the field and nothing unlocks it.",
-                            rk, entry_after)
-            return {
-                "ok": True, "rating_key": rk, "already_unlocked": False,
-                "theme_locked_before": True, "unlock_http_status": unlock_status,
-                "refreshed": refreshed, "waited_s": _REREAD_POLLS * _REREAD_POLL_S,
-                "selected_entry_before": entry_before,
-                "selected_entry_after": entry_after,
-                "entries_before": entries_before, "entries_after": entries_after,
-                "gained_a_theme": gained,
-                "lock_restored": restored,
-                "verdict": (
-                    "UNLOCKING WORKED — Plex supplied a theme once the field was open. "
-                    "The lock WAS blocking recovery, so LET PLEX SERVE and the SWITCH "
-                    "api→file teardown are degraded on every row motif deleted from; the "
-                    "fix is to unlock after every delete_theme."
-                    if gained else
-                    "no theme appeared while unlocked, so on this row the lock is NOT "
-                    "what's stopping Plex — the lead is not supported here. The row's "
-                    "problem is elsewhere (no canonical to push, or a stale upload needing "
-                    "a re-push). Plex's agent may also simply have no theme to give; try "
-                    "another locked row before concluding."),
-            }
-
-        return await run_in_threadpool(_run)
-
-    @app.post("/api/admin/loudness/theme-lock-probe")
-    async def api_admin_loudness_theme_lock_probe(
-        request: Request, db: Path = Depends(get_db_path),
-    ):
-        """v0.51.178: is Plex's `theme` field LOCKED, and does an unlock actually work?
-
-        The open question. v0.51.173 measured a refresh failing to re-read a changed
-        sidecar. v0.51.177 then concluded the lock was not the cause — off an unlock PUT
-        that returned 200. But a 200 is not evidence the flag moved: that unlock uses the
-        metadata-endpoint shape, while Plex's field-lock API conventionally goes through
-        the SECTION endpoint with type= + id=, so it may have been a silent no-op. If it
-        WAS, then the theme field was locked the whole time, the lock explains the dead
-        refresh, and unlock+refresh is an untested, ceiling-free path to all 2,821 themes.
-        Reporting a probe off a status code is the mistake this arc keeps repeating — so
-        this reads the flag instead.
-
-        Two rows, because they answer different halves:
-          - CONTROL: a row motif has never normalized or uploaded to. Its lock state is
-            the NATURAL state of a sidecar-ingested theme — i.e. what was true when
-            v0.51.173's refresh ran. This is the one that decides the question.
-          - AUDITION: the normalized row. Contaminated (v0.51.177 deleted, "unlocked" and
-            pushed it), so it can't answer the natural-state question — but it's the
-            subject for the shape test.
-
-        The shape test flips the flag, RE-READS to see if it actually moved, then flips it
-        back and re-reads again to confirm the restore. Self-restoring: the probe leaves
-        the field as it found it. Read-only wrt the theme bytes and Plex's selection —
-        nothing here can strand an item the way delete+re-detect did. Threadpool
-        (class-12)."""
-        _require_admin(request)
-        from ..core.db import get_conn
-
-        # Plex's section endpoint keys the lock by item type, not by media_type string.
-        plex_type_of = {"movie": 1, "show": 2, "collection": 18}
-
-        def _run():
-            with get_conn(db) as conn:
-                audition = conn.execute(
-                    "SELECT media_type, tmdb_id, section_id, edition_key FROM local_files "
-                    "WHERE norm_state='normalized' ORDER BY norm_at DESC LIMIT 1"
-                ).fetchone()
-
-                # Every cohort below needs "what does motif think it placed here?", and
-                # the answer separates "Plex lost our theme" from "motif never had one to
-                # give" — the difference the v0.51.180 report could not express about
-                # rk 3487. Keyed the way placements are keyed: on the THEME tmdb_id, not
-                # plex_items.guid_tmdb (NULL for collections — the v1.23.39 bug class its
-                # lint now guards). That is also why every plex_items→placements match
-                # below is done in plain Python: the two ids mean different things and
-                # the SQL shape that conflates them is exactly what the lint forbids.
-                placed_kind = {
-                    (r["media_type"], r["tmdb_id"], r["section_id"],
-                     r["edition_key"] or ""): r["placement_kind"]
-                    for r in conn.execute(
-                        "SELECT media_type, tmdb_id, section_id, edition_key, "
-                        "       placement_kind FROM placements").fetchall()
-                }
-                _motif_mt_of = {"show": "tv", "collection": "collection"}
-
-                def _cand(r, *, motif_mt):
-                    return {"rating_key": str(r["rating_key"]), "tmdb_id": r["tmdb_id"],
-                            "media_type": r["media_type"], "title": r["title"],
-                            "motif_placement": placed_kind.get(
-                                (motif_mt, r["tmdb_id"], r["section_id"],
-                                 r["edition_key"] or ""))}
-
-                # ── CONTROL: rows motif has never normalized or uploaded to. Their lock
-                # state is the NATURAL one — what was true when v0.51.173's refresh ran.
-                # v0.51.179: resolve the rating_key IN the JOIN and take several.
-                # v0.51.178 took ONE candidate (ORDER BY tmdb_id LIMIT 1) and gave up if
-                # it had no plex_items row — guaranteed to fail on a real library, since
-                # synthetic orphan ids are NEGATIVE (adopt.py mints MIN(tmdb_id) - 1), so
-                # the lowest tmdb_id row is always an orphan and an orphan by definition
-                # has no Plex row. It never had a chance.
-                controls = [
-                    _cand(r, motif_mt=r["media_type"]) for r in conn.execute(
-                        "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
-                        "       pi.rating_key, pi.title "
-                        "FROM local_files lf "
-                        "JOIN placements p "
-                        "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
-                        " AND p.section_id=lf.section_id "
-                        " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
-                        " AND p.placement_kind='hardlink' "
-                        "JOIN plex_items pi "
-                        "  ON pi.media_type = CASE lf.media_type WHEN 'tv' THEN 'show' "
-                        "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
-                        " AND pi.guid_tmdb = lf.tmdb_id AND pi.section_id = lf.section_id "
-                        " AND COALESCE(pi.edition_key,'') = COALESCE(lf.edition_key,'') "
-                        "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0 "
-                        "ORDER BY lf.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
-                    ).fetchall()
-                ]
-                # v0.51.179: one error string covered two causes ("no such rows" vs "rows
-                # existed but none resolved"), so the operator's failure couldn't be read.
-                candidate_rows = conn.execute(
-                    "SELECT COUNT(*) c FROM local_files lf JOIN placements p "
-                    "  ON p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
-                    " AND p.section_id=lf.section_id "
-                    " AND COALESCE(p.edition_key,'')=COALESCE(lf.edition_key,'') "
-                    " AND p.placement_kind='hardlink' "
-                    "WHERE lf.norm_state IS NULL AND lf.tmdb_id > 0"
-                ).fetchone()["c"]
-
-                # ── MOTIF'S OWN UPLOADS: a POST locks the theme field (measured).
-                uploads = [
-                    _cand(r, motif_mt=r["media_type"]) for r in conn.execute(
-                        "SELECT p.media_type, p.tmdb_id, p.section_id, p.edition_key, "
-                        "       pi.rating_key, pi.title "
-                        "FROM placements p JOIN plex_items pi "
-                        "  ON pi.media_type = CASE p.media_type WHEN 'tv' THEN 'show' "
-                        "       WHEN 'collection' THEN 'collection' ELSE 'movie' END "
-                        " AND pi.guid_tmdb = p.tmdb_id AND pi.section_id = p.section_id "
-                        " AND COALESCE(pi.edition_key,'') = COALESCE(p.edition_key,'') "
-                        "WHERE p.placement_kind='plex_upload' AND p.tmdb_id > 0 "
-                        "ORDER BY p.tmdb_id LIMIT ?", (_CONTROL_SAMPLE,)
-                    ).fetchall()
-                ]
-
-                # ── PLEX SERVES IT, MOTIF PLACED NOTHING: contains any LPS'd row, i.e.
-                # rows motif DELETED from — and the delete is what locks the field.
-                pserved = []
-                for r in conn.execute(
-                    "SELECT pi.media_type, pi.guid_tmdb AS tmdb_id, pi.rating_key, "
-                    "       pi.title, pi.section_id, pi.edition_key FROM plex_items pi "
-                    "WHERE pi.has_theme = 1 AND pi.guid_tmdb IS NOT NULL "
-                    "  AND pi.guid_tmdb > 0 ORDER BY pi.guid_tmdb LIMIT 500"
-                ).fetchall():
-                    mt = _motif_mt_of.get(r["media_type"], "movie")
-                    if (mt, r["tmdb_id"], r["section_id"],
-                            r["edition_key"] or "") in placed_kind:
-                        continue
-                    pserved.append(_cand(r, motif_mt=mt))
-                    if len(pserved) >= _CONTROL_SAMPLE:
-                        break
-
-                # ── v0.51.181: SIZE the lead before treating it as an emergency — the
-                # move that correctly sized the upload ceiling (v0.51.176). A row can only
-                # be locked-with-no-theme if Plex has no theme for it, and motif already
-                # tracks that as plex_items.has_theme=0, so the COUNT is a local read.
-                # Only the lock needs Plex, so that stays a sample. This is also the
-                # cohort that can actually answer the lead: v0.51.180 found rk 3487 only
-                # by luck of the ordering.
-                stale_uploads = conn.execute(
-                    "SELECT COUNT(*) c FROM placements "
-                    "WHERE placement_kind='plex_upload' AND theme_present=0"
-                ).fetchone()["c"]
-                themeless_cands, plex_themeless, motif_placed_themeless = [], 0, 0
-                for r in conn.execute(
-                    "SELECT media_type, guid_tmdb AS tmdb_id, rating_key, title, "
-                    "       section_id, edition_key FROM plex_items "
-                    "WHERE has_theme = 0 AND guid_tmdb IS NOT NULL ORDER BY guid_tmdb"
-                ).fetchall():
-                    plex_themeless += 1
-                    mt = _motif_mt_of.get(r["media_type"], "movie")
-                    if (mt, r["tmdb_id"], r["section_id"],
-                            r["edition_key"] or "") not in placed_kind:
-                        continue        # motif placed nothing — no theme is expected
-                    motif_placed_themeless += 1
-                    if len(themeless_cands) < _CONTROL_SAMPLE:
-                        themeless_cands.append(_cand(r, motif_mt=mt))
-
-                def _rk(row):
-                    if row is None:
-                        return None
-                    plex_mt = {"tv": "show", "collection": "collection"}.get(
-                        row["media_type"], "movie")
-                    got = conn.execute(
-                        "SELECT rating_key FROM plex_items "
-                        "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
-                        "  AND COALESCE(edition_key,'')=? LIMIT 1",
-                        (plex_mt, row["tmdb_id"], row["section_id"],
-                         row["edition_key"] or ""),
-                    ).fetchone()
-                    return (str(got["rating_key"]), plex_mt) if got else (None, plex_mt)
-
-                audition_rk, audition_mt = _rk(audition) if audition else (None, None)
-
-            if not settings.plex_url or not settings.plex_token:
-                return {"ok": False, "error": "Plex is not configured"}
-            cfg = PlexConfig(
-                url=settings.plex_url, token=settings.plex_token,
-                movie_section=settings.plex_movie_section,
-                tv_section=settings.plex_tv_section, enabled=True,
-            )
-
-            out: dict = {"ok": True}
-            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                # ── read lock + serving state for a set of rows
-                # v0.51.181: `motif_placement` on every sampled row. rk 3487 took three
-                # separate lookups to interpret and the report carried none of them, so
-                # a candidate could not be triaged without a second round trip.
-                def _cand(r, *, motif_mt):
-                    return {"rating_key": str(r["rating_key"]), "tmdb_id": r["tmdb_id"],
-                            "media_type": r["media_type"], "title": r["title"],
-                            "motif_placement": placed_kind.get(
-                                (motif_mt, r["tmdb_id"], r["section_id"],
-                                 r["edition_key"] or ""))}
-
-                def _sample(cands):
-                    got_rows = []
-                    for cr in cands:
-                        rk = cr["rating_key"]
-                        locks = plex.get_field_locks(rating_key=rk)
-                        got = plex.get_themes(rating_key=rk)
-                        b = got.get("body")
-                        meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
-                            if isinstance(b, dict) else []
-                        sel = next((m for m in meta if m.get("selected")), None)
-                        entry = str(sel.get("ratingKey") or sel.get("key")) if sel else None
-                        got_rows.append({
-                            "rating_key": rk, "tmdb_id": cr["tmdb_id"],
-                            "media_type": cr["media_type"], "title": cr["title"],
-                            # what motif thinks it placed here — the difference between
-                            # "Plex lost our theme" and "motif never had one to give".
-                            "motif_placement": cr["motif_placement"],
-                            "theme_locked": locks["theme_locked"],
-                            "locked_fields": locks["locked_fields"],
-                            "read_error": locks["error"],
-                            # a metadata:// entry is what proves a row really is
-                            # sidecar-ingested and not something motif uploaded to — an
-                            # upload:// row's lock says nothing about the natural state.
-                            "selected_entry": entry,
-                            "is_sidecar_entry": bool(
-                                entry and entry.startswith("metadata://")),
-                        })
-                    return got_rows
-
-                rows = _sample(controls)
-                sidecar = [r for r in rows
-                           if r["is_sidecar_entry"] and r["theme_locked"] is not None]
-                locked_n = sum(1 for r in sidecar if r["theme_locked"])
-                out["control"] = {
-                    "candidate_rows": candidate_rows, "sampled": len(rows), "rows": rows,
-                    "sidecar_rows_read": len(sidecar), "sidecar_rows_locked": locked_n,
-                    # None when nothing readable — an unread flag decides nothing.
-                    # Conservative: ANY locked sidecar row keeps the lock alive as an
-                    # explanation rather than closing the door early.
-                    "theme_locked": (None if not sidecar else locked_n > 0),
-                }
-                # v0.51.180: does a locked theme field leave an item Plex CANNOT fill?
-                # v0.51.181: the cohort that can actually answer it is Plex-says-themeless
-                # AND motif-placed. The v0.51.180 sample found one such row (rk 3487,
-                # Star Wars) purely by luck of the ordering.
-                upload_rows, pserved_rows = _sample(uploads), _sample(pserved)
-                themeless_rows = _sample(themeless_cands)
-                out["motif_uploaded_rows"] = upload_rows
-                out["plex_served_rows"] = pserved_rows
-                out["plex_themeless_rows"] = themeless_rows
-                every = rows + upload_rows + pserved_rows + themeless_rows
-                locked_bare = [
-                    # v0.51.181: enough to TRIAGE a candidate without a second round trip.
-                    # rk 3487 needed three separate facts to interpret and the report
-                    # carried none of them.
-                    {"rating_key": r["rating_key"], "title": r["title"],
-                     "tmdb_id": r["tmdb_id"], "media_type": r["media_type"],
-                     "locked_fields": r["locked_fields"],
-                     "motif_placement": r.get("motif_placement")}
-                    for r in every if r["theme_locked"] and not r["selected_entry"]
-                ]
-                locked_serving = sum(
-                    1 for r in every if r["theme_locked"] and r["selected_entry"])
-                out["lock_lead"] = {
-                    "rows_read": sum(1 for r in every if r["theme_locked"] is not None),
-                    "locked_and_serving": locked_serving,
-                    "locked_with_no_theme": locked_bare,
-                    # local, library-wide — the ceiling of how big this could possibly be
-                    "library": {
-                        "plex_items_with_no_theme": plex_themeless,
-                        "motif_placed_but_plex_themeless": motif_placed_themeless,
-                        "known_stale_plex_uploads": stale_uploads,
-                    },
-                    "verdict": _lock_lead_verdict(every, locked_bare, locked_serving,
-                                                  motif_placed_themeless),
-                }
-                if not rows:
-                    out["control"]["error"] = (
-                        "no untouched hardlink-placed row resolved to a plex_items "
-                        "rating_key" if candidate_rows else
-                        "no untouched hardlink-placed rows exist at all")
-
-                # ── the audition row + the shape test
-                if not audition_rk:
-                    out["audition"] = {"error": "no normalized theme — normalize one "
-                                                "first to run the shape test"}
-                    out["verdict"] = _lock_verdict(out["control"].get("theme_locked"),
-                                                   None)
-                    return out
-
-                before = plex.get_field_locks(rating_key=audition_rk)
-                out["audition"] = {
-                    "rating_key": audition_rk,
-                    "theme_locked": before["theme_locked"],
-                    "locked_fields": before["locked_fields"],
-                    "read_error": before["error"],
-                    "note": "contaminated by v0.51.177 (deleted + unlocked + pushed) — "
-                            "the CONTROL row is what answers the natural-state question",
-                }
-                original = before["theme_locked"]
-                if original is None:
-                    out["shape_test"] = {"error": "could not read the flag, so nothing "
-                                                  "here could be verified — no shape test"}
-                    out["verdict"] = _lock_verdict(out["control"].get("theme_locked"),
-                                                   None)
-                    return out
-
-                want = not original
-                tried, working = [], None
-                for shape in ("metadata", "section"):
-                    status = plex.set_theme_field_lock(
-                        rating_key=audition_rk, locked=want, shape=shape,
-                        section_id=audition["section_id"],
-                        plex_type=plex_type_of.get(audition_mt),
-                    )
-                    after = plex.get_field_locks(rating_key=audition_rk)["theme_locked"]
-                    moved = after is not None and after == want
-                    tried.append({"shape": shape, "http_status": status,
-                                  "flag_after": after, "flag_moved": moved})
-                    if moved:
-                        working = shape
-                        break
-
-                # restore with whatever actually worked; leaving the operator's field
-                # flipped is a side effect nobody asked for.
-                restored = None
-                if working:
-                    plex.set_theme_field_lock(
-                        rating_key=audition_rk, locked=original, shape=working,
-                        section_id=audition["section_id"],
-                        plex_type=plex_type_of.get(audition_mt),
-                    )
-                    restored = plex.get_field_locks(
-                        rating_key=audition_rk)["theme_locked"]
-                    if restored != original:
-                        log.warning("theme-lock-probe: rk=%s could NOT be restored to "
-                                    "locked=%s (now %s) — the probe changed Plex state "
-                                    "it could not put back", audition_rk, original,
-                                    restored)
-
-                out["shape_test"] = {
-                    "original_locked": original, "flipped_to": want,
-                    "tried": tried, "working_shape": working,
-                    "restored_locked": restored,
-                    "restored_ok": (restored == original) if working else True,
-                }
-                if working is None:
-                    log.warning("theme-lock-probe: NEITHER unlock shape moved the theme "
-                                "flag on rk=%s (statuses %s) — v0.51.177's unlock was a "
-                                "silent no-op and its 200 meant nothing", audition_rk,
-                                [t["http_status"] for t in tried])
-                out["verdict"] = _lock_verdict(out["control"].get("theme_locked"), working)
-            return out
 
         return await run_in_threadpool(_run)
 

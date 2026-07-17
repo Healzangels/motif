@@ -8083,116 +8083,35 @@
 
     // v0.51.173: does a Plex metadata refresh make it re-read the changed sidecar?
     // MEASURED, not assumed — the probe re-checks what Plex serves after refreshing.
-    // v0.51.178: reads the theme field's lock flag rather than trusting a status code.
-    // The control rows answer the natural-state question; v0.51.180 also samples the
-    // cohorts most likely to BE locked, because motif locks the field on every
-    // delete_theme and never unlocks it.
-    const lockBtn = document.getElementById('loud-theme-lock-btn');
-    if (lockBtn) {
-      lockBtn.addEventListener('click', async () => {
-        lockBtn.disabled = true;
-        const o = lockBtn.textContent;
-        lockBtn.textContent = '// READING LOCK FLAGS…';
+    // v0.51.183: the last thread off the lock arc. v0.51.182 proved Plex's agent never
+    // re-selects after a delete, so LET PLEX SERVE cannot work the way its name implies —
+    // either Plex plays the collection entry without the `selected` flag (LPS is fine) or
+    // it plays nothing (LPS strands items). Reads the SERVING association, not the flag.
+    const unselBtn = document.getElementById('loud-unselected-btn');
+    if (unselBtn) {
+      unselBtn.addEventListener('click', async () => {
+        unselBtn.disabled = true;
+        const o = unselBtn.textContent;
+        unselBtn.textContent = '// CHECKING WHAT PLAYS…';
         try {
-          const rep = await api('POST', '/api/admin/loudness/theme-lock-probe');
+          const rep = await api('POST', '/api/admin/plex/unselected-serves-probe');
           out.textContent = JSON.stringify(rep, null, 2);
           out.style.display = '';
           if (!rep.ok) {
-            status.textContent = '✗ ' + (rep.error || 'lock probe failed');
+            status.textContent = '✗ ' + (rep.error || 'probe failed');
             status.className = 'form-status form-status-fail';
           } else {
-            // the CONTROL row's flag is the answer; an unread flag is not a pass.
-            const known = rep.control && rep.control.theme_locked !== undefined
-              && rep.control.theme_locked !== null;
-            const lead = rep.lock_lead && rep.lock_lead.locked_with_no_theme
-              && rep.lock_lead.locked_with_no_theme.length;
-            status.textContent = (known && !lead ? '✓ ' : '✗ ') + rep.verdict
-              + (lead ? ' — ' + rep.lock_lead.verdict : '');
-            status.className = 'form-status '
-              + (known && !lead ? 'form-status-ok' : 'form-status-fail');
+            // finding bare rows is BAD news; answering nothing is not good news either.
+            const good = rep.rows_that_answer > 0 && rep.unselected_and_bare === 0;
+            status.textContent = (good ? '✓ ' : '✗ ') + rep.verdict;
+            status.className = 'form-status ' + (good ? 'form-status-ok' : 'form-status-fail');
           }
         } catch (e) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 'lock probe failed');
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'probe failed');
           status.className = 'form-status form-status-fail';
         } finally {
-          lockBtn.disabled = false;
-          lockBtn.textContent = o;
-        }
-      });
-    }
-
-    // v0.51.181: the INTERVENTION that settles the lock lead on one named row. The probe
-    // can only find rows LOCKED with no theme, and that shape has innocent explanations
-    // (nothing was ever pushed; the known stale-upload/RP class) — correlation can't
-    // separate them. Unlock, refresh, and see if a theme appears where none could before.
-    const unlockBtn = document.getElementById('loud-unlock-test-btn');
-    if (unlockBtn) {
-      unlockBtn.addEventListener('click', async () => {
-        const rk = prompt('rating_key to test (from lock_lead.locked_with_no_theme):');
-        if (!rk) return;
-        unlockBtn.disabled = true;
-        const o = unlockBtn.textContent;
-        unlockBtn.textContent = '// UNLOCKING + WATCHING…';
-        try {
-          const rep = await api('POST', '/api/admin/plex/theme-unlock-experiment',
-                                { rating_key: rk.trim() });
-          out.textContent = JSON.stringify(rep, null, 2);
-          out.style.display = '';
-          if (!rep.ok) {
-            status.textContent = '✗ ' + (rep.error || 'unlock experiment failed');
-            status.className = 'form-status form-status-fail';
-          } else {
-            // gaining a theme CONFIRMS the lead — which is bad news, so it is not a ✓.
-            status.textContent = (rep.gained_a_theme ? '✗ ' : '✓ ') + rep.verdict;
-            status.className = 'form-status '
-              + (rep.gained_a_theme ? 'form-status-fail' : 'form-status-ok');
-          }
-        } catch (e) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 'experiment failed');
-          status.className = 'form-status form-status-fail';
-        } finally {
-          unlockBtn.disabled = false;
-          unlockBtn.textContent = o;
-        }
-      });
-    }
-
-    // v0.51.182: the DECISIVE test. Every earlier witness was unusable (locked-and-
-    // serving, or themeless for its own reasons). An agent-served row proves Plex HAS a
-    // theme to give, so deleting it and refreshing locked-then-unlocked isolates the lock
-    // as the only variable. MUTATES a real row — captures the bytes first and recovers.
-    const lpsBtn = document.getElementById('loud-lps-test-btn');
-    if (lpsBtn) {
-      lpsBtn.addEventListener('click', async () => {
-        const rk = prompt('AGENT-SERVED rating_key (motif_placement: null and a '
-          + 'metadata://themes/tv.plex.agents.* entry).\n\nThis DELETES that theme to '
-          + 'watch whether Plex puts it back. The bytes are captured first and restored '
-          + 'if Plex does not — but on that path the row ends up serving an upload:// '
-          + 'copy instead of the agent\'s own entry.');
-        if (!rk) return;
-        lpsBtn.disabled = true;
-        const o = lpsBtn.textContent;
-        lpsBtn.textContent = '// DELETING + WATCHING…';
-        try {
-          const rep = await api('POST', '/api/admin/plex/lps-lock-experiment',
-                                { rating_key: rk.trim() });
-          out.textContent = JSON.stringify(rep, null, 2);
-          out.style.display = '';
-          if (!rep.ok) {
-            status.textContent = '✗ ' + (rep.error || 'LPS lock test failed');
-            status.className = 'form-status form-status-fail';
-          } else {
-            // confirming the lead is BAD news, and so is a row left with no theme.
-            const bad = rep.agent_restored_once_unlocked || !rep.row_has_a_theme_now;
-            status.textContent = (bad ? '✗ ' : '✓ ') + rep.verdict;
-            status.className = 'form-status ' + (bad ? 'form-status-fail' : 'form-status-ok');
-          }
-        } catch (e) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 'LPS lock test failed');
-          status.className = 'form-status form-status-fail';
-        } finally {
-          lpsBtn.disabled = false;
-          lpsBtn.textContent = o;
+          unselBtn.disabled = false;
+          unselBtn.textContent = o;
         }
       });
     }

@@ -329,17 +329,30 @@ not line numbers — they don't go stale.
           the entry flips `metadata://` → `upload://`, and Plex **500s
           over ~10MB** — 82 of 2,821 themes on the operator's library
           (v0.51.176), which must be skipped EXPLICITLY, never silently.
-      **A POST to `/themes` LOCKS the item's `theme` field** (measured,
-      rk 261711: `locked_fields: [thumb, theme, collection]`). Naturally
-      Plex locks `thumb`/`collection`/`label` but NOT `theme`. Nothing in
-      motif ever UNLOCKS it (`set_theme_field_lock` exists but has no
-      production caller), and `delete_collection_theme` locks it too — so
-      every `delete_theme` call leaves the field locked forever. **Open
-      question (v0.51.180)**: LET PLEX SERVE and the SWITCH api→file
-      teardown both delete and then rely on an agent writing the theme,
-      which a locked field is exactly what prevents. The `theme-lock-probe`
-      admin endpoint samples for the smoking gun (a row locked AND with no
-      selected entry).
+    - **The `theme` field lock: measured, and NOT a problem (v0.51.178-183).**
+      Do not re-open this. Both a POST to `/themes` and a DELETE on singular
+      `/theme` LOCK the item's `theme` field (measured, rk 261711 + rk
+      302080 went in unlocked and came out locked), and nothing in motif
+      ever unlocks it. Plex naturally locks `thumb`/`collection`/`label`
+      but NOT `theme` (6/6 untouched sidecar rows unlocked, 694 candidates).
+      That made a lock left by every `delete_theme` look like it might stop
+      Plex's agent from re-supplying a theme — which would have degraded
+      LET PLEX SERVE and the SWITCH api→file teardown. **It does not.** The
+      v0.51.182 intervention deleted an agent-served theme (rk 302080,
+      Wildboyz) and refreshed with the field LOCKED and then UNLOCKED: the
+      agent restored nothing either way. Identical outcome, so the lock is
+      not the variable. A locked field also does not stop Plex SERVING an
+      already-selected theme (8/8 locked rows served).
+      **What that experiment DID find**: Plex's agent never re-selects or
+      re-adds a theme entry after a delete, at all. So LET PLEX SERVE
+      cannot work by "the agent writes a new theme" — the entries survive
+      the delete but nothing is selected. Whether Plex then plays an
+      unselected collection entry (⇒ LPS always worked) or plays nothing
+      (⇒ LPS strands items) is what `unselected-serves-probe` reads, via
+      `verify_theme_claim` (HEAD singular `/theme` = the serving
+      association). **Read the association, not the `selected` flag** —
+      `_measure_plex_serving` falls back to `meta[0]` when nothing is
+      selected and so cannot tell those apart.
     - **Investigation cadence pattern (v1.18.31-40)**: 6 read-
       mostly probe tags before any production change. Each
       probe characterized one piece of Plex's behavior (GET
