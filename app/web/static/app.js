@@ -17842,6 +17842,76 @@
     // v0.51.64 (the user: prefers the original demo labels): renamed
     // IDS/LINKS/TIMELINE/ON DISK → IDENTITY/SOURCE/HISTORY/FILE & PLACEMENT.
     // htmlEscape(title) so the '&' in "file & placement" is a literal ampersand.
+    // v0.51.190: the LOUDNESS block. Plex plays themes on hover, so mixed-source
+    // loudness is the library's loudest quality defect — the operator's audit measured a
+    // -14.5 LUFS median with outliers to -5.2 CLIPPING at +2.9 dBTP. This is where a
+    // single theme's level is legible and actionable without the Settings audition.
+    //
+    // Shows BOTH sides deliberately: a leveled row states the level it plays at AND the
+    // raw level it came from, because "-18.8" alone doesn't tell you whether the gain
+    // did anything. The raw level is DERIVED (loudness_i - norm_gain_db) rather than
+    // stored; the raw true-peak is NOT recoverable (norm_orig_* keeps hashes, not
+    // measurements), so it is omitted rather than invented.
+    const _loudnessRows = (() => {
+      if (!lf) return '';
+      const li = lf.loudness_i;
+      // v0.51.163: a silent theme measures -inf and any consumer must assume it could be
+      // in the DB from a pre-v0.51.163 build. Not a number = say so, never render "-inf".
+      const measured = (typeof li === 'number' && Number.isFinite(li)) ? li : null;
+      if (measured === null) {
+        return `<dt>loudness</dt><dd class="muted small">not measured${
+          li === null || li === undefined ? '' : ' (unmeasurable — silent?)'
+        } · run the <a href="/admin/loudness">LOUDNESS AUDIT</a></dd>`;
+      }
+      const tp = (typeof lf.loudness_tp === 'number' && Number.isFinite(lf.loudness_tp))
+        ? lf.loudness_tp : null;
+      const leveled = lf.norm_state === 'normalized';
+      const gain = (typeof lf.norm_gain_db === 'number') ? lf.norm_gain_db : null;
+      // the raw level a leveled row came from. Derived, not stored.
+      const rawI = (leveled && gain !== null) ? (measured - gain) : null;
+      const CEIL = 10485760;   // mirrors plex.THEME_UPLOAD_CEILING_BYTES
+      const tooBig = typeof lf.file_size === 'number' && lf.file_size > CEIL;
+
+      const lvl = `<dt>plays at</dt><dd class="muted small">${measured.toFixed(1)} LUFS${
+        tp !== null ? ` · peak ${tp.toFixed(1)} dBTP${tp > 0 ? ' <span class="accent-red">(clipping)</span>' : ''}` : ''
+      }</dd>`;
+      const state = leveled
+        ? `<dt>leveled</dt><dd class="muted small" title="mp3gain edited this file's gain field — lossless, and reversible from the file's own undo tag.">${
+            gain !== null ? `${gain > 0 ? '+' : ''}${gain.toFixed(1)} dB` : 'yes'
+          }${lf.norm_target !== null && lf.norm_target !== undefined
+              ? ` to a ${Number(lf.norm_target).toFixed(0)} LUFS target` : ''}${
+            lf.norm_at ? ` · ${fmt.timeAuto(lf.norm_at)}` : ''}</dd>`
+        : `<dt>leveled</dt><dd class="muted small">no — raw source loudness</dd>`;
+      const raw = rawI !== null
+        ? `<dt>raw source</dt><dd class="muted small" title="What this theme measured BEFORE motif leveled it. Derived from the applied gain; // UNDO returns it to exactly this.">${rawI.toFixed(1)} LUFS</dd>`
+        : '';
+
+      // v0.51.190: the design-system split (app.js ~18570) — btn-warn for MUTATING.
+      // Both of these rewrite real audio.
+      let act;
+      if (tooBig) {
+        act = `<dd class="muted small accent-red" title="Plex 500s on a theme POST over ~10MB, and re-upload is the ONLY way to tell Plex the bytes changed (CLAUDE.md § 11). Leveling this would change the file and change nothing you can hear.">${
+          fmt.bytes(lf.file_size)} — over Plex's upload ceiling, so leveling it could not reach Plex</dd>`;
+      } else if (leveled) {
+        act = `<dd><button class="btn btn-tiny btn-warn" data-act="loud-undo"
+                 data-mt="${htmlEscape(lf.media_type || '')}"
+                 data-id="${htmlEscape(lf.tmdb_id ?? '')}"
+                 data-sec="${htmlEscape(lf.section_id || '')}"
+                 data-edn="${htmlEscape(lf.edition_key || '')}"
+                 title="Restore the original bytes from mp3gain's undo tag, and put Plex back to serving them.">// UNDO LEVELING</button>
+               <span id="loud-result" class="muted small info-probe-meta"></span></dd>`;
+      } else {
+        act = `<dd><button class="btn btn-tiny btn-warn" data-act="loud-normalize"
+                 data-mt="${htmlEscape(lf.media_type || '')}"
+                 data-id="${htmlEscape(lf.tmdb_id ?? '')}"
+                 data-sec="${htmlEscape(lf.section_id || '')}"
+                 data-edn="${htmlEscape(lf.edition_key || '')}"
+                 title="Level this theme with mp3gain and push it to Plex. Lossless and reversible — Plex plays its own ingested copy, so motif re-uploads to make the change audible.">// LEVEL THIS THEME</button>
+               <span id="loud-result" class="muted small info-probe-meta"></span></dd>`;
+      }
+      return `${lvl}${state}${raw}<dt>${tooBig ? 'cannot level' : 'action'}</dt>${act}`;
+    })();
+
     const _grp = (title, rows) => rows.trim()
       ? `<div class="dlg-section info-group"><h4>${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>`
       : '';
@@ -17890,6 +17960,7 @@
       ${_grp('source', _linksRows)}
       ${_grp('history', _timelineRows)}
       ${_grp('file & placement', _onDiskRows)}
+      ${_grp('loudness', _loudnessRows)}
       ${recoveryPlaceholder}
       ${diffSection}
       ${(() => {
@@ -18023,6 +18094,67 @@
     // the URL is dead, the row's failure_kind is also written
     // server-side (the user's option B: preemptive surface) — a
     // background loadLibrary catches it on the next tick.
+    // v0.51.190: LEVEL / UNDO. Both mutate real audio AND re-upload to Plex, so the
+    // result line leads with what Plex is actually serving (plex_is_serving_it), not with
+    // the HTTP status — the recurring bug of this arc was reporting success off a 200
+    // while Plex kept playing the old bytes. Bound explicitly (not delegated), mirroring
+    // probe-tdb below.
+    for (const act of ['loud-normalize', 'loud-undo']) {
+      body.querySelector(`button[data-act="${act}"]`)?.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const btn = ev.currentTarget;
+        const slot = body.querySelector('#loud-result');
+        const undo = act === 'loud-undo';
+        const orig = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = undo ? '// RESTORING…' : '// LEVELING…';
+        if (slot) slot.textContent = '';
+        try {
+          const r = await fetch(`/api/admin/loudness/${undo ? 'undo-one' : 'normalize-one'}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              media_type: btn.dataset.mt,
+              tmdb_id: Number(btn.dataset.id),
+              section_id: btn.dataset.sec,
+              edition_key: btn.dataset.edn,
+            }),
+          });
+          const j = await r.json().catch(() => ({}));
+          if (!r.ok || !j.ok) {
+            if (slot) {
+              slot.className = 'accent-red small info-probe-meta';
+              slot.textContent = j.error || j.note || `failed (${r.status})`;
+            }
+            btn.disabled = false;
+            btn.textContent = orig;
+            return;
+          }
+          // The mutation succeeded; whether PLEX got it is a separate fact.
+          const served = undo ? j.plex_is_serving_the_restore : j.plex_is_serving_it;
+          if (slot) {
+            slot.className = (served === false ? 'accent-red' : 'muted') + ' small info-probe-meta';
+            slot.textContent = served === true
+              ? (undo ? 'restored — Plex is serving the original' : 'leveled — Plex is serving it')
+              : served === false
+                ? (undo ? 'restored on disk, but Plex is NOT serving it yet' : 'leveled on disk, but Plex is NOT serving it yet')
+                : (undo ? 'restored on disk — could not confirm Plex' : 'leveled on disk — could not confirm Plex');
+          }
+          btn.textContent = '// DONE';
+          // re-open so the block re-reads the row it just changed
+          setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey), 900);
+        } catch (e) {
+          if (slot) {
+            slot.className = 'accent-red small info-probe-meta';
+            slot.textContent = 'request failed';
+          }
+          btn.disabled = false;
+          btn.textContent = orig;
+        }
+      });
+    }
+
     body.querySelector('button[data-act="probe-tdb"]')?.addEventListener('click', async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
