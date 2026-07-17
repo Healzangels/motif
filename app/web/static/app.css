@@ -4697,6 +4697,19 @@ body.auth-page .auth-card { margin: 0; }
   vertical-align: middle;
   user-select: none;
 }
+/* v0.51.192: loudness-leveled marker. FIXED across themes — it ENCODES meaning
+   (theme SPLIT). Cyan because --ok and --src-t are the same #6dffb5 (a green badge
+   would read as the ThemerrDB source letter) and --amber is .tier-badge-4k, which
+   sits in this same cell. Letter-spacing is dropped: the inherited 0.5px from
+   .tier-badge wedges the meter bars apart into three separate marks. */
+.tier-badge-lvl {
+  color: var(--cyan);
+  border: 1px solid rgba(var(--cyan-rgb), 0.55);
+  background: rgba(var(--cyan-rgb), 0.12);
+  letter-spacing: 0;
+  padding: 1px 4px;
+}
+
 .tier-badge-4k {
   color: var(--amber-bright);
   border: 1px solid var(--amber);

@@ -3230,6 +3230,11 @@ def _library_main_query(
                -- TDB◌ pill render and the ACK DROP / CONVERT TO
                -- MANUAL items in the SOURCE menu.
                t.tdb_dropped_at,
+               -- v0.51.192: loudness state for the title-cell level marker. MUST go
+               -- through the lf_e/lf_g COALESCE pair like every other lf column —
+               -- there is no bare `lf` alias in this query, and reading only lf_e
+               -- would blank the marker for every '' -fallback edition.
+               COALESCE(lf_e.norm_state, lf_g.norm_state) AS norm_state,
                COALESCE(lf_e.file_path, lf_g.file_path) AS file_path, COALESCE(lf_e.source_video_id, lf_g.source_video_id) AS source_video_id, COALESCE(lf_e.provenance, lf_g.provenance) AS provenance, COALESCE(lf_e.source_kind, lf_g.source_kind) AS source_kind,
                -- v1.19.21: surface last_place_attempt_reason so the JS
                -- can render a BK link-badge for backup-only intent

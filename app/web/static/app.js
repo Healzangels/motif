@@ -10759,6 +10759,23 @@
     // (was a type-colored dot the user didn't like) — a neutral .lib-tag pill.
     // Collection rows only; the movies/tv/anime tabs are single-type so it would
     // be noise there.
+    // v0.51.192: the level marker. Deliberately NOT a titleGlyph — that slot is a
+    // strict one-glyph hierarchy reserved for attention signals needing intervention
+    // (v1.12.106), and "this theme's loudness is managed" is a settled state, not a
+    // call to action. It sits with the trailing state badges (4K, lib-tag) instead,
+    // reusing .tier-badge so the decode is identical to its neighbours.
+    //
+    // Presence IS the signal: only leveled rows are marked. Marking the ~2,700 raw rows
+    // would be noise today. NOTE the volume inverts after the bulk pass — then the
+    // interesting rows are the ones that are NOT leveled — so revisit this then.
+    //
+    // Colour is FIXED across themes because it ENCODES meaning (docs/DESIGN_SYSTEM.md
+    // theme SPLIT). Cyan, not green: --ok and --src-t are the SAME #6dffb5, so a green
+    // marker would read as the ThemerrDB source letter. Amber is the 4K badge, in this
+    // very cell.
+    const lvlTag = (it.norm_state === 'normalized')
+      ? '<span class="tier-badge tier-badge-lvl" title="Loudness leveled — motif adjusted this theme\'s gain toward the target so it does not jump out against the rest of the library. Lossless and reversible: open INFO to see the levels or undo it.">\u2582\u2584\u2586</span>'
+      : '';
     const libTag = (it.plex_media_type === 'collection' && it.section_title)
       ? `<span class="lib-tag">${htmlEscape(it.section_title)}</span>`
       : '';
@@ -12178,6 +12195,7 @@
                  truncatable name. -->
             <span class="title-cell-name">${htmlEscape(it.plex_title)}</span>
             ${it.section_is_4k ? '<span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}
+            ${lvlTag}
             ${libTag}
           </div>
         </td>
@@ -18198,7 +18216,11 @@
           srcNode.connect(_loudGainNode).connect(_loudAudioCtx.destination);
           const _reset = () => {
             if (_loudGainNode) _loudGainNode.gain.value = 1.0;
-            if (note) { note.dataset.playing = '0'; note.textContent = 'preview stopped — the player is back to the real file'; }
+            // v0.51.192: keep every state's note SHORT. The old 53-char message was
+            // longer than the ~49-char playing note, so it wrapped to a second line and
+            // the audition row grew taller only when stopped — a visible layout jump the
+            // operator flagged. All three notes now sit on one line beside the button.
+            if (note) { note.dataset.playing = '0'; note.textContent = 'stopped · player restored'; }
           };
           audio.addEventListener('pause', _reset);
           audio.addEventListener('ended', _reset);
@@ -18209,9 +18231,10 @@
         audio.play();
         if (note) {
           note.dataset.playing = '1';
-          const g = _loudGainDb();
-          note.textContent = `playing at ${loudTarget.toFixed(1)} LUFS `
-            + `(${g > 0 ? '+' : ''}${g.toFixed(1)} dB) — nothing written`;
+          // the applied gain is already spelled out in the target row above; the note
+          // only needs the level + the reassurance nothing was written. Kept short so
+          // it never wraps and shifts the row (v0.51.192).
+          note.textContent = `playing at ${loudTarget.toFixed(1)} LUFS · nothing written`;
         }
       } catch (e) {
         if (note) note.textContent = 'preview unavailable';
