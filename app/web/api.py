@@ -26456,6 +26456,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                    "plex_matches_restored_file": False,
                                    "error": "could not fetch or re-post the recorded "
                                             "entry's bytes"}
+                    # v0.51.187: SELF-CORRECT. Re-selecting "what Plex served before" is
+                    # only right if Plex matched the FILE back then — and it might not
+                    # have. rk 261711 proved it on the real library: its recorded entry
+                    # was ITSELF a normalized upload (Plex was already on it when that
+                    # normalize ran), so re-selecting it restored Plex to -18.75 while the
+                    # file went to -5.2. Detecting that and stopping is half a fix; the
+                    # row stays diverged and the loudest-raw auto-pick grabs it straight
+                    # back, which is the loop the operator hit. If the re-selected entry
+                    # does not match the restored file, push the restored file — a new
+                    # entry is a smaller price than a row that never converges.
+                    if not restore.get("plex_matches_restored_file"):
+                        log.warning("loudness undo: rk=%s re-selected entry %s does not "
+                                    "match the restored file — pushing the restored bytes "
+                                    "instead", rk, entry_uri)
+                        pushed = _push_theme_to_plex(settings, rk=rk, theme=theme,
+                                                     canonical_i=res["new_i"])
+                        if pushed.get("serving_normalized"):
+                            restore = {
+                                "method": "the recorded entry did not match the restored "
+                                          "file (Plex was not in sync with the file when "
+                                          "this row was normalized), so the restored file "
+                                          "was pushed instead — Plex gains an entry rather "
+                                          "than returning to the original",
+                                "entry_uri": entry_uri,
+                                "fell_back_to_push": True, "push": pushed,
+                                "plex_matches_restored_file": True,
+                            }
+                        else:
+                            restore["fell_back_to_push"] = True
+                            restore["push"] = pushed
                 else:
                     # NULL uri = normalized by a pre-v0.51.185 build, which never recorded
                     # it. Push the restored file instead and SAY so — this mints a new

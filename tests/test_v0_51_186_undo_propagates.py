@@ -96,7 +96,12 @@ def _stub(monkeypatch, *, fetch_ok=True, upload_ok=True, plex_i=-5.2):
             st["posted"] = audio_bytes
             if not upload_ok:
                 return (False, 500, "nope")
-            st["serving"] = plex_i      # Plex now plays the re-selected original
+            # what Plex plays follows WHAT WAS POSTED, which is the whole point: posting
+            # the recorded entry's bytes lands on `plex_i` (whatever that entry holds —
+            # possibly still normalized, as rk 261711's was), while posting the RESTORED
+            # FILE lands on the restored loudness. A stub that ignored the difference
+            # could not tell the fallback working from the fallback firing.
+            st["serving"] = -5.2 if audio_bytes != b"ORIGINALBYTES" else plex_i
             return (True, 200, "")
 
         def upload_collection_theme(self, **k):
@@ -223,3 +228,39 @@ def test_the_working_tools_survive():
     assert "// WHAT IS PLEX SERVING?" in HTML
     assert "// NORMALIZE LOUDEST THEME" in HTML
     assert "// UNDO" in HTML
+
+
+# ── v0.51.187: detecting the divergence isn't enough — fix it ────────────
+
+def test_undo_falls_back_to_pushing_when_the_recorded_entry_does_not_match(client,
+                                                                          monkeypatch):
+    """THE REAL-LIBRARY CASE. rk 261711's recorded entry was ITSELF a normalized upload —
+    Plex was already serving it when that normalize ran — so re-selecting it restored Plex
+    to -18.75 while the file went to -5.2. v0.51.186 detected that and stopped, leaving
+    the row diverged; the loudest-raw auto-pick then grabbed it straight back and pushed
+    bytes Plex already had. That loop is why the propagation test could never run.
+
+    A new entry is a smaller price than a row that never converges."""
+    c, db = client
+    _normalized(db)
+    # the recorded entry serves -18.75: re-selecting it will NOT match the -5.2 restore
+    st = _stub(monkeypatch, plex_i=-18.75)
+
+    b = _undo(c)
+    assert st["fetched"] == ORIG_ENTRY, "it must TRY the cheap re-select first"
+    assert b["plex_restored"]["fell_back_to_push"] is True
+    assert "did not match the restored file" in b["plex_restored"]["method"]
+    assert b["plex_is_serving_the_restore"] is True, (
+        "the fallback must actually converge the row, not just report the problem")
+
+
+def test_the_cheap_path_is_still_preferred_when_it_works(client, monkeypatch):
+    """The fallback must not become the default — re-selecting adds no entry, pushing does."""
+    c, db = client
+    _normalized(db)
+    _stub(monkeypatch, plex_i=-5.2)          # the re-select lands on the restored loudness
+
+    b = _undo(c)
+    assert b["plex_restored"].get("fell_back_to_push") is not True
+    assert b["plex_restored"]["method"] == "re-selected the pre-normalize entry"
+    assert b["plex_is_serving_the_restore"] is True
