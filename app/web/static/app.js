@@ -8157,6 +8157,46 @@
       });
     }
 
+    // v0.51.182: the DECISIVE test. Every earlier witness was unusable (locked-and-
+    // serving, or themeless for its own reasons). An agent-served row proves Plex HAS a
+    // theme to give, so deleting it and refreshing locked-then-unlocked isolates the lock
+    // as the only variable. MUTATES a real row — captures the bytes first and recovers.
+    const lpsBtn = document.getElementById('loud-lps-test-btn');
+    if (lpsBtn) {
+      lpsBtn.addEventListener('click', async () => {
+        const rk = prompt('AGENT-SERVED rating_key (motif_placement: null and a '
+          + 'metadata://themes/tv.plex.agents.* entry).\n\nThis DELETES that theme to '
+          + 'watch whether Plex puts it back. The bytes are captured first and restored '
+          + 'if Plex does not — but on that path the row ends up serving an upload:// '
+          + 'copy instead of the agent\'s own entry.');
+        if (!rk) return;
+        lpsBtn.disabled = true;
+        const o = lpsBtn.textContent;
+        lpsBtn.textContent = '// DELETING + WATCHING…';
+        try {
+          const rep = await api('POST', '/api/admin/plex/lps-lock-experiment',
+                                { rating_key: rk.trim() });
+          out.textContent = JSON.stringify(rep, null, 2);
+          out.style.display = '';
+          if (!rep.ok) {
+            status.textContent = '✗ ' + (rep.error || 'LPS lock test failed');
+            status.className = 'form-status form-status-fail';
+          } else {
+            // confirming the lead is BAD news, and so is a row left with no theme.
+            const bad = rep.agent_restored_once_unlocked || !rep.row_has_a_theme_now;
+            status.textContent = (bad ? '✗ ' : '✓ ') + rep.verdict;
+            status.className = 'form-status ' + (bad ? 'form-status-fail' : 'form-status-ok');
+          }
+        } catch (e) {
+          status.textContent = '✗ ' + (e && e.message ? e.message : 'LPS lock test failed');
+          status.className = 'form-status form-status-fail';
+        } finally {
+          lpsBtn.disabled = false;
+          lpsBtn.textContent = o;
+        }
+      });
+    }
+
     // v0.51.174: refresh?force=1 provably does NOT propagate a CHANGED theme (measured:
     // Plex sat at -5.15 vs a -18.7 canonical, same entry, minutes later). Re-upload is the
     // proven path (v1.18.35/36 sha1-dedup + auto-select) — push and MEASURE.

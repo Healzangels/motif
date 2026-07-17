@@ -4433,7 +4433,8 @@
 # 0.51.179: fix the control picker — it took ONE candidate ordered by tmdb_id, and synthetic orphan ids are NEGATIVE, so it always landed on an orphan with no plex_items row and reported "no control" on a library full of them; now resolves the rating_key in SQL, skips orphans, and samples several rows.
 # 0.51.180: propagation settled — delete+re-detect and refresh are MEASURED dead and are removed (the delete only cleared the selection, stranding the item and buying nothing); re-upload is the mechanism. Chases the lead the lock probe exposed: motif locks the theme field on every delete and never unlocks it, and LET PLEX SERVE / SWITCH api-to-file both delete then rely on an agent writing.
 # 0.51.181: stop the lock probe asserting causation it never measured — one locked+themeless row is a CANDIDATE, not a cause (rk 3487 was a broken canonical AND a stale-upload suspect); size the lead with a local library-wide count, carry enough per row to triage it, and settle it per row with an unlock INTERVENTION.
-__version__ = "0.51.181"
+# 0.51.182: settle the lock lead on the case that matters — an AGENT-SERVED row proves Plex has a theme to give, so delete it (the LPS operation) and refresh locked-then-unlocked to isolate the lock as the only variable; bytes captured first. Also refuses an unlock subject that already HAS a theme (v0.51.181 accepted rk 497736 and answered an unanswerable question).
+__version__ = "0.51.182"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
