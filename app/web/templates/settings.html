@@ -1181,34 +1181,6 @@
   </div>
 </section>
 
-{# v0.51.164: PROBE MP3GAIN — the Phase-1 pre-flight. Confirms mp3gain is in the
-   container + proves apply→undo restores the audio on a throwaway copy of one real
-   theme, before any normalization code touches a real file. Read-only wrt every theme.
-   v0.51.165: criterion is decoded PCM (audio), not whole-file bytes — mp3gain appends
-   an APE undo tag so the FILE always differs even when the SAMPLES are restored. #}
-<section class="block tab-panel" data-panel="diagnostics" style="display:none">
-  <header class="block-head">
-    <h2 class="block-title">// PROBE MP3GAIN</h2>
-    <span class="muted small">pre-flight for loudness normalization — does undo restore the audio?</span>
-  </header>
-  <div class="block-body">
-    <p class="form-hint block-intro">
-      Loudness normalization (mp3gain) is lossless + reversible <em>in theory</em> — this
-      proves it on <strong>your</strong> files. Picks one measured theme, copies it to a
-      temp file, applies a test gain, undoes it, and decodes both to raw audio to check the
-      <strong>samples are identical</strong> — mp3gain writes an undo tag so the file bytes
-      differ, but the sound must come back exactly. Tests the attenuate direction we
-      actually use. Nothing touches a real theme. Run this once after deploying a build
-      with mp3gain, before we build the actual normalize.
-    </p>
-    <div class="form-actions">
-      <button class="btn btn-warn" id="mp3gain-probe-btn" type="button">// PROBE MP3GAIN</button>
-      <span class="form-status" id="mp3gain-probe-status"></span>
-    </div>
-    <pre id="mp3gain-probe-output" class="codeblock" style="display:none"></pre>
-  </div>
-</section>
-
 {# v0.51.168: AUDITION NORMALIZE — Phase 1's first file mutation, on the smallest safe
    surface. Normalizes ONE canonical theme (auto-picks the loudest measured, hardlink-
    placed one so Plex plays it live) to the target LUFS via mp3gain, shows before/after,
@@ -1232,7 +1204,6 @@
       <button class="btn btn-warn" id="loud-audition-btn" type="button">// NORMALIZE LOUDEST THEME</button>
       <button class="btn" id="loud-audition-undo-btn" type="button" style="display:none">// UNDO</button>
       <button class="btn" id="loud-plex-serving-btn" type="button">// WHAT IS PLEX SERVING?</button>
-      <button class="btn" id="loud-unselected-btn" type="button">// DOES AN UNSELECTED ENTRY PLAY?</button>
       <button class="btn btn-warn" id="loud-plex-push-btn" type="button">// PUSH NORMALIZED TO PLEX</button>
       <span class="form-status" id="loud-audition-status"></span>
     </div>

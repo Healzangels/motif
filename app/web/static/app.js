@@ -7913,50 +7913,6 @@
   // is bit-exact on a throwaway copy of one real theme → render the report + a plain-
   // English verdict. The whole mp3gain engine choice rests on reversibility, and mp3gain
   // is container-only (untestable on the dev box), so this is how we confirm it for real.
-  function bindMp3gainProbe() {
-    const btn = document.getElementById('mp3gain-probe-btn');
-    const status = document.getElementById('mp3gain-probe-status');
-    const out = document.getElementById('mp3gain-probe-output');
-    if (!btn || !status || !out) return;
-    btn.addEventListener('click', async () => {
-      btn.disabled = true;
-      const orig = btn.textContent;
-      btn.textContent = '// PROBING…';
-      status.textContent = '';
-      status.className = 'form-status';
-      out.style.display = 'none';
-      try {
-        const rep = await api('POST', '/api/admin/mp3gain-probe');
-        out.textContent = JSON.stringify(rep, null, 2);
-        out.style.display = '';
-        // v0.51.165: the verdict is AUDIO-level (decoded PCM), not whole-file bytes —
-        // mp3gain appends an APE undo tag so the file always differs; the samples don't.
-        if (!rep.mp3gain_present) {
-          status.textContent = '✗ mp3gain not in the container — redeploy a build that has it';
-          status.classList.add('form-status-fail');
-        } else if (!rep.ffmpeg_present) {
-          status.textContent = '✗ ffmpeg could not decode — audio reversibility unverifiable';
-          status.classList.add('form-status-fail');
-        } else if (rep.ok) {
-          const boost = rep.boost_reversible_audio
-            ? 'boost also reversible'
-            : 'NOTE: boost not bit-exact (quiet-tail boosts will be excluded)';
-          status.textContent = '✓ attenuate→undo restores the AUDIO bit-exactly — safe to normalize (' + boost + ')';
-          status.classList.add('form-status-ok');
-        } else {
-          status.textContent = '✗ ' + (rep.error || 'attenuate→undo did NOT restore the audio — do not normalize');
-          status.classList.add('form-status-fail');
-        }
-      } catch (e) {
-        status.textContent = '✗ ' + (e && e.message ? e.message : 'probe failed');
-        status.classList.add('form-status-fail');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = orig;
-        _autoDismissOpStatus(status, 8000);
-      }
-    });
-  }
 
   // v0.51.168: AUDITION NORMALIZE — Phase 1's first file mutation on the smallest safe
   // surface. Normalize the loudest measured hardlink-placed theme (so Plex plays it
@@ -8032,11 +7988,22 @@
           status.classList.add('form-status-ok');
         } else {
           armUndo(rep.row);
-          status.textContent = '✓ ' + (rep.title || 'theme') + ': '
+          // v0.51.186: LEAD with whether Plex got it. The gain is inaudible until Plex is
+          // pushed (it plays its own ingested copy), so a green line reading "-5.2 →
+          // -18.8, hear it in Plex" while the push failed would promise something the
+          // operator cannot hear — which is the whole failure v0.51.185 exists to close.
+          // "Hear it in Plex" is only true when plex_is_serving_it is.
+          const heard = rep.plex_is_serving_it;
+          status.textContent = (heard ? '✓ ' : '✗ ') + (rep.title || 'theme') + ': '
             + fmt(rep.before.loudness_i) + ' → ' + fmt(rep.after.loudness_i)
             + ' LUFS (' + (rep.applied_db > 0 ? '+' : '') + Number(rep.applied_db).toFixed(1)
-            + ' dB). Hear it in Plex, then // UNDO.';
-          status.classList.add('form-status-ok');
+            + ' dB). ' + (heard
+              ? 'Plex is serving it — hear it in Plex, then // UNDO.'
+              : 'BUT PLEX IS NOT SERVING IT: ' + ((rep.propagated && (rep.propagated.error
+                  || rep.propagated.verdict)) || 'the push did not land')
+                + ' — the file is quieter and nothing you play will be, until '
+                + '// PUSH NORMALIZED TO PLEX succeeds.');
+          status.classList.add(heard ? 'form-status-ok' : 'form-status-fail');
         }
       } catch (e) {
         status.textContent = '✗ ' + (e && e.message ? e.message : 'normalize failed');
@@ -8083,39 +8050,6 @@
 
     // v0.51.173: does a Plex metadata refresh make it re-read the changed sidecar?
     // MEASURED, not assumed — the probe re-checks what Plex serves after refreshing.
-    // v0.51.183: the last thread off the lock arc. v0.51.182 proved Plex's agent never
-    // re-selects after a delete, so LET PLEX SERVE cannot work the way its name implies —
-    // either Plex plays the collection entry without the `selected` flag (LPS is fine) or
-    // it plays nothing (LPS strands items). Reads the SERVING association, not the flag.
-    const unselBtn = document.getElementById('loud-unselected-btn');
-    if (unselBtn) {
-      unselBtn.addEventListener('click', async () => {
-        unselBtn.disabled = true;
-        const o = unselBtn.textContent;
-        unselBtn.textContent = '// CHECKING WHAT PLAYS…';
-        try {
-          const rep = await api('POST', '/api/admin/plex/unselected-serves-probe');
-          out.textContent = JSON.stringify(rep, null, 2);
-          out.style.display = '';
-          if (!rep.ok) {
-            status.textContent = '✗ ' + (rep.error || 'probe failed');
-            status.className = 'form-status form-status-fail';
-          } else {
-            // finding bare rows is BAD news; answering nothing is not good news either.
-            const good = rep.rows_that_answer > 0 && rep.unselected_and_bare === 0;
-            status.textContent = (good ? '✓ ' : '✗ ') + rep.verdict;
-            status.className = 'form-status ' + (good ? 'form-status-ok' : 'form-status-fail');
-          }
-        } catch (e) {
-          status.textContent = '✗ ' + (e && e.message ? e.message : 'probe failed');
-          status.className = 'form-status form-status-fail';
-        } finally {
-          unselBtn.disabled = false;
-          unselBtn.textContent = o;
-        }
-      });
-    }
-
     // v0.51.174: refresh?force=1 provably does NOT propagate a CHANGED theme (measured:
     // Plex sat at -5.15 vs a -18.7 canonical, same entry, minutes later). Re-upload is the
     // proven path (v1.18.35/36 sha1-dedup + auto-select) — push and MEASURE.
@@ -8171,9 +8105,19 @@
           const note = bad
             ? ' (WARNING: the AUDIO did not come back — check logs)'
             : (unknown ? ' (audio check unavailable — normalized by an older build)' : '');
-          status.textContent = '✓ restored ' + (rep.title || 'theme') + ' to '
-            + fmt(rep.restored.loudness_i) + ' LUFS' + note;
-          status.className = 'form-status ' + (bad ? 'form-status-fail' : 'form-status-ok');
+          // v0.51.186: a restore Plex never hears is not a restore. Before this, undo
+          // reverted the FILE and left Plex serving the normalized upload — the diverged
+          // state rk 261711 was actually found in (file -5.2, Plex -18.75).
+          const plexBack = rep.plex_is_serving_the_restore;
+          const pnote = plexBack ? ' — Plex is serving it again'
+            : ' — BUT PLEX IS STILL SERVING THE NORMALIZED COPY: the file is back and what '
+              + 'plays is not' + ((rep.plex_restored && rep.plex_restored.error)
+                                  ? ' (' + rep.plex_restored.error + ')' : '');
+          status.textContent = (bad || !plexBack ? '✗ ' : '✓ ') + 'restored '
+            + (rep.title || 'theme') + ' to ' + fmt(rep.restored.loudness_i) + ' LUFS'
+            + note + pnote;
+          status.className = 'form-status '
+            + (bad || !plexBack ? 'form-status-fail' : 'form-status-ok');
           disarmUndo();
         }
       } catch (e) {
@@ -20792,7 +20736,6 @@
     bindLoudnessAudit();
     bindLoudnessReport();
     bindCanonicalHealth();
-    bindMp3gainProbe();
     bindLoudnessAudition();
     bindTestCookies();
     bindTestNotification();

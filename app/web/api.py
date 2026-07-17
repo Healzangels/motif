@@ -25926,42 +25926,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           f"{summary['surfaced']} surfaced (no URL)")
         return {"ok": True, **summary}
 
-    @app.post("/api/admin/mp3gain-probe")
-    async def api_admin_mp3gain_probe(
-        request: Request, db: Path = Depends(get_db_path),
-    ):
-        """v0.51.164: characterize mp3gain before Phase-1 normalization is built on it.
-        Picks one measured local-bytes theme, and (on a THROWAWAY COPY, never the real
-        file) proves apply→undo restores the AUDIO bit-exactly. v0.51.165: the criterion is
-        decoded PCM, not whole-file bytes — mp3gain appends an APE undo tag so the file
-        always differs even when the samples are restored. Read-only wrt every real theme.
-        Off-loaded to a thread (subprocess + decode/hash would block the event loop —
-        CLAUDE.md class-12)."""
-        _require_admin(request)
-        from ..core.loudness_apply import probe_mp3gain
-        from ..core.db import get_conn
-
-        def _run():
-            with get_conn(db) as conn:
-                row = conn.execute(
-                    "SELECT file_path FROM local_files "
-                    "WHERE loudness_i IS NOT NULL AND file_path IS NOT NULL "
-                    "  AND file_path != '' ORDER BY tmdb_id LIMIT 1"
-                ).fetchone()
-            if row is None:
-                return {"ok": False, "error": "no measured theme to probe — run the "
-                        "LOUDNESS AUDIT first"}
-            fp = Path(row["file_path"])
-            # v0.51.169: themes_dir is None until configured (config.py: "None if not yet
-            # set on first run") — joining it would TypeError into a 500.
-            if not fp.is_absolute() and settings.themes_dir is None:
-                return {"ok": False, "error": "themes_dir is not configured — set it in "
-                        "Settings first"}
-            theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
-            return probe_mp3gain(theme)
-
-        return await run_in_threadpool(_run)
-
     @app.post("/api/admin/loudness/normalize-one")
     async def api_admin_loudness_normalize_one(
         request: Request, db: Path = Depends(get_db_path),
@@ -26357,173 +26321,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
-    @app.post("/api/admin/plex/unselected-serves-probe")
-    async def api_admin_plex_unselected_serves_probe(
-        request: Request, db: Path = Depends(get_db_path),
-    ):
-        """v0.51.183: the last thread. Does Plex serve a theme with NOTHING selected?
-
-        v0.51.182 settled the lock (dead: identical outcome locked and unlocked) but
-        turned up something bigger — Plex's agent does NOT re-select or re-add an entry
-        after a delete. So LET PLEX SERVE cannot work the way its name implies. Either:
-
-          - Plex plays whatever is in the /themes collection regardless of the `selected`
-            flag ⇒ LPS has always worked, just not via the agent re-writing; or
-          - it plays nothing ⇒ every LPS delete leaves the item silently themeless, which
-            would be a real bug in a shipped feature.
-
-        Everything measured so far reads the `selected` FLAG, which is not the same as
-        "does Plex serve audio" — _measure_plex_serving even falls back to meta[0] when
-        nothing is selected, so it cannot tell the two apart. verify_theme_claim can: it
-        HEADs singular /theme, which is the serving association itself (200 = Plex really
-        delivers, 404 = it does not, None = transient).
-
-        The subject: rows where Plex reports NO theme but motif placed one. If such a row
-        still has entries in its collection, it is the exact state an LPS delete produces,
-        already sitting there — so this answers the question with ZERO mutation. A row
-        with no entries cannot answer it and is reported as such rather than counted.
-        Read-only. Threadpool (class-12)."""
-        _require_admin(request)
-        from ..core.db import get_conn
-
-        try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001
-            body = {}
-        named = str((body or {}).get("rating_key") or "").strip()
-
-        def _run():
-            if not settings.plex_url or not settings.plex_token:
-                return {"ok": False, "error": "Plex is not configured"}
-            with get_conn(db) as conn:
-                if named:
-                    cands = conn.execute(
-                        "SELECT rating_key, title, media_type FROM plex_items "
-                        "WHERE rating_key = ?", (named,)).fetchall()
-                    if not cands:
-                        return {"ok": False, "error": f"rk {named} is not in plex_items"}
-                else:
-                    placed = {
-                        (r["media_type"], r["tmdb_id"], r["section_id"],
-                         r["edition_key"] or "")
-                        for r in conn.execute(
-                            "SELECT media_type, tmdb_id, section_id, edition_key "
-                            "FROM placements").fetchall()
-                    }
-                    cands = []
-                    for r in conn.execute(
-                        "SELECT rating_key, title, media_type, guid_tmdb, section_id, "
-                        "       edition_key FROM plex_items "
-                        "WHERE has_theme = 0 AND guid_tmdb IS NOT NULL "
-                        "ORDER BY guid_tmdb"
-                    ).fetchall():
-                        mt = {"show": "tv", "collection": "collection"}.get(
-                            r["media_type"], "movie")
-                        if (mt, r["guid_tmdb"], r["section_id"],
-                                r["edition_key"] or "") in placed:
-                            cands.append(r)
-                        if len(cands) >= _UNSELECTED_SAMPLE:
-                            break
-            if not cands:
-                return {"ok": False, "error": "no motif-placed row with has_theme=0 to "
-                                              "look at — nothing here can answer it"}
-
-            cfg = PlexConfig(
-                url=settings.plex_url, token=settings.plex_token,
-                movie_section=settings.plex_movie_section,
-                tv_section=settings.plex_tv_section, enabled=True,
-            )
-            rows = []
-            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                for cr in cands:
-                    rk = str(cr["rating_key"])
-                    got = plex.get_themes(rating_key=rk)
-                    b = got.get("body")
-                    meta = ((b.get("MediaContainer") or {}).get("Metadata") or []) \
-                        if isinstance(b, dict) else []
-                    sel = next((m for m in meta if m.get("selected")), None)
-                    # the ONLY question that matters, and the flag cannot answer it:
-                    # does Plex actually deliver bytes for this item's theme?
-                    serves = plex.verify_theme_claim(rk)
-                    # v0.51.184: is the unselected entry ALIVE? Without this, "entry
-                    # present but nothing served" has an innocent explanation — a DEAD
-                    # entry pointing at bytes Plex no longer has would look identical to
-                    # "Plex ignores unselected entries", and only the second is a bug.
-                    # v0.51.183 called it a REAL BUG off one row without checking. The
-                    # operator's own Wildboyz diag showed the check: fetching an entry
-                    # with selected:false returned 4096 bytes, proving it live.
-                    entry_uri = (str(meta[0].get("ratingKey") or meta[0].get("key"))
-                                 if meta else None)
-                    entry_alive = None
-                    if entry_uri and sel is None:
-                        got_b = plex.fetch_theme_bytes(item_rating_key=rk,
-                                                       entry_uri=entry_uri)
-                        entry_alive = bool(got_b.get("ok") and got_b.get("bytes"))
-                    rows.append({
-                        "rating_key": rk, "title": cr["title"],
-                        "entries": len(meta),
-                        "selected_entry": (str(sel.get("ratingKey") or sel.get("key"))
-                                           if sel else None),
-                        "first_entry": entry_uri,
-                        "unselected_entry_is_alive": entry_alive,
-                        "plex_serves_a_theme": serves,
-                        # a LIVE entry + nothing selected is exactly the state an LPS
-                        # delete leaves behind. A dead entry can't answer: it would serve
-                        # nothing no matter what the flag said.
-                        "answers_the_question": bool(meta) and sel is None
-                                                and serves is not None
-                                                and entry_alive is True,
-                    })
-
-            useful = [r for r in rows if r["answers_the_question"]]
-            served = [r for r in useful if r["plex_serves_a_theme"]]
-            bare = [r for r in useful if not r["plex_serves_a_theme"]]
-            if not useful:
-                verdict = ("no row here could answer it — every sampled row has an empty "
-                           "theme collection (Plex has nothing to serve, selected or not), "
-                           "a DEAD entry, or could not be read. INCONCLUSIVE, not a pass. "
-                           "Note an empty collection on a motif-PLACED row is its own "
-                           "problem: motif put a sidecar there and Plex never ingested "
-                           "it.")
-            elif bare and not served:
-                verdict = (f"Plex serves NOTHING on {len(bare)} row(s) that hold a LIVE "
-                           f"theme entry with nothing selected — the exact state a LET "
-                           f"PLEX SERVE delete leaves behind. The entry has playable "
-                           f"bytes and Plex still will not serve it, so the `selected` "
-                           f"flag is what gates playback and the entries surviving a "
-                           f"delete are cold comfort: LPS strands the item. "
-                           + ("Only ONE row could answer, so this rests on a single "
-                              "case — but the mechanism (does Plex honour `selected`) "
-                              "is not per-row, so one clean case is meaningful. "
-                              if len(bare) == 1 else "")
-                           + "Confirm before fixing: the fix is a re-upload after the "
-                             "delete (the only way to select an entry), which is the same "
-                             "propagation step v0.51.176-183 landed on.")
-            elif served and not bare:
-                verdict = (f"Plex DOES serve a theme on {len(served)} row(s) with entries "
-                           f"and nothing selected — the `selected` flag is not what makes "
-                           f"it play. LET PLEX SERVE has always worked; it just never "
-                           f"depended on the agent re-writing after the delete. Nothing "
-                           f"to fix.")
-            else:
-                verdict = (f"MIXED: {len(served)} unselected row(s) serve, {len(bare)} do "
-                           f"not. The flag alone does not decide it — something else "
-                           f"differs between them and is worth finding before trusting "
-                           f"LPS.")
-            if bare:
-                log.warning("unselected-serves-probe: %s row(s) have theme entries but "
-                            "Plex serves nothing (rks %s) — the state an LPS delete "
-                            "leaves.", len(bare), [r["rating_key"] for r in bare])
-            return {
-                "ok": True, "sampled": len(rows), "rows": rows,
-                "rows_that_answer": len(useful),
-                "unselected_and_served": len(served),
-                "unselected_and_bare": len(bare),
-                "verdict": verdict,
-            }
-
-        return await run_in_threadpool(_run)
-
     @app.post("/api/admin/loudness/undo-one")
     async def api_admin_loudness_undo_one(
         request: Request, db: Path = Depends(get_db_path),
@@ -26556,6 +26353,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 row = conn.execute(
                     "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
                     "  lf.file_path, lf.norm_state, lf.norm_orig_sha256, "
+                    "  lf.norm_plex_entry_uri, "
                     "  lf.norm_orig_pcm_sha256, t.title "
                     "FROM local_files lf "
                     "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
@@ -26573,6 +26371,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     return {"ok": False, "error": "themes_dir is not configured — set it "
                             "in Settings first"}
                 theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+                # v0.51.186: undo has to put PLEX back too, not just the file. Plex plays
+                # its own ingested copy, so restoring the bytes alone leaves the row
+                # diverged — motif's DB says raw, the file is raw, and Plex keeps serving
+                # the normalized upload. That is not hypothetical: it is exactly the state
+                # rk 261711 was found in on the real library (file -5.2, Plex -18.75).
+                plex_mt = {"tv": "show", "collection": "collection"}.get(
+                    row["media_type"], "movie")
+                rk_row = conn.execute(
+                    "SELECT rating_key FROM plex_items "
+                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+                    "  AND COALESCE(edition_key,'')=? LIMIT 1",
+                    (plex_mt, row["tmdb_id"], row["section_id"],
+                     row["edition_key"] or ""),
+                ).fetchone()
                 expect = row["norm_orig_sha256"]
                 expect_pcm = row["norm_orig_pcm_sha256"]
 
@@ -26587,18 +26399,92 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
                     "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
                     "  norm_state=NULL, norm_gain_db=NULL, norm_target=NULL, norm_at=NULL, "
-                    "  norm_orig_sha256=NULL, norm_orig_pcm_sha256=NULL "
+                    "  norm_orig_sha256=NULL, norm_orig_pcm_sha256=NULL, "
+                    "  norm_plex_entry_uri=NULL "
                     "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
                     (res["new_i"], res["new_tp"], res["new_lra"], measured_at, measured_sha,
                      res["new_sha"], row["media_type"], row["tmdb_id"],
                      row["section_id"], row["edition_key"]),
                 )
                 wconn.commit()
-            # v0.51.170: audio_restored is the verdict; file_bit_exact is informational
-            # (mp3gain's APE tag means a correct restore is NOT byte-identical).
+            # v0.51.186: PUT PLEX BACK. Restoring only the file leaves the row diverged —
+            # motif's DB says raw, the file is raw, and Plex keeps serving the normalized
+            # upload. rk 261711 was found in exactly that state on the real library.
+            #
+            # Re-select the entry Plex served BEFORE the normalize rather than pushing the
+            # restored file: mp3gain's APE tag makes the restored file's hash differ from
+            # the original's, so pushing it would mint a THIRD entry and every
+            # normalize/undo cycle would add another. Fetching the recorded entry's bytes
+            # and POSTing them content-dedupes straight back onto it (v1.18.36) — no new
+            # entry, and Plex ends up on the exact entry it started on.
+            entry_uri, rk = row["norm_plex_entry_uri"], (
+                str(rk_row["rating_key"]) if rk_row else None)
+            restore = None
+            if rk and settings.plex_url and settings.plex_token:
+                cfg = PlexConfig(
+                    url=settings.plex_url, token=settings.plex_token,
+                    movie_section=settings.plex_movie_section,
+                    tv_section=settings.plex_tv_section, enabled=True,
+                )
+                if entry_uri:
+                    with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                        got = plex.fetch_theme_bytes(item_rating_key=rk,
+                                                     entry_uri=entry_uri)
+                        blob = got.get("bytes") if got.get("ok") else None
+                        if blob:
+                            ok_up, status, _b = plex.upload_theme(rating_key=rk,
+                                                                  audio_bytes=blob)
+                        else:
+                            ok_up, status = False, got.get("http_status")
+                    if blob and ok_up:
+                        import time as _t   # module-local, the file's existing pattern
+                        after = None
+                        for _ in range(_REREAD_POLLS):
+                            _t.sleep(_REREAD_POLL_S)
+                            after = _measure_plex_serving(settings, rk=rk,
+                                                          canonical_i=res["new_i"])
+                            if after.get("serving_normalized"):
+                                break
+                        restore = {"method": "re-selected the pre-normalize entry",
+                                   "entry_uri": entry_uri, "http_status": status,
+                                   "after": after,
+                                   "plex_matches_restored_file":
+                                       bool(after and after.get("serving_normalized"))}
+                    else:
+                        restore = {"method": "re-selected the pre-normalize entry",
+                                   "entry_uri": entry_uri, "http_status": status,
+                                   "plex_matches_restored_file": False,
+                                   "error": "could not fetch or re-post the recorded "
+                                            "entry's bytes"}
+                else:
+                    # NULL uri = normalized by a pre-v0.51.185 build, which never recorded
+                    # it. Push the restored file instead and SAY so — this mints a new
+                    # entry rather than re-selecting the original, which is worse but
+                    # honest, and silently skipping would leave Plex on the loud copy.
+                    restore = _push_theme_to_plex(settings, rk=rk, theme=theme,
+                                                  canonical_i=res["new_i"])
+                    restore["method"] = ("pushed the restored file (no pre-normalize entry "
+                                         "was recorded — this row predates v0.51.185, so "
+                                         "Plex gains a new entry instead of returning to "
+                                         "the original)")
+                    restore["plex_matches_restored_file"] = bool(
+                        restore.get("serving_normalized"))
+                if not restore.get("plex_matches_restored_file"):
+                    log.warning("loudness undo: %s/%s was restored on disk but Plex is "
+                                "NOT serving the restored theme — the row is DIVERGED "
+                                "(file raw, Plex still normalized)", row["media_type"],
+                                row["tmdb_id"])
+            # v0.51.170: audio_restored is the verdict for the FILE; file_bit_exact is
+            # informational (mp3gain's APE tag means a correct restore is NOT
+            # byte-identical). v0.51.186: the file is only half of it.
             return {"ok": True, "audio_restored": res["audio_restored"],
                     "file_bit_exact": res["file_bit_exact"],
                     "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
+                    "rating_key": rk,
+                    "recorded_entry_uri": entry_uri,
+                    "plex_restored": restore,
+                    "plex_is_serving_the_restore": bool(
+                        restore and restore.get("plex_matches_restored_file")),
                     "restored": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]}}
 
         return await run_in_threadpool(_run)
