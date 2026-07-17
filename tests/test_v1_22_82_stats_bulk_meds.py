@@ -57,12 +57,13 @@ def test_post_stat_blocks_share_one_pagination():
 
 def test_bulk_runners_start_progress_inside_try():
     # v0.51.195: bulk_normalize joins the bulk runners that start_progress inside the try.
-    for kind in ("bulk_probe_tdb", "bulk_lps", "reprobe_plex_themes", "bulk_normalize"):
+    for kind in ("bulk_probe_tdb", "bulk_lps", "reprobe_plex_themes", "bulk_normalize",
+                 "bulk_normalize_undo"):
         i = API_PY.index(f'kind="{kind}",')
         before = API_PY[i - 800:i]
         assert "v1.22.82: start INSIDE the try" in before, kind
     # The marker appears once per runner.
-    assert API_PY.count("v1.22.82: start INSIDE the try") == 4
+    assert API_PY.count("v1.22.82: start INSIDE the try") == 5
 
 
 # ── (3) per-thread client pools ──────────────────────────────

@@ -299,8 +299,11 @@ def test_normalize_file_never_raises_on_none_measurement(tmp_path):
 def test_one_timestamp_per_operation():
     api_py = (REPO / "app" / "web" / "api.py").read_text()
     # v0.51.194: the mutation moved into _normalize_one_row — anchor there.
+    # v0.51.199: bound by the NEXT sibling fn (_bulk_normalize_run), not create_app —
+    # _undo_one_row now sits between _normalize_one_row and create_app and calls now_iso()
+    # too, which would double the count.
     i = api_py.index('def _normalize_one_row(')
-    block = api_py[i:api_py.index('def create_app(', i)]
+    block = api_py[i:api_py.index('def _bulk_normalize_run(', i)]
     assert "ts = now_iso()" in block
     # the UPDATE binds the single ts, not two independent now_iso() calls
     assert block.count("now_iso()") == 1

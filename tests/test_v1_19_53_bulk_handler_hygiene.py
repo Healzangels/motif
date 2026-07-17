@@ -236,7 +236,8 @@ def test_no_placeholder_uses_unknown_kind():
         # Real op_progress kinds (db.py CHECK list).
         "tdb_sync", "plex_enum", "reprobe_plex_themes",
         "bulk_probe_tdb", "bulk_lps", "tvdb_bridge",
-        "cloud_themes_backup", "bulk_normalize",   # v0.51.197
+        "cloud_themes_backup", "bulk_normalize",
+        "bulk_normalize_undo",   # v0.51.199
     }
     bad = [k for k in set(calls) if k not in KNOWN_KINDS]
     assert not bad, (

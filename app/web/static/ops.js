@@ -100,6 +100,11 @@
       { key: 'normalize', label: 'Normalize',
         long: 'mp3gain-level each eligible theme toward the target and re-upload it to Plex so Plex serves the leveled copy.' },
     ],
+    // v0.51.199: BULK UNDO — reverse a LEVEL run, restoring each file + putting Plex back.
+    bulk_normalize_undo: [
+      { key: 'undo', label: 'Undo',
+        long: 'Restore each leveled theme to its original bytes and put Plex back to the pre-level entry.' },
+    ],
     // Queue ops have no fixed stage timeline — just a single
     // indeterminate stage that pulses for as long as work remains.
     download_queue: [],
@@ -150,6 +155,7 @@
     bulk_probe_tdb: 'tdb',
     bulk_lps:       'plex',
     bulk_normalize: 'plex',   // v0.51.195: re-uploads to Plex
+    bulk_normalize_undo: 'plex',   // v0.51.199
     // v1.19.45: cloud_themes_backup walks Plex's /themes endpoint +
     // downloads bytes from Plex. Plex-family operation (motif
     // talking to Plex's API on the user's behalf) so 'plex' tone
@@ -180,6 +186,7 @@
     plex_enum_pending:   3,  // queued refresh shares its parent's slot
     bulk_probe_tdb:      4,  // probe TDB URLs
     bulk_normalize:      4,  // v0.51.195: user-initiated bulk mutation
+    bulk_normalize_undo: 4,  // v0.51.199
     // v1.18.51: bulk_lps shares the bulk-probe slot — both are
     // user-initiated bulk operations that surface in the mini-
     // bar; sitting just above plex sidecar probe keeps the
@@ -261,6 +268,7 @@
     bulk_probe_tdb: 'BULK PROBE TDB',
     bulk_lps:       'BULK LET PLEX SERVE',
     bulk_normalize: 'BULK NORMALIZE',
+    bulk_normalize_undo: 'BULK UNDO',
     // v1.19.45: cloud-themes-backup walker (v1.19.42 feature).
     // v1.19.48: label renamed to mirror the bulk-bar button +
     // SOURCE-menu entry (DOWNLOAD PLEX BACKUP). The drawer card

@@ -162,7 +162,14 @@ def bulk_normalize_counts(conn, *, ceiling_bytes: int, target: float,
         f"SELECT COUNT(*) {base} AND lf.loudness_i > ?",
         (ceiling_bytes, target + margin_db),
     ).fetchone()[0]
-    return {"eligible": eligible, "outliers": outliers, "outlier_margin_db": margin_db}
+    # v0.51.199: the leveled count powers the // UNDO ALL LEVELING button — NOT gated by
+    # the eligible predicate, because bulk-undo reverses every leveled row regardless of
+    # placement/ceiling (undo just restores bytes + re-selects the pre-level entry).
+    leveled = conn.execute(
+        "SELECT COUNT(*) FROM local_files WHERE norm_state = 'normalized'"
+    ).fetchone()[0]
+    return {"eligible": eligible, "outliers": outliers, "leveled": leveled,
+            "outlier_margin_db": margin_db}
 
 
 def record_measurement(conn, row, m: dict, measured_at: str) -> None:

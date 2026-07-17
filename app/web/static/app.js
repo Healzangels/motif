@@ -7761,6 +7761,7 @@
     const levelSub = document.getElementById('loud-level-sub');
     const outliersBtn = document.getElementById('loud-level-outliers');
     const allBtn = document.getElementById('loud-level-all');
+    const undoAllBtn = document.getElementById('loud-undo-all');   // v0.51.199
     const levelStatus = document.getElementById('loud-level-status');
     let lastBulk = null;
     if (!slider || !previewEl) return;
@@ -7920,48 +7921,78 @@
     function renderLevel(bulk) {
       if (!levelBlock) return;
       lastBulk = bulk || null;
-      if (!bulk || !bulk.eligible) {
-        // nothing to level — no measured raw hardlink rows (all leveled, or none yet).
+      const eligible = (bulk && bulk.eligible) || 0;
+      const leveled = (bulk && bulk.leveled) || 0;
+      if (!bulk || (!eligible && !leveled)) {
+        // nothing to do — no raw rows to level AND no leveled rows to undo.
         levelBlock.style.display = 'none';
         return;
       }
       levelBlock.style.display = '';
-      levelSub.textContent = `${bulk.eligible} eligible · target ${fmtLufs(bulk.target)} LUFS (from Settings)`
+      // v0.51.199: the sub reflects both directions — what's left to level and
+      // what's already leveled (and therefore undoable).
+      levelSub.textContent =
+        (eligible
+          ? `${eligible} eligible · target ${fmtLufs(bulk.target)} LUFS (from Settings)`
+          : 'all eligible themes leveled')
+        + (leveled ? ` · ${leveled} leveled` : '')
         + (bulk.plex_ready ? '' : ' · Plex not configured');
       if (outliersBtn) {
         outliersBtn.textContent = bulk.outliers
           ? `// LEVEL ${bulk.outliers} OUTLIER${bulk.outliers === 1 ? '' : 'S'}`
           : '// NO OUTLIERS';
+        // hide the leveling buttons entirely once nothing is eligible — the
+        // block is being kept open only for the undo action.
+        outliersBtn.style.display = eligible ? '' : 'none';
         outliersBtn.disabled = !bulk.outliers || !bulk.plex_ready;
         outliersBtn.title = bulk.outliers
           ? `Level the ${bulk.outliers} theme(s) more than ${bulk.outlier_margin_db} dB louder than the target — the worst offenders, loudest first.`
           : 'No themes are far enough above the target to count as outliers.';
       }
       if (allBtn) {
-        allBtn.textContent = `// LEVEL LIBRARY (${bulk.eligible})`;
+        allBtn.textContent = `// LEVEL LIBRARY (${eligible})`;
+        allBtn.style.display = eligible ? '' : 'none';
         allBtn.disabled = !bulk.plex_ready;
         allBtn.title = bulk.plex_ready ? 'Level every eligible theme, loudest first.'
           : 'Plex must be configured — leveling re-uploads to Plex.';
       }
+      if (undoAllBtn) {
+        // v0.51.199: the safety net — reverse every leveled theme back to its
+        // raw bytes and re-point Plex. Shown only when something is leveled.
+        undoAllBtn.textContent = `// UNDO ALL LEVELING (${leveled})`;
+        undoAllBtn.style.display = leveled ? '' : 'none';
+        undoAllBtn.disabled = !leveled || !bulk.plex_ready;
+        undoAllBtn.title = bulk.plex_ready
+          ? `Restore all ${leveled} leveled theme(s) to their raw bytes and re-point Plex — lossless, undoes a whole LEVEL run.`
+          : 'Plex must be configured — undo re-points Plex at the restored bytes.';
+      }
     }
 
-    async function startBulk(maxRows, confirmMsg) {
+    // v0.51.199: generalized so both LEVEL (bulk-normalize) and UNDO ALL
+    // (bulk-normalize-undo) share the same optimistic-placeholder + waitForOp
+    // plumbing — they differ only in endpoint, placeholder kind, and copy.
+    async function startBulk(maxRows, confirmMsg, opts) {
+      opts = opts || {};
+      const endpoint = opts.endpoint || '/api/admin/loudness/bulk-normalize';
+      const kind = opts.kind || 'bulk_normalize';
+      const opId = opts.opId || 'bulk-normalize';
+      const placeholder = opts.placeholder || '// LEVELING…';
+      const runningMsg = opts.runningMsg || '// leveling — watch the status bar';
       if (confirmMsg && !confirm(confirmMsg)) return;
-      [outliersBtn, allBtn].forEach((b) => { if (b) b.disabled = true; });
+      [outliersBtn, allBtn, undoAllBtn].forEach((b) => { if (b) b.disabled = true; });
       if (levelStatus) levelStatus.textContent = '// starting…';
       try {
-        const r = await api('POST', '/api/admin/loudness/bulk-normalize',
-          (maxRows != null) ? { max_rows: maxRows } : {});
+        const r = await api('POST', endpoint, (maxRows != null) ? { max_rows: maxRows } : {});
         if (window.motifOps) {
           if (window.motifOps.setOptimisticPlaceholder) {
-            window.motifOps.setOptimisticPlaceholder('bulk_normalize', '// LEVELING…');
+            window.motifOps.setOptimisticPlaceholder(kind, placeholder);
           }
           if (window.motifOps.boostPoll) window.motifOps.boostPoll();
         }
-        if (levelStatus) levelStatus.textContent = '// leveling — watch the status bar';
-        // the op is long; on terminal, re-fetch the report (eligible count drops) + reset.
+        if (levelStatus) levelStatus.textContent = runningMsg;
+        // the op is long; on terminal, re-fetch the report (counts shift) + reset.
         if (window.motifOps && window.motifOps.waitForOp) {
-          window.motifOps.waitForOp(r.op_id || 'bulk-normalize', { timeoutMs: 1800000 })
+          window.motifOps.waitForOp(r.op_id || opId, { timeoutMs: 1800000 })
             .then(() => { if (levelStatus) levelStatus.textContent = '// done'; refresh(); })
             .catch(() => { if (levelStatus) levelStatus.textContent = ''; refresh(); });
         }
@@ -7988,6 +8019,19 @@
         `Level ALL ${lastBulk.eligible} eligible theme(s) toward ${fmtLufs(lastBulk.target)} LUFS `
         + `and re-upload each to Plex?\n\nThis is the whole eligible library — loudest first, `
         + `cancelable from the status bar, and per-item reversible from the INFO card.`);
+    });
+    if (undoAllBtn) undoAllBtn.addEventListener('click', () => {
+      if (!lastBulk || !lastBulk.leveled) return;
+      startBulk(null,
+        `Undo leveling on ALL ${lastBulk.leveled} leveled theme(s) — restore each to its raw `
+        + `bytes and re-point Plex?\n\nLossless (mp3gain undo tag) and cancelable from the status bar.`,
+        {
+          endpoint: '/api/admin/loudness/bulk-normalize-undo',
+          kind: 'bulk_normalize_undo',
+          opId: 'bulk-normalize-undo',
+          placeholder: '// UNDOING…',
+          runningMsg: '// undoing — watch the status bar',
+        });
     });
 
     window.__loudRefreshReport = refresh;   // audit-complete hook calls this

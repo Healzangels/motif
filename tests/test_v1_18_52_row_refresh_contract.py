@@ -85,6 +85,8 @@ ROW_MUTATING_KINDS = {
     # (the v0.51.192 leveled marker appears), so it MUST fire the row-refresh
     # contract like every other mutating op — it is NOT filtered from /api/stats.
     "bulk_normalize",
+    # v0.51.199: bulk_normalize_undo reverses a LEVEL run (norm_state→NULL) → row-refresh.
+    "bulk_normalize_undo",
 }
 
 

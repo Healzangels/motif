@@ -6760,6 +6760,226 @@ def _bulk_normalize_run(db: Path, settings, *, max_rows: int | None = None) -> N
         op_progress.finish_progress(db, OP_ID, status="failed", error_message=str(e))
 
 
+def _undo_one_row(db: Path, settings, row) -> dict:
+    """v0.51.199: the per-row UNDO chokepoint, extracted verbatim from undo-one's _run so
+    // UNDO LEVELING and the Phase-2 bulk-undo op share ONE implementation. Takes an
+    ALREADY-FETCHED local_files row (guaranteed non-None) with the undo columns; reverses
+    the mp3gain gain via the MP3GAIN_UNDO tag, re-measures, puts PLEX back to the
+    pre-normalize entry (self-correcting to a push if that entry did not match the file),
+    and returns the exact result dict undo-one has always returned. BLOCKING — the caller
+    runs it in a thread."""
+    from ..core.loudness_apply import undo_file
+    from ..core.db import get_conn
+    from ..core.events import now_iso
+
+    if row["norm_state"] != "normalized":
+        return {"ok": False, "error": "row is not normalized — nothing to undo"}
+    fp = Path(row["file_path"])
+    # v0.51.169: themes_dir is None until configured — guard the join (500).
+    if not fp.is_absolute() and settings.themes_dir is None:
+        return {"ok": False, "error": "themes_dir is not configured — set it "
+                "in Settings first"}
+    theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+    # v0.51.186: undo has to put PLEX back too, not just the file.
+    plex_mt = {"tv": "show", "collection": "collection"}.get(row["media_type"], "movie")
+    with get_conn(db) as conn:
+        rk_row = conn.execute(
+            "SELECT rating_key FROM plex_items "
+            "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
+            "  AND COALESCE(edition_key,'')=? LIMIT 1",
+            (plex_mt, row["tmdb_id"], row["section_id"], row["edition_key"] or ""),
+        ).fetchone()
+    expect = row["norm_orig_sha256"]
+    expect_pcm = row["norm_orig_pcm_sha256"]
+
+    res = undo_file(theme, expect_sha=expect, expect_pcm_sha=expect_pcm)
+    if not res["ok"]:
+        return {"ok": False, "error": res.get("error") or "undo failed",
+                "title": row["title"]}
+    measured_sha = res["new_sha"] if res["new_i"] is not None else None
+    measured_at = now_iso() if res["new_i"] is not None else None
+    with get_conn(db) as wconn:
+        wconn.execute(
+            "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
+            "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+            "  norm_state=NULL, norm_gain_db=NULL, norm_target=NULL, norm_at=NULL, "
+            "  norm_orig_sha256=NULL, norm_orig_pcm_sha256=NULL, "
+            "  norm_plex_entry_uri=NULL "
+            "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+            (res["new_i"], res["new_tp"], res["new_lra"], measured_at, measured_sha,
+             res["new_sha"], row["media_type"], row["tmdb_id"],
+             row["section_id"], row["edition_key"]),
+        )
+        wconn.commit()
+    # v0.51.186: PUT PLEX BACK. Re-select the entry Plex served BEFORE the normalize
+    # rather than pushing the restored file: mp3gain's APE tag makes the restored file's
+    # hash differ from the original's, so pushing it would mint a THIRD entry. Fetching the
+    # recorded entry's bytes and POSTing them content-dedupes straight back onto it
+    # (v1.18.36) — no new entry.
+    entry_uri = row["norm_plex_entry_uri"]
+    rk = str(rk_row["rating_key"]) if rk_row else None
+    restore = None
+    if rk and settings.plex_url and settings.plex_token:
+        cfg = PlexConfig(
+            url=settings.plex_url, token=settings.plex_token,
+            movie_section=settings.plex_movie_section,
+            tv_section=settings.plex_tv_section, enabled=True,
+        )
+        if entry_uri:
+            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                got = plex.fetch_theme_bytes(item_rating_key=rk, entry_uri=entry_uri)
+                blob = got.get("bytes") if got.get("ok") else None
+                if blob:
+                    ok_up, status, _b = plex.upload_theme(rating_key=rk, audio_bytes=blob)
+                else:
+                    ok_up, status = False, got.get("http_status")
+            if blob and ok_up:
+                import time as _t
+                after = None
+                for _ in range(_REREAD_POLLS):
+                    _t.sleep(_REREAD_POLL_S)
+                    after = _measure_plex_serving(settings, rk=rk, canonical_i=res["new_i"])
+                    if after.get("serving_normalized"):
+                        break
+                restore = {"method": "re-selected the pre-normalize entry",
+                           "entry_uri": entry_uri, "http_status": status, "after": after,
+                           "plex_matches_restored_file":
+                               bool(after and after.get("serving_normalized"))}
+            else:
+                restore = {"method": "re-selected the pre-normalize entry",
+                           "entry_uri": entry_uri, "http_status": status,
+                           "plex_matches_restored_file": False,
+                           "error": "could not fetch or re-post the recorded entry's bytes"}
+            # v0.51.187: SELF-CORRECT. Re-selecting "what Plex served before" is only right
+            # if Plex matched the FILE back then — and it might not have (rk 261711). If the
+            # re-selected entry does not match the restored file, push the restored file.
+            if not restore.get("plex_matches_restored_file"):
+                log.warning("loudness undo: rk=%s re-selected entry %s does not match the "
+                            "restored file — pushing the restored bytes instead", rk, entry_uri)
+                pushed = _push_theme_to_plex(settings, rk=rk, theme=theme,
+                                             canonical_i=res["new_i"])
+                if pushed.get("serving_normalized"):
+                    restore = {
+                        "method": "the recorded entry did not match the restored file, so "
+                                  "the restored file was pushed instead — Plex gains an "
+                                  "entry rather than returning to the original",
+                        "entry_uri": entry_uri,
+                        "fell_back_to_push": True, "push": pushed,
+                        "plex_matches_restored_file": True,
+                    }
+                else:
+                    restore["fell_back_to_push"] = True
+                    restore["push"] = pushed
+        else:
+            # NULL uri = normalized by a pre-v0.51.185 build, which never recorded it.
+            restore = _push_theme_to_plex(settings, rk=rk, theme=theme,
+                                          canonical_i=res["new_i"])
+            restore["method"] = ("pushed the restored file (no pre-normalize entry was "
+                                 "recorded — this row predates v0.51.185)")
+            restore["plex_matches_restored_file"] = bool(restore.get("serving_normalized"))
+        if not restore.get("plex_matches_restored_file"):
+            log.warning("loudness undo: %s/%s was restored on disk but Plex is NOT serving "
+                        "the restored theme — the row is DIVERGED", row["media_type"],
+                        row["tmdb_id"])
+    return {"ok": True, "audio_restored": res["audio_restored"],
+            "file_bit_exact": res["file_bit_exact"],
+            "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
+            "rating_key": rk,
+            "recorded_entry_uri": entry_uri,
+            "plex_restored": restore,
+            "plex_is_serving_the_restore": bool(
+                restore and restore.get("plex_matches_restored_file")),
+            "restored": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]}}
+
+
+def _bulk_normalize_undo_run(db: Path, settings, *, max_rows: int | None = None) -> None:
+    """v0.51.199: the reverse of _bulk_normalize_run — undo the leveling on every leveled
+    theme, restoring each file AND putting Plex back. The safety net: one op reverses a
+    whole // LEVEL run. SERIAL, most-recently-leveled first, each row through the SAME
+    _undo_one_row chokepoint // UNDO LEVELING uses. Idempotent (a re-run skips rows already
+    back to raw). Cancelable at every row via /api/progress/bulk-normalize-undo/cancel."""
+    from ..core import progress as op_progress
+    from ..core.db import get_conn
+    OP_ID = "bulk-normalize-undo"
+
+    def _cancel() -> bool:
+        return op_progress.is_cancelled(db, OP_ID)
+
+    try:
+        with get_conn(db) as conn:
+            rows = conn.execute(
+                "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
+                " lf.file_path, lf.norm_state, lf.norm_orig_sha256, "
+                " lf.norm_plex_entry_uri, lf.norm_orig_pcm_sha256, t.title "
+                "FROM local_files lf "
+                "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
+                "WHERE lf.norm_state = 'normalized' "
+                "ORDER BY lf.norm_at DESC"
+                + (" LIMIT " + str(int(max_rows)) if max_rows else ""),
+            ).fetchall()
+        n = len(rows)
+        # v1.22.82: start INSIDE the try so a failed start can't strand the pending row.
+        op_progress.start_progress(
+            db, op_id=OP_ID, kind="bulk_normalize_undo",
+            stage="undo",
+            stage_label=f"Undoing leveling on {n} theme(s)",
+            stage_total=n, processed_est=n,
+        )
+        n_undone = n_skipped = n_failed = n_diverged = 0
+        for i, row in enumerate(rows):
+            if _cancel():
+                op_progress.finish_progress(db, OP_ID, status="cancelled")
+                return
+            try:
+                res = _undo_one_row(db, settings, row)
+            except Exception as e:  # noqa: BLE001 — one bad row must not kill the batch
+                n_failed += 1
+                log.warning("bulk undo: %s/%s errored: %s",
+                            row["media_type"], row["tmdb_id"], e)
+                res = None
+            if res and res.get("ok"):
+                n_undone += 1
+                # restored on disk is not the same as Plex-restored — count divergence.
+                if not res.get("plex_is_serving_the_restore"):
+                    n_diverged += 1
+            elif res is not None:
+                # a row that flipped to raw under us (a concurrent undo) — skipped.
+                n_skipped += 1
+            done = i + 1
+            if done % 5 == 0 or done == n:
+                op_progress.update_progress(
+                    db, OP_ID, stage_current=done, processed_total=done,
+                    activity=(f"{done}/{n} — undone={n_undone}, "
+                              f"skipped={n_skipped}, failed={n_failed}"),
+                )
+        _ds = [{"l": "undone", "v": n_undone}]
+        if n_skipped:
+            _ds.append({"l": "skipped", "v": n_skipped})
+        if n_failed:
+            _ds.append({"l": "failed", "v": n_failed})
+        if n_diverged:
+            _ds.append({"l": "diverged", "v": n_diverged})
+        op_progress.set_detail_field(db, OP_ID, "done_summary", _ds)
+        op_progress.finish_progress(db, OP_ID, status="done")
+        if n > 0:
+            try:
+                from ..core import notify as _notify
+                _notify.dispatch(
+                    db, settings.cfg.notifications,
+                    event_kind="bulk_action_completed",
+                    title=f"✅ Bulk undo done — {n_undone} restored",
+                    body=(f"restored={n_undone}/{n}"
+                          + (f", skipped={n_skipped}" if n_skipped else "")
+                          + (f", failed={n_failed}" if n_failed else "")
+                          + (f", diverged={n_diverged}" if n_diverged else "")),
+                )
+            except Exception as e:  # v1.17.1 (class 9): log breadcrumb on swallow.
+                log.debug("notify dispatch (bulk-undo) suppressed: %s", e)
+    except Exception as e:
+        log.exception("BULK NORMALIZE UNDO failed")
+        op_progress.finish_progress(db, OP_ID, status="failed", error_message=str(e))
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     app = FastAPI(title="Motif", docs_url=None, redoc_url=None)
@@ -6936,6 +7156,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         WHEN 'bulk_lps'            THEN 3
                         WHEN 'cloud_themes_backup' THEN 3
                         WHEN 'bulk_normalize'      THEN 3
+                        WHEN 'bulk_normalize_undo' THEN 3
                         WHEN 'reprobe_plex_themes' THEN 4
                         WHEN 'tvdb_bridge'         THEN 4
                         ELSE 99
@@ -6959,6 +7180,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "tvdb_bridge": "tdb",
                     "cloud_themes_backup": "plex",
                     "bulk_normalize": "plex",   # v0.51.195
+                    "bulk_normalize_undo": "plex",   # v0.51.199
                 }
                 kind_label = {
                     "tdb_sync": "THEMERRDB SYNC",
@@ -6969,6 +7191,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "tvdb_bridge": "TVDB BRIDGE",
                     "cloud_themes_backup": "DOWNLOAD PLEX BACKUP",
                     "bulk_normalize": "BULK NORMALIZE",   # v0.51.195
+                    "bulk_normalize_undo": "BULK UNDO",   # v0.51.199
                 }
                 state["op_running"] = True
                 state["op_tone"] = tone_by_kind.get(kind, "tdb")
@@ -26391,6 +26614,46 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         t.start()
         return {"ok": True, "op_id": "bulk-normalize"}
 
+    @app.post("/api/admin/loudness/bulk-normalize-undo")
+    async def api_admin_loudness_bulk_undo(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.199: reverse a // LEVEL run — undo every leveled theme (restore the file
+        + put Plex back). The safety net for a bulk normalize. Cancel via the generic
+        POST /api/progress/bulk-normalize-undo/cancel. Optional body {max_rows: N}."""
+        _require_admin(request)
+        if not (settings.plex_enabled and settings.plex_url and settings.plex_token):
+            # undo puts Plex back too; without Plex the row would be left diverged
+            # (file raw, Plex still leveled). Refuse EXPLICITLY.
+            raise HTTPException(status_code=400,
+                                detail="Plex is not configured — undo must put Plex back")
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — empty body = "undo the whole leveled set"
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        max_rows = body.get("max_rows")
+        try:
+            max_rows = int(max_rows) if max_rows is not None else None
+            if max_rows is not None and max_rows <= 0:
+                max_rows = None
+        except (TypeError, ValueError):
+            max_rows = None
+        from ..core import progress as op_progress
+        if not await run_in_threadpool(
+                op_progress.try_acquire, db, "bulk-normalize-undo", "bulk_normalize_undo"):
+            raise HTTPException(status_code=409, detail="bulk undo already running")
+        log_event(db, level="INFO", component="api",
+                  message=(f"BULK NORMALIZE UNDO started by {request.state.user}"
+                           + (f" (max_rows={max_rows})" if max_rows else "")))
+        import threading
+        t = threading.Thread(
+            target=_bulk_normalize_undo_run, args=(db, settings),
+            kwargs={"max_rows": max_rows}, name="bulk-normalize-undo", daemon=True)
+        t.start()
+        return {"ok": True, "op_id": "bulk-normalize-undo"}
+
     @app.get("/api/admin/loudness/normalized")
     async def api_admin_loudness_normalized(
         request: Request, db: Path = Depends(get_db_path),
@@ -26604,162 +26867,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "  AND lf.edition_key=?",
                     (want_mt, want_id, sec, edn),
                 ).fetchone()
-                if row is None:
-                    return {"ok": False, "error": "row not found"}
-                if row["norm_state"] != "normalized":
-                    return {"ok": False, "error": "row is not normalized — nothing to undo"}
-                fp = Path(row["file_path"])
-                # v0.51.169: themes_dir is None until configured — guard the join (500).
-                if not fp.is_absolute() and settings.themes_dir is None:
-                    return {"ok": False, "error": "themes_dir is not configured — set it "
-                            "in Settings first"}
-                theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
-                # v0.51.186: undo has to put PLEX back too, not just the file. Plex plays
-                # its own ingested copy, so restoring the bytes alone leaves the row
-                # diverged — motif's DB says raw, the file is raw, and Plex keeps serving
-                # the normalized upload. That is not hypothetical: it is exactly the state
-                # rk 261711 was found in on the real library (file -5.2, Plex -18.75).
-                plex_mt = {"tv": "show", "collection": "collection"}.get(
-                    row["media_type"], "movie")
-                rk_row = conn.execute(
-                    "SELECT rating_key FROM plex_items "
-                    "WHERE media_type=? AND guid_tmdb=? AND section_id=? "
-                    "  AND COALESCE(edition_key,'')=? LIMIT 1",
-                    (plex_mt, row["tmdb_id"], row["section_id"],
-                     row["edition_key"] or ""),
-                ).fetchone()
-                expect = row["norm_orig_sha256"]
-                expect_pcm = row["norm_orig_pcm_sha256"]
-
-            res = undo_file(theme, expect_sha=expect, expect_pcm_sha=expect_pcm)
-            if not res["ok"]:
-                return {"ok": False, "error": res.get("error") or "undo failed",
-                        "title": row["title"]}
-            measured_sha = res["new_sha"] if res["new_i"] is not None else None
-            measured_at = now_iso() if res["new_i"] is not None else None
-            with get_conn(db) as wconn:
-                wconn.execute(
-                    "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
-                    "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
-                    "  norm_state=NULL, norm_gain_db=NULL, norm_target=NULL, norm_at=NULL, "
-                    "  norm_orig_sha256=NULL, norm_orig_pcm_sha256=NULL, "
-                    "  norm_plex_entry_uri=NULL "
-                    "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
-                    (res["new_i"], res["new_tp"], res["new_lra"], measured_at, measured_sha,
-                     res["new_sha"], row["media_type"], row["tmdb_id"],
-                     row["section_id"], row["edition_key"]),
-                )
-                wconn.commit()
-            # v0.51.186: PUT PLEX BACK. Restoring only the file leaves the row diverged —
-            # motif's DB says raw, the file is raw, and Plex keeps serving the normalized
-            # upload. rk 261711 was found in exactly that state on the real library.
-            #
-            # Re-select the entry Plex served BEFORE the normalize rather than pushing the
-            # restored file: mp3gain's APE tag makes the restored file's hash differ from
-            # the original's, so pushing it would mint a THIRD entry and every
-            # normalize/undo cycle would add another. Fetching the recorded entry's bytes
-            # and POSTing them content-dedupes straight back onto it (v1.18.36) — no new
-            # entry, and Plex ends up on the exact entry it started on.
-            entry_uri, rk = row["norm_plex_entry_uri"], (
-                str(rk_row["rating_key"]) if rk_row else None)
-            restore = None
-            if rk and settings.plex_url and settings.plex_token:
-                cfg = PlexConfig(
-                    url=settings.plex_url, token=settings.plex_token,
-                    movie_section=settings.plex_movie_section,
-                    tv_section=settings.plex_tv_section, enabled=True,
-                )
-                if entry_uri:
-                    with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
-                        got = plex.fetch_theme_bytes(item_rating_key=rk,
-                                                     entry_uri=entry_uri)
-                        blob = got.get("bytes") if got.get("ok") else None
-                        if blob:
-                            ok_up, status, _b = plex.upload_theme(rating_key=rk,
-                                                                  audio_bytes=blob)
-                        else:
-                            ok_up, status = False, got.get("http_status")
-                    if blob and ok_up:
-                        import time as _t   # module-local, the file's existing pattern
-                        after = None
-                        for _ in range(_REREAD_POLLS):
-                            _t.sleep(_REREAD_POLL_S)
-                            after = _measure_plex_serving(settings, rk=rk,
-                                                          canonical_i=res["new_i"])
-                            if after.get("serving_normalized"):
-                                break
-                        restore = {"method": "re-selected the pre-normalize entry",
-                                   "entry_uri": entry_uri, "http_status": status,
-                                   "after": after,
-                                   "plex_matches_restored_file":
-                                       bool(after and after.get("serving_normalized"))}
-                    else:
-                        restore = {"method": "re-selected the pre-normalize entry",
-                                   "entry_uri": entry_uri, "http_status": status,
-                                   "plex_matches_restored_file": False,
-                                   "error": "could not fetch or re-post the recorded "
-                                            "entry's bytes"}
-                    # v0.51.187: SELF-CORRECT. Re-selecting "what Plex served before" is
-                    # only right if Plex matched the FILE back then — and it might not
-                    # have. rk 261711 proved it on the real library: its recorded entry
-                    # was ITSELF a normalized upload (Plex was already on it when that
-                    # normalize ran), so re-selecting it restored Plex to -18.75 while the
-                    # file went to -5.2. Detecting that and stopping is half a fix; the
-                    # row stays diverged and the loudest-raw auto-pick grabs it straight
-                    # back, which is the loop the operator hit. If the re-selected entry
-                    # does not match the restored file, push the restored file — a new
-                    # entry is a smaller price than a row that never converges.
-                    if not restore.get("plex_matches_restored_file"):
-                        log.warning("loudness undo: rk=%s re-selected entry %s does not "
-                                    "match the restored file — pushing the restored bytes "
-                                    "instead", rk, entry_uri)
-                        pushed = _push_theme_to_plex(settings, rk=rk, theme=theme,
-                                                     canonical_i=res["new_i"])
-                        if pushed.get("serving_normalized"):
-                            restore = {
-                                "method": "the recorded entry did not match the restored "
-                                          "file (Plex was not in sync with the file when "
-                                          "this row was normalized), so the restored file "
-                                          "was pushed instead — Plex gains an entry rather "
-                                          "than returning to the original",
-                                "entry_uri": entry_uri,
-                                "fell_back_to_push": True, "push": pushed,
-                                "plex_matches_restored_file": True,
-                            }
-                        else:
-                            restore["fell_back_to_push"] = True
-                            restore["push"] = pushed
-                else:
-                    # NULL uri = normalized by a pre-v0.51.185 build, which never recorded
-                    # it. Push the restored file instead and SAY so — this mints a new
-                    # entry rather than re-selecting the original, which is worse but
-                    # honest, and silently skipping would leave Plex on the loud copy.
-                    restore = _push_theme_to_plex(settings, rk=rk, theme=theme,
-                                                  canonical_i=res["new_i"])
-                    restore["method"] = ("pushed the restored file (no pre-normalize entry "
-                                         "was recorded — this row predates v0.51.185, so "
-                                         "Plex gains a new entry instead of returning to "
-                                         "the original)")
-                    restore["plex_matches_restored_file"] = bool(
-                        restore.get("serving_normalized"))
-                if not restore.get("plex_matches_restored_file"):
-                    log.warning("loudness undo: %s/%s was restored on disk but Plex is "
-                                "NOT serving the restored theme — the row is DIVERGED "
-                                "(file raw, Plex still normalized)", row["media_type"],
-                                row["tmdb_id"])
-            # v0.51.170: audio_restored is the verdict for the FILE; file_bit_exact is
-            # informational (mp3gain's APE tag means a correct restore is NOT
-            # byte-identical). v0.51.186: the file is only half of it.
-            return {"ok": True, "audio_restored": res["audio_restored"],
-                    "file_bit_exact": res["file_bit_exact"],
-                    "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}',
-                    "rating_key": rk,
-                    "recorded_entry_uri": entry_uri,
-                    "plex_restored": restore,
-                    "plex_is_serving_the_restore": bool(
-                        restore and restore.get("plex_matches_restored_file")),
-                    "restored": {"loudness_i": res["new_i"], "true_peak": res["new_tp"]}}
-
+            if row is None:
+                return {"ok": False, "error": "row not found"}
+            # v0.51.199: every guard + the undo + the Plex restore moved to the shared
+            # _undo_one_row chokepoint the bulk-undo op also calls.
+            return _undo_one_row(db, settings, row)
         return await run_in_threadpool(_run)
 
     @app.post("/api/admin/orphan-scan/cleanup-dead-rk")

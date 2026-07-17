@@ -473,13 +473,18 @@ CREATE TABLE IF NOT EXISTS op_progress (
                        -- _bulk_normalize_run (serial, loudest-first,
                        -- per-row _normalize_one_row, cancel + progress).
                        -- Mutates local_files.norm_state → row-refresh kind.
+                       -- v0.51.199 (schema v77): 'bulk_normalize_undo' — the
+                       -- reverse of bulk_normalize (undo a whole LEVEL run,
+                       -- restoring each file + putting Plex back). Same runner
+                       -- shape; mutates local_files.norm_state → row-refresh kind.
                        CHECK (kind IN ('tdb_sync', 'plex_enum',
                                        'reprobe_plex_themes',
                                        'bulk_probe_tdb',
                                        'bulk_lps',
                                        'tvdb_bridge',
                                        'cloud_themes_backup',
-                                       'bulk_normalize')),
+                                       'bulk_normalize',
+                                       'bulk_normalize_undo')),
     status          TEXT NOT NULL DEFAULT 'running'
                        -- v1.15.48 (schema v48): widened to include
                        -- 'pending'. v1.15.37's try_acquire helper
@@ -993,7 +998,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 76
+CURRENT_SCHEMA_VERSION = 77
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2754,6 +2759,53 @@ def _migrate_v75_to_v76(conn: sqlite3.Connection) -> None:
                                                'tvdb_bridge',
                                                'cloud_themes_backup',
                                                'bulk_normalize')),
+            status          TEXT NOT NULL DEFAULT 'running'
+                               CHECK (status IN ('pending', 'running',
+                                                 'cancelling',
+                                                 'done', 'failed', 'cancelled')),
+            started_at      TEXT NOT NULL,
+            updated_at      TEXT NOT NULL,
+            finished_at     TEXT,
+            stage           TEXT,
+            stage_label     TEXT,
+            stage_current   INTEGER NOT NULL DEFAULT 0,
+            stage_total     INTEGER NOT NULL DEFAULT 0,
+            processed_total INTEGER NOT NULL DEFAULT 0,
+            processed_est   INTEGER NOT NULL DEFAULT 0,
+            error_count     INTEGER NOT NULL DEFAULT 0,
+            detail_json     TEXT
+        );
+        INSERT INTO op_progress_new SELECT * FROM op_progress;
+        DROP TABLE op_progress;
+        ALTER TABLE op_progress_new RENAME TO op_progress;
+        CREATE INDEX IF NOT EXISTS idx_op_progress_status
+            ON op_progress (status, updated_at);
+        CREATE INDEX IF NOT EXISTS idx_op_progress_finished
+            ON op_progress (finished_at);
+        COMMIT;
+    """)
+
+
+def _migrate_v76_to_v77(conn: sqlite3.Connection) -> None:
+    """v77 (v0.51.199): widen op_progress.kind to include 'bulk_normalize_undo' — the
+    reverse of the Phase-2 bulk op. Same executescript rebuild as _migrate_v75_to_v76
+    (op_progress has no FKs, no foreign_keys dance); carries the current kind list +
+    'bulk_normalize_undo'. Idempotent on re-run."""
+    log.info("Migrating to schema v77 "
+             "(op_progress.kind CHECK widened to include 'bulk_normalize_undo' — v0.51.199)")
+    conn.executescript("""
+        BEGIN;
+        CREATE TABLE op_progress_new (
+            op_id           TEXT PRIMARY KEY,
+            kind            TEXT NOT NULL
+                               CHECK (kind IN ('tdb_sync', 'plex_enum',
+                                               'reprobe_plex_themes',
+                                               'bulk_probe_tdb',
+                                               'bulk_lps',
+                                               'tvdb_bridge',
+                                               'cloud_themes_backup',
+                                               'bulk_normalize',
+                                               'bulk_normalize_undo')),
             status          TEXT NOT NULL DEFAULT 'running'
                                CHECK (status IN ('pending', 'running',
                                                  'cancelling',
@@ -4672,6 +4724,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 75:
                     _migrate_v75_to_v76(conn)
                     current = 76
+                elif current == 76:
+                    _migrate_v76_to_v77(conn)
+                    current = 77
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

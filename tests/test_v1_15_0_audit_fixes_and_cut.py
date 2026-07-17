@@ -139,7 +139,9 @@ def test_schema_constant_still_defines_both_indexes():
     # comment pushed the indexes further from the CREATE TABLE.
     # v1.19.45: widened 4500 → 6000 for the v59 kind-CHECK comment
     # (cloud_themes_backup add).
-    schema_block = src[schema_anchor:schema_anchor + 6000]
+    # v0.51.199: widened 6000 → 7000 for the bulk_normalize +
+    # bulk_normalize_undo kind-CHECK entries pushing the indexes out.
+    schema_block = src[schema_anchor:schema_anchor + 7000]
     assert "CREATE INDEX IF NOT EXISTS idx_op_progress_status" in schema_block
     assert "CREATE INDEX IF NOT EXISTS idx_op_progress_finished" in schema_block
 
