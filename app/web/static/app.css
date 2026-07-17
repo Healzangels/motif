@@ -4828,6 +4828,50 @@ body.auth-page .auth-card { margin: 0; }
   box-shadow: 0 0 0 2px var(--cyan);
 }
 
+/* v0.51.198: LOUDNESS filter chips — a peer axis sized like .tdb-pill. Colors ENCODE
+   level state so they're FIXED across themes (theme SPLIT): LEVELED = cyan (the same
+   #6dffb5-adjacent cyan as the ▂▄▆ row marker), RAW = neutral, OUTLIERS = amber (the
+   "too loud" warning tone). Reused by the legend/glossary rows (reuse-don't-mirror). */
+.loudness-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  padding: 1px 5px;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  line-height: 1;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.loudness-pill-normalized {
+  color: var(--cyan);
+  border: 1px solid rgba(var(--cyan-rgb), 0.45);
+  background: rgba(var(--cyan-rgb), 0.08);
+}
+.loudness-pill-raw {
+  color: var(--fg-mute);
+  border: 1px solid var(--line);
+  background: transparent;
+}
+.loudness-pill-outliers {
+  color: var(--amber);
+  border: 1px solid rgba(var(--amber-rgb), 0.45);
+  background: rgba(var(--amber-rgb), 0.08);
+}
+.loudness-pill-btn {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  user-select: none;
+}
+@media (hover: hover) {
+.loudness-pill-btn:hover { filter: brightness(1.25); }
+}
+.loudness-pill-btn-active {
+  filter: brightness(1.3);
+  box-shadow: 0 0 0 2px var(--cyan);
+}
+
 /* v1.13.68: ATTN (attention) chip row — mirrors the title-cell
    `!`-glyph color palette so each chip visually matches the row
    glyphs that feed it. Sized like .tdb-pill so the row reads as

@@ -8747,6 +8747,7 @@
     // sort all honor the set; the client just tracks the
     // selection and ships it as ?tdb_pills=... on each fetch.
     tdbPills: new Set(),
+    loudnessPills: new Set(),
     // v1.12.23: DL / PL / Link pill multi-select sets. Same
     // server-side pattern as srcFilter / tdbPills.
     //   dlPills: 'on' (green dot), 'off' (faded), 'broken' (red).
@@ -9439,6 +9440,9 @@
     if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
       params.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
     }
+    if (libraryState.loudnessPills && libraryState.loudnessPills.size > 0) {
+      params.set('loudness_pills', Array.from(libraryState.loudnessPills).join(','));
+    }
     if (libraryState.dlPills && libraryState.dlPills.size > 0) {
       params.set('dl_pills', Array.from(libraryState.dlPills).join(','));
     }
@@ -9579,6 +9583,7 @@
         || (libraryState.tdb && libraryState.tdb !== 'any')
         || (libraryState.srcFilter && libraryState.srcFilter.size > 0)
         || (libraryState.tdbPills && libraryState.tdbPills.size > 0)
+        || (libraryState.loudnessPills && libraryState.loudnessPills.size > 0)
         || (libraryState.dlPills && libraryState.dlPills.size > 0)
         || (libraryState.plPills && libraryState.plPills.size > 0)
         || (libraryState.linkPills && libraryState.linkPills.size > 0)
@@ -9736,6 +9741,9 @@
     if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
       p.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
     }
+    if (libraryState.loudnessPills && libraryState.loudnessPills.size > 0) {
+      p.set('loudness_pills', Array.from(libraryState.loudnessPills).join(','));
+    }
     if (libraryState.dlPills && libraryState.dlPills.size > 0) {
       p.set('dl_pills', Array.from(libraryState.dlPills).join(','));
     }
@@ -9856,6 +9864,7 @@
         tdb: libraryState.tdb,
         srcFilter: Array.from(libraryState.srcFilter || []),
         tdbPills: Array.from(libraryState.tdbPills || []),
+        loudnessPills: Array.from(libraryState.loudnessPills || []),
         dlPills: Array.from(libraryState.dlPills || []),
         plPills: Array.from(libraryState.plPills || []),
         linkPills: Array.from(libraryState.linkPills || []),
@@ -9910,6 +9919,7 @@
     const HYDRATE_MAP = [
       { key: 'srcFilter', attr: 'srcFilter', activeClass: 'src-key-btn-active' },
       { key: 'tdbPills',  attr: 'tdbPill',   activeClass: 'tdb-pill-btn-active' },
+      { key: 'loudnessPills', attr: 'loudnessPill', activeClass: 'loudness-pill-btn-active' },
       { key: 'dlPills',   attr: 'dlPill',    activeClass: 'state-pill-btn-active' },
       { key: 'plPills',   attr: 'plPill',    activeClass: 'state-pill-btn-active' },
       { key: 'linkPills', attr: 'linkPill',  activeClass: 'link-pill-btn-active' },
@@ -13561,6 +13571,9 @@
       // badge uses ?tdb_pills=dead; future surfaces (e.g. dashboard
       // shortcuts) can deep-link any combination.
       const PILL_DEEP_LINKS = [
+        { param: 'loudness_pills', state: 'loudnessPills', attr: 'loudnessPill',
+          activeClass: 'loudness-pill-btn-active',
+          values: new Set(['normalized', 'raw', 'outliers']) },
         { param: 'tdb_pills',  state: 'tdbPills',  attr: 'tdbPill',
           activeClass: 'tdb-pill-btn-active',
           // v1.14.23: include the v1.13.1 'dropped' token so URL
@@ -13902,6 +13915,11 @@
         { attr: 'tdbPill', allAttr: 'tdbPillAll', state: 'tdbPills',
           activeClass: 'tdb-pill-btn-active',
           values: ['tdb', 'update', 'cookies', 'dead', 'none', 'dropped', 'empty'] },
+        // v0.51.198: LOUDNESS axis — kept AFTER tdb so the v1.14.23 marker window
+        // (test_v1_14_23) still reaches the tdb values line.
+        { attr: 'loudnessPill', allAttr: 'loudnessPillAll', state: 'loudnessPills',
+          activeClass: 'loudness-pill-btn-active',
+          values: ['normalized', 'raw', 'outliers'] },
         { attr: 'dlPill', allAttr: 'dlPillAll', state: 'dlPills',
           activeClass: 'state-pill-btn-active',
           values: ['on', 'off', 'broken'] },
@@ -14178,6 +14196,7 @@
       libraryState.tdb = 'any';
       libraryState.srcFilter.clear();
       libraryState.tdbPills.clear();
+      libraryState.loudnessPills.clear();
       libraryState.dlPills.clear();
       libraryState.plPills.clear();
       libraryState.linkPills.clear();
@@ -15498,6 +15517,9 @@
       }
       if (libraryState.tdbPills && libraryState.tdbPills.size > 0) {
         params.set('tdb_pills', Array.from(libraryState.tdbPills).join(','));
+      }
+      if (libraryState.loudnessPills && libraryState.loudnessPills.size > 0) {
+        params.set('loudness_pills', Array.from(libraryState.loudnessPills).join(','));
       }
       if (libraryState.dlPills && libraryState.dlPills.size > 0) {
         params.set('dl_pills', Array.from(libraryState.dlPills).join(','));

@@ -46,7 +46,8 @@ def _legend(html):
     i = html.index('id="library-legend"')
     # v1.23.68: widened 4000 -> 6000 for the new TDB axis section.
     # v0.51.92: widened 6000 -> 7000 for the new TITLE (4K + library dot) section.
-    return html[i:i + 7000]
+    # v0.51.198: widened 7000 -> 8200 for the new LOUD (level-state filter) section.
+    return html[i:i + 8200]
 
 
 # ── behavioral: the legend renders + decodes this tab's chips ──
@@ -63,7 +64,7 @@ def test_legend_renders_above_the_table(admin_client):
     assert html.index('id="library-legend"') < html.index('id="library-table"')
     leg = _legend(html)
     # v1.23.68: the TDB axis is decoded too (added to glossary + legend).
-    for axis in ("TDB", "SRC", "LINK", "DL / PL", "FLAGS"):
+    for axis in ("TDB", "SRC", "LINK", "DL / PL", "FLAGS", "LOUD"):   # v0.51.198
         assert axis in leg, f"legend missing {axis}"
     # the full reference is reachable from the legend foot.
     assert 'id="library-legend-gloss"' in leg

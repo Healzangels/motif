@@ -2225,6 +2225,13 @@ def _library_main_query(
     # for the full state list. Drives the new // ATTN chip row
     # below the SRC row and the topbar 5-FAIL click-through.
     attn_pills: set[str] | None = None,
+    # v0.51.198: LOUDNESS pill axis — level state. 'normalized' = leveled,
+    # 'raw' = has a local file but not yet leveled, 'outliers' = raw AND more
+    # than the margin louder than the target (the SAME set // LEVEL OUTLIERS
+    # acts on). loudness_target is the configured (clamped) target; +margin
+    # mirrors loudness_audit._OUTLIER_MARGIN_DB so the filter and the button agree.
+    loudness_pills: set[str] | None = None,
+    loudness_target: float = -18.0,
     cookies_present: bool = False,
     themes_dir: Path | None = None,
 ) -> dict:
@@ -2444,6 +2451,7 @@ def _library_main_query(
     src_pills = src_pills or set()
     tdb_pills = tdb_pills or set()
     dl_pills = dl_pills or set()
+    loudness_pills = loudness_pills or set()
     pl_pills = pl_pills or set()
     link_pills = link_pills or set()
     ed_pills = ed_pills or set()
@@ -3159,6 +3167,29 @@ def _library_main_query(
         if branches:
             where_extra += " AND (" + " OR ".join(branches) + ")"
 
+    # v0.51.198: LOUDNESS level-state axis. Placed LAST among the pill blocks so its
+    # one bound param (the outliers threshold) is the final WHERE param — aligned with
+    # the last `?`, since only q-search + src append params before it. All three read the
+    # lf_e/lf_g COALESCE aliases (no bare `lf` in this query); the count join is gated by
+    # needs_lf_for_count below so the slim COUNT path grows the same lf_e/lf_g joins.
+    if loudness_pills:
+        _lnorm = "COALESCE(lf_e.norm_state, lf_g.norm_state)"
+        _lfp = "COALESCE(lf_e.file_path, lf_g.file_path)"
+        _li = "COALESCE(lf_e.loudness_i, lf_g.loudness_i)"
+        lbr = []
+        for p in loudness_pills:
+            if p == "normalized":
+                lbr.append(f"({_lnorm} = 'normalized')")
+            elif p == "raw":
+                lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL)")
+            elif p == "outliers":
+                # the SAME set as // LEVEL OUTLIERS: raw + louder than target + margin.
+                lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL "
+                           f"AND {_li} IS NOT NULL AND {_li} > ?)")
+                params.append(loudness_target + 6.0)
+        if lbr:
+            where_extra += " AND (" + " OR ".join(lbr) + ")"
+
     # v1.19.4: f-string so the urls_match gates below can interpolate
     # `_not_p_row_sql()` for the P-row exclusion. Body has no other
     # `{}` so f-string conversion is safe (verified at edit time).
@@ -3631,6 +3662,9 @@ def _library_main_query(
         # query already uses the full sql_from with lf joined.
         or bool(src_pills) or bool(dl_pills) or bool(link_pills)
         or bool(pl_pills)
+        # v0.51.198: the loudness axis reads lf_e/lf_g norm_state/loudness_i, so the
+        # COUNT must join lf too or it 500s "no such column".
+        or bool(loudness_pills)
     )
     needs_p_for_count = (
         status in (
@@ -3651,7 +3685,7 @@ def _library_main_query(
     # producing the visible mismatch between header count and
     # body count the user reported.
     no_pills = not (src_pills or tdb_pills or dl_pills or pl_pills
-                    or link_pills or ed_pills or attn_pills)
+                    or link_pills or ed_pills or attn_pills or loudness_pills)
     if status == "all" and tdb == "any" and no_pills:
         sql_count = (f"SELECT COUNT(*) {sql_from_pi_only} "
                      f"WHERE {tab_where}{where_pi_only}")
@@ -13314,6 +13348,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Multi-select OR within axis, AND with other axes. Topbar's
         # 5-FAIL pill click-through routes to ?attn_pills=fail.
         attn_pills: str = Query(""),
+        loudness_pills: str = Query(""),   # v0.51.198: normalized / raw / outliers
         page: int = Query(1, ge=1),
         per_page: int = Query(50, ge=1, le=200),
         # v1.14.95: 'tdb' added to the regex. The TDB column header
@@ -13369,6 +13404,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         pl_set = _pset(pl_pills, {"on", "await", "off", "broken"})
         link_set = _pset(link_pills, {"hl", "c", "m", "none", "ps", "pu", "rp", "b", "bk", "tb", "ab"})
         ed_set = _pset(ed_pills, {"has", "none"})
+        loudness_set = _pset(loudness_pills, {"normalized", "raw", "outliers"})
         # v1.15.23: 'cookies' added to the valid set. v1.15.17
         # introduced the cookies STATUS pill + topbar chip and added
         # the SQL branch (api.py: ~line 1310) but missed THIS valid
@@ -13427,6 +13463,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             src_pills=src_set, tdb_pills=tdb_set,
             dl_pills=dl_set, pl_pills=pl_set, link_pills=link_set,
             ed_pills=ed_set, attn_pills=attn_set,
+            loudness_pills=loudness_set,
+            loudness_target=settings.loudness_target_lufs,
             cookies_present=cookies_present,
             themes_dir=settings.themes_dir if settings.is_paths_ready() else None,
         )

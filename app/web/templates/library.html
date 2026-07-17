@@ -381,6 +381,26 @@
             title="Clear all ATTN selections.">CLEAR</button>
   </div>
 
+  {# v0.51.198: LOUDNESS level-state axis. Same token vocabulary as the server
+     whitelist (_pset loudness_pills) + the JS pillAxes registry; a token added here
+     that's missing on either surface silently no-ops (the mirror-principle leak). #}
+  <div class="pill-filter-row" aria-label="LOUDNESS pill filter">
+    <span class="pill-filter-label muted small">LOUD:</span>
+    <button type="button" class="pill-filter-clear" data-loudness-pill-all="1"
+            title="Select every loudness state.">ALL</button>
+    <button type="button" class="loudness-pill loudness-pill-normalized loudness-pill-btn"
+            data-loudness-pill="normalized"
+            title="Leveled — motif adjusted this theme's gain toward the target.">LEVELED</button>
+    <button type="button" class="loudness-pill loudness-pill-raw loudness-pill-btn"
+            data-loudness-pill="raw"
+            title="Raw — has a local theme file that has not been leveled yet.">RAW</button>
+    <button type="button" class="loudness-pill loudness-pill-outliers loudness-pill-btn"
+            data-loudness-pill="outliers"
+            title="Outliers — raw themes well above the target (what // LEVEL OUTLIERS acts on).">OUTLIERS</button>
+    <button type="button" class="pill-filter-clear" data-loudness-pill=""
+            title="Clear all loudness selections.">CLEAR</button>
+  </div>
+
   </div>
   <div class="pill-filter-col" aria-label="file-axis filters">
   <div class="pill-filter-row" aria-label="DL pill filter">
@@ -915,6 +935,16 @@
           {% if tab == "collections" %}
           <div class="help-gloss-row"><span class="lib-tag">Movies</span><span class="help-gloss-def">Owning Plex library — trails the collection name</span></div>
           {% endif %}
+        </div>
+      </div>
+      {# v0.51.198: LOUDNESS filter axis. Reuses the real .loudness-pill classes so the
+         legend decode matches the drawer chips (reuse-don't-mirror). #}
+      <div class="help-gloss-sec">
+        <h3 class="help-gloss-sec-t">LOUD — level state (filter)</h3>
+        <div class="help-gloss-grid">
+          <div class="help-gloss-row"><span class="loudness-pill loudness-pill-normalized">LEVELED</span><span class="help-gloss-def">Leveled — gain adjusted toward the target</span></div>
+          <div class="help-gloss-row"><span class="loudness-pill loudness-pill-raw">RAW</span><span class="help-gloss-def">Raw — has a local theme file, not yet leveled</span></div>
+          <div class="help-gloss-row"><span class="loudness-pill loudness-pill-outliers">OUTLIERS</span><span class="help-gloss-def">Outliers — raw + well above the target; what // LEVEL OUTLIERS acts on</span></div>
         </div>
       </div>
       <p class="library-legend-foot">full reference in <button type="button" class="library-legend-gloss-link" id="library-legend-gloss">// GLOSSARY</button></p>
