@@ -932,6 +932,9 @@
              so its legend row must sit OUTSIDE the collections-only block — it was gated here
              and never decoded on the main tabs where the marker actually appears. #}
           <div class="help-gloss-row"><span class="tier-badge tier-badge-lvl">▂▄▆</span><span class="help-gloss-def">Loudness leveled — gain adjusted toward the target; INFO shows it</span></div>
+          {# v0.51.200: the other two loudness marker states (same meter glyph, colour = state). #}
+          <div class="help-gloss-row"><span class="tier-badge tier-badge-loud">▂▄▆</span><span class="help-gloss-def">Loudness outlier — plays much louder than target; a // LEVEL candidate</span></div>
+          <div class="help-gloss-row"><span class="tier-badge tier-badge-raw">▂▄▆</span><span class="help-gloss-def">Loudness raw — measured, not yet leveled</span></div>
           {% if tab == "collections" %}
           <div class="help-gloss-row"><span class="lib-tag">Movies</span><span class="help-gloss-def">Owning Plex library — trails the collection name</span></div>
           {% endif %}

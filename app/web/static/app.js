@@ -10912,9 +10912,21 @@
     // theme SPLIT). Cyan, not green: --ok and --src-t are the SAME #6dffb5, so a green
     // marker would read as the ThemerrDB source letter. Amber is the 4K badge, in this
     // very cell.
-    const lvlTag = (it.norm_state === 'normalized')
-      ? '<span class="tier-badge tier-badge-lvl" title="Loudness leveled — motif adjusted this theme\'s gain toward the target so it does not jump out against the rest of the library. Lossless and reversible: open INFO to see the levels or undo it.">\u2582\u2584\u2586</span>'
-      : '';
+    // v0.51.200 (Tag 5): 3-state now — state computed SERVER-SIDE as it.loudness_marker
+    // ('leveled' | 'outlier' | 'raw' | null) so the marker and the LOUDNESS filter chip
+    // share ONE rule. Same glyph for all three; COLOUR encodes the state and is FIXED
+    // across themes (theme SPLIT): leveled=cyan (NOT green — reads as SRC=T), outlier=amber
+    // (much louder than target — the LEVEL candidate), raw=muted (measured, not yet
+    // leveled — the quiet baseline, low-contrast so outliers + leveled still pop).
+    const LOUD_MARK = {
+      leveled: ['tier-badge-lvl', 'Loudness leveled — motif adjusted this theme\'s gain toward the target so it does not jump out against the rest of the library. Lossless and reversible: open INFO to see the levels or undo it.'],
+      outlier: ['tier-badge-loud', 'Loudness outlier — plays much louder than the target, so it jumps out on hover. A candidate for // LEVEL. Open INFO to level it (lossless, reversible).'],
+      raw: ['tier-badge-raw', 'Loudness raw — measured but not yet leveled. Open INFO to level it, or leave it as-is.'],
+    };
+    const lvlTag = (() => {
+      const _lm = LOUD_MARK[it.loudness_marker];
+      return _lm ? '<span class="tier-badge ' + _lm[0] + '" title="' + htmlEscape(_lm[1]) + '">▂▄▆</span>' : '';
+    })();
     const libTag = (it.plex_media_type === 'collection' && it.section_title)
       ? `<span class="lib-tag">${htmlEscape(it.section_title)}</span>`
       : '';

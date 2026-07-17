@@ -3184,9 +3184,12 @@ def _library_main_query(
                 lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL)")
             elif p == "outliers":
                 # the SAME set as // LEVEL OUTLIERS: raw + louder than target + margin.
+                # v0.51.200: bind the shared _OUTLIER_MARGIN_DB (was a literal 6.0) so the
+                # filter, the row marker, and the // LEVEL OUTLIERS button use ONE threshold.
+                from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
                 lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL "
                            f"AND {_li} IS NOT NULL AND {_li} > ?)")
-                params.append(loudness_target + 6.0)
+                params.append(loudness_target + _loud_margin)
         if lbr:
             where_extra += " AND (" + " OR ".join(lbr) + ")"
 
@@ -3266,6 +3269,11 @@ def _library_main_query(
                -- there is no bare `lf` alias in this query, and reading only lf_e
                -- would blank the marker for every '' -fallback edition.
                COALESCE(lf_e.norm_state, lf_g.norm_state) AS norm_state,
+               -- v0.51.200: loudness_i drives the 3-state title-cell marker
+               -- (raw / outlier / leveled). Same lf_e/lf_g COALESCE as norm_state;
+               -- the derived `loudness_marker` is computed in Python below so the
+               -- marker and the LOUDNESS filter predicate share ONE 3-state rule.
+               COALESCE(lf_e.loudness_i, lf_g.loudness_i) AS loudness_i,
                COALESCE(lf_e.file_path, lf_g.file_path) AS file_path, COALESCE(lf_e.source_video_id, lf_g.source_video_id) AS source_video_id, COALESCE(lf_e.provenance, lf_g.provenance) AS provenance, COALESCE(lf_e.source_kind, lf_g.source_kind) AS source_kind,
                -- v1.19.21: surface last_place_attempt_reason so the JS
                -- can render a BK link-badge for backup-only intent
@@ -3836,6 +3844,27 @@ def _library_main_query(
         and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
     )
     items = [dict(r) for r in rows]
+    # v0.51.200 (Tag 5): the 3-state title-cell loudness marker. Derived HERE (not
+    # in SQL) so the marker and the LOUDNESS filter predicate above share ONE rule:
+    # leveled = norm_state normalized; outlier = raw AND louder than target+margin
+    # (the SAME set // LEVEL OUTLIERS + the filter's 'outliers' chip act on); raw =
+    # has a local file but not yet leveled. No local file → no marker. The +margin
+    # is loudness_audit._OUTLIER_MARGIN_DB (same value the filter binds at ~line 3189)
+    # so all three stay in lock-step. loudness_i may be NULL (un-audited) → not an
+    # outlier, just raw. The `> ` compare matches the SQL exactly (a stored ±inf
+    # from a pre-v0.51.163 build compares the same way it does in SQLite).
+    from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
+    _out_thresh = loudness_target + _loud_margin
+    for it in items:
+        if it.get("norm_state") == "normalized":
+            it["loudness_marker"] = "leveled"
+        elif it.get("file_path") is not None and it.get("norm_state") is None:
+            # `is not None` (not truthiness) mirrors the filter's SQL `file_path IS NOT NULL`.
+            _li = it.get("loudness_i")
+            it["loudness_marker"] = (
+                "outlier" if (_li is not None and _li > _out_thresh) else "raw")
+        else:
+            it["loudness_marker"] = None
     # v1.11.62: stat the canonical for each row that has a local_files
     # entry, so the UI can render a 'DL broken' state when motif's
     # canonical was deleted out from under it but the placement

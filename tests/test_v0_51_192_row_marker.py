@@ -114,12 +114,19 @@ def test_query_reads_norm_state_through_the_coalesce_pair():
     assert "COALESCE(lf_e.norm_state, lf_g.norm_state) AS norm_state" in API_PY
 
 
-def test_marker_renders_only_for_normalized_and_is_a_trailing_badge():
-    assert "it.norm_state === 'normalized'" in APP_JS
-    assert "tier-badge tier-badge-lvl" in APP_JS
+def test_marker_is_three_state_and_a_trailing_badge():
+    # v0.51.200: 3-state now — the state comes from the server as it.loudness_marker and
+    # is rendered via the LOUD_MARK glyph map (was a leveled-only norm_state ternary).
+    assert "it.loudness_marker" in APP_JS
+    assert "LOUD_MARK = {" in APP_JS
+    for cls in ("tier-badge-lvl", "tier-badge-loud", "tier-badge-raw"):
+        assert cls in APP_JS, cls
     # it must be a trailing state badge (sibling of 4K), NOT pushed into titleGlyphs —
-    # that slot is the strict one-glyph attention hierarchy (v1.12.106).
-    assert "titleGlyphs.push" not in APP_JS.split("const lvlTag")[1].split("return `")[0]
+    # that slot is the strict one-glyph attention hierarchy (v1.12.106). Scope the check
+    # to the marker block so an unrelated titleGlyphs.push elsewhere doesn't trip it.
+    blk = APP_JS[APP_JS.index("const LOUD_MARK = {"):
+                 APP_JS.index("})();", APP_JS.index("const LOUD_MARK = {"))]
+    assert "titleGlyphs.push" not in blk
 
 
 def test_marker_colour_is_fixed_cyan_not_themed_nor_source_green():

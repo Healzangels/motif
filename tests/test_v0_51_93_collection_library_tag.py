@@ -129,7 +129,9 @@ def test_lib_tag_css_is_a_neutral_pill():
 
 def test_glossary_documents_library_name_tag_and_4k():
     i = BASE_HTML.index("// TITLE — badges beside the name")
-    sec = BASE_HTML[i:i + 1000]
+    # v0.51.200: widened 1000 → 1800 — the 3-state loudness marker added two rows
+    # (outlier + raw, long definitions) between the 4K chip and the lib-tag row.
+    sec = BASE_HTML[i:i + 1800]
     assert 'class="tier-badge tier-badge-4k">4K<' in sec
     assert 'class="lib-tag">Movies</span>' in sec
 

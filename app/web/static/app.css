@@ -4713,6 +4713,27 @@ body.auth-page .auth-card { margin: 0; }
   letter-spacing: 0;
   padding: 1px 4px;
 }
+/* v0.51.200 (Tag 5): the other two loudness states, same meter glyph, FIXED colours
+   (theme SPLIT — colour ENCODES state). OUTLIER = amber "hot / plays too loud" — the
+   LEVEL candidate; distinct from the amber .tier-badge-4k in this cell by shape (meter
+   bars vs the letters "4K"). RAW = the majority state, so it's deliberately low-contrast
+   (muted, no chip border/bg) — it reads as a quiet baseline the amber + cyan rows pop
+   off of, rather than 2,700 shouting chips. */
+.tier-badge-loud {
+  color: var(--amber-bright);
+  border: 1px solid var(--amber);
+  background: rgba(var(--amber-rgb), 0.14);
+  letter-spacing: 0;
+  padding: 1px 4px;
+}
+.tier-badge-raw {
+  color: var(--fg-dim);
+  border: 1px solid transparent;
+  background: none;
+  opacity: 0.75;
+  letter-spacing: 0;
+  padding: 1px 4px;
+}
 
 .tier-badge-4k {
   color: var(--amber-bright);
