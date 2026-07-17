@@ -74,8 +74,11 @@ def _themeless_placed(db, *, rating_key, tmdb_id, placed=True):
         c.commit()
 
 
-def _stub(monkeypatch, *, entries_by_rk, serves_by_rk):
+def _stub(monkeypatch, *, entries_by_rk, serves_by_rk, alive_by_rk=None):
+    """alive_by_rk: rk -> can the unselected entry's bytes be fetched? Defaults to alive.
+    A DEAD entry serves nothing regardless of the flag, so it cannot answer."""
     from app.web import api as api_mod
+    alive_by_rk = alive_by_rk or {}
 
     class _FakePlex:
         def __init__(self, *a, **k):
@@ -94,6 +97,12 @@ def _stub(monkeypatch, *, entries_by_rk, serves_by_rk):
 
         def verify_theme_claim(self, rating_key):
             return serves_by_rk.get(str(rating_key), False)
+
+        def fetch_theme_bytes(self, *, item_rating_key, entry_uri):
+            if alive_by_rk.get(str(item_rating_key), True):
+                return {"ok": True, "http_status": 200, "bytes": b"AUDIO",
+                        "error": None}
+            return {"ok": False, "http_status": 404, "bytes": None, "error": "gone"}
 
     monkeypatch.setattr(api_mod, "PlexClient", _FakePlex)
 
@@ -123,8 +132,28 @@ def test_unselected_entry_that_plays_nothing_is_a_real_bug(client, monkeypatch):
 
     b = c.post("/api/admin/plex/unselected-serves-probe", headers=AUTH).json()
     assert b["unselected_and_bare"] == 1
-    assert "REAL BUG" in b["verdict"]
-    assert "strands the item silently" in b["verdict"]
+    assert b["rows"][0]["unselected_entry_is_alive"] is True
+    assert "LIVE theme entry" in b["verdict"]
+    assert "LPS strands the item" in b["verdict"]
+    # v0.51.184: n=1 must be named as n=1, not dressed up
+    assert "rests on a single case" in b["verdict"]
+
+
+def test_a_dead_entry_cannot_answer(client, monkeypatch):
+    """v0.51.184's discriminator, and the reason v0.51.183 shouldn't have said REAL BUG.
+    An entry pointing at bytes Plex no longer has serves nothing no matter what the flag
+    says — identical symptom, innocent cause. The operator's Wildboyz diag showed the
+    check: fetching an entry with selected:false returned 4096 bytes, proving it live."""
+    c, db = client
+    _themeless_placed(db, rating_key="1", tmdb_id=10)
+    _stub(monkeypatch, entries_by_rk={"1": UNSELECTED}, serves_by_rk={"1": False},
+          alive_by_rk={"1": False})
+
+    b = c.post("/api/admin/plex/unselected-serves-probe", headers=AUTH).json()
+    assert b["rows"][0]["unselected_entry_is_alive"] is False
+    assert b["rows"][0]["answers_the_question"] is False
+    assert b["unselected_and_bare"] == 0
+    assert "INCONCLUSIVE" in b["verdict"]
 
 
 def test_mixed_is_reported_as_mixed(client, monkeypatch):
@@ -142,7 +171,9 @@ def test_mixed_is_reported_as_mixed(client, monkeypatch):
 
 def test_a_row_with_no_entries_cannot_answer_and_is_not_counted(client, monkeypatch):
     """An empty collection means Plex has nothing to serve, selected or not — that says
-    nothing about the flag."""
+    nothing about the flag. (It IS its own problem on a motif-placed row: motif put a
+    sidecar there and Plex never ingested it. 5 of the operator's first 6 looked like
+    this, which is why only n=1 could answer.)"""
     c, db = client
     _themeless_placed(db, rating_key="1", tmdb_id=10)
     _stub(monkeypatch, entries_by_rk={"1": []}, serves_by_rk={"1": False})

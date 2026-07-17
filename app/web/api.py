@@ -6294,7 +6294,9 @@ def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
 
 # v0.51.173: Plex's metadata refresh is async — poll the measurement instead of
 # sleeping once and guessing whether the agent got there.
-_UNSELECTED_SAMPLE = 6   # v0.51.183: one row can't answer a library-wide question
+_UNSELECTED_SAMPLE = 40  # v0.51.184: the whole candidate cohort (~11 on the real
+                        # library). 6 was arbitrary and 5 of the first 6 couldn't
+                        # answer, leaving n=1 to carry a claim it can't.
 _REREAD_POLLS = 4
 _REREAD_POLL_S = 5
 
@@ -26356,33 +26358,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # the ONLY question that matters, and the flag cannot answer it:
                     # does Plex actually deliver bytes for this item's theme?
                     serves = plex.verify_theme_claim(rk)
+                    # v0.51.184: is the unselected entry ALIVE? Without this, "entry
+                    # present but nothing served" has an innocent explanation — a DEAD
+                    # entry pointing at bytes Plex no longer has would look identical to
+                    # "Plex ignores unselected entries", and only the second is a bug.
+                    # v0.51.183 called it a REAL BUG off one row without checking. The
+                    # operator's own Wildboyz diag showed the check: fetching an entry
+                    # with selected:false returned 4096 bytes, proving it live.
+                    entry_uri = (str(meta[0].get("ratingKey") or meta[0].get("key"))
+                                 if meta else None)
+                    entry_alive = None
+                    if entry_uri and sel is None:
+                        got_b = plex.fetch_theme_bytes(item_rating_key=rk,
+                                                       entry_uri=entry_uri)
+                        entry_alive = bool(got_b.get("ok") and got_b.get("bytes"))
                     rows.append({
                         "rating_key": rk, "title": cr["title"],
                         "entries": len(meta),
                         "selected_entry": (str(sel.get("ratingKey") or sel.get("key"))
                                            if sel else None),
+                        "first_entry": entry_uri,
+                        "unselected_entry_is_alive": entry_alive,
                         "plex_serves_a_theme": serves,
-                        # entries in the collection + nothing selected = exactly the state
-                        # an LPS delete leaves behind. Anything else can't answer.
+                        # a LIVE entry + nothing selected is exactly the state an LPS
+                        # delete leaves behind. A dead entry can't answer: it would serve
+                        # nothing no matter what the flag said.
                         "answers_the_question": bool(meta) and sel is None
-                                                and serves is not None,
+                                                and serves is not None
+                                                and entry_alive is True,
                     })
 
             useful = [r for r in rows if r["answers_the_question"]]
             served = [r for r in useful if r["plex_serves_a_theme"]]
             bare = [r for r in useful if not r["plex_serves_a_theme"]]
             if not useful:
-                verdict = ("no row here could answer it — every sampled row either has an "
-                           "empty theme collection (so Plex has nothing to serve, "
-                           "selected or not) or could not be read. INCONCLUSIVE, not a "
-                           "pass. Run the LPS lock test on an agent-served row to create "
-                           "the state deliberately.")
+                verdict = ("no row here could answer it — every sampled row has an empty "
+                           "theme collection (Plex has nothing to serve, selected or not), "
+                           "a DEAD entry, or could not be read. INCONCLUSIVE, not a pass. "
+                           "Note an empty collection on a motif-PLACED row is its own "
+                           "problem: motif put a sidecar there and Plex never ingested "
+                           "it.")
             elif bare and not served:
-                verdict = (f"Plex serves NOTHING on {len(bare)} row(s) that still have "
-                           f"entries in the collection with nothing selected. That is the "
-                           f"exact state a LET PLEX SERVE delete leaves behind — so LPS "
-                           f"strands the item silently, and the entries surviving the "
-                           f"delete are cold comfort. REAL BUG.")
+                verdict = (f"Plex serves NOTHING on {len(bare)} row(s) that hold a LIVE "
+                           f"theme entry with nothing selected — the exact state a LET "
+                           f"PLEX SERVE delete leaves behind. The entry has playable "
+                           f"bytes and Plex still will not serve it, so the `selected` "
+                           f"flag is what gates playback and the entries surviving a "
+                           f"delete are cold comfort: LPS strands the item. "
+                           + ("Only ONE row could answer, so this rests on a single "
+                              "case — but the mechanism (does Plex honour `selected`) "
+                              "is not per-row, so one clean case is meaningful. "
+                              if len(bare) == 1 else "")
+                           + "Confirm before fixing: the fix is a re-upload after the "
+                             "delete (the only way to select an entry), which is the same "
+                             "propagation step v0.51.176-183 landed on.")
             elif served and not bare:
                 verdict = (f"Plex DOES serve a theme on {len(served)} row(s) with entries "
                            f"and nothing selected — the `selected` flag is not what makes "
