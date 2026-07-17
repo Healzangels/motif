@@ -4702,6 +4702,10 @@ body.auth-page .auth-card { margin: 0; }
    would read as the ThemerrDB source letter) and --amber is .tier-badge-4k, which
    sits in this same cell. Letter-spacing is dropped: the inherited 0.5px from
    .tier-badge wedges the meter bars apart into three separate marks. */
+/* v0.51.196: the audition's own preview player — appears below the button when you
+   preview, on its own line, decoupled from the FILE & PLACEMENT play bar. */
+.loud-preview-player { margin-top: var(--gap-2); }
+
 .tier-badge-lvl {
   color: var(--cyan);
   border: 1px solid rgba(var(--cyan-rgb), 0.55);

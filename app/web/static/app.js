@@ -17894,6 +17894,16 @@
       const rawI = (leveled && gain !== null) ? (measured - gain) : null;
       const CEIL = 10485760;   // mirrors plex.THEME_UPLOAD_CEILING_BYTES
       const tooBig = typeof lf.file_size === 'number' && lf.file_size > CEIL;
+      // v0.51.196: the audition gets its OWN player (built here, same serve URL as the
+      // FILE & PLACEMENT `play` bar) so the preview no longer HIJACKS that shared player
+      // — it appears in the LOUDNESS section beside the +/- stepper. rating_key scopes
+      // the edition, like audioBlock.
+      const _pqp = [];
+      if (sectionId) _pqp.push(`section_id=${encodeURIComponent(sectionId)}`);
+      if (ratingKey) _pqp.push(`rating_key=${encodeURIComponent(ratingKey)}`);
+      const _previewSrc = `/api/items/${encodeURIComponent(lf.media_type)}/`
+        + `${encodeURIComponent(lf.tmdb_id)}/theme.mp3`
+        + (_pqp.length ? `?${_pqp.join('&')}` : '');
 
       const lvl = `<dt>plays at</dt><dd class="muted small">${measured.toFixed(1)} LUFS${
         tp !== null ? ` · peak ${tp.toFixed(1)} dBTP${tp > 0 ? ' <span class="accent-red">(clipping)</span>' : ''}` : ''
@@ -17949,8 +17959,11 @@
            </dd>
            <dt>audition</dt><dd>
              <button class="btn btn-tiny btn-info" data-act="loud-preview"
-                     title="Play the theme at the target level, using the player above. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>
+                     title="Hear the theme at the target level in its own preview player below. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>
              <span id="loud-preview-note" class="muted small"></span>
+             <div class="loud-preview-player" hidden>
+               <audio id="loud-preview-audio" class="info-audio" controls preload="none" src="${htmlEscape(_previewSrc)}">your browser doesn't support inline audio playback</audio>
+             </div>
            </dd>`
         : '';
       return `${lvl}${state}${raw}${stepper}<dt>${tooBig ? 'cannot level' : 'action'}</dt>${act}`;
@@ -18003,8 +18016,8 @@
       ${_grp('identity', _idsRows)}
       ${_grp('source', _linksRows)}
       ${_grp('history', _timelineRows)}
-      ${_grp('file & placement', _onDiskRows)}
       ${_grp('loudness', _loudnessRows)}
+      ${_grp('file & placement', _onDiskRows)}
       ${recoveryPlaceholder}
       ${diffSection}
       ${(() => {
@@ -18185,15 +18198,18 @@
         const next = loudTarget + Number(ev.currentTarget.dataset.dir) * LOUD_STEP;
         loudTarget = Math.max(LOUD_MIN, Math.min(LOUD_MAX, next));
         _loudRefresh();
-        // a target change invalidates a running preview's gain
-        const note = body.querySelector('#loud-preview-note');
-        if (_loudAudioCtx && note && note.dataset.playing === '1') _loudApplyGain();
+        // keep the (dedicated) preview player's gain in sync with the target so a
+        // stepped-then-replayed preview is at the number shown.
+        if (_loudGainNode) _loudApplyGain();
       });
     });
 
-    // The audition routes the EXISTING player through a GainNode. A GainNode in dB is
-    // exactly what mp3gain does to the file (a global gain scale), so this is a faithful
-    // preview rather than an approximation — with one caveat stated in the note below.
+    // v0.51.196: the audition drives its OWN dedicated <audio> (#loud-preview-audio),
+    // NOT the shared FILE & PLACEMENT player — so previewing never reroutes the theme's
+    // normal play bar. A GainNode in dB is exactly what mp3gain does to the file (a
+    // global gain scale), so this is a faithful preview. Because this element exists
+    // ONLY to audition, it STAYS gained (no reset-to-1.0 dance the shared player needed
+    // — nothing else ever plays through it).
     let _loudGainNode = null;
     const _loudApplyGain = () => {
       if (_loudGainNode) _loudGainNode.gain.value = Math.pow(10, _loudGainDb() / 20);
@@ -18201,7 +18217,8 @@
     body.querySelector('button[data-act="loud-preview"]')?.addEventListener('click', (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
-      const audio = body.querySelector('audio.info-audio');
+      const audio = body.querySelector('#loud-preview-audio');
+      const wrap = body.querySelector('.loud-preview-player');
       const note = body.querySelector('#loud-preview-note');
       if (!audio || _lm === null) return;
       try {
@@ -18211,40 +18228,25 @@
           _loudAudioCtx = new AC();
         }
         if (!_loudGainNode) {
-          // NOTE: createMediaElementSource PERMANENTLY reroutes this element through the
-          // graph — after this, the player's own controls also play through _loudGainNode
-          // forever. That's why gain is reset to 1.0 on pause/ended: otherwise hitting
-          // play later would quietly audition the target and pass as the real file.
           const srcNode = _loudAudioCtx.createMediaElementSource(audio);
           _loudGainNode = _loudAudioCtx.createGain();
           srcNode.connect(_loudGainNode).connect(_loudAudioCtx.destination);
-          const _reset = () => {
-            if (_loudGainNode) _loudGainNode.gain.value = 1.0;
-            // v0.51.192: keep every state's note SHORT. The old 53-char message was
-            // longer than the ~49-char playing note, so it wrapped to a second line and
-            // the audition row grew taller only when stopped — a visible layout jump the
-            // operator flagged. All three notes now sit on one line beside the button.
-            if (note) { note.dataset.playing = '0'; note.textContent = 'stopped · player restored'; }
-          };
-          audio.addEventListener('pause', _reset);
-          audio.addEventListener('ended', _reset);
+          const _pstop = () => { if (note) note.textContent = 'preview stopped'; };
+          audio.addEventListener('pause', _pstop);
+          audio.addEventListener('ended', _pstop);
         }
+        if (wrap) wrap.hidden = false;   // the preview bar appears when you audition
         _loudApplyGain();
         _loudAudioCtx.resume();
         audio.currentTime = 0;
         // v0.51.193: play() rejects asynchronously (decode failure / autoplay block),
-        // which the try/catch above cannot see — surface it on the note instead of an
-        // uncaught-promise console error that leaves 'playing…' showing.
+        // which the try/catch above cannot see — surface it on the note.
         audio.play().catch(() => {
-          if (note) { note.dataset.playing = '0'; note.textContent = 'preview unavailable'; }
+          if (note) note.textContent = 'preview unavailable';
         });
-        if (note) {
-          note.dataset.playing = '1';
-          // the applied gain is already spelled out in the target row above; the note
-          // only needs the level + the reassurance nothing was written. Kept short so
-          // it never wraps and shifts the row (v0.51.192).
-          note.textContent = `playing at ${loudTarget.toFixed(1)} LUFS · nothing written`;
-        }
+        // short so it never wraps + shifts the row (v0.51.192); the dedicated player's
+        // own controls convey play/pause, the note only reassures nothing was written.
+        if (note) note.textContent = `playing at ${loudTarget.toFixed(1)} LUFS · nothing written`;
       } catch (e) {
         if (note) note.textContent = 'preview unavailable';
       }

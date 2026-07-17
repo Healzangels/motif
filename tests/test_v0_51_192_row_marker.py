@@ -153,7 +153,10 @@ def test_glossary_documents_the_marker_on_BOTH_surfaces():
 def test_audition_note_states_are_short_enough_not_to_wrap():
     """The reported bug: the stopped note was longer than the playing note and wrapped,
     growing the audition row only when stopped. All states now sit on one line."""
-    assert "stopped · player restored" in APP_JS
+    # v0.51.196: the audition got its own dedicated preview player, so the stopped note
+    # no longer says "player restored" (nothing to restore — the shared play bar is never
+    # touched). All notes stay short so none wraps + shifts the row.
+    assert "preview stopped" in APP_JS
     assert "playing at ${loudTarget.toFixed(1)} LUFS · nothing written" in APP_JS
     # the specific 53-char string that wrapped must be gone.
     assert "the player is back to the real file" not in APP_JS
