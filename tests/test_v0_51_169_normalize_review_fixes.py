@@ -241,11 +241,11 @@ def test_normalize_update_is_guarded_by_norm_state_is_null(client, monkeypatch):
 
 def test_update_carries_the_norm_state_guard():
     api_py = (REPO / "app" / "web" / "api.py").read_text()
-    i = api_py.index('@app.post("/api/admin/loudness/normalize-one")')
-    # v0.51.185: bound by the NEXT endpoint, not a byte count — an i+9000
-    # window silently truncated as soon as the handler grew, which is a
-    # test that stops testing rather than an invariant that broke.
-    block = api_py[i:api_py.index('@app.get("/api/admin/loudness/normalized")', i)]
+    # v0.51.194: the write moved from the normalize-one endpoint into the shared
+    # _normalize_one_row chokepoint (the bulk op calls it too). Anchor on that fn,
+    # bounded by create_app — the guard is intact, just relocated.
+    i = api_py.index('def _normalize_one_row(')
+    block = api_py[i:api_py.index('def create_app(', i)]
     assert "AND norm_state IS NULL" in block
     assert "rowcount == 0" in block
 
@@ -298,11 +298,9 @@ def test_normalize_file_never_raises_on_none_measurement(tmp_path):
 
 def test_one_timestamp_per_operation():
     api_py = (REPO / "app" / "web" / "api.py").read_text()
-    i = api_py.index('@app.post("/api/admin/loudness/normalize-one")')
-    # v0.51.185: bound by the NEXT endpoint, not a byte count — an i+9000
-    # window silently truncated as soon as the handler grew, which is a
-    # test that stops testing rather than an invariant that broke.
-    block = api_py[i:api_py.index('@app.get("/api/admin/loudness/normalized")', i)]
+    # v0.51.194: the mutation moved into _normalize_one_row — anchor there.
+    i = api_py.index('def _normalize_one_row(')
+    block = api_py[i:api_py.index('def create_app(', i)]
     assert "ts = now_iso()" in block
     # the UPDATE binds the single ts, not two independent now_iso() calls
     assert block.count("now_iso()") == 1
