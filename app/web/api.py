@@ -16072,6 +16072,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "plex_has_theme": _pi_has_theme,
                 "local_file": local_payloads[0] if local_payloads else None,
                 "local_files": local_payloads,
+                # v0.51.191: the CONFIGURED level target, so the card's stepper seeds
+                # from the same number normalize-one and the download-conditioner use.
+                # Shipping a second hardcoded -18 in the JS would be the mirror-drift
+                # this tag just removed from normalize-one.
+                "loudness_target_default": settings.loudness_target_lufs,
                 "placements": [dict(p) for p in placements],
                 "override": dict(ovr) if ovr else None,
                 # v1.12.72: full per-section override list. Frontend
@@ -25957,9 +25962,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not isinstance(body, dict):
             body = {}   # v0.51.169: a list/str body would AttributeError on .get → 500
         try:
-            target = float(body.get("target")) if body.get("target") is not None else -18.0
+            # v0.51.191: default to the CONFIGURED target, not a hardcoded -18. The
+            # download-conditioning path already uses settings.loudness_target_lufs
+            # (worker.py), so hardcoding here made one operation answer two ways
+            # depending on which door you came through — the mirror-drift class.
+            target = (float(body["target"]) if body.get("target") is not None
+                      else settings.loudness_target_lufs)
         except (TypeError, ValueError):
-            target = -18.0
+            target = settings.loudness_target_lufs   # a junk body != a different default
         target = max(-31.0, min(-6.0, target))   # clamp to a sane hover band
         want_mt = body.get("media_type")
         want_id = body.get("tmdb_id")

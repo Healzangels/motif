@@ -17085,6 +17085,11 @@
     showModalNoFocusRing(dlg);
   }
 
+  // v0.51.191: ONE AudioContext for the whole page. Browsers cap concurrent contexts
+  // (~6); minting one per card-open would silently stop working on the 7th preview.
+  // The per-element MediaElementSource nodes are cheap and GC with their <audio>.
+  let _loudAudioCtx = null;
+
   async function openInfoDialog(mediaType, tmdbId, sectionId, ratingKey) {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
@@ -17909,7 +17914,28 @@
                  title="Level this theme with mp3gain and push it to Plex. Lossless and reversible — Plex plays its own ingested copy, so motif re-uploads to make the change audible.">// LEVEL THIS THEME</button>
                <span id="loud-result" class="muted small info-probe-meta"></span></dd>`;
       }
-      return `${lvl}${state}${raw}<dt>${tooBig ? 'cannot level' : 'action'}</dt>${act}`;
+      // v0.51.191: the target picker + audition. Only on a levelable RAW row: the
+      // server refuses a re-level ("already normalized — undo it first") because a
+      // second mp3gain pass would stack gain and rewrite the undo tag to point at the
+      // once-leveled state, stranding the true original. So a leveled row shows no
+      // stepper — UNDO first. The steps are mp3gain's own 1.505 dB quantum, so one
+      // press is exactly one step and the number you pick is the number you get.
+      const stepper = (!tooBig && !leveled)
+        ? `<dt>target</dt><dd>
+             <button class="btn btn-tiny btn-info" data-act="loud-step" data-dir="-1"
+                     title="Quieter by one mp3gain step (1.5 dB).">–</button>
+             <span id="loud-target">${'\u2014'}</span> <span class="muted small">LUFS</span>
+             <button class="btn btn-tiny btn-info" data-act="loud-step" data-dir="1"
+                     title="Louder by one mp3gain step (1.5 dB).">+</button>
+             <span id="loud-gain-note" class="muted small"></span>
+           </dd>
+           <dt>audition</dt><dd>
+             <button class="btn btn-tiny btn-info" data-act="loud-preview"
+                     title="Play the theme at the target level, using the player above. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>
+             <span id="loud-preview-note" class="muted small"></span>
+           </dd>`
+        : '';
+      return `${lvl}${state}${raw}${stepper}<dt>${tooBig ? 'cannot level' : 'action'}</dt>${act}`;
     })();
 
     const _grp = (title, rows) => rows.trim()
@@ -18094,6 +18120,104 @@
     // the URL is dead, the row's failure_kind is also written
     // server-side (the user's option B: preemptive surface) — a
     // background loadLibrary catches it on the next tick.
+    // v0.51.191: target stepper + audition.
+    const LOUD_STEP = 1.505;          // mp3gain's quantum — not a display choice
+    const LOUD_MIN = -31.0, LOUD_MAX = -6.0;   // mirrors normalize-one's clamp
+    const _lm = (lf && typeof lf.loudness_i === 'number' && Number.isFinite(lf.loudness_i))
+      ? lf.loudness_i : null;
+    // seed from the CONFIGURED target the server actually uses, never a second
+    // hardcoded -18 (that divergence is exactly what v0.51.191 removed server-side)
+    let loudTarget = (typeof data.loudness_target_default === 'number')
+      ? data.loudness_target_default : -18.0;
+    const _loudSteps = () => Math.round((loudTarget - _lm) / LOUD_STEP);
+    const _loudGainDb = () => _loudSteps() * LOUD_STEP;
+
+    const _loudRefresh = () => {
+      const v = body.querySelector('#loud-target');
+      const n = body.querySelector('#loud-gain-note');
+      if (!v || _lm === null) return;
+      v.textContent = loudTarget.toFixed(1);
+      const st = _loudSteps();
+      const g = _loudGainDb();
+      // report the gain that will ACTUALLY be applied, not the requested delta —
+      // mp3gain quantizes, so asking for -13.9 and getting -13.5 is normal and the
+      // card should say the number the file will really carry.
+      if (n) {
+        n.textContent = st === 0
+          ? 'no change — already at target'
+          : `${g > 0 ? '+' : ''}${g.toFixed(1)} dB will be applied `
+            + `(${Math.abs(st)} mp3gain step${Math.abs(st) === 1 ? '' : 's'})`;
+      }
+      body.querySelectorAll('button[data-act="loud-step"]').forEach((b) => {
+        const d = Number(b.dataset.dir);
+        b.disabled = (d > 0 && loudTarget + LOUD_STEP > LOUD_MAX)
+                  || (d < 0 && loudTarget - LOUD_STEP < LOUD_MIN);
+      });
+    };
+    _loudRefresh();
+
+    body.querySelectorAll('button[data-act="loud-step"]').forEach((b) => {
+      b.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        const next = loudTarget + Number(ev.currentTarget.dataset.dir) * LOUD_STEP;
+        loudTarget = Math.max(LOUD_MIN, Math.min(LOUD_MAX, next));
+        _loudRefresh();
+        // a target change invalidates a running preview's gain
+        const note = body.querySelector('#loud-preview-note');
+        if (_loudAudioCtx && note && note.dataset.playing === '1') _loudApplyGain();
+      });
+    });
+
+    // The audition routes the EXISTING player through a GainNode. A GainNode in dB is
+    // exactly what mp3gain does to the file (a global gain scale), so this is a faithful
+    // preview rather than an approximation — with one caveat stated in the note below.
+    let _loudGainNode = null;
+    const _loudApplyGain = () => {
+      if (_loudGainNode) _loudGainNode.gain.value = Math.pow(10, _loudGainDb() / 20);
+    };
+    body.querySelector('button[data-act="loud-preview"]')?.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const audio = body.querySelector('audio.info-audio');
+      const note = body.querySelector('#loud-preview-note');
+      if (!audio || _lm === null) return;
+      try {
+        if (!_loudAudioCtx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) { if (note) note.textContent = 'no Web Audio in this browser'; return; }
+          _loudAudioCtx = new AC();
+        }
+        if (!_loudGainNode) {
+          // NOTE: createMediaElementSource PERMANENTLY reroutes this element through the
+          // graph — after this, the player's own controls also play through _loudGainNode
+          // forever. That's why gain is reset to 1.0 on pause/ended: otherwise hitting
+          // play later would quietly audition the target and pass as the real file.
+          const srcNode = _loudAudioCtx.createMediaElementSource(audio);
+          _loudGainNode = _loudAudioCtx.createGain();
+          srcNode.connect(_loudGainNode).connect(_loudAudioCtx.destination);
+          const _reset = () => {
+            if (_loudGainNode) _loudGainNode.gain.value = 1.0;
+            if (note) { note.dataset.playing = '0'; note.textContent = 'preview stopped — the player is back to the real file'; }
+          };
+          audio.addEventListener('pause', _reset);
+          audio.addEventListener('ended', _reset);
+        }
+        _loudApplyGain();
+        _loudAudioCtx.resume();
+        audio.currentTime = 0;
+        audio.play();
+        if (note) {
+          note.dataset.playing = '1';
+          const g = _loudGainDb();
+          note.textContent = `playing at ${loudTarget.toFixed(1)} LUFS `
+            + `(${g > 0 ? '+' : ''}${g.toFixed(1)} dB) — nothing written`;
+        }
+      } catch (e) {
+        if (note) note.textContent = 'preview unavailable';
+      }
+    });
+
     // v0.51.190: LEVEL / UNDO. Both mutate real audio AND re-upload to Plex, so the
     // result line leads with what Plex is actually serving (plex_is_serving_it), not with
     // the HTTP status — the recurring bug of this arc was reporting success off a 200
@@ -18119,6 +18243,8 @@
               tmdb_id: Number(btn.dataset.id),
               section_id: btn.dataset.sec,
               edition_key: btn.dataset.edn,
+              // undo takes no target; level sends the stepper's pick
+              ...(undo ? {} : { target: loudTarget }),
             }),
           });
           const j = await r.json().catch(() => ({}));
