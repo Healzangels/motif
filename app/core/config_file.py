@@ -99,6 +99,29 @@ class DownloadsConfig:
 
 
 @dataclass
+class LoudnessConfig:
+    """v0.51.188: condition theme loudness as it arrives.
+
+    Plex plays themes on hover, so mixed-source loudness is the loudest quality
+    defect in the library — the operator's own measurement: a -14.5 LUFS median
+    with outliers up to -5.2 (clipping at +2.9 dBTP).
+
+    normalize_on_download conditions a theme BEFORE it is placed, which is the
+    cheap half of the problem: Plex ingests theme.mp3 at scan time, so a theme
+    normalized before its first placement needs no propagation at all — Plex
+    only ever sees the conditioned copy. (Re-normalizing an ALREADY-placed theme
+    is the expensive half and needs a re-upload; that's // NORMALIZE, v0.51.185.)
+
+    Default OFF. This mutates downloaded audio, and nobody opts a homelab into
+    that by accident.
+    """
+    normalize_on_download: bool = False
+    # -18 LUFS: the operator's audit put the library median at -14.5, and -18 is
+    # the ambient-hover lean the target-preview slider was built to settle.
+    target_lufs: float = -18.0
+
+
+@dataclass
 class MatchingConfig:
     strict_edition: bool = True
     plus_mode: str = "separator"  # "separator" or "literal"
@@ -449,6 +472,8 @@ class MotifConfig:
     notifications: NotificationsConfig = field(default_factory=NotificationsConfig)
     # v1.23.16: scheduled database backups + retention.
     database_backup: DatabaseBackupConfig = field(default_factory=DatabaseBackupConfig)
+    # v0.51.188: theme loudness conditioning.
+    loudness: LoudnessConfig = field(default_factory=LoudnessConfig)
 
 
 # ----------------------------------------------------------------------------
@@ -530,6 +555,8 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_DB_BACKUP_ENABLED",   "database_backup.enabled",         _to_bool),
     ("MOTIF_DB_BACKUP_CRON",      "database_backup.cron",            str),
     ("MOTIF_DB_BACKUP_RETENTION", "database_backup.retention",       int),
+    ("MOTIF_NORMALIZE_ON_DOWNLOAD", "loudness.normalize_on_download", _to_bool),
+    ("MOTIF_LOUDNESS_TARGET",     "loudness.target_lufs",            float),
 ]
 
 
@@ -681,6 +708,14 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
             errors.append(
                 f"database_backup.retention must be >= 0 (0 keeps all), "
                 f"got {cfg.database_backup.retention}"
+            )
+        # v0.51.188: the target drives `gain = target - measured`, so a nonsense
+        # value drives a nonsense gain onto real audio. -70..0 LUFS spans silence
+        # to full-scale; anything outside it is a typo, not an intent.
+        if not (-70.0 <= cfg.loudness.target_lufs <= 0.0):
+            errors.append(
+                f"loudness.target_lufs must be between -70 and 0 LUFS, "
+                f"got {cfg.loudness.target_lufs}"
             )
 
         # v1.17.1: notifications.apprise_external_url scheme enforcement.

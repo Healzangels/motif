@@ -573,6 +573,37 @@ def apply_job_rollback(db_path: Path, job: "sqlite3.Row", err_text: str) -> None
                     job["id"], e)
 
 
+def _cond_columns(cond: dict | None, sha256: str | None) -> tuple:
+    """v0.51.188: the 11 loudness/normalize columns for the post-download upsert, in the
+    INSERT's order.
+
+    A raw download (conditioning off, or it declined) still stamps loudness when the
+    measurement succeeded — the audit would only have to measure it again otherwise —
+    but leaves norm_state NULL, because nothing was gained.
+
+    loudness_measured_sha256 pins the measurement to the bytes it was taken from: that
+    key is what the v0.51.169 staleness gate reads before computing a gain, and a
+    measurement recorded against the wrong sha drives the gain off stale data."""
+    if not cond:
+        return (None,) * 11
+    now = now_iso()
+    if not cond.get("ok"):
+        # measured but not gained (e.g. a silent theme), or not measurable at all.
+        li = cond.get("loudness_i")
+        return (li, cond.get("true_peak"), None, now if li is not None else None,
+                sha256 if li is not None else None,
+                None, None, None, None, None, None)
+    if not cond.get("changed"):
+        # already at target: measured, honest, and NOT normalized — there is no undo tag
+        # on it, so calling it normalized would make // UNDO promise a restore it cannot
+        # perform.
+        return (cond["loudness_i"], cond["true_peak"], cond.get("lra"), now, sha256,
+                None, None, None, None, None, None)
+    return (cond["loudness_i"], cond["true_peak"], cond.get("lra"), now, sha256,
+            "normalized", cond["applied_db"], cond["target"], now,
+            cond.get("orig_sha256"), cond.get("orig_pcm_sha256"))
+
+
 @dataclass
 class Worker:
     settings: Settings
@@ -2103,13 +2134,40 @@ class Worker:
                 override["section_id"],
                 override["youtube_url"],
             )
+        # v0.51.188: condition the loudness BEFORE recording/placing. This is the cheap
+        # half: Plex ingests theme.mp3 at scan time and then plays its own copy, so a
+        # theme normalized before its FIRST placement needs no propagation at all — the
+        # only copy Plex ever ingests is the conditioned one. (Re-normalizing an
+        # already-placed theme is the expensive half; that's // NORMALIZE + a re-upload,
+        # v0.51.185.) Default OFF: this mutates downloaded audio.
+        sha256, size = result.file_sha256, result.file_size
+        cond = None
+        if self.settings.normalize_on_download:
+            from .loudness_apply import condition_new_download
+            cond = condition_new_download(
+                result.file_path,
+                target_lufs=self.settings.loudness_target_lufs)
+            if cond.get("ok") and cond.get("changed"):
+                # the file changed under us — record the POST-gain bytes, or the row's
+                # sha/size describe a file that no longer exists and every staleness
+                # check keyed on them (the v0.51.169 audit, health passes) reads wrong.
+                sha256, size = cond["file_sha256"], result.file_path.stat().st_size
+                log.info("download: conditioned %s/%s to %s LUFS (%+.1f dB) before "
+                         "placement — Plex only ever ingests the leveled copy",
+                         media_type, tmdb_id, cond["loudness_i"], cond["applied_db"])
+            elif cond and not cond.get("ok"):
+                # never let a loudness step fail a download: a raw theme beats no theme.
+                log.warning("download: %s/%s arrived but could not be conditioned (%s) — "
+                            "recording the raw download", media_type, tmdb_id,
+                            cond.get("reason"))
         self._record_local_file(
             media_type=media_type, tmdb_id=tmdb_id, section_id=section_id,
-            rel_path=rel_path, sha256=result.file_sha256, size=result.file_size,
+            rel_path=rel_path, sha256=sha256, size=size,
             video_id=vid,
             provenance=prov,
             source_kind=("url" if override else "themerrdb"),
             job_payload=job["payload"],
+            conditioned=cond,
         )
 
         log_event(
@@ -2125,6 +2183,7 @@ class Worker:
         rel_path: str, sha256: str | None, size: int | None,
         video_id: str, provenance: str, source_kind: str,
         job_payload: str | None,
+        conditioned: dict | None = None,
     ) -> None:
         """v1.11.0: shared write path for the post-download bookkeeping.
 
@@ -2229,8 +2288,12 @@ class Worker:
                     (media_type, tmdb_id, section_id, edition_key, file_path,
                      file_sha256, file_size,
                      downloaded_at, source_video_id, provenance, source_kind,
-                     mismatch_state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     mismatch_state,
+                     loudness_i, loudness_tp, loudness_lra, loudness_measured_at,
+                     loudness_measured_sha256, norm_state, norm_gain_db, norm_target,
+                     norm_at, norm_orig_sha256, norm_orig_pcm_sha256)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
                     file_path = excluded.file_path,
                     file_sha256 = excluded.file_sha256,
@@ -2239,11 +2302,27 @@ class Worker:
                     source_video_id = excluded.source_video_id,
                     provenance = excluded.provenance,
                     source_kind = excluded.source_kind,
-                    mismatch_state = excluded.mismatch_state
+                    mismatch_state = excluded.mismatch_state,
+                    -- v0.51.188: a re-download REPLACES the bytes, so its loudness and
+                    -- normalize state replace the old row's too. Carrying a stale
+                    -- norm_state='normalized' onto fresh raw bytes would tell // UNDO to
+                    -- un-gain a file that was never gained.
+                    loudness_i = excluded.loudness_i,
+                    loudness_tp = excluded.loudness_tp,
+                    loudness_lra = excluded.loudness_lra,
+                    loudness_measured_at = excluded.loudness_measured_at,
+                    loudness_measured_sha256 = excluded.loudness_measured_sha256,
+                    norm_state = excluded.norm_state,
+                    norm_gain_db = excluded.norm_gain_db,
+                    norm_target = excluded.norm_target,
+                    norm_at = excluded.norm_at,
+                    norm_orig_sha256 = excluded.norm_orig_sha256,
+                    norm_orig_pcm_sha256 = excluded.norm_orig_pcm_sha256
                 """,
                 (media_type, tmdb_id, section_id, edition_key, rel_path,
                  sha256, size,
-                 now_iso(), video_id, provenance, source_kind, mismatch_value),
+                 now_iso(), video_id, provenance, source_kind, mismatch_value,
+                 *_cond_columns(conditioned, sha256)),
             )
             # v1.20.10: motif now HOLDS this TDB theme (local_files just
             # written) — resolve any pending new_theme_available update for

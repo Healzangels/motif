@@ -406,3 +406,59 @@ def undo_file(path: Path | str, expect_sha: str | None = None,
         out["new_lra"] = m["lra"]
     out["ok"] = True
     return out
+
+
+def condition_new_download(theme: Path, *, target_lufs: float) -> dict:
+    """v0.51.188: measure + normalize a theme that has JUST been downloaded, before it
+    is placed.
+
+    This is the cheap half of loudness conditioning. Plex ingests theme.mp3 at scan time
+    and thereafter plays its own copy, which is why re-normalizing an already-placed
+    theme needs a re-upload to propagate (v0.51.176-185). A theme normalized BEFORE its
+    first placement has no such problem: Plex has never seen it, so the only copy it ever
+    ingests is the conditioned one. No push, no ceiling, no entry churn.
+
+    Returns a dict the caller stamps onto the local_files row. `ok` False means the file
+    was left ALONE — the caller must record the raw download and carry on, because a
+    theme that arrives un-normalized is a far better outcome than a download that fails
+    over a loudness step. Never raises.
+
+    Guards worth their lines:
+      - a SILENT theme measures -inf (v0.51.163, seen on the real library). gain =
+        target - (-inf) = +inf, which mp3gain would either reject or act on absurdly.
+        Non-finite in = skip, and say so.
+      - measurement failure = skip, not "assume 0 dB".
+    """
+    import math
+
+    from .loudness import measure_loudness
+
+    m = measure_loudness(theme)
+    if m is None:
+        log.warning("condition_new_download: could not measure %s — leaving it raw", theme)
+        return {"ok": False, "reason": "measurement failed"}
+    measured_i, true_peak = m["loudness_i"], m["true_peak"]
+    # v0.51.163's lesson: a near-silent theme really does measure -inf here, and every
+    # consumer of this column has to assume it.
+    if measured_i is None or not math.isfinite(measured_i):
+        log.warning("condition_new_download: %s measured %s LUFS (silent or unmeasurable)"
+                    " — leaving it raw rather than computing a gain from it",
+                    theme, measured_i)
+        return {"ok": False, "reason": f"non-finite measurement ({measured_i})",
+                "loudness_i": None}
+
+    res = normalize_file(theme, target_lufs, measured_i, true_peak)
+    if not res["ok"]:
+        log.warning("condition_new_download: normalize failed for %s (%s) — the raw "
+                    "download stands", theme, res.get("error"))
+        return {"ok": False, "reason": res.get("error") or "normalize failed",
+                "loudness_i": measured_i, "true_peak": true_peak}
+    return {
+        "ok": True, "changed": res["changed"], "note": res.get("note"),
+        "applied_db": res["applied_db"], "target": target_lufs,
+        "before_i": measured_i, "before_tp": true_peak,
+        # post-gain values: what the placed file actually is
+        "loudness_i": res["new_i"], "true_peak": res["new_tp"], "lra": res["new_lra"],
+        "file_sha256": res["new_sha"], "orig_sha256": res["old_sha"],
+        "orig_pcm_sha256": res["old_pcm_sha"],
+    }

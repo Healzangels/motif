@@ -259,6 +259,16 @@ class Settings:
     def plus_equiv_mode(self) -> str:
         return self._cfg.matching.plus_mode
 
+    # ---- Loudness section (v0.51.188) ----
+
+    @property
+    def normalize_on_download(self) -> bool:
+        return self._cfg.loudness.normalize_on_download
+
+    @property
+    def loudness_target_lufs(self) -> float:
+        return self._cfg.loudness.target_lufs
+
     # ---- Placement section ----
 
     @property
