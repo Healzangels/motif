@@ -133,9 +133,21 @@ def test_marker_colour_is_fixed_cyan_not_themed_nor_source_green():
 def test_glossary_documents_the_marker_on_BOTH_surfaces():
     """Missing either surface is the exact legend drift that cost six tags (v1.23.50-56).
     The in-context legend (library.html) and the full glossary (base.html) both decode
-    the row's badges, so both must carry the new one."""
+    the row's badges, so both must carry the new one.
+
+    v0.51.193: assert the library.html row is UNGATED, not merely present. It shipped
+    gated behind {% if tab == "collections" %} so it never decoded the marker on
+    movies/tv/anime — and a bare 'in LIB_HTML' substring check (this test's first form)
+    passed anyway. Pin it structurally: the marker row must come before the
+    collections-only conditional in the TITLE legend grid."""
     assert "tier-badge-lvl" in BASE_HTML, "full glossary (base.html) missing the marker"
-    assert "tier-badge-lvl" in LIB_HTML, "in-context legend (library.html) missing it"
+    # the TITLE legend grid: from the 4K def to its closing {% endif %}
+    seg = LIB_HTML[LIB_HTML.index("From a 4K library"):
+                   LIB_HTML.index("{% endif %}", LIB_HTML.index("From a 4K library"))]
+    assert "tier-badge-lvl" in seg, "in-context legend (library.html) missing the marker"
+    assert seg.index("tier-badge-lvl") < seg.index('{% if tab == "collections" %}'), (
+        "the leveled-marker legend row is inside the collections-only block — it renders "
+        "on every tab, so movies/tv/anime would show the marker with no legend for it")
 
 
 def test_audition_note_states_are_short_enough_not_to_wrap():

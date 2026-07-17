@@ -98,6 +98,18 @@ class DownloadsConfig:
     proxy_url: str = ""
 
 
+# v0.51.193: the usable hover band for the level target. config validate keeps the
+# wider -70..0 typo-guard (silence to full-scale = "not a typo"), but the FEATURE's
+# real range is this: mp3gain outside it either clamps global_gain or lands a level
+# nothing on the hover surface wants. Every functional consumer — the settings
+# loudness_target_lufs property, normalize-one, the card's stepper — clamps to these,
+# so "level to target" gives ONE answer no matter which door you came through
+# (the mirror-drift v0.51.191 set out to remove, which the two disagreeing bands had
+# quietly reopened for any configured target outside this range).
+LOUDNESS_TARGET_FLOOR = -31.0
+LOUDNESS_TARGET_CEIL = -6.0
+
+
 @dataclass
 class LoudnessConfig:
     """v0.51.188: condition theme loudness as it arrives.

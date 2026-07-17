@@ -18144,9 +18144,13 @@
     const _lm = (lf && typeof lf.loudness_i === 'number' && Number.isFinite(lf.loudness_i))
       ? lf.loudness_i : null;
     // seed from the CONFIGURED target the server actually uses, never a second
-    // hardcoded -18 (that divergence is exactly what v0.51.191 removed server-side)
-    let loudTarget = (typeof data.loudness_target_default === 'number')
-      ? data.loudness_target_default : -18.0;
+    // hardcoded -18 (that divergence is exactly what v0.51.191 removed server-side).
+    // v0.51.193: clamp the seed to the hover band too. The server clamps the target it
+    // levels to, so an unclamped seed would let the card DISPLAY and AUDITION a target
+    // (e.g. a -35 config) that // LEVEL then silently lands 4 dB off — the audition
+    // must match what the file will actually carry.
+    let loudTarget = Math.max(LOUD_MIN, Math.min(LOUD_MAX,
+      (typeof data.loudness_target_default === 'number') ? data.loudness_target_default : -18.0));
     const _loudSteps = () => Math.round((loudTarget - _lm) / LOUD_STEP);
     const _loudGainDb = () => _loudSteps() * LOUD_STEP;
 
@@ -18228,7 +18232,12 @@
         _loudApplyGain();
         _loudAudioCtx.resume();
         audio.currentTime = 0;
-        audio.play();
+        // v0.51.193: play() rejects asynchronously (decode failure / autoplay block),
+        // which the try/catch above cannot see — surface it on the note instead of an
+        // uncaught-promise console error that leaves 'playing…' showing.
+        audio.play().catch(() => {
+          if (note) { note.dataset.playing = '0'; note.textContent = 'preview unavailable'; }
+        });
         if (note) {
           note.dataset.playing = '1';
           // the applied gain is already spelled out in the target row above; the note
@@ -18254,6 +18263,17 @@
         const slot = body.querySelector('#loud-result');
         const undo = act === 'loud-undo';
         const orig = btn.textContent;
+        // v0.51.193: a row with no tmdb_id (data-id='') would POST tmdb_id: Number('')
+        // === 0, which normalize-one can't address — say so plainly instead of firing a
+        // request that returns a confusing 'no eligible theme'.
+        const _idNum = Number(btn.dataset.id);
+        if (!btn.dataset.id || !Number.isFinite(_idNum)) {
+          if (slot) {
+            slot.className = 'accent-red small info-probe-meta';
+            slot.textContent = 'no TMDB id on this row — can’t level it from here';
+          }
+          return;
+        }
         btn.disabled = true;
         btn.textContent = undo ? '// RESTORING…' : '// LEVELING…';
         if (slot) slot.textContent = '';
@@ -18263,7 +18283,7 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               media_type: btn.dataset.mt,
-              tmdb_id: Number(btn.dataset.id),
+              tmdb_id: _idNum,
               section_id: btn.dataset.sec,
               edition_key: btn.dataset.edn,
               // undo takes no target; level sends the stepper's pick

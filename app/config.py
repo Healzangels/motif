@@ -39,6 +39,7 @@ from pathlib import Path
 
 from .core.config_file import (
     ConfigFile, MotifConfig, validate, env_overrides_present,
+    LOUDNESS_TARGET_FLOOR, LOUDNESS_TARGET_CEIL,
 )
 
 log = logging.getLogger(__name__)
@@ -267,7 +268,14 @@ class Settings:
 
     @property
     def loudness_target_lufs(self) -> float:
-        return self._cfg.loudness.target_lufs
+        # v0.51.193: clamp to the usable hover band at the ONE functional read point,
+        # so worker conditioning, normalize-one, and the card's stepper all get the
+        # same number. A configured value outside the band (e.g. -35, which config
+        # validate still accepts as "not a typo") is honored as the nearest in-band
+        # target instead of diverging per-path — worker used to level it raw while
+        # normalize-one clamped it.
+        raw = self._cfg.loudness.target_lufs
+        return max(LOUDNESS_TARGET_FLOOR, min(LOUDNESS_TARGET_CEIL, raw))
 
     # ---- Placement section ----
 

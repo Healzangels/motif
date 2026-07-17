@@ -25975,7 +25975,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                       else settings.loudness_target_lufs)
         except (TypeError, ValueError):
             target = settings.loudness_target_lufs   # a junk body != a different default
-        target = max(-31.0, min(-6.0, target))   # clamp to a sane hover band
+        from ..core.config_file import LOUDNESS_TARGET_FLOOR, LOUDNESS_TARGET_CEIL
+        # v0.51.193: the shared hover band (settings.loudness_target_lufs clamps to the
+        # same constants) — belt-and-suspenders for a body-supplied `target`.
+        target = max(LOUDNESS_TARGET_FLOOR, min(LOUDNESS_TARGET_CEIL, target))
         want_mt = body.get("media_type")
         want_id = body.get("tmdb_id")
 
