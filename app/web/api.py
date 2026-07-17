@@ -26145,10 +26145,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         outliers + a compact value array for the target-preview slider. Pure read
         (no measure, no mutation); the /admin/loudness report page renders it."""
         _require_admin(request)
-        from ..core.loudness_audit import build_report
+        from ..core.loudness_audit import build_report, bulk_normalize_counts
         from ..core.db import get_conn
         with get_conn(db) as conn:
-            return build_report(conn)
+            report = build_report(conn)
+            # v0.51.197: the bulk-normalize eligible + outliers counts, matching
+            # _bulk_normalize_run's predicate + the CONFIGURED (clamped) target, so the
+            # // LEVEL OUTLIERS / // LEVEL LIBRARY buttons label themselves honestly.
+            report["bulk"] = bulk_normalize_counts(
+                conn, ceiling_bytes=THEME_UPLOAD_CEILING_BYTES,
+                target=settings.loudness_target_lufs)
+            report["bulk"]["target"] = settings.loudness_target_lufs
+            report["bulk"]["plex_ready"] = bool(
+                settings.plex_enabled and settings.plex_url and settings.plex_token)
+            return report
 
     @app.get("/api/admin/canonical-health/report")
     async def api_admin_canonical_health_report(

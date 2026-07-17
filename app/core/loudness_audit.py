@@ -129,6 +129,42 @@ def audit_counts(conn) -> dict:
     return {"total": total, "already_current": current, "skipped_no_sha": no_sha}
 
 
+# the "clearly too loud" margin — a row more than this many dB above the target gets a
+# big, audible reduction. Since these are the LOUDEST rows, they're exactly what a
+# loudest-first, max_rows-capped bulk run processes, so the count and the op agree.
+_OUTLIER_MARGIN_DB = 6.0
+
+
+def bulk_normalize_counts(conn, *, ceiling_bytes: int, target: float,
+                          margin_db: float = _OUTLIER_MARGIN_DB) -> dict:
+    """v0.51.197: counts that MATCH _bulk_normalize_run's eligible set (raw,
+    hardlink-placed, measurement-current, under the Plex upload ceiling) so the
+    // LEVEL OUTLIERS / // LEVEL LIBRARY buttons can be labeled honestly — the report's
+    rep.measured / stats.count OVER-count (they include non-placed + already-normalized
+    rows), and rep.loudest is capped at 40.
+
+    `eligible` = the full set a // LEVEL LIBRARY run would touch. `outliers` = the subset
+    more than margin_db louder than the target — the worst offenders, and (being the
+    loudest) exactly the head a max_rows-capped loudest-first run levels first."""
+    base = (
+        "FROM local_files lf "
+        "JOIN placements p ON p.media_type=lf.media_type "
+        "  AND p.tmdb_id=lf.tmdb_id AND p.section_id=lf.section_id "
+        "  AND p.edition_key=lf.edition_key AND p.placement_kind='hardlink' "
+        "WHERE lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
+        "  AND lf.norm_state IS NULL "
+        "  AND lf.file_sha256 IS NOT NULL "
+        "  AND lf.loudness_measured_sha256 = lf.file_sha256 "
+        "  AND lf.file_size IS NOT NULL AND lf.file_size <= ?"
+    )
+    eligible = conn.execute(f"SELECT COUNT(*) {base}", (ceiling_bytes,)).fetchone()[0]
+    outliers = conn.execute(
+        f"SELECT COUNT(*) {base} AND lf.loudness_i > ?",
+        (ceiling_bytes, target + margin_db),
+    ).fetchone()[0]
+    return {"eligible": eligible, "outliers": outliers, "outlier_margin_db": margin_db}
+
+
 def record_measurement(conn, row, m: dict, measured_at: str) -> None:
     """Stamp one row's loudness measurement onto its local_files PK. Keyed by the
     full (media_type, tmdb_id, section_id, edition_key) PK so an edition's

@@ -64,6 +64,27 @@
   </div>
 </section>
 
+{# v0.51.197: LEVEL — the Phase-2 bulk action. Hidden until the report shows eligible
+   rows. Levels toward the CONFIGURED target (from Settings), loudest first, so OUTLIERS
+   fixes the worst offenders first; LIBRARY is the whole eligible set behind a confirm. #}
+<section class="block" id="loud-level-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// LEVEL</h2>
+    <span class="muted small" id="loud-level-sub"></span>
+  </header>
+  <p class="form-hint block-intro">
+    mp3gain-level themes toward the target and re-upload each to Plex so it actually
+    plays quieter — <strong>lossless and per-item reversible</strong> from each row's
+    INFO card. Loudest first, so <code>// LEVEL OUTLIERS</code> fixes the worst offenders
+    first. Runs in the background; cancel any time from the status bar.
+  </p>
+  <div class="form-actions">
+    <button type="button" id="loud-level-outliers" class="btn btn-warn">// LEVEL OUTLIERS</button>
+    <button type="button" id="loud-level-all" class="btn btn-warn">// LEVEL LIBRARY</button>
+    <span class="form-status" id="loud-level-status"></span>
+  </div>
+</section>
+
 {# outliers — the extremes are what an operator wants to eyeball first. Each links
    to the row's INFO card via the library search deep-link (?q=). #}
 <section class="block loud-outliers" id="loud-outliers-block" style="display:none">

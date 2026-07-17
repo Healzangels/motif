@@ -7756,6 +7756,13 @@
     const previewEl = document.getElementById('loud-preview');
     const hintEl = document.getElementById('loud-target-hint');
     const recBtn = document.getElementById('loud-target-rec');   // v0.51.162
+    // v0.51.197: LEVEL block (the Phase-2 bulk action)
+    const levelBlock = document.getElementById('loud-level-block');
+    const levelSub = document.getElementById('loud-level-sub');
+    const outliersBtn = document.getElementById('loud-level-outliers');
+    const allBtn = document.getElementById('loud-level-all');
+    const levelStatus = document.getElementById('loud-level-status');
+    let lastBulk = null;
     if (!slider || !previewEl) return;
     let values = [];
     let recommended = null;      // v0.51.162: server-recommended target LUFS
@@ -7868,6 +7875,7 @@
         histEl.innerHTML = '';
         previewEl.innerHTML = '';
         if (outliersBlock) outliersBlock.style.display = 'none';
+        renderLevel(null);
         return;
       }
       renderStats(rep.stats, rep.recommended, rep.upload_ceiling);
@@ -7894,6 +7902,7 @@
         loudestEl.innerHTML = (rep.loudest || []).map(outRow).join('');
         outliersBlock.style.display = '';
       }
+      renderLevel(rep.bulk);
     }
 
     slider.addEventListener('input', renderPreview);
@@ -7905,6 +7914,82 @@
         renderPreview();
       });
     }
+    // v0.51.197: the LEVEL block. Labels come from rep.bulk (eligible + outliers counts
+    // that MATCH _bulk_normalize_run's predicate + the configured target), so the buttons
+    // never promise a count the op won't touch.
+    function renderLevel(bulk) {
+      if (!levelBlock) return;
+      lastBulk = bulk || null;
+      if (!bulk || !bulk.eligible) {
+        // nothing to level — no measured raw hardlink rows (all leveled, or none yet).
+        levelBlock.style.display = 'none';
+        return;
+      }
+      levelBlock.style.display = '';
+      levelSub.textContent = `${bulk.eligible} eligible · target ${fmtLufs(bulk.target)} LUFS (from Settings)`
+        + (bulk.plex_ready ? '' : ' · Plex not configured');
+      if (outliersBtn) {
+        outliersBtn.textContent = bulk.outliers
+          ? `// LEVEL ${bulk.outliers} OUTLIER${bulk.outliers === 1 ? '' : 'S'}`
+          : '// NO OUTLIERS';
+        outliersBtn.disabled = !bulk.outliers || !bulk.plex_ready;
+        outliersBtn.title = bulk.outliers
+          ? `Level the ${bulk.outliers} theme(s) more than ${bulk.outlier_margin_db} dB louder than the target — the worst offenders, loudest first.`
+          : 'No themes are far enough above the target to count as outliers.';
+      }
+      if (allBtn) {
+        allBtn.textContent = `// LEVEL LIBRARY (${bulk.eligible})`;
+        allBtn.disabled = !bulk.plex_ready;
+        allBtn.title = bulk.plex_ready ? 'Level every eligible theme, loudest first.'
+          : 'Plex must be configured — leveling re-uploads to Plex.';
+      }
+    }
+
+    async function startBulk(maxRows, confirmMsg) {
+      if (confirmMsg && !confirm(confirmMsg)) return;
+      [outliersBtn, allBtn].forEach((b) => { if (b) b.disabled = true; });
+      if (levelStatus) levelStatus.textContent = '// starting…';
+      try {
+        const r = await api('POST', '/api/admin/loudness/bulk-normalize',
+          (maxRows != null) ? { max_rows: maxRows } : {});
+        if (window.motifOps) {
+          if (window.motifOps.setOptimisticPlaceholder) {
+            window.motifOps.setOptimisticPlaceholder('bulk_normalize', '// LEVELING…');
+          }
+          if (window.motifOps.boostPoll) window.motifOps.boostPoll();
+        }
+        if (levelStatus) levelStatus.textContent = '// leveling — watch the status bar';
+        // the op is long; on terminal, re-fetch the report (eligible count drops) + reset.
+        if (window.motifOps && window.motifOps.waitForOp) {
+          window.motifOps.waitForOp(r.op_id || 'bulk-normalize', { timeoutMs: 1800000 })
+            .then(() => { if (levelStatus) levelStatus.textContent = '// done'; refresh(); })
+            .catch(() => { if (levelStatus) levelStatus.textContent = ''; refresh(); });
+        }
+      } catch (e) {
+        const msg = String((e && e.message) || e);
+        if (levelStatus) {
+          levelStatus.textContent = msg.indexOf('409') !== -1 ? '// already running'
+            : msg.indexOf('400') !== -1 ? '// Plex not configured'
+            : '// failed';
+        }
+        renderLevel(lastBulk);   // re-enable the buttons
+      }
+    }
+
+    if (outliersBtn) outliersBtn.addEventListener('click', () => {
+      if (!lastBulk || !lastBulk.outliers) return;
+      startBulk(lastBulk.outliers,
+        `Level the ${lastBulk.outliers} loudest outlier theme(s) toward ${fmtLufs(lastBulk.target)} LUFS `
+        + `and re-upload each to Plex?\n\nLossless and per-item reversible from the INFO card.`);
+    });
+    if (allBtn) allBtn.addEventListener('click', () => {
+      if (!lastBulk || !lastBulk.eligible) return;
+      startBulk(null,
+        `Level ALL ${lastBulk.eligible} eligible theme(s) toward ${fmtLufs(lastBulk.target)} LUFS `
+        + `and re-upload each to Plex?\n\nThis is the whole eligible library — loudest first, `
+        + `cancelable from the status bar, and per-item reversible from the INFO card.`);
+    });
+
     window.__loudRefreshReport = refresh;   // audit-complete hook calls this
     refresh();
   }
