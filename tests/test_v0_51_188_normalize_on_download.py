@@ -113,7 +113,9 @@ def test_a_failed_normalize_still_keeps_the_measurement():
 
 def test_conditioning_never_fails_the_download():
     """A raw theme beats no theme. The hook logs and records the raw download."""
-    i = WORKER.index("if self.settings.normalize_on_download:")
+    # v0.51.201: the gate is now the per-theme override (payload.normalize) falling back
+    # to the global setting; the conditioning block below it is unchanged.
+    i = WORKER.index('_norm_job = payload.get("normalize")')
     block = WORKER[i:WORKER.index("self._record_local_file(", i)]
     assert "elif cond and not cond.get(\"ok\"):" in block
     assert "recording the raw download" in block
@@ -123,7 +125,9 @@ def test_conditioning_never_fails_the_download():
 def test_the_post_gain_sha_is_what_gets_recorded():
     """If the file changed under us, the row must describe the file that now exists —
     every staleness check keys on file_sha256."""
-    i = WORKER.index("if self.settings.normalize_on_download:")
+    # v0.51.201: the gate is now the per-theme override (payload.normalize) falling back
+    # to the global setting; the conditioning block below it is unchanged.
+    i = WORKER.index('_norm_job = payload.get("normalize")')
     block = WORKER[i:WORKER.index("self._record_local_file(", i)]
     assert 'sha256, size = cond["file_sha256"], result.file_path.stat().st_size' in block
     # and the writer is handed those, not the raw ones

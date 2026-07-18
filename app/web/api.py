@@ -14246,6 +14246,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return hashlib.sha256(data).hexdigest()
 
         sha = await run_in_threadpool(_write_and_hash)
+        # v0.51.201 (Tag 6): the LEVEL LOUDNESS checkbox. Condition the uploaded MP3
+        # BEFORE it's recorded/placed — the cheap half (Plex only ever ingests the leveled
+        # copy, so no re-upload needed). Default OFF: the form omits the field unless
+        # checked. Never fails the upload — a raw theme beats a rejected one. Blocking
+        # (ffmpeg + mp3gain) so it runs in the threadpool (event-loop-block class 12).
+        upload_size = len(data)
+        cond = None
+        if (form.get("normalize") or "").lower() in ("1", "true", "yes", "on"):
+            from ..core.loudness_apply import condition_new_download
+            cond = await run_in_threadpool(
+                condition_new_download, target,
+                target_lufs=settings.loudness_target_lufs)
+            if cond.get("ok") and cond.get("changed"):
+                # the file changed under us — record the POST-gain bytes or every
+                # staleness check keyed on sha/size reads a file that no longer exists.
+                sha = cond["file_sha256"]
+                upload_size = target.stat().st_size
         rel_path = str(target.relative_to(settings.themes_dir))
         mismatch_value = "pending" if is_mismatch else None
 
@@ -14265,7 +14282,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                        source_kind = excluded.source_kind,
                        mismatch_state = excluded.mismatch_state""",
                 (theme_media_type, tmdb_id, section_id, _upl_edition, rel_path,
-                 sha, len(data), now_iso(), mismatch_value),
+                 sha, upload_size, now_iso(), mismatch_value),
+            )
+            # v0.51.201: (re)write the loudness/normalize columns EVERY upload via the
+            # SAME _cond_columns mapping the worker uses (no drift). A conditioned upload
+            # stamps norm_state='normalized' + the undo anchors; a RAW upload passes
+            # cond=None → all 11 columns NULL, which also CLEARS any stale norm_state left
+            # by a previous normalized upload of THIS row (else // UNDO would try to
+            # restore the old original over the new raw bytes).
+            from ..core.worker import _cond_columns
+            _lc = _cond_columns(cond, sha)
+            conn.execute(
+                "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
+                "  loudness_measured_at=?, loudness_measured_sha256=?, norm_state=?, "
+                "  norm_gain_db=?, norm_target=?, norm_at=?, norm_orig_sha256=?, "
+                "  norm_orig_pcm_sha256=? "
+                "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                (*_lc, theme_media_type, tmdb_id, section_id, _upl_edition),
             )
             # v1.10.50: implicit ack on a manual upload — the user is
             # routing around the broken TDB URL. Stamp acked_at so the
@@ -14848,6 +14881,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             download_only = bool((body or {}).get("download_only"))
             is_p_row = bool(pi["has_theme"])
             payload: dict = {"reason": "manual_url"}
+            # v0.51.201 (Tag 6): per-theme LEVEL LOUDNESS choice. Present → an explicit
+            # bool the worker honors over the global normalize_on_download toggle; absent
+            # (older client / API caller) → the global setting stands. Default UNCHECKED
+            # (raw) is the client's job, not ours.
+            _norm = (body or {}).get("normalize")
+            if _norm is not None:
+                payload["normalize"] = bool(_norm)
             if download_only:
                 payload["auto_place"] = False
             elif is_p_row:

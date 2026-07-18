@@ -1074,6 +1074,19 @@
           Plex's theme immediately.
         </p>
       </label>
+      {# v0.51.201 (Tag 6): per-theme LEVEL LOUDNESS. Default UNCHECKED (raw) — check it
+         to have motif mp3gain-level the uploaded file toward the configured target BEFORE
+         placing it (cheap: Plex only ever ingests the leveled copy). Lossless + reversible
+         from the row's INFO card. Sibling of the SET URL dialog's checkbox. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" id="upload-normalize" />
+        <span class="form-label-text">LEVEL LOUDNESS</span>
+        <p class="form-hint">
+          mp3gain-level this theme toward the configured target before placing it, so it
+          doesn't jump out against the rest of the library. Leave unchecked to keep it at
+          its source loudness. Lossless and reversible (<code>// UNDO</code> from the INFO card).
+        </p>
+      </label>
       <div class="form-actions">
         <button class="btn btn-warn" type="submit">// UPLOAD &amp; PLACE</button>
         <button class="btn" type="button" id="upload-cancel">// CANCEL</button>
@@ -1173,6 +1186,19 @@
           from the row's INFO card later to deploy the backup
           (e.g. if Plex's theme disappears). Leave unchecked to
           have motif's URL replace Plex's theme immediately.
+        </p>
+      </label>
+      {# v0.51.201 (Tag 6): per-theme LEVEL LOUDNESS. Default UNCHECKED (raw) — check it
+         to have motif mp3gain-level the DOWNLOADED theme toward the target before placing
+         it (cheap: Plex only ever ingests the leveled copy). Sibling of the UPLOAD MP3
+         checkbox. An over-loud ThemerrDB / user-URL rip is exactly what this tames. #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" id="manual-url-normalize" />
+        <span class="form-label-text">LEVEL LOUDNESS</span>
+        <p class="form-hint">
+          mp3gain-level this theme toward the configured target after downloading it, so it
+          doesn't jump out against the rest of the library. Leave unchecked to keep it at
+          its source loudness. Lossless and reversible (<code>// UNDO</code> from the INFO card).
         </p>
       </label>
       <div class="form-actions">

@@ -2142,7 +2142,14 @@ class Worker:
         # v0.51.185.) Default OFF: this mutates downloaded audio.
         sha256, size = result.file_sha256, result.file_size
         cond = None
-        if self.settings.normalize_on_download:
+        # v0.51.201 (Tag 6): a SET URL / re-download job can carry an explicit per-theme
+        # normalize choice in its payload — it OVERRIDES the global toggle both ways (force
+        # a theme leveled with normalize_on_download off, or force one raw with it on).
+        # Absent (TDB auto-downloads, sibling short-circuit) → the global setting stands.
+        _norm_job = payload.get("normalize")
+        _do_condition = (self.settings.normalize_on_download if _norm_job is None
+                         else bool(_norm_job))
+        if _do_condition:
             from .loudness_apply import condition_new_download
             cond = condition_new_download(
                 result.file_path,

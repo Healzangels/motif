@@ -905,6 +905,10 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.201: Phase 2 Tag 6 — per-theme LEVEL LOUDNESS checkbox on UPLOAD MP3 + SET URL
+# (default UNCHECKED/raw). UPLOAD conditions the file inline before placement (+ clears stale
+# norm on a raw re-upload); SET URL threads a `normalize` payload the worker honors over the
+# global normalize_on_download toggle. Both share _cond_columns + condition_new_download.
 # 0.51.200: Phase 2 Tag 5 — 3-state loudness title-cell marker (raw muted / outlier amber /
 # leveled cyan), same ▂▄▆ glyph, colour ENCODES state (theme SPLIT). Derived SERVER-SIDE in
 # _library_main_query so the marker + the LOUDNESS filter share ONE rule (shared _OUTLIER_MARGIN_DB).
@@ -4466,7 +4470,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.200"
+__version__ = "0.51.201"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

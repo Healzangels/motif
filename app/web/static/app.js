@@ -20161,6 +20161,9 @@
     if (downloadOnlyRow) {
       downloadOnlyRow.style.display = (srcLetter === 'P') ? '' : 'none';
     }
+    // v0.51.201 (Tag 6): reset LEVEL LOUDNESS to unchecked (raw default) each open.
+    const normInput = document.getElementById('manual-url-normalize');
+    if (normInput) normInput.checked = false;
     // v1.16.1: same X-button auto-focus-ring suppression as the
     // info / override / upload dialogs.
     showModalNoFocusRing(dlg);
@@ -20418,6 +20421,11 @@
       if (downloadOnlyInput && downloadOnlyInput.checked) {
         body.download_only = true;
       }
+      // v0.51.201 (Tag 6): per-theme LEVEL LOUDNESS. Send the explicit boolean so the
+      // download job carries a normalize override the worker honors over the global
+      // setting (force this one leveled, or force it raw). Default UNCHECKED → false.
+      const normInput = document.getElementById('manual-url-normalize');
+      if (normInput) body.normalize = !!normInput.checked;
       status.textContent = 'saving…';
       status.classList.remove('err', 'ok');
       urlSubmitting = true;
@@ -20478,6 +20486,9 @@
     if (downloadOnlyRow) {
       downloadOnlyRow.style.display = (srcLetter === 'P') ? '' : 'none';
     }
+    // v0.51.201 (Tag 6): reset LEVEL LOUDNESS to unchecked (raw default) each open.
+    const normInput = document.getElementById('upload-normalize');
+    if (normInput) normInput.checked = false;
     // v1.16.1: see showModalNoFocusRing — kills the cyan ring
     // around the auto-focused close button.
     showModalNoFocusRing(dlg);
@@ -20809,6 +20820,11 @@
       const fd = new FormData();
       fd.append('file', file);
       if (downloadOnly) fd.append('download_only', '1');
+      // v0.51.201 (Tag 6): per-theme LEVEL LOUDNESS. Only append when checked — the
+      // endpoint treats an absent field as raw (default). Checked → condition the file
+      // before placing it (mp3gain, lossless, reversible).
+      const normInput = document.getElementById('upload-normalize');
+      if (normInput && normInput.checked) fd.append('normalize', '1');
       try {
         const r = await fetch(`/api/plex_items/${encodeURIComponent(rk)}/upload-theme`, {
           method: 'POST', body: fd,
