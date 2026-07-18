@@ -646,19 +646,34 @@
          bytes a download produces. #}
       <p class="form-subhead">// THEME CONDITIONING</p>
 
+      {# v0.51.203 (Phase 3): the on-arrival gate is SPLIT by who triggered the download —
+         downloads YOU trigger vs the auto-picks motif fetches on its own — so each can be
+         leveled independently. UPLOAD MP3 / SET URL ignore both (per-theme checkbox). #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="loudness.normalize_on_download" />
-        <span class="form-label-text">NORMALIZE LOUDNESS ON DOWNLOAD</span>
+        <span class="form-label-text">NORMALIZE MY DOWNLOADS</span>
         <p class="form-hint">
-          Levels each new theme to the target below as it arrives, with
-          <code>mp3gain</code> — lossless (it edits the MP3 gain field, no re-encode)
-          and gain-only, so dynamics are preserved. Plex hovers play whatever it
-          ingested at scan time, so conditioning BEFORE placement means Plex only ever
-          sees the leveled copy — no re-push needed.
-          <strong class="warn">Only affects NEW downloads</strong>; existing themes are
-          untouched until you normalize them from their INFO card.
-          A theme that can't reach the target within its peak headroom lands
-          <em>below</em> it rather than being compressed.
+          Levels each theme YOU download (<code>// DOWNLOAD FROM TDB</code>, bulk downloads)
+          to the target below as it arrives, with <code>mp3gain</code> — lossless (it edits
+          the MP3 gain field, no re-encode) and gain-only, so dynamics are preserved. Plex
+          plays whatever it ingested at scan time, so conditioning BEFORE placement means
+          Plex only ever sees the leveled copy — no re-push needed. A theme that can't reach
+          the target within its peak headroom lands <em>below</em> it, never compressed.
+          <strong class="warn">New downloads only</strong>; existing themes stay put until
+          you level them from the INFO card or the LOUDNESS report.
+          <span class="muted">UPLOAD MP3 / SET URL carry their own per-theme checkbox.</span>
+        </p>
+      </label>
+
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="loudness.normalize_auto_added" />
+        <span class="form-label-text">NORMALIZE AUTO-ADDED THEMES</span>
+        <p class="form-hint">
+          The same leveling, but for themes motif fetches on its OWN — the auto-download of
+          a newly-detected unthemed row, or a re-fetch when a ThemerrDB theme's source URL
+          changes (both require motif's auto-download of new themes to be on). Independent
+          of the switch above, so you can hands-off-level everything motif adds while keeping
+          your own downloads raw, or the reverse.
         </p>
       </label>
 

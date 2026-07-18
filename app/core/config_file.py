@@ -127,7 +127,15 @@ class LoudnessConfig:
     Default OFF. This mutates downloaded audio, and nobody opts a homelab into
     that by accident.
     """
+    # v0.51.203 (Phase 3): the on-arrival gate is SPLIT by who triggered the download.
+    # normalize_on_download = downloads YOU trigger (// DOWNLOAD FROM TDB, bulk download).
+    # normalize_auto_added = the sync/enum auto-picks motif fetches without a click
+    # (reason 'new' / 'url_changed', gated by the sync auto-download-new-themes toggle).
+    # Independent so you can auto-level the hands-off picks while keeping your own
+    # downloads raw, or vice-versa. UPLOAD MP3 / SET URL ignore both — they carry their
+    # own per-theme checkbox (v0.51.201). Both default OFF (this mutates downloaded audio).
     normalize_on_download: bool = False
+    normalize_auto_added: bool = False
     # -18 LUFS: the operator's audit put the library median at -14.5, and -18 is
     # the ambient-hover lean the target-preview slider was built to settle.
     target_lufs: float = -18.0
@@ -568,6 +576,7 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_DB_BACKUP_CRON",      "database_backup.cron",            str),
     ("MOTIF_DB_BACKUP_RETENTION", "database_backup.retention",       int),
     ("MOTIF_NORMALIZE_ON_DOWNLOAD", "loudness.normalize_on_download", _to_bool),
+    ("MOTIF_NORMALIZE_AUTO_ADDED", "loudness.normalize_auto_added",  _to_bool),
     ("MOTIF_LOUDNESS_TARGET",     "loudness.target_lufs",            float),
 ]
 

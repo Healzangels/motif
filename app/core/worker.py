@@ -193,6 +193,28 @@ class _JobTransient(Exception):
 # QUEUED" at ~97% for ~6min per bulk place before terminal-failing.
 _PLEX_THEME_UPLOAD_CEILING_MB = 10
 
+# v0.51.203 (Phase 3): download jobs motif enqueues automatically, with no user click —
+# the sync/enum auto-download of an unthemed row ('new') and the auto re-download when a
+# TDB theme's source URL changes ('url_changed'). Both fire ONLY when
+# auto_download_new_themes_for_unthemed_rows is on (sync.py:1333 + :1589, plex_enum.py:3217).
+# Every other _enqueue_download reason is a user action (// DOWNLOAD, bulk, ACCEPT, SET URL).
+# The loudness gate keys on this set to route auto-picks through normalize_auto_added.
+_AUTO_ADDED_DOWNLOAD_REASONS = frozenset({"new", "url_changed"})
+
+
+def _should_condition_download(settings, payload: dict) -> bool:
+    """v0.51.203 (Phase 3): does a freshly-downloaded theme get loudness-conditioned
+    before placement? An explicit per-job choice (SET URL's payload.normalize) wins both
+    ways; otherwise a motif-initiated auto-pick uses normalize_auto_added and a
+    user-triggered download (// DOWNLOAD FROM TDB, bulk) uses normalize_on_download.
+    Pure decision (no I/O) so its branches are unit-tested directly."""
+    norm_job = payload.get("normalize")
+    if norm_job is not None:
+        return bool(norm_job)
+    if payload.get("reason") in _AUTO_ADDED_DOWNLOAD_REASONS:
+        return settings.normalize_auto_added
+    return settings.normalize_on_download
+
 
 def _downscale_audio_to_fit(src_path: "Path", target_bytes: int) -> bytes | None:
     # v1.24.45: re-encode an MP3 down to <= ~target_bytes so an over-ceiling
@@ -2142,13 +2164,10 @@ class Worker:
         # v0.51.185.) Default OFF: this mutates downloaded audio.
         sha256, size = result.file_sha256, result.file_size
         cond = None
-        # v0.51.201 (Tag 6): a SET URL / re-download job can carry an explicit per-theme
-        # normalize choice in its payload — it OVERRIDES the global toggle both ways (force
-        # a theme leveled with normalize_on_download off, or force one raw with it on).
-        # Absent (TDB auto-downloads, sibling short-circuit) → the global setting stands.
-        _norm_job = payload.get("normalize")
-        _do_condition = (self.settings.normalize_on_download if _norm_job is None
-                         else bool(_norm_job))
+        # v0.51.201 (Tag 6) + v0.51.203 (Phase 3): the on-arrival gate — an explicit
+        # per-job choice (SET URL) wins, else auto-picks vs user downloads split by toggle.
+        # Decision extracted to _should_condition_download so its 6 branches are unit-tested.
+        _do_condition = _should_condition_download(self.settings, payload)
         if _do_condition:
             from .loudness_apply import condition_new_download
             cond = condition_new_download(

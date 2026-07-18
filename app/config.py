@@ -267,6 +267,12 @@ class Settings:
         return self._cfg.loudness.normalize_on_download
 
     @property
+    def normalize_auto_added(self) -> bool:
+        # v0.51.203 (Phase 3): the auto-pick half of the split — sync/enum downloads
+        # motif fetches without a user click. Independent of normalize_on_download.
+        return self._cfg.loudness.normalize_auto_added
+
+    @property
     def loudness_target_lufs(self) -> float:
         # v0.51.193: clamp to the usable hover band at the ONE functional read point,
         # so worker conditioning, normalize-one, and the card's stepper all get the

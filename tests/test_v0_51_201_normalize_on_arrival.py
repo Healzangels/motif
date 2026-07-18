@@ -230,8 +230,10 @@ def test_worker_download_gate_honors_payload_normalize():
     """The conditioning gate must read the per-job override + fall back to the global,
     not the old bare `if self.settings.normalize_on_download:`."""
     assert 'payload.get("normalize")' in WORKER_PY
-    assert ("self.settings.normalize_on_download if _norm_job is None"
-            in WORKER_PY)
+    # v0.51.203: the gate decision moved into _should_condition_download (the explicit
+    # per-job override still wins, then auto-added vs manual — see the v0.51.203 gate tests).
+    assert "_should_condition_download(self.settings, payload)" in WORKER_PY
+    assert "def _should_condition_download(" in WORKER_PY
     # the pre-Tag-6 unconditional gate (global only) must be gone.
     assert ("if self.settings.normalize_on_download:\n"
             "            from .loudness_apply import condition_new_download"
