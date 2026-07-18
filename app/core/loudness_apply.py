@@ -404,7 +404,16 @@ def undo_file(path: Path | str, expect_sha: str | None = None,
         out["new_i"] = m["loudness_i"]
         out["new_tp"] = m["true_peak"]
         out["new_lra"] = m["lra"]
-    out["ok"] = True
+    # v0.51.204 (audit H1): `ok` must ENFORCE the audio verdict, not merely mean "mp3gain -u
+    # ran". audio_restored is False ⟺ the decoded PCM differs from the pre-normalize hash — a
+    # deep attenuation clamped a frame's global_gain and -u OVER-restored (irreversible; the
+    # exact case the atten_deep probe screens for). Reporting ok=True there let the caller
+    # commit a permanently-degraded theme back to Plex as "raw". None (legacy row / undecodable)
+    # stays ok — unknown, not failed.
+    out["ok"] = out["audio_restored"] is not False
+    if out["audio_restored"] is False and out["error"] is None:
+        out["error"] = ("undo did not restore the original audio — the leveling was too deep to "
+                        "reverse (a clamped frame)")
     return out
 
 

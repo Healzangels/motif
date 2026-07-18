@@ -6831,6 +6831,31 @@ def _undo_one_row(db: Path, settings, row) -> dict:
     expect_pcm = row["norm_orig_pcm_sha256"]
 
     res = undo_file(theme, expect_sha=expect, expect_pcm_sha=expect_pcm)
+    if res.get("audio_restored") is False:
+        # v0.51.204 (audit H1): mp3gain -u RAN but OVER-restored — a deep attenuation clamped
+        # a frame's global_gain and -u could not return the original samples, so the file on
+        # disk is now DEGRADED, not the original. Do NOT flip the row to raw, wipe its recovery
+        # refs, or re-push this to Plex (which would make Plex serve the wrong audio). Re-stamp
+        # ONLY the measurement so the audit/markers reflect the degraded file; keep norm_state
+        # so the row stays flagged as managed for the operator to inspect / re-download.
+        _dmsha = res["new_sha"] if res["new_i"] is not None else None
+        _dmat = now_iso() if res["new_i"] is not None else None
+        with get_conn(db) as wconn:
+            wconn.execute(
+                "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
+                "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=? "
+                "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                (res["new_i"], res["new_tp"], res["new_lra"], _dmat, _dmsha, res["new_sha"],
+                 row["media_type"], row["tmdb_id"], row["section_id"], row["edition_key"]),
+            )
+            wconn.commit()
+        log.error("loudness undo: %s/%s OVER-RESTORED — the leveling was too deep to reverse; "
+                  "left leveled + NOT pushed to Plex for inspection",
+                  row["media_type"], row["tmdb_id"])
+        return {"ok": False, "audio_restored": False,
+                "error": "undo could not restore the original audio (the leveling was too deep to "
+                         "reverse) — the theme was left as-is and Plex was not changed",
+                "title": row["title"] or f'{row["media_type"]}/{row["tmdb_id"]}'}
     if not res["ok"]:
         return {"ok": False, "error": res.get("error") or "undo failed",
                 "title": row["title"]}

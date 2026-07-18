@@ -108,8 +108,12 @@ def test_genuinely_broken_restore_is_flagged(tmp_path, monkeypatch):
     _stub_measure(monkeypatch)
 
     res = la.undo_file(theme, expect_sha="x", expect_pcm_sha="PCM-ORIG")
-    assert res["ok"] is True
+    # v0.51.204 (audit H1): a False audio verdict must make ok=False — the caller commits raw
+    # + re-pushes to Plex on ok, so ok=True here silently shipped a degraded theme. None
+    # (legacy / undecodable) stays ok; only an explicit mismatch fails.
+    assert res["ok"] is False
     assert res["audio_restored"] is False
+    assert res["error"]   # a reason is surfaced
 
 
 def test_legacy_row_without_a_pcm_reference_is_unknown_not_failed(tmp_path, monkeypatch):
