@@ -2227,9 +2227,10 @@ def _library_main_query(
     attn_pills: set[str] | None = None,
     # v0.51.198: LOUDNESS pill axis — level state. 'normalized' = leveled,
     # 'raw' = has a local file but not yet leveled, 'outliers' = raw AND more
-    # than the margin louder than the target (the SAME set // LEVEL OUTLIERS
-    # acts on). loudness_target is the configured (clamped) target; +margin
-    # mirrors loudness_audit._OUTLIER_MARGIN_DB so the filter and the button agree.
+    # than the margin louder than the target. loudness_target is the configured
+    # (clamped) target; +margin is loudness_audit._OUTLIER_MARGIN_DB. v0.51.202:
+    # SAME loudness def as // LEVEL OUTLIERS but NOT eligibility-gated → a SUPERSET
+    # of what the button levels (see the 'outliers' branch below).
     loudness_pills: set[str] | None = None,
     loudness_target: float = -18.0,
     cookies_present: bool = False,
@@ -3183,9 +3184,11 @@ def _library_main_query(
             elif p == "raw":
                 lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL)")
             elif p == "outliers":
-                # the SAME set as // LEVEL OUTLIERS: raw + louder than target + margin.
-                # v0.51.200: bind the shared _OUTLIER_MARGIN_DB (was a literal 6.0) so the
-                # filter, the row marker, and the // LEVEL OUTLIERS button use ONE threshold.
+                # v0.51.202: the SAME loudness DEFINITION as // LEVEL OUTLIERS (raw + louder
+                # than target+margin) but NOT eligibility-gated — bulk_normalize_counts also
+                # requires hardlink-placed + measurement-current + under-ceiling, so this
+                # filter is a SUPERSET (an unplaced / over-ceiling / stale loud row matches
+                # here but the button won't level it). Shared _OUTLIER_MARGIN_DB = ONE threshold.
                 from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
                 lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL "
                            f"AND {_li} IS NOT NULL AND {_li} > ?)")
@@ -3844,15 +3847,18 @@ def _library_main_query(
         and (not last_plex_enum_at or last_sync_at > last_plex_enum_at)
     )
     items = [dict(r) for r in rows]
-    # v0.51.200 (Tag 5): the 3-state title-cell loudness marker. Derived HERE (not
-    # in SQL) so the marker and the LOUDNESS filter predicate above share ONE rule:
-    # leveled = norm_state normalized; outlier = raw AND louder than target+margin
-    # (the SAME set // LEVEL OUTLIERS + the filter's 'outliers' chip act on); raw =
-    # has a local file but not yet leveled. No local file → no marker. The +margin
-    # is loudness_audit._OUTLIER_MARGIN_DB (same value the filter binds at ~line 3189)
-    # so all three stay in lock-step. loudness_i may be NULL (un-audited) → not an
-    # outlier, just raw. The `> ` compare matches the SQL exactly (a stored ±inf
-    # from a pre-v0.51.163 build compares the same way it does in SQLite).
+    # v0.51.200 (Tag 5): the 3-state title-cell loudness marker. Derived HERE (not in
+    # SQL) so the marker and the LOUDNESS filter predicate above share ONE rule (both use
+    # the same _OUTLIER_MARGIN_DB). leveled = norm_state normalized; outlier = raw AND
+    # louder than target+margin; raw = has a local file but not yet leveled. No local
+    # file → no marker. loudness_i may be NULL (un-audited) → not an outlier, just raw.
+    # v0.51.202: the marker + filter 'outlier' use the SAME loudness DEFINITION as
+    # // LEVEL OUTLIERS but are NOT eligibility-gated (bulk_normalize_counts also requires
+    # hardlink-placed + measurement-current + under-ceiling) — so they are a SUPERSET: an
+    # unplaced / over-ceiling / stale loud row shows amber here + in the filter but the
+    # button won't level it. Intentional (spot every loud theme at a glance), not "same set".
+    # The `> ` compare matches the SQL exactly (a stored ±inf from a pre-v0.51.163 build
+    # compares the same way it does in SQLite).
     from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
     _out_thresh = loudness_target + _loud_margin
     for it in items:
@@ -3865,6 +3871,9 @@ def _library_main_query(
                 "outlier" if (_li is not None and _li > _out_thresh) else "raw")
         else:
             it["loudness_marker"] = None
+        # v0.51.202: loudness_i was only needed for the derivation above — nothing
+        # client-side reads it. Drop it so it doesn't ride in every row's JSON.
+        it.pop("loudness_i", None)
     # v1.11.62: stat the canonical for each row that has a local_files
     # entry, so the UI can render a 'DL broken' state when motif's
     # canonical was deleted out from under it but the placement
@@ -14887,6 +14896,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # (raw) is the client's job, not ours.
             _norm = (body or {}).get("normalize")
             if _norm is not None:
+                # v0.51.202: a JSON string like "false" is truthy under bool(), which would
+                # silently level when the caller asked not to — coerce the usual falsey
+                # strings to False first. The UI sends a real boolean; this guards API callers.
+                if isinstance(_norm, str):
+                    _norm = _norm.strip().lower() not in ("", "false", "0", "no", "off")
                 payload["normalize"] = bool(_norm)
             if download_only:
                 payload["auto_place"] = False

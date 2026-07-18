@@ -97,6 +97,17 @@ def test_marker_three_states(client):
     assert m[6] == "raw"         # has a file but never audited → raw, not outlier
 
 
+def test_loudness_i_is_not_leaked_into_library_rows(client):
+    """v0.51.202 (review #2): loudness_i is SELECTed only to derive loudness_marker
+    server-side; nothing client-side reads it, so it must be popped from each row."""
+    _fill(client[1])
+    c, _ = client
+    rows = c.get("/api/library?tab=movies&per_page=100", headers=AUTH).json()["items"]
+    assert rows, "seeded rows must be present"
+    assert all("loudness_marker" in it for it in rows)
+    assert all("loudness_i" not in it for it in rows), "loudness_i must not ride in the JSON"
+
+
 def test_marker_agrees_with_outliers_filter(client):
     """Drift guard: the rows the marker calls 'outlier' are EXACTLY the rows the
     ?loudness_pills=outliers filter returns — one _OUTLIER_MARGIN_DB threshold."""

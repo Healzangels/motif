@@ -199,6 +199,18 @@ def test_manual_url_threads_normalize_false(app_client):
     assert _download_payload(db).get("normalize") is False
 
 
+def test_manual_url_string_false_does_not_enable_leveling(app_client):
+    """v0.51.202 (review #3): a JSON string "false" is truthy under bool(), so an API
+    caller could accidentally level. The endpoint must coerce falsey strings to False."""
+    client, db, _ = app_client
+    _seed(db, has_theme=0)
+    r = client.post(f"/api/plex_items/{RK}/manual-url",
+                    json={"youtube_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                          "normalize": "false"}, headers=AUTH)
+    assert r.status_code == 200, r.text
+    assert _download_payload(db).get("normalize") is False
+
+
 def test_manual_url_absent_normalize_leaves_no_key(app_client):
     """An older client / API caller that omits normalize → no key → the worker
     falls back to the global normalize_on_download setting."""
