@@ -26615,9 +26615,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         'audition'). A body may name a specific row. Fully reversible via undo-one.
         Threadpool (subprocess + hash + re-measure block the loop — class-12)."""
         _require_admin(request)
-        from ..core.loudness_apply import normalize_file
         from ..core.db import get_conn
-        from ..core.events import now_iso
 
         try:
             body = await request.json()
@@ -26832,7 +26830,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Threadpool: HTTP + decode + measure all block (class-12)."""
         _require_admin(request)
         from ..core.db import get_conn
-        from ..core.loudness import measure_loudness
 
         try:
             body = await request.json()
@@ -26907,7 +26904,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         on a fact. Threadpool (class-12)."""
         _require_admin(request)
         from ..core.db import get_conn
-        import time as _t
 
         def _run():
             with get_conn(db) as conn:
@@ -26955,9 +26951,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         sha (norm_orig_sha256). Edition-scoped; the body echoes the row identity from
         normalize-one. Threadpool (class-12)."""
         _require_admin(request)
-        from ..core.loudness_apply import undo_file
         from ..core.db import get_conn
-        from ..core.events import now_iso
 
         try:
             body = await request.json()

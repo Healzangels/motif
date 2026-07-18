@@ -905,6 +905,10 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.206: cleanup — remove 6 dead local imports left by the v0.51.199 chokepoint
+# extraction (the loudness endpoints delegate to _normalize_one_row/_undo_one_row/
+# _push_theme_to_plex/_measure_plex_serving now, but kept their old normalize_file/
+# undo_file/measure_loudness/now_iso/time imports). AST-verified unused; endpoints unchanged.
 # 0.51.205: audit hardening — M1 normalize_file rejects non-finite loudness (a legacy
 # -inf row was round(inf)->OverflowError, breaking "never raises"); M2 -t-cap the PCM
 # decode so a low-bitrate file can't balloon memory; M3 bulk counts/run use EXISTS not a
@@ -4488,7 +4492,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.205"
+__version__ = "0.51.206"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
