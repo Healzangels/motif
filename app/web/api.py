@@ -6720,11 +6720,15 @@ def _bulk_normalize_run(db: Path, settings, *, max_rows: int | None = None) -> N
                 " lf.file_path, lf.file_sha256, lf.loudness_measured_sha256, "
                 " lf.loudness_i, lf.loudness_tp, lf.norm_state, t.title, t.year "
                 "FROM local_files lf "
-                "JOIN placements p ON p.media_type=lf.media_type "
-                "  AND p.tmdb_id=lf.tmdb_id AND p.section_id=lf.section_id "
-                "  AND p.edition_key=lf.edition_key AND p.placement_kind='hardlink' "
+                # v0.51.205 (audit M3): EXISTS not a JOIN — a JOIN fans out (2+ hardlink
+                # placements for one row → the row processed N times, wasting the max_rows
+                # LIMIT on duplicate chokepoint no-ops). Mirrors bulk_normalize_counts.
                 "LEFT JOIN themes t ON t.media_type=lf.media_type AND t.tmdb_id=lf.tmdb_id "
-                "WHERE lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
+                "WHERE EXISTS (SELECT 1 FROM placements p "
+                "   WHERE p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
+                "     AND p.section_id=lf.section_id AND p.edition_key=lf.edition_key "
+                "     AND p.placement_kind='hardlink') "
+                "  AND lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
                 "  AND lf.norm_state IS NULL "
                 "  AND lf.file_sha256 IS NOT NULL "
                 "  AND lf.loudness_measured_sha256 = lf.file_sha256 "
@@ -6812,6 +6816,13 @@ def _undo_one_row(db: Path, settings, row) -> dict:
 
     if row["norm_state"] != "normalized":
         return {"ok": False, "error": "row is not normalized — nothing to undo"}
+    # v0.51.205 (audit L1): if this row was pushed to Plex (a recorded pre-normalize entry) but
+    # Plex is now unconfigured, undo can restore the file but NOT put Plex back → the row would
+    # diverge (file raw, Plex still leveled). Refuse explicitly, mirroring the bulk-undo gate.
+    # (A conditioned-before-placement row has no recorded entry, so this doesn't over-refuse it.)
+    if row["norm_plex_entry_uri"] and not (settings.plex_url and settings.plex_token):
+        return {"ok": False, "error": "Plex is not configured — undo can't put Plex back for a "
+                "theme that was pushed to it; configure Plex first", "title": row["title"]}
     fp = Path(row["file_path"])
     # v0.51.169: themes_dir is None until configured — guard the join (500).
     if not fp.is_absolute() and settings.themes_dir is None:

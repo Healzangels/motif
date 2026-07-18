@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import math
 import shutil
 import subprocess
 import tempfile
@@ -43,6 +44,11 @@ log = logging.getLogger("motif.loudness_apply")
 # A LUFS target rarely lands on a step boundary, so we round — the ~0.75 dB worst-case
 # residual is inaudible for a hover theme (the plan accepted this coarseness).
 _STEP_DB = 1.505
+# v0.51.205 (audit M2): cap the decoded-PCM duration so a crafted low-bitrate file can't
+# balloon in memory (the whole decode is captured for the hash). Themes are short clips; a
+# real one is far under this, so the hash is unchanged for every legitimate row (a file
+# shorter than the cap decodes identically with or without -t) — only an anomaly is truncated.
+_PCM_DECODE_CAP_S = 900
 # leave 1 dB of true-peak headroom below full scale; a boost is capped so the result's
 # true peak can't exceed this (no induced clipping).
 _PEAK_CEILING_DBTP = -1.0
@@ -137,7 +143,7 @@ def _decode_pcm_sha(path: Path | str, timeout: int = _TIMEOUT_S) -> str | None:
     try:
         p = subprocess.run(
             ["ffmpeg", "-hide_banner", "-nostats", "-i", str(path),
-             "-vn", "-f", "f32le", "-"],
+             "-t", str(_PCM_DECODE_CAP_S), "-vn", "-f", "f32le", "-"],
             capture_output=True, timeout=timeout,
         )
     except FileNotFoundError:
@@ -315,6 +321,13 @@ def normalize_file(path: Path | str, target_lufs: float,
     if measured_i is None:
         out["error"] = "no loudness measurement — run the LOUDNESS AUDIT first"
         return out
+    # v0.51.205 (audit M1): a legacy -inf loudness (a silent theme measured by a pre-v0.51.163
+    # build, persisted because unchanged bytes skip re-measure) makes gain_steps_for_target
+    # compute round(±inf) → OverflowError, breaking this function's "never raises" contract.
+    # condition_new_download guards this; the direct // NORMALIZE / bulk callers didn't.
+    if not math.isfinite(measured_i):
+        out["error"] = "loudness measurement is not finite (silent or unmeasurable) — re-audit"
+        return out
     if not path.is_file():
         out["error"] = f"canonical file missing: {path}"
         return out
@@ -327,6 +340,12 @@ def normalize_file(path: Path | str, target_lufs: float,
     # reference undo can honestly verify against (the file hash can't: mp3gain leaves its
     # APE tag, so a restored file never matches the pre-normalize bytes).
     out["old_pcm_sha"] = _decode_pcm_sha(path)
+    if out["old_pcm_sha"] is None:
+        # v0.51.205 (audit L2): breadcrumb — without the pre-gain PCM hash, // UNDO can never
+        # verify this row's restore (audio_restored stays None forever). Proceed (a leveled
+        # theme still beats a raw one) but say so, or the lost safety net is silent (class 9).
+        log.warning("loudness normalize: could not hash pre-gain PCM of %s — its // UNDO will "
+                    "be UNVERIFIABLE (ffmpeg decode failed)", path)
 
     steps = gain_steps_for_target(target_lufs, measured_i, true_peak)
     out["steps"] = steps

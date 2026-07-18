@@ -146,12 +146,17 @@ def bulk_normalize_counts(conn, *, ceiling_bytes: int, target: float,
     `eligible` = the full set a // LEVEL LIBRARY run would touch. `outliers` = the subset
     more than margin_db louder than the target — the worst offenders, and (being the
     loudest) exactly the head a max_rows-capped loudest-first run levels first."""
+    # v0.51.205 (audit M3): EXISTS, not a JOIN — a row hardlinked into 2+ media folders
+    # (multi-location section / a folder-relocation window) has 2+ placement rows sharing
+    # (media_type, tmdb_id, section_id, edition_key), and a JOIN would FAN OUT and count the
+    # theme N times. EXISTS is the boolean "is it hardlink-placed?" this predicate means.
     base = (
         "FROM local_files lf "
-        "JOIN placements p ON p.media_type=lf.media_type "
-        "  AND p.tmdb_id=lf.tmdb_id AND p.section_id=lf.section_id "
-        "  AND p.edition_key=lf.edition_key AND p.placement_kind='hardlink' "
-        "WHERE lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
+        "WHERE EXISTS (SELECT 1 FROM placements p "
+        "   WHERE p.media_type=lf.media_type AND p.tmdb_id=lf.tmdb_id "
+        "     AND p.section_id=lf.section_id AND p.edition_key=lf.edition_key "
+        "     AND p.placement_kind='hardlink') "
+        "  AND lf.loudness_i IS NOT NULL AND lf.loudness_i > -1e30 "
         "  AND lf.norm_state IS NULL "
         "  AND lf.file_sha256 IS NOT NULL "
         "  AND lf.loudness_measured_sha256 = lf.file_sha256 "
@@ -172,19 +177,22 @@ def bulk_normalize_counts(conn, *, ceiling_bytes: int, target: float,
             "outlier_margin_db": margin_db}
 
 
-def record_measurement(conn, row, m: dict, measured_at: str) -> None:
+def record_measurement(conn, row, m: dict, measured_at: str) -> int:
     """Stamp one row's loudness measurement onto its local_files PK. Keyed by the
     full (media_type, tmdb_id, section_id, edition_key) PK so an edition's
     measurement never bleeds onto a sibling edition (v1.21.x edition-scope rule).
     Stamps loudness_measured_sha256 from the row's file_sha256 so a later
-    re-download (new sha) marks this measurement stale."""
-    conn.execute(
+    re-download (new sha) marks this measurement stale.
+    v0.51.205 (audit L3): returns rowcount so the caller can tell a real write from a
+    zero-row no-op (the row's PK moved between the select and the write)."""
+    cur = conn.execute(
         "UPDATE local_files SET loudness_i = ?, loudness_tp = ?, loudness_lra = ?, "
         "loudness_measured_at = ?, loudness_measured_sha256 = ? "
         "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? AND edition_key = ?",
         (m["loudness_i"], m["true_peak"], m["lra"], measured_at, row["file_sha256"],
          row["media_type"], row["tmdb_id"], row["section_id"], row["edition_key"]),
     )
+    return cur.rowcount
 
 
 # comfortable ambient-hover loudness band. Themes play UNDER browsing, so the
@@ -354,9 +362,16 @@ def run_loudness_audit(
                             r["media_type"], r["tmdb_id"], e)
                 m = None
             if m is not None:
-                record_measurement(wconn, r, m, now_iso())
+                _rc = record_measurement(wconn, r, m, now_iso())
                 wconn.commit()  # per-row so a crash mid-audit keeps prior measurements
-                measured += 1
+                if _rc:
+                    measured += 1
+                else:
+                    # v0.51.205 (audit L3): the UPDATE matched no row — the PK moved between
+                    # the select and the write (a promote / re-key mid-sweep). Don't count a
+                    # measurement that landed nowhere (class-9 silent no-op); log so it's visible.
+                    log.warning("loudness audit: measurement for %s/%s matched no row (PK moved "
+                                "mid-sweep) — not counted", r["media_type"], r["tmdb_id"])
             else:
                 failed += 1
             if progress_cb is not None:

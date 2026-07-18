@@ -80,6 +80,11 @@ def test_over_restore_keeps_the_row_leveled_and_does_not_touch_plex(bench, monke
         "new_sha": "DEGRADED_SHA", "new_i": -4.0, "new_tp": -1.0, "new_lra": 5.0,
         "error": "undo did not restore the original audio",
     })
+    # Plex "configured" so the v0.51.205 L1 gate (refuse a pushed row without Plex) doesn't
+    # intercept — this scenario is a pushed row being undone WITH Plex available.
+    from app.config import Settings
+    monkeypatch.setattr(Settings, "plex_url", property(lambda self: "http://x"))
+    monkeypatch.setattr(Settings, "plex_token", property(lambda self: "t"))
     # a tripwire: Plex must NOT be touched on the degraded path.
     monkeypatch.setattr(api, "_push_theme_to_plex",
                         lambda *a, **k: pytest.fail("Plex must not be pushed on over-restore"))
@@ -110,6 +115,9 @@ def test_bulk_undo_does_not_count_an_over_restore_as_undone(bench, monkeypatch):
         "new_sha": "DEGRADED_SHA", "new_i": -4.0, "new_tp": -1.0, "new_lra": 5.0,
         "error": "undo did not restore the original audio",
     })
+    from app.config import Settings
+    monkeypatch.setattr(Settings, "plex_url", property(lambda self: "http://x"))
+    monkeypatch.setattr(Settings, "plex_token", property(lambda self: "t"))
     monkeypatch.setattr(api, "_push_theme_to_plex", lambda *a, **k: {})
     monkeypatch.setattr("app.core.notify.dispatch", lambda *a, **k: None)
 
