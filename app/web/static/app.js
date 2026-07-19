@@ -18041,13 +18041,23 @@
     const _loudnessRows = (() => {
       if (!lf) return '';
       const li = lf.loudness_i;
+      // v0.51.208: the row PK the // RE-MEASURE / // MEASURE NOW button posts back — the
+      // loudness analogue of // PROBE TDB URL. Shared by the measured + unmeasured branches.
+      const _mpk = `data-mt="${htmlEscape(lf.media_type || '')}" data-id="${htmlEscape(lf.tmdb_id ?? '')}"`
+        + ` data-sec="${htmlEscape(lf.section_id || '')}" data-edn="${htmlEscape(lf.edition_key || '')}"`;
       // v0.51.163: a silent theme measures -inf and any consumer must assume it could be
       // in the DB from a pre-v0.51.163 build. Not a number = say so, never render "-inf".
       const measured = (typeof li === 'number' && Number.isFinite(li)) ? li : null;
       if (measured === null) {
+        // v0.51.208: a per-row // MEASURE NOW instead of only "run the whole audit".
         return `<dt>loudness</dt><dd class="muted small">not measured${
           li === null || li === undefined ? '' : ' (unmeasurable — silent?)'
-        } · run the <a href="/admin/loudness">LOUDNESS AUDIT</a></dd>`;
+        }</dd>
+        <dt>measure</dt><dd>
+          <button class="btn btn-tiny btn-info" data-act="loud-measure" ${_mpk}
+                  title="Measure this theme's loudness from the file on disk now — no need to run the whole LOUDNESS AUDIT.">// MEASURE NOW</button>
+          <span id="loud-measure-note" class="muted small info-probe-meta"></span>
+        </dd>`;
       }
       const tp = (typeof lf.loudness_tp === 'number' && Number.isFinite(lf.loudness_tp))
         ? lf.loudness_tp : null;
@@ -18081,6 +18091,14 @@
       const raw = rawI !== null
         ? `<dt>raw source</dt><dd class="muted small" title="What this theme measured BEFORE motif leveled it. Derived from the applied gain; // UNDO returns it to exactly this.">${rawI.toFixed(1)} LUFS</dd>`
         : '';
+      // v0.51.208: // RE-MEASURE — re-reads the file's actual loudness on demand (the
+      // loudness // PROBE TDB URL). Sits under 'plays at' with a 'last measured' note.
+      const measuredRow = `<dt>measured</dt><dd>
+             <button class="btn btn-tiny btn-info" data-act="loud-measure" ${_mpk}
+                     title="Re-read this theme's actual loudness from the file on disk and update 'plays at' above. Doesn't change the audio or Plex.">// RE-MEASURE</button>
+             <span id="loud-measure-note" class="muted small info-probe-meta">${
+               lf.loudness_measured_at ? 'last ' + htmlEscape(fmt.timeAuto(lf.loudness_measured_at)) : ''}</span>
+           </dd>`;
 
       // v0.51.207: the INTERACTIVE controls (target stepper, audition, LEVEL/UNDO) move
       // out of the narrow 140px label grid into ONE full-width block (.loud-controls spans
@@ -18136,7 +18154,7 @@
              </div>
            </div>`;
       }
-      return `${lvl}${state}${raw}${controls}`;
+      return `${lvl}${measuredRow}${state}${raw}${controls}`;
     })();
 
     const _grp = (title, rows) => rows.trim()
@@ -18514,6 +18532,62 @@
         }
       });
     }
+
+    // v0.51.208: // RE-MEASURE / // MEASURE NOW — re-read this theme's loudness from disk.
+    // Read-only against the audio; on success re-open the card so 'plays at', the header
+    // chip, and the stepper base all re-seed from the fresh measurement (the stepper
+    // captures loudness_i at render, so an inline patch would leave its gain math stale).
+    body.querySelector('button[data-act="loud-measure"]')?.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const btn = ev.currentTarget;
+      const slot = body.querySelector('#loud-measure-note');
+      const orig = btn.textContent;
+      const _idNum = Number(btn.dataset.id);
+      if (!btn.dataset.id || !Number.isFinite(_idNum)) {
+        if (slot) { slot.className = 'accent-red small info-probe-meta'; slot.textContent = 'no TMDB id on this row'; }
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = '// MEASURING…';
+      if (slot) { slot.className = 'muted small info-probe-meta'; slot.textContent = ''; }
+      try {
+        const r = await fetch('/api/admin/loudness/measure-one', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            media_type: btn.dataset.mt, tmdb_id: _idNum,
+            section_id: btn.dataset.sec, edition_key: btn.dataset.edn,
+          }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok || !j.ok) {
+          if (slot) {
+            slot.className = 'accent-red small info-probe-meta';
+            slot.textContent = j.error || `failed (${r.status})`;
+          }
+          btn.disabled = false;
+          btn.textContent = orig;
+          return;
+        }
+        btn.textContent = '// DONE';
+        if (slot) {
+          slot.className = 'muted small info-probe-meta';
+          slot.textContent = (typeof j.loudness_i === 'number')
+            ? `now ${j.loudness_i.toFixed(1)} LUFS`
+            : 'measured';
+        }
+        // re-open so plays-at, the chip, and the stepper base re-read the new measurement.
+        setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey), 700);
+      } catch (e) {
+        if (slot) {
+          slot.className = 'accent-red small info-probe-meta';
+          slot.textContent = 'request failed';
+        }
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
 
     body.querySelector('button[data-act="probe-tdb"]')?.addEventListener('click', async (ev) => {
       ev.preventDefault();

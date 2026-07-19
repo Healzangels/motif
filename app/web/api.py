@@ -26710,6 +26710,95 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         return await run_in_threadpool(_run)
 
+    @app.post("/api/admin/loudness/measure-one")
+    async def api_admin_loudness_measure_one(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.208: re-measure ONE theme's loudness from the file on disk, on demand —
+        the loudness analogue of // PROBE TDB URL. Runs the same ffmpeg loudnorm pass the
+        audit uses over the CURRENT bytes and re-stamps loudness_i/tp/lra + measured_sha256
+        + file_sha256 for the edition-scoped PK, so 'plays at' and the markers reflect the
+        file as it is NOW (e.g. after a re-download). READ-ONLY against the audio — it
+        never rewrites the theme or touches Plex. Threadpool (hash + ffmpeg block the loop —
+        class-12)."""
+        _require_admin(request)
+        from ..core.db import get_conn
+        from ..core.loudness import measure_loudness
+        from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
+        from ..core.events import now_iso
+        import hashlib
+        import math
+
+        try:
+            body = await request.json()
+        except Exception:  # noqa: BLE001 — a junk/empty body is a 400 below, not a 500
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        want_mt = body.get("media_type")
+        want_id = body.get("tmdb_id")
+        if not want_mt or want_id is None:
+            raise HTTPException(status_code=400,
+                                detail="media_type and tmdb_id are required")
+        sec = body.get("section_id") or ""
+        edn = body.get("edition_key") or ""
+
+        def _run():
+            with get_conn(db) as conn:
+                row = conn.execute(
+                    "SELECT media_type, tmdb_id, section_id, edition_key, file_path, "
+                    " norm_state FROM local_files "
+                    "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                    (want_mt, want_id, sec, edn),
+                ).fetchone()
+            if row is None:
+                return {"ok": False, "error": "no local theme file for this row to measure"}
+            if not row["file_path"]:
+                return {"ok": False, "error": "this row has no file path to measure"}
+            fp = Path(row["file_path"])
+            if not fp.is_absolute() and settings.themes_dir is None:
+                return {"ok": False, "error": "themes_dir is not configured — "
+                        "set it in Settings first"}
+            theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
+            if not theme.is_file():
+                return {"ok": False, "error": f"the theme file is missing on disk: {theme}"}
+            m = measure_loudness(theme)
+            if m is None:
+                return {"ok": False, "error": "ffmpeg could not measure the theme"}
+            # the sha of the bytes we just measured, so measured_sha256 == file_sha256 marks
+            # this measurement CURRENT — the same staleness key the audit + normalize use.
+            h = hashlib.sha256()
+            with theme.open("rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    h.update(chunk)
+            sha = h.hexdigest()
+            with get_conn(db) as conn:
+                cur = conn.execute(
+                    "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
+                    "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=? "
+                    "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                    (m["loudness_i"], m["true_peak"], m["lra"], now_iso(), sha, sha,
+                     row["media_type"], row["tmdb_id"], row["section_id"],
+                     row["edition_key"]),
+                )
+                conn.commit()
+            if not cur.rowcount:
+                # the PK moved between the SELECT and the write — surface, don't fake it.
+                return {"ok": False, "error": "the row changed while measuring — try again"}
+            li, tp = m["loudness_i"], m["true_peak"]
+            thr = settings.loudness_target_lufs + _loud_margin
+            return {
+                "ok": True,
+                # never ship a raw ±inf to the card (a silent theme measures -inf).
+                "loudness_i": li if math.isfinite(li) else None,
+                "true_peak": tp if math.isfinite(tp) else None,
+                "clipping": bool(math.isfinite(tp) and tp > 0),
+                "loudness_marker": _loudness_marker(row["norm_state"], True, li, thr),
+                "measured_at": now_iso(),
+            }
+
+        return await run_in_threadpool(_run)
+
     @app.post("/api/admin/loudness/bulk-normalize")
     async def api_admin_loudness_bulk_normalize(
         request: Request, db: Path = Depends(get_db_path),
