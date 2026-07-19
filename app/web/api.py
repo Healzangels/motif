@@ -2189,6 +2189,24 @@ _LIBRARY_SORTS_NOT_IN_PLEX = {
 }
 
 
+def _loudness_marker(norm_state, has_local_file: bool,
+                     loudness_i, outlier_thresh: float):
+    """The 3-state loudness marker: 'leveled' / 'outlier' / 'raw' / None.
+
+    v0.51.207: one definition shared by the library ROW markers (the meter glyphs)
+    and the INFO card's at-a-glance chip, so the two surfaces can never drift (the
+    SRC-axis cross-surface rule). Callers compute `outlier_thresh` (=
+    loudness_target + _OUTLIER_MARGIN_DB) since they own settings. None = no local
+    file, so nothing to mark. `> ` matches the filter SQL exactly (a stored ±inf
+    from a pre-v0.51.163 build compares the same way it does in SQLite)."""
+    if norm_state == "normalized":
+        return "leveled"
+    if has_local_file and norm_state is None:
+        # `is not None`, not truthiness — mirrors the filter's SQL `file_path IS NOT NULL`.
+        return "outlier" if (loudness_i is not None and loudness_i > outlier_thresh) else "raw"
+    return None
+
+
 def _library_main_query(
     db: Path, *, tab: str, fourk: bool, q: str, status: str,
     page: int, per_page: int,
@@ -3862,15 +3880,11 @@ def _library_main_query(
     from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
     _out_thresh = loudness_target + _loud_margin
     for it in items:
-        if it.get("norm_state") == "normalized":
-            it["loudness_marker"] = "leveled"
-        elif it.get("file_path") is not None and it.get("norm_state") is None:
-            # `is not None` (not truthiness) mirrors the filter's SQL `file_path IS NOT NULL`.
-            _li = it.get("loudness_i")
-            it["loudness_marker"] = (
-                "outlier" if (_li is not None and _li > _out_thresh) else "raw")
-        else:
-            it["loudness_marker"] = None
+        # v0.51.207: via the shared _loudness_marker so this and the INFO card chip
+        # (api_item) derive the state identically — no cross-surface drift.
+        it["loudness_marker"] = _loudness_marker(
+            it.get("norm_state"), it.get("file_path") is not None,
+            it.get("loudness_i"), _out_thresh)
         # v0.51.202: loudness_i was only needed for the derivation above — nothing
         # client-side reads it. Drop it so it doesn't ride in every row's JSON.
         it.pop("loudness_i", None)
@@ -16492,11 +16506,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "ORDER BY ts DESC LIMIT 25",
                         (media_type, tmdb_id),
                     ).fetchall()
+            # v0.51.207: the at-a-glance loudness chip beside the 4K badge reads
+            # local_file.loudness_marker. Derive it server-side via the SAME helper the
+            # library row markers use so the card chip and the row glyph never disagree.
+            from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
+            _card_out_thresh = settings.loudness_target_lufs + _loud_margin
             local_payloads: list[dict] = []
             for lf in local_files:
                 d = dict(lf)
                 if settings.is_paths_ready() and d.get("file_path"):
                     d["abs_path"] = str(settings.themes_dir / d["file_path"])
+                d["loudness_marker"] = _loudness_marker(
+                    d.get("norm_state"), d.get("file_path") is not None,
+                    d.get("loudness_i"), _card_out_thresh)
                 local_payloads.append(d)
             # v1.12.86: surface per-section previous URL (replaces the
             # title-global themes.previous_youtube_url + previous_youtube_kind

@@ -18069,7 +18069,7 @@
         + (_pqp.length ? `?${_pqp.join('&')}` : '');
 
       const lvl = `<dt>plays at</dt><dd class="muted small">${measured.toFixed(1)} LUFS${
-        tp !== null ? ` · peak ${tp.toFixed(1)} dBTP${tp > 0 ? ' <span class="accent-red">(clipping)</span>' : ''}` : ''
+        tp !== null ? ` · peak ${tp.toFixed(1)} dBTP${tp > 0 ? ' <span class="accent-red loud-clip" title="The loudest moments peak above 0 dBTP, so they distort (clip) on playback. Leveling this theme quieter — set a target below and // LEVEL THIS THEME — pulls the peak back under 0 and clears the clipping.">(clipping)</span>' : ''}` : ''
       }</dd>`;
       const state = leveled
         ? `<dt>leveled</dt><dd class="muted small" title="mp3gain edited this file's gain field — lossless, and reversible from the file's own undo tag.">${
@@ -18077,59 +18077,66 @@
           }${lf.norm_target !== null && lf.norm_target !== undefined
               ? ` to a ${Number(lf.norm_target).toFixed(0)} LUFS target` : ''}${
             lf.norm_at ? ` · ${fmt.timeAuto(lf.norm_at)}` : ''}</dd>`
-        : `<dt>leveled</dt><dd class="muted small">no — raw source loudness</dd>`;
+        : `<dt>leveled</dt><dd class="muted small" title="This theme hasn't been mp3gain-leveled, so it plays at whatever level it was recorded at. Set a target below and // LEVEL THIS THEME to even it out with the rest of your library.">no — plays at its original recorded level</dd>`;
       const raw = rawI !== null
         ? `<dt>raw source</dt><dd class="muted small" title="What this theme measured BEFORE motif leveled it. Derived from the applied gain; // UNDO returns it to exactly this.">${rawI.toFixed(1)} LUFS</dd>`
         : '';
 
-      // v0.51.190: the design-system split (app.js ~18570) — btn-warn for MUTATING.
-      // Both of these rewrite real audio.
-      let act;
+      // v0.51.207: the INTERACTIVE controls (target stepper, audition, LEVEL/UNDO) move
+      // out of the narrow 140px label grid into ONE full-width block (.loud-controls spans
+      // both grid columns) so they get room instead of wrapping/squishing in the value
+      // column — the user's "buttons and sections look squished" report. All wiring binds by
+      // #id / [data-act], so DOM position is free to change. btn-warn for the two audio-
+      // rewriting actions (design-system split); btn-info for the non-mutating ones. A
+      // levelable RAW row shows the stepper; a leveled row shows only UNDO (a second mp3gain
+      // pass would stack gain + strand the true original — undo first); an over-ceiling row
+      // shows why it can't reach Plex.
+      let controls;
       if (tooBig) {
-        act = `<dd class="muted small accent-red" title="Plex 500s on a theme POST over ~10MB, and re-upload is the ONLY way to tell Plex the bytes changed (CLAUDE.md § 11). Leveling this would change the file and change nothing you can hear.">${
-          fmt.bytes(lf.file_size)} — over Plex's upload ceiling, so leveling it could not reach Plex</dd>`;
+        controls = `<div class="loud-controls accent-red" title="Plex 500s on a theme POST over ~10MB, and re-upload is the ONLY way to tell Plex the bytes changed (CLAUDE.md § 11). Leveling this would change the file and change nothing you can hear.">can't level — ${
+          fmt.bytes(lf.file_size)} is over Plex's upload ceiling, so a leveled copy could not reach Plex</div>`;
       } else if (leveled) {
-        act = `<dd><button class="btn btn-tiny btn-warn" data-act="loud-undo"
-                 data-mt="${htmlEscape(lf.media_type || '')}"
-                 data-id="${htmlEscape(lf.tmdb_id ?? '')}"
-                 data-sec="${htmlEscape(lf.section_id || '')}"
-                 data-edn="${htmlEscape(lf.edition_key || '')}"
-                 title="Restore the original bytes from mp3gain's undo tag, and put Plex back to serving them.">// UNDO LEVELING</button>
-               <span id="loud-result" class="muted small info-probe-meta"></span></dd>`;
+        controls = `<div class="loud-controls"><div class="loud-ctl-row">
+             <button class="btn btn-tiny btn-warn" data-act="loud-undo"
+                     data-mt="${htmlEscape(lf.media_type || '')}"
+                     data-id="${htmlEscape(lf.tmdb_id ?? '')}"
+                     data-sec="${htmlEscape(lf.section_id || '')}"
+                     data-edn="${htmlEscape(lf.edition_key || '')}"
+                     title="Restore the original bytes from mp3gain's undo tag, and put Plex back to serving them.">// UNDO LEVELING</button>
+             <span id="loud-result" class="muted small info-probe-meta"></span>
+           </div></div>`;
       } else {
-        act = `<dd><button class="btn btn-tiny btn-warn" data-act="loud-normalize"
-                 data-mt="${htmlEscape(lf.media_type || '')}"
-                 data-id="${htmlEscape(lf.tmdb_id ?? '')}"
-                 data-sec="${htmlEscape(lf.section_id || '')}"
-                 data-edn="${htmlEscape(lf.edition_key || '')}"
-                 title="Level this theme with mp3gain and push it to Plex. Lossless and reversible — Plex plays its own ingested copy, so motif re-uploads to make the change audible.">// LEVEL THIS THEME</button>
-               <span id="loud-result" class="muted small info-probe-meta"></span></dd>`;
-      }
-      // v0.51.191: the target picker + audition. Only on a levelable RAW row: the
-      // server refuses a re-level ("already normalized — undo it first") because a
-      // second mp3gain pass would stack gain and rewrite the undo tag to point at the
-      // once-leveled state, stranding the true original. So a leveled row shows no
-      // stepper — UNDO first. The steps are mp3gain's own 1.505 dB quantum, so one
-      // press is exactly one step and the number you pick is the number you get.
-      const stepper = (!tooBig && !leveled)
-        ? `<dt>target</dt><dd>
-             <button class="btn btn-tiny btn-info" data-act="loud-step" data-dir="-1"
-                     title="Quieter by one mp3gain step (1.5 dB).">–</button>
-             <span id="loud-target">${'\u2014'}</span> <span class="muted small">LUFS</span>
-             <button class="btn btn-tiny btn-info" data-act="loud-step" data-dir="1"
-                     title="Louder by one mp3gain step (1.5 dB).">+</button>
-             <span id="loud-gain-note" class="muted small"></span>
-           </dd>
-           <dt>audition</dt><dd>
-             <button class="btn btn-tiny btn-info" data-act="loud-preview"
-                     title="Hear the theme at the target level in its own preview player below. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>
+        controls = `<div class="loud-controls">
+             <div class="loud-ctl-row">
+               <span class="loud-ctl-label muted small">target</span>
+               <span class="loud-stepper">
+                 <button class="btn btn-tiny btn-info" data-act="loud-step" data-dir="-1"
+                         title="Quieter by one mp3gain step (1.5 dB).">–</button>
+                 <span id="loud-target">${'—'}</span>
+                 <span class="muted small">LUFS</span>
+                 <button class="btn btn-tiny btn-info" data-act="loud-step" data-dir="1"
+                         title="Louder by one mp3gain step (1.5 dB).">+</button>
+               </span>
+               <span id="loud-gain-note" class="loud-gain-note muted small"></span>
+             </div>
+             <div class="loud-ctl-row">
+               <button class="btn btn-tiny btn-info" data-act="loud-preview"
+                       title="Hear the theme at the target level in its own preview player below. Nothing is written — this only changes playback volume, exactly the way mp3gain would.">// PREVIEW AT TARGET</button>
+               <button class="btn btn-tiny btn-warn" data-act="loud-normalize"
+                       data-mt="${htmlEscape(lf.media_type || '')}"
+                       data-id="${htmlEscape(lf.tmdb_id ?? '')}"
+                       data-sec="${htmlEscape(lf.section_id || '')}"
+                       data-edn="${htmlEscape(lf.edition_key || '')}"
+                       title="Level this theme with mp3gain and push it to Plex. Lossless and reversible — Plex plays its own ingested copy, so motif re-uploads to make the change audible.">// LEVEL THIS THEME</button>
+               <span id="loud-result" class="muted small info-probe-meta"></span>
+             </div>
              <span id="loud-preview-note" class="muted small"></span>
              <div class="loud-preview-player" hidden>
                <audio id="loud-preview-audio" class="info-audio" controls preload="none" src="${htmlEscape(_previewSrc)}">your browser doesn't support inline audio playback</audio>
              </div>
-           </dd>`
-        : '';
-      return `${lvl}${state}${raw}${stepper}<dt>${tooBig ? 'cannot level' : 'action'}</dt>${act}`;
+           </div>`;
+      }
+      return `${lvl}${state}${raw}${controls}`;
     })();
 
     const _grp = (title, rows) => rows.trim()
@@ -18161,6 +18168,25 @@
         ${backupBlock}
         ${placedBlock}
         ${audioBlock}`;
+    // v0.51.207: at-a-glance loudness chip beside the 4K badge. Reads the SAME
+    // server-derived marker (lf.loudness_marker) the library row glyphs use, so the card
+    // and the list can't disagree. Colours are FIXED across themes — they ENCODE loudness
+    // state (theme SPLIT): cyan=leveled, amber=loud, dim=raw (.tier-badge-lvl/-loud/-raw).
+    // The title carries the LUFS + a clipping note so the compact chip explains itself.
+    const _loudChip = (() => {
+      const spec = { leveled: ['tier-badge-lvl', 'LEVELED'],
+                     outlier: ['tier-badge-loud', 'LOUD'],
+                     raw:     ['tier-badge-raw', 'RAW'] }[lf && lf.loudness_marker];
+      if (!spec) return '';
+      const li = (lf && typeof lf.loudness_i === 'number' && Number.isFinite(lf.loudness_i)) ? lf.loudness_i : null;
+      const tp = (lf && typeof lf.loudness_tp === 'number' && Number.isFinite(lf.loudness_tp)) ? lf.loudness_tp : null;
+      const base = { leveled: 'Leveled — mp3gain-adjusted toward a consistent hover level.',
+                     outlier: 'Loud — plays noticeably louder than your target; a candidate for leveling.',
+                     raw:     'Raw — measured but not yet leveled; plays at its original recorded level.' }[lf.loudness_marker];
+      const ttl = base + (li !== null ? ` Plays at ${li.toFixed(1)} LUFS.` : '')
+                + (tp !== null && tp > 0 ? ' Its peaks clip above 0 dBTP.' : '');
+      return ` <span class="tier-badge ${spec[0]}" title="${htmlEscape(ttl)}">${spec[1]}</span>`;
+    })();
     body.innerHTML = `
       <!-- v1.24.92: back to option A (the user compared A vs B and kept A) — the
            cover sits top-LEFT with the title, scope chip + playback headline
@@ -18171,7 +18197,7 @@
       <div class="info-hero">
         ${posterImgHtml}
         <div class="info-hero-meta">
-          <h3 class="info-title">${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}${sc && sc.is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}</h3>
+          <h3 class="info-title">${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}${sc && sc.is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}${_loudChip}</h3>
           ${scopeChips}
           <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
         </div>

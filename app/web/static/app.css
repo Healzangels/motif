@@ -4705,6 +4705,23 @@ body.auth-page .auth-card { margin: 0; }
 /* v0.51.196: the audition's own preview player — appears below the button when you
    preview, on its own line, decoupled from the FILE & PLACEMENT play bar. */
 .loud-preview-player { margin-top: var(--gap-2); }
+/* v0.51.207: the LOUDNESS controls block. Pulled out of the 140px|1fr dlg-grid into ONE
+   full-width row (spans BOTH grid columns) so the target stepper + audition + LEVEL/UNDO
+   get room instead of squishing in the value column (the user's "buttons and sections
+   look squished" report). A vertical stack of flex rows that wrap cleanly on the narrow
+   half-screen INFO drawer. */
+.loud-controls { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--gap-2); margin-top: var(--gap-1); }
+.loud-ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-2); }
+.loud-ctl-label { flex: 0 0 auto; min-width: 3.5em; }
+.loud-stepper { display: inline-flex; align-items: center; gap: var(--gap-2); }
+/* the +/- steppers are single glyphs — drop the .btn-tiny 72px min-width to a compact square. */
+.loud-stepper .btn-tiny { min-width: 2.2em; padding-left: var(--gap-2); padding-right: var(--gap-2); }
+.loud-stepper #loud-target { min-width: 3.2em; text-align: right; color: var(--fg); font-variant-numeric: tabular-nums; }
+/* the gain note drops to its own line so it never crowds the stepper on a narrow drawer. */
+.loud-gain-note { flex: 1 1 100%; }
+/* v0.51.207: the (clipping) marker is hoverable — a dotted underline + help cursor signal
+   there's an explanation (the user didn't know what clipping meant or what to do). */
+.loud-clip { cursor: help; text-decoration: underline dotted; text-underline-offset: 2px; }
 
 .tier-badge-lvl {
   color: var(--cyan);

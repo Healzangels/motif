@@ -190,9 +190,10 @@ def test_select_carries_loudness_i():
 
 
 def test_filter_and_marker_share_one_margin_constant():
-    """Both the filter predicate and the marker derivation import _OUTLIER_MARGIN_DB
-    (was a literal 6.0) so the outlier threshold is single-sourced."""
+    """The filter predicate, the library-row marker, AND (v0.51.207) the INFO card chip
+    all import _OUTLIER_MARGIN_DB (was a literal 6.0) so the outlier threshold is
+    single-sourced. Three consumers as of the info-card presentation pass."""
     api_py = (REPO / "app" / "web" / "api.py").read_text()
-    assert api_py.count("_OUTLIER_MARGIN_DB as _loud_margin") == 2
+    assert api_py.count("_OUTLIER_MARGIN_DB as _loud_margin") == 3
     # the old literal is gone from the filter param bind.
     assert "params.append(loudness_target + 6.0)" not in api_py
