@@ -135,8 +135,10 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
 
 
 def count_unread(db_path: Path) -> int:
-    """Undismissed AND unseen — the topbar INBOX badge count (a batch will count
-    as 1 unit once grouping lands; today each row is 1)."""
+    """Undismissed AND unseen — the topbar INBOX badge count. Counts individual rows:
+    the v0.51.154 drawer grouping is client-side + display-only, so a bulk burst shows
+    its true unread COUNT on the badge while collapsing to one expandable group in the
+    drawer (intentional — the badge is 'how many new', the drawer tidies the view)."""
     conn = sqlite3.connect(db_path, timeout=10.0)
     try:
         row = conn.execute(

@@ -20814,6 +20814,17 @@
       try { await api('POST', '/api/notifications/dismiss-all'); } catch (_) { /* best-effort */ }
       renderEmpty();
     }
+    // v0.51.209: expand/collapse a group header. Extracted so BOTH mouse click and
+    // keyboard (Enter/Space) drive it — the head is role="button" tabindex="0" but had
+    // no keydown handler, so grouping was keyboard-inoperable (a11y gap, v0.51.154).
+    function toggleGroupHead(head) {
+      const kids = head.parentElement.querySelector('.notif-group-children');
+      if (!kids) return;
+      const opening = kids.hidden;
+      kids.hidden = !opening;
+      head.setAttribute('aria-expanded', String(opening));
+      head.classList.toggle('is-open', opening);
+    }
 
     pill.addEventListener('click', open);
     if (closeBtn) closeBtn.addEventListener('click', close);
@@ -20835,25 +20846,31 @@
       }
       // v0.51.154: expand/collapse a group header (reveals the clickable children).
       const head = e.target.closest('.notif-group-head');
-      if (head) {
-        const kids = head.parentElement.querySelector('.notif-group-children');
-        const opening = kids.hidden;
-        kids.hidden = !opening;
-        head.setAttribute('aria-expanded', String(opening));
-        head.classList.toggle('is-open', opening);
-        return;
-      }
+      if (head) { toggleGroupHead(head); return; }
       // v0.51.151: click-through — navigate to the row's INFO card via the
       // info_open deep-link (the same mechanism /queue's REPROBE OPEN ROW uses,
       // so closing the card leaves the user on the library row).
       const row = e.target.closest('.notif-row.notif-clickable');
       if (!row || !row.dataset.mt || !row.dataset.tid) return;
-      const tab = row.dataset.mt === 'movie' ? '/movies' : '/tv';
+      // v0.51.209: route by media_type — a collection lands on /collections (was /tv,
+      // the wrong tab), a movie on /movies; tv/anime default to /tv.
+      const tab = row.dataset.mt === 'movie' ? '/movies'
+        : row.dataset.mt === 'collection' ? '/collections' : '/tv';
       const params = new URLSearchParams();
       params.set('info_open', row.dataset.tid);
       params.set('info_mt', row.dataset.mt);
       if (row.dataset.sec) params.set('info_section', row.dataset.sec);
       window.location.href = `${tab}?${params.toString()}`;
+    });
+    // v0.51.209: keyboard operation of the group header (Enter/Space) — pairs with the
+    // click handler so a keyboard user can expand a group. Space is prevented so it
+    // doesn't scroll the drawer.
+    if (listEl) listEl.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      const head = e.target.closest('.notif-group-head');
+      if (!head) return;
+      e.preventDefault();
+      toggleGroupHead(head);
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !drawer.hidden) close();
