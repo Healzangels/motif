@@ -123,11 +123,16 @@ def test_marker_agrees_with_raw_and_leveled_filters(client):
     _fill(client[1])
     c, _ = client
     m = _markers(client)
-    # raw filter = has a file + not leveled (INCLUDES outliers, which are a loud subset of raw)
+    # v0.51.211: the raw FILTER now equals the raw MARKER exactly (excludes outliers), so the
+    # filter and the dim raw glyph agree. Pre-fix the raw filter was a SUPERSET that also
+    # matched amber-outlier rows — the inconsistency the user caught.
     raw_rows = {it["guid_tmdb"] for it in
                 c.get("/api/library?tab=movies&loudness_pills=raw", headers=AUTH).json()["items"]}
-    marker_raw_or_outlier = {t for t, mk in m.items() if mk in ("raw", "outlier")}
-    assert raw_rows == marker_raw_or_outlier == {1, 2, 3, 6}
+    assert raw_rows == {t for t, mk in m.items() if mk == "raw"} == {3, 6}
+    # raw + outliers together == every unleveled marker (the old superset, now via multi-select).
+    both = {it["guid_tmdb"] for it in
+            c.get("/api/library?tab=movies&loudness_pills=raw,outliers", headers=AUTH).json()["items"]}
+    assert both == {t for t, mk in m.items() if mk in ("raw", "outlier")} == {1, 2, 3, 6}
     lev_rows = {it["guid_tmdb"] for it in
                 c.get("/api/library?tab=movies&loudness_pills=normalized", headers=AUTH).json()["items"]}
     assert lev_rows == {t for t, mk in m.items() if mk == "leveled"} == {4}

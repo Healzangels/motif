@@ -90,10 +90,20 @@ def test_normalized_filter(client):
     assert ids == [4] and total == 1
 
 
-def test_raw_filter(client):
+def test_raw_filter_excludes_outliers(client):
     _fill(client[1])
     ids, total = _ids(client, "raw")
-    # rows 1,2,3 have a file and NULL norm_state; row 5 has no file, row 4 is leveled
+    # v0.51.211: raw = unleveled AND NOT an outlier → only row 3 (-16.0, within margin).
+    # rows 1,2 are loud outliers (amber glyph, not the dim raw glyph); row 4 leveled; row 5
+    # has no file. Pre-fix RAW was a superset [1,2,3] that disagreed with the raw row marker.
+    assert ids == [3] and total == 1
+
+
+def test_raw_plus_outliers_is_every_unleveled_row(client):
+    # v0.51.211: the raw + outliers chips PARTITION the unleveled set, so selecting BOTH gives
+    # every unleveled row — the capability the old superset RAW provided, now via multi-select.
+    _fill(client[1])
+    ids, total = _ids(client, "raw,outliers")
     assert ids == [1, 2, 3] and total == 3
 
 
@@ -115,7 +125,7 @@ def test_count_header_agrees_with_rows(client):
     the exact 500/miscount class the v1.13.32 comment documents."""
     _fill(client[1])
     c, _ = client
-    for token, n in [("normalized", 1), ("raw", 3), ("outliers", 2)]:
+    for token, n in [("normalized", 1), ("raw", 1), ("outliers", 2)]:
         r = c.get(f"/api/library?tab=movies&loudness_pills={token}", headers=AUTH).json()
         assert r["total"] == len(r["items"]) == n, (token, r["total"], len(r["items"]))
 

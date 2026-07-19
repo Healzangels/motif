@@ -2248,12 +2248,13 @@ def _library_main_query(
     # for the full state list. Drives the new // ATTN chip row
     # below the SRC row and the topbar 5-FAIL click-through.
     attn_pills: set[str] | None = None,
-    # v0.51.198: LOUDNESS pill axis — level state. 'normalized' = leveled,
-    # 'raw' = has a local file but not yet leveled, 'outliers' = raw AND more
-    # than the margin louder than the target. loudness_target is the configured
-    # (clamped) target; +margin is loudness_audit._OUTLIER_MARGIN_DB. v0.51.202:
-    # SAME loudness def as // LEVEL OUTLIERS but NOT eligibility-gated → a SUPERSET
-    # of what the button levels (see the 'outliers' branch below).
+    # v0.51.198: LOUDNESS pill axis — level state. 'normalized' = leveled, 'raw' = has a
+    # local file, not leveled, AND within the margin of target, 'outliers' = raw AND more
+    # than the margin louder than the target. v0.51.211: raw/outliers PARTITION the unleveled
+    # set (mutually exclusive, matching the raw/outlier row markers) — select both chips to
+    # get every unleveled row. loudness_target is the configured (clamped) target; +margin is
+    # loudness_audit._OUTLIER_MARGIN_DB. v0.51.202: outliers is the SAME loudness def as
+    # // LEVEL OUTLIERS but NOT eligibility-gated → a SUPERSET of what the button levels.
     loudness_pills: set[str] | None = None,
     loudness_target: float = -18.0,
     cookies_present: bool = False,
@@ -3201,21 +3202,32 @@ def _library_main_query(
         _lfp = "COALESCE(lf_e.file_path, lf_g.file_path)"
         _li = "COALESCE(lf_e.loudness_i, lf_g.loudness_i)"
         lbr = []
+        # v0.51.211: ONE outlier threshold shared by the raw (<=) + outliers (>) branches so
+        # they PARTITION the unleveled rows exactly the way the row markers do.
+        from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
+        _out_thr = loudness_target + _loud_margin
         for p in loudness_pills:
             if p == "normalized":
                 lbr.append(f"({_lnorm} = 'normalized')")
             elif p == "raw":
-                lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL)")
+                # v0.51.211: raw = not-leveled AND NOT an outlier, so the RAW chip matches the
+                # dim RAW row marker exactly (raw/outlier/leveled are mutually-exclusive markers).
+                # Pre-fix RAW was a superset that ALSO matched amber-outlier-glyph rows → the
+                # filter and the glyph disagreed (the user caught it). "Everything unleveled"
+                # stays reachable as RAW + OUTLIERS (the chips OR-combine). A NULL loudness (an
+                # unmeasured raw row) is raw, matching _loudness_marker's `> thr` outlier test.
+                lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL "
+                           f"AND ({_li} IS NULL OR {_li} <= ?))")
+                params.append(_out_thr)
             elif p == "outliers":
                 # v0.51.202: the SAME loudness DEFINITION as // LEVEL OUTLIERS (raw + louder
                 # than target+margin) but NOT eligibility-gated — bulk_normalize_counts also
                 # requires hardlink-placed + measurement-current + under-ceiling, so this
                 # filter is a SUPERSET (an unplaced / over-ceiling / stale loud row matches
                 # here but the button won't level it). Shared _OUTLIER_MARGIN_DB = ONE threshold.
-                from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
                 lbr.append(f"({_lfp} IS NOT NULL AND {_lnorm} IS NULL "
                            f"AND {_li} IS NOT NULL AND {_li} > ?)")
-                params.append(loudness_target + _loud_margin)
+                params.append(_out_thr)
         if lbr:
             where_extra += " AND (" + " OR ".join(lbr) + ")"
 
