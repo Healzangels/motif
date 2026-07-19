@@ -64,23 +64,24 @@ def test_settings_events_block_has_dedicated_save_button():
     notif_anchor = html.index('data-panel="notifications"')
     notif_end = html.index("============================ TOKENS", notif_anchor)
     notif_section = html[notif_anchor:notif_end]
-    # Two SAVE buttons + two status spans, both keyed on notifications.
+    # v0.51.210: THREE SAVE buttons now — URLs+sinks, EVENTS (Apprise toggles), and
+    # INBOX (the in-app allowlist toggles). All share data-save="notifications" (one
+    # idempotent PATCH); the split is purely a UX-grouping affordance per subsection.
     save_buttons = notif_section.count('data-save="notifications"')
     status_spans = notif_section.count('data-save-status="notifications"')
-    assert save_buttons == 2, (
-        f"v1.17.2: NOTIFICATIONS section must have 2 SAVE buttons "
-        f"(one for URLs + sinks up top, one for events below), "
-        f"found {save_buttons}."
+    assert save_buttons == 3, (
+        f"v1.17.2/v0.51.210: NOTIFICATIONS section must have 3 SAVE buttons "
+        f"(URLs+sinks, EVENTS, IN-APP INBOX), found {save_buttons}."
     )
-    assert status_spans == 2, (
-        f"v1.17.2: each SAVE button needs its own form-status "
-        f"sibling, found {status_spans}."
+    assert status_spans == 3, (
+        f"each SAVE button needs its own form-status sibling, found {status_spans}."
     )
-    # The new button uses the // SAVE EVENTS label.
+    # The events-block button uses the // SAVE EVENTS label; the inbox block // SAVE INBOX.
     assert ">// SAVE EVENTS</button>" in notif_section, (
-        "v1.17.2: the second SAVE button must read '// SAVE EVENTS' "
-        "(matches the user's mental model of 'save the toggle "
-        "section' separate from 'save the URLs')."
+        "v1.17.2: the events SAVE button must read '// SAVE EVENTS'."
+    )
+    assert ">// SAVE INBOX</button>" in notif_section, (
+        "v0.51.210: the in-app inbox toggle block needs its own '// SAVE INBOX' button."
     )
 
 

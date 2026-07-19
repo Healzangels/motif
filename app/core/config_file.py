@@ -467,6 +467,24 @@ _DEFAULT_NOTIFY_EVENTS: dict[str, bool] = {
     "theme_auto_restored":          True,
 }
 
+# v0.51.210: per-kind IN-APP INBOX toggle map — which event kinds land in the topbar
+# INBOX drawer, INDEPENDENT of the Apprise `events` toggles above. All default ON (the
+# pre-toggle behaviour: every INBOX_EVENT_KIND records unconditionally). Turning one OFF
+# stops NEW inbox rows of that kind; notify.dispatch gates the inbox record on this map.
+# The key set MUST equal notify_inbox.INBOX_EVENT_KINDS (guarded by test_v0_51_210); it's
+# duplicated here rather than imported to keep this config module free of an app-core
+# dependency (config_file is imported very early).
+_DEFAULT_INBOX_EVENTS: dict[str, bool] = {
+    "theme_added":                  True,
+    "plex_item_arrived_themed":     True,
+    "theme_auto_restored":          True,
+    "new_tdb_theme_available":      True,
+    "backup_ready_to_deploy":       True,
+    "theme_lost_backup_ready":      True,
+    "theme_lost_sidecar_available": True,
+    "plex_theme_lost":              True,
+}
+
 
 @dataclass
 class NotificationsConfig:
@@ -474,6 +492,9 @@ class NotificationsConfig:
     apprise_external_url: str = ""
     events: dict[str, bool] = field(
         default_factory=lambda: dict(_DEFAULT_NOTIFY_EVENTS))
+    # v0.51.210: the in-app INBOX allowlist toggles (see _DEFAULT_INBOX_EVENTS).
+    inbox_events: dict[str, bool] = field(
+        default_factory=lambda: dict(_DEFAULT_INBOX_EVENTS))
 
 
 @dataclass

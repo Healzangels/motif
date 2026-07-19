@@ -1721,6 +1721,72 @@
       writes <code>notifications.events.&lt;kind&gt;</code> — the same
       keys are also reachable via <code>/api/config</code> PATCH.
     </p>
+
+    {# v0.51.210: per-kind toggles for the in-app INBOX drawer, INDEPENDENT of the
+       Apprise events above — a kind can be off for Discord yet on in the inbox (or off
+       entirely). Declarative data-cfg-field checkboxes; the generic config load/save
+       machinery handles them. Keys mirror notify_inbox.INBOX_EVENT_KINDS. #}
+    <header class="block-head block-head--divided">
+      <h2 class="block-title">// IN-APP INBOX</h2>
+      <span class="muted small">which kinds reach the drawer</span>
+    </header>
+    <p class="form-hint block-intro">
+      These control the topbar <code>// INBOX</code> drawer <strong>independently</strong>
+      of the Discord/Apprise toggles above — a kind can be off for Discord yet still land in
+      the inbox, or turned off from the inbox entirely. All on by default; turning one off
+      stops <em>new</em> notices of that kind (existing rows stay until dismissed).
+    </p>
+    <div class="form-grid form-grid-tight" data-config-form="notifications">
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_added" />
+        <span class="form-label-text">🎵 THEME ADDED <span class="muted small">(on)</span></span>
+        <p class="form-hint">A theme was placed for a row for the first time — sync auto-add, download, or adopt.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_item_arrived_themed" />
+        <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(on)</span></span>
+        <p class="form-hint">A newly-added Plex item showed up already themed by Plex — a pure FYI, nothing to do.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_auto_restored" />
+        <span class="form-label-text">🛠 THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
+        <p class="form-hint">motif re-deployed a sidecar whose Plex theme went missing — a self-heal confirmation.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.new_tdb_theme_available" />
+        <span class="form-label-text">✨ THEME AVAILABLE TO ADD <span class="muted small">(on)</span></span>
+        <p class="form-hint">ThemerrDB now has a theme for an unthemed row you could download.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.backup_ready_to_deploy" />
+        <span class="form-label-text">🎯 BACKUP READY TO DEPLOY <span class="muted small">(on)</span></span>
+        <p class="form-hint">A backup theme is eligible to promote to active — Plex dropped its own.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_lost_backup_ready" />
+        <span class="form-label-text">💔 THEME LOST — BACKUP READY <span class="muted small">(on)</span></span>
+        <p class="form-hint">A Plex-served theme was lost, but motif has a backup ready to deploy.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_lost_sidecar_available" />
+        <span class="form-label-text">💔 THEME LOST — STILL PLAYING <span class="muted small">(on)</span></span>
+        <p class="form-hint">A Plex theme was lost; a motif sidecar is still playing it in the meantime.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_theme_lost" />
+        <span class="form-label-text">💔 THEME LOST <span class="muted small">(on)</span></span>
+        <p class="form-hint">A Plex-served theme was lost with no motif fallback — the item is now unthemed.</p>
+      </label>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-warn" data-save="notifications">// SAVE INBOX</button>
+      <span class="form-status" data-save-status="notifications"></span>
+    </div>
+    <p class="form-hint">
+      Each toggle writes <code>notifications.inbox_events.&lt;kind&gt;</code>. The Discord/
+      Apprise toggles above are separate — the inbox records for allowed kinds regardless
+      of the Apprise send-toggle, and this is the switch that governs the inbox itself.
+    </p>
   </div>
 </section>
 

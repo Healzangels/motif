@@ -633,7 +633,12 @@ def dispatch(
     # so a bulk burst isn't double-counted.
     if _record_inbox:
         from . import notify_inbox
-        if event_kind in notify_inbox.INBOX_EVENT_KINDS:
+        # v0.51.210: gate on the per-kind in-app INBOX toggle (default True) — independent
+        # of the Apprise `events` gate below, so a kind can be off for Discord yet on in the
+        # inbox, or turned off from the inbox entirely. getattr-default tolerates a config
+        # object predating inbox_events (defaults to recording = the pre-feature behaviour).
+        if (event_kind in notify_inbox.INBOX_EVENT_KINDS
+                and (getattr(notifications, "inbox_events", None) or {}).get(event_kind, True)):
             # v0.51.151: carry item identity (from the per-item ctx) so the drawer
             # can click through to the row's INFO card. None on batch digests.
             _ic = item_ctx or {}
@@ -795,7 +800,10 @@ def dispatch_coalesced(
     # row even when the Apprise toggle is off. The dispatch()/flush sends below pass
     # _record_inbox=False so the item isn't double-counted.
     from . import notify_inbox
-    if event_kind in notify_inbox.INBOX_EVENT_KINDS:
+    # v0.51.210: honor the per-kind in-app INBOX toggle (default True; getattr-default
+    # tolerates a config predating inbox_events).
+    if (event_kind in notify_inbox.INBOX_EVENT_KINDS
+            and (getattr(notifications, "inbox_events", None) or {}).get(event_kind, True)):
         # v0.51.151: per-item identity for the drawer click-through (this records
         # the SINGLE item; the batch flush sends carry no per-item ctx).
         _sic = single_item_ctx or {}

@@ -318,6 +318,11 @@ def _apply_partial_config(cfg, body: dict) -> None:
                 if section_name == "notifications" and k == "events":
                     from ..core.config_file import _DEFAULT_NOTIFY_EVENTS
                     allowed_keys = set(_DEFAULT_NOTIFY_EVENTS.keys())
+                # v0.51.210: same closed-set for the in-app inbox toggles so an unknown
+                # kind can't land in the YAML permanently (mirrors the events contract).
+                elif section_name == "notifications" and k == "inbox_events":
+                    from ..core.config_file import _DEFAULT_INBOX_EVENTS
+                    allowed_keys = set(_DEFAULT_INBOX_EVENTS.keys())
                 for sub_k, sub_v in v.items():
                     if allowed_keys is not None and sub_k not in allowed_keys:
                         # v1.17.10: log.debug on dropped key.
