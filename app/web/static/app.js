@@ -10921,7 +10921,10 @@
     const LOUD_MARK = {
       leveled: ['tier-badge-lvl', 'Loudness leveled — motif adjusted this theme\'s gain toward the target so it does not jump out against the rest of the library. Lossless and reversible: open INFO to see the levels or undo it.'],
       outlier: ['tier-badge-loud', 'Loudness outlier — plays much louder than the target, so it jumps out on hover. A candidate for // LEVEL. Open INFO to level it (lossless, reversible).'],
-      raw: ['tier-badge-raw', 'Loudness raw — measured but not yet leveled. Open INFO to level it, or leave it as-is.'],
+      // v0.51.216: no "measured" claim — v0.51.202 pops loudness_i from the row payload,
+      // so this surface genuinely cannot tell a measured row from an un-audited one, and
+      // "raw" covers both. The INFO card, which still has the value, says which.
+      raw: ['tier-badge-raw', 'Loudness raw — not leveled; it plays at its original recorded level. Open INFO to measure or level it, or leave it as-is.'],
     };
     const lvlTag = (() => {
       const _lm = LOUD_MARK[it.loudness_marker];
@@ -18109,12 +18112,21 @@
       // levelable RAW row shows the stepper; a leveled row shows only UNDO (a second mp3gain
       // pass would stack gain + strand the true original — undo first); an over-ceiling row
       // shows why it can't reach Plex.
+      // v0.51.216: the controls ride in a real <dt>/<dd> pair. v0.51.207 emitted a bare
+      // <div> as a sibling of the dt/dd pairs inside <dl class="dlg-grid">, which the HTML
+      // content model forbids (a dl takes EITHER dt/dd groups OR div children, never
+      // intermixed) — it laid out fine, so it was silent, but a screen reader reached the
+      // stepper and the two audio-rewriting buttons with no preceding term, and the
+      // over-ceiling explanation was orphaned from any label. The dd keeps
+      // grid-column:1/-1 so it still spans full width; the dt labels it on the row above.
+      // accent-red goes on an inner span: `.dlg-grid dd` (0,1,1) would out-specify the
+      // bare `.accent-red` (0,1,0) and repaint the warning as ordinary value text.
       let controls;
       if (tooBig) {
-        controls = `<div class="loud-controls accent-red" title="Plex 500s on a theme POST over ~10MB, and re-upload is the ONLY way to tell Plex the bytes changed (CLAUDE.md § 11). Leveling this would change the file and change nothing you can hear.">can't level — ${
-          fmt.bytes(lf.file_size)} is over Plex's upload ceiling, so a leveled copy could not reach Plex</div>`;
+        controls = `<dt>cannot level</dt><dd class="loud-controls" title="Plex 500s on a theme POST over ~10MB, and re-upload is the ONLY way to tell Plex the bytes changed (CLAUDE.md § 11). Leveling this would change the file and change nothing you can hear."><span class="accent-red">can't level — ${
+          fmt.bytes(lf.file_size)} is over Plex's upload ceiling, so a leveled copy could not reach Plex</span></dd>`;
       } else if (leveled) {
-        controls = `<div class="loud-controls"><div class="loud-ctl-row">
+        controls = `<dt>action</dt><dd class="loud-controls"><div class="loud-ctl-row">
              <button class="btn btn-tiny btn-warn" data-act="loud-undo"
                      data-mt="${htmlEscape(lf.media_type || '')}"
                      data-id="${htmlEscape(lf.tmdb_id ?? '')}"
@@ -18122,9 +18134,9 @@
                      data-edn="${htmlEscape(lf.edition_key || '')}"
                      title="Restore the original bytes from mp3gain's undo tag, and put Plex back to serving them.">// UNDO LEVELING</button>
              <span id="loud-result" class="muted small info-probe-meta"></span>
-           </div></div>`;
+           </div></dd>`;
       } else {
-        controls = `<div class="loud-controls">
+        controls = `<dt>action</dt><dd class="loud-controls">
              <div class="loud-ctl-row">
                <span class="loud-ctl-label muted small">target</span>
                <span class="loud-stepper">
@@ -18152,7 +18164,7 @@
              <div class="loud-preview-player" hidden>
                <audio id="loud-preview-audio" class="info-audio" controls preload="none" src="${htmlEscape(_previewSrc)}">your browser doesn't support inline audio playback</audio>
              </div>
-           </div>`;
+           </dd>`;
       }
       return `${lvl}${measuredRow}${state}${raw}${controls}`;
     })();
@@ -18200,10 +18212,23 @@
       const tp = (lf && typeof lf.loudness_tp === 'number' && Number.isFinite(lf.loudness_tp)) ? lf.loudness_tp : null;
       const base = { leveled: 'Leveled — mp3gain-adjusted toward a consistent hover level.',
                      outlier: 'Loud — plays noticeably louder than your target; a candidate for leveling.',
-                     raw:     'Raw — measured but not yet leveled; plays at its original recorded level.' }[lf.loudness_marker];
+                     // v0.51.216: _loudness_marker returns "raw" for a local file with NO
+                     // measurement at all, so the flat "measured" claim was wrong for
+                     // exactly the rows whose next step is // MEASURE NOW.
+                     raw:     li !== null
+                       ? 'Raw — measured but not yet leveled; plays at its original recorded level.'
+                       : 'Raw — not measured yet, so its level is unknown. Use // MEASURE NOW.' }[lf.loudness_marker];
       const ttl = base + (li !== null ? ` Plays at ${li.toFixed(1)} LUFS.` : '')
                 + (tp !== null && tp > 0 ? ' Its peaks clip above 0 dBTP.' : '');
-      return ` <span class="tier-badge ${spec[0]}" title="${htmlEscape(ttl)}">${spec[1]}</span>`;
+      // v0.51.216: carry the library's ▂▄▆ meter glyph. .tier-badge-loud and
+      // .tier-badge-4k are byte-identical amber, which app.js:~10913 and app.css:~4735
+      // both justify ONLY because the library marker is a GLYPH ("distinct ... by shape
+      // (meter bars vs the letters 4K)"). This chip renders right beside the 4K badge in
+      // the same <h3>, so as bare letters it broke that rationale — two identical amber
+      // pills, adjacent. The glyph restores the shape distinction and ties the chip to
+      // the row marker it mirrors. Colour is untouched: it ENCODES the state and is
+      // fixed across themes.
+      return ` <span class="tier-badge ${spec[0]}" title="${htmlEscape(ttl)}">▂▄▆ ${spec[1]}</span>`;
     })();
     body.innerHTML = `
       <!-- v1.24.92: back to option A (the user compared A vs B and kept A) — the

@@ -905,6 +905,27 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.216: info-card semantics — the last three ultra-review findings, all in the
+# v0.51.207 loudness card. (1) The controls block was a bare <div> intermixed with dt/dd
+# siblings inside <dl class="dlg-grid">; the HTML content model allows a dl to hold EITHER
+# dt/dd groups OR div children, never both. It laid out fine so nothing complained, but a
+# screen reader walking the list reached the target stepper, // PREVIEW AT TARGET,
+# // LEVEL THIS THEME and // UNDO LEVELING with no preceding term, and the over-ceiling
+# explanation was orphaned from any label. Now a real <dt>action</dt> / <dt>cannot level</dt>
+# plus a dd that keeps grid-column:1/-1, so the v0.51.207 de-squishing is preserved.
+# accent-red moved to an inner span because `.dlg-grid dd` (0,1,1) out-specifies a bare
+# `.accent-red` (0,1,0) and would have silently repainted the warning as ordinary text.
+# (2) The card chip now carries the library's ▂▄▆ meter glyph. .tier-badge-loud is
+# byte-identical to .tier-badge-4k, which both the JS and CSS comments justify ONLY because
+# the library marker is a GLYPH ("distinct ... by shape (meter bars vs the letters 4K)") —
+# and the chip renders as bare letters right beside the 4K badge in the same <h3>, i.e. two
+# identical amber pills, adjacent. Fixed by SHAPE, not colour: the amber ENCODES the state
+# and stays fixed across themes. (3) RAW stopped claiming a measurement that may not exist
+# — _loudness_marker returns "raw" for a local file with NO measurement at all, so
+# "measured but not yet leveled" was false for exactly the rows whose next step is
+# // MEASURE NOW. The card branches on the value it has; the library tooltip drops the
+# claim entirely, since v0.51.202 pops loudness_i from the row payload and that surface
+# genuinely cannot tell the two apart.
 # 0.51.215: the NOTIFICATIONS settings block tells the truth again, and the guard that
 # should have caught it can now see the block it was missing. v0.51.210 made the in-app
 # INBOX per-kind toggleable, which FALSIFIED a standing promise repeated in three places —
@@ -4586,7 +4607,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.215"
+__version__ = "0.51.216"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
