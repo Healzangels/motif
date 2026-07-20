@@ -905,6 +905,22 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.215: the NOTIFICATIONS settings block tells the truth again, and the guard that
+# should have caught it can now see the block it was missing. v0.51.210 made the in-app
+# INBOX per-kind toggleable, which FALSIFIED a standing promise repeated in three places —
+# two settings hints and the config_file registry comment all still said a kind "always
+# lands in the in-app INBOX regardless of this toggle". A user who switched a kind OFF and
+# then read that sentence would reasonably conclude the new toggle was broken. All three
+# now say the INBOX is that kind's primary surface, toggled separately under // IN-APP
+# INBOX. Also realigns two labels that drifted when the v0.51.210 block was written: a
+# bare U+1F6E0 without VS16 (rendering with different glyph presentation than its twin on
+# the same page) and a "THEME LOST" that had lost its "— NO FALLBACK" qualifier, leaving
+# it as an ambiguous fourth sibling three lines under "— STILL PLAYING" and "— BACKUP
+# READY". Root cause of the drift: test_v1_23_83 hardcoded the notifications.events.
+# prefix, so the entire inbox_events.* block was invisible to every guard in it. The
+# lookup is now prefix-parameterized and a new cross-block test asserts a kind is NAMED
+# identically in both (the on/off chip may differ — separate registries, separate
+# defaults). Verified non-vacuous: it compares 8 kinds and fails on both pre-fix labels.
 # 0.51.214: the in-dialog loudness mutations now invalidate the info-card cache.
 # _infoFetch serves a cached payload for 6000ms per URL and a cache HIT does NOT refresh
 # its ts, so the window runs from the FIRST fetch. // LEVEL THIS THEME, // UNDO LEVELING
@@ -4570,7 +4586,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.214"
+__version__ = "0.51.215"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

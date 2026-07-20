@@ -1695,12 +1695,13 @@
          Fires when a genuinely-new Plex item arrives ALREADY themed by Plex
          (has_theme=1) that motif doesn't own — a pure FYI, no action needed.
          Baseline-gated (silent on a section's first enum) + per-(mt,tmdb) 30-day
-         dedupe. OFF for Discord, but it always records to the in-app INBOX (the
-         primary surface for these passive arrivals). 📺 = "new content in Plex". #}
+         dedupe. OFF for Discord; the in-app INBOX is the primary surface for these
+         passive arrivals and is controlled separately under // IN-APP INBOX below
+         (v0.51.210 — it was unconditional before that). 📺 = "new content in Plex". #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.plex_item_arrived_themed" />
         <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(off)</span></span>
-        <p class="form-hint">Fires after a Plex refresh when a <strong>newly-added</strong> Plex item already has a theme that Plex is serving and motif doesn't own — a heads-up that new content showed up already themed, with <em>nothing to do</em>. Only genuinely-new arrivals fire, and only after a library's first scan (the initial seed stays silent); each title pings at most once per 30 days. <strong>Off for Discord</strong> — but it always lands in the in-app <code>// INBOX</code> drawer regardless of this toggle.</p>
+        <p class="form-hint">Fires after a Plex refresh when a <strong>newly-added</strong> Plex item already has a theme that Plex is serving and motif doesn't own — a heads-up that new content showed up already themed, with <em>nothing to do</em>. Only genuinely-new arrivals fire, and only after a library's first scan (the initial seed stays silent); each title pings at most once per 30 days. <strong>Off for Discord</strong> — the in-app <code>// INBOX</code> drawer is its primary surface, toggled separately under <code>// IN-APP INBOX</code> below.</p>
       </label>
     </div>
     <!-- v1.17.2: dedicated SAVE EVENTS button below the toggles
@@ -1749,7 +1750,7 @@
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_auto_restored" />
-        <span class="form-label-text">🛠 THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
+        <span class="form-label-text">🛠️ THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
         <p class="form-hint">motif re-deployed a sidecar whose Plex theme went missing — a self-heal confirmation.</p>
       </label>
       <label class="form-label form-checkbox">
@@ -1774,7 +1775,7 @@
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_theme_lost" />
-        <span class="form-label-text">💔 THEME LOST <span class="muted small">(on)</span></span>
+        <span class="form-label-text">💔 THEME LOST — NO FALLBACK <span class="muted small">(on)</span></span>
         <p class="form-hint">A Plex-served theme was lost with no motif fallback — the item is now unthemed.</p>
       </label>
     </div>

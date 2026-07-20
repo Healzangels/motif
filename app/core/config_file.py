@@ -414,9 +414,9 @@ _DEFAULT_NOTIFY_EVENTS: dict[str, bool] = {
     # nothing to do." Baseline-gated (only after a section's first enum) + per-
     # (media_type, tmdb) 30-day deduped, so it can't flood on the initial seed or
     # on Plex remove+re-add churn. OFF for Discord like new_tdb_theme_available —
-    # but it still records to the in-app INBOX unconditionally of this toggle
-    # (notify.dispatch records INBOX_EVENT_KINDS before the Apprise gate), which
-    # is the primary surface for it (see notify_inbox.INBOX_EVENT_KINDS).
+    # the in-app INBOX is its primary surface (see notify_inbox.INBOX_EVENT_KINDS),
+    # recorded independently of THIS toggle but gated by its own inbox_events entry
+    # since v0.51.210 (it was unconditional before that).
     "plex_item_arrived_themed": False,
     # v1.18.80: ON-by-default. Fires when Plex's theme transitions
     # 1→0 on a row with user_overrides.intent='backup'. Rare

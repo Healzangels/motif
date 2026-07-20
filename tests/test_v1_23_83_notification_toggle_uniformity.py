@@ -24,12 +24,24 @@ REPO = Path(__file__).resolve().parent.parent
 HTML = (REPO / "app" / "web" / "templates" / "settings.html").read_text()
 
 
-def _toggle_label(key: str) -> str:
-    """The form-label-text span for one notifications.events.<key> toggle."""
-    i = HTML.index(f'data-cfg-field="notifications.events.{key}"')
+def _toggle_label(key: str, *, prefix: str = "notifications.events") -> str:
+    """The form-label-text span for one <prefix>.<key> toggle.
+
+    v0.51.215: prefix is a parameter because this lookup was hardcoded to
+    notifications.events. — so the v0.51.210 IN-APP INBOX block, which repeats the same
+    event kinds under notifications.inbox_events.*, was invisible to every guard here.
+    That is precisely why label drift shipped in it."""
+    i = HTML.index(f'data-cfg-field="{prefix}.{key}"')
     start = HTML.index('<span class="form-label-text">', i)
     end = HTML.index("</span></span>", start) + len("</span></span>")
     return HTML[start:end]
+
+
+def _label_name(label: str) -> str:
+    """The label's NAME — emoji + words, without the trailing (on)/(off) chip."""
+    inner = label[label.index(">") + 1:]
+    cut = inner.find('<span class="muted')
+    return (inner[:cut] if cut != -1 else inner).strip()
 
 
 # ── the registry ↔ chip guard (the load-bearing test) ───────
@@ -93,6 +105,42 @@ def test_theme_lost_toggles_are_parallel():
     assert "SIDECAR AVAILABLE" not in sidecar
     assert "THEME LOST — NO FALLBACK" in nofb
     assert "(PLEX)" not in nofb
+
+
+# ── the same kind, named the same way in both blocks ─────────
+
+def test_inbox_block_labels_match_the_events_block_exactly():
+    """v0.51.215: the IN-APP INBOX block repeats the same event kinds, so a kind must be
+    NAMED identically in both — same emoji (variation selector included) and same
+    qualifier. Two had drifted: a bare U+1F6E0 without VS16 (rendering with different
+    glyph presentation than its twin on the same page), and 'THEME LOST' missing its
+    '— NO FALLBACK', which left it reading as an ambiguous fourth sibling three lines
+    under '— STILL PLAYING' and '— BACKUP READY'.
+
+    The (on)/(off) chip legitimately differs — the two registries have separate defaults.
+    Only the name is pinned."""
+    from app.core.config_file import _DEFAULT_INBOX_EVENTS, _DEFAULT_NOTIFY_EVENTS
+    shared = set(_DEFAULT_INBOX_EVENTS) & set(_DEFAULT_NOTIFY_EVENTS)
+    assert shared, "the registries must overlap or this guard is vacuous"
+    for key in sorted(shared):
+        ev = _label_name(_toggle_label(key))
+        ib = _label_name(_toggle_label(key, prefix="notifications.inbox_events"))
+        assert ev == ib, (
+            f"{key} is named differently in the two blocks:\n"
+            f"  events.*       {ev!r}\n  inbox_events.* {ib!r}")
+
+
+def test_no_block_claims_the_inbox_is_unconditional():
+    """v0.51.210 made the in-app INBOX per-kind toggleable, which falsified the standing
+    promise that a kind 'always lands in the INBOX regardless of this toggle'. A user who
+    switched a kind OFF and then read that sentence would conclude the new toggle was
+    broken."""
+    for claim in ("regardless of this toggle", "always records to the in-app INBOX",
+                  "unconditionally of this toggle"):
+        assert claim not in HTML, f"stale pre-v0.51.210 copy still present: {claim!r}"
+    from pathlib import Path as _P
+    cfg = (REPO / "app" / "core" / "config_file.py").read_text()
+    assert "unconditionally of this toggle" not in cfg
 
 
 # ── version pin ──────────────────────────────────────────────
