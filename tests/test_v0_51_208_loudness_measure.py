@@ -121,7 +121,12 @@ def test_remeasure_is_read_only_no_norm_state_change(client_and_db, monkeypatch)
     assert _row(db)["norm_state"] == "normalized"
 
 
-def test_silent_theme_does_not_ship_negative_infinity(client_and_db, monkeypatch):
+def test_response_boundary_scrubs_non_finite(client_and_db, monkeypatch):
+    """Defense-in-depth on the JSON boundary: a raw ±inf is not valid JSON and would render
+    as `Infinity` on the card. v0.51.212 note — production CANNOT reach this today, because
+    _parse_loudnorm_json returns None for any non-finite value, so measure_loudness never
+    hands back -inf. This mock is therefore hypothetical; the REAL silent-theme path is the
+    None case, covered by test_unmeasurable_theme_is_a_clean_error below."""
     c, db = client_and_db
     _seed(db, loudness_i=None)
     _mock_measure(monkeypatch, i=float("-inf"), tp=float("-inf"))
@@ -129,6 +134,20 @@ def test_silent_theme_does_not_ship_negative_infinity(client_and_db, monkeypatch
     assert j["ok"] is True
     assert j["loudness_i"] is None and j["true_peak"] is None   # never a raw -inf on the wire
     assert j["clipping"] is False
+
+
+def test_unmeasurable_theme_is_a_clean_error(client_and_db, monkeypatch):
+    """The path a genuinely silent (or corrupt, or non-audio) theme actually takes:
+    _parse_loudnorm_json rejects it → measure_loudness returns None → clean ok:False and
+    NOTHING is written, so the row keeps its previous measurement rather than being
+    re-stamped as freshly-measured-with-no-data."""
+    c, db = client_and_db
+    _seed(db, loudness_i=-15.0)
+    monkeypatch.setattr("app.core.loudness.measure_loudness", lambda *a, **k: None)
+    j = _post(c).json()
+    assert j["ok"] is False and "could not measure" in j["error"]
+    row = _row(db)
+    assert row["loudness_i"] == -15.0 and row["file_sha256"] == "OLD_SHA"
 
 
 def test_missing_file_is_a_clean_error_not_a_500(client_and_db, monkeypatch):
@@ -164,5 +183,10 @@ def test_button_and_handler_are_wired_in_js():
     assert "// RE-MEASURE" in APP_JS and "// MEASURE NOW" in APP_JS
     assert "/api/admin/loudness/measure-one" in APP_JS
     # on success it re-opens the card so the stepper base re-seeds (not a stale inline patch).
-    h = APP_JS[APP_JS.index('data-act="loud-measure"]\')?.addEventListener'):]
-    assert "openInfoDialog(mediaType, tmdbId, sectionId, ratingKey)" in h[:2000]
+    # v0.51.212: bound the slice by the NEXT handler registration, not a fixed byte window —
+    # the old h[:2000] was already 87% consumed, so ~260 bytes of growth anywhere above the
+    # re-open would have failed this as a broken invariant (the v0.51.141-143 slice trap).
+    i = APP_JS.index('data-act="loud-measure"]\')?.addEventListener')
+    nxt = APP_JS.find("?.addEventListener", i + 60)
+    h = APP_JS[i:nxt if nxt != -1 else len(APP_JS)]
+    assert "openInfoDialog(mediaType, tmdbId, sectionId, ratingKey)" in h

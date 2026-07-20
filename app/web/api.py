@@ -26741,6 +26741,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         from ..core.db import get_conn
         from ..core.loudness import measure_loudness
+        from ..core.loudness_apply import _sha256
         from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
         from ..core.events import now_iso
         import hashlib
@@ -26764,7 +26765,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with get_conn(db) as conn:
                 row = conn.execute(
                     "SELECT media_type, tmdb_id, section_id, edition_key, file_path, "
-                    " norm_state FROM local_files "
+                    " norm_state, file_sha256 FROM local_files "
                     "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
                     (want_mt, want_id, sec, edn),
                 ).fetchone()
@@ -26779,29 +26780,51 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             theme = fp if fp.is_absolute() else (settings.themes_dir / row["file_path"])
             if not theme.is_file():
                 return {"ok": False, "error": f"the theme file is missing on disk: {theme}"}
+            # v0.51.212: hash BEFORE measuring and again after. Measure-then-hash pairs
+            # OLD-bytes loudness with NEW-bytes sha when the file is replaced mid-probe, and
+            # every downstream staleness gate reads that pair as current.
+            sha = _sha256(theme)
             m = measure_loudness(theme)
             if m is None:
                 return {"ok": False, "error": "ffmpeg could not measure the theme"}
-            # the sha of the bytes we just measured, so measured_sha256 == file_sha256 marks
-            # this measurement CURRENT — the same staleness key the audit + normalize use.
-            h = hashlib.sha256()
-            with theme.open("rb") as fh:
-                for chunk in iter(lambda: fh.read(65536), b""):
-                    h.update(chunk)
-            sha = h.hexdigest()
+            if _sha256(theme) != sha:
+                return {"ok": False, "error": "the theme file changed while it was being "
+                        "measured — nothing was written, try again"}
+            # v0.51.212: a stored sha that disagrees with the bytes on disk is the ONLY record
+            # that a leveled file was replaced out-of-band (its undo anchors describe bytes that
+            # are gone) — re-stamping it silently erases the evidence.
+            if (row["norm_state"] == "normalized" and row["file_sha256"]
+                    and row["file_sha256"] != sha):
+                log.warning("loudness measure-one: %s/%s bytes changed since leveling — the "
+                            "undo anchors no longer describe this file",
+                            row["media_type"], row["tmdb_id"])
+                log_event(db, level="WARNING", component="loudness",
+                          media_type=row["media_type"], tmdb_id=row["tmdb_id"],
+                          section_id=row["section_id"],
+                          message="Leveled theme was replaced outside motif — UNDO LEVELING "
+                                  "can no longer restore the original audio")
             with get_conn(db) as conn:
+                # v0.51.212: compare-and-set on (norm_state, file_sha256) as read above. A blind
+                # PK write silently overwrote a LEVEL that landed during the probe, leaving
+                # norm_state='normalized' carrying pre-level loudness — which the audit's
+                # measured_sha256==file_sha256 skip then made permanent.
+                # file_size rides with file_sha256 (v0.51.177 ceiling gate reads it) — updating
+                # the sha alone re-qualified an over-ceiling row for a doomed Plex re-upload.
                 cur = conn.execute(
                     "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
-                    "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=? "
-                    "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
+                    "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+                    "  file_size=? "
+                    "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=? "
+                    "  AND norm_state IS ? AND file_sha256 IS ?",
                     (m["loudness_i"], m["true_peak"], m["lra"], now_iso(), sha, sha,
-                     row["media_type"], row["tmdb_id"], row["section_id"],
-                     row["edition_key"]),
+                     theme.stat().st_size,
+                     row["media_type"], row["tmdb_id"], row["section_id"], row["edition_key"],
+                     row["norm_state"], row["file_sha256"]),
                 )
                 conn.commit()
             if not cur.rowcount:
-                # the PK moved between the SELECT and the write — surface, don't fake it.
-                return {"ok": False, "error": "the row changed while measuring — try again"}
+                return {"ok": False, "error": "a level, undo or download landed while measuring "
+                        "— nothing was written; re-open the card and try again"}
             li, tp = m["loudness_i"], m["true_peak"]
             thr = settings.loudness_target_lufs + _loud_margin
             return {

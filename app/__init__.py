@@ -905,6 +905,24 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.212: data-integrity hardening for the v0.51.208 per-item loudness probe, all
+# three holes found by the ultra review of v0.51.205..211. (1) The UPDATE was blind on
+# the PK, so a LEVEL landing during the ~1s ffmpeg window was silently overwritten with
+# PRE-level loudness — and since measured_sha256 then equalled file_sha256, the audit's
+# staleness skip made that wrong number PERMANENT (row reads "leveled", reports raw).
+# Now a compare-and-set re-asserts the (norm_state, file_sha256) pair it read; a 0-row
+# result is reported, not faked. (2) file_sha256 was re-stamped without file_size, which
+# re-qualified an over-ceiling row for a LEVEL whose ~12MB Plex re-upload 500s (the
+# v0.51.177 gate reads file_size) — the two now always move together. (3) measure-then-
+# hash was a TOCTOU that paired OLD-bytes loudness with NEW-bytes sha, a self-consistent
+# pair every downstream staleness gate accepts; it now hashes before AND after and
+# refuses on mismatch. Plus: on a normalized row a stored sha that disagrees with disk is
+# the ONLY record that the leveled file was swapped out-of-band (undo anchors dead) —
+# re-stamping it silently erased that, so it now logs + leaves an event breadcrumb.
+# Test debt from the same review: test_v0_51_208's re-open assert used a FIXED 2000-byte
+# slice already 87% consumed (the v0.51.141-143 trap) — now bounded by the next handler
+# registration; and its "silent theme" case mocked a -inf that _parse_loudnorm_json makes
+# unreachable, so the REAL None path is now covered too.
 # 0.51.211: fix the RAW loudness filter to match the row marker — RAW was a SUPERSET
 # ("everything not-yet-leveled") that ALSO matched amber-outlier-glyph rows, so the
 # filter and the glyph disagreed (user report). RAW now = unleveled AND within margin
@@ -4517,7 +4535,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.211"
+__version__ = "0.51.212"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
