@@ -905,6 +905,17 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.214: the in-dialog loudness mutations now invalidate the info-card cache.
+# _infoFetch serves a cached payload for 6000ms per URL and a cache HIT does NOT refresh
+# its ts, so the window runs from the FIRST fetch. // LEVEL THIS THEME, // UNDO LEVELING
+# and // RE-MEASURE each re-open the card 700-900ms later to re-read the row they just
+# changed — squarely inside that window — so the re-open replayed the PRE-mutation payload
+# and overwrote the result the handler had just painted: the correct "now -18.4 LUFS"
+# showed for ~700ms and then reverted to the old number. Bites whenever the click lands
+# within ~5s of opening the card, i.e. the natural post-re-download flow. The row-menu
+# handler already clears on any non-info action; these buttons live inside the dialog and
+# bypassed it. Clearing at mutation-SUCCESS rather than merely before the re-open means
+# every later read is fresh too, and a failed request keeps its still-valid cache.
 # 0.51.213: fix the two v0.51.209 regressions + finish the a11y pass it half-did, all
 # from the ultra review. (1) v0.51.209 routed collection notifications to /collections
 # but never added that path to the info_open auto-open gate, so the click-through
@@ -4559,7 +4570,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.213"
+__version__ = "0.51.214"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

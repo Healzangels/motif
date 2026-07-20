@@ -18509,6 +18509,11 @@
             btn.textContent = orig;
             return;
           }
+          // v0.51.214: this row's cached info payload now describes pre-mutation state.
+          // _infoFetch serves a hit for 6s and a hit does NOT refresh its ts, so the
+          // re-open below replayed the OLD payload and overwrote the result we just
+          // painted. Same reflex as the row-menu handler, which clears on any non-info act.
+          _infoPrefetch.clear();
           // The mutation succeeded; whether PLEX got it is a separate fact.
           const served = undo ? j.plex_is_serving_the_restore : j.plex_is_serving_it;
           if (slot) {
@@ -18570,6 +18575,7 @@
           btn.textContent = orig;
           return;
         }
+        _infoPrefetch.clear();   // v0.51.214: see the normalize/undo handler above
         btn.textContent = '// DONE';
         if (slot) {
           slot.className = 'muted small info-probe-meta';
