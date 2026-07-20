@@ -58,11 +58,22 @@
    (the op-card-expandable / detail-collapse spans are mouse-click-only,
    no tabindex, so they can't receive :focus-visible). Matches the
    app.css ring: 2px solid cyan, 2px offset. */
+/* v0.51.213: the INBOX drawer's two tabbable surfaces belong on this list too. v0.51.209
+   gave .notif-group-head role="button" + tabindex="0" without adding it here, so it was
+   focusable with NO visible ring — keyboard focus simply vanished into the drawer; the
+   same trap this rule was written for. The clickable rows became tabbable in v0.51.213.
+   Offset is negative on both: they are full-bleed drawer rows, so a +2px ring would be
+   clipped by the panel edge instead of framing the row. */
 .op-pill:focus-visible,
 .ops-drawer-close:focus-visible,
 .op-card-cancel:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
+}
+.notif-group-head:focus-visible,
+.notif-row.notif-clickable .notif-main:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: -2px;
 }
 
 /* ── op-pill ──────────────────────────────────────────────────── */

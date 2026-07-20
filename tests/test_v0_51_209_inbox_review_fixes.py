@@ -37,10 +37,14 @@ def test_group_header_is_keyboard_operable():
     assert "if (head) { toggleGroupHead(head); return; }" in fn
     assert "listEl.addEventListener('keydown'" in fn
     # the keydown handler activates on Enter or Space and suppresses Space-scroll.
-    kd = fn[fn.index("listEl.addEventListener('keydown'"):]
-    assert "'Enter'" in kd[:400] and "' '" in kd[:400]
-    assert "e.preventDefault()" in kd[:400]
-    assert "toggleGroupHead(head)" in kd[:400]
+    # v0.51.213: bound by the listener's end, not a fixed 400-byte window — v0.51.213's
+    # nested-control bail pushed preventDefault past it, failing this as a phantom
+    # invariant break when the invariant was intact (the v0.51.141-143 slice trap).
+    i = fn.index("listEl.addEventListener('keydown'")
+    kd = fn[i:fn.index("document.addEventListener('keydown'", i)]
+    assert "'Enter'" in kd and "' '" in kd
+    assert "e.preventDefault()" in kd
+    assert "toggleGroupHead(head)" in kd
 
 
 def test_clickthrough_routes_collection_to_its_own_tab():

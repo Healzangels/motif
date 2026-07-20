@@ -39,15 +39,22 @@ def _fn(name: str) -> str:
 # ── #14/#18: poll + reconciler arm on /collections too ──────────────────
 
 def test_arming_gate_includes_collections():
-    m = re.search(
-        r"if \(path === '/movies' \|\| path === '/tv' \|\| path === '/anime'"
-        r"\s*\|\| path === '/collections'\)", APP_JS)
-    assert m, "the 30s poll + stuck-row reconciler must arm on /collections too"
+    pat = (r"if \(path === '/movies' \|\| path === '/tv' \|\| path === '/anime'"
+           r"\s*\|\| path === '/collections'\)")
+    # v0.51.213: this shape is no longer unique — the info_open auto-open gate gained
+    # /collections too (it was routing there and opening nothing). re.search took whichever
+    # came first in the file, so identify the arming gate by what it OWNS, not by assuming
+    # it is the only match. Slices run to the next top-level function, not a byte window.
+    blocks = []
+    for m in re.finditer(pat, APP_JS):
+        end = APP_JS.find("\n  function ", m.start())
+        blocks.append(APP_JS[m.start():end if end != -1 else len(APP_JS)])
+    assert blocks, "the 30s poll + stuck-row reconciler must arm on /collections too"
     # both intervals still live inside that gate: the block must contain the
     # reconciler marker AND the 30s tick.
-    block = APP_JS[m.start():m.start() + 3000]
-    assert "v1.22.36: stuck-row reconciler" in block
-    assert "30000" in block and "6000" in block
+    arming = [b for b in blocks if "v1.22.36: stuck-row reconciler" in b
+              and "30000" in b and "6000" in b]
+    assert arming, "no /collections-armed gate carries both the 30s tick and the reconciler"
 
 
 # ── #15: collections-boundary switches fall back to full navigation ─────

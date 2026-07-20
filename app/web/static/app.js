@@ -20729,8 +20729,12 @@
           + ` data-tid="${htmlEscape(String(n.tmdb_id))}"`
           + (n.section_id ? ` data-sec="${htmlEscape(String(n.section_id))}"` : '')
         : '';
+      // v0.51.213: a clickable row IS a control, and it was mouse-only. role+tabindex go on
+      // .notif-main — NOT the <li>, which would strip its listitem role and nest the
+      // dismiss <button> inside a role="button". The title inside names it.
+      const mainAttrs = clickable ? ' role="button" tabindex="0"' : '';
       return `<li class="${cls}" data-nid="${n.id}"${idAttrs}>`
-        + `<div class="notif-main"><div class="notif-title">`
+        + `<div class="notif-main"${mainAttrs}><div class="notif-title">`
         +   `${htmlEscape(n.title || '')}</div></div>`
         + `<div class="notif-meta">`
         +   `<span class="notif-time">${htmlEscape(fmtRelativePast(n.ts))}</span>`
@@ -20826,6 +20830,22 @@
       head.classList.toggle('is-open', opening);
     }
 
+    // v0.51.151: click-through — navigate to the row's INFO card via the info_open
+    // deep-link (the same mechanism /queue's REPROBE OPEN ROW uses, so closing the card
+    // leaves the user on the library row). v0.51.213: shared by click AND keydown.
+    function openNotifRow(row) {
+      if (!row.dataset.mt || !row.dataset.tid) return;
+      // v0.51.209: route by media_type — a collection lands on /collections (was /tv,
+      // the wrong tab), a movie on /movies; tv/anime default to /tv.
+      const tab = row.dataset.mt === 'movie' ? '/movies'
+        : row.dataset.mt === 'collection' ? '/collections' : '/tv';
+      const params = new URLSearchParams();
+      params.set('info_open', row.dataset.tid);
+      params.set('info_mt', row.dataset.mt);
+      if (row.dataset.sec) params.set('info_section', row.dataset.sec);
+      window.location.href = `${tab}?${params.toString()}`;
+    }
+
     pill.addEventListener('click', open);
     if (closeBtn) closeBtn.addEventListener('click', close);
     if (scrim) scrim.addEventListener('click', close);
@@ -20851,26 +20871,23 @@
       // info_open deep-link (the same mechanism /queue's REPROBE OPEN ROW uses,
       // so closing the card leaves the user on the library row).
       const row = e.target.closest('.notif-row.notif-clickable');
-      if (!row || !row.dataset.mt || !row.dataset.tid) return;
-      // v0.51.209: route by media_type — a collection lands on /collections (was /tv,
-      // the wrong tab), a movie on /movies; tv/anime default to /tv.
-      const tab = row.dataset.mt === 'movie' ? '/movies'
-        : row.dataset.mt === 'collection' ? '/collections' : '/tv';
-      const params = new URLSearchParams();
-      params.set('info_open', row.dataset.tid);
-      params.set('info_mt', row.dataset.mt);
-      if (row.dataset.sec) params.set('info_section', row.dataset.sec);
-      window.location.href = `${tab}?${params.toString()}`;
+      if (row) openNotifRow(row);
     });
     // v0.51.209: keyboard operation of the group header (Enter/Space) — pairs with the
     // click handler so a keyboard user can expand a group. Space is prevented so it
     // doesn't scroll the drawer.
     if (listEl) listEl.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter' && e.key !== ' ' && e.key !== 'Spacebar') return;
+      // v0.51.213: a nested × owns its own Enter/Space. The group's Dismiss-all button is
+      // a CHILD of .notif-group-head, so matching the head first swallowed its activation
+      // and toggled the group instead — dismissGroup was keyboard-unreachable.
+      if (e.target.closest('.notif-x')) return;
       const head = e.target.closest('.notif-group-head');
-      if (!head) return;
-      e.preventDefault();
-      toggleGroupHead(head);
+      if (head) { e.preventDefault(); toggleGroupHead(head); return; }
+      // v0.51.213: the v0.51.209 pass made the group HEADER operable and left the drawer's
+      // primary action — the click-through rows — mouse-only.
+      const row = e.target.closest('.notif-row.notif-clickable');
+      if (row) { e.preventDefault(); openNotifRow(row); }
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !drawer.hidden) close();
@@ -21353,7 +21370,11 @@
     // on library pages where loadLibrary actually runs.
     try {
       const path = window.location.pathname;
-      if (path === '/movies' || path === '/tv' || path === '/anime') {
+      // v0.51.213: '/collections' was missing, so every collection deep-link — the
+      // v0.51.209 inbox click-through, canonical-health, loudness-audit — navigated
+      // correctly and then opened NOTHING. The poll-arming sibling already listed it.
+      if (path === '/movies' || path === '/tv' || path === '/anime'
+          || path === '/collections') {
         const sp = new URLSearchParams(window.location.search);
         const infoOpen = sp.get('info_open');
         const infoMt = sp.get('info_mt');

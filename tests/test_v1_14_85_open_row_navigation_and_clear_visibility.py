@@ -98,9 +98,15 @@ def test_library_page_load_parses_info_open_params():
     anchor = js.index(
         "v1.14.85: ?info_open=<tmdb_id>"
     )
-    block = js[anchor:anchor + 2000]
+    # v0.51.213: bound by the block's own catch, not a fixed byte window — at 1369/2000
+    # this was two-thirds consumed and would eventually fail as a phantom invariant break
+    # (the v0.51.141-143 slice trap).
+    block = js[anchor:js.index("URLSearchParams not supported", anchor)]
     # Path-guarded so the parser doesn't fire on /dash, /queue, etc.
     assert "path === '/movies' || path === '/tv' || path === '/anime'" in block
+    # v0.51.213: /collections must be here too — collection notifications, canonical-health
+    # and loudness-audit all deep-link there, and without it the card silently never opens.
+    assert "path === '/collections'" in block
     # Reads all three params.
     assert "sp.get('info_open')" in block
     assert "sp.get('info_mt')" in block

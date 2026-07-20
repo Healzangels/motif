@@ -905,6 +905,30 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.213: fix the two v0.51.209 regressions + finish the a11y pass it half-did, all
+# from the ultra review. (1) v0.51.209 routed collection notifications to /collections
+# but never added that path to the info_open auto-open gate, so the click-through
+# navigated and then opened NOTHING — strictly worse than the /tv it replaced, where the
+# gate passed. The canonical-health and loudness-audit deep-links emit the same URL and
+# were dead too. (2) Its new keydown handler matched any Enter/Space inside
+# .notif-group-head — including the group's own Dismiss-all ×, which is a CHILD of the
+# head — so preventDefault ate that button and toggled the group instead; dismissGroup
+# was keyboard-unreachable. The bail on a nested control now comes first, mirroring the
+# click handler's ordering. (3) That pass made the group HEADER operable and left the
+# drawer's PRIMARY action — the click-through rows — with no tabindex, no role and no
+# keydown path, so a keyboard user could expand a group and then reach none of its
+# children. (4) Worse, .notif-group-head was given tabindex with no entry in the
+# ops.css focus-ring allow-list (app.css strips the UA outline app-wide), so keyboard
+# focus landed on it INVISIBLY — focusable-but-unseeable is worse than not tabbable.
+# Both drawer surfaces are on the list now. The row's role+tabindex sit on .notif-main,
+# not the <li> — on the list item they would strip its listitem role and nest the dismiss
+# <button> inside a role="button"; .notif-group-head is likewise a div inside its <li>.
+# Click and keyboard share one openNotifRow so the routing table can't drift between them.
+# Three more fixed-window test slices bounded by real anchors: v1_14_85 (68% consumed),
+# v0_51_209's 400-byte window (which this tag's own comment overran), and v0_51_12's
+# arming-gate test — that one ALSO assumed its regex matched exactly one gate, which
+# stopped being true the moment the auto-open gate gained /collections, so it now
+# identifies the arming gate by what it owns rather than by position.
 # 0.51.212: data-integrity hardening for the v0.51.208 per-item loudness probe, all
 # three holes found by the ultra review of v0.51.205..211. (1) The UPDATE was blind on
 # the PK, so a LEVEL landing during the ~1s ffmpeg window was silently overwritten with
@@ -4535,7 +4559,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.212"
+__version__ = "0.51.213"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
