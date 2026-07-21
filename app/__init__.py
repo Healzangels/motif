@@ -905,6 +905,24 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.217: plex_items' media_type vocabulary is translated before it's compared —
+# user-reported, from clicking an "arrived already themed" inbox row and getting a 422.
+# plex_items.media_type is PLEX's string set (movie/show/collection); themes, local_files,
+# placements and every /api/items path use motif's (movie/tv/collection). The codebase
+# translates constantly and deliberately — worker.py 4x motif->Plex, plex_enum 3x
+# Plex->motif — but _maybe_notify_arrived_themed used the raw value in three places, and
+# the sibling _maybe_notify_theme_available in the SAME file gets it right, which is why
+# it read as correct. Two live bugs: (1) `lf.media_type = pi.media_type` compared 'tv' to
+# 'show' for every TV row, always false, so the NOT EXISTS meant to SUPPRESS this FYI when
+# motif already owns a theme for the title was INERT for TV — the "nothing to do" notice
+# fired for shows motif manages, and the user could not tell which; (2) the same raw value
+# rode into item_ctx, so the inbox click-through emitted info_mt=show and
+# /api/items/show/<id> answered 422 literal_error. A sweep found these were the ONLY two
+# raw comparisons in app/ (recovery_v55's is the correct longhand form). Behavioural tests
+# seed the exact shape and assert on the endpoint contract, not a string compare; a lint
+# pins the CLASS so the next one fails at test time. Note: the 30-day dedupe key embeds
+# media_type, so a TV title deduped under the old 'show' key can ping once more —
+# self-limiting, since the now-working suppression drops the rows motif owns.
 # 0.51.216: info-card semantics — the last three ultra-review findings, all in the
 # v0.51.207 loudness card. (1) The controls block was a bare <div> intermixed with dt/dd
 # siblings inside <dl class="dlg-grid">; the HTML content model allows a dl to hold EITHER
@@ -4607,7 +4625,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.216"
+__version__ = "0.51.217"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

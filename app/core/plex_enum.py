@@ -3298,10 +3298,14 @@ def _maybe_notify_arrived_themed(
     Baseline-gated by the caller (updated>0), so a section's first enum — all
     inserts — stays silent instead of flooding the inbox with the whole library.
     Per-(media_type, tmdb_id) 30-day deduped so a Plex remove+re-add (new rk)
-    doesn't re-ping. Records to the in-app INBOX unconditionally of the Apprise
-    toggle (notify.dispatch records INBOX_EVENT_KINDS before the send gate — the
-    inbox is the primary surface for this passive FYI). Best-effort (class-9): a
-    notify failure never disturbs the enum."""
+    doesn't re-ping. v0.51.217: the dedupe key embeds the media_type, which
+    changed for TV ('show' -> 'tv'), so a TV title deduped under the old key can
+    ping once more — self-limiting, since the now-working suppression drops the
+    rows motif actually owns. Recorded to the in-app INBOX independently of the
+    APPRISE toggle (notify.dispatch records INBOX_EVENT_KINDS before the send
+    gate — the inbox is the primary surface for this passive FYI), but gated by
+    its own notifications.inbox_events entry since v0.51.210. Best-effort
+    (class-9): a notify failure never disturbs the enum."""
     try:
         from ..config import Settings
         _settings = Settings()
@@ -3312,6 +3316,17 @@ def _maybe_notify_arrived_themed(
             for i in range(0, len(new_item_rks), 400):
                 chunk = new_item_rks[i:i + 400]
                 ph = ",".join("?" * len(chunk))
+                # v0.51.217: translate to motif's vocabulary. plex_items.media_type is
+                # PLEX's string set (movie/show/collection); local_files, placements,
+                # themes and every /api/items path use movie/tv/collection. Compared raw,
+                # the lf subquery below read 'tv' = 'show' for every TV row — always
+                # false — so the "motif already owns a theme for this title" suppression
+                # was INERT for TV and the FYI fired for shows motif manages. The same
+                # untranslated value rode into item_ctx, so the inbox click-through
+                # emitted info_mt=show and /api/items/show/<id> answered 422. Same CASE
+                # the sibling _maybe_notify_theme_available already uses. This note sits
+                # ABOVE the edition-blind marker on purpose: test_v1_21_94 only looks 10
+                # lines back from .execute( for it, and inserting here displaced it.
                 # Plex serves a theme (has_theme=1) on a brand-new item that motif
                 # has no managed theme for. edition-blind OK (v0.51.150): the NOT
                 # EXISTS subqueries are (mt, tmdb) title-global BY DESIGN — a theme
@@ -3319,7 +3334,9 @@ def _maybe_notify_arrived_themed(
                 # externally themed" if motif put a theme on the title), and the
                 # notify is a passive digest, not an edition-scoped mutation.
                 rows = conn.execute(
-                    "SELECT pi.media_type AS mt, pi.guid_tmdb AS tmdb_id, "
+                    "SELECT CASE pi.media_type WHEN 'show' THEN 'tv' "
+                    "            ELSE pi.media_type END AS mt, "
+                    "       pi.guid_tmdb AS tmdb_id, "
                     "       COALESCE(t.title, pi.title) AS title, "
                     "       COALESCE(t.year, pi.year) AS year, "
                     "       pi.section_id AS section_id "
@@ -3329,10 +3346,12 @@ def _maybe_notify_arrived_themed(
                     "   AND pi.has_theme = 1 "
                     "   AND pi.guid_tmdb IS NOT NULL "
                     "   AND NOT EXISTS (SELECT 1 FROM local_files lf "
-                    "        WHERE lf.media_type = pi.media_type "
+                    "        WHERE lf.media_type = CASE pi.media_type WHEN 'show' "
+                    "                                THEN 'tv' ELSE pi.media_type END "
                     "          AND lf.tmdb_id = pi.guid_tmdb) "
                     "   AND NOT EXISTS (SELECT 1 FROM placements p "
-                    "        WHERE p.media_type = pi.media_type "
+                    "        WHERE p.media_type = CASE pi.media_type WHEN 'show' "
+                    "                               THEN 'tv' ELSE pi.media_type END "
                     "          AND p.tmdb_id = pi.guid_tmdb)",
                     chunk,
                 ).fetchall()
