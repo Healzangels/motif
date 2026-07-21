@@ -17142,10 +17142,14 @@
   // card opens instantly instead of waiting on a fresh round-trip.
   // Failed prefetches self-evict so a real click still retries fresh.
   const _infoPrefetch = new Map();
-  function _infoUrl(mt, tmdb, section, rk) {
+  function _infoUrl(mt, tmdb, section, rk, edn) {
     const p = [];
     if (section) p.push(`section_id=${encodeURIComponent(section)}`);
     if (rk) p.push(`rating_key=${encodeURIComponent(rk)}`);
+    // v0.51.218: an explicitly-chosen cut. '' IS a real edition (the untagged
+    // folder), so the test is `!= null` — a truthiness check would silently drop it
+    // and put the card back to guessing.
+    if (edn != null) p.push(`edition_key=${encodeURIComponent(edn)}`);
     return p.length
       ? `/api/items/${mt}/${tmdb}?${p.join('&')}`
       : `/api/items/${mt}/${tmdb}`;
@@ -17274,7 +17278,7 @@
   // The per-element MediaElementSource nodes are cheap and GC with their <audio>.
   let _loudAudioCtx = null;
 
-  async function openInfoDialog(mediaType, tmdbId, sectionId, ratingKey) {
+  async function openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey) {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
     const body = document.getElementById('info-dlg-body');
@@ -17305,7 +17309,7 @@
       // card to the clicked edition. section_id stays for legacy/order.
       // v1.23.19: route through _infoFetch so a click reuses the
       // hover-prefetched (or in-flight) request instead of a fresh GET.
-      data = await _infoFetch(_infoUrl(mediaType, tmdbId, sectionId, ratingKey));
+      data = await _infoFetch(_infoUrl(mediaType, tmdbId, sectionId, ratingKey, editionKey));
     } catch (e) {
       // v1.17.20: bail if this isn't the latest in-flight call —
       // a newer click is already loading, don't clobber its
@@ -18043,6 +18047,23 @@
     // measurements), so it is omitted rather than invented.
     const _loudnessRows = (() => {
       if (!lf) return '';
+      // v0.51.218: no caller named a cut and this title has several in this library, so
+      // `lf` is an ARBITRARY one — its loudness reading, its file, and whatever
+      // // LEVEL THIS THEME would rewrite. Render ONLY the picker: showing a sibling's
+      // numbers is what made the wrong cut look like the right one. Reachable from every
+      // deep-link (inbox, canonical-health, loudness-audit, /queue OPEN ROW) since none
+      // carries a rating_key. Picking re-opens scoped to that cut — the same path a
+      // library-row click already takes.
+      if (data.edition_ambiguous) {
+        return `<dt>which cut?</dt><dd class="loud-controls">
+             <span class="accent-red">this title has ${data.edition_choices.length} editions in this library and the link didn't say which — pick one, or levelling would rewrite an arbitrary cut's audio</span>
+             <div class="loud-ctl-row">${data.edition_choices.map((e) => `
+               <button class="btn btn-tiny btn-info" data-act="loud-pick-edition"
+                       data-edn="${htmlEscape(e)}"
+                       title="Show this cut's own theme, loudness and actions.">// ${
+                         htmlEscape(e ? e.toUpperCase() : 'STANDARD')}</button>`).join('')}
+             </div></dd>`;
+      }
       const li = lf.loudness_i;
       // v0.51.208: the row PK the // RE-MEASURE / // MEASURE NOW button posts back — the
       // loudness analogue of // PROBE TDB URL. Shared by the measured + unmeasured branches.
@@ -18567,6 +18588,18 @@
     // Read-only against the audio; on success re-open the card so 'plays at', the header
     // chip, and the stepper base all re-seed from the fresh measurement (the stepper
     // captures loudness_i at render, so an inline patch would leave its gain math stale).
+    // v0.51.218: choosing a cut re-opens the card scoped to it — querySelectorAll because
+    // there is one button per edition, and the prefetch cache is cleared first so the
+    // re-open fetches the chosen scope rather than replaying the ambiguous payload.
+    body.querySelectorAll('button[data-act="loud-pick-edition"]').forEach((b) => {
+      b.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        _infoPrefetch.clear();
+        openInfoDialog(mediaType, tmdbId, sectionId, undefined,
+                       ev.currentTarget.dataset.edn).catch(console.error);
+      });
+    });
     body.querySelector('button[data-act="loud-measure"]')?.addEventListener('click', async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();

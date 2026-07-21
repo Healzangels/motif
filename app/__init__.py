@@ -905,6 +905,27 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.218: the INFO card stops GUESSING which edition it shows. A Plex title can hold
+# several cuts in one section and motif tracks a SEPARATE theme file per cut. api_item
+# resolves the cut from the clicked row's rating_key (v1.21.68) — but only a LIBRARY ROW
+# click carries one. Every deep-link (inbox click-through, canonical-health,
+# loudness-audit, /queue OPEN ROW) sends media_type + tmdb_id + section_id and nothing
+# else, so _info_edition was None, execution fell to the section-only branch, and the card
+# rendered local_payloads[0] — an arbitrary cut, with no ORDER BY behind it. The loudness
+# it displayed, and the file // LEVEL THIS THEME rewrites, then belonged to a cut the user
+# never chose. Measured against the live DB (2026-07-21): 32 (mt, tmdb, section) groups
+# hold >1 edition and 23 of those have cuts whose theme files genuinely differ — Fellowship
+# carries three at -33.33 / -14.75 / -18.75 LUFS, so "whichever came first" is a ~19 dB
+# difference in what mp3gain rewrites. api_item now accepts an explicit edition_key (which
+# beats the rk resolution — a caller naming the cut is more authoritative than one inferred)
+# and, when nobody named one and several exist, returns edition_choices +
+# edition_ambiguous instead of quietly picking. The card renders ONLY a picker in that
+# state — returning BEFORE any reading is derived from the arbitrary row, since showing a
+# sibling's LUFS beside a picker is exactly what made the wrong cut look like the right one
+# — and choosing re-opens scoped to that cut, the same path a library-row click takes.
+# Single-edition titles (2,745 of 2,822 rows) are untouched: no ambiguity, no picker, and
+# naming a cut skips the DISTINCT scan entirely. '' is a real edition (the untagged folder)
+# so the URL builder tests `!= null`, not truthiness, or the standard cut would be dropped.
 # 0.51.217: plex_items' media_type vocabulary is translated before it's compared —
 # user-reported, from clicking an "arrived already themed" inbox row and getting a 422.
 # plex_items.media_type is PLEX's string set (movie/show/collection); themes, local_files,
@@ -4625,7 +4646,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.217"
+__version__ = "0.51.218"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

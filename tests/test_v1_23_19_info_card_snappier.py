@@ -50,7 +50,11 @@ def test_prefetch_helpers_and_hover_wired():
     assert "function _infoFetch(" in APP_JS
     assert "const _infoPrefetch = new Map();" in APP_JS
     # openInfoDialog reuses the prefetch instead of a bare GET.
-    assert "_infoFetch(_infoUrl(mediaType, tmdbId, sectionId, ratingKey))" in APP_JS
+    # v0.51.218: pin the INTENT (openInfoDialog goes through the prefetch helper) rather
+    # than a verbatim argument list — the arity grew when the card learned to scope by
+    # edition, and a literal match failed on a change that preserved this invariant
+    # exactly. The trailing args are checked by that tag's own test.
+    assert "_infoFetch(_infoUrl(mediaType, tmdbId, sectionId, ratingKey" in APP_JS
     # the ⓘ-hover listener kicks the prefetch.
     assert "addEventListener('mouseover'" in APP_JS
     assert 'button[data-act="info"]' in APP_JS

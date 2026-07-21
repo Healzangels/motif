@@ -65,7 +65,9 @@ def test_a_cache_hit_still_does_not_extend_its_own_window():
 
 
 def test_every_clear_site_is_accounted_for():
-    """4 sites: dialog-close reset, the row-menu non-info action, and the two in-dialog
-    loudness handlers. A 5th appearing without a test means a new mutation path was found
-    to need this — pin it here so the reasoning travels with it."""
-    assert APP_JS.count("_infoPrefetch.clear()") == 4
+    """5 sites: dialog-close reset, the row-menu non-info action, the two in-dialog
+    loudness handlers, and (v0.51.218) the edition picker — which re-opens the card at a
+    DIFFERENT scope, so without the clear the re-open replays the ambiguous payload and
+    the chosen cut never appears. A 6th appearing without a test means a new path was
+    found to need this — pin it here so the reasoning travels with it."""
+    assert APP_JS.count("_infoPrefetch.clear()") == 5

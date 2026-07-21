@@ -16173,6 +16173,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # {edition-X} tag (the user: every card showed "edition: Sam Takes a
         # Step"). None = legacy section-only behavior (no rk sent).
         rating_key: str | None = Query(None),
+        # v0.51.218: an EXPLICIT edition, for callers that know which cut they
+        # mean but have no rating_key — the loudness-audit / canonical-health
+        # deep-links are per-local_files row, so edition_key is what they carry.
+        # Takes precedence over the rating_key resolution below.
+        edition_key: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         # v1.23.19: the card's 39 indexed reads run off the
@@ -16193,9 +16198,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # edition (un-tagged folder); None = no rk sent → legacy
                 # section-only reads (every narrowing below is gated on
                 # `_info_edition is not None`, so legacy callers are unchanged).
+                # v0.51.218: an explicitly-passed edition wins — a caller that
+                # names the cut is more authoritative than resolving one from a rk.
                 _info_edition = (
-                    edition_key_for_rating_key(conn, rating_key)
-                    if rating_key else None)
+                    edition_key if edition_key is not None
+                    else (edition_key_for_rating_key(conn, rating_key)
+                          if rating_key else None))
                 # v1.22.7 (code-review): gate the '' read-fallbacks below on this
                 # title+section having exactly ONE edition — mirrors the
                 # api_unplace_item WRITE gate (v1.21.95). Pre-fix the INFO card fell
@@ -16225,6 +16233,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # card honest — the user sees exactly what's at this row's
                 # section. Without section_id (legacy callers) the
                 # unfiltered query stays.
+                # v0.51.218: when NO edition was named and this (mt, tmdb, section)
+                # holds more than one, the card silently rendered local_payloads[0] —
+                # an arbitrary cut — and // LEVEL THIS THEME then rewrote THAT cut's
+                # audio. Reachable from every deep-link (notification click-through,
+                # canonical-health, loudness-audit, /queue OPEN ROW) since none carry
+                # a rating_key; 23 titles on the operator's library have cuts whose
+                # theme files genuinely differ. Surface the ambiguity, don't guess.
+                _edition_choices: list[str] = []
+                if _info_edition is None and section_id:
+                    _edition_choices = [r["edition_key"] for r in conn.execute(
+                        "SELECT DISTINCT edition_key FROM local_files "
+                        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                        "ORDER BY edition_key",
+                        (media_type, tmdb_id, section_id))]
                 if section_id and _info_edition is not None:
                     # v1.21.68: scope to the clicked edition, preferring its own
                     # rows and falling back to the shared '' rows (mirrors the
@@ -16528,6 +16550,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # library row markers use so the card chip and the row glyph never disagree.
             from ..core.loudness_audit import _OUTLIER_MARGIN_DB as _loud_margin
             _card_out_thresh = settings.loudness_target_lufs + _loud_margin
+            _edition_ambiguous = len(_edition_choices) > 1
             local_payloads: list[dict] = []
             for lf in local_files:
                 d = dict(lf)
@@ -16765,6 +16788,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "plex_has_theme": _pi_has_theme,
                 "local_file": local_payloads[0] if local_payloads else None,
                 "local_files": local_payloads,
+                # v0.51.218: which cut the card is showing, and whether that was a
+                # GUESS. edition_ambiguous=true means no caller named an edition and
+                # several exist — the card must ask instead of acting on payloads[0].
+                "edition_key": _info_edition,
+                "edition_choices": _edition_choices,
+                "edition_ambiguous": _edition_ambiguous,
                 # v0.51.191: the CONFIGURED level target, so the card's stepper seeds
                 # from the same number normalize-one and the download-conditioner use.
                 # Shipping a second hardcoded -18 in the JS would be the mirror-drift
