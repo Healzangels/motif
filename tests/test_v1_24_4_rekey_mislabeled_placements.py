@@ -6,6 +6,7 @@ Cut etc.). rekey_mislabeled_placements re-labels each to the edition its rk genu
 belongs to (per plex_items) — tracking-only, dry-run by default, PK-safe.
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sqlite3
 from pathlib import Path
@@ -110,8 +111,8 @@ def test_rk_not_in_plex_items_unresolved(tmp_path):
 
 
 def test_endpoint_wired_dry_run_default():
-    i = API_PY.index('@app.post("/api/admin/placements/rekey-mislabeled")')
-    blk = API_PY[i:i + 1600]
+    blk = slice_to_next(API_PY, '@app.post("/api/admin/placements/rekey-mislabeled")',
+                       "@app.post(", "@app.get(", "@app.put(", "@app.delete(")
     assert "apply: bool = Query(False)" in blk
     assert "rekey_mislabeled_placements(db, dry_run=not apply)" in blk
     assert "run_in_threadpool" in blk

@@ -12,6 +12,7 @@ the same field expressions as the link_pills filter branches so filter and
 sort agree.
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sqlite3
 from pathlib import Path
@@ -158,8 +159,7 @@ def test_link_sort_key_ranks_every_chip(admin_client=None):
     # Source guard: the link sort key must branch on the backup reason +
     # source_kind + mismatch + each placement_kind — not the old flat
     # hardlink/copy/else CASE.
-    i = API_PY.index('"link": (')
-    block = API_PY[i:i + 1200]
+    block = slice_to_next(API_PY, '"link": (', "'attention'")
     assert "last_place_attempt_reason, lf_g.last_place_attempt_reason) = 'backup_only'" in block
     for sk in ("'plex_cloud'", "'themerrdb'", "'adopt'"):
         assert sk in block, f"link sort must rank backup source {sk}"

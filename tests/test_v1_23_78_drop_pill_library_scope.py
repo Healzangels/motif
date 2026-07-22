@@ -13,6 +13,7 @@ plex_items row in an included section, and add a per-(tab, fourk) breakdown so
 the pill routes to the tab that owns the dropped row (mirrors updates.tabs).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sqlite3
 from pathlib import Path
@@ -132,8 +133,7 @@ def test_ssr_drop_count_is_library_scoped():
 
 
 def test_drop_badge_routes_in_js():
-    i = APP_JS.index("const dropBadge = ")
-    body = APP_JS[i:i + 900]
+    body = slice_to_next(APP_JS, "const dropBadge = ", "dropBadge.hidden = true")
     assert "stats.drops.tabs" in body
     assert "firstDropTab" in body
     assert "tdb_pills=dropped" in body

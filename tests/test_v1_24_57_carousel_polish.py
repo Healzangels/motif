@@ -14,6 +14,7 @@ never visibly moved even with the toggle on. Removing scroll-snap fixes it.
 These pin the client-side surfaces (JS/CSS/HTML source).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -39,8 +40,8 @@ def test_type_icon_maps_movie_tv_collection():
 
 def test_carousel_meta_renders_the_icon():
     # The meta line builds the icon span (innerHTML SVG) ahead of the year/date.
-    idx = APP_JS.index("async function loadRecentlyAdded()")
-    body = APP_JS[idx:idx + 2900]
+    body = slice_to_next(APP_JS, "async function loadRecentlyAdded()",
+                        "\n  function ", "\n  async function ")
     assert "_recentTypeIcon(it.media_type)" in body
     assert "recent-type" in body
     assert "g.innerHTML = icon" in body

@@ -12,6 +12,7 @@ chain, then read at the worker's notify dispatch. dispatch_coalesced(bulk=False)
 bulk=True buffers every item into ONE list (no previews).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 from types import SimpleNamespace
@@ -135,7 +136,6 @@ def test_worker_propagates_bulk_download_to_place_and_reads_it():
 
 def test_single_action_path_dispatches_immediately_in_source():
     # the not-bulk branch returns after an immediate dispatch (no buffering).
-    i = NOTIFY_PY.index("if not bulk:")
-    block = NOTIFY_PY[i:i + 400]
+    block = slice_to_next(NOTIFY_PY, "if not bulk:", "# v1.21.46")
     assert "dispatch(db_path, notifications" in block
     assert "return" in block

@@ -10,6 +10,7 @@ two uploads (theme upload already had one from v0.51.141).
     a non-JSON-200 guard, killing the raw-HTML slice / "Unexpected token '<'".
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -19,8 +20,9 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 def _restore_pick() -> str:
     # the DB-restore file-input change listener.
-    i = APP_JS.index("const uploadBtn = document.getElementById('database-restore-upload-btn')")
-    return APP_JS[i:i + 1400]
+    return slice_to_next(
+        APP_JS, "const uploadBtn = document.getElementById('database-restore-upload-btn')",
+        "uploadBtn.addEventListener('click'")
 
 
 def _import_pick() -> str:

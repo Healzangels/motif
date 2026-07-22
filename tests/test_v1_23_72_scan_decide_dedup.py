@@ -9,6 +9,7 @@ adds a JOBS-table dedup (existing pending/running job for the same target) insid
 a BEGIN IMMEDIATE, mirroring api_sync_now / api_relink_all (v1.23.69).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sqlite3
 from pathlib import Path
@@ -66,15 +67,15 @@ def test_scan_dedups_against_jobs_table():
 
 
 def test_decide_finding_dedups_against_jobs_table():
-    i = API.index("async def api_decide_finding(")
-    body = API[i:i + 1900]
+    body = slice_to_next(API, "async def api_decide_finding(",
+                        "\n    async def ", "\n    def ", "@app.")
     assert "with get_conn(db) as conn, transaction(conn):" in body
     assert "json_extract(payload, '$.finding_id') = ?" in body
 
 
 def test_decide_bulk_per_row_txn_and_dedup():
-    i = API.index("async def api_decide_findings_bulk(")
-    body = API[i:i + 2400]
+    body = slice_to_next(API, "async def api_decide_findings_bulk(",
+                        "\n    async def ", "\n    def ", "@app.")
     assert "with transaction(conn):" in body, "per-row BEGIN IMMEDIATE"
     assert "json_extract(payload, '$.finding_id') = ?" in body
 

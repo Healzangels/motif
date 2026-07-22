@@ -69,6 +69,8 @@ surfaces as an "Alternative:" line in the tier-1 body.
 """
 from __future__ import annotations
 
+from _slice_helpers import slice_to_next
+
 import sqlite3
 import sys
 from pathlib import Path
@@ -264,11 +266,11 @@ def test_tier_classifier_filesystem_check_present():
     through find_theme_sidecar_path, which does that translation AND accepts
     the full SIDECAR_AUDIO_EXTS set (the hardcoded theme.mp3 mis-tiered a
     manual theme.flac to no_fallback)."""
-    idx = PLEX_ENUM_PY.index("sidecar_fs = False")
     # v0.51.14 (audit #7): the check is now a BOUNDED executor submit (the call
     # ran inside the reap's BEGIN IMMEDIATE txn; a stalled /data mount held the
     # writer lock indefinitely) — the pin follows the submit form + deadline.
-    chunk = PLEX_ENUM_PY[idx:idx + 3600]
+    chunk = slice_to_next(PLEX_ENUM_PY, "sidecar_fs = False",
+                         "sidecar_present = bool(sidecar_db)")
     assert "find_theme_sidecar_path, _folder_path" in chunk, (
         "v1.22.15/v1.22.72: filesystem fallback must translate "
         "host→container + accept all sidecar extensions"

@@ -15,6 +15,7 @@ CI; the quickjs parse guard lives in test_v1_21_91). They pin the rating_key
 threading end-to-end: menu item → flow → unplace URL.
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -44,7 +45,8 @@ def test_lps_flow_resolves_by_clicked_rating_key():
         + sig_line)
     # v0.51.57: widened 2500→3100 — the PU-vs-sidecar removalLine branch (+
     # comment) landed ahead of the unplace-URL rk resolution, pushing it out.
-    body = APP_JS[sig:sig + 3100]
+    body = slice_to_next(APP_JS, "async function letPlexServeFlow(",
+                        "\n  function ", "\n  async function ")
     # Row resolution prefers an exact rating_key match.
     assert "String(row.rating_key) === String(ratingKey)" in body
     # The unplace URL threads the clicked rk (authoritative).

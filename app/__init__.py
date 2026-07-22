@@ -905,6 +905,17 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.222: test-hygiene sweep (user-requested) — kill the fixed-window source-slice rot
+# class that tripped ~8x across v0.51.212-221 (byte-window slices, arity pins, fixed-line
+# lookbacks: each asserted incidental TEXT SHAPE, not the invariant, so a structural edit
+# that preserved the invariant still failed). Measured the whole suite: 108 tight (<20%
+# headroom) sites, 4 at literal 0% (next in-scope edit breaks them). Rather than churn all
+# 108 (the _slice_helpers doc's own stance: the comfortable-headroom bulk is fine), migrated
+# the 11 sites below a 2% hard floor to _slice_helpers.slice_to_next (anchor-bounded, grows
+# with the code) and added test_v0_51_222 as the durable forward guard: (1) HARD FLOOR — no
+# slice may sit <2% headroom (fix or widen), (2) RATCHET — the tight-site count may not
+# exceed the recorded baseline (108->96 here), so the population can only hold or shrink.
+# New source pins should use slice_to_next. Product code untouched; tests only.
 # 0.51.221: loose-end cleanup — declare ItemContext.edition_key. v0.51.220 set
 # ctx["edition_key"] on the ItemContext TypedDict without declaring the field (only the
 # DISPLAY-label ctx["edition"] was declared). Runtime is fine (total=False), and CI's
@@ -4678,7 +4689,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.221"
+__version__ = "0.51.222"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

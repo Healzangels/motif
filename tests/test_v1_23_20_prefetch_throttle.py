@@ -14,6 +14,7 @@ slow confirming GET can't leave it stuck (the banner-still-showing
 symptom in the user's screenshot).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -35,8 +36,8 @@ def test_prefetch_is_rest_delayed_not_immediate():
     # it's no longer the bare one-liner — assert the mouseout listener
     # clears the timer (the boundary-check shape is pinned in v1_23_21).
     assert "_lib?.addEventListener('mouseout'" in APP_JS
-    m = APP_JS.index("_lib?.addEventListener('mouseout'")
-    assert "clearTimeout(_infoHoverTimer)" in APP_JS[m:m + 200]
+    assert "clearTimeout(_infoHoverTimer)" in slice_to_next(
+        APP_JS, "_lib?.addEventListener('mouseout'", "});")
 
 
 def test_cancel_hides_banner_optimistically():

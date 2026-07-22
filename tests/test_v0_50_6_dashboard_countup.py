@@ -13,6 +13,7 @@ glitch-free path the user chose:
 reduced-motion users skip the inline reset (keep the static SSR value).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -32,10 +33,10 @@ def test_inline_prepaint_reset_in_template():
 def test_dashcountup_climbs_and_clears():
     assert "function dashCountUp()" in DASH or "function dashCountUp()" in APP_JS
     assert "function dashCountUp()" in APP_JS
-    i = APP_JS.index("function dashCountUp()")
     # v0.50.46: widened 900→1500 — the bar-fill lockstep drive added lines before
     # the removeAttribute gate-clear.
-    body = APP_JS[i:i + 1500]
+    body = slice_to_next(APP_JS, "function dashCountUp()",
+                        "\n  function ", "\n  async function ")
     assert "data-countup" in body or "dataset.countup" in body
     assert "requestAnimationFrame" in body
     # rounds each displayed frame (no float artifacts) + clears the gate at the end.
