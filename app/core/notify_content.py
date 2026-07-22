@@ -84,7 +84,9 @@ class ItemContext(TypedDict, total=False):
     title:            str
     year:             int | None
     display_title:    str            # "Title (Year)" or "Title [· Edition]"
-    edition:          str            # "Extended Edition" etc. ('' = standard)
+    edition:          str            # "Extended Edition" etc. ('' = standard) — DISPLAY label
+    edition_key:      str            # v0.51.220: RAW key ('' = standard) — persisted to
+                                     # notifications.edition_key for edition-exact click-through
     provenance:       ProvenanceKind
     theme_url:        str | None
     youtube_video_id: str | None

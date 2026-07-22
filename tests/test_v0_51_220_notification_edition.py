@@ -127,6 +127,14 @@ def test_enrich_item_keeps_the_raw_edition_key_in_ctx(db):
     assert ctx.get("edition_key") == "theatrical"
 
 
+def test_edition_key_is_a_declared_itemcontext_field():
+    """v0.51.221: the raw edition_key is persisted + read in two dispatch sites, so it must
+    be a DECLARED field of the ItemContext contract, not an implied one set on a total=False
+    dict (which mypy — report-only in CI — flags as 'no key edition_key')."""
+    from app.core.notify_content import ItemContext
+    assert "edition_key" in ItemContext.__annotations__
+
+
 # ── the client end ───────────────────────────────────────────────────────────
 
 def test_inbox_row_emits_info_edition_when_present():
