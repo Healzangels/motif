@@ -17332,6 +17332,13 @@
     const ovr = data.override;
     const lf = data.local_file;
     const placements = data.placements || [];
+    // v0.51.223: no caller named a cut and this title has several in this library, so
+    // `lf`/`placements` are an ARBITRARY one. v0.51.218 already renders a picker in the
+    // LOUDNESS section instead of that cut's numbers; extend the same discipline to every
+    // other cut-specific surface (hero loudness chip, file & placement block, playback
+    // headline) so the card never asserts one cut's data while the picker says it's
+    // unknown (ultra-review #3). The edition scope-chip label is suppressed server-side.
+    const _ambiguousCut = !!data.edition_ambiguous;
     // v1.19.59: derive a single human-readable "playback source"
     // label so the user can answer "what's actually playing on
     // this row?" without parsing source_kind + provenance +
@@ -17343,6 +17350,12 @@
     // four signals (source_kind, provenance, ovr, placements)
     // into ONE phrase per row.
     function _derivePlaybackSourceLabel() {
+      // v0.51.223: an ambiguous card can't say what plays — that depends on which cut,
+      // and the fields below read the arbitrary `lf`. Point at the picker instead of
+      // asserting one cut's playback source (ultra-review #3).
+      if (_ambiguousCut) {
+        return '(multiple cuts — pick one in the loudness section to see what plays)';
+      }
       // Plex agent — Plex serves its own theme; motif standing by.
       // v1.22.71: read the top-level field api_item actually returns.
       // Pre-fix this read data.theme.plex_independent_theme (a
@@ -18221,7 +18234,11 @@
         ${failBlock}
         ${ovrBlock}
         ${puBlock}`;
-    const _onDiskRows = `
+    // v0.51.223: when the cut is ambiguous every one of these is an ARBITRARY sibling's
+    // downloaded path / backup / placement / playable audio — the same leak the LOUDNESS
+    // picker exists to prevent. Blank the whole section; the picker is the CTA, and a
+    // pick re-opens the card scoped so this section fills in for the chosen cut.
+    const _onDiskRows = _ambiguousCut ? '' : `
         ${dlBlock}
         ${backupBlock}
         ${placedBlock}
@@ -18232,6 +18249,10 @@
     // state (theme SPLIT): cyan=leveled, amber=loud, dim=raw (.tier-badge-lvl/-loud/-raw).
     // The title carries the LUFS + a clipping note so the compact chip explains itself.
     const _loudChip = (() => {
+      // v0.51.223: an ambiguous card shows a picker in the LOUDNESS section, not an
+      // arbitrary cut's reading — so its hero chip must not assert that cut's
+      // LEVELED/LOUD/RAW state either (ultra-review #3).
+      if (_ambiguousCut) return '';
       const spec = { leveled: ['tier-badge-lvl', 'LEVELED'],
                      outlier: ['tier-badge-loud', 'LOUD'],
                      raw:     ['tier-badge-raw', 'RAW'] }[lf && lf.loudness_marker];
@@ -18579,7 +18600,11 @@
           }
           btn.textContent = '// DONE';
           // re-open so the block re-reads the row it just changed
-          setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey), 900);
+          // v0.51.223: thread editionKey — a card reached BY edition (picker or
+          // audit/health deep-link) has ratingKey undefined, so dropping the 5th arg
+          // re-opened edition-blind → the card bounced back to the picker instead of
+          // showing the cut we just leveled (ultra-review #2). Undefined on row-click.
+          setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey), 900);
         } catch (e) {
           if (slot) {
             slot.className = 'accent-red small info-probe-meta';
@@ -18649,7 +18674,9 @@
             : 'measured';
         }
         // re-open so plays-at, the chip, and the stepper base re-read the new measurement.
-        setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey), 700);
+        // v0.51.223: thread editionKey (see the normalize/undo re-open above) — else a
+        // pick→measure→re-pick loop on an edition-deep-linked card (ultra-review #2).
+        setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey), 700);
       } catch (e) {
         if (slot) {
           slot.className = 'accent-red small info-probe-meta';

@@ -126,7 +126,7 @@ def enrich_item(
     db_path: Path, *,
     media_type: str, tmdb_id: int,
     section_id: str | None = None,
-    edition_key: str = "",
+    edition_key: str | None = None,
     fallback_title: str = "",
 ) -> ItemContext:
     """Best-effort: load title + source + URL + thumb from DB so a
@@ -145,11 +145,18 @@ def enrich_item(
         "media_type": media_type,
         "tmdb_id": tmdb_id,
         "section_id": section_id,
-        # v0.51.220: carry the RAW edition_key (not just the ctx["edition"] display
-        # label below) so notify.dispatch can persist it and the inbox click-through
-        # opens that exact cut. '' = standard; callers with no edition pass the default.
-        "edition_key": edition_key,
     }
+    # v0.51.220: carry the RAW edition_key (not just the ctx["edition"] display label
+    # below) so notify.dispatch persists it and the inbox click-through opens that exact
+    # cut. '' = the standard cut, a REAL scope; None = the caller named NO cut.
+    # v0.51.223: stamp it ONLY when the caller named one. v0.51.220 defaulted to '' and
+    # stamped unconditionally, so a title-level notice (new_tdb_theme_available,
+    # plex_item_arrived_themed — callers that pass no edition) recorded '' and its
+    # multi-edition click-through silently scoped to the standard cut instead of falling
+    # back to the v0.51.218 picker (ultra-review #1). Absent key → dispatch's .get() reads
+    # None → record_notification persists NULL → the drawer omits info_edition → picker.
+    if edition_key is not None:
+        ctx["edition_key"] = edition_key
     try:
         with get_conn(db_path) as conn:
             # 1. ThemerrDB-managed row (the common case).

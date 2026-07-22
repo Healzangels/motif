@@ -16724,7 +16724,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         edition_label = edition_label_for_folder(
                             pi_row["folder_path"])
                 # Preserve the prior contract: None (not '') when no edition tag.
-                section_context["edition"] = edition_label or None
+                # v0.51.223: when the cut is ambiguous the fallback above resolved an
+                # ARBITRARY sibling's folder (the LIMIT 1 with no rk) — don't surface its
+                # {edition-X} label as though it's this card's cut. None → the JS omits
+                # the edition scope-chip, matching the loudness picker (ultra-review #3).
+                section_context["edition"] = (
+                    None if _edition_ambiguous else (edition_label or None))
 
             # v1.22.71: surface the P-row discriminator for the playback-
             # source line. The JS read data.theme.plex_independent_theme (a

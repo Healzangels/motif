@@ -189,4 +189,8 @@ def test_button_and_handler_are_wired_in_js():
     i = APP_JS.index('data-act="loud-measure"]\')?.addEventListener')
     nxt = APP_JS.find("?.addEventListener", i + 60)
     h = APP_JS[i:nxt if nxt != -1 else len(APP_JS)]
-    assert "openInfoDialog(mediaType, tmdbId, sectionId, ratingKey)" in h
+    # v0.51.223: the re-open now also threads editionKey (ultra-review #2 — a card reached
+    # by edition must not go blind on re-open). Match the ratingKey-based re-open by prefix
+    # so this stays a "does it re-open" guard, not an arity pin; the strict
+    # never-drops-editionKey check lives in test_v0_51_223_edition_arc_review_fixes.
+    assert "openInfoDialog(mediaType, tmdbId, sectionId, ratingKey" in h
