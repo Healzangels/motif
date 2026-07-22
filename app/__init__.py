@@ -905,6 +905,19 @@
 # last_place_attempt_reason='backup_only' — the very flag stamped when motif
 # downloads but DEFERS to Plex (doesn't place). openInfoDialog now relabels that
 # line to "backup url" for backup-only rows (covers TB + UB; the URL, thumbnail and
+# 0.51.220: notifications carry the exact edition they fired for — the last surface in
+# the edition-exact click-through arc. The `notifications` table had no edition_key column,
+# so an inbox click-through on a multi-edition title fell to the v0.51.218 picker even when
+# the notice was about ONE cut (a theme placed on the extended edition). Schema v78 adds a
+# nullable notifications.edition_key (idempotent _add_column migration). enrich_item already
+# accepted edition_key for its display label (v1.21.76) — it now also keeps the RAW key in
+# the ItemContext, so the 5-of-7 dispatch sites that already pass edition_key persist it for
+# free; the 2 title-level digest sites pass none → NULL → picker fallback, correct.
+# notify.dispatch + dispatch_coalesced thread _ic.get("edition_key") into
+# record_notification; list_notifications returns it; the inbox rowHtml emits data-edn and
+# openNotifRow forwards it as info_edition. '' (untagged standard edition) is preserved as a
+# real scope distinct from NULL "unknown" — `!= null` on write, `'edn' in dataset` on read.
+# Schema pins bumped (test_v0_50_17, test_v1_24_93) + CLAUDE.md v77->v78.
 # 0.51.219: the per-row deep-links carry their edition, so they skip the v0.51.218
 # picker. Every row of the loudness-audit report and the canonical-health report IS one
 # local_files edition (both already SELECT edition_key and ship it to the client), so
@@ -4659,7 +4672,7 @@
 # 0.51.187: undo SELF-CORRECTS. Re-selecting "what Plex served before" is only right if Plex matched the FILE back then — rk 261711 proved it might not: its recorded entry was itself a normalized upload, so undo restored Plex to -18.75 while the file went to -5.2, and the loudest-raw auto-pick grabbed it straight back. Detecting that without fixing it is half a fix; now it pushes the restored file when the re-select does not match.
 # 0.51.188: normalize-at-download. Condition a theme BEFORE it is placed — the cheap half, because Plex has never seen it, so the only copy it ever ingests is the conditioned one and no propagation is needed. Default OFF; a loudness step never fails a download; a silent theme (-inf) is left raw rather than gained by infinity.
 # 0.51.189: surface normalize-at-download in Settings (it was YAML/env-only). Two wiring traps caught by reading rather than shipping: `loudness` had to join _ALLOWED_TOP_LEVEL or every save 400s (the v1.13.26 placement bug), and the SAVE button had to name the section or the controls render and never save. Both now have standing lints that walk the config + the template.
-__version__ = "0.51.219"
+__version__ = "0.51.220"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

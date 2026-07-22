@@ -367,6 +367,12 @@ CREATE TABLE IF NOT EXISTS notifications (
     media_type   TEXT,
     tmdb_id      INTEGER,
     section_id   TEXT,
+    -- v0.51.220 (schema v78): the exact cut this fired for, so the drawer
+    -- click-through opens THAT edition's card instead of the v0.51.218
+    -- pick-a-cut prompt. NULL on title-level digests (a batch has no single
+    -- edition — those correctly fall back to the picker). '' is the untagged
+    -- standard edition, distinct from NULL "unknown".
+    edition_key  TEXT,
     batch_id     TEXT,
     seen_at      TEXT,
     dismissed_at TEXT
@@ -998,7 +1004,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 77
+CURRENT_SCHEMA_VERSION = 78
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2831,6 +2837,17 @@ def _migrate_v76_to_v77(conn: sqlite3.Connection) -> None:
             ON op_progress (finished_at);
         COMMIT;
     """)
+
+
+def _migrate_v77_to_v78(conn: sqlite3.Connection) -> None:
+    """v78 (v0.51.220): add notifications.edition_key so an inbox click-through opens the
+    exact cut the notice fired for, not the v0.51.218 pick-a-cut prompt. Nullable + no
+    default — NULL means "no single edition" (title-level digests), which correctly
+    falls back to the picker; '' is the untagged standard edition. Idempotent ADD COLUMN
+    via the shared _add_column guard (crash-between-commit-and-stamp safe)."""
+    log.info("Migrating to schema v78 "
+             "(notifications.edition_key for edition-exact click-through — v0.51.220)")
+    _add_column(conn, "notifications", "edition_key", "TEXT")
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4727,6 +4744,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 76:
                     _migrate_v76_to_v77(conn)
                     current = 77
+                elif current == 77:
+                    _migrate_v77_to_v78(conn)
+                    current = 78
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

@@ -53,6 +53,7 @@ def record_notification(
     media_type: str | None = None,
     tmdb_id: int | None = None,
     section_id: str | None = None,
+    edition_key: str | None = None,
 ) -> None:
     """Insert one inbox row. Best-effort — never raises (a failed inbox write
     must not break notification dispatch). Scrubs title/body through the events
@@ -67,13 +68,16 @@ def record_notification(
         # per-item dispatches carry them; batch digests store NULL (non-clickable,
         # since a batch has no single item to open). These are identity ids, not
         # secrets, so they skip the text scrubber.
+        # v0.51.220: edition_key names the exact cut so the click-through opens THAT
+        # edition's card, not the v0.51.218 picker. NULL = no single edition (batch
+        # digest) → picker fallback, correct. An identity key, not a secret.
         sql = (
             "INSERT INTO notifications (ts, event_kind, severity, title, body,"
-            " media_type, tmdb_id, section_id) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            " media_type, tmdb_id, section_id, edition_key) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
         )
         params = (now_iso(), event_kind, severity or "info", safe_title, safe_body,
-                  media_type, tmdb_id, section_id)
+                  media_type, tmdb_id, section_id, edition_key)
         last_err: Exception | None = None
         for attempt in range(3):
             try:
@@ -108,7 +112,7 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
         conn.row_factory = sqlite3.Row
         rows = conn.execute(
             "SELECT id, ts, event_kind, severity, title, body, seen_at, "
-            "       media_type, tmdb_id, section_id "
+            "       media_type, tmdb_id, section_id, edition_key "
             "FROM notifications WHERE dismissed_at IS NULL "
             "ORDER BY ts DESC, id DESC LIMIT ?",
             (limit,),
@@ -129,6 +133,9 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
             "media_type": r["media_type"],
             "tmdb_id": r["tmdb_id"],
             "section_id": r["section_id"],
+            # v0.51.220: the exact cut, so the click-through skips the picker. NULL on
+            # digests → the drawer omits info_edition and the card falls back to it.
+            "edition_key": r["edition_key"],
         }
         for r in rows
     ]

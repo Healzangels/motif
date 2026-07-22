@@ -143,6 +143,10 @@ def enrich_item(
         "media_type": media_type,
         "tmdb_id": tmdb_id,
         "section_id": section_id,
+        # v0.51.220: carry the RAW edition_key (not just the ctx["edition"] display
+        # label below) so notify.dispatch can persist it and the inbox click-through
+        # opens that exact cut. '' = standard; callers with no edition pass the default.
+        "edition_key": edition_key,
     }
     try:
         with get_conn(db_path) as conn:

@@ -108,7 +108,7 @@ def test_column_exists_at_current_schema(client):
     with get_conn(db) as c:
         cols = {r[1] for r in c.execute("PRAGMA table_info(plex_items)")}
     assert "plex_edition_title" in cols
-    assert CURRENT_SCHEMA_VERSION == 77  # v0.51.199: op_progress += bulk_normalize_undo
+    assert CURRENT_SCHEMA_VERSION == 78  # v0.51.220: notifications.edition_key
 
 
 # ── guards: capture, migrate, render ─────────────────────────────────────────

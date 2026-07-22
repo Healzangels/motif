@@ -20799,6 +20799,10 @@
         ? ` data-mt="${htmlEscape(String(n.media_type))}"`
           + ` data-tid="${htmlEscape(String(n.tmdb_id))}"`
           + (n.section_id ? ` data-sec="${htmlEscape(String(n.section_id))}"` : '')
+          // v0.51.220: the exact cut, so the click-through opens THAT edition, not the
+          // picker. `!= null` — '' is the untagged standard edition; NULL (digest) omits
+          // the attr and correctly falls back to the picker.
+          + (n.edition_key != null ? ` data-edn="${htmlEscape(String(n.edition_key))}"` : '')
         : '';
       // v0.51.213: a clickable row IS a control, and it was mouse-only. role+tabindex go on
       // .notif-main — NOT the <li>, which would strip its listitem role and nest the
@@ -20914,6 +20918,10 @@
       params.set('info_open', row.dataset.tid);
       params.set('info_mt', row.dataset.mt);
       if (row.dataset.sec) params.set('info_section', row.dataset.sec);
+      // v0.51.220: 'edn' in dataset means this notice named its cut — carry it so the
+      // card opens that edition, not the picker. `in` (not truthiness): '' is the real
+      // standard edition; absent = a digest with no single cut → picker.
+      if ('edn' in row.dataset) params.set('info_edition', row.dataset.edn);
       window.location.href = `${tab}?${params.toString()}`;
     }
 

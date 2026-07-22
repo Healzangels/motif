@@ -73,14 +73,19 @@ def test_a_link_without_an_edition_still_defers_to_the_picker():
 
 
 def test_no_producer_uses_a_truthiness_guard_for_the_edition():
-    """Sweep: every info_edition emitter must use `!= null`, since '' is the untagged-
-    folder edition and a truthy check silently un-scopes exactly the standard cut."""
+    """Sweep: every info_edition emitter must guard on PRESENCE, never truthiness, since ''
+    is the untagged-folder edition a truthy check silently un-scopes. Two valid presence
+    forms: `X != null` (JSON value where '' is falsy) and `'X' in row.dataset` (v0.51.220's
+    inbox read, where dataset values are always strings so absence, not falsiness, is the
+    test). A bare `if (edn)` / `if (row.dataset.edn)` would drop the standard cut."""
     import re
     for m in re.finditer(r"info_edition", APP_JS):
-        # look back a little for the guard on the same logical line
         line_start = APP_JS.rfind("\n", 0, m.start())
-        prev = APP_JS[max(0, line_start - 120):m.start()]
-        if "p.set('info_edition'" in APP_JS[line_start:m.start() + 40] or \
-           "params.set('info_edition'" in APP_JS[line_start:m.start() + 40]:
-            assert "!= null" in prev or "!= null" in APP_JS[line_start:m.start()], (
-                f"info_edition emitter near offset {m.start()} lacks a `!= null` guard")
+        if not ("p.set('info_edition'" in APP_JS[line_start:m.start() + 40]
+                or "params.set('info_edition'" in APP_JS[line_start:m.start() + 40]):
+            continue
+        # the guard sits on this line or a few lines above (the `if (...)` before .set)
+        window = APP_JS[max(0, line_start - 200):m.start()]
+        assert "!= null" in window or "in row.dataset" in window or "in n" in window, (
+            f"info_edition emitter near offset {m.start()} lacks a presence guard "
+            "(`!= null` or `in ...dataset`) — a truthy check drops the '' standard cut")

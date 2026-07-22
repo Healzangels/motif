@@ -648,6 +648,7 @@ def dispatch(
                 title=title, body=body,
                 media_type=_ic.get("media_type"), tmdb_id=_ic.get("tmdb_id"),
                 section_id=_ic.get("section_id"),
+                edition_key=_ic.get("edition_key"),  # v0.51.220: edition-exact click-through
             )
     if not notifications.events.get(event_kind, False):
         return  # event disabled by user (Apprise send only — inbox already recorded)
@@ -813,6 +814,7 @@ def dispatch_coalesced(
             title=single_title, body=single_body,
             media_type=_sic.get("media_type"), tmdb_id=_sic.get("tmdb_id"),
             section_id=_sic.get("section_id"),
+            edition_key=_sic.get("edition_key"),  # v0.51.220: edition-exact click-through
         )
     if not notifications.events.get(event_kind, False):
         return
