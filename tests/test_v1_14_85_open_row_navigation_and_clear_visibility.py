@@ -113,7 +113,11 @@ def test_library_page_load_parses_info_open_params():
     assert "sp.get('info_section')" in block
     # Calls openInfoDialog after the deferred timeout.
     assert "setTimeout(" in block
-    assert "openInfoDialog(infoMt, infoOpen, infoSection)" in block
+    # v0.51.219: match the call PREFIX, not the full argument list — the arity grew when
+    # deep-links learned to carry info_edition, and a verbatim match broke on a change that
+    # preserved this invariant (openInfoDialog is called with the parsed params). The
+    # edition argument is covered by test_v0_51_219.
+    assert "openInfoDialog(infoMt, infoOpen, infoSection" in block
 
 
 def test_library_page_only_opens_when_both_required_params_present():

@@ -201,8 +201,10 @@ def test_library_page_auto_opens_info_dialog_from_url_params():
     assert "sp.get('info_open')" in block
     assert "sp.get('info_mt')" in block
     assert "sp.get('info_section')" in block
-    # Calls openInfoDialog with them.
-    assert "openInfoDialog(infoMt, infoOpen, infoSection)" in block
+    # Calls openInfoDialog with them. v0.51.219: match the call PREFIX — the arity grew
+    # when deep-links learned to carry info_edition; the invariant (openInfoDialog gets the
+    # parsed params) is unchanged. The edition arg is covered by test_v0_51_219.
+    assert "openInfoDialog(infoMt, infoOpen, infoSection" in block
     # Defers past loadLibrary's tbody render.
     assert "setTimeout(" in block
 

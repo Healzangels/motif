@@ -7545,6 +7545,9 @@
       p.set('info_open', String(r.tmdb_id));
       p.set('info_mt', String(r.media_type));
       if (r.section_id) p.set('info_section', String(r.section_id));
+      // v0.51.219: broken_canonical_report emits one edition per row — carry it so
+      // OPEN lands on that cut, not the v0.51.218 picker. `!= null` keeps '' (untagged).
+      if (r.edition_key != null) p.set('info_edition', String(r.edition_key));
       if (r.title) p.set('q', r.title);
       const yr = r.year ? ` <span class="muted">(${htmlEscape(String(r.year))})</span>` : '';
       return `<a href="${tab}?${p.toString()}">${htmlEscape(r.title)}</a>${yr}`;
@@ -7825,6 +7828,10 @@
       p.set('info_open', String(r.tmdb_id));
       p.set('info_mt', String(r.media_type));
       if (r.section_id) p.set('info_section', String(r.section_id));
+      // v0.51.219: this row IS one local_files edition, so carry it — the deep-link
+      // then lands on this exact cut instead of the v0.51.218 pick-a-cut prompt. '' is a
+      // real edition (untagged folder), so the test is `!= null`, not truthiness.
+      if (r.edition_key != null) p.set('info_edition', String(r.edition_key));
       if (r.title) p.set('q', r.title);
       const yr = r.year ? ` <span class="muted">(${r.year})</span>` : '';
       return `<tr><td><a href="${tab}?${p.toString()}">${htmlEscape(r.title)}</a>${yr}</td>`
@@ -21443,13 +21450,17 @@
         const infoOpen = sp.get('info_open');
         const infoMt = sp.get('info_mt');
         const infoSection = sp.get('info_section') || undefined;
+        // v0.51.219: producers that know their edition (loudness-audit, canonical-health)
+        // pass info_edition; `.has` not `.get()||undefined`, since '' is a real edition a
+        // truthiness fallback would drop back into the v0.51.218 picker.
+        const infoEdition = sp.has('info_edition') ? sp.get('info_edition') : undefined;
         if (infoOpen && infoMt) {
           // Defer past the loadLibrary tbody render so the
           // dialog opens over a populated library, not a
           // loading shell. 600ms is the same delay other
           // post-action loadLibrary callers use.
           setTimeout(() => {
-            openInfoDialog(infoMt, infoOpen, infoSection)
+            openInfoDialog(infoMt, infoOpen, infoSection, undefined, infoEdition)
               .catch(console.error);
           }, 600);
         }
