@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
+from _slice_helpers import slice_between
 from app.core.db import init_db
 
 NOW = "2026-07-21T00:00:00"
@@ -171,11 +172,19 @@ def test_ambiguity_is_only_computed_when_no_edition_was_named(client):
 def test_the_scan_is_scoped_to_the_section():
     """A title can hold different cuts in the standard vs 4K section; the choice list must
     describe THIS section only, or the picker offers cuts that aren't here (the class-2
-    edition-sibling bleed this codebase has been bitten by repeatedly)."""
-    start = API_PY.index("_edition_choices: list[str] = []")
-    block = API_PY[start:API_PY.index("if section_id and _info_edition is not None:", start)]
-    assert "AND section_id = ?" in block
-    assert "if _info_edition is None and section_id:" in block
+    edition-sibling bleed this codebase has been bitten by repeatedly).
+
+    v0.51.225 (#6): the choices are no longer a separate DISTINCT scan — they're derived
+    from the section-scoped local_files the card already fetches. This pins that the
+    derivation is (a) gated on the no-edition deep-link case and (b) sourced from a
+    section-scoped list, which is where the section-scoping now lives."""
+    # gated on the deep-link case (no edition named), derived from the fetched list
+    deriv = slice_between(API_PY, "if _info_edition is None and section_id:",
+                          "# v1.12.72")
+    assert 'sorted({lf["edition_key"] for lf in local_files})' in deriv
+    # the local_files it derives from is section-scoped (the `elif section_id:` branch)
+    elif_block = slice_between(API_PY, "elif section_id:", "else:")
+    assert "AND section_id = ?" in elif_block
 
 
 # ── the card surface ─────────────────────────────────────────────────────────

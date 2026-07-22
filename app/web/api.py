@@ -16240,13 +16240,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # canonical-health, loudness-audit, /queue OPEN ROW) since none carry
                 # a rating_key; 23 titles on the operator's library have cuts whose
                 # theme files genuinely differ. Surface the ambiguity, don't guess.
+                # v0.51.225 (ultra-review #6): the choices are the distinct editions of the
+                # section-scoped local_files the `elif section_id:` branch reads below (one
+                # row per edition_key by PK) — derived from that list after the fetch, not a
+                # second DISTINCT scan over the same rows. '' init covers the rk-scoped and
+                # no-section paths where the picker never fires.
                 _edition_choices: list[str] = []
-                if _info_edition is None and section_id:
-                    _edition_choices = [r["edition_key"] for r in conn.execute(
-                        "SELECT DISTINCT edition_key FROM local_files "
-                        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-                        "ORDER BY edition_key",
-                        (media_type, tmdb_id, section_id))]
                 if section_id and _info_edition is not None:
                     # v1.21.68: scope to the clicked edition, preferring its own
                     # rows and falling back to the shared '' rows (mirrors the
@@ -16301,6 +16300,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "ORDER BY section_id, media_folder",
                         (media_type, tmdb_id),
                     ).fetchall()
+                # v0.51.225 (ultra-review #6): the ambiguity picker's choices, derived from
+                # the section-scoped local_files just read (the `elif section_id:` branch) —
+                # sorted+deduped reproduces the old SELECT DISTINCT … ORDER BY edition_key.
+                if _info_edition is None and section_id:
+                    _edition_choices = sorted({lf["edition_key"] for lf in local_files})
                 # v1.12.72: prefer the section-specific override row when
                 # section_id is provided; fall back to global ('') row.
                 # v1.12.81: dropped the "any-section LIMIT 1" final
