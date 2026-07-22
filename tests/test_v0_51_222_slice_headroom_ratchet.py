@@ -29,6 +29,7 @@ ratchet is a floor on rot, not a proof of its absence.
 """
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -123,3 +124,73 @@ def test_tight_slice_population_does_not_grow():
     assert len(tight) >= _TIGHT_BASELINE - 15, (
         f"only {len(tight)} tight sites vs baseline {_TIGHT_BASELINE} — the population "
         f"shrank; lower _TIGHT_BASELINE to {len(tight)} to lock in the gain.")
+
+
+# ── the other half of the rot: slice_to_next fall-throughs ────────────────────
+#
+# v0.51.224 (ultra-review #5): the ratchet above measures FIXED-window slices. The
+# STRUCTURAL fix it steers toward — _slice_helpers.slice_to_next — has its own silent
+# failure mode: if none of its end-anchors match after the start, it "falls back to
+# end-of-src" (its docstring) and returns the whole rest of the file. That is a slice with
+# no bound at all — the vacuous window the whole sweep exists to prevent — but _measure()
+# can't see it (it recognises only `SRC[X:X+N]`). v0.51.222's own dashCountUp migration
+# shipped exactly this: 2-space end-anchors on a 4-space-nested function, silently EOF.
+#
+# This resolves every static slice_to_next call against its real source and fails if any
+# falls through to EOF. Only calls whose source is a known _SOURCES alias and whose
+# anchors are string literals are checked — a call over a local var (`rc = ....read_text()`)
+# or a computed anchor is skipped, same "can't parse it, don't count it" contract as above.
+
+def _string_const(node) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _iter_slice_to_next_calls():
+    """Yield (test_file, lineno, alias, start_anchor, end_anchors) for every statically
+    resolvable slice_to_next(...) call across tests/ — alias in _SOURCES, all anchors str
+    literals. Unresolvable calls (local-var source, non-literal anchor) are skipped."""
+    for tf in sorted((REPO / "tests").glob("test_*.py")):
+        try:
+            tree = ast.parse(tf.read_text())
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "slice_to_next"):
+                continue
+            if not node.args:
+                continue
+            src = node.args[0]
+            if not (isinstance(src, ast.Name) and src.id in _SOURCES):
+                continue                                   # local-var source — can't resolve
+            start = _string_const(node.args[1]) if len(node.args) > 1 else None
+            ends = [_string_const(a) for a in node.args[2:]]
+            if start is None or any(e is None for e in ends):
+                continue                                   # computed anchor — can't resolve
+            yield tf.name, node.lineno, src.id, start, ends
+
+
+def test_no_slice_to_next_call_falls_through_to_end_of_file():
+    """A slice_to_next whose end-anchors never match returns the whole rest of the file —
+    an unbounded window. Resolve each call and fail loudly on any that does, so the
+    slice_helpers footgun can't ship a silently-EOF slice (its asserts then pass only by
+    the luck of file-unique substrings, guarding nothing)."""
+    src_cache = {}
+    for alias, rel in _SOURCES.items():
+        p = REPO / rel
+        if p.exists():
+            src_cache[alias] = p.read_text()
+    fell_through = []
+    for fname, lineno, alias, start, ends in _iter_slice_to_next_calls():
+        src = src_cache.get(alias)
+        if src is None or start not in src:
+            continue                                       # runtime would ValueError anyway
+        search_from = src.index(start) + len(start) + 1
+        if not any(src.find(e, search_from) != -1 for e in ends):
+            fell_through.append(f"{fname}:{lineno} slice_to_next({alias}, {start!r}) — "
+                                f"none of {ends} match after the start; slice runs to EOF")
+    assert not fell_through, (
+        "these slice_to_next calls fall through to end-of-file (unbounded window) — their "
+        "end-anchors don't match the current source; re-anchor them:\n  "
+        + "\n  ".join(fell_through))

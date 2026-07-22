@@ -35,8 +35,13 @@ def test_dashcountup_climbs_and_clears():
     assert "function dashCountUp()" in APP_JS
     # v0.50.46: widened 900→1500 — the bar-fill lockstep drive added lines before
     # the removeAttribute gate-clear.
+    # v0.51.224 (ultra-review #4): the 2-space end-anchors NEVER matched — dashCountUp is
+    # 4-space-nested and the last function of its kind, so slice_to_next fell through to
+    # EOF (7685 chars, whole rest of file). The four asserts passed only because their
+    # strings are file-unique — a gutted guard. Bound on the invocation that immediately
+    # follows the definition (4-space `dashCountUp();`), with loadDashboard( as a backstop.
     body = slice_to_next(APP_JS, "function dashCountUp()",
-                        "\n  function ", "\n  async function ")
+                        "\n    dashCountUp();", "\n    loadDashboard(")
     assert "data-countup" in body or "dataset.countup" in body
     assert "requestAnimationFrame" in body
     # rounds each displayed frame (no float artifacts) + clears the gate at the end.
