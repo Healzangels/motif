@@ -194,3 +194,61 @@ def test_no_slice_to_next_call_falls_through_to_end_of_file():
         "these slice_to_next calls fall through to end-of-file (unbounded window) — their "
         "end-anchors don't match the current source; re-anchor them:\n  "
         + "\n  ".join(fell_through))
+
+
+# ── the wrong-occurrence anchor: a start anchor that resolves into a COMMENT ───
+#
+# v0.51.227 (ultra-review): a source-pin's start anchor is resolved with str.index() = the
+# FIRST occurrence. If the same literal text also appears earlier inside a COMMENT (very
+# likely, since these anchors quote code that comments describe), the slice bounds the WRONG
+# region and the assertion silently guards nothing. v0.51.225 shipped exactly this: the
+# anchor "elif section_id:" matched a `# … the `elif section_id:` branch …` comment in
+# api.py before the real branch. This walks every static slice_between/slice_to_next call
+# and fails if its start anchor's first occurrence lands on a comment-only line.
+
+_COMMENT_PREFIX = {".py": "#", ".js": "//", ".css": "/*", ".html": "<!--"}
+
+
+def _comment_prefix_for(rel: str) -> str | None:
+    for ext, pfx in _COMMENT_PREFIX.items():
+        if rel.endswith(ext):
+            return pfx
+    return None
+
+
+def test_no_slice_anchor_resolves_into_a_comment():
+    """A start anchor whose first source occurrence is a comment resolves THERE, so the
+    slice bounds the wrong region — a silent phantom guard. Fail on any such anchor; the fix
+    is a code-unique or line-start (`\\n`+indent) anchor the comment's mid-line copy can't
+    match. Only literal-anchor calls over a known _SOURCES alias are checked (same
+    can't-parse-it-skip-it contract as the ratchet above)."""
+    src_cache = {alias: ((REPO / rel).read_text(), rel)
+                 for alias, rel in _SOURCES.items() if (REPO / rel).exists()}
+    bad = []
+    for tf in sorted((REPO / "tests").glob("test_*.py")):
+        try:
+            tree = ast.parse(tf.read_text())
+        except SyntaxError:
+            continue
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                    and node.func.id in ("slice_between", "slice_to_next")):
+                continue
+            if len(node.args) < 2:
+                continue
+            src = node.args[0]
+            start = _string_const(node.args[1]) if len(node.args) > 1 else None
+            if not (isinstance(src, ast.Name) and src.id in src_cache) or start is None:
+                continue
+            text, rel = src_cache[src.id]
+            pfx = _comment_prefix_for(rel)
+            if pfx is None or start not in text:
+                continue
+            anchor_line = text.splitlines()[text[:text.index(start)].count("\n")]
+            if anchor_line.lstrip().startswith(pfx):
+                bad.append(f"{tf.name}:{node.lineno} {node.func.id}({src.id}, {start!r}) "
+                           f"→ first matches a COMMENT: {anchor_line.strip()!r}")
+    assert not bad, (
+        "these source-pin start anchors resolve into a comment, not the code they mean to "
+        "bound (silent phantom guard) — use a code-unique or line-start anchor:\n  "
+        + "\n  ".join(bad))

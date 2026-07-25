@@ -169,22 +169,43 @@ def test_ambiguity_is_only_computed_when_no_edition_was_named(client):
     assert _get(c, 120, edition_key="theatrical")["edition_choices"] == []
 
 
-def test_the_scan_is_scoped_to_the_section():
+def test_the_choice_list_is_scoped_to_the_requested_section(client):
     """A title can hold different cuts in the standard vs 4K section; the choice list must
     describe THIS section only, or the picker offers cuts that aren't here (the class-2
     edition-sibling bleed this codebase has been bitten by repeatedly).
 
-    v0.51.225 (#6): the choices are no longer a separate DISTINCT scan — they're derived
-    from the section-scoped local_files the card already fetches. This pins that the
-    derivation is (a) gated on the no-edition deep-link case and (b) sourced from a
-    section-scoped list, which is where the section-scoping now lives."""
-    # gated on the deep-link case (no edition named), derived from the fetched list
-    deriv = slice_between(API_PY, "if _info_edition is None and section_id:",
-                          "# v1.12.72")
+    v0.51.225 (#6): choices are DERIVED from the section-scoped local_files the card already
+    fetches, not a separate DISTINCT scan. Pin that derivation shape (a clean, code-resolved
+    anchor) — then prove the section scoping BEHAVIORALLY.
+
+    v0.51.227 (ultra-review): the prior source-pin for the scoping asserted `"AND section_id
+    = ?" in <slice of the elif branch>`, which was doubly weak — its `"elif section_id:"`
+    anchor matched the word inside a COMMENT before the code branch (spanning an unrelated
+    branch's own scope), and even re-anchored it was satisfied by the branch's PLACEMENTS
+    query while the local_files scope could be gutted. A two-section behavioral check can't
+    be faked: seed a cut that exists ONLY in section 2 and assert section 1's picker omits
+    it."""
+    # the derivation is gated on the no-edition deep-link case + reads the fetched list
+    deriv = slice_between(API_PY, "if _info_edition is None and section_id:", "# v1.12.72")
     assert 'sorted({lf["edition_key"] for lf in local_files})' in deriv
-    # the local_files it derives from is section-scoped (the `elif section_id:` branch)
-    elif_block = slice_between(API_PY, "elif section_id:", "else:")
-    assert "AND section_id = ?" in elif_block
+    # behavioral: a cut that lives only in section 2 must not surface in section 1's picker
+    c, db = client
+    _seed(db, tmdb=120, cuts=CUTS)                        # three cuts in section 1
+    with sqlite3.connect(db) as x:
+        x.execute("INSERT INTO plex_sections (section_id, title, type, is_anime, is_4k, "
+                  " themes_subdir, included, discovered_at, last_seen_at) "
+                  "VALUES ('2','4K Movies','movie',0,1,'movies-4k',1,?,?)", (NOW, NOW))
+        x.execute("INSERT INTO local_files (media_type, tmdb_id, section_id, edition_key, "
+                  " file_path, file_sha256, downloaded_at, source_video_id, loudness_i) "
+                  "VALUES ('movie',120,'2','imax','movies-4k/120/imax.mp3','shx',?,'v',-12.0)",
+                  (NOW,))
+        x.commit()
+    j = _get(c, 120)                                     # _get always asks section_id=1
+    assert j["edition_ambiguous"] is True
+    assert "imax" not in j["edition_choices"], (
+        "section 2's 'imax' cut leaked into section 1's picker — the derivation dropped its "
+        "section scope (class-2 cross-section edition bleed)")
+    assert sorted(j["edition_choices"]) == sorted(e for e, _ in CUTS)
 
 
 # ── the card surface ─────────────────────────────────────────────────────────
