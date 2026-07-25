@@ -10407,6 +10407,16 @@
     const sourceKind = it.source_kind || null;
     const svid = it.source_video_id || '';
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
+    // v0.51.226: the loudness meter is derived from motif's LOCAL copy of the theme, so a
+    // Plex-served row with no backup has no reading and the meter cell is blank (the user
+    // asked why). Explain it on the P pill's own hover rather than marking the row — the
+    // v0.51.192 "presence IS the signal" rule means no new glyph on the ~3,883-row P
+    // majority. Gated on !it.loudness_marker so a BACKED-UP P-row (TB/BK/plex_cloud — which
+    // DOES have a local file and DOES show a meter) keeps the plain label.
+    const _pTitle = 'Plex agent / cloud theme'
+      + (it.loudness_marker ? ''
+         : ' — motif has no local copy of this theme, so there is no loudness reading; '
+           + 'use // BACKUP THIS THEME to measure or level it.');
     let srcCell;
     if (placed && sourceKind === 'themerrdb') {
       srcCell = '<span class="link-badge link-badge-themerrdb" title="Motif manages from ThemerrDB.">T</span>';
@@ -10423,7 +10433,7 @@
       // src filter / sort / dashboard donut all said P — the exact
       // v1.18.0→v1.18.24 inline-lag class the placement-kind contract
       // warns about. Must sit BEFORE the auto fallback.
-      srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud theme">P</span>';
+      srcCell = '<span class="link-badge link-badge-cloud" title="' + _pTitle + '">P</span>';
     } else if (placed && placedProv === 'auto') {
       // Legacy rows (source_kind NULL) — provenance='auto' === T.
       srcCell = '<span class="link-badge link-badge-themerrdb" title="Motif manages from ThemerrDB.">T</span>';
@@ -10457,7 +10467,7 @@
       // alone showed rows the server filter said matched but
       // were rendered with the wrong chip color. Aligning the
       // render with computeSrcLetter closes the mismatch.
-      srcCell = '<span class="link-badge link-badge-cloud" title="Plex agent / cloud theme">P</span>';
+      srcCell = '<span class="link-badge link-badge-cloud" title="' + _pTitle + '">P</span>';
     } else {
       srcCell = '<span class="muted" title="no theme">—</span>';
     }

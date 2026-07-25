@@ -170,4 +170,9 @@ def test_render_still_emits_p_for_verified_p_rows():
     block = _render_src_branch()
     # The P-chip rendering must still appear in the branch chain.
     assert "link-badge-cloud" in block
-    assert "Plex agent / cloud theme" in block
+    # v0.51.226: the P tooltip text moved out of this branch into the shared `_pTitle`
+    # const (defined just above `let srcCell;`, so it's outside this slice) — it now
+    # appends a loudness explanation on rows with no local copy. The branch carries it by
+    # reference; assert the chip still renders a titled P via that var.
+    assert '_pTitle' in block
+    assert '>P</span>' in block
