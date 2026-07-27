@@ -855,6 +855,25 @@ class PlexClient:
                 # looped forever, `out` growing until OOM (the v1.22.29
                 # reorder removed the short-page break that incidentally
                 # caught this).
+                # v0.51.228 (audit): breaking here RETURNED the truncated `out`
+                # with no error — the THIRD truncation door, still open after
+                # v1.22.29 (short page) and v1.23.64 (empty page) closed the
+                # other two. The v1.18.89 reaper then treats the short set as
+                # authoritative and DELETEs the unseen rows (moderate truncation
+                # slips under its 20% abort). When totalSize says more items
+                # remain, raise like the empty-page door so plex_enum counts a
+                # section error and SKIPS the reaper; only break when there is
+                # no totalSize to contradict us.
+                if total_size is not None and (offset + len(page_children)) < total_size:
+                    msg = (
+                        f"enumerate_section_items: section {section_id} page at "
+                        f"offset {offset} advertised size=0 with "
+                        f"{len(page_children)} items while totalSize={total_size} "
+                        f"indicates more remain — refusing to report a truncated "
+                        f"enumeration as complete"
+                    )
+                    log.warning(msg)
+                    raise PlexParseError(msg)
                 log.warning(
                     "enumerate pagination: page advertised size=0 with %d "
                     "items at offset %d — aborting walk to avoid an "
@@ -1099,9 +1118,24 @@ class PlexClient:
                 break  # defensive infinite-loop guard
             if container_size <= 0:
                 # v1.22.85: no-progress guard (see enumerate_section_items).
+                # v0.51.228 (audit): the collections twin of the size=0 truncation
+                # door — breaking returned `out` truncated with no error. Worse
+                # here than for items: the reaper's mass-abort needs >50 stale
+                # rows, and most sections hold fewer than 50 collections, so it
+                # can NEVER trip. Raise when totalSize contradicts the short walk.
+                if total_size is not None and (offset + len(page_children)) < total_size:
+                    msg = (
+                        f"enumerate_collections_for_section: section {section_id} "
+                        f"page at offset {offset} advertised size=0 with "
+                        f"{len(page_children)} items while totalSize={total_size} "
+                        f"indicates more remain — refusing to report a truncated "
+                        f"enumeration as complete"
+                    )
+                    log.warning(msg)
+                    raise PlexParseError(msg)
                 log.warning(
                     "collections pagination: page advertised size=0 with %d "
-                    "items at offset %d — aborting walk", 
+                    "items at offset %d — aborting walk",
                     len(page_children), offset)
                 break
             offset += container_size

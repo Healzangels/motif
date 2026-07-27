@@ -27,8 +27,13 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 def test_adopt_link_fail_surfaces_non_exdev():
     """The canonical-exists relink branch must log non-EXDEV link
     failures (silent disk-bloat trap otherwise)."""
-    anchor = ADOPT_PY.index("canonical_path.unlink(missing_ok=True)")
-    block = ADOPT_PY[anchor - 400:anchor + 60]
+    # v0.51.228: the relink branch no longer unlinks the canonical up front — it stages
+    # into `<name>.adopt.tmp` and os.replace()s, so destroying the live file before its
+    # replacement exists is impossible (destroy-then-fail, v1.22.40 class). The v1.20.42
+    # invariant is unchanged and re-anchored on the staged temp: a non-EXDEV link failure
+    # must still be logged rather than silently absorbed by the copy fallback.
+    anchor = ADOPT_PY.index("_tmp.unlink(missing_ok=True)\n                        shutil.copy2")
+    block = ADOPT_PY[anchor - 500:anchor + 60]
     assert "e.errno != 18" in block
     assert "log.warning" in block
     assert "fell back to copy" in block

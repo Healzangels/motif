@@ -717,23 +717,39 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     placement_kind = "hardlink"
     try:
         if canonical_path.exists():
-            try:
-                if canonical_path.stat().st_ino == source_path.stat().st_ino:
-                    placement_kind = "hardlink"  # already linked
-                else:
-                    canonical_path.unlink()
-                    os.link(source_path, canonical_path)
-            except OSError as e:
-                # v1.20.42: hardlink failed — copy IS the functional
-                # fallback, but a non-EXDEV errno (EMLINK max-links,
-                # EPERM, ENOSPC) is a silent disk-bloat trap, so surface
-                # it (class 9). EXDEV (cross-FS) is expected, stays quiet.
-                if e.errno != 18:
-                    log.warning("adopt: hardlink failed for %s (errno=%s), "
-                                "fell back to copy", canonical_path, e.errno)
-                canonical_path.unlink(missing_ok=True)
-                shutil.copy2(source_path, canonical_path)
-                placement_kind = "copy"
+            if canonical_path.stat().st_ino == source_path.stat().st_ino:
+                placement_kind = "hardlink"  # already linked
+            else:
+                # v0.51.228 (audit): stage into a sibling tmp + atomic os.replace.
+                # Pre-fix this ran `canonical_path.unlink()` FIRST and only then
+                # os.link — so if the link raised (EXDEV) AND the copy2 fallback
+                # also raised (ENOSPC/EACCES/EMLINK), the outer handler raised
+                # AdoptError with the live canonical already DELETED while its
+                # local_files row still pointed at it: the row kept rendering as
+                # tracked/themed and every later place failed "source file
+                # missing". Destroy-then-fail (the v1.22.40 class). Both siblings
+                # already stage — worker.py's sibling-hardlink (theme.mp3.sib.tmp
+                # + os.replace) and placement.py's os.replace(dst_tmp, dst).
+                _tmp = canonical_path.with_name(canonical_path.name + ".adopt.tmp")
+                _tmp.unlink(missing_ok=True)
+                try:
+                    try:
+                        os.link(source_path, _tmp)
+                    except OSError as e:
+                        # v1.20.42: hardlink failed — copy IS the functional
+                        # fallback, but a non-EXDEV errno (EMLINK max-links,
+                        # EPERM, ENOSPC) is a silent disk-bloat trap, so surface
+                        # it (class 9). EXDEV (cross-FS) is expected, stays quiet.
+                        if e.errno != 18:
+                            log.warning("adopt: hardlink failed for %s (errno=%s), "
+                                        "fell back to copy", canonical_path, e.errno)
+                        _tmp.unlink(missing_ok=True)
+                        shutil.copy2(source_path, _tmp)
+                        placement_kind = "copy"
+                    os.replace(_tmp, canonical_path)
+                except OSError:
+                    _tmp.unlink(missing_ok=True)  # never strand the staged temp
+                    raise
         else:
             try:
                 os.link(source_path, canonical_path)

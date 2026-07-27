@@ -686,12 +686,27 @@ def _upsert_theme(
             (media_type, tmdb_id),
         ).fetchone() is not None
         if has_override and url_changed:
+            # v0.51.228 (audit): this branch deliberately WITHHOLDS the
+            # youtube_url/_video_id write (the user's override wins until they
+            # ACCEPT), so it must NOT advance tdb_content_fingerprint either —
+            # that column is the per-item cursor the v1.15.81 fast path skips
+            # on. Pre-fix it stamped new_fp, so the very next sync matched the
+            # fingerprint, took the fast path, and NEVER revisited the withheld
+            # URL: themes.youtube_url stayed pinned at the stale value forever,
+            # even after the override was gone (the only other writer,
+            # adopt.py, is gated on `youtube_url IS NULL OR = ''`). Then a PURGE
+            # → the orphan-override sweep deletes the override → DOWNLOAD/
+            # REPLACE TDB silently fetched the OLD video while TDB published a
+            # new one. Baseline-advance class (v1.24.14) on a per-row cursor.
+            # Leaving the fingerprint stale re-enters this slow path each sync
+            # (cheap — only rows with an override AND a changed TDB url) and
+            # self-heals the moment the override goes away.
             conn.execute(
                 """
                 UPDATE themes SET
                     imdb_id = ?, title = ?, original_title = ?, year = ?, release_date = ?,
                     upstream_source = ?, raw_json = ?, last_seen_sync_at = ?,
-                    title_norm = ?, tdb_content_fingerprint = ?,
+                    title_norm = ?,
                     -- v1.13.1 (Phase C): if the item was previously
                     -- dropped from TDB and has now reappeared, clear
                     -- the dropped flag automatically — re-adding is
@@ -702,7 +717,7 @@ def _upsert_theme(
                 (
                     imdb_id, title, original_title, year, rd or None,
                     upstream_source, _safe_json(record), sync_ts,
-                    title_norm, new_fp,
+                    title_norm,
                     media_type, tmdb_id,
                 ),
             )

@@ -8270,6 +8270,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         media_type: MediaType = Query(...),
         tmdb_id: int = Query(...),
         section_id: str = Query(...),
+        # v0.51.228 (audit): the finding carries edition_key (v1.22.81); accept it
+        # so the folder resolve below targets the cut the operator clicked.
+        edition_key: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """v1.18.43: targeted deletion of orphan theme.<ext>
@@ -8303,19 +8306,48 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 else ("collection" if media_type == "collection"
                       else "movie")
             )
+            # v0.51.228 (audit): these lookups were edition-BLIND `.fetchone()`s —
+            # on a multi-edition title they returned an ARBITRARY sibling's
+            # folder, so DELETE SIDECAR walked that folder and unlinked the
+            # WRONG edition's LIVE, motif-placed theme.mp3 while the orphan it
+            # was asked to remove stayed on disk. It reported {deleted: true}.
+            # orphan_scan.py (v1.24.5) fixed the same folder-resolution bug on
+            # the SCAN side and its comment names DELETE SIDECAR as the
+            # mis-targeted consumer; the endpoint never got the matching fix.
+            # Scope by the clicked cut when we have one, and REFUSE to guess
+            # when the title holds several and none was named — an unlink is
+            # irreversible, so failing safe beats deleting an arbitrary cut.
+            _ed_clause = "" if edition_key is None else " AND edition_key = ?"
+            _ed_args: tuple = () if edition_key is None else (edition_key,)
+            if edition_key is None:
+                _n_ed = conn.execute(
+                    "SELECT COUNT(DISTINCT edition_key) FROM plex_items "
+                    "WHERE guid_tmdb = ? AND media_type = ? AND section_id = ?",
+                    (str(tmdb_id), plex_mt, section_id),
+                ).fetchone()[0]
+                if _n_ed > 1:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "This title has multiple editions in this library and "
+                            "the request didn't say which one — refusing to delete "
+                            "a sidecar that might belong to another cut. Re-run the "
+                            "orphan scan so the finding carries its edition."
+                        ),
+                    )
             row = None
             if tid_pk is not None:
                 row = conn.execute(
                     "SELECT folder_path FROM plex_items "
-                    "WHERE theme_id = ? AND section_id = ?",
-                    (tid_pk, section_id),
+                    "WHERE theme_id = ? AND section_id = ?" + _ed_clause,
+                    (tid_pk, section_id) + _ed_args,
                 ).fetchone()
             if row is None:
                 row = conn.execute(
                     "SELECT folder_path FROM plex_items "
                     "WHERE guid_tmdb = ? AND media_type = ? "
-                    "  AND section_id = ?",
-                    (str(tmdb_id), plex_mt, section_id),
+                    "  AND section_id = ?" + _ed_clause,
+                    (str(tmdb_id), plex_mt, section_id) + _ed_args,
                 ).fetchone()
         if row is None or not row["folder_path"]:
             raise HTTPException(

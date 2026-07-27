@@ -18,6 +18,8 @@ pairs per query so coverage stays full instead of degrading.
 from __future__ import annotations
 
 from pathlib import Path
+
+import pytest
 from unittest.mock import patch
 
 from app.core.plex import PlexClient, PlexConfig
@@ -56,10 +58,17 @@ def test_malformed_page_terminates_instead_of_looping():
 
     cfg = PlexConfig(url="http://x", token="t",
                      movie_section="1", tv_section="2")
+    # v0.51.228: the walk now RAISES here instead of returning. v1.22.85's invariant is
+    # "abort on the FIRST size=0 page rather than loop forever" — raising satisfies it
+    # exactly as a return did (still one request, still terminates), and additionally
+    # stops a TRUNCATED enumeration being reported as complete, which let the v1.18.89
+    # reaper DELETE the unseen live rows. Both properties are asserted below.
+    from app.core.plex import PlexParseError
     with patch.object(PlexClient, "_get", _capture_get):
         client = PlexClient(cfg)
-        client.enumerate_section_items(section_id="1",
-                                       media_type="movie")
+        with pytest.raises(PlexParseError):
+            client.enumerate_section_items(section_id="1",
+                                           media_type="movie")
     assert len(calls) == 1, (
         f"v1.22.85: the walk must abort on the FIRST size=0 page "
         f"(made {len(calls)} requests)"

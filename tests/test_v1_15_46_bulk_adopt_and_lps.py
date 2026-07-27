@@ -119,7 +119,11 @@ def test_update_bulk_bar_counts_adopt_lps_candidates():
     # Anchor on the v1.15.46 marker comment.
     marker = "v1.15.46: M+P composite gate"
     anchor = js.index(marker)
-    block = js[anchor:anchor + 800]
+    # v0.51.228: anchor-bounded, not a fixed 800-char window — the v0.51.228 count/handler
+    # parity comment pushed `adoptLpsCount++` past the old edge, failing on a change that
+    # PRESERVED the invariant exactly (the v0.51.222 slice-rot class). Bound on the next
+    # bucket instead so the window grows with the code.
+    block = js[anchor:js.index("adoptOnlyCount++", anchor)]
     for clause in [
         "it.plex_local_theme === 1",
         "!placed",

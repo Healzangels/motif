@@ -37,7 +37,10 @@ def test_coverage_plex_offloads_queries_to_threadpool():
 
 def test_delete_orphan_sidecar_unlink_offloaded():
     fn = API_PY.index('async def api_admin_delete_orphan_sidecar(')
-    body = API_PY[fn:fn + 4000]
+    # v0.51.228: anchor-bounded, not a fixed 4000-char window — the edition-scope guard
+    # added there pushed the offloaded unlink past the old edge (the v0.51.222 slice-rot
+    # class). Bound on the next route so the window grows with the handler.
+    body = API_PY[fn:API_PY.index("\n    @app.", fn)]
     assert "await run_in_threadpool(sp.unlink)" in body
     # the bare synchronous unlink is gone.
     assert "\n            sp.unlink()\n" not in body

@@ -12907,7 +12907,15 @@
         // v1.15.49: extend to fill all three buckets exactly once.
         const isMSidecar = it.plex_local_theme === 1 && !placed;
         const isPlexIndep = it.plex_independent_theme === 1;
-        if (isMSidecar && isPlexIndep && it.rating_key) {
+        // v0.51.228: the bulk handler ALSO requires the theme linkage (it builds
+        // /api/items/{theme_media_type}/{theme_tmdb}/unplace), so counting a
+        // linkage-less row here made the badge promise rows the click silently
+        // dropped — "(5)" then "No M+P composite rows selected". The SRC=M +
+        // NO-TDB cohort is hundreds of rows. Same count-vs-handler drift v1.22.80
+        // fixed at the sibling bulk-LPS button. Such a row is still ADOPT-able
+        // (that flow is rating_key-keyed), so it falls through to adoptOnlyCount.
+        if (isMSidecar && isPlexIndep && it.rating_key
+            && it.theme_media_type && it.theme_tmdb != null) {
           adoptLpsCount++;
         } else if (isMSidecar) {
           // M sidecar without Plex independent theme — ADOPT only.
@@ -15909,7 +15917,14 @@
       const candidates = Array.from(libraryState.selectedRows.values())
         .filter((it) => (
           it.plex_local_theme === 1
-          && !it.media_folder
+          // v0.51.228: the EIGHTH SRC-axis drift site. A bare `!it.media_folder`
+          // reads `!''` as TRUE, so a plex_upload row (media_folder='' is the
+          // sentinel, not "unplaced") passed this filter and got ADOPTed then
+          // UNPLACEd — tearing down motif's own API upload. Both siblings were
+          // already widened (bulk-ADOPT v0.50.89, bulk-LPS v1.22.80); this one
+          // was missed because the v1.19.38 lint only walks `awaitingApproval`
+          // declarations, never a plain .filter() predicate.
+          && !(!!it.media_folder || it.placement_kind === 'plex_upload')
           && it.plex_independent_theme === 1
           && it.rating_key
           && it.theme_media_type
