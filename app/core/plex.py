@@ -249,8 +249,14 @@ class PlexClient:
             r = self._client.head(path)
             if r.status_code in (200, 401, 403):
                 return r.status_code
-            r = self._client.get(path)
-            return r.status_code
+            # v0.51.234: both callers pass a /theme path, so a plain .get() read the
+            # entire theme MP3 into memory purely to read a status code. Harmless while
+            # Plex answers HEAD, but a 405/redirect on this endpoint would silently turn
+            # every verify into a full-body download (~1-10MB x 2,800 themes on a bulk
+            # pass). stream() sends the same request and yields the same status without
+            # consuming the body; the context manager releases the connection.
+            with self._client.stream("GET", path) as r:
+                return r.status_code
         except httpx.HTTPError as e:
             log.debug("Plex HEAD/GET failed: %s", e)
             return None

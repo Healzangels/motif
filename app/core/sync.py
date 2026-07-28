@@ -313,7 +313,15 @@ def _fetch_item(
                 continue
             r.raise_for_status()
             return r.json()
-        except httpx.HTTPError as e:
+        # v0.51.234: ValueError catches json.JSONDecodeError, which is NOT an
+        # httpx.HTTPError — a 200 carrying a non-JSON body (a proxy/CDN error page,
+        # a truncated response) escaped this handler entirely, propagated out of
+        # _do_fetch, and the un-try'd fut.result() in the remote-tier fetch loop
+        # turned ONE bad item into an aborted sync. It also skipped the themoviedb
+        # candidate, since raising past `continue` abandons the loop. Now it falls
+        # through to the next candidate and, failing that, returns None into the
+        # existing record-is-None path that logs the tmdb_id and counts stats.errors.
+        except (httpx.HTTPError, ValueError) as e:
             last_err = e
             continue
     if last_err:

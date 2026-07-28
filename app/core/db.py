@@ -413,6 +413,13 @@ CREATE TABLE IF NOT EXISTS sync_runs (
     no_changes      INTEGER NOT NULL DEFAULT 0
 );
 
+-- v0.51.234: the v36->v37 migration created this, so only MIGRATED installs had it
+-- and every fresh install scanned sync_runs for the dashboard sparkline's
+-- ORDER BY started_at DESC. Bounded by the 90d prune so the cost was small, but
+-- it is the same fresh-vs-migrated index divergence _migrate_v9_to_v10 documents
+-- having caused a soft-lock once already. Declared here so both paths converge.
+CREATE INDEX IF NOT EXISTS idx_sync_runs_started ON sync_runs (started_at DESC);
+
 -- v1.12.106: live progress surface for long-running ops (TDB sync,
 -- Plex enum). One row per op, upserted by the worker on each
 -- natural checkpoint already in the code (per-page index fetch,
