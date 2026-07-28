@@ -3009,6 +3009,25 @@ class _ChangeSet:
 
 _GIT_PATH_UNCLASSIFIED_WARNED = False
 
+# v0.51.235: the top-level dirs whose 3-part .json paths are per-item records.
+# Single source of truth for both _classify_git_path and _is_item_shaped_git_path.
+_GIT_ITEM_TOP_DIRS = {
+    "movies": "movie",
+    "tv_shows": "tv",
+    "movie_collections": "collection",
+}
+
+
+def _is_item_shaped_git_path(rel_path: str) -> bool:
+    """v0.51.235: True when a path LOOKS like a per-item record — 3 parts, a
+    .json leaf, a known top-level dir — whether or not _classify_git_path could
+    actually parse it. Lets the apply loop tell "a record we failed to classify"
+    (a real miss) from "README.md / pages.json / an unknown top dir" (expected).
+    """
+    parts = rel_path.split("/")
+    return (len(parts) == 3 and parts[2].endswith(".json")
+            and parts[0] in _GIT_ITEM_TOP_DIRS)
+
 
 def _classify_git_path(rel_path: str) -> tuple[str, str | None, int | None] | None:
     """Translate a `database`-branch-relative path into the
@@ -3032,18 +3051,15 @@ def _classify_git_path(rel_path: str) -> tuple[str, str | None, int | None] | No
     top, kind, leaf = parts
     if not leaf.endswith(".json"):
         return None
-    if top == "movies":
-        media_type = "movie"
-    elif top == "tv_shows":
-        media_type = "tv"
-    elif top == "movie_collections":
-        # v1.18.0: collections only have themoviedb/ keyed records.
-        # An imdb/ subtree path (if ever introduced upstream) would
-        # be ignored — fall through to the kind=='imdb' branch
-        # returning the imdb_id, but the caller's downstream code
-        # would treat it as a missing-tmdb error.
-        media_type = "collection"
-    else:
+    # v1.18.0: collections only have themoviedb/ keyed records.
+    # An imdb/ subtree path (if ever introduced upstream) would
+    # be ignored — fall through to the kind=='imdb' branch
+    # returning the imdb_id, but the caller's downstream code
+    # would treat it as a missing-tmdb error.
+    # v0.51.235: membership reads from _GIT_ITEM_TOP_DIRS so the caller's
+    # item-shaped test can't drift from this one (the mirror-drift class).
+    media_type = _GIT_ITEM_TOP_DIRS.get(top)
+    if media_type is None:
         return None
     stem = leaf[:-5]  # strip .json
     if kind == "imdb":
@@ -3178,6 +3194,19 @@ def _run_git_differential_upsert(
         completed += 1
         classification = _classify_git_path(rel_path)
         if classification is None:
+            # v0.51.235: an item-SHAPED path we could not parse is a real miss, not
+            # a README. Pre-fix it was a bare `continue`: no error, so the run
+            # reported 0 errors / 0 new / 0 updated (a TDB layout restructure looked
+            # exactly like a quiet upstream day apart from v1.21.43's warn-once), and
+            # the stats.errors==0 gate advanced the baseline — consuming that
+            # add/modify permanently, the v1.22.74 failure mode. Counting it blocks
+            # the advance for one run (the chronic escape still forces through if it
+            # repeats, so it can never pin), surfaces the error in the UI, and makes a
+            # baseline-reset run skip drop detection rather than false-drop.
+            if _is_item_shaped_git_path(rel_path):
+                stats.errors += 1
+                failed_paths.append(rel_path)
+                unresolved_failures += 1
             continue
         media_type, imdb_id, tmdb_id = classification
         _r0 = time.monotonic()
