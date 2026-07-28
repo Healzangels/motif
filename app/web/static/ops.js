@@ -327,7 +327,16 @@
         return null;
       }
       _fetchProgressFailStreak = 0;
-      return r.json();
+      // v0.51.232 (audit): `return await`, not `return r.json()`. In an async function a
+      // bare `return promise` resolves the returned promise WITH it — the rejection
+      // escapes this try/catch entirely. A 200 with a non-JSON body (behind NPM +
+      // Authentik an expired session redirects to an HTML login page, and fetch follows
+      // redirects so r.ok is true) therefore rejected out of fetchProgress, which poll()
+      // does not guard: it sets pollInFlight=true and clears pollTimer BEFORE the await,
+      // so the latch stayed true with no timer armed and LIVE OPS was dead until a full
+      // page reload. The v0.51.17 comment in poll() explicitly relies on "fetchProgress
+      // never throws" — this makes that true instead of assumed.
+      return await r.json();
     } catch (e) {
       _fetchProgressFailStreak++;
       if (_fetchProgressFailStreak === _FETCH_PROGRESS_FAIL_THRESHOLD) {

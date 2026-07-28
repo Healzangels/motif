@@ -198,6 +198,23 @@ def deorphan_imdb_resolvable(
                                 f"UPDATE {tbl} SET tmdb_id = ? "
                                 f"WHERE media_type = ? AND tmdb_id = ?",
                                 (real_tmdb, media_type, old_tmdb))
+                        # v0.51.232 (audit): the two NEWER (media_type, tmdb_id) tables
+                        # were never added to this loop. They are NOT FK'd, so nothing
+                        # cascaded and nothing complained — the rows just kept pointing at
+                        # the retired synthetic id. Consequences: an open INBOX row still
+                        # renders clickable (the drawer gates on media_type && tmdb_id) and
+                        # deep-links to a tmdb that no longer exists, so the v0.51.220
+                        # edition-exact click-through lands nowhere; and a dismissed
+                        # per-section failure ack stops joining its theme, so the banner
+                        # the operator dismissed comes back. Deliberately NOT added to the
+                        # pre-delete loop above — that clears FK-invalid junk at the
+                        # target, and deleting the target's real notifications/acks would
+                        # destroy live inbox rows.
+                        for tbl in ("notifications", "section_failure_acks"):
+                            conn.execute(
+                                f"UPDATE {tbl} SET tmdb_id = ? "
+                                f"WHERE media_type = ? AND tmdb_id = ?",
+                                (real_tmdb, media_type, old_tmdb))
                         # v0.51.11: re-key in-flight jobs too (mirrors sync.py's
                         # v1.22.87 fix) — a pending download/place enqueued at the
                         # synthetic orphan id (SET URL on an orphan) dies confusingly
@@ -488,6 +505,18 @@ def merge_orphan_collisions(
                     conn.execute(
                         "UPDATE scan_findings SET theme_id = ? "
                         "WHERE theme_id = ?", (target_id, o["id"]))
+                    # v0.51.232 (audit): re-point the two non-FK'd (media_type, tmdb_id)
+                    # tables at the SURVIVING id before the husk's rows are dropped.
+                    # They are not FK'd so the husk DELETE below never touched them and
+                    # they were left stranded at a tmdb_id with no theme — a clickable
+                    # inbox row deep-linking nowhere, and a dismissed failure ack that
+                    # stops matching so the banner reappears. Re-key (not delete): these
+                    # are the operator's own notifications and dismissals.
+                    for tbl in ("notifications", "section_failure_acks"):
+                        conn.execute(
+                            f"UPDATE {tbl} SET tmdb_id = ? "
+                            f"WHERE media_type = ? AND tmdb_id = ?",
+                            (real_tmdb, media_type, old_tmdb))
                     # collision losers left at the old tmdb, then the husk.
                     for tbl in ("local_files", "placements", "pending_updates",
                                 "user_overrides", "previous_urls"):
