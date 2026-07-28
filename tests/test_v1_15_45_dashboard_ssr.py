@@ -245,7 +245,13 @@ def test_dashboard_template_storage_wasted_uses_pre_formatted_string():
     # rationale comments pushed the units array past the prior
     # 14000-char window). Bump to 18000 with comfortable margin.
     # v0.51.98: 22000 → 24000 (hero-button SSR busy plumbing).
-    fn_body = api_src[fn_anchor:fn_anchor + 24000]
+    # v0.51.230: stop. That is FOUR widenings (14000 → 18000 → 22000 → 24000), each on a
+    # change that preserved the invariant — this time a 4-line edition-scope comment.
+    # motif's own convention REQUIRES a `# vX.Y.Z:` rationale on load-bearing lines, so
+    # the source only ever grows and a fixed window is guaranteed to overflow eventually.
+    # Anchor-bound on the next sibling def (4-space nested inside create_app) so the
+    # window tracks the function instead of a guessed byte count.
+    fn_body = api_src[fn_anchor:api_src.index("\n    def ", fn_anchor)]
     assert '["B", "KB", "MB", "GB", "TB"]' in fn_body, (
         "v1.15.45: SSR byte-formatter units array must match "
         "fmtBytes() in app.js so SSR + post-poll agree"

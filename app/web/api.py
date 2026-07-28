@@ -3814,6 +3814,13 @@ def _library_main_query(
                   AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END)))
         LEFT JOIN local_files lf
           ON lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id
+         -- v0.51.230 (audit): section+edition scope, mirroring the DOWNLOAD MISSING
+         -- action query this count is supposed to describe (v1.11.0 / v1.23.65).
+         -- Pre-fix the join was title-wide, so a title downloaded in the standard
+         -- section had SOME local_files row and `lf.file_path IS NULL` went false —
+         -- the 4K tab reported 0 missing while DOWNLOAD MISSING would enqueue it.
+         AND lf.section_id = pi.section_id
+         AND lf.edition_key = pi.edition_key
         WHERE {tab_where}
           AND lf.file_path IS NULL
           AND t.upstream_source != 'plex_orphan'
@@ -7494,6 +7501,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            ON lf.media_type = p.media_type
                           AND lf.tmdb_id = p.tmdb_id
                           AND lf.section_id = p.section_id
+                          -- v0.51.230 (audit): edition_key is in BOTH PKs, so without it this
+                          -- join fans each placement across every edition's local_files row —
+                          -- SUM/COUNT multiply. Re-opens the v1.14.36 cartesian bug on the
+                          -- edition axis added by schema v63.
+                          AND lf.edition_key = p.edition_key
                         WHERE p.placement_kind='copy')
                           AS storage_wasted_bytes,
                       (SELECT COUNT(*) FROM themes
@@ -8662,6 +8674,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                          ON lf.media_type = p.media_type
                         AND lf.tmdb_id = p.tmdb_id
                         AND lf.section_id = p.section_id
+                        -- v0.51.230 (audit): edition_key is in BOTH PKs, so without it this
+                        -- join fans each placement across every edition's local_files row —
+                        -- SUM/COUNT multiply. Re-opens the v1.14.36 cartesian bug on the
+                        -- edition axis added by schema v63.
+                        AND lf.edition_key = p.edition_key
                        WHERE p.placement_kind = 'copy') AS storage_copies_bytes,
                       (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                       (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
@@ -8852,6 +8869,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      ON lf.media_type = p.media_type
                     AND lf.tmdb_id = p.tmdb_id
                     AND lf.section_id = p.section_id
+                    -- v0.51.230 (audit): edition_key is in BOTH PKs, so without it this
+                    -- join fans each placement across every edition's local_files row —
+                    -- SUM/COUNT multiply. Re-opens the v1.14.36 cartesian bug on the
+                    -- edition axis added by schema v63.
+                    AND lf.edition_key = p.edition_key
                    WHERE p.placement_kind = 'copy') AS storage_copies_bytes,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'pending') AS pending,
                   (SELECT COUNT(*) FROM jobs WHERE status = 'running') AS running,
@@ -11480,6 +11502,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   ON lf.media_type = p.media_type
                  AND lf.tmdb_id = p.tmdb_id
                  AND lf.section_id = p.section_id
+                 -- v0.51.230 (audit): edition_key is in BOTH PKs, so without it this
+                 -- join fans each placement across every edition's local_files row —
+                 -- SUM/COUNT multiply. Re-opens the v1.14.36 cartesian bug on the
+                 -- edition axis added by schema v63.
+                 AND lf.edition_key = p.edition_key
                 WHERE p.placement_kind = 'copy'
                 ORDER BY t.title COLLATE NOCASE
             """).fetchall()
@@ -15378,6 +15405,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                      ON lf.media_type = p.media_type
                     AND lf.tmdb_id = p.tmdb_id
                     AND lf.section_id = p.section_id
+                    -- v0.51.230 (audit): edition_key is in BOTH PKs, so without it this
+                    -- join fans each placement across every edition's local_files row —
+                    -- SUM/COUNT multiply. Re-opens the v1.14.36 cartesian bug on the
+                    -- edition axis added by schema v63.
+                    AND lf.edition_key = p.edition_key
                    WHERE p.media_type = ?
                      AND p.tmdb_id = ?
                      AND p.media_folder IS NOT NULL""",
