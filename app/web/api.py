@@ -8530,7 +8530,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  "next": next or "/"},
                 status_code=429,
             )
-        ok = authenticate_password(
+        # v0.51.231 (audit, class 12): bcrypt at rounds=12 is ~235ms of pure CPU
+        # (auth.py's own comment measures it), and the equal-time dummy-hash path burns
+        # the same on an unknown username. Run inline it froze the SINGLE asyncio loop
+        # for that quarter-second, stalling every concurrent /api/stats, /api/library,
+        # /api/progress and /healthz — and an attacker could drive it to the rate-limit
+        # ceiling. The standing lint (test_v1_22_58) cannot catch this: its blocklist
+        # enumerates PlexClient methods + a few dotted calls, nothing CPU-bound.
+        ok = await run_in_threadpool(
+            authenticate_password,
             settings.db_path, username=username, password=password,
         )
         if not ok:
@@ -10426,11 +10434,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError:
                 return None
 
+        # v0.51.231 (audit): route through the shared helper so this and the scheduler's
+        # release_available push can never disagree again (they did — see versioning.py).
+        # _parse above is kept: other callers below still read the parsed tuples.
         cur_t = _parse(motif_version)
         lat_t = _parse(latest) if latest else None
-        update_available = bool(
-            cur_t and lat_t and lat_t > cur_t
-        )
+        from ..core.versioning import is_newer
+        update_available = is_newer(latest or "", motif_version)
         return {
             "current": motif_version,
             "latest": latest,

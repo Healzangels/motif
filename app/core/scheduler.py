@@ -1100,8 +1100,18 @@ def _check_release_update(settings: "Settings") -> None:
             from . import notify_dedupe as _dedupe
             # Skip if the detected tag matches the running motif —
             # no upgrade available, no point pinging.
+            # v0.51.231 (audit): was `payload["tag_name"] != running`, i.e. INEQUALITY.
+            # motif's channel model (nightly = dev, release = last shipped tag) means the
+            # running version is routinely AHEAD of the latest GitHub Release, so
+            # publishing v0.51.220 while the box runs 0.51.227 pushed "🆕 v0.51.220
+            # available — you're running v0.51.227": an upgrade ping pointing BACKWARDS.
+            # Tag-keyed dedupe fires it once per release and never self-corrects. The
+            # sibling at api.py's /api/release/latest already compared parsed tuples, so
+            # the topbar stayed silent while the push nagged — mirror drift. Both now use
+            # the shared is_newer().
+            from .versioning import is_newer
             running = f"v{motif_version}"
-            if payload["tag_name"] != running and _dedupe.should_fire(
+            if is_newer(payload["tag_name"], running) and _dedupe.should_fire(
                     settings.db_path, "release_available",
                     edge_value=payload["tag_name"]):
                 _notify.dispatch(

@@ -251,7 +251,21 @@ def _prepare_attachment(url: str) -> str | None:
             pass
         return raw_path
     except Exception as e:  # noqa: BLE001
-        log.debug("notify attachment prep failed for %s: %s", url, e)
+        # v0.51.231 (audit, class 9): raw_path is mkstemp'd above and only unlinked on
+        # the two SUCCESS returns, so any post-download failure — subprocess.TimeoutExpired
+        # when ffmpeg wedges under a bulk place, a getsize FileNotFoundError — leaked a
+        # ~50-200KB jpeg into the container tmpdir forever. _dispatch_inline's finally
+        # can't clean it because it only ever sees attach_path=None. A bulk theme_added
+        # burst leaks one per item. This is the un-fixed twin of the v1.23.0 fix ten lines
+        # above (which upgraded the rc != 0 branch to log.warning) — the timeout/exception
+        # branch stayed silent at DEBUG, so the leak was invisible at default log level.
+        for _p in (locals().get("raw_path"), locals().get("norm_path")):
+            if _p:
+                try:
+                    os.unlink(_p)
+                except OSError:
+                    pass
+        log.warning("notify attachment prep failed for %s: %s", url, e)
         return None
 
 

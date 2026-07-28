@@ -1020,7 +1020,15 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
             continue
         ticks = _QUEUE_BURST_EMPTY_TICKS.get(jt, 0) + 1
         if ticks >= _BURST_GRACE_TICKS:
-            del _QUEUE_BURST_HW[jt]
+            # v0.51.231 (audit): .pop(jt, None), not `del`. /api/progress offloads
+            # load_active to the threadpool and its 750ms TTL cache is read at entry +
+            # written at exit, so two requests that both MISS (two tabs, or the drawer
+            # poll and refreshTopbarStatus on the same tick) run this concurrently: both
+            # snapshot the keys, both pass the grace check, the second `del` raises
+            # KeyError -> uncaught -> HTTP 500 -> the ops drawer blanks mid-burst.
+            # .pop is idempotent and matches every sibling line here (the other three
+            # burst dicts already use it) — `del` was the odd one out.
+            _QUEUE_BURST_HW.pop(jt, None)
             _QUEUE_BURST_EMPTY_TICKS.pop(jt, None)
             # v1.13.66: drop the prev-remaining map alongside HW so
             # the next burst computes its grown-by delta from a fresh 0.
@@ -1034,7 +1042,7 @@ def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
     # been absent for _BURST_GRACE_TICKS in a row).
     for jt in list(_QUEUE_BURST_START.keys()):
         if jt not in _QUEUE_BURST_HW:
-            del _QUEUE_BURST_START[jt]
+            _QUEUE_BURST_START.pop(jt, None)  # v0.51.231: same concurrent-del KeyError
     for row in counts:
         jt = row["job_type"]
         running_n = row["running_n"] or 0
