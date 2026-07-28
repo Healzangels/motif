@@ -150,11 +150,17 @@ def test_a_redownload_replaces_the_normalize_state():
     # and the first one belongs to a different table entirely.
     i = WORKER.index("INSERT INTO local_files")
     block = WORKER[i:WORKER.index('"""', WORKER.index("DO UPDATE SET", i))]
-    for col in ("norm_state = excluded.norm_state",
-                "norm_gain_db = excluded.norm_gain_db",
-                "loudness_i = excluded.loudness_i",
-                "norm_orig_sha256 = excluded.norm_orig_sha256"):
-        assert col in block, f"{col} must be replaced on re-download"
+    # v0.51.233 narrowed this to the differing-sha branch: the premise "a re-download
+    # REPLACES the bytes" is false for the two paths that return without writing any
+    # (download_theme's expected-mp3 short-circuit, the sibling hardlink), where the
+    # blanket overwrite destroyed a live norm_state + its mp3gain undo anchors. The
+    # invariant guarded here is unchanged — FRESH bytes still take excluded's values.
+    for col in ("norm_state", "norm_gain_db", "loudness_i", "norm_orig_sha256"):
+        assert (f"{col} = CASE WHEN local_files.file_sha256 IS NOT "
+                f"excluded.file_sha256 THEN excluded.{col}") in block, (
+            f"{col} must still be replaced when the bytes actually changed")
+    # and the ELSE arm must preserve, not null — see test_v0_51_233_* for the behavior.
+    assert "ELSE local_files.norm_state END" in block
 
 
 # ── the engine helper ────────────────────────────────────────────────────

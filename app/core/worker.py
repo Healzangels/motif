@@ -2333,17 +2333,40 @@ class Worker:
                     -- normalize state replace the old row's too. Carrying a stale
                     -- norm_state='normalized' onto fresh raw bytes would tell // UNDO to
                     -- un-gain a file that was never gained.
-                    loudness_i = excluded.loudness_i,
-                    loudness_tp = excluded.loudness_tp,
-                    loudness_lra = excluded.loudness_lra,
-                    loudness_measured_at = excluded.loudness_measured_at,
-                    loudness_measured_sha256 = excluded.loudness_measured_sha256,
-                    norm_state = excluded.norm_state,
-                    norm_gain_db = excluded.norm_gain_db,
-                    norm_target = excluded.norm_target,
-                    norm_at = excluded.norm_at,
-                    norm_orig_sha256 = excluded.norm_orig_sha256,
-                    norm_orig_pcm_sha256 = excluded.norm_orig_pcm_sha256
+                    -- v0.51.233 (audit): that premise holds for a REAL re-download but NOT
+                    -- for the two paths that return without replacing anything —
+                    -- download_theme short-circuits when the expected mp3 already exists
+                    -- (any same-source re-download, e.g. // DOWNLOAD TDB BACKUP with
+                    -- normalize-on-download off), and the sibling-hardlink branch passes no
+                    -- `conditioned` at all. Both then wrote (None,)*11 over a row that was
+                    -- genuinely leveled: motif reported it raw while the file on disk was
+                    -- still gained AND still carried mp3gain's APEv2 undo tag, and // UNDO
+                    -- refuses on norm_state != 'normalized' — the original audio was no
+                    -- longer restorable through motif. Gate on the sha: identical bytes
+                    -- mean nothing was re-encoded or re-gained, so the existing loudness
+                    -- and normalize state still describe this exact file.
+                    loudness_i = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.loudness_i
+                        ELSE local_files.loudness_i END,
+                    loudness_tp = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.loudness_tp
+                        ELSE local_files.loudness_tp END,
+                    loudness_lra = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.loudness_lra
+                        ELSE local_files.loudness_lra END,
+                    loudness_measured_at = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.loudness_measured_at
+                        ELSE local_files.loudness_measured_at END,
+                    loudness_measured_sha256 = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.loudness_measured_sha256
+                        ELSE local_files.loudness_measured_sha256 END,
+                    norm_state = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.norm_state
+                        ELSE local_files.norm_state END,
+                    norm_gain_db = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.norm_gain_db
+                        ELSE local_files.norm_gain_db END,
+                    norm_target = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.norm_target
+                        ELSE local_files.norm_target END,
+                    norm_at = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.norm_at
+                        ELSE local_files.norm_at END,
+                    norm_orig_sha256 = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.norm_orig_sha256
+                        ELSE local_files.norm_orig_sha256 END,
+                    norm_orig_pcm_sha256 = CASE WHEN local_files.file_sha256 IS NOT excluded.file_sha256 THEN excluded.norm_orig_pcm_sha256
+                        ELSE local_files.norm_orig_pcm_sha256 END
                 """,
                 (media_type, tmdb_id, section_id, edition_key, rel_path,
                  sha256, size,

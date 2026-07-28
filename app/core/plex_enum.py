@@ -1287,7 +1287,23 @@ def reconcile_placement_paths(db_path: Path, *,
         ).fetchall():
             mt = "tv" if pi["pi_mt"] == "show" else "movie"
             key = (mt, pi["tmdb_id"])
-            plex_paths_by_item.setdefault(key, set()).add(pi["folder_path"])
+            # v0.51.233 (audit): index BOTH the raw host path Plex reports AND its
+            # host→container translations. `old_folder` below is placements.media_folder,
+            # which place_theme resolved through _candidate_local_paths to the CONTAINER
+            # path — so on any install needing a translation (the hardcoded
+            # /mnt/user/data/ → /data/ pair, or MOTIF_PATH_TRANSLATIONS) the raw-only set
+            # could never match it. The skip never fired, every placement looked "moved",
+            # and each enum cancelled the in-flight place, rewrote media_folder to the HOST
+            # path and re-enqueued a forced place — which resolved back to the container
+            # path and INSERTed a second placements row (media_folder is in the PK), which
+            # the next enum deleted and re-enqueued: an unbounded per-enum churn loop
+            # (v1.18.49 class). Adding candidates can only ADD skips, so this strictly
+            # reduces false moves and is a no-op where the paths already match.
+            _pf = pi["folder_path"]
+            _bucket = plex_paths_by_item.setdefault(key, set())
+            _bucket.add(_pf)
+            for _cand in _candidate_local_paths(_pf):
+                _bucket.add(str(_cand))
 
         for r in rows:
             old_folder = r["old_folder"]
