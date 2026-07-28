@@ -17699,6 +17699,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # resolved an arbitrary sibling (same class as the REPLACE TDB bug).
         # None = legacy title/section-wide replace (no rk sent).
         rating_key: str | None = Query(None),
+        # v0.51.229 (audit): app.js has sent ?section_id=... with an explicit comment that
+        # it "scopes the PUSH to THIS edition", but the endpoint never DECLARED the param
+        # so FastAPI silently dropped it — the worklist below was edition-scoped yet
+        # SECTION-WIDE. Frontend-believes-scoped / backend-isn't = the v1.18.81
+        # phantom-fix class; the identical fan-out was fixed for download-batch in v1.19.8.
+        section_id: str | None = Query(None),
         db: Path = Depends(get_db_path),
     ):
         """Re-place motif's existing canonical into the Plex media folder.
@@ -17749,13 +17755,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 " AND edition_key = ?" if _repl_edition is not None else "")
             _repl_ed_params = (
                 (_repl_edition,) if _repl_edition is not None else ())
+            # v0.51.229: narrow to the clicked section when the caller named one. Without
+            # it a bulk PUSH on the 4K tab also force-placed the standard section — for a
+            # row left on LET PLEX SERVE there, that silently re-installed a sidecar the
+            # operator had deliberately handed back to Plex.
+            _repl_sec_clause = " AND section_id = ?" if section_id else ""
+            _repl_sec_params = (section_id,) if section_id else ()
             # v1.11.0: enqueue one place job per section that has a
             # local_files row for this item. Sections without staged
             # content are skipped — re-download is a separate action.
             sections = conn.execute(
                 "SELECT section_id FROM local_files "
-                "WHERE media_type = ? AND tmdb_id = ?" + _repl_ed_clause,
-                (media_type, tmdb_id) + _repl_ed_params,
+                "WHERE media_type = ? AND tmdb_id = ?"
+                + _repl_ed_clause + _repl_sec_clause,
+                (media_type, tmdb_id) + _repl_ed_params + _repl_sec_params,
             ).fetchall()
             if not sections:
                 raise HTTPException(
@@ -17793,8 +17806,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 existing_placements = conn.execute(
                     "SELECT placement_kind, section_id "
                     "FROM placements "
-                    "WHERE media_type = ? AND tmdb_id = ?" + _repl_ed_clause,
-                    (media_type, tmdb_id) + _repl_ed_params,
+                    "WHERE media_type = ? AND tmdb_id = ?"
+                    + _repl_ed_clause + _repl_sec_clause,
+                    (media_type, tmdb_id) + _repl_ed_params + _repl_sec_params,
                 ).fetchall()
                 if kind == "file":
                     # v0.51.48: else media_type for convention uniformity —
@@ -17845,8 +17859,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 rk_row["rating_key"])
                 conn.execute(
                     "DELETE FROM placements "
-                    "WHERE media_type = ? AND tmdb_id = ?" + _repl_ed_clause,
-                    (media_type, tmdb_id) + _repl_ed_params,
+                    "WHERE media_type = ? AND tmdb_id = ?"
+                    + _repl_ed_clause + _repl_sec_clause,
+                    (media_type, tmdb_id) + _repl_ed_params + _repl_sec_params,
                 )
             # v1.22.76: edition-scoped when the PUSH named an edition (the
             # v1.21.82 payload convention) — pre-fix this title-wide cancel

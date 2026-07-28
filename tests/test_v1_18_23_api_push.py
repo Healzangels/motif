@@ -162,7 +162,12 @@ def test_replace_endpoint_parses_kind_body():
     # collects per-section rks into a dict instead of calling the
     # sync helper (atomic-teardown audit rollover) — ~1500 more
     # chars before the place-job INSERT.
-    body = src[fn_idx:fn_idx + 10000]
+    # v0.51.229: stop widening (4000 → 6000 → 10000 → …). The v0.51.229 section-scope
+    # guard pushed an assertion past the edge again, on a change that PRESERVED the
+    # invariant exactly — the treadmill _slice_helpers exists to end. All three sites
+    # slice an api.py route handler, so bound on the NEXT route: the window now grows
+    # with the handler and never needs another widening.
+    body = src[fn_idx:src.index("\n    @app.", fn_idx)]
     assert "raw_kind = (body or {}).get(\"kind\")" in body
     assert 'in ("file", "api"):' in body
     # Payload includes the kind key when set.
@@ -184,7 +189,12 @@ def test_replace_endpoint_deletes_existing_placements_on_kind_switch():
     # collects per-section rks into a dict instead of calling the
     # sync helper (atomic-teardown audit rollover) — ~1500 more
     # chars before the place-job INSERT.
-    body = src[fn_idx:fn_idx + 10000]
+    # v0.51.229: stop widening (4000 → 6000 → 10000 → …). The v0.51.229 section-scope
+    # guard pushed an assertion past the edge again, on a change that PRESERVED the
+    # invariant exactly — the treadmill _slice_helpers exists to end. All three sites
+    # slice an api.py route handler, so bound on the NEXT route: the window now grows
+    # with the handler and never needs another widening.
+    body = src[fn_idx:src.index("\n    @app.", fn_idx)]
     # The conditional DELETE keyed on `kind` being set.
     assert "if kind:" in body
     assert "DELETE FROM placements " in body
@@ -228,7 +238,12 @@ def test_switch_placement_inverts_existing_kind():
     # collects per-section rks into a dict instead of calling the
     # sync helper (atomic-teardown audit rollover) — ~1500 more
     # chars before the place-job INSERT.
-    body = src[fn_idx:fn_idx + 10000]
+    # v0.51.229: stop widening (4000 → 6000 → 10000 → …). The v0.51.229 section-scope
+    # guard pushed an assertion past the edge again, on a change that PRESERVED the
+    # invariant exactly — the treadmill _slice_helpers exists to end. All three sites
+    # slice an api.py route handler, so bound on the NEXT route: the window now grows
+    # with the handler and never needs another widening.
+    body = src[fn_idx:src.index("\n    @app.", fn_idx)]
     assert 'target_kind = "file"' in body
     assert 'target_kind = "api"' in body
     # The inversion rule.

@@ -3555,6 +3555,46 @@ def _detect_and_stamp_drops_git(
     return stamped_total
 
 
+# v0.51.229 (holistic audit): amplifier-sweep abort caps for the two destructive
+# NOT-EXISTS sweeps below. This is the v1.18.10 class BY NAME — v1.18.0 wiped
+# local_files + placements, then the next sync's orphan sweep found 98 user_overrides
+# whose presence-EXISTS checks all failed and DELETEd those too. Every sibling sweep
+# got a guard (deorphan _MERGE_ABORT_CAP, the v1.18.89 reaper, recovery_v55, worker);
+# these two never did, and they run on EVERY sync including no-change ones.
+# Thresholds mirror the reaper's idiom exactly: only abort when the kill is BOTH
+# large in absolute terms AND a big share of the table, so ordinary cleanup (a few
+# rows after a PURGE) is untouched while a broken-state mass-delete is refused.
+_SWEEP_ABORT_MIN_ROWS = 50
+_SWEEP_ABORT_PCT = 20
+
+
+class _SweepAborted(Exception):
+    """Raised inside the sweep txn to ROLL BACK a suspicious mass-delete.
+
+    Raising (rather than counting first) is deliberate: the guard then measures the
+    DELETE's own rowcount, so the check and the delete can never drift onto different
+    predicates — the mirror-drift class this codebase keeps getting bitten by."""
+
+    def __init__(self, doomed: int, total: int):
+        self.doomed = doomed
+        self.total = total
+
+
+def _abort_if_amplified(table: str, doomed: int, total: int) -> bool:
+    if doomed <= _SWEEP_ABORT_MIN_ROWS:
+        return False
+    pct = (100.0 * doomed / total) if total else 0.0
+    if pct <= _SWEEP_ABORT_PCT:
+        return False
+    log.error(
+        "SWEEP ABORTED: %s would delete %d of %d rows (%.0f%%) — that is a "
+        "broken-state signature, not routine cleanup (v1.18.10 amplifier class). "
+        "Nothing was deleted; investigate before the next sync.",
+        table, doomed, total, pct,
+    )
+    return True
+
+
 def _sweep_orphan_user_overrides(db_path) -> int:
     # v1.12.60: delete user_overrides rows with no theme presence (no
     # local_files, no placements, no Plex sidecar) and no in-flight
@@ -3567,8 +3607,11 @@ def _sweep_orphan_user_overrides(db_path) -> int:
     # SET-URL download left the override unprotected and this sweep
     # DELETED it on the next sync (the v1.18.10 amplifier class).
     with get_conn(db_path) as conn:
-        return conn.execute(
-            """
+        _total = conn.execute("SELECT COUNT(*) FROM user_overrides").fetchone()[0]
+        try:
+            with transaction(conn):
+                _n = conn.execute(
+                    """
             DELETE FROM user_overrides
             WHERE NOT EXISTS (
                 SELECT 1 FROM local_files lf
@@ -3599,7 +3642,12 @@ def _sweep_orphan_user_overrides(db_path) -> int:
                   AND j.status IN ('pending', 'running')
               )
             """
-        ).rowcount or 0
+                ).rowcount or 0
+                if _abort_if_amplified("user_overrides", _n, _total):
+                    raise _SweepAborted(_n, _total)
+                return _n
+        except _SweepAborted:
+            return 0
 
 
 def _prune_stale_pending_updates(db_path) -> int:
@@ -3615,8 +3663,11 @@ def _prune_stale_pending_updates(db_path) -> int:
     # A new-theme row whose title has left Plex (no plex_items row) still
     # prunes, preserving the orphan-cleanup intent.
     with get_conn(db_path) as conn:
-        pruned = conn.execute(
-            """
+        _total = conn.execute("SELECT COUNT(*) FROM pending_updates").fetchone()[0]
+        try:
+            with transaction(conn):
+                pruned = conn.execute(
+                    """
             DELETE FROM pending_updates
             WHERE NOT EXISTS (
                 SELECT 1 FROM local_files lf
@@ -3657,7 +3708,15 @@ def _prune_stale_pending_updates(db_path) -> int:
                   AND j.status IN ('pending', 'running')
               )
             """
-        ).rowcount or 0
+                ).rowcount or 0
+                # v0.51.229: pending_updates has NO recovery walker (unlike
+                # user_overrides, which v1.18.10/v1.18.83 can rebuild from events), so a
+                # mass-prune here is unrecoverable — every un-actioned ACCEPT / KEEP
+                # CURRENT prompt and every recorded decision, gone.
+                if _abort_if_amplified("pending_updates", pruned, _total):
+                    raise _SweepAborted(pruned, _total)
+        except _SweepAborted:
+            pruned = 0
     if pruned:
         log_event(
             db_path, level="INFO", component="sync",
