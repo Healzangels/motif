@@ -158,7 +158,12 @@ def test_drop_detection_phases_have_distinct_labels():
     # v1.24.14 widened 4200→5400: the read-failure baseline-hold breadcrumb
     # pushed the later phase labels down a few lines. v0.51.14 widened
     # 5400→8000: the chronic-pin escape (audit #5) sits before the gate.
-    block = SYNC_PY[i:i + 8000]
+    # v0.51.237: stop widening. A fixed +N asserts the incidental BYTE LENGTH of
+    # this region, not the invariant — every comment added inside it (and motif
+    # requires a `# vX.Y.Z:` rationale on load-bearing lines, so the region only
+    # grows) walks the last label off the end and reds the suite for no defect.
+    # Anchor on the phase that genuinely follows instead; it can't go stale.
+    block = SYNC_PY[i:SYNC_PY.index("_clear_url_less_pending_updates(db_path)", i)]
     assert 'log.warning("drop detection failed' in block
     assert 'log.warning("git baseline advance failed' in block
     assert 'log.warning("mirror compaction failed' in block

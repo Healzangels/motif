@@ -3954,6 +3954,12 @@ def run_sync(db_path, base_url: str, *,
             # it, remote-walk-only). git_failed_paths / git_unresolved feed the
             # baseline-reset detection routing + the chronic-pin escape below.
             index_incomplete = False
+            # v0.51.237: index entries with no usable `id`. They are in the
+            # catalog but cannot be mapped to a tmdb_id, so unlike a per-item
+            # fetch error they CANNOT be excluded per-id from the drop sweep —
+            # same situation as git_unresolved on the baseline-reset path, and
+            # handled the same way: skip detection entirely for the run.
+            unmappable_entries = 0
             errored_by_mt: dict[str, set[int]] = {}
             git_failed_paths: list[str] = []
             git_unresolved = 0
@@ -4165,6 +4171,24 @@ def run_sync(db_path, base_url: str, *,
                                 error_count=stats.errors,
                             )
                         if result is None:
+                            # v0.51.237: _do_fetch returns None ONLY for an
+                            # index entry with no `id`. Pre-fix this was a bare
+                            # continue: no stats.errors (so the errors gate
+                            # passed) and no errored_by_mt entry (so nothing was
+                            # excluded), yet the item's last_seen_sync_at was
+                            # never refreshed — the full-walk sweep then stamped
+                            # a LIVE title tdb_dropped_at, flipping SRC to – with
+                            # the gray TDB◌ pill and dropping its pending_updates.
+                            # Exactly the v1.21.38 false-drop class, through the
+                            # one door v1.21.44's per-id exclusion can't cover.
+                            unmappable_entries += 1
+                            if unmappable_entries == 1:
+                                log.warning(
+                                    "sync %s: an index entry has no `id` — it "
+                                    "cannot be mapped to a tmdb_id, so drop "
+                                    "detection is skipped this run rather than "
+                                    "risk mis-stamping a live title as dropped",
+                                    media_type)
                             continue
                         if result[0] == "error":
                             stats.errors += 1
@@ -4280,7 +4304,7 @@ def run_sync(db_path, base_url: str, *,
                     # — it stays ungated.
                     n_dropped = _detect_and_stamp_drops_git(
                         db_path, git_mirror, sync_ts=sync_ts)
-                elif index_incomplete:
+                elif index_incomplete or unmappable_entries:
                     # v1.21.44 (review of v1.21.38): a swallowed INDEX PAGE
                     # means a chunk of items is genuinely MISSING from this
                     # run's catalog and we can't enumerate which — a stale
@@ -4290,11 +4314,19 @@ def run_sync(db_path, base_url: str, *,
                     # land here — they're handled by excluding just those ids
                     # below, so a single chronically-erroring item can't
                     # permanently starve drop detection (the v1.21.38 bug).
+                    # v0.51.237: name WHICH signal fired — an incomplete index
+                    # and an unmappable entry both make last_seen unreliable but
+                    # mean different upstream faults, and a cold path needs the
+                    # more explicit breadcrumb, not the less (v1.18.5/v1.18.7).
                     log.info(
-                        "Sync run #%s: skipping drop detection — an index "
-                        "page failed this run; the catalog is incomplete and "
-                        "a stale last_seen_sync_at would be mis-stamped as a "
-                        "drop", run_id,
+                        "Sync run #%s: skipping drop detection — %s; a stale "
+                        "last_seen_sync_at would be mis-stamped as a drop",
+                        run_id,
+                        ("an index page failed this run, so the catalog is "
+                         "incomplete" if index_incomplete else
+                         f"{unmappable_entries} index entr"
+                         f"{'y has' if unmappable_entries == 1 else 'ies have'} "
+                         f"no `id` and cannot be excluded per-item"),
                     )
                 else:
                     media_types_seen: set[str] = set()
