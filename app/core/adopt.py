@@ -273,7 +273,12 @@ def _maybe_restore_url_history(
     """
     if not sha256 or media_type is None or tmdb_id is None:
         return None
-    with get_conn(db_path) as conn:
+    # v0.51.236: same autocommit exposure as replace_with_themerrdb — the A→U
+    # promotion is a local_files source_kind flip PLUS a user_overrides INSERT plus
+    # a themes.youtube_url UPDATE. Partially applied, the row's SRC letter disagrees
+    # with its override state (source_kind='url' with no override to justify it, or
+    # the reverse), which no walker reconciles. All-or-nothing.
+    with get_conn(db_path) as conn, transaction(conn):
         hist = conn.execute(
             """SELECT source_kind, source_video_id, youtube_url, saved_at
                FROM local_files_history
@@ -432,7 +437,15 @@ def replace_with_themerrdb(
     """
     if media_type not in ("movie", "tv"):
         raise AdoptError(f"unknown media_type: {media_type}")
-    with get_conn(db_path) as conn:
+    # v0.51.236: get_conn is isolation_level=None (autocommit), so these four
+    # writes — cancel in-flight jobs, capture previous_urls, DELETE the override,
+    # INSERT the download jobs — each committed on their own. If the final INSERT
+    # failed (lock timeout, ENOSPC) the destructive half had ALREADY landed: the
+    # user's override was gone and their in-flight download cancelled, with no
+    # replacement enqueued. That is the destroy-then-fail ordering class v1.22.40
+    # fixed for the filesystem; this is its DB twin. One transaction, so a failure
+    # anywhere leaves the row exactly as the user left it.
+    with get_conn(db_path) as conn, transaction(conn):
         theme = conn.execute(
             "SELECT youtube_url, upstream_source FROM themes "
             "WHERE media_type = ? AND tmdb_id = ?",

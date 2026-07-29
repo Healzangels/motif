@@ -2428,7 +2428,18 @@ class _GitMirror:
         if isinstance(cur, DTree):
             return None
         try:
-            return json.loads(cur.as_raw_string())
+            parsed = json.loads(cur.as_raw_string())
+            # v0.51.236: json.loads returns a list/str/int/None for a valid-JSON
+            # NON-object blob, but this returns dict|None and every consumer calls
+            # record.get(...) — so a `[...]` blob raised AttributeError out of the
+            # apply loop, where nothing catches it, aborting the whole sync (the
+            # v0.51.234 class, one path further upstream). Route it into the
+            # malformed-blob handler below: warn-once + None = a counted read
+            # failure that holds the baseline instead of killing the run.
+            if not isinstance(parsed, dict):
+                raise ValueError(
+                    f"expected a JSON object, got {type(parsed).__name__}")
+            return parsed
         except (ValueError, AttributeError) as e:
             # v1.17.11: class-9 fix — pre-fix the silent `return
             # None` was indistinguishable from "tree path missing"
