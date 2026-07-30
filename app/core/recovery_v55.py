@@ -2496,6 +2496,7 @@ def maybe_cleanup_duplicate_placements(db_path: Path) -> dict:
         "stale_hardlink_rows_found": 0,
         "deleted": 0,
         "skipped_file_present": 0,
+        "skipped_folder_missing": 0,
     }
     with get_conn(db_path) as conn:
         row = conn.execute(
@@ -2555,7 +2556,8 @@ def maybe_cleanup_duplicate_placements(db_path: Path) -> dict:
     # the hardlink row alone — that's a legit dual state.
     to_delete: list[int] = []
     for c in candidates:
-        sidecar = Path(c["media_folder"]) / "theme.mp3"
+        folder = Path(c["media_folder"])
+        sidecar = folder / "theme.mp3"
         if sidecar.is_file():
             stats["skipped_file_present"] += 1
             log.info(
@@ -2563,6 +2565,27 @@ def maybe_cleanup_duplicate_placements(db_path: Path) -> dict:
                 "hardlink (file present) AND plex_upload — "
                 "leaving hardlink row alone (legitimate dual)",
                 c["media_type"], c["tmdb_id"], c["section_id"],
+            )
+            continue
+        # v0.51.241: a missing sidecar is only evidence of staleness when the
+        # FOLDER is there. If the folder itself is gone we are not looking at a
+        # removed theme.mp3 — we are looking at an unreachable path, which is
+        # what an unmounted /data looks like from inside the container (on
+        # Unraid the array may not be up when the container starts). Deleting on
+        # that reading is the v1.18.10 amplifier-sweep class: one mount outage
+        # would drop the hardlink half of EVERY dual placement in a single pass.
+        # Skipping per-row is better than a count cap here, because the
+        # legitimate case is also "every candidate's sidecar is missing" — the
+        # folder is the only signal that separates them. Rows skipped this way
+        # keep their placement and are re-examined next boot (the marker is only
+        # stamped when the run completes).
+        if not folder.is_dir():
+            stats["skipped_folder_missing"] += 1
+            log.warning(
+                "v1.19.17 cleanup: %s/%s sec=%s — media folder %s does not "
+                "exist (not just the sidecar). Treating as unreachable, NOT "
+                "stale; leaving the placement row alone.",
+                c["media_type"], c["tmdb_id"], c["section_id"], c["media_folder"],
             )
             continue
         to_delete.append(c["rid"])
@@ -2575,14 +2598,28 @@ def maybe_cleanup_duplicate_placements(db_path: Path) -> dict:
             )
             if cur.rowcount:
                 stats["deleted"] += cur.rowcount
-        conn.execute(
-            "INSERT OR REPLACE INTO runtime_settings "
-            "  (key, value, updated_at) "
-            "VALUES "
-            "  ('recovery_duplicate_placements_cleanup_done_at"
-            "_v1_19_17', ?, ?)",
-            (now_iso, now_iso),
-        )
+        # v0.51.241: only close the one-shot when every candidate was actually
+        # decidable. If any row was skipped because its folder was unreachable
+        # we cannot tell "movie removed" from "/data not mounted", so stamping
+        # here would make that guess permanent — the walker would never look
+        # again. Leaving it unstamped costs one cheap re-run per boot and lets a
+        # healthy mount finish the job (same fail-safe shape as v1.24.34).
+        if stats["skipped_folder_missing"]:
+            log.warning(
+                "v1.19.17 duplicate placement cleanup: %d candidate(s) had an "
+                "unreachable media folder — NOT stamping the one-shot so a boot "
+                "with /data mounted can finish the cleanup.",
+                stats["skipped_folder_missing"],
+            )
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO runtime_settings "
+                "  (key, value, updated_at) "
+                "VALUES "
+                "  ('recovery_duplicate_placements_cleanup_done_at"
+                "_v1_19_17', ?, ?)",
+                (now_iso, now_iso),
+            )
     if stats["deleted"] > 0:
         stats["detected"] = True
     log.warning(

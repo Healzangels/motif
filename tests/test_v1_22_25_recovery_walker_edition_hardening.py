@@ -92,9 +92,13 @@ def test_dup_cleanup_spares_other_edition_hardlink(tmp_path):
     init_db(db)
     with sqlite3.connect(db) as conn:
         _theme(conn)
-        # Extended hardlink — file missing (folder doesn't exist on disk).
-        _placement(conn, edition="extended",
-                   folder="/data/m/M {edition-Extended}", kind="hardlink")
+        # Extended hardlink — the FOLDER exists, only theme.mp3 is missing.
+        # v0.51.241: it must be a real dir; an unreachable folder is now skipped
+        # as "can't tell removed-movie from unmounted /data", which would make
+        # this test pass without ever exercising the edition guard it exists for.
+        _ext = tmp_path / "M {edition-Extended}"
+        _ext.mkdir()
+        _placement(conn, edition="extended", folder=str(_ext), kind="hardlink")
         # Standard edition's plex_upload, placed later.
         _placement(conn, edition="", folder="", kind="plex_upload",
                    placed_at="2026-06-07T00:00:00")
@@ -118,8 +122,10 @@ def test_dup_cleanup_still_deletes_same_edition_dup(tmp_path):
     init_db(db)
     with sqlite3.connect(db) as conn:
         _theme(conn)
-        _placement(conn, edition="extended",
-                   folder="/data/m/M {edition-Extended}", kind="hardlink")
+        # v0.51.241: real dir — see the note in the sibling test above.
+        _ext = tmp_path / "M {edition-Extended}"
+        _ext.mkdir()
+        _placement(conn, edition="extended", folder=str(_ext), kind="hardlink")
         _placement(conn, edition="extended", folder="", kind="plex_upload",
                    placed_at="2026-06-07T00:00:00")
         conn.commit()
