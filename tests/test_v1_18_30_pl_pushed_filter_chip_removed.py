@@ -283,5 +283,7 @@ def test_link_pills_pu_still_present():
     idx = src.index('elif p == "pu":')
     # Widened from 600 → 1200; the v1.18.22 explanatory comment
     # before the actual branches.append push the SQL past 600.
-    block = src[idx:idx + 1200]
+    # v0.51.238: stop widening — anchor on the next branch. A fixed +N pins the
+    # branch's incidental byte length, and this one has now overflowed twice.
+    block = src[idx:src.index('elif p == "rp":', idx)]
     assert "COALESCE(p_e.placement_kind, p_g.placement_kind) = 'plex_upload'" in block

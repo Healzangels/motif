@@ -283,7 +283,11 @@ def test_sql_link_pills_branch_for_pu():
     src = API_PY.read_text()
     assert 'elif p == "pu":' in src
     idx = src.index('elif p == "pu":')
-    block = src[idx:idx + 1500]
+    # v0.51.238: was a fixed +1500 slice, which asserts the byte length of the
+    # branch rather than its content — motif requires a `# vX.Y.Z:` rationale on
+    # load-bearing lines, so the branch only grows and eventually walks the SQL
+    # off the end (it did). Anchored on the next branch instead.
+    block = src[idx:src.index('elif p == "rp":', idx)]
     assert "COALESCE(p_e.placement_kind, p_g.placement_kind) = 'plex_upload'" in block
 
 

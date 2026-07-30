@@ -3068,11 +3068,23 @@ def _library_main_query(
                 # stamp is suppressed for these rows by plex_enum
                 # (motif IS the source — no independent Plex theme).
                 # v1.24.28: exclude STALE plex_uploads — those now read as the
-                # RP (re-push) chip, not PU. A valid PU has theme_present NULL
-                # (legacy/unchecked) or 1; a stale one is theme_present=0.
+                # RP (re-push) chip, not PU.
+                # v0.51.238: use the NEGATION of _LIB_STALE_PU_SQL rather than a
+                # hand-rolled `theme_present IS NOT 0`. v1.24.28 wrote that when
+                # theme_present=0 WAS the whole definition of stale, but v1.24.40
+                # added rk-liveness and v1.24.41 added the non-NULL-rk guard — to
+                # _LIB_STALE_PU_SQL only. So two shapes rendered PU (needs_repush
+                # is CASE WHEN _LIB_STALE_PU_SQL, which they fail) yet matched
+                # NEITHER filter: a theme_present=0 row whose rk is live (the
+                # v1.24.40 self-correction) and a legacy plex_upload with a NULL
+                # rk. Filtering by PU hid rows that visibly paint PU. Deriving
+                # from the same constant makes PU and RP an exact partition of
+                # plex_upload and cannot drift again (contract-drift, v1.17.10).
+                # NOT COALESCE(...,0) mirrors the render's CASE WHEN, which sends
+                # a NULL theme_present down the ELSE (not stale) branch.
                 branches.append(
                     "(COALESCE(p_e.placement_kind, p_g.placement_kind) = 'plex_upload' "
-                    " AND COALESCE(p_e.theme_present, p_g.theme_present) IS NOT 0)"
+                    f" AND NOT COALESCE(({_LIB_STALE_PU_SQL}), 0))"
                 )
             elif p == "rp":
                 # v1.24.28: RP = re-push needed — a plex_upload whose uploaded

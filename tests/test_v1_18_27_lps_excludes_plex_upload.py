@@ -173,14 +173,18 @@ def test_sql_link_pills_ps_already_excludes_via_is_null():
     something like `not media_folder` (which would reintroduce
     the bug)."""
     src = API_PY.read_text()
-    # Find the link_pills='ps' branch.
-    elif_idx = src.index('elif p == "ps":')
     # v1.19.63: widened 800→1500 to absorb the new comment block
     # explaining the v1.19.61 PS→BK unification drift fix.
     # v1.19.64: widened further to 3000 to absorb the v1.19.64
     # WIDENED comment block explaining the pure-P-rows fold-in.
     # v1.24.28: 3000→3700 to absorb the new 'rp' (re-push) link_pills
-    # branch inserted between 'pu' and 'b' (the first branch carrying
-    # the media_folder IS NULL predicate this pin anchors on).
-    block = src[elif_idx:elif_idx + 3700]
+    # branch inserted between 'pu' and 'b'.
+    # v0.51.238: stop widening (this is the FOURTH), and stop anchoring on 'ps'
+    # — v1.19.66 made that branch a `(1 = 0)` no-op, so the docstring's premise
+    # is stale: the IS NULL predicate this guards actually lives in the 'b'
+    # branch, ~4200 chars away, which is why the slice kept overflowing. The
+    # invariant is "the LINK filters still test IS NULL, not a falsy check",
+    # which is a property of the whole link_pills block — so scope it to that.
+    start = src.index("    if link_pills:")
+    block = src[start:src.index("        if branches:", start)]
     assert "COALESCE(p_e.media_folder, p_g.media_folder) IS NULL" in block
