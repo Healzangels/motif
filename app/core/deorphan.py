@@ -70,7 +70,18 @@ def _resolve_real_tmdb(tmdb_client, imdb_id: str, media_type: str):
         return None
     # a 'tv' orphan must resolve to a tv record (and vice-versa) — otherwise
     # we'd re-key into the wrong identity space.
-    if (cand_kind == "tv") != (media_type == "tv"):
+    # v0.51.240: was `(cand_kind == "tv") != (media_type == "tv")`, a TWO-class
+    # test over a THREE-class space. themes.media_type is movie/tv/COLLECTION,
+    # and _lookup_by_imdb only ever yields 'movie' or 'tv', so a collection
+    # orphan against a movie hit read False != False -> pass, and the row was
+    # re-keyed onto a MOVIE's tmdb_id while staying media_type='collection' —
+    # precisely the wrong-identity-space re-key this guard exists to stop.
+    # Reachable because the v1.22.52 mint stamps plex_items.guid_imdb onto the
+    # minted orphan whatever its media_type, and this walker's SELECT does not
+    # filter media_type. Equality is identical for movie/tv and correctly
+    # refuses collection (TMDB's /find cannot resolve a collection identity
+    # from an imdb id at all — it returns only movie_results / tv_results).
+    if cand_kind != media_type:
         return None
     return cand_tmdb
 
