@@ -284,6 +284,23 @@ def _set_cursor(conn, rating_key: str | None) -> None:
     )
 
 
+# v0.51.239: the id a candidate row will ACTUALLY be keyed to, mirroring
+# _resolve_or_mint_tmdb_id's precedence (a real guid_tmdb wins, else the orphan
+# id reachable through theme_id). The candidate query's NOT EXISTS gates compared
+# bare `pi.guid_tmdb`, which is NULL on the FORCE path — force deliberately drops
+# the `guid_tmdb IS NOT NULL` filter so no-TDB rows can be captured — so every
+# comparison evaluated to NULL and the exclusions were vacuously true for exactly
+# the rows force exists to serve. A collection already backed under its minted
+# orphan id was still offered, so DOWNLOAD PLEX BACKUP re-fetched ~1MB from Plex
+# and rewrote local_files instead of being the no-op the code says it is. On the
+# non-force path guid_tmdb is NOT NULL by construction, so this COALESCE reduces
+# to the old expression and that walk is unchanged.
+_CTB_EFFECTIVE_TMDB = (
+    "COALESCE(pi.guid_tmdb, "
+    "         (SELECT t.tmdb_id FROM themes t WHERE t.id = pi.theme_id))"
+)
+
+
 def _resolve_or_mint_tmdb_id(
     conn, r, motif_mt: str, *, mint: bool,
     minted_out: list | None = None,
@@ -512,7 +529,7 @@ def identify_c1_rows(
         sql_parts.append(
             "   AND NOT EXISTS ("
             "     SELECT 1 FROM local_files lf "
-            "      WHERE lf.tmdb_id = pi.guid_tmdb "
+            f"      WHERE lf.tmdb_id = {_CTB_EFFECTIVE_TMDB} "
             "        AND lf.section_id = pi.section_id "
             "        AND lf.edition_key = pi.edition_key "
             "        AND lf.media_type = CASE pi.media_type "
@@ -526,7 +543,7 @@ def identify_c1_rows(
         sql_parts.append(
             "   AND NOT EXISTS ("
             "     SELECT 1 FROM local_files lf "
-            "      WHERE lf.tmdb_id = pi.guid_tmdb "
+            f"      WHERE lf.tmdb_id = {_CTB_EFFECTIVE_TMDB} "
             "        AND lf.section_id = pi.section_id "
             "        AND lf.edition_key = pi.edition_key "
             "        AND lf.media_type = CASE pi.media_type "
@@ -538,7 +555,7 @@ def identify_c1_rows(
     sql_parts.append(
         "   AND NOT EXISTS ("
         "     SELECT 1 FROM placements pl "
-        "      WHERE pl.tmdb_id = pi.guid_tmdb "
+        f"      WHERE pl.tmdb_id = {_CTB_EFFECTIVE_TMDB} "
         "        AND pl.section_id = pi.section_id "
         "        AND pl.edition_key = pi.edition_key "
         "        AND pl.media_type = CASE pi.media_type "
