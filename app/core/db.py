@@ -1183,6 +1183,14 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         -- ======================================================================
         -- themes: add id, tvdb_id; extend upstream_source CHECK
         -- ======================================================================
+        DROP TABLE IF EXISTS themes_new;
+        -- v0.51.242: pre-clean a shadow left by an interrupted run. These two
+        -- rebuilds are NOT wrapped in BEGIN/COMMIT (unlike the 10 later
+        -- op_progress rebuilds, which roll back cleanly), so a kill between the
+        -- CREATE and the RENAME leaves the shadow committed — and the retry then
+        -- dies on 'table already exists', failing init_db on EVERY boot until
+        -- someone drops it by hand. Mirrors the v1.19.73 pre-clean in
+        -- _widen_check_constraint.
         CREATE TABLE themes_new (
             id                   INTEGER PRIMARY KEY AUTOINCREMENT,
             media_type           TEXT NOT NULL CHECK (media_type IN ('movie', 'tv')),
@@ -1234,6 +1242,14 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         -- ======================================================================
         -- jobs: extend job_type to include 'scan' and 'adopt'
         -- ======================================================================
+        DROP TABLE IF EXISTS jobs_new;
+        -- v0.51.242: pre-clean a shadow left by an interrupted run. These two
+        -- rebuilds are NOT wrapped in BEGIN/COMMIT (unlike the 10 later
+        -- op_progress rebuilds, which roll back cleanly), so a kill between the
+        -- CREATE and the RENAME leaves the shadow committed — and the retry then
+        -- dies on 'table already exists', failing init_db on EVERY boot until
+        -- someone drops it by hand. Mirrors the v1.19.73 pre-clean in
+        -- _widen_check_constraint.
         CREATE TABLE jobs_new (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             job_type        TEXT NOT NULL
@@ -1412,6 +1428,14 @@ def _migrate_v6_to_v7(conn: sqlite3.Connection) -> None:
     """)
     # widen jobs.job_type to include 'plex_enum'
     conn.executescript("""
+        DROP TABLE IF EXISTS jobs__new;
+        -- v0.51.242: pre-clean a shadow left by an interrupted run. These two
+        -- rebuilds are NOT wrapped in BEGIN/COMMIT (unlike the 10 later
+        -- op_progress rebuilds, which roll back cleanly), so a kill between the
+        -- CREATE and the RENAME leaves the shadow committed — and the retry then
+        -- dies on 'table already exists', failing init_db on EVERY boot until
+        -- someone drops it by hand. Mirrors the v1.19.73 pre-clean in
+        -- _widen_check_constraint.
         CREATE TABLE jobs__new (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             job_type        TEXT NOT NULL CHECK (
