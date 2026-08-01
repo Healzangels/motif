@@ -15,6 +15,7 @@ all admin-only-DoS / non-applicable / already-neutralized; this is hygiene.
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -28,10 +29,22 @@ def test_starlette_pinned_to_fixed_floor():
     assert "fastapi==0.138.*" in REQ
 
 
+def _floor(pkg: str) -> tuple:
+    """The declared `pkg>=X.Y.Z` floor, as a comparable int tuple."""
+    m = re.search(rf"^{re.escape(pkg)}>=([0-9.]+)", REQ, re.M)
+    assert m, f"no floor declared for {pkg}"
+    return tuple(int(p) for p in m.group(1).split("."))
+
+
 def test_dependency_security_floors():
-    assert "yt-dlp>=2026.6.9" in REQ
-    assert "dulwich>=1.2.6" in REQ
-    assert "python-multipart>=0.0.31" in REQ
+    """v0.51.245: these were literal string matches, so the quarterly yt-dlp
+    bump rewrote the CVE guard instead of being checked against it — the floor
+    could have been moved DOWN and nothing would have failed. Compared as
+    versions now, so a quarterly bump passes and a regression below the
+    CVE-2026-50023/50574/50019 + GHSA-69qj fix release does not."""
+    assert _floor("yt-dlp") >= (2026, 6, 9), "below the v1.24.42 CVE floor"
+    assert _floor("dulwich") >= (1, 2, 6)
+    assert _floor("python-multipart") >= (0, 0, 31)
 
 
 def test_dockerfile_ffmpeg_version_guard():

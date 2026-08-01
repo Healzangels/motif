@@ -4711,7 +4711,8 @@
 # 0.51.242: the audit item 'op_progress rebuild shadow-table pre-clean' turned out to be a FALSE POSITIVE, and measuring it found a real one next door. The rebuild idiom is CREATE TABLE X_new -> INSERT SELECT -> DROP X -> RENAME; if a kill lands between the CREATE and the RENAME and that shadow COMMITS, the retry on the next boot dies on 'table X_new already exists' — init_db raises, so the container fails to start on EVERY restart until someone drops the table by hand (verified end to end). Whether it commits depends purely on BEGIN/COMMIT, which was measured rather than assumed: all TEN op_progress rebuilds are BEGIN-wrapped and roll back cleanly, so they needed nothing. THREE older blocks are not — themes_new + jobs_new in _migrate_v4_to_v5 and jobs__new in _migrate_v6_to_v7 — and those genuinely leaked a shadow. They now pre-clean, mirroring the v1.19.73 pre-clean in _widen_check_constraint. Only reachable on a DB still below schema v7 (current is v78), so almost certainly latent, but a boot-blocking crash-loop is worth three free lines. A lint now requires every rebuild to be either transactional or pre-cleaned, so a future one can't reopen this.
 # 0.51.243: loudness controls sit in the value column, so the INFO card keeps one alignment.
 # 0.51.244: re-opening the info card you're already on updates in place, keeping your scroll.
-__version__ = "0.51.244"
+# 0.51.245: quarterly floors — yt-dlp 2026.7.4, apprise 1.12.0.
+__version__ = "0.51.245"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

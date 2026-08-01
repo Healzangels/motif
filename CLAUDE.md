@@ -600,14 +600,13 @@ rows where cloud-backup is the only viable recovery path.
   "old extractor" failure mode behind the looser `>=` resolution.
   Verify the running version on a deployed container via the
   startup log line `yt_dlp = X.Y.Z` (added v1.15.16). Last
-  bumped: 2026.3.17 (v1.15.16); re-verified latest 2026-06-06
-  (v1.22.24) — still the most recent stable, no newer release.
+  bumped: **2026.7.4** (v0.51.245, 2026-08-01).
 - **Quarterly: bump the `apprise` floor in `requirements.txt`**
   to current latest stable. Apprise ships service-specific
   transport updates as new notification services are added and
   URL schemas evolve; a stale floor masks "service unavailable"
-  errors behind a generic dispatch failure. Last bumped: 1.11.0
-  (v1.22.24).
+  errors behind a generic dispatch failure. Last bumped:
+  **1.12.0** (v0.51.245, 2026-08-01).
 
 ## Deploy + branch state
 

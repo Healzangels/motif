@@ -32,13 +32,13 @@ DB_PY = REPO / "app" / "core" / "db.py"
 # ── Quarterly dep bumps ──────────────────────────────────────
 
 
-def test_apprise_floor_bumped_to_1_10_0():
-    """Apprise floor — v1.22.24 bumped it 1.10.0 → 1.11.0 (latest stable
-    2026-05-29) on the quarterly review."""
+def test_apprise_floor_is_current():
+    """Apprise floor — v0.51.245 bumped it 1.11.0 → 1.12.0 (latest stable,
+    released 2026-07-04) on the quarterly review."""
     req = REQUIREMENTS.read_text()
-    assert "apprise>=1.11.0" in req, (
-        "v1.22.24: apprise floor must be bumped to 1.11.0 (latest stable "
-        "2026-05-29)"
+    assert "apprise>=1.12.0" in req, (
+        "v0.51.245: apprise floor must be bumped to 1.12.0 (latest stable "
+        "2026-07-04)"
     )
     # Superseded floors must NOT survive in the LIVE require
     # (comments referencing them for history are fine).
@@ -49,18 +49,19 @@ def test_apprise_floor_bumped_to_1_10_0():
     joined = "\n".join(live_lines)
     assert "apprise>=1.7.0" not in joined
     assert "apprise>=1.10.0" not in joined
+    assert "apprise>=1.11.0" not in joined
 
 
-def test_yt_dlp_floor_unchanged_but_verified():
-    """v1.24.42 (security audit): yt-dlp floor bumped 2026.3.17 → 2026.6.9 (the
-    release fixing CVE-2026-50023/50574/50019 + GHSA-69qj). The comment must
-    still record the quarterly re-verification lineage."""
+def test_yt_dlp_floor_records_its_quarterly_lineage():
+    """v0.51.245: floor 2026.6.9 → 2026.7.4 on the quarterly review. The point
+    of this guard is the LINEAGE — every quarterly check leaves a dated note in
+    requirements.txt, so "when was this last looked at?" is answerable from the
+    file rather than from memory. (The CVE floor itself is enforced as a version
+    comparison in test_v1_24_42_security_floors, not as a literal here.)"""
     req = REQUIREMENTS.read_text()
-    assert "yt-dlp>=2026.6.9" in req
-    assert "re-verified 2026-06-06" in req, (
-        "v1.22.24: yt-dlp comment must record the quarterly "
-        "re-verification date even when no bump was needed"
-    )
+    assert "yt-dlp>=2026.7.4" in req
+    for marker in ("re-verified 2026-06-06", "quarterly review 2026-08-01"):
+        assert marker in req, f"yt-dlp lineage note missing: {marker}"
 
 
 # ── Schema column comment ────────────────────────────────────
