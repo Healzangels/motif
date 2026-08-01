@@ -134,12 +134,17 @@ def test_clipping_has_an_explainer():
     assert "clip" in ttl.lower() and "LEVEL THIS THEME" in ttl
 
 
-def test_controls_moved_into_a_full_width_block():
+def test_controls_moved_into_their_own_block():
     assert 'class="loud-controls"' in APP_JS
-    # the block spans both grid columns so the controls aren't squished in the value cell.
-    assert ".loud-controls { grid-column: 1 / -1;" in APP_CSS
+    # v0.51.243: the block is no longer full-width. Spanning both columns is what made the
+    # card "look off" — it stranded the <dt> in the label column and shifted the controls
+    # ~156px left of every other value. De-squishing is carried by the two rules below,
+    # not by the span (measured: 523px of value column vs 366px of buttons at 720px).
+    assert ".loud-controls { grid-column: 2;" in APP_CSS
     # the +/- steppers drop the .btn-tiny 72px min-width.
     assert ".loud-stepper .btn-tiny" in APP_CSS
+    # and the row wraps rather than overflowing when the column IS narrow (375px).
+    assert ".loud-ctl-row { display: flex; flex-wrap: wrap;" in APP_CSS
     # every wiring hook the handlers bind to must survive the re-layout.
     for hook in ('id="loud-target"', 'id="loud-gain-note"', 'id="loud-result"',
                  'id="loud-preview-note"', 'id="loud-preview-audio"',

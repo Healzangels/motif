@@ -59,10 +59,21 @@ def test_the_over_ceiling_warning_keeps_its_own_colour():
     assert 'class="loud-controls accent-red"' not in dd
 
 
-def test_loud_controls_still_spans_both_grid_columns():
-    """The dd must keep the full-width span, or the v0.51.207 de-squishing regresses."""
+def test_loud_controls_sit_in_the_value_column():
+    """v0.51.243 REPLACES this guard's original premise. It used to assert the full-width
+    span "or the v0.51.207 de-squishing regresses" — measured false: at the real 720px
+    drawer the value column is 523px against 366px of buttons, and the span was instead
+    what stranded the <dt> alone in the label column and misaligned the whole block.
+
+    What still has to hold is the anti-squish MECHANISM, which was never the span: the
+    steppers drop the .btn-tiny min-width, and .loud-ctl-row wraps instead of overflowing
+    when the column really is narrow. Those are pinned here alongside the placement."""
     rule = APP_CSS[APP_CSS.index(".loud-controls {"):]
-    assert "grid-column: 1 / -1" in rule[:rule.index("}")]
+    rule = rule[:rule.index("}")]
+    assert "grid-column: 2" in rule
+    assert "1 / -1" not in rule
+    assert ".loud-stepper .btn-tiny" in APP_CSS
+    assert ".loud-ctl-row { display: flex; flex-wrap: wrap;" in APP_CSS
 
 
 # ── 2. the chip is distinguishable from the 4K badge ─────────────────────────
