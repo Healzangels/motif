@@ -114,7 +114,12 @@ def test_info_dialog_uses_helper():
     callsite uses the helper."""
     js = _read_js()
     fn_idx = js.index("async function openInfoDialog(")
-    body = js[fn_idx:fn_idx + 2000]
+    # v0.51.244: was js[fn_idx:fn_idx + 2000]. A comment added near the top of the
+    # function pushed the call past the window and this went red on a change that
+    # never touched it. Anchored on the OPENING SEQUENCE instead — everything this
+    # test cares about happens before the first await, and that boundary moves only
+    # when the open path itself is restructured, which is exactly when it should.
+    body = js[fn_idx:js.index("await _infoFetch(", fn_idx)]
     assert "showModalNoFocusRing(dlg)" in body, (
         "v1.16.1: openInfoDialog must use the helper — this is "
         "the user's exact repro: clicking info on a TV row showed "

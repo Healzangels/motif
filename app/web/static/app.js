@@ -17314,7 +17314,17 @@
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
     const body = document.getElementById('info-dlg-body');
-    body.innerHTML = recordLoaderHtml('loading…');
+    // v0.51.244 (the user: "after clicking remeasure the info card reloads"): it did —
+    // .dlg-body is the scroller and #info-dlg-body its only child, so the loader collapsed
+    // scrollHeight and clamped scrollTop to 0 (measured: 750 -> 0, LOUDNESS 660px below the
+    // fold). Re-opening the card ALREADY on screen now keeps the old render up during the
+    // fetch and puts the scroll back, so the numbers just change. Keyed on the fetch URL so
+    // two editions of one title (same tmdb/section/edition_key, different rk) can't collide.
+    const _cardKey = _infoUrl(mediaType, tmdbId, sectionId, ratingKey, editionKey);
+    const _sameCard = dlg.open && dlg.dataset.cardKey === _cardKey;
+    const _scroller = dlg.querySelector('.dlg-body');
+    const _keepScroll = _sameCard && _scroller ? _scroller.scrollTop : null;
+    if (!_sameCard) body.innerHTML = recordLoaderHtml('loading…');
     // v1.16.1: info dialog was the most-clicked-on offender for
     // the user's "X has a square around it like it being clicked
     // straight away" repro — the close button is the first
@@ -18411,6 +18421,11 @@
       ${auditPlaceholder}
       ${historySection}
     `;
+    // v0.51.244: stamp the identity the NEXT open compares against, and put the scroll back
+    // where the click happened. Set after the render so a failed fetch (which returns above)
+    // leaves the previous card's key intact rather than claiming to be this one.
+    dlg.dataset.cardKey = _cardKey;
+    if (_keepScroll !== null && _scroller) _scroller.scrollTop = _keepScroll;
     // v1.24.83: drop the poster on 404 / non-art so the hero collapses to just
     // the meta (mirrors the carousel's onerror handling; attached here, not
     // inline, so a future CSP can't block it).
