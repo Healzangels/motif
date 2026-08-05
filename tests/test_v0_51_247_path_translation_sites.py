@@ -171,3 +171,60 @@ def test_no_raw_sidecar_stat_on_a_folder_path_variable():
     assert not offenders, (
         "raw sidecar stat on a host-form folder_path — use "
         f"find_theme_sidecar_path(): {offenders}")
+
+
+# ── v0.51.248: regression parity for the SQL->Python gate rewrite ────────
+
+def test_the_new_gate_matches_the_old_sql_except_where_translation_applies(tmp_path):
+    """Differential. The v0.51.247 rewrite moved a candidate gate out of SQL, so
+    the risk is not "does the fix work" but "did anything ELSE change". Runs the
+    OLD `pi.folder_path = p.media_folder` predicate and the NEW set membership
+    over identical rows: they must agree on every case EXCEPT the translated one
+    (the bug), and in particular must still agree on untranslated installs — who
+    were never affected and must not be disturbed."""
+    from app.core.db import get_conn, init_db
+    from app.core.scheduler import _plex_claimed_folders
+    NOW = "2026-01-01T00:00:00+00:00"
+    cases = [
+        ("untranslated exact match",   "/data/movies/A",          "/data/movies/A",     "1", "movie", "movie", "same"),
+        ("translated host->container", "/mnt/user/data/movies/B", "/data/movies/B",     "1", "movie", "movie", "differs"),
+        ("genuinely different folder", "/data/movies/C",          "/data/movies/OTHER", "1", "movie", "movie", "same"),
+        ("tv show media_type mapping", "/data/tv/E",              "/data/tv/E",         "2", "tv",    "show",  "same"),
+    ]
+    d = tmp_path / "m.db"
+    init_db(d)
+    with get_conn(d) as c:
+        c.execute("INSERT INTO plex_sections (section_id,title,type,included,"
+                  "discovered_at,last_seen_at) VALUES ('1','M','movie',1,?,?)", (NOW, NOW))
+        c.execute("INSERT INTO plex_sections (section_id,title,type,included,"
+                  "discovered_at,last_seen_at) VALUES ('2','T','show',1,?,?)", (NOW, NOW))
+        for i, (lbl, pi_fp, pl_mf, sec, mt, pi_mt, _exp) in enumerate(cases):
+            c.execute("INSERT INTO plex_items (rating_key,section_id,media_type,"
+                      "folder_path,edition_key,title,first_seen_at,last_seen_at)"
+                      " VALUES (?,?,?,?,'',?,?,?)", (f"rk{i}", sec, pi_mt, pi_fp, lbl, NOW, NOW))
+            c.execute("INSERT INTO themes (media_type,tmdb_id,title,upstream_source,"
+                      "last_seen_sync_at,first_seen_sync_at) VALUES (?,?,?,'themoviedb',?,?)",
+                      (mt, 100 + i, lbl, NOW, NOW))
+            c.execute("INSERT INTO placements (media_type,tmdb_id,section_id,edition_key,"
+                      "media_folder,placed_at,placement_kind) VALUES (?,?,?,'',?,?,'hardlink')",
+                      (mt, 100 + i, sec, pl_mf, NOW))
+        c.commit()
+
+    old_sql = ("SELECT 1 FROM plex_items pi WHERE pi.folder_path = ? "
+               "AND pi.section_id = ? AND (CASE pi.media_type WHEN 'show' "
+               "THEN 'tv' ELSE pi.media_type END) = ?")
+    claimed = _plex_claimed_folders(d)
+    with get_conn(d) as c:
+        rows = c.execute("SELECT media_type, section_id, media_folder FROM "
+                         "placements ORDER BY tmdb_id").fetchall()
+    for r, (lbl, *_m, expect) in zip(rows, cases):
+        with get_conn(d) as conn:
+            old = conn.execute(old_sql, (r["media_folder"], r["section_id"],
+                                         r["media_type"])).fetchone() is not None
+        new = (str(r["section_id"]), r["media_type"], r["media_folder"]) in claimed
+        if expect == "same":
+            assert old == new, (
+                f"{lbl}: gate behaviour CHANGED (old={old} new={new}) — this case "
+                "was never broken and must not be disturbed")
+        else:
+            assert not old and new, f"{lbl}: expected the translated fix, got old={old} new={new}"

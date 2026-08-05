@@ -202,3 +202,43 @@ def test_both_touch_sites_route_through_the_helper():
         i = src.index(f"def {fn}")
         j = src.find("\ndef ", i + 1)
         assert "_best_effort_touch(" in src[i:j if j > 0 else len(src)], fn
+
+
+# ── v0.51.248: end-to-end through the real middleware ────────────────────
+
+def test_repeated_token_polls_write_once_through_the_real_app(tmp_path, monkeypatch):
+    """The unit tests above call authenticate_token directly. This drives real
+    HTTP through AuthMiddleware.dispatch — the path that actually froze — and
+    pins the whole point of the tag: a Homepage widget polling forever must
+    produce ONE write, not one per poll."""
+    from starlette.testclient import TestClient
+    from app.config import Settings
+    from app.web.api import create_app
+    monkeypatch.delenv("MOTIF_TRUST_FORWARD_AUTH", raising=False)
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
+    s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
+    init_db(s.db_path)
+    init_auth_schema(s.db_path)
+    auth._SETUP_COMPLETE_CACHE.clear()
+    create_admin(s.db_path, username="a", password="correct horse battery")
+    _id, raw = create_api_token(s.db_path, name="homepage", scope="read")
+    c = TestClient(create_app(s))
+    hdr = {"Authorization": f"Bearer {raw}"}
+
+    assert c.get("/healthz").status_code == 200
+    assert c.get("/api/public/stats").status_code == 401, "unauth must stay 401"
+    assert c.get("/api/public/stats", headers=hdr).status_code == 200
+
+    def stamp():
+        with get_conn(s.db_path) as cx:
+            return cx.execute("SELECT last_used_at FROM api_tokens").fetchone()[0]
+
+    first = stamp()
+    assert first is not None
+    for _ in range(15):
+        assert c.get("/api/public/stats", headers=hdr).status_code == 200
+    assert stamp() == first, "a poll inside the interval re-wrote — the freeze is back"
+    # and auth is not weakened by the caching/gating
+    assert c.get("/api/public/stats",
+                 headers={"Authorization": "Bearer thmr_bogus"}).status_code == 401
