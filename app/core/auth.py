@@ -57,7 +57,9 @@ log = logging.getLogger(__name__)
 # subsequent failures stay quiet (they can't auth anyway).
 _VERIFY_PASSWORD_WARNED: bool = False
 _VERIFY_TOKEN_WARNED: bool = False
-_TOUCH_LOCKED_WARNED: bool = False
+_TOUCH_LOCKED_WARNED: set[str] = set()  # v0.51.246: per-site, was a single bool
+# v0.51.246: keyed by db_path so tests with temp DBs don't poison each other.
+_SETUP_COMPLETE_CACHE: dict[str, bool] = {}
 
 SESSION_COOKIE = "motif_sess"
 SESSION_TTL_SECONDS = 30 * 24 * 3600  # 30 days
@@ -72,6 +74,9 @@ SESSION_IDLE_TIMEOUT_SECONDS = 14 * 24 * 3600  # 14 days
 # 30s busy_timeout on the writer lock during a long sync and softlocked the UI.
 # The refresh is also fail-fast + best-effort (see _touch_session_last_seen).
 SESSION_TOUCH_INTERVAL_SECONDS = 3600  # 1 hour
+# v0.51.246: separate from the session interval on purpose — these are
+# independent policies; last_used_at is display-only so it can be coarse.
+TOKEN_TOUCH_INTERVAL_SECONDS = 3600  # 1 hour
 
 # Routes that bypass auth entirely. Healthcheck for Docker, static assets, and
 # the auth pages themselves. v1.11.41: /api/public/stats was demoted from this
@@ -190,10 +195,21 @@ def init_auth_schema(db_path: Path) -> None:
 # -------- Setup state --------
 
 def setup_complete(db_path: Path) -> bool:
-    """True once an admin account has been provisioned."""
+    """True once an admin account has been provisioned.
+
+    v0.51.246: memoized. AuthMiddleware.dispatch calls this on EVERY request,
+    synchronously on the event loop, so pre-fix every request paid a fresh
+    sqlite3.connect + SELECT. Only the True result is cached: nothing in motif
+    deletes the admin row (no DELETE FROM admin exists), so True is permanent,
+    while False must stay live for the first-run /setup flow to flip."""
+    if _SETUP_COMPLETE_CACHE.get(str(db_path)):
+        return True
     with get_conn(db_path) as conn:
         row = conn.execute("SELECT 1 FROM admin WHERE id = 1").fetchone()
-    return row is not None
+    if row is not None:
+        _SETUP_COMPLETE_CACHE[str(db_path)] = True
+        return True
+    return False
 
 
 def create_admin(db_path: Path, *, username: str, password: str) -> None:
@@ -333,28 +349,43 @@ def _parse_iso_utc(s: str | None) -> datetime | None:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _touch_session_last_seen(db_path: Path, hashed_id: str, now_iso: str) -> None:
-    """Best-effort COARSE refresh of a session's last_seen_at (v0.51.88 idle
-    timeout). Fail-fast: a short busy_timeout overrides get_conn's 30s so a
-    locked DB (mid-sync) SKIPS the touch instead of blocking the request — the
-    read that just authenticated the session is authoritative, and last_seen_at
-    refreshes on a later request. This is the safe form of the write v1.11.37
-    removed: rare (≤ once per SESSION_TOUCH_INTERVAL_SECONDS) AND non-blocking."""
+def _best_effort_touch(db_path: Path, what: str, sql: str, params: tuple) -> None:
+    """Fire-and-forget bookkeeping write on an AUTH path. Fail-fast: a short
+    busy_timeout overrides get_conn's 30s so a locked DB (mid-sync) SKIPS the
+    write instead of blocking the request — the read that just authenticated is
+    authoritative, and the stamp refreshes on a later request.
+
+    This is the safe form of the per-request write v1.11.37 removed, whose
+    comment reads "NEVER touch last_seen_at per request (the UPDATE waited on
+    the writer lock during long syncs and softlocked the UI)". Callers MUST
+    also rate-limit (see the *_TOUCH_INTERVAL_SECONDS gates) — rare AND
+    non-blocking are both load-bearing.
+
+    v0.51.246: extracted so the token path can't miss it the way it did for
+    three tags. Every auth-path bookkeeping write goes through here."""
     try:
         with get_conn(db_path) as conn:
             conn.execute("PRAGMA busy_timeout = 250")  # not the 30s default
-            conn.execute(
-                "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
-                (now_iso, hashed_id),
-            )
-    except sqlite3.OperationalError:
-        # locked past 250ms → skip; the session stays valid, refresh retries
-        # next request. Warn once (class-9: a swallowed write needs a breadcrumb).
-        global _TOUCH_LOCKED_WARNED
-        if not _TOUCH_LOCKED_WARNED:
-            log.warning("_touch_session_last_seen: DB locked, skipped idle-"
-                        "timeout refresh (session still valid; retries next request)")
-            _TOUCH_LOCKED_WARNED = True
+            conn.execute(sql, params)
+    except sqlite3.Error as e:
+        # locked past 250ms → skip; auth already succeeded, the stamp retries
+        # next request. sqlite3.Error not just OperationalError: this is pure
+        # bookkeeping, so NO db failure of any kind may turn a valid auth into
+        # a 401. Warn once per site (class-9: a swallowed write needs a
+        # breadcrumb, but this fires per-request so it must not drown the log).
+        if what not in _TOUCH_LOCKED_WARNED:
+            log.warning("%s: DB locked, skipped bookkeeping write "
+                        "(auth still valid; retries next request)", what)
+            _TOUCH_LOCKED_WARNED.add(what)
+
+
+def _touch_session_last_seen(db_path: Path, hashed_id: str, now_iso: str) -> None:
+    """Coarse refresh of a session's last_seen_at (v0.51.88 idle timeout)."""
+    _best_effort_touch(
+        db_path, "_touch_session_last_seen",
+        "UPDATE sessions SET last_seen_at = ? WHERE id = ?",
+        (now_iso, hashed_id),
+    )
 
 
 def lookup_session(db_path: Path, session_id: str) -> str | None:
@@ -501,23 +532,43 @@ def authenticate_token(db_path: Path, raw_token: str) -> Principal | None:
     with get_conn(db_path) as conn:
         # Narrow the candidate set by prefix to avoid bcrypt-checking every row
         rows = conn.execute(
-            """SELECT id, name, token_hash, scope FROM api_tokens
+            """SELECT id, name, token_hash, scope, last_used_at FROM api_tokens
                WHERE token_prefix = ? AND revoked_at IS NULL""",
             (prefix,),
         ).fetchall()
         for row in rows:
             if _verify_token(raw_token, row["token_hash"]):
-                now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-                conn.execute(
-                    "UPDATE api_tokens SET last_used_at = ? WHERE id = ?",
-                    (now, row["id"]),
-                )
+                _maybe_touch_token_last_used(db_path, row)
                 return Principal(
                     username=f"token:{row['name']}",
                     scope=row["scope"],
                     auth_method="token",
                 )
     return None
+
+
+def _maybe_touch_token_last_used(db_path: Path, row) -> None:
+    """v0.51.246: this was an UNCONDITIONAL per-request UPDATE on get_conn's
+    30s busy_timeout, run from AuthMiddleware.dispatch. One token request
+    arriving while sync/plex_enum/a bulk op held the writer lock blocked in
+    sqlite3 for up to 30s — and because the middleware is on the event loop,
+    that froze the WHOLE app, not just that request. Exactly the softlock
+    v1.11.37 removed from the session path; the safe form shipped there in
+    v0.51.88 and was never applied here.
+
+    last_used_at is display-only (the tokens table's "last used" column), so
+    hourly granularity costs nothing and the write becomes rare + skippable."""
+    last = _parse_iso_utc(row["last_used_at"])
+    if last is not None:
+        age_s = (datetime.now(timezone.utc) - last).total_seconds()
+        if age_s < TOKEN_TOUCH_INTERVAL_SECONDS:
+            return
+    now_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _best_effort_touch(
+        db_path, "_maybe_touch_token_last_used",
+        "UPDATE api_tokens SET last_used_at = ? WHERE id = ?",
+        (now_iso, row["id"]),
+    )
 
 
 # ── v1.21.18 (security audit): login rate-limiting ──────────────────────────

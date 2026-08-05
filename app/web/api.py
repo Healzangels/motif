@@ -8472,7 +8472,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             if password != password_confirm:
                 raise ValueError("Passwords do not match")
-            create_admin(settings.db_path, username=username, password=password)
+            # v0.51.246: bcrypt rounds=12 (~235ms of CPU) — inline it froze the
+            # single event loop for every concurrent request.
+            await run_in_threadpool(
+                create_admin, settings.db_path, username=username, password=password)
         except (ValueError, RuntimeError) as e:
             return templates.TemplateResponse(
                 request, "setup.html", {"error": str(e)}, status_code=400,
@@ -8603,7 +8606,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if scope not in ("read", "admin"):
             raise HTTPException(status_code=400, detail="scope must be 'read' or 'admin'")
         try:
-            token_id, raw = create_api_token(db, name=name, scope=scope)  # type: ignore[arg-type]
+            # v0.51.246: bcrypt rounds=10 (~60ms) — see setup_post above.
+            token_id, raw = await run_in_threadpool(
+                create_api_token, db, name=name, scope=scope)  # type: ignore[arg-type]
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
         log_event(db, level="INFO", component="auth",
@@ -8639,7 +8644,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # v0.51.16 (audit #19): pass the caller's session so the rotation
             # revokes every OTHER session (a stolen cookie must not survive a
             # password change) without logging the admin out of their own.
-            ok = change_admin_password(
+            # v0.51.246: verify_password + hash_password, both bcrypt rounds=12
+            # — ~470ms of CPU on the loop. v0.51.231 offloaded login_post for the
+            # same reason and left this sibling inline.
+            ok = await run_in_threadpool(
+                change_admin_password,
                 db, current_password=current_password, new_password=new_password,
                 keep_session_id=request.cookies.get(SESSION_COOKIE),
             )

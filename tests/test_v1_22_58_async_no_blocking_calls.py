@@ -66,7 +66,17 @@ PLEX_BLOCKING_METHODS = _derive_plex_blocking_methods()
 # as a module function taking the client as an arg, evaded the same detection
 # (api_refresh_libraries froze the loop on it until v1.23.42).
 BLOCKING_FUNCS = {"probe_youtube_url", "urlopen", "_trigger_plex_item_refresh",
-                  "refresh_sections"}
+                  "refresh_sections",
+                  # v0.51.246: the auth entry points. Each runs bcrypt (rounds
+                  # 10-12, ~60-470ms of pure CPU) and/or opens a DB connection.
+                  # KNOWN BLIND SPOT this set does not close: AuthMiddleware
+                  # reaches authenticate_token through the SYNC method
+                  # _resolve_principal, and this lint only walks the DIRECT body
+                  # of `async def` — which is exactly how a 30s writer-lock
+                  # block survived there until v0.51.246. Listing them still
+                  # catches the next DIRECT call from an async handler.
+                  "authenticate_token", "change_admin_password",
+                  "create_api_token", "create_admin", "verify_password"}
 # v1.23.62 (audit #1/#10): blocking method NAMES that aren't on PlexClient but
 # still do a synchronous network round-trip when called from an async handler —
 # matched by attribute name like PLEX_BLOCKING_METHODS (any receiver). The
