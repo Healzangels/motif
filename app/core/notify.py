@@ -972,11 +972,23 @@ def flush_all_coalesced() -> None:
             for event_kind, timer in list(_COALESCE_TIMERS.items()):
                 try:
                     timer.cancel()
-                except Exception:
-                    pass
+                except Exception as e:
+                    # v0.51.249: class-9 breadcrumb. A cancel that raises still
+                    # lets us drain the buffer below, so this is recoverable —
+                    # but silence made it indistinguishable from a clean cancel.
+                    log.debug("notify.flush: timer.cancel raised for %s: %s",
+                              event_kind, e)
                 try:
                     db_path, notifications, _ek = timer.args
-                except Exception:
+                except Exception as e:
+                    # v0.51.249: this is the LOSS path — db_path=None makes the
+                    # gate below DROP the batch, in the very function whose
+                    # v1.20.63 purpose is stopping shutdown batch loss. A future
+                    # change to the Timer args tuple (contract-drift, v1.17.10)
+                    # would have discarded every pending batch with zero output.
+                    log.warning("notify.flush: cannot recover config for %s "
+                                "(%s) — DROPPING %d pending item(s)",
+                                event_kind, e, len(_COALESCE_BUF.get(event_kind, [])))
                     db_path, notifications = None, None
                 items = _COALESCE_BUF.pop(event_kind, [])
                 _COALESCE_ACTIVE[event_kind] = False

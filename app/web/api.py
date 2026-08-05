@@ -6437,9 +6437,6 @@ def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
 
 # v0.51.173: Plex's metadata refresh is async — poll the measurement instead of
 # sleeping once and guessing whether the agent got there.
-_UNSELECTED_SAMPLE = 40  # v0.51.184: the whole candidate cohort (~11 on the real
-                        # library). 6 was arbitrary and 5 of the first 6 couldn't
-                        # answer, leaving n=1 to carry a claim it can't.
 _REREAD_POLLS = 4
 _REREAD_POLL_S = 5
 
@@ -12825,7 +12822,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     _OEMBED_CACHE: "_OrderedDict[str, dict]" = _OrderedDict()
     _OEMBED_CACHE_MAX = 512
     # v1.13.15: oEmbed lookups arrive via run_in_threadpool, so multiple
-    # FastAPI requests can hit _fetch_youtube_oembed concurrently. Pre-
+    # FastAPI requests can hit _fetch_oembed concurrently. Pre-
     # fix two concurrent calls on the same URL could race past the
     # `if cached is not None` check and both perform the HTTP fetch
     # (wasted bandwidth) — and concurrent move_to_end / popitem on
@@ -13073,12 +13070,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # survives the next redeploy.
         _oembed_cache_put(url, slim)
         return slim
-
-    # v1.14.3: legacy alias kept so a browser holding a cached app.js
-    # (pre-bump) doesn't 404 on the diff tile hydration after a deploy.
-    # Functionally identical to /api/source/oembed — both route by host.
-    def _fetch_youtube_oembed(yt_url: str) -> dict | None:
-        return _fetch_oembed(yt_url)
 
     @app.get("/api/source/oembed")
     async def api_source_oembed(url: str = Query(...)):
@@ -27385,8 +27376,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail={"media_type": media_type, "tmdb_id": tmdb_id,
                         "section_id": section_id, "rating_key": str(rating_key),
                         "dropped": result.get("dropped")})
-        except Exception:
-            pass
+        except Exception as e:
+            # v0.51.249: class-9 breadcrumb. events.log_event is documented
+            # "Never raises" and every other endpoint calls it bare, so this
+            # wrapper is anomalous — but if it ever DID fail, the audit trail
+            # for a destructive placements DELETE vanished with no output.
+            log.warning("dead-rk cleanup: audit log_event failed for "
+                        "%s/%s rk=%s: %s", media_type, tmdb_id, rating_key, e)
         return result
 
     @app.post("/api/admin/orphan-scan/item")

@@ -244,7 +244,15 @@ def _downscale_audio_to_fit(src_path: "Path", target_bytes: int) -> bytes | None
                  "-of", "default=noprint_wrappers=1:nokey=1", str(src_path)],
                 capture_output=True, text=True, timeout=30)
             duration = float(out.stdout.strip())
-        except Exception:
+        except Exception as e:
+            # v0.51.249: class-9 breadcrumb — this function's sibling failure
+            # paths already log (missing ffmpeg, re-encode failure) and this one
+            # did not. On a >~10.4min theme the 128kbps fallback still exceeds
+            # the Plex ceiling, so the re-upload 500s again and the log shows
+            # over_ceiling with no trace that the duration probe — the input
+            # that would have picked a fitting bitrate — is what failed.
+            log.warning("downscale: ffprobe duration probe failed for %s (%s) "
+                        "— falling back to the default bitrate guess", src_path, e)
             duration = None
     # Highest bitrate that fits target; clamp so a very long theme doesn't go to
     # an absurd bitrate (if even the floor can't fit, the upload still 500s and
@@ -4672,8 +4680,8 @@ _LONG_JOB_TYPES = ("sync", "plex_enum", "scan")
 # go live as they download, and neither tier can starve the other.
 _DOWNLOAD_JOB_TYPES = ("download",)
 _PLACE_JOB_TYPES = ("place", "refresh", "relink", "adopt")
-# Kept as the union for callers/tests that reason about "general" work.
-_GENERAL_JOB_TYPES = _DOWNLOAD_JOB_TYPES + _PLACE_JOB_TYPES
+# v0.51.249: _GENERAL_JOB_TYPES removed — the v1.20.40 pool split orphaned it and
+# its comment ("kept for callers/tests") was false: zero references anywhere.
 
 
 def _reclaim_orphan_jobs(db_path: Path) -> None:

@@ -4715,7 +4715,8 @@
 # 0.51.246: auth path stops blocking the event loop (30s writer-lock freeze + bcrypt).
 # 0.51.247: 4 sidecar checks on plex_items.folder_path now translate host->container.
 # 0.51.248: regression guards for the v246/v247 rewrites (parity + end-to-end).
-__version__ = "0.51.248"
+# 0.51.249: drop 4 dead defs whose comments claimed protections that never existed.
+__version__ = "0.51.249"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

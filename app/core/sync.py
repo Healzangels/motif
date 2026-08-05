@@ -2184,10 +2184,9 @@ class _GitMirrorError(RuntimeError):
     path."""
 
 
-# Hard-coded ceilings on the bare repo. Catches a repo that has
-# grown unreasonably large (fetched megabytes of binary blobs we
-# don't actually want) before it fills disk.
-_GIT_MIRROR_MAX_BYTES = 500 * 1024 * 1024
+# v0.51.249: _GIT_MIRROR_MAX_BYTES (500MB) removed — it was never referenced,
+# and its comment claimed a disk-safety ceiling that nothing enforced. The real
+# size control is the v1.14.98 _COMPACT_THRESHOLD_BYTES compaction below.
 # Max number of changed paths we'll process in one run. Real branch
 # changes are typically a handful per day; tens of thousands would be
 # a re-import event we should fall back from rather than try to
