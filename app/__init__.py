@@ -4713,7 +4713,8 @@
 # 0.51.244: re-opening the info card you're already on updates in place, keeping your scroll.
 # 0.51.245: quarterly floors — yt-dlp 2026.7.4, apprise 1.12.0.
 # 0.51.246: auth path stops blocking the event loop (30s writer-lock freeze + bcrypt).
-__version__ = "0.51.246"
+# 0.51.247: 4 sidecar checks on plex_items.folder_path now translate host->container.
+__version__ = "0.51.247"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

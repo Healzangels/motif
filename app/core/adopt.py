@@ -100,9 +100,15 @@ def adopt_folder(
     """
     if media_type not in ("movie", "tv"):
         raise AdoptError(f"unknown media_type: {media_type}")
-    sidecar = Path(folder_path) / "theme.mp3"
-    if not sidecar.is_file():
-        raise AdoptError(f"no theme.mp3 at {folder_path}")
+    # v0.51.247: was a raw `Path(folder_path) / "theme.mp3"`. api_adopt_sidecar
+    # gates the button on plex_items.local_theme_file, which plex_enum sets via
+    # the TRANSLATED stat — so on an install needing host->container translation
+    # the UI offered ADOPT FROM PLEX and this raised 409 every time, on exactly
+    # the installs the translation table exists for. Same helper as the gate.
+    from .plex_enum import find_theme_sidecar_path  # lazy: avoids a cycle
+    sidecar = find_theme_sidecar_path(folder_path)
+    if sidecar is None:
+        raise AdoptError(f"no theme sidecar at {folder_path}")
     sha256, size = _hash_file(sidecar)
 
     if not section_id:

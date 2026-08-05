@@ -319,6 +319,29 @@ def _retry_pending_placements(db_path: Path) -> None:
         )
 
 
+def _plex_claimed_folders(db_path) -> set:
+    """(section_id, media_type, CONTAINER folder) for every plex_items row.
+
+    v0.51.247: plex_items.folder_path is PLEX's host form (/mnt/user/data/...)
+    while placements.media_folder is motif's container form (/data/...), so the
+    raw string equality this replaces matched nothing on a translated install —
+    the v1.22.15 class ("raw Path().exists() was ALWAYS False inside the
+    container"), which left the whole sidecar auto-restore sweep silently inert.
+    _candidate_local_paths is the same translator plex_enum's stat uses."""
+    from .plex_enum import _candidate_local_paths  # lazy: avoids a cycle
+    out = set()
+    with get_conn(db_path) as conn:
+        rows = conn.execute(
+            "SELECT section_id, media_type, folder_path FROM plex_items "
+            "WHERE folder_path IS NOT NULL AND folder_path != ''"
+        ).fetchall()
+    for r in rows:
+        mt = "tv" if r["media_type"] == "show" else r["media_type"]
+        for cand in _candidate_local_paths(r["folder_path"]):
+            out.add((str(r["section_id"]), mt, str(cand)))
+    return out
+
+
 def _restore_lost_placements(settings: "Settings") -> None:
     """v1.24.26: auto-re-place a motif-owned sidecar theme whose theme.mp3 is
     VERIFIED gone from its Plex folder (placements.theme_present=0, stamped by
@@ -385,13 +408,14 @@ def _restore_lost_placements(settings: "Settings") -> None:
                   -- sweep re-enqueues a doomed job + fires a false "restored"
                   -- notification every hour. NULL (unverified) stays eligible.
                   AND COALESCE(lf.canonical_present, 1) != 0
-                  AND EXISTS (
-                      SELECT 1 FROM plex_items pi
-                      WHERE pi.folder_path = p.media_folder
-                        AND pi.section_id = p.section_id
-                        AND (CASE pi.media_type WHEN 'show' THEN 'tv'
-                                 ELSE pi.media_type END) = p.media_type
-                  )
+                  -- v0.51.247: the plex_items-still-points-here check MOVED to
+                  -- Python (_plex_still_claims_folder below). It compared
+                  -- pi.folder_path = p.media_folder as raw strings — but
+                  -- folder_path is PLEX's host form (/mnt/user/data/...) and
+                  -- media_folder is motif's container form (/data/...), so on any
+                  -- install needing translation it matched ZERO rows and this
+                  -- whole sweep was silently inert. Same v1.22.15 class; SQL
+                  -- can't reach the translation table, Python can.
                   AND NOT EXISTS (
                       SELECT 1 FROM jobs j
                       WHERE j.job_type = 'place' AND j.media_type = p.media_type
@@ -471,13 +495,26 @@ def _restore_lost_placements(settings: "Settings") -> None:
         # A present file = a stamp stale since the last enum (skip, the next
         # enum re-stamps theme_present=1); an OSError = indeterminate mount blip
         # (skip — never auto-act on an uncertain read).
+        # v0.51.247: the gate the SQL used to do, now translation-aware. One
+        # query builds the (section, media_type, container_folder) set; the
+        # comparison is a set lookup, so no N+1.
+        claimed = _plex_claimed_folders(db_path)
+        skipped_unclaimed = 0
         for r in cands:
+            key = (str(r["section_id"]), r["media_type"], r["media_folder"])
+            if key not in claimed:
+                skipped_unclaimed += 1
+                continue
             try:
                 if (Path(r["media_folder"]) / "theme.mp3").is_file():
                     continue
             except OSError:
                 continue
             to_place.append(r)
+        if skipped_unclaimed:
+            log.info("restore-lost-placements: %d candidate(s) skipped — no "
+                     "plex_items row still points at that folder",
+                     skipped_unclaimed)
         # v1.24.29: plex_uploads have no on-disk sidecar — the SQL rk-liveness
         # gate above is their authority, so accept them directly.
         to_place.extend(pu_cands)

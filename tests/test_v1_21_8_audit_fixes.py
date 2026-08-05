@@ -105,8 +105,12 @@ def test_dashboard_event_stream_hash_guarded():
 def test_test_trigger_sidecar_oserror_breadcrumbed():
     """The /api/admin/test-trigger-theme-lost sidecar-fs probe must
     log.debug on OSError (was a bare `except OSError: pass`)."""
-    idx = API_PY.index('Path(_folder_path) / "theme.mp3"')
-    seg = API_PY[idx:idx + 700]
+    # v0.51.247: was anchored on the literal `Path(_folder_path) / "theme.mp3"`,
+    # which that tag replaced with the translated find_theme_sidecar_path. The
+    # PROBE moved; the breadcrumb requirement did not. Anchored on the probe's
+    # own variable so it survives a change of stat mechanism.
+    idx = API_PY.index("sidecar_fs = (")
+    seg = API_PY[idx:API_PY.index("sidecar_present =", idx)]
     assert "except OSError as _fe:" in seg
     assert "log.debug(" in seg
     assert "test-trigger: sidecar-fs check raised" in seg

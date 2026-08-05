@@ -6093,14 +6093,23 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
                     clients.append(c)
             return c
 
+        from ..core.plex_enum import find_theme_sidecar_path
+
         def _probe_one(idx_row):
             idx, r = idx_row
             rk = r["rating_key"]
             folder_path = r["folder_path"]
             client = _client_for_thread()
             try:
-                p = Path(folder_path) / "theme.mp3"
-                if not p.is_file():
+                # v0.51.247: was a raw `Path(folder_path) / "theme.mp3"`. The row
+                # was SELECTed on local_theme_file=1, which plex_enum sets via the
+                # TRANSLATED stat — so on an install needing host->container
+                # translation the selector said "sidecar here" and this said
+                # "sidecar missing" for EVERY row, making the whole reprobe a
+                # permanent no-op. Same helper the selector's stat uses, which
+                # also covers non-mp3 sidecars (SIDECAR_AUDIO_EXTS).
+                p = find_theme_sidecar_path(folder_path)
+                if p is None:
                     return rk, None, "sidecar missing"
                 with p.open("rb") as f:
                     local_prefix = f.read(PROBE_PREFIX_BYTES)
@@ -25916,9 +25925,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 _folder_path = row["folder_path"]
                 if _folder_path:
                     try:
+                        # v0.51.247: was a raw .mp3-only stat while the prod
+                        # reaper this claims to mirror moved to
+                        # find_theme_sidecar_path (v1.22.15 translation +
+                        # v1.22.72 all extensions). A mirror three fixes behind
+                        # dispatches a DIFFERENT tier than the real reaper for
+                        # the same row, defeating the endpoint's purpose.
+                        from ..core.plex_enum import find_theme_sidecar_path
                         sidecar_fs = (
-                            Path(_folder_path) / "theme.mp3"
-                        ).exists()
+                            find_theme_sidecar_path(_folder_path) is not None
+                        )
                     except OSError as _fe:
                         # v1.21.8 (audit LOW): breadcrumb the swallow —
                         # mirrors the identical sidecar-fs probe at
