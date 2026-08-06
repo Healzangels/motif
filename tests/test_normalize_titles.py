@@ -60,7 +60,6 @@ class TestParseFolderName(unittest.TestCase):
         # ParsedFolder.year is "" when absent, NOT None — code that branches
         # on `is None` is buggy.
         self.assertEqual(p.year, "")
-        self.assertFalse(p.has_year)
 
     def test_edition_tags_stripped(self):
         p = parse_folder_name("Blade Runner (1982) {edition-Final Cut}")

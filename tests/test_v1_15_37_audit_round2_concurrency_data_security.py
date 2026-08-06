@@ -210,7 +210,7 @@ def test_high_stakes_routes_wrapped_in_transactions():
         "api_clear_failure",
         "api_upload_theme",
         "api_unplace_item",
-        "api_override",
+        # "api_override" dropped v0.51.251 — the dead endpoint was removed
         "api_adopt_from_plex",
         "api_redownload",
         "api_download_backup",

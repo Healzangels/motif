@@ -227,7 +227,7 @@ CREATE TABLE IF NOT EXISTS local_files_history (
     source_video_id TEXT,
     youtube_url     TEXT,
     saved_at        TEXT NOT NULL,
-    saved_reason    TEXT
+    saved_reason    TEXT     -- v0.51.251: forensic-only. Written by unmanage/purge, read by NOTHING (verified); restore ignores it
 );
 CREATE INDEX IF NOT EXISTS idx_local_files_history_sha
     ON local_files_history (file_sha256, saved_at DESC);
@@ -4259,7 +4259,7 @@ def _migrate_v15_to_v16(conn: sqlite3.Connection) -> None:
             source_video_id TEXT,
             youtube_url     TEXT,
             saved_at        TEXT NOT NULL,
-            saved_reason    TEXT
+            saved_reason    TEXT     -- forensic-only, see base schema note
         );
         CREATE INDEX IF NOT EXISTS idx_local_files_history_sha
             ON local_files_history (file_sha256, saved_at DESC);

@@ -145,15 +145,6 @@ def test_single_action_dispatches_immediately_no_arm():
 # ── A4: api_override SET URL surfaces a 0-enqueue ───────────────
 
 
-def test_api_override_captures_enqueue_count_and_warns_on_zero():
-    idx = API_PY.index("async def api_override(")
-    end = API_PY.index("\n    @app.", idx + 1)
-    body = API_PY[idx:end]
-    assert "_n_enq = _enqueue_download(" in body, (
-        "v1.22.43: SET URL must capture _enqueue_download's count")
-    assert "if _n_enq == 0:" in body, (
-        "v1.22.43: SET URL must branch on the 0-enqueue case")
-    assert "queued NO download" in body
-    assert '"enqueued_sections": _n_enq' in body, (
-        "v1.22.43: the response must surface the enqueued count so the client "
-        "isn't told ok:True with nothing downloaded")
+# v0.51.251: test_api_override_captures_enqueue_count_and_warns_on_zero
+# removed with its subject — the dead api_override endpoint is gone. The
+# live SET URL flow's 0-enqueue guard is pinned by the manual-url tests.

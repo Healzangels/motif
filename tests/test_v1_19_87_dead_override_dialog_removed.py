@@ -17,8 +17,9 @@ saved" optimistic-placeholder UX — which had lived (uselessly) in
 the dead override submit — was relocated to the live manual-url
 submit, so it now actually fires.
 
-The `/api/items/{mt}/{id}/override` endpoint is intentionally KEPT
-(external/scripted callers, per the v1.12.76 clear-failed precedent).
+The `/api/items/{mt}/{id}/override` endpoint was KEPT at the time
+(hypothetical external callers) — then removed in v0.51.251 once the
+operator install proved zero API tokens ever used it.
 """
 from __future__ import annotations
 

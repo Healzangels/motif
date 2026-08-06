@@ -4716,8 +4716,15 @@
 # 0.51.247: 4 sidecar checks on plex_items.folder_path now translate host->container.
 # 0.51.248: regression guards for the v246/v247 rewrites (parity + end-to-end).
 # 0.51.249: drop 4 dead defs whose comments claimed protections that never existed.
-# 0.51.250: folder-move reconcile sees theme_id-linked (anime) placements — 32 were invisible.
-__version__ = "0.51.250"
+# 0.51.250: folder-move reconcile sees theme_id-linked (anime) placements — 3 were invisible
+#   (the 32 first measured included 29 plex_upload rows reconcile rightly excludes).
+# 0.51.251: dead-code batch. The /override POST+DELETE pair removed (no caller; the DELETE
+#   fan-out was a cross-edition override wipe for any token holder), ParsedFolder.has_year
+#   removed with its mirror assert, saved_reason marked forensic-only at both schema sites.
+#   Removing the pair exposed a PHANTOM GUARD: the v1.15.66 import-apply section_id='' test
+#   had matched only the dead handler's INSERT since v1.21.34 added the intent column —
+#   re-anchored inside the apply handler and mutation-verified against the live INSERT.
+__version__ = "0.51.251"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

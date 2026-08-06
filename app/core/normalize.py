@@ -49,9 +49,6 @@ class ParsedFolder:
     year: str  # "" if absent
     editions_raw: str  # pipe-joined raw tags, "" if none
 
-    @property
-    def has_year(self) -> bool:
-        return bool(self.year)
 
 
 # v1.10.25: Plex's folder format also uses {imdb-...}/{tmdb-...}/{tvdb-...}

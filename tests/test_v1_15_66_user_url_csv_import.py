@@ -155,11 +155,21 @@ def test_import_apply_writes_global_section_override():
     (the title-global row). Per-section overrides are intentionally
     left untouched — bulk import is title-level, the COALESCE
     fallback in /api/library serves the global row to every section
-    that doesn't have its own per-section override."""
+    that doesn't have its own per-section override.
+
+    v0.51.251: re-anchored INSIDE the apply handler. The original
+    whole-file grep for a 6-placeholder VALUES literal went phantom
+    when v1.21.34 added the intent column (7 placeholders) — from
+    then on it was satisfied ONLY by the dead api_override handler's
+    INSERT, and removing that endpoint exposed it. Pin-tests-that-
+    mirror class: the anchor must be the handler, not a shape."""
     src = API_PY.read_text()
-    # The INSERT INTO user_overrides with the literal '' VALUES
-    # parameter is the canonical apply write.
-    assert "VALUES (?, ?, ?, ?, ?, ?, '')" in src, (
+    apply_start = src.index('@app.post("/api/import/apply")')
+    apply_end = src.index("@app.post", apply_start + 1)
+    body = src[apply_start:apply_end]
+    i = body.index("INSERT INTO user_overrides")
+    stmt = body[i:i + 400]
+    assert "section_id)" in stmt and ", '')" in stmt, (
         "v1.15.66: apply must write user_overrides at section_id='' "
         "(title-global). Per-section writes would only affect a "
         "single section's row, missing the bulk-import intent."

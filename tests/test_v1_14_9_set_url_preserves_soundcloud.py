@@ -109,42 +109,9 @@ def test_manual_url_endpoint_no_longer_unconditionally_wraps_as_youtube():
     assert body.index(yt_assign) < sc_branch
 
 
-# ── api_override (the failure-dialog SET URL) ─────────────────
-
-
-def test_override_endpoint_routes_canonicalization_by_source():
-    """Same fix on the api_override handler — the failure-dialog
-    SET URL surface also wrapped SC URLs as YT pre-fix."""
-    src = (REPO / "app" / "web" / "api.py").read_text()
-    # Find the override handler — it's the one at api.py:10295's
-    # canonical assignment site. Anchor on the unique v1.12.47
-    # marker right above its enqueue call.
-    fn_anchor = src.index("v1.12.47: SET URL via the /override dialog")
-    # Walk back to the function header.
-    body_start = src.rindex("async def ", 0, fn_anchor)
-    body = src[body_start:fn_anchor + 2000]
-    assert "src = url_source(youtube_url)" in body
-    assert 'src == "unknown"' in body
-    # Branched canonicalization.
-    assert 'if src == "youtube":' in body
-    assert 'canonical = f"https://www.youtube.com/watch?v={vid}"' in body
-    assert "canonical = youtube_url" in body
-
-
-def test_override_endpoint_no_unconditional_yt_wrap():
-    """Mirror of the manual-url regression guard — pin the YT
-    canonical assignment in the override handler sits behind
-    the source gate."""
-    src = (REPO / "app" / "web" / "api.py").read_text()
-    fn_anchor = src.index("v1.12.47: SET URL via the /override dialog")
-    body_start = src.rindex("async def ", 0, fn_anchor)
-    body = src[body_start:fn_anchor + 2000]
-    yt_branch = body.index('if src == "youtube":')
-    sc_assign = body.index("canonical = youtube_url", yt_branch)
-    yt_assign = 'canonical = f"https://www.youtube.com/watch?v={vid}"'
-    assert body.count(yt_assign) == 1
-    assert body.index(yt_assign) > yt_branch
-    assert body.index(yt_assign) < sc_assign
+# v0.51.251: the two api_override mirror guards removed with their subject —
+# the dead /override endpoint is gone. The manual-url guards above pin the
+# same canonicalization fix on the live surface.
 
 
 # ── Behavior of url_source / extract_video_id on the user's URL ─

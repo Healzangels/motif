@@ -151,13 +151,8 @@ def test_probe_themes_runs_off_event_loop():
         "v1.22.31: probe-themes' synchronous Plex calls must run off the loop")
 
 
-def test_clear_override_wraps_in_transaction():
-    fn = API_PY.index("async def api_clear_override(")
-    body = API_PY[fn:fn + 2500]
-    assert "with get_conn(db) as conn, transaction(conn):" in body, (
-        "v1.22.31: clear-override's DELETE + audit must be one transaction")
-
-
+# v0.51.251: test_clear_override_wraps_in_transaction removed with its
+# subject — the dead api_clear_override endpoint (no caller) is gone.
 def test_notify_external_failures_log_warning():
     fn = NOTIFY_PY.index("def _send_external(")
     body = NOTIFY_PY[fn:fn + 2600]
