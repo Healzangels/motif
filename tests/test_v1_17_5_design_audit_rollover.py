@@ -179,8 +179,9 @@ def test_js_rendered_buttons_use_slash_prefix():
     js = APP_JS.read_text()
     # RELINK (storage waste row)
     assert '>// RELINK</button>' in js
-    # DOWNLOAD (dashboard missing-themes)
-    assert '>// DOWNLOAD</button>' in js
+    # v0.51.252: the DOWNLOAD (dashboard missing-themes) assertion dropped —
+    # renderMissing was dead code (no template renders its tbody) and was
+    # removed with its // DOWNLOAD button, mirroring the v0.50.89 VIEW drop.
     # REFRESH (libraries per-section)
     assert '>// REFRESH</button>' in js
     # REVOKE (tokens)

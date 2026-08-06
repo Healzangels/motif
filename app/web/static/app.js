@@ -2409,7 +2409,19 @@
     // 30s tick doesn't flicker the strip or reset its scroll (bug-class 4).
     loadRecentlyAdded().catch(() => {});
     loadServices().catch(() => {});  // v1.24.53: SERVICES panel (Plex ping + yt-dlp)
-    const stats = await api('GET', '/api/stats');
+    // v0.51.252: fire the five dashboard GETs concurrently — they're
+    // independent reads, and awaiting them serially made first paint pay
+    // the SUM of five round-trips instead of the slowest one. Render order
+    // (and each await's seq-token guard) is unchanged below; the pre-armed
+    // .catch keeps an abandoned promise from surfacing as an unhandled
+    // rejection when an earlier await throws or a fresher call supersedes.
+    const _statsP = api('GET', '/api/stats');
+    const _histP = api('GET', '/api/sync/history?limit=30');
+    const _secP = api('GET', '/api/sections/coverage');
+    const _insP = api('GET', '/api/dashboard/insights');
+    const _evsP = api('GET', '/api/events?limit=20');
+    for (const _p of [_histP, _secP, _insP, _evsP]) _p.catch(() => {});
+    const stats = await _statsP;
     if (loadDashboard._seq !== _myToken) return;
     renderStat('movies.downloaded', stats.movies.downloaded);
     renderStat('movies.placed', stats.movies.placed);
@@ -2450,7 +2462,7 @@
     // v1.13.2 (#1): sync history sparkline. Hidden when there's
     // no telemetry data yet (fresh install or pre-v37 schema).
     try {
-      const hist = await api('GET', '/api/sync/history?limit=30');
+      const hist = await _histP;
       // v1.15.109: re-check the seq token after each await —
       // a fresh loadDashboard call between this await and the
       // render below would mean our hist payload is already
@@ -2463,7 +2475,7 @@
     // managed section (no comparison value); rendered as a table
     // with click-through to the matching library tab + 4K toggle.
     try {
-      const sec = await api('GET', '/api/sections/coverage');
+      const sec = await _secP;
       if (loadDashboard._seq !== _myToken) return;
       renderSectionCoverage(sec.sections || []);
       // v1.23.90: the PLEX ANIME card is populated in renderPlexCoverage from
@@ -2478,7 +2490,7 @@
     // function hides its block on empty data so a fresh install
     // doesn't render placeholder axes.
     try {
-      const ins = await api('GET', '/api/dashboard/insights');
+      const ins = await _insP;
       if (loadDashboard._seq !== _myToken) return;
       renderFailureBreakdown(ins.failures || []);
       renderSyncPerformance(ins.syncs || []);
@@ -2496,7 +2508,7 @@
     } catch (_) { /* non-fatal */ }
 
     // Recent events
-    const evs = await api('GET', '/api/events?limit=20');
+    const evs = await _evsP;
     if (loadDashboard._seq !== _myToken) return;
     const stream = $('#event-stream');
     // v1.15.128: empty-state fallback — pre-fix a fresh install
@@ -4783,23 +4795,21 @@
     }
 
     // Plex coverage report — populates the stat cards on every page that
-    // includes them; missing-themes tables only render when present.
+    // includes them.
+    // v0.51.252: the error branches used to write into #movies-missing-body —
+    // an element no template has rendered since the missing-themes tables were
+    // retired, so every `if (mb)` was a silent no-op. Console breadcrumbs now
+    // carry what those dead writes were meant to say.
     let data;
     try {
       data = await api('GET', '/api/coverage/plex');
     } catch (e) {
-      const mb = $('#movies-missing-body');
-      if (mb) mb.innerHTML = `<tr><td colspan="4" class="accent-red">${htmlEscape(e.message)}</td></tr>`;
+      console.error('coverage load failed', e);
       return;
     }
-    if (!data.enabled) {
-      const mb = $('#movies-missing-body');
-      if (mb) mb.innerHTML = '<tr><td colspan="4" class="muted">Plex integration disabled</td></tr>';
-      return;
-    }
+    if (!data.enabled) return;
     if (data.error) {
-      const mb = $('#movies-missing-body');
-      if (mb) mb.innerHTML = `<tr><td colspan="4" class="accent-red">Plex error: ${htmlEscape(data.error)}</td></tr>`;
+      console.error('coverage: Plex error', data.error);
       return;
     }
 
@@ -4835,24 +4845,9 @@
     const isAddable = (m) => m.motif_available && !m.has_theme && !m.placed
       && !(m.failure_kind && TDB_DEAD_FAILURES_GLOBAL.has(m.failure_kind));
 
-    const renderMissing = (items, bodyId) => {
-      const tbody = $(bodyId);
-      if (!tbody) return;
-      const missing = items.filter((it) => !it.has_theme && it.motif_available);
-      tbody.innerHTML = missing.length ? missing.map((it) => `
-        <tr>
-          <td>${htmlEscape(it.title)}</td>
-          <td class="col-year">${htmlEscape(it.year || '')}</td>
-          <td><span class="ok">▸ available</span></td>
-          <td class="col-actions">
-            ${it.tmdb_id ? `<button class="btn btn-tiny btn-warn" data-act="redl" data-mt="movie" data-id="${it.tmdb_id}">// DOWNLOAD</button>` : ''}
-          </td>
-        </tr>
-      `).join('') : '<tr><td colspan="4" class="muted center">no missing themes — fully covered ✓</td></tr>';
-    };
-
-    renderMissing(data.movies || [], '#movies-missing-body');
-    renderMissing((data.tv || []), '#tv-missing-body');
+    // v0.51.252: renderMissing + its two calls removed — dead since the
+    // missing-themes tables left the templates (no #movies-missing-body /
+    // #tv-missing-body anywhere, so `if (!tbody) return` fired every call).
 
     // v1.15.31 reset: pre-v1.15.27 PLEX-card hydration restored.
     // Big number = library total (#plex-{movies,tv}-total). No bar
@@ -12650,6 +12645,17 @@
     }, 2000);
   }
 
+  // v0.51.252: bulk-bar labels write through this guard. A bulk click
+  // handler owns its button while running (disabled=true + // PUSHING i/N
+  // progress, then a result flash) — but the handler's own loadLibrary /
+  // rapid-poll re-runs this updater, which used to stamp the resting count
+  // label straight over the busy text (bug-class 5 ping-pong). At rest the
+  // bulk bar hides buttons via display:none, never disabled, so disabled
+  // means handler-owned: leave the label alone.
+  function setBulkLabel(btn, text) {
+    if (!btn.disabled) btn.textContent = text;
+  }
+
   function updateLibrarySelectionUi() {
     const bar = document.getElementById('library-bulk-bar');
     const cnt = document.getElementById('library-selected-count');
@@ -13070,9 +13076,9 @@
       // see updateLibrarySelectionUi flow — this block runs once
       // per render, after all consts are bound.
       if (onAttnFail && ackCount > 0) {
-        ackBtn.textContent = withCount('// ACK FAILURES', ackCount);
+        setBulkLabel(ackBtn, withCount('// ACK FAILURES', ackCount));
       } else {
-        ackBtn.textContent = '// ACK FAILURES';
+        setBulkLabel(ackBtn, '// ACK FAILURES');
       }
     }
     // v1.12.101: hide DOWNLOAD-FROM-TDB on the update filter. The
@@ -13106,7 +13112,7 @@
       // helper itself was added in v1.15.51; v1.15.49 wrote
       // the inline form before that helper existed.
       if (adoptOnlyCount > 0) {
-        adoptBtn.textContent = withCount('// ADOPT SELECTED', adoptOnlyCount);
+        setBulkLabel(adoptBtn, withCount('// ADOPT SELECTED', adoptOnlyCount));
       }
       // v1.17.2: title tooltip explaining the M vs M+P split.
       // the user's repro: filtered SRC=M with 1342 selected, but
@@ -13150,9 +13156,9 @@
       // bulk button using a "VERB N THING" shape — every
       // other was "// VERB THING (N)".
       if (selectionAllPureP) {
-        backupBtn.textContent = withCount(
+        setBulkLabel(backupBtn, withCount(
           '// DOWNLOAD TDB BACKUP', pureP_count,
-        );
+        ));
       }
     }
     // v1.19.43: bulk BACKUP CLOUD THEMES. Visibility gate is
@@ -13174,9 +13180,9 @@
       // consistency with the other bulk buttons (sibling
       // DOWNLOAD TDB BACKUP got the same treatment).
       if (cloudBackupCount > 0) {
-        cloudBackupBtn.textContent = withCount(
+        setBulkLabel(cloudBackupBtn, withCount(
           '// DOWNLOAD PLEX BACKUP', cloudBackupCount,
-        );
+        ));
       }
     }
     // v1.13.33: PUSH TO PLEX bulk button. Visible when the selection
@@ -13187,7 +13193,7 @@
     if (pushBtn) {
       pushBtn.style.display = (!onTdbOnly && !onAttnUpdateFilter && pushableCount > 0) ? '' : 'none';
       if (pushCount > 0) {
-        pushBtn.textContent = withCount('// PUSH TO PLEX', pushCount);
+        setBulkLabel(pushBtn, withCount('// PUSH TO PLEX', pushCount));
       }
     }
     // v0.50.83: bulk SWITCH TO API — visible when the selection holds ≥1 file-sidecar
@@ -13197,7 +13203,7 @@
     if (switchApiBtn) {
       switchApiBtn.style.display = (!onTdbOnly && !onAttnUpdateFilter && switchToApiCount > 0) ? '' : 'none';
       if (switchToApiCount > 0) {
-        switchApiBtn.textContent = withCount('// SWITCH TO API', switchToApiCount);
+        setBulkLabel(switchApiBtn, withCount('// SWITCH TO API', switchToApiCount));
       }
     }
     // v1.12.60: relabel DOWNLOAD-FROM-TDB based on selection mix so
@@ -13207,10 +13213,10 @@
     if (dlBtn) {
       // v1.15.51: count-badge applied to both label variants.
       if (hasReplaceTarget) {
-        dlBtn.textContent = withCount('// DOWNLOAD & REPLACE FROM TDB', downloadCount);
+        setBulkLabel(dlBtn, withCount('// DOWNLOAD & REPLACE FROM TDB', downloadCount));
         dlBtn.title = 'Download from ThemerrDB. Selected rows with existing themes (U / A / M / P) will be overwritten with the TDB version.';
       } else {
-        dlBtn.textContent = withCount('// DOWNLOAD FROM TDB', downloadCount);
+        setBulkLabel(dlBtn, withCount('// DOWNLOAD FROM TDB', downloadCount));
         dlBtn.title = 'Download and place each selected row from ThemerrDB.';
       }
     }
@@ -13222,7 +13228,7 @@
       // "no rows selected" when size === 0). Show the count
       // directly from selection size so the operator sees the
       // export scope before clicking.
-      exportBtn.textContent = withCount('// EXPORT CSV', n);
+      setBulkLabel(exportBtn, withCount('// EXPORT CSV', n));
     }
     // v1.12.55: bulk update actions visible only when the user is
     // on the blue-↑-pill click-through (the topbar UPD badge
@@ -13253,17 +13259,17 @@
     if (acceptAllBtn) {
       acceptAllBtn.style.display = showAcceptAll ? '' : 'none';
       if (showAcceptAll) {
-        acceptAllBtn.textContent = selScoped
+        setBulkLabel(acceptAllBtn, selScoped
           ? `// ACCEPT UPDATE${updateCount === 1 ? '' : 'S'} (${updateCount})`
-          : '// ACCEPT ALL UPDATES';
+          : '// ACCEPT ALL UPDATES');
       }
     }
     if (declineAllBtn) {
       declineAllBtn.style.display = showAcceptAll ? '' : 'none';
       if (showAcceptAll) {
-        declineAllBtn.textContent = selScoped
+        setBulkLabel(declineAllBtn, selScoped
           ? `// KEEP CURRENT (${updateCount})`
-          : '// KEEP ALL CURRENT';
+          : '// KEEP ALL CURRENT');
         // v1.20.3: tint by the source being kept — the same SRC tone
         // the per-row KEEP CURRENT uses. A single clean source across
         // the actionable rows → that tone (P→amber, U→violet, etc.);
@@ -13294,7 +13300,7 @@
     const onAttnAwait = libraryState.attnPills.has('await');
     if (pushBtn && onAttnAwait && pushableCount === 0) {
       pushBtn.style.display = '';
-      pushBtn.textContent = '// PUSH ALL TO PLEX';
+      setBulkLabel(pushBtn, '// PUSH ALL TO PLEX');
       pushBtn.title = 'Push every awaiting-placement row visible in this filter into Plex.';
     }
     // v1.13.68: REVERT MISMATCH bulk action — visible when the ATTN
@@ -13307,7 +13313,7 @@
       revertBtn.style.display = onAttnMismatch ? '' : 'none';
       // v1.15.51: count badge.
       if (onAttnMismatch && revertCount > 0) {
-        revertBtn.textContent = withCount('// REVERT MISMATCH', revertCount);
+        setBulkLabel(revertBtn, withCount('// REVERT MISMATCH', revertCount));
       }
     }
     // v1.13.68: RESTORE FROM PLEX bulk action — visible when the
@@ -13318,7 +13324,7 @@
       restoreBtn.style.display = onAttnBroken ? '' : 'none';
       // v1.15.51: count badge.
       if (onAttnBroken && restoreCount > 0) {
-        restoreBtn.textContent = withCount('// RESTORE FROM PLEX', restoreCount);
+        setBulkLabel(restoreBtn, withCount('// RESTORE FROM PLEX', restoreCount));
       }
     }
     // v1.14.27 / v1.15.49: bulk LET PLEX SERVE visibility.
@@ -13338,7 +13344,7 @@
     if (letPlexServeBtn) {
       letPlexServeBtn.style.display = lpsOnlyCount > 0 ? '' : 'none';
       if (lpsOnlyCount > 0) {
-        letPlexServeBtn.textContent = withCount('// LET PLEX SERVE', lpsOnlyCount);
+        setBulkLabel(letPlexServeBtn, withCount('// LET PLEX SERVE', lpsOnlyCount));
       }
     }
     // v1.15.60: bulk PROBE TDB SELECTED visibility. Shows when
@@ -13351,7 +13357,7 @@
     if (probeTdbBtn) {
       probeTdbBtn.style.display = probeTdbCount > 0 ? '' : 'none';
       if (probeTdbCount > 0) {
-        probeTdbBtn.textContent = withCount('// PROBE TDB SELECTED', probeTdbCount);
+        setBulkLabel(probeTdbBtn, withCount('// PROBE TDB SELECTED', probeTdbCount));
       }
     }
     // v1.15.46: bulk ADOPT + LET PLEX SERVE — visible when ≥1
@@ -13366,7 +13372,7 @@
       adoptLpsBtn.style.display = adoptLpsCount > 0 ? '' : 'none';
       // v1.15.59: withCount() helper (convention parity).
       if (adoptLpsCount > 0) {
-        adoptLpsBtn.textContent = withCount('// ADOPT + LET PLEX SERVE', adoptLpsCount);
+        setBulkLabel(adoptLpsBtn, withCount('// ADOPT + LET PLEX SERVE', adoptLpsCount));
       }
       // v1.17.2: tooltip mirroring the v1.15.49 design intent
       // (paired with the ADOPT SELECTED tooltip above). Surfaces

@@ -203,4 +203,5 @@ def test_push_to_plex_button_still_visible_on_attn_await_with_no_selection():
     assert "const onAttnAwait = libraryState.attnPills.has('await');" in js
     assert "if (pushBtn && onAttnAwait && pushableCount === 0)" in js
     # And the label flip.
-    assert "pushBtn.textContent = '// PUSH ALL TO PLEX';" in js
+    # v0.51.252: label writes route through setBulkLabel (ping-pong guard).
+    assert "setBulkLabel(pushBtn, '// PUSH ALL TO PLEX');" in js

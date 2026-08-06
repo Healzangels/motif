@@ -13223,6 +13223,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # dependencies. v0.51.31 added ThemerrDB (the upstream catalogue) + TMDB
     # (orphan id resolution). Short-timeout probes so a down dependency reports
     # "offline" fast instead of holding a threadpool worker for 30s.
+    # v0.51.252: WAN probes (ThemerrDB git source + TMDB) get a 300s TTL cache.
+    # The dashboard poll hits /api/services every 30s, so each open dashboard
+    # burned ~5,760 outbound requests/day re-asking two WAN endpoints whose
+    # status doesn't change per-tick. Plex is LAN + the panel's headline
+    # signal — probed fresh every call. Keyed on the probed config so a
+    # settings change invalidates instantly.
+    _wan_status_cache: dict = {"key": None, "ts": 0.0, "tdb": None, "tmdb": None}
+
     def _service_status_sync() -> dict:
         yt_version = None
         try:
@@ -13263,6 +13271,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # for dulwich) is configured-but-not-probeable, reported as such rather
         # than a false "unreachable".
         tdb_url = (settings.sync_git_url or "").rstrip("/")
+        import time as _time
+        _wan_key = (tdb_url, settings.sync_source, settings.tmdb_api_key)
+        _wan_now = _time.monotonic()
+        if (_wan_status_cache["key"] == _wan_key
+                and _wan_now - _wan_status_cache["ts"] < 300.0):
+            return {"plex": plex, "yt_dlp": {"version": yt_version},
+                    "themerrdb": _wan_status_cache["tdb"],
+                    "tmdb": _wan_status_cache["tmdb"]}
         tdb = {"configured": bool(tdb_url), "probeable": False, "online": False,
                "latency_ms": None, "source": settings.sync_source}
         if tdb_url.startswith(("http://", "https://")):
@@ -13298,6 +13314,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 latency_ms=round((_time.perf_counter() - t0) * 1000))
             except Exception as e:  # noqa: BLE001
                 log.debug("services: tmdb probe failed: %s", e)
+        _wan_status_cache.update(key=_wan_key, ts=_wan_now, tdb=tdb, tmdb=tmdb)
         return {"plex": plex, "yt_dlp": {"version": yt_version},
                 "themerrdb": tdb, "tmdb": tmdb}
 

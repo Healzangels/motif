@@ -480,25 +480,34 @@ def main() -> int:
 
     # Auto-discover Plex sections at startup so /libraries works even before
     # the first sync. Failures here are non-fatal (Plex might just be down).
+    # v0.51.252: moved to a daemon thread (the deorphan boot pattern). A slow
+    # or down Plex held the whole boot — UI included — for the probe duration,
+    # while nothing at startup needs the refreshed rows synchronously: worker,
+    # scheduler, and /libraries all read plex_sections from the DB, which a
+    # prior boot already populated (fresh installs see sections appear seconds
+    # after the UI is up instead of the UI waiting on Plex).
     if settings.plex_enabled and settings.plex_url and settings.plex_token:
-        try:
-            from .core.plex import PlexClient, PlexConfig
-            from .core.sections import refresh_sections
-            cfg = PlexConfig(
-                url=settings.plex_url, token=settings.plex_token,
-                movie_section=settings.plex_movie_section,
-                tv_section=settings.plex_tv_section, enabled=True,
-            )
-            with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:  # type: ignore[arg-type]
-                sections = refresh_sections(
-                    settings.db_path, plex,
-                    excluded_titles=settings.plex_excluded_titles,
-                    included_titles=settings.plex_included_titles,
+        def _discover_sections_at_boot() -> None:
+            try:
+                from .core.plex import PlexClient, PlexConfig
+                from .core.sections import refresh_sections
+                cfg = PlexConfig(
+                    url=settings.plex_url, token=settings.plex_token,
+                    movie_section=settings.plex_movie_section,
+                    tv_section=settings.plex_tv_section, enabled=True,
                 )
-            log.info("Plex sections discovered: %d (managed: %d)",
-                     len(sections), sum(1 for s in sections if s.get("included")))
-        except Exception as e:
-            log.warning("Plex section discovery failed: %s", e)
+                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:  # type: ignore[arg-type]
+                    sections = refresh_sections(
+                        settings.db_path, plex,
+                        excluded_titles=settings.plex_excluded_titles,
+                        included_titles=settings.plex_included_titles,
+                    )
+                log.info("Plex sections discovered: %d (managed: %d)",
+                         len(sections), sum(1 for s in sections if s.get("included")))
+            except Exception as e:
+                log.warning("Plex section discovery failed: %s", e)
+        threading.Thread(target=_discover_sections_at_boot, daemon=True,
+                         name="boot-section-discovery").start()
 
     log_event(settings.db_path, level="INFO", component="main",
               message="motif started")

@@ -112,11 +112,11 @@ def test_all_bulk_buttons_share_with_count_convention():
     the test."""
     js = APP_JS.read_text()
     fn_anchor = js.index("function updateLibrarySelectionUi()")
-    # v1.18.24: widen window — comment additions in
-    # updateLibrarySelectionUi pushed `// ADOPT + LET PLEX SERVE`
-    # past the prior 30000 boundary. v0.50.83: the SWITCH TO API
-    # bucket + visibility block pushed the tail past 36000.
-    fn_body = js[fn_anchor:fn_anchor + 38000]
+    # v0.51.252: the fixed +38000 byte window was the treadmill class — it
+    # went red a THIRD time (v1.18.24, v0.50.83, now the setBulkLabel
+    # conversion each pushed the tail past it). Bounded by the function's
+    # actual end (next top-level `function `) instead; never widen again.
+    fn_body = js[fn_anchor:js.index("\n  function ", fn_anchor + 10)]
     expected_withcount_labels = [
         "// PUSH TO PLEX",
         "// REVERT MISMATCH",

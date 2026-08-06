@@ -4724,7 +4724,15 @@
 #   Removing the pair exposed a PHANTOM GUARD: the v1.15.66 import-apply section_id='' test
 #   had matched only the dead handler's INSERT since v1.21.34 added the intent column —
 #   re-anchored inside the apply handler and mutation-verified against the live INSERT.
-__version__ = "0.51.251"
+# 0.51.252: LOW batch closing the 2026-08-01 review backlog. /api/services WAN probes
+#   (ThemerrDB git host + TMDB) cached 300s (~5,760 → ~576 outbound req/day per open
+#   dashboard; Plex stays fresh every call), loadDashboard's five GETs fire concurrently
+#   (first paint pays the slowest round-trip, not the sum), boot Plex section discovery
+#   moved to a daemon thread (a down Plex no longer holds the UI hostage at start),
+#   dead renderMissing + #*-missing-body writes removed, and bulk-bar labels write
+#   through setBulkLabel so the selection poll can't stamp the resting count label
+#   over a running handler's // PUSHING i/N progress (bug-class 5 ping-pong).
+__version__ = "0.51.252"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
