@@ -4716,7 +4716,8 @@
 # 0.51.247: 4 sidecar checks on plex_items.folder_path now translate host->container.
 # 0.51.248: regression guards for the v246/v247 rewrites (parity + end-to-end).
 # 0.51.249: drop 4 dead defs whose comments claimed protections that never existed.
-__version__ = "0.51.249"
+# 0.51.250: folder-move reconcile sees theme_id-linked (anime) placements — 32 were invisible.
+__version__ = "0.51.250"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -1257,14 +1257,27 @@ def reconcile_placement_paths(db_path: Path, *,
         # masked it), and a metadata-only edition's un-tagged '' placement got
         # spuriously "moved" toward the {edition-X}-tagged folder. Genuine
         # same-edition moves (parent dir changed, tag unchanged) still match.
+        # v0.51.250: theme_id OR-arm (the v1.22.17 class — 6 sync.py sites were
+        # widened, this one was missed). AniDB-matched anime rows have guid_tmdb
+        # NULL and link to themes only via pi.theme_id, so their placements were
+        # INVISIBLE to this join: a Sonarr folder rename never reconciled,
+        # media_folder went stale, verify_placement_health stat'd the dead path
+        # and the row showed a permanent false "broken placement". Measured on
+        # the operator's library before fixing: 32/2387 placements reachable
+        # ONLY via theme_id. themes has UNIQUE(media_type, tmdb_id) so the LEFT
+        # JOIN cannot fan out, and guid-linked rows are provably unchanged (for
+        # them the first arm already matched; DISTINCT absorbs any double-match).
         rows = conn.execute(
             """SELECT DISTINCT p.media_type, p.tmdb_id, p.section_id,
                       p.edition_key,
                       p.media_folder AS old_folder,
                       pi.folder_path AS new_folder
                FROM placements p
+               LEFT JOIN themes t
+                 ON t.media_type = p.media_type AND t.tmdb_id = p.tmdb_id
                INNER JOIN plex_items pi
-                 ON pi.guid_tmdb = p.tmdb_id
+                 ON (pi.guid_tmdb = p.tmdb_id
+                     OR (t.id IS NOT NULL AND pi.theme_id = t.id))
                 AND pi.media_type = (CASE p.media_type WHEN 'tv' THEN 'show' ELSE 'movie' END)
                 AND pi.section_id = p.section_id
                 AND pi.edition_key = p.edition_key
@@ -1279,12 +1292,23 @@ def reconcile_placement_paths(db_path: Path, *,
         # the stale row(s) pointing at folders Plex no longer reports.
         # Build a set of currently-Plex-reported folders per (mt, tmdb).
         plex_paths_by_item: dict[tuple, set[str]] = {}
+        # v0.51.250: key by the EFFECTIVE id (guid_tmdb, else the theme_id-linked
+        # tmdb — the v0.51.239 _CTB_EFFECTIVE_TMDB precedence). Widening only the
+        # divergence join above without this would re-arm the v1.18.49 churn
+        # loop for the theme_id cohort: their rows would look "moved" on every
+        # enum because the guard set could never contain their key.
         for pi in conn.execute(
-            """SELECT pi.guid_tmdb AS tmdb_id, pi.media_type AS pi_mt,
-                      pi.folder_path
+            """SELECT COALESCE(pi.guid_tmdb, t.tmdb_id) AS tmdb_id,
+                      pi.media_type AS pi_mt, pi.folder_path
                FROM plex_items pi
+               LEFT JOIN themes t
+                 ON t.id = pi.theme_id
+                AND t.media_type = (CASE pi.media_type WHEN 'show' THEN 'tv'
+                                        ELSE pi.media_type END)
                WHERE pi.folder_path IS NOT NULL AND pi.folder_path != ''"""
         ).fetchall():
+            if pi["tmdb_id"] is None:
+                continue  # unlinked row — no placement can be keyed to it
             mt = "tv" if pi["pi_mt"] == "show" else "movie"
             key = (mt, pi["tmdb_id"])
             # v0.51.233 (audit): index BOTH the raw host path Plex reports AND its

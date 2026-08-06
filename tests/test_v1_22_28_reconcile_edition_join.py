@@ -125,7 +125,10 @@ def test_no_spurious_move_when_folder_already_correct(tmp_path):
 
 def test_join_pins_edition_key():
     i = PLEX_ENUM_PY.index("def reconcile_placement_paths(")
-    body = PLEX_ENUM_PY[i:i + 4500]
+    # v0.51.250: was a fixed `i + 4500` byte window — the theme_id-arm comment
+    # pushed the divergence query past it and this went red on a change that
+    # KEPT the edition join. Bounded by the query's own terminator instead.
+    body = PLEX_ENUM_PY[i:PLEX_ENUM_PY.index(").fetchall()", i)]
     assert "AND pi.edition_key = p.edition_key" in body, (
         "v1.21.94 edition JOIN must stay in reconcile_placement_paths")
 
