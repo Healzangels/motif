@@ -4756,7 +4756,16 @@
 #   dispatches, so neither can flood. Separately, _send_discord_embed treated HTTP 429 as
 #   a generic failure and DISCARDED the message despite Discord naming retry_after —
 #   those notifications were lost, not delayed. Now one retry, capped at 5s.
-__version__ = "0.51.254"
+# 0.51.255: the last two unmarked notification sweeps. Sweeping the whole class after
+#   .254 rather than only the loop the operator hit: of 12 place/download enqueue sites,
+#   5 already stamp bulk, 3 are genuinely one-action-per-call (UPLOAD MP3 / SET URL /
+#   PROMOTE — no bulk button exists), auto_restore coalesces via a hardcoded branch, and
+#   TWO were unmarked AND automated. _retry_pending_placements (hourly, LIMIT 500) fired
+#   theme_added per re-placed row — a 500-message ceiling from a cron tick nobody pressed.
+#   reconcile_placement_paths (every enum, UNCAPPED) fires theme_pushed per relocated
+#   row, and its trigger is a mass folder rename. Both are sweeps by construction, never
+#   one user action per row, so both now stamp bulk unconditionally.
+__version__ = "0.51.255"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

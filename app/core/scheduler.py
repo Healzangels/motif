@@ -224,7 +224,15 @@ def _retry_pending_placements(db_path: Path) -> None:
             # so the worker re-places the SAME edition (not the standard
             # one). '' for standard rows = today's '{}'-equivalent payload.
             import json
-            _retry_payload = json.dumps({"edition_key": r["edition_key"]})
+            # v0.51.255: bulk=True — this is a SWEEP, never one user action per
+            # row. It runs hourly against up to 500 rows (LIMIT above), and each
+            # landed place fires theme_added; unmarked, that is up to 500
+            # separate Discord messages from a cron tick nobody pressed. The
+            # v1.23.46 flag exists to tell one-action-per-row apart from a
+            # batch, and a sweep is unambiguously the latter — same reasoning
+            # as the auto_restore sweep, which has always coalesced.
+            _retry_payload = json.dumps({"edition_key": r["edition_key"],
+                                         "bulk": True})
             conn.execute(
                 """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
                                      payload, status, created_at, next_run_at)

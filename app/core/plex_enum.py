@@ -1401,9 +1401,17 @@ def reconcile_placement_paths(db_path: Path, *,
                     # THIS edition's local_files into the relocated folder
                     # (the payload was edition-less → worker fell back to '').
                     import json as _json
+                    # v0.51.255: bulk=True — this reconcile is a SWEEP and is
+                    # UNCAPPED. Its trigger is a mass folder rename (a *arr
+                    # reorganisation, a library restructure, a disk re-add), so
+                    # the natural batch size is "however many folders moved" —
+                    # and `force` makes each landed place fire theme_pushed.
+                    # Unmarked, one rename storm is one Discord message per
+                    # title. Never one user action per row, so it coalesces
+                    # unconditionally, like the auto_restore sweep.
                     _reloc_payload = _json.dumps({
                         "force": True, "reason": "folder_relocated",
-                        "edition_key": r["edition_key"]})
+                        "edition_key": r["edition_key"], "bulk": True})
                     conn.execute(
                         """INSERT INTO jobs (job_type, media_type, tmdb_id, section_id,
                                              payload, status, created_at, next_run_at)
