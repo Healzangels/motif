@@ -118,7 +118,7 @@ def test_do_place_collection_resolves_named_editions_rk(tmp_path, caplog):
         _worker(s)._do_place_collection(job=job, theme=theme, local=None)
 
     line = next((r.getMessage() for r in caplog.records
-                 if "_do_place_collection: rk=" in r.getMessage()), None)
+                 if "_do_place_collection: job=" in r.getMessage()), None)
     assert line is not None, "expected the _do_place_collection state log"
     assert f"cached_rk={SAM_RK}" in line, line
     assert f"cached_rk={THEATRICAL_RK}" not in line, line

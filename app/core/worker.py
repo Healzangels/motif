@@ -2749,6 +2749,18 @@ class Worker:
         _ed_clause2 = " AND edition_key = ?"
         _ed_params = (place_edition_key,)
         with get_conn(self.settings.db_path) as conn:
+            # v0.51.253: ORDER BY liveness on all three resolves below. A disk
+            # dropping out and coming back makes Plex DELETE the items and
+            # re-add them with NEW rating keys; the reaper holds the dead rows
+            # for _REAP_MISS_THRESHOLD enums (v0.51.128 anti-glitch grace), so
+            # the table legitimately holds a dead row and a live row for the
+            # same title. resolve_theme_ids links BOTH to the theme, so the
+            # JOIN matched both and a bare LIMIT 1 returned whichever SQLite
+            # yielded first — the OLDER, dead one. Every upload then 404'd
+            # against a rating key Plex had already deleted (the user's
+            # 2026-08-09 disk incident: ~80 movies, Pacific Rim rk 137499 dead
+            # vs 738854 live, both theme_id=2474). consecutive_missing=0 rows
+            # are the ones Plex returned THIS enum; last_seen_at breaks ties.
             pi = conn.execute(
                 """SELECT pi.rating_key, pi.has_theme, pi.folder_path,
                           pi.local_theme_file, pi.plex_independent_theme,
@@ -2759,6 +2771,8 @@ class Worker:
                     AND t.media_type = ?
                     AND t.tmdb_id = ?
                    WHERE pi.section_id = ?""" + _ed_clause + """
+                   ORDER BY pi.consecutive_missing ASC,
+                            pi.last_seen_at DESC
                    LIMIT 1""",
                 (media_type, tmdb_id, section_id) + _ed_params,
             ).fetchone()
@@ -2772,7 +2786,9 @@ class Worker:
                     "       plex_theme_verified_ok "
                     "FROM plex_items "
                     "WHERE guid_tmdb = ? AND media_type = ? "
-                    "  AND section_id = ?" + _ed_clause2 + " LIMIT 1",
+                    "  AND section_id = ?" + _ed_clause2
+                    + " ORDER BY consecutive_missing ASC, last_seen_at DESC"
+                    " LIMIT 1",
                     (tmdb_id, plex_mt, section_id) + _ed_params,
                 ).fetchone()
             if pi is None and not place_edition_key:
@@ -2788,16 +2804,29 @@ class Worker:
                 # → place_theme's find_target_folder cleanly no-matches the tagged
                 # folders under strict_edition. TAGGED editions still never fall
                 # back (v1.21.66 strict: a tagged miss must not grab a sibling).
+                # v0.51.253: count the ambiguity over LIVE rows only. The
+                # v1.24.24 guard is about multi-EDITION siblings, but a
+                # re-added title (dead row + live row, same edition) also
+                # reads as 2 candidates and bailed — turning a recoverable
+                # place into a no-match. Two LIVE rows is still genuinely
+                # ambiguous and still bails. When NOTHING is live (a whole-
+                # section Plex glitch), fall back to the pre-v0.51.253
+                # count so a transient miss doesn't newly strand a place.
                 _cands = conn.execute(
                     "SELECT rating_key, has_theme, folder_path, "
                     "       local_theme_file, plex_independent_theme, "
-                    "       plex_theme_verified_ok "
+                    "       plex_theme_verified_ok, consecutive_missing "
                     "FROM plex_items "
                     "WHERE guid_tmdb = ? AND media_type = ? "
-                    "  AND section_id = ? LIMIT 2",
+                    "  AND section_id = ? "
+                    "ORDER BY consecutive_missing ASC, last_seen_at DESC "
+                    "LIMIT 3",
                     (tmdb_id, plex_mt, section_id),
                 ).fetchall()
-                if len(_cands) == 1:
+                _live = [c for c in _cands if not c["consecutive_missing"]]
+                if len(_live) == 1:
+                    pi = _live[0]
+                elif not _live and len(_cands) == 1:
                     pi = _cands[0]
         cached_rk = pi["rating_key"] if pi else None
         cached_has_theme = bool(pi and pi["has_theme"])
@@ -3509,6 +3538,17 @@ class Worker:
         _ce_clause = " AND pi.edition_key = ?"
         _ce_clause2 = " AND edition_key = ?"
         _ce_params = (_coll_payload_edition,)
+        # v0.51.253: prefer the LIVE plex_items row — THE 2026-08-09 incident.
+        # A disk dropped and came back; Plex deleted the items and re-added
+        # them with new rating keys, and the v0.51.128 reaper holds the dead
+        # rows for 2 enums as anti-glitch grace, so the table legitimately
+        # held a dead row + a live row per title. resolve_theme_ids linked
+        # BOTH to the theme, so this JOIN matched both and a bare LIMIT 1
+        # returned the older, DEAD one — every upload 404'd against a rating
+        # key Plex had already deleted (~80 movies; Pacific Rim dead 137499 /
+        # live 738854, both theme_id=2474). This is the upload path the bulk
+        # PUSH actually takes; _do_place's own resolve below is the FILE path
+        # and needs the identical ordering (kind='api' returns before it).
         with get_conn(self.settings.db_path) as conn:
             pi = conn.execute(
                 """SELECT pi.rating_key, pi.has_theme,
@@ -3519,6 +3559,8 @@ class Worker:
                     AND t.media_type = ?
                     AND t.tmdb_id = ?
                    WHERE pi.section_id = ?""" + _ce_clause + """
+                   ORDER BY pi.consecutive_missing ASC,
+                            pi.last_seen_at DESC
                    LIMIT 1""",
                 (media_type, tmdb_id, section_id) + _ce_params,
             ).fetchone()
@@ -3537,7 +3579,9 @@ class Worker:
                     "       plex_theme_verified_ok "
                     "FROM plex_items "
                     "WHERE guid_tmdb = ? AND media_type = ? "
-                    "  AND section_id = ?" + _ce_clause2 + " LIMIT 1",
+                    "  AND section_id = ?" + _ce_clause2
+                    + " ORDER BY consecutive_missing ASC, last_seen_at DESC"
+                    " LIMIT 1",
                     (tmdb_id, pi_media_type_fallback, section_id)
                     + _ce_params,
                 ).fetchone()
@@ -3548,15 +3592,26 @@ class Worker:
                 # siblings. Tagged payloads still never fall back (v1.21.66 strict).
                 pi_media_type_fallback = (
                     "show" if media_type == "tv" else media_type)
+                # v0.51.253: count the ambiguity over LIVE rows only — the
+                # v1.24.24 guard targets multi-EDITION siblings, but a
+                # re-added title's dead+live pair also read as 2 candidates
+                # and got refused. Two LIVE rows is still ambiguous. When
+                # nothing is live, keep the old count so a section-wide Plex
+                # glitch doesn't newly strand a place.
                 _cands = conn.execute(
                     "SELECT rating_key, has_theme, "
-                    "       plex_theme_verified_ok "
+                    "       plex_theme_verified_ok, consecutive_missing "
                     "FROM plex_items "
                     "WHERE guid_tmdb = ? AND media_type = ? "
-                    "  AND section_id = ? LIMIT 2",
+                    "  AND section_id = ? "
+                    "ORDER BY consecutive_missing ASC, last_seen_at DESC "
+                    "LIMIT 3",
                     (tmdb_id, pi_media_type_fallback, section_id),
                 ).fetchall()
-                if len(_cands) == 1:
+                _live = [c for c in _cands if not c["consecutive_missing"]]
+                if len(_live) == 1:
+                    pi = _live[0]
+                elif not _live and len(_cands) == 1:
                     pi = _cands[0]
         cached_rk = pi["rating_key"] if pi else None
         cached_has_theme = bool(pi and pi["has_theme"])
@@ -3583,8 +3638,11 @@ class Worker:
         # local-file-present) tuple BEFORE deciding skip vs
         # upload. Pairs with the verbose upload_collection_theme
         # logging in plex.py.
+        # v0.51.253: label this `job=`, not `rk=`. It is the JOB id, and the
+        # mislabel actively misled during the 2026-08-09 dead-rk incident —
+        # "rk=7621" next to "cached_rk=137499" reads as two rating keys.
         log.info(
-            "_do_place_collection: rk=%s media_type=%s tmdb_id=%s "
+            "_do_place_collection: job=%s media_type=%s tmdb_id=%s "
             "section_id=%s cached_rk=%s cached_has_theme=%s "
             "force_overwrite=%s local_present=%s",
             job["id"], media_type, tmdb_id, section_id,

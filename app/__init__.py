@@ -4732,7 +4732,20 @@
 #   dead renderMissing + #*-missing-body writes removed, and bulk-bar labels write
 #   through setBulkLabel so the selection poll can't stamp the resting count label
 #   over a running handler's // PUSHING i/N progress (bug-class 5 ping-pong).
-__version__ = "0.51.252"
+# 0.51.253: INCIDENT FIX — the place resolve targets the LIVE rating key. A disk
+#   dropped off the array; Plex deleted the items and re-added them with new rating
+#   keys on reconnect. The v0.51.128 reaper holds a missing row for 2 enums (correct
+#   anti-glitch grace), so plex_items legitimately held a dead row AND a live row per
+#   title — resolve_theme_ids had linked BOTH to the theme, so the JOIN matched both
+#   and a bare LIMIT 1 returned the older, DEAD one. Every bulk PUSH upload 404'd
+#   against a key Plex had already deleted (~80 movies). All three resolves in BOTH
+#   _do_place_collection (the API/upload path the incident took) and _do_place (the
+#   file path) now ORDER BY consecutive_missing ASC, last_seen_at DESC, so a dropout
+#   self-corrects on the first enum instead of needing two refreshes. The v1.24.24
+#   ambiguity guard now counts LIVE candidates only (a dead+live pair was being
+#   refused as ambiguous). Also: the state log labeled job["id"] as `rk=`, which read
+#   as a second rating key next to cached_rk while debugging the incident.
+__version__ = "0.51.253"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

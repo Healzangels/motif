@@ -261,9 +261,14 @@ def test_do_place_collection_logs_resolved_state():
     fn_start = src.index("def _do_place_collection(")
     fn_end = src.index("\n    def _do_refresh(", fn_start + 1)
     body = src[fn_start:fn_end]
-    # Pin the diagnostic log line.
-    assert "_do_place_collection: rk=%s" in body, (
+    # Pin the diagnostic log line. v0.51.253: the leading field is `job=`
+    # — it was mislabeled `rk=` while carrying job["id"], which read as a
+    # second rating key next to cached_rk during the dead-rk incident.
+    assert "_do_place_collection: job=%s" in body, (
         "v1.18.9: helper must log its resolved state tuple"
+    )
+    assert "_do_place_collection: rk=%s" not in body, (
+        "v0.51.253: the job id must not be labeled rk="
     )
     # Required fields in the log: cached_rk, cached_has_theme,
     # force_overwrite, local-presence.

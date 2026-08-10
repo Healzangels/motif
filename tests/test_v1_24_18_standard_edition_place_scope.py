@@ -170,7 +170,7 @@ def test_do_place_collection_resolves_standard_edition_rk(tmp_path, caplog):
         _worker(s)._do_place_collection(job=job, theme=theme, local=None)
 
     line = next((r.getMessage() for r in caplog.records
-                 if "_do_place_collection: rk=" in r.getMessage()), None)
+                 if "_do_place_collection: job=" in r.getMessage()), None)
     assert line is not None, "expected the _do_place_collection state log"
     assert f"cached_rk={STD_RK}" in line, line
     assert f"cached_rk={TAG_RK}" not in line, line
@@ -190,7 +190,7 @@ def test_do_place_collection_standard_payload_falls_back_to_tagged_only(
         _worker(s)._do_place_collection(job=job, theme=theme, local=None)
 
     line = next((r.getMessage() for r in caplog.records
-                 if "_do_place_collection: rk=" in r.getMessage()), None)
+                 if "_do_place_collection: job=" in r.getMessage()), None)
     assert line is not None, "expected the _do_place_collection state log"
     assert f"cached_rk={TAG_RK}" in line, line
     assert "cached_rk=None" not in line, line
@@ -314,7 +314,7 @@ def test_do_place_collection_ambiguous_multitag_does_not_guess(
         _worker(s)._do_place_collection(job=job, theme=theme, local=None)
 
     line = next((r.getMessage() for r in caplog.records
-                 if "_do_place_collection: rk=" in r.getMessage()), None)
+                 if "_do_place_collection: job=" in r.getMessage()), None)
     assert line is not None, "expected the _do_place_collection state log"
     assert "cached_rk=None" in line, line
     assert f"cached_rk={TAG_RK}" not in line, line
@@ -322,8 +322,21 @@ def test_do_place_collection_ambiguous_multitag_does_not_guess(
 
 
 def test_ambiguous_fallback_gated_on_single_candidate():
-    """Both helpers' fallback must be gated on EXACTLY ONE candidate (LIMIT 2 +
-    `if len(_cands) == 1`), not a bare arbitrary `LIMIT 1`."""
+    """Both helpers' fallback must be gated on EXACTLY ONE candidate, not a
+    bare arbitrary `LIMIT 1`.
+
+    v0.51.253: the count is now over LIVE candidates — a re-added title holds
+    a dead row + a live row and was wrongly refused as ambiguous. The guard's
+    intent is unchanged (never guess across 2+ real siblings); only its
+    expression moved from `len(_cands) == 1` to `len(_live) == 1`, plus an
+    all-dead fallback that keeps the old count. Behavioural coverage of the
+    ambiguity refusal itself lives in this file's tagged-sibling tests and in
+    test_v0_51_253's two-live-editions case.
+    """
     src = (Path(__file__).resolve().parent.parent
            / "app" / "core" / "worker.py").read_text()
-    assert src.count("if len(_cands) == 1:") >= 2
+    assert src.count("if len(_live) == 1:") >= 2, (
+        "both resolves must gate the fallback on exactly one LIVE candidate")
+    assert src.count("elif not _live and len(_cands) == 1:") >= 2, (
+        "both resolves must keep the all-dead single-candidate fallback — "
+        "dropping it strands a place during a section-wide Plex glitch")
