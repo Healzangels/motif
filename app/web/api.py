@@ -17785,6 +17785,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # SECTION-WIDE. Frontend-believes-scoped / backend-isn't = the v1.18.81
         # phantom-fix class; the identical fan-out was fixed for download-batch in v1.19.8.
         section_id: str | None = Query(None),
+        # v0.51.254: the bulk PUSH button is a CLIENT-SIDE loop over this
+        # single-row endpoint, so the backend had no way to know 72 calls were
+        # ONE user action — every place job took dispatch_coalesced's
+        # `bulk=False` branch and fired its own Discord message (the operator's
+        # 2026-08-09 disk-recovery push: 72 notifications, and Discord 429'd
+        # away a chunk of them). v1.23.46 made `bulk` explicit precisely so the
+        # coalescer stops guessing; this is that flag reaching the path that
+        # needs it. Default False keeps a genuine single PUSH immediate.
+        bulk: bool = Query(False),
         db: Path = Depends(get_db_path),
     ):
         """Re-place motif's existing canonical into the Plex media folder.
@@ -17966,6 +17975,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 )
             for s in sections:
                 payload_obj = {"force": True, "reason": "user_replace"}
+                if bulk:
+                    payload_obj["bulk"] = True
                 if kind:
                     payload_obj["kind"] = kind
                 # v1.21.69: carry edition_key so the place job lands in
@@ -18015,6 +18026,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # place jobs → arbitrary cached_rk (same class as REPLACE TDB).
         # None = legacy title/section-wide switch (no rk sent).
         rating_key: str | None = Query(None),
+        # v0.51.254: bulk SWITCH TO API loops this endpoint client-side — same
+        # notification flood as bulk PUSH. See api_replace_item's note.
+        bulk: bool = Query(False),
         db: Path = Depends(get_db_path),
     ):
         """v1.18.23: flip a placement between sidecar (file) and
@@ -18206,6 +18220,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "reason": "user_switch_placement",
                     "kind": target_kind,
                 }
+                if bulk:
+                    sec_payload["bulk"] = True
                 # v1.21.69: place job carries edition_key → lands in THIS
                 # edition's folder/rk (cached_rk lookup edition-scoped).
                 if _sw_edition is not None:

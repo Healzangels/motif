@@ -63,7 +63,9 @@ def test_click_handler_loops_per_row_switch_placement_edition_scoped():
     assert ("document.getElementById('library-switch-to-api-btn')?.addEventListener"
             in JS)
     # …reuses the per-row endpoint (no new backend), edition-scoped via rating_key.
-    assert "`?rating_key=${encodeURIComponent(c.rk)}`" in JS
+    # v0.51.254: the loop also carries &bulk=1 so its N calls coalesce into ONE
+    # notification (see test_v0_51_254). Still edition-scoped via rating_key.
+    assert "`?rating_key=${encodeURIComponent(c.rk)}&bulk=1`" in JS
     assert "`/api/items/${c.mt}/${c.id}/switch-placement${_qs}`" in JS
     # same candidate eligibility as the count (per-row gate: theme_tmdb present, no orphan
     # exclusion — SRC=U-on-orphan rows switch too).

@@ -4745,7 +4745,18 @@
 #   ambiguity guard now counts LIVE candidates only (a dead+live pair was being
 #   refused as ambiguous). Also: the state log labeled job["id"] as `rk=`, which read
 #   as a second rating key next to cached_rk while debugging the incident.
-__version__ = "0.51.253"
+# 0.51.254: a client-side bulk loop is ONE action + Discord 429s retry. Exposed by
+#   .253: once the 72-row recovery push actually SUCCEEDED it fired 72 Discord messages
+#   (a failed place never notifies, so both defects had been hidden). v1.23.46 made
+#   coalescing depend on an explicit `bulk` flag, but bulk PUSH / bulk SWITCH TO API are
+#   CLIENT-SIDE loops over the single-row /replace + /switch-placement endpoints, so
+#   nothing told the backend those N calls were one action. Both now accept ?bulk=1 and
+#   stamp it into the place-job payload the worker already reads. /restore-canonical and
+#   /adopt-sidecar deliberately untouched — MEASURED: neither enqueues a place job nor
+#   dispatches, so neither can flood. Separately, _send_discord_embed treated HTTP 429 as
+#   a generic failure and DISCARDED the message despite Discord naming retry_after —
+#   those notifications were lost, not delayed. Now one retry, capped at 5s.
+__version__ = "0.51.254"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -413,6 +414,11 @@ _DISCORD_WEBHOOK_HOSTS = (
     "canary.discord.com", "discordapp.com", "www.discordapp.com",
 )
 
+# v0.51.254: ceiling on the 429 retry_after we'll actually wait. Discord's
+# per-webhook 429s are sub-2s, but a global/bucket 429 can name minutes —
+# blocking the dispatch thread that long is worse than dropping one message.
+_DISCORD_429_MAX_WAIT_S: float = 5.0
+
 
 def _parse_discord_webhook(url: str) -> tuple[str, str] | None:
     """v1.23.2: (webhook_id, token) from a Discord sink URL, or None
@@ -484,17 +490,37 @@ def _send_discord_embed(
                 "image": {"url": f"attachment://{fname}"},
             }],
         }
-        with open(attach_path, "rb") as f, \
-                httpx.Client(timeout=15.0) as c:
-            resp = c.post(
-                f"https://discord.com/api/webhooks/{wid}/{token}",
-                data={"payload_json": _json.dumps(payload)},
-                files={"files[0]": (fname, f, "image/jpeg")},
-            )
-        if 200 <= resp.status_code < 300:
-            return True
-        log.warning("discord native embed send failed: HTTP %s %s",
-                    resp.status_code, resp.text[:200])
+        # v0.51.254: honor Discord's 429 retry_after instead of dropping the
+        # message. Pre-fix a 429 was treated as a generic failure — logged,
+        # discarded — even though the response names the exact wait
+        # ("retry_after": 1.657). The operator's 2026-08-09 bulk push 429'd
+        # repeatedly and those notifications were LOST, not delayed. Coalescing
+        # (same tag) cuts the volume that causes this, but any burst can still
+        # trip it. Bounded: ONE retry, wait capped — a jammed webhook must not
+        # wedge the notify thread (this runs on the worker's dispatch path).
+        for _attempt in (0, 1):
+            with open(attach_path, "rb") as f, \
+                    httpx.Client(timeout=15.0) as c:
+                resp = c.post(
+                    f"https://discord.com/api/webhooks/{wid}/{token}",
+                    data={"payload_json": _json.dumps(payload)},
+                    files={"files[0]": (fname, f, "image/jpeg")},
+                )
+            if 200 <= resp.status_code < 300:
+                return True
+            if resp.status_code == 429 and _attempt == 0:
+                try:
+                    _wait = float(resp.json().get("retry_after") or 0)
+                except Exception:  # noqa: BLE001 — malformed 429 body
+                    _wait = 0.0
+                _wait = min(max(_wait, 0.0), _DISCORD_429_MAX_WAIT_S)
+                if _wait > 0:
+                    log.info("discord 429 — retrying once in %.2fs", _wait)
+                    time.sleep(_wait)
+                    continue
+            log.warning("discord native embed send failed: HTTP %s %s",
+                        resp.status_code, resp.text[:200])
+            return False
         return False
     except Exception as e:  # noqa: BLE001
         log.warning("discord native embed send raised: %s", e)

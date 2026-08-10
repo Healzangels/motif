@@ -15160,6 +15160,13 @@
           const _cP = [];
           if (c.sid) _cP.push(`section_id=${encodeURIComponent(c.sid)}`);
           if (c.rk) _cP.push(`rating_key=${encodeURIComponent(c.rk)}`);
+          // v0.51.254: mark every call in this loop as part of ONE bulk
+          // action. The endpoint stamps it into the place job payload so the
+          // worker's coalescer emits a single summary — pre-fix the operator's
+          // 72-row disk-recovery push sent 72 Discord messages (and Discord
+          // 429'd a chunk of them away). Only THIS loop sets it; a per-row
+          // PUSH from the SOURCE menu stays a rich immediate single.
+          _cP.push('bulk=1');
           await api('POST', `/api/items/${c.mt}/${c.id}/replace`
             + (_cP.length ? `?${_cP.join('&')}` : ''));
           ok++;
@@ -15243,7 +15250,10 @@
       for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i];
         try {
-          const _qs = c.rk ? `?rating_key=${encodeURIComponent(c.rk)}` : '';
+          // v0.51.254: bulk=1 — same one-action-N-calls coalescing as bulk
+          // PUSH above (this loop notifies through the same theme_pushed path).
+          const _qs = c.rk
+            ? `?rating_key=${encodeURIComponent(c.rk)}&bulk=1` : '?bulk=1';
           await api('POST', `/api/items/${c.mt}/${c.id}/switch-placement${_qs}`);
           ok++;
         } catch (_) {

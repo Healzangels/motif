@@ -147,9 +147,14 @@ def test_per_row_handlers_show_x_over_n_progress():
     failures = []
     for btn_id, verb in PER_ROW_HANDLERS:
         anchor = js.index(f"{btn_id}')?.addEventListener")
-        # v1.21.85: widened from 5000 — bulk PUSH's per-edition rating_key
-        # query builder pushed the per-iter progress label further down.
-        body = js[anchor:anchor + 5400]
+        # v0.51.254: was a fixed byte window (5000 → widened to 5400 in
+        # v1.21.85, then red AGAIN here when bulk PUSH gained its bulk=1
+        # comment). That is the treadmill: every growth in the handler needs
+        # another bump. Bound by the handler's own end — the next
+        # getElementById(...) addEventListener registration — so it can never
+        # go stale on size alone.
+        _next = js.find("')?.addEventListener", anchor + 40)
+        body = js[anchor:_next if _next > 0 else len(js)]
         # Initial label sets count: "// VERBING 0/N"
         if f"// {verb} 0/" not in body and f"// {verb} 0/${{" not in body:
             # Some handlers use backtick templates: `// VERBING 0/${count.length}`
