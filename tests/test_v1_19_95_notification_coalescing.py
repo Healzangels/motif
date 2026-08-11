@@ -42,7 +42,7 @@ def notify_mod(monkeypatch):
     # Reset coalesce state so tests don't bleed into each other.
     n._COALESCE_BUF.clear()
     n._COALESCE_TIMERS.clear()
-    n._COALESCE_ACTIVE.clear()  # v1.19.97: leading-edge flag
+    n._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
     sent = []
     monkeypatch.setattr(
         n, "dispatch",
@@ -155,7 +155,9 @@ def test_disabled_event_does_not_buffer(notify_mod):
     n, sent = notify_mod
     _push(n, _cfg(enabled=False), Path("/x"), "Off (2024)")
     assert not n._COALESCE_BUF.get("theme_pushed")
-    assert not n._COALESCE_ACTIVE.get("theme_pushed")
+    # v0.51.257: the gate must return before ANY coalescer state is written —
+    # asserted on the buffer + the config (the write-only ACTIVE flag is gone).
+    assert "theme_pushed" not in n._COALESCE_CFG
     assert sent == [], "disabled event must not send (even the leading edge)"
 
 
@@ -163,7 +165,7 @@ def test_no_sinks_does_not_buffer(notify_mod):
     n, sent = notify_mod
     _push(n, _cfg(sinks=False), Path("/x"), "NoSink (2024)")
     assert not n._COALESCE_BUF.get("theme_pushed")
-    assert not n._COALESCE_ACTIVE.get("theme_pushed")
+    assert "theme_pushed" not in n._COALESCE_CFG
     assert sent == [], "no-sink event must not send"
 
 

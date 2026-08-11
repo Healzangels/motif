@@ -4776,7 +4776,19 @@
 #   load, so an existing install keeps its saved value; the Settings toggle is the fix
 #   there. Also retracts a stale notify_inbox note calling plex_item_arrived_themed
 #   dormant — it fires (3 rows on the operator's install).
-__version__ = "0.51.256"
+# 0.51.257: the shutdown drain follows the BUFFER, not the timers. flush_all_coalesced
+#   iterated _COALESCE_TIMERS and recovered (db_path, notifications) from timer.args, so
+#   a kind holding buffered items with NO timer was invisible to it — and that is exactly
+#   what an _arm_coalesce_timer failure leaves behind, the case v1.20.0's except handler
+#   exists for. The batch vanished at exit with no breadcrumb, in the function whose whole
+#   job is preventing that. Config now lives in _COALESCE_CFG beside the buffer, written
+#   BEFORE the append, which also retires the fragile timer.args coupling. Second half:
+#   _COALESCE_ACTIVE is gone — write-only since v1.23.46 replaced leading-edge inference
+#   with the explicit bulk= flag, and the only thing keeping it alive was a v1.20.0 guard
+#   that was itself a phantom (its fixed 800-char window reached past the except it named
+#   into _flush_coalesced's copy of the line, so it would have passed with the handler
+#   deleted). That guard is retargeted at the invariant the handler actually owes.
+__version__ = "0.51.257"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

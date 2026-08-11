@@ -103,7 +103,7 @@ def test_bulk_item_buffered_even_if_arm_raises():
     from app.core import notify as n
     n._COALESCE_BUF.clear()
     n._COALESCE_TIMERS.clear()
-    n._COALESCE_ACTIVE.clear()
+    n._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
     sent = []
 
     def _capture(db, cfg, *, event_kind, title, body, body_format="text", **kw):

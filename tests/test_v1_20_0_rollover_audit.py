@@ -12,10 +12,12 @@ real bug + two coalescer hardenings + audit coverage:
    truth, used at all 5 bulk-bar/accept sites (ends the drift class).
 
 2. **Coalescer hardening (notify.py).** dispatch_coalesced's except
-   now resets _COALESCE_ACTIVE so a Timer.start failure can't jam the
-   burst window open (dark-holing notifications). _dispatch_batch is
-   wrapped so a formatter raise on the daemon timer thread can't
-   silently drop a batch.
+   logs a WARNING and falls through so a Timer.start failure can't
+   dark-hole the buffered item. (v0.51.257 retired the _COALESCE_ACTIVE
+   flag this originally reset — it was write-only, and the guard here
+   was a phantom that matched _flush_coalesced's copy of the line.)
+   _dispatch_batch is wrapped so a formatter raise on the daemon timer
+   thread can't silently drop a batch.
 
 3. **Coverage.** Coalescer concurrency behavioral test (the lock
    contract was only serially tested); decline-all of new_theme rows.
@@ -68,12 +70,27 @@ def test_no_bare_bulk_bar_predicate_remains():
 # ── 2. coalescer hardenings ──────────────────────────────────
 
 
-def test_dispatch_coalesced_except_resets_active():
-    idx = NOTIFY_PY.index("notify.dispatch_coalesced buffer failed")
-    block = NOTIFY_PY[idx:idx + 800]
-    assert "_COALESCE_ACTIVE[event_kind] = False" in block, (
-        "v1.20.0: the except must reset ACTIVE so a Timer.start "
-        "failure can't jam the burst window open"
+def test_dispatch_coalesced_arm_failure_is_recoverable():
+    """v0.51.257: this replaces test_dispatch_coalesced_except_resets_active,
+    which was a phantom — its fixed 800-char window from the log line reached
+    12 lines PAST the except into _flush_coalesced, so it matched that
+    function's `_COALESCE_ACTIVE[event_kind] = False` and would have passed
+    with the except handler deleted outright.
+
+    What the handler actually has to guarantee: an _arm_coalesce_timer raise
+    leaves the item BUFFERED and REACHABLE, not dark-holed. Anchored to the
+    end of the except block, and the reachability half is behavioural in
+    test_v0_51_257_*."""
+    idx = NOTIFY_PY.index("    except Exception as e:\n"
+                          "        # v1.20.9 (class-9)")
+    block = NOTIFY_PY[idx:NOTIFY_PY.index("\ndef ", idx)]
+    assert 'log.warning("notify.dispatch_coalesced buffer failed' in block, (
+        "v1.20.9 (class-9): an arm failure must leave a WARNING breadcrumb, "
+        "not vanish at debug level"
+    )
+    assert "return" not in block, (
+        "v1.20.0: the except must fall through — swallowing the arm failure "
+        "and returning would strand the buffered item with no timer"
     )
 
 
@@ -97,7 +114,7 @@ def notify_mod(monkeypatch):
     from app.core import notify as n
     n._COALESCE_BUF.clear()
     n._COALESCE_TIMERS.clear()
-    n._COALESCE_ACTIVE.clear()
+    n._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
     sent = []
     sent_lock = threading.Lock()
 

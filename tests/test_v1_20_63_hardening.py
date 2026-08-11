@@ -41,7 +41,7 @@ def _clean_coalescer():
             pass
     notify._COALESCE_TIMERS.clear()
     notify._COALESCE_BUF.clear()
-    notify._COALESCE_ACTIVE.clear()
+    notify._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
     yield
     for t in list(notify._COALESCE_TIMERS.values()):
         try:
@@ -50,7 +50,7 @@ def _clean_coalescer():
             pass
     notify._COALESCE_TIMERS.clear()
     notify._COALESCE_BUF.clear()
-    notify._COALESCE_ACTIVE.clear()
+    notify._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
 
 
 def _stub_cfg():

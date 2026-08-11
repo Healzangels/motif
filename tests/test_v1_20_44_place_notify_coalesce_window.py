@@ -117,7 +117,7 @@ def notify_harness(monkeypatch):
 
     # Reset coalescer state so prior tests don't leak an open window.
     n._COALESCE_BUF.clear()
-    n._COALESCE_ACTIVE.clear()
+    n._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
     n._COALESCE_TIMERS.clear()
 
     return n, sent, advance

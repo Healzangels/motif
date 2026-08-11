@@ -745,8 +745,16 @@ _COALESCE_LOCK = threading.Lock()
 # "burst window open?" flag. v1.19.97 reworked this from a pure
 # debounce (every event delayed) to leading-edge + trailing tail.
 _COALESCE_BUF: dict[str, list[dict]] = {}
-_COALESCE_ACTIVE: dict[str, bool] = {}
 _COALESCE_TIMERS: dict[str, threading.Timer] = {}
+# v0.51.257: the config for whatever is buffered per kind. flush_all_coalesced
+# used to recover (db_path, notifications) from `timer.args`, which meant a kind
+# with a BUFFER but no TIMER — the exact state an _arm_coalesce_timer failure
+# leaves behind — had no recoverable config and was silently unreachable at
+# shutdown. Holding it beside the buffer decouples the drain from the timer.
+# Not popped on flush: it is keyed by event_kind (a bounded set) and overwritten
+# on the next buffered event, so a stale entry costs nothing and popping it
+# would just re-open the same recover-from-somewhere-else problem.
+_COALESCE_CFG: dict[str, tuple] = {}
 # v1.20.44: 120s window. Pre-v1.20.40 the worker drained a place
 # burst in a tight ms-apart cluster, so an 8s window comfortably
 # trailed it. Place-as-you-go (v1.20.40) now interleaves each place
@@ -886,6 +894,9 @@ def dispatch_coalesced(
     flush_tail: list[dict] | None = None
     try:
         with _COALESCE_LOCK:
+            # v0.51.257: stash the config BEFORE the append, so the shutdown
+            # drain can reach this batch even if the timer-arm below raises.
+            _COALESCE_CFG[event_kind] = (db_path, notifications)
             buf = _COALESCE_BUF.setdefault(event_kind, [])
             buf.append({
                 "label": item_label,
@@ -923,7 +934,6 @@ def _flush_coalesced(db_path, notifications, event_kind: str) -> None:
         with _COALESCE_LOCK:
             tail = _COALESCE_BUF.pop(event_kind, [])
             _COALESCE_TIMERS.pop(event_kind, None)
-            _COALESCE_ACTIVE[event_kind] = False
     except Exception as e:
         log.debug("notify._flush_coalesced drain failed: %s", e)
         return
@@ -990,35 +1000,40 @@ def flush_all_coalesced() -> None:
     would silently lose its batch summary. Wired from the main.py
     SIGTERM/SIGINT handler. Never raises — shutdown must proceed.
 
-    Each timer carries (db_path, notifications, event_kind) in its
-    .args, so we recover the config to dispatch without a registry."""
+    v0.51.257: drains by BUFFER, not by timer. Pre-fix this iterated
+    _COALESCE_TIMERS and read the config off `timer.args`, so a kind holding
+    buffered items with no timer — precisely what an _arm_coalesce_timer
+    failure leaves behind, the case v1.20.0's handler exists for — was
+    invisible here and lost its batch silently, in the function whose whole
+    job is preventing that. The config now lives in _COALESCE_CFG alongside
+    the buffer, which also retires the fragile timer.args coupling v0.51.249
+    flagged as contract-drift-prone."""
     drained: list[tuple] = []
     try:
         with _COALESCE_LOCK:
-            for event_kind, timer in list(_COALESCE_TIMERS.items()):
-                try:
-                    timer.cancel()
-                except Exception as e:
-                    # v0.51.249: class-9 breadcrumb. A cancel that raises still
-                    # lets us drain the buffer below, so this is recoverable —
-                    # but silence made it indistinguishable from a clean cancel.
-                    log.debug("notify.flush: timer.cancel raised for %s: %s",
-                              event_kind, e)
-                try:
-                    db_path, notifications, _ek = timer.args
-                except Exception as e:
-                    # v0.51.249: this is the LOSS path — db_path=None makes the
-                    # gate below DROP the batch, in the very function whose
-                    # v1.20.63 purpose is stopping shutdown batch loss. A future
-                    # change to the Timer args tuple (contract-drift, v1.17.10)
-                    # would have discarded every pending batch with zero output.
-                    log.warning("notify.flush: cannot recover config for %s "
-                                "(%s) — DROPPING %d pending item(s)",
-                                event_kind, e, len(_COALESCE_BUF.get(event_kind, [])))
-                    db_path, notifications = None, None
+            for event_kind in set(_COALESCE_TIMERS) | set(_COALESCE_BUF):
+                timer = _COALESCE_TIMERS.pop(event_kind, None)
+                if timer is not None:
+                    try:
+                        timer.cancel()
+                    except Exception as e:
+                        # v0.51.249: class-9 breadcrumb. A cancel that raises still
+                        # lets us drain the buffer below, so this is recoverable —
+                        # but silence made it indistinguishable from a clean cancel.
+                        log.debug("notify.flush: timer.cancel raised for %s: %s",
+                                  event_kind, e)
                 items = _COALESCE_BUF.pop(event_kind, [])
-                _COALESCE_ACTIVE[event_kind] = False
-                if items and db_path is not None:
+                cfg = _COALESCE_CFG.get(event_kind)
+                if items and cfg is None:
+                    # v0.51.249's LOSS path, preserved: with no config there is
+                    # nowhere to send. Now genuinely unreachable in normal
+                    # operation (the cfg is written before the append), so if it
+                    # ever fires something structural broke — say so loudly.
+                    log.warning("notify.flush: no config for %s — DROPPING %d "
+                                "pending item(s)", event_kind, len(items))
+                    continue
+                if items:
+                    db_path, notifications = cfg
                     drained.append((db_path, notifications, event_kind, items))
             _COALESCE_TIMERS.clear()
     except Exception as e:

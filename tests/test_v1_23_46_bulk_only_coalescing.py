@@ -40,7 +40,7 @@ def notify_mod(monkeypatch):
     from app.core import notify as n
     n._COALESCE_BUF.clear()
     n._COALESCE_TIMERS.clear()
-    n._COALESCE_ACTIVE.clear()
+    n._COALESCE_CFG.clear()  # v0.51.257: replaced the write-only ACTIVE flag
     sent = []
     monkeypatch.setattr(
         n, "dispatch",
