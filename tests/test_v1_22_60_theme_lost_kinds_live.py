@@ -38,8 +38,10 @@ def test_tiered_kinds_present_and_on_by_default():
     from app.core.config_file import _DEFAULT_NOTIFY_EVENTS
     assert _DEFAULT_NOTIFY_EVENTS.get("theme_lost_backup_ready") is True
     assert _DEFAULT_NOTIFY_EVENTS.get("theme_lost_sidecar_available") is True
-    # Tier-4 stays opt-in (its OFF default was a deliberate call).
-    assert _DEFAULT_NOTIFY_EVENTS.get("plex_theme_lost") is False
+    # v0.51.256: tier-4 is ON too now. Its OFF default was a deliberate call in
+    # v1.18.90 (per-row burst risk), reversed on evidence: bursts coalesce as of
+    # v0.51.254/255, and 5 lifetime firings were 5 correct calls.
+    assert _DEFAULT_NOTIFY_EVENTS.get("plex_theme_lost") is True
 
 
 def test_dispatch_no_longer_drops_the_tiered_kinds(tmp_path):

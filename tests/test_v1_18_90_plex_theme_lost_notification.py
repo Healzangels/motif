@@ -76,16 +76,19 @@ def test_notify_py_registers_plex_theme_lost_at_warning_level():
 # ── config_file.py default OFF ───────────────────────────────
 
 
-def test_config_default_is_off():
-    """Per the user's call: default OFF. Conservative since the
-    event is per-row + bulk Plex changes could burst. Users
-    opt in via NOTIFICATIONS settings."""
+def test_config_default_is_on():
+    """v0.51.256 REVERSES v1.18.90's OFF default. That call was conservative
+    on two grounds, and both were answered by measurement rather than argument:
+    bursts coalesce as of v0.51.254/255, and the kind proved ACCURATE in the
+    field — 5 lifetime firings on the operator's install, 5 correct, 0 false
+    positives. It is the only tier meaning "no automatic recovery exists", so
+    muting it silenced precisely the alerts that needed a human."""
     src = CONFIG_FILE_PY.read_text()
     fn_idx = src.index("_DEFAULT_NOTIFY_EVENTS")
     fn_end = src.index("}", fn_idx)
     block = src[fn_idx:fn_end]
-    assert '"plex_theme_lost":         False' in block, (
-        "v1.18.90: default must be False (opt-in)"
+    assert '"plex_theme_lost":         True' in block, (
+        "v0.51.256: the no-recovery tier must reach the operator by default"
     )
 
 
@@ -253,13 +256,21 @@ def test_settings_html_has_plex_theme_lost_toggle():
     assert "notifications.events.plex_theme_lost" in html
 
 
-def test_settings_html_toggle_explains_default_off():
-    """Label or hint must surface the OFF-by-default behavior
-    so users know to opt in."""
+def test_settings_html_toggle_states_its_default_and_why():
+    """v0.51.256: the toggle now defaults ON, so the hint must say ON — and say
+    WHY, since 'more notifications by default' needs a reason. The original
+    v1.18.90 form of this test asserted the OFF prose; leaving it would have
+    frozen a claim the code no longer makes (the stale-comment class this
+    session kept hitting)."""
     html = SETTINGS_HTML.read_text()
     idx = html.index("notifications.events.plex_theme_lost")
     block = html[idx:idx + 1500]
-    assert "Off by default" in block or "OFF by default" in block.lower() or "off by default" in block.lower()
+    assert "On by default" in block, "the hint must state the real default"
+    assert "off by default" not in block.lower(), (
+        "the retired OFF claim is back in the hint prose")
+    assert "no</em> way to recover" in block, (
+        "the hint must justify the ON default — this tier is the one loss with "
+        "no automatic recovery, which is the whole reason it alerts")
 
 
 def test_settings_html_toggle_explains_action_paths():

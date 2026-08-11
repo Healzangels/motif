@@ -4765,7 +4765,18 @@
 #   reconcile_placement_paths (every enum, UNCAPPED) fires theme_pushed per relocated
 #   row, and its trigger is a mass folder rename. Both are sweeps by construction, never
 #   one user action per row, so both now stamp bulk unconditionally.
-__version__ = "0.51.255"
+# 0.51.256: the no-recovery theme-lost tier alerts by default. v1.18.90 shipped
+#   plex_theme_lost OFF (per-row event, burst risk); both grounds are now answered by
+#   MEASUREMENT — bursts coalesce as of .254/.255, and the kind proved accurate in the
+#   field: 5 lifetime firings, 5 correct, 0 false positives (ER left the library; 4
+#   disk-dropout casualties with has_theme=0, no backup, and a TDB url dead upstream at
+#   failure_kind=video_removed). It is the ONLY tier meaning "no automatic recovery
+#   exists", so muting it silenced exactly the alerts needing a human while the two
+#   RECOVERABLE tiers pinged instantly — backwards. NOTE: yaml wins over defaults on
+#   load, so an existing install keeps its saved value; the Settings toggle is the fix
+#   there. Also retracts a stale notify_inbox note calling plex_item_arrived_themed
+#   dormant — it fires (3 rows on the operator's install).
+__version__ = "0.51.256"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

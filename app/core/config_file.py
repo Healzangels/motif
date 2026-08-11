@@ -438,13 +438,21 @@ _DEFAULT_NOTIFY_EVENTS: dict[str, bool] = {
     # so a bulk collapses to one summary while the first backup
     # still pings immediately via the leading edge.
     "theme_backed_up":         True,
-    # v1.18.90: OFF-by-default. the user's call — conservative
-    # since the event fires per-row and bulk Plex changes could
-    # produce a burst. Users opt in via the NOTIFICATIONS
-    # settings page. The dispatch path uses notify_dedupe with
-    # per-row keys (`plex_theme_lost:<mt>:<tmdb>`) + a 24h
-    # rate-limit, so even an opted-in burst stays bounded.
-    "plex_theme_lost":         False,
+    # v1.18.90: OFF-by-default, conservatively — the event fires per-row and a
+    # bulk Plex change could burst it.
+    # v0.51.256: flipped ON. Both halves of that rationale are now answered, and
+    # MEASURED rather than argued. (1) Bursts coalesce as of v0.51.254/255, on
+    # top of the existing notify_dedupe per-row keys + 24h rate-limit. (2) The
+    # accuracy question settled on the operator's install: 5 lifetime firings,
+    # 5 correct — ER (left the library) plus 4 disk-dropout casualties that were
+    # genuinely stranded (has_theme=0, no local_files backup, and a TDB URL dead
+    # upstream with failure_kind=video_removed). Zero false positives.
+    # This is the ONLY tier that means "no automatic recovery exists — a human
+    # must supply a URL", so muting it hid the four alerts that actually needed
+    # action while the RECOVERABLE tiers (backup_ready / sidecar_available)
+    # pinged immediately. The cheap tiers were loud and the expensive one was
+    # silent — exactly backwards.
+    "plex_theme_lost":         True,
     # v1.22.60 (audit round 2 #1): the v1.19.41 tier-1/tier-2 kinds
     # were dispatched by the reaper but NEVER added here — and
     # notify.dispatch drops unknown kinds — so the "🎯 deploy your

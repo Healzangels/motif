@@ -1676,8 +1676,8 @@
          opted in. #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.plex_theme_lost" />
-        <span class="form-label-text">💔 THEME LOST — NO FALLBACK <span class="muted small">(off)</span></span>
-        <p class="form-hint">Fires when Plex was serving a theme for a row but it's no longer available <strong>and motif has no fallback</strong> (no user URL, no upload, no local file). Common cause: the item was removed + re-added in Plex, breaking its theme cache (caught by the v1.18.89 stale-row reaper). Notification body explains the cause + names both action paths (<code>// SET URL</code> / <code>// UPLOAD MP3</code>) on the row's INFO card. Per-row dedup at 24h so bulk Plex changes can't flood. <strong>Off by default</strong> — opt in here.</p>
+        <span class="form-label-text">💔 THEME LOST — NO FALLBACK <span class="muted small">(on)</span></span>
+        <p class="form-hint">Fires when Plex was serving a theme for a row but it's no longer available <strong>and motif has no fallback</strong> (no user URL, no upload, no local file). Common cause: the item was removed + re-added in Plex, breaking its theme cache (caught by the v1.18.89 stale-row reaper). Notification body explains the cause + names both action paths (<code>// SET URL</code> / <code>// UPLOAD MP3</code>) on the row's INFO card. Per-row dedup at 24h so bulk Plex changes can't flood, and bursts coalesce into one summary since v0.51.255. <strong>On by default</strong> (v0.51.256) — this is the only tier meaning motif has <em>no</em> way to recover the theme automatically, so it's the one loss you most need to hear about. Turn it off if you'd rather triage these in the INBOX drawer alone.</p>
       </label>
       {# v1.21.5: new_tdb_theme_available — fires after a plex refresh
          when a NEW Plex item matches a ThemerrDB theme but has no

@@ -26,8 +26,10 @@ log = logging.getLogger("motif.notify_inbox")
 # The event kinds surfaced in the in-app inbox — the "Additions + FYI" scope the
 # user chose. Excludes operational kinds (sync_completed/failed, cookies_needed,
 # disk_low, worker_restarted) which live on the topbar pills / LOGS, not here.
-# `plex_item_arrived_themed` is listed for forward-readiness; it doesn't fire until
-# a later tag adds that event at the plex_enum insert site.
+# v0.51.256: `plex_item_arrived_themed` DOES fire — the note claiming it was
+# "forward-readiness, doesn't fire until a later tag" outlived the tag that wired it
+# (3 rows on the operator's install). Same misleading-comment class as the `rk=` log
+# label: a stale claim costs a future reader a wrong assumption, not just tidiness.
 INBOX_EVENT_KINDS: frozenset[str] = frozenset({
     "theme_added",
     "plex_item_arrived_themed",
