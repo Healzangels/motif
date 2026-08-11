@@ -4799,7 +4799,24 @@
 #   events table and would truncate a real 77-item digest mid-list. No known live
 #   vector (the Plex token rides a header) — a last line of defense that covers only
 #   the safe direction just is not one.
-__version__ = "0.51.258"
+# 0.51.259: the inbox stops lying about how much it is showing, and covers two kinds
+#   it never did. (a) The drawer fetched with no limit — the endpoint's 50-row
+#   default — and the group head rendered children.length as if it were the total.
+#   After the 77-row restore burst it read "50 themes restored" with 27 rows
+#   invisible and nothing saying so. /api/notifications now returns `total` (every
+#   UNDISMISSED row — the same scope the drawer renders, so a dismissed row cannot
+#   inflate it into claiming hidden rows that dismissing will never reveal), the
+#   drawer asks for the 200-row ceiling since burst SIZE is set by Plex not by us,
+#   and it renders "showing N of M" only when actually truncated. (b) theme_pushed +
+#   theme_backed_up join INBOX_EVENT_KINDS — theme_added's siblings had no in-app
+#   trace at all, so the 72-item bulk PUSH left one coalesced Discord line and zero
+#   rows in motif. theme_pushed keeps its Apprise-OFF default and gets an inbox-ON
+#   default: the registries answer different questions, and the inbox records BEFORE
+#   the Apprise gate, so the quiet local record lands for muted operators too.
+#   Also adds the guard that was missing: app.js TIER/GROUP are a FOURTH event_kind
+#   registry nothing checked — a new kind without entries silently rendered with no
+#   tier stripe and a generic "N notifications" group label.
+__version__ = "0.51.259"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

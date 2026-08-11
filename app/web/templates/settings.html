@@ -1744,6 +1744,16 @@
         <p class="form-hint">A theme was placed for a row for the first time — sync auto-add, download, or adopt.</p>
       </label>
       <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_pushed" />
+        <span class="form-label-text">📤 THEME PUSHED <span class="muted small">(on)</span></span>
+        <p class="form-hint">motif re-deployed a theme the row already had — PUSH TO PLEX, REPLACE TDB, PROMOTE TO ACTIVE, force-place. On here even though the Discord toggle is off by default: a bulk push is exactly the kind of thing you want to look up afterwards without wanting a ping per row.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_backed_up" />
+        <span class="form-label-text">💾 THEME BACKED UP <span class="muted small">(on)</span></span>
+        <p class="form-hint">A theme was downloaded as a backup rather than placed — your current theme keeps playing and the backup sits staged until it is lost.</p>
+      </label>
+      <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_item_arrived_themed" />
         <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(on)</span></span>
         <p class="form-hint">A newly-added Plex item showed up already themed by Plex — a pure FYI, nothing to do.</p>

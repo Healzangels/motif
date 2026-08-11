@@ -484,6 +484,12 @@ _DEFAULT_NOTIFY_EVENTS: dict[str, bool] = {
 # dependency (config_file is imported very early).
 _DEFAULT_INBOX_EVENTS: dict[str, bool] = {
     "theme_added":                  True,
+    # v0.51.259: theme_pushed's APPRISE default is off (per-row deploy chatter on
+    # a noisy channel); its INBOX default is on. The two registries answer
+    # different questions — "should this ping Discord" vs "should this be
+    # findable in-app" — and a quiet local record is the point of the drawer.
+    "theme_pushed":                 True,
+    "theme_backed_up":              True,
     "plex_item_arrived_themed":     True,
     "theme_auto_restored":          True,
     "new_tdb_theme_available":      True,

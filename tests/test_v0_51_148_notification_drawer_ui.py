@@ -94,8 +94,11 @@ def test_appjs_wires_inbox_badge_and_drawer():
     # the drawer binder is defined AND invoked at init
     assert "function bindNotifInbox()" in APP_JS
     assert "bindNotifInbox();" in APP_JS
-    # it talks to every phase-1 endpoint
-    assert "api('GET', '/api/notifications')" in APP_JS
+    # it talks to every phase-1 endpoint. v0.51.259: the LIST call carries an
+    # explicit ?limit=200 — the bare form silently took the endpoint's 50-row
+    # default and truncated a real burst — so this matches the path, not the
+    # whole literal, and stays true if the query string changes again.
+    assert "api('GET', '/api/notifications?" in APP_JS
     assert "'/api/notifications/seen'" in APP_JS
     assert "'/api/notifications/dismiss-all'" in APP_JS
     assert "/api/notifications/${id}/dismiss" in APP_JS

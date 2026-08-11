@@ -1225,6 +1225,23 @@ body[data-ops-running="1"] #topbar-status-text {
 }
 .notif-empty-sub { color: var(--fg-dim); font-size: var(--t-tiny); letter-spacing: 0.04em; }
 
+/* v0.51.259: truncation footer — the drawer caps its fetch, so this states the
+   cap instead of letting the rendered count read as the total. Mirrors
+   .notif-empty's tone/scale (same muted register, tighter padding since it
+   trails a populated list rather than replacing one). */
+.notif-more {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-1);
+  padding: 12px 18px;
+  color: var(--fg-mute);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+  text-align: center;
+  border-top: 1px solid var(--line);
+}
+.notif-more-sub { color: var(--fg-dim); letter-spacing: 0.04em; }
+
 /* mobile: the reused .ops-drawer panel is already 92vw (near full-width) at
    ≤600px; just enlarge the touch targets to ≥44px (the v0.50.88 tap-target
    rule). A full bottom-sheet treatment is a possible later refinement. */

@@ -23305,7 +23305,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         items = await run_in_threadpool(notify_inbox.list_notifications, db, limit)
         unread = await run_in_threadpool(notify_inbox.count_unread, db)
-        return {"ok": True, "notifications": items, "unread": unread}
+        # v0.51.259: `total` = every undismissed row, so the drawer can say
+        # "showing 50 of 77" instead of presenting the capped fetch as the whole
+        # inbox. Without it the client cannot tell a full list from a truncated one.
+        total = await run_in_threadpool(notify_inbox.count_undismissed, db)
+        return {"ok": True, "notifications": items, "unread": unread,
+                "total": total}
 
     @app.post("/api/notifications/seen")
     async def api_notifications_seen(request: Request, db: Path = Depends(get_db_path)):

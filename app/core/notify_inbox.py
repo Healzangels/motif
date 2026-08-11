@@ -30,8 +30,17 @@ log = logging.getLogger("motif.notify_inbox")
 # "forward-readiness, doesn't fire until a later tag" outlived the tag that wired it
 # (3 rows on the operator's install). Same misleading-comment class as the `rk=` log
 # label: a stale claim costs a future reader a wrong assumption, not just tidiness.
+# v0.51.259: theme_pushed + theme_backed_up join the set. They were the only
+# theme-lifecycle kinds with no in-app trace at all, and .254/.255 sharpened the
+# gap: Discord now COALESCES a bulk burst into one summary, so the operator's
+# 72-item PUSH left exactly one Discord line and zero rows anywhere in motif.
+# theme_added's siblings should be findable the same way it is — and because the
+# inbox records before the Apprise gate, theme_pushed (Apprise-default-off) now
+# leaves a trace even for operators who keep it muted on Discord.
 INBOX_EVENT_KINDS: frozenset[str] = frozenset({
     "theme_added",
+    "theme_pushed",
+    "theme_backed_up",
     "plex_item_arrived_themed",
     "theme_auto_restored",
     "new_tdb_theme_available",
@@ -141,6 +150,21 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
         }
         for r in rows
     ]
+
+
+def count_undismissed(db_path: Path) -> int:
+    """Every undismissed row — seen or not. This is the DENOMINATOR the drawer
+    needs: list_notifications caps its result, and the drawer rendered that
+    capped count as if it were the total. After a 77-item restore burst it read
+    "50 themes restored" with 27 rows invisible and nothing saying so."""
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM notifications WHERE dismissed_at IS NULL"
+        ).fetchone()
+    finally:
+        conn.close()
+    return int(row[0]) if row else 0
 
 
 def count_unread(db_path: Path) -> int:

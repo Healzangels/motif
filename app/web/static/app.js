@@ -20795,6 +20795,9 @@
     // rendered against real data). Mirrors notify_inbox.INBOX_EVENT_KINDS.
     const TIER = {
       theme_added:                  'tier-add',
+      // v0.51.259: a re-deploy / a staged backup are both additive, not loss.
+      theme_pushed:                 'tier-add',
+      theme_backed_up:              'tier-add',
       plex_item_arrived_themed:     'tier-add',
       theme_auto_restored:          'tier-add',
       new_tdb_theme_available:      'tier-avail',
@@ -20811,6 +20814,8 @@
     // (click-through) + dismissable (v0.51.151 preserved).
     const GROUP = {
       theme_added:                  ['🎵', 'themes added'],
+      theme_pushed:                 ['📤', 'themes pushed to Plex'],
+      theme_backed_up:              ['💾', 'themes backed up'],
       plex_item_arrived_themed:     ['📺', 'new items already themed'],
       theme_auto_restored:          ['🛠', 'themes restored'],
       new_tdb_theme_available:      ['✨', 'themes available to add'],
@@ -20910,12 +20915,28 @@
 
     async function load() {
       try {
-        const data = await api('GET', '/api/notifications');
+        // v0.51.259: ask for the endpoint's ceiling, not its 50-row default. The
+        // burst sizes this drawer actually sees are set by Plex, not by us — the
+        // operator's disk dropout produced 77 restores in one pass, and .254/.255
+        // made large inbox bursts the EXPECTED case (Discord coalesces to one
+        // summary now; the inbox stays per-item on purpose).
+        const data = await api('GET', '/api/notifications?limit=200');
         const items = (data && data.notifications) || [];
         if (!listEl) return;
         if (!items.length) { renderEmpty(); return; }
+        // v0.51.259: `total` counts every undismissed row. Pre-tag the drawer
+        // rendered the CAPPED fetch as if it were the whole inbox — a group head
+        // reading "50 themes restored" when there were 77, with nothing saying so.
+        // `total > items.length` is the only honest way to know it was truncated.
+        const total = (data && typeof data.total === 'number') ? data.total : items.length;
+        const hidden = Math.max(0, total - items.length);
         listEl.innerHTML = groupRows(items)
-          .map((x) => (x.group ? groupHtml(x) : rowHtml(x.n))).join('');
+          .map((x) => (x.group ? groupHtml(x) : rowHtml(x.n))).join('')
+          + (hidden
+            ? `<li class="notif-more">// showing ${items.length} of ${total}`
+              + `<span class="notif-more-sub">dismiss rows to reveal the ` +
+              `remaining ${hidden}</span></li>`
+            : '');
         if (clearBtn) clearBtn.hidden = false;
         // snapshot-mark the unread set seen → badge clears on the next poll;
         // clear the glow now too so the pill dims immediately (rows keep their
