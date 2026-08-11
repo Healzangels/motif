@@ -4788,7 +4788,18 @@
 #   that was itself a phantom (its fixed 800-char window reached past the except it named
 #   into _flush_coalesced's copy of the line, so it would have passed with the handler
 #   deleted). That guard is retargeted at the invariant the handler actually owes.
-__version__ = "0.51.257"
+# 0.51.258: the credential scrubber pointed the wrong way. notify_inbox has run
+#   title/body through the events scrubber since v0.51.147 — for the LOCAL db write —
+#   while notify.py handed the same two strings to Discord / Apprise / an external
+#   apprise-api completely raw. The protection was on the copy that never leaves the
+#   machine and absent on the third-party hop. _dispatch_inline is the single function
+#   every real send funnels through, so the redaction lands there and covers all three
+#   sinks including the native discord-embed route. Redaction ONLY, not
+#   events._scrub_text: that helper also caps at 2 KB, which is log hygiene for the
+#   events table and would truncate a real 77-item digest mid-list. No known live
+#   vector (the Plex token rides a header) — a last line of defense that covers only
+#   the safe direction just is not one.
+__version__ = "0.51.258"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

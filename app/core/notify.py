@@ -36,6 +36,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from .events import _redact_url_credentials
+
 if TYPE_CHECKING:
     from .config_file import NotificationsConfig
 
@@ -544,7 +546,20 @@ def _dispatch_inline(
     shape has no attachment field, so it sends body-only there).
     v1.23.2: discord:// sinks take the native embed-card send when a
     thumbnail rides along; non-discord sinks keep the apprise
-    attachment behavior."""
+    attachment behavior.
+
+    v0.51.258: redacts URL-embedded credentials before EGRESS. Every real
+    send funnels through here, so it is the one place that covers all three
+    sinks."""
+    # v0.51.258: notify_inbox has scrubbed title/body since v0.51.147 for the
+    # LOCAL db write, while this path — the one that leaves the machine for
+    # Discord / Apprise / an external apprise-api — sent the same strings raw.
+    # The credential protection was on the copy that stays here and absent on
+    # the third-party hop; that is backwards. Redaction only, NOT
+    # events._scrub_text: its 2 KB cap is log hygiene and would truncate a real
+    # bulk digest mid-list.
+    title = _redact_url_credentials(title or "")
+    body = _redact_url_credentials(body or "")
     sent_ok = 0
     sent_fail = 0
     attach_path = _prepare_attachment(attach_url) if attach_url else None
