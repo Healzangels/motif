@@ -199,17 +199,22 @@ def test_event_flusher_loop_broad_catches():
     """The flusher loop body must be wrapped in a broad
     `except Exception:` so a non-sqlite exception doesn't kill
     the thread and silently fill the event queue to 10K.
-    v1.15.35 added the lock-contention retry loop which expanded
-    the function past the original 3500-char slice — bumped to
-    5000 chars to cover the full loop body."""
+
+    v0.51.260: was a FIXED-WIDTH slice — 3500 chars, bumped to 5000 when
+    v1.15.35 grew the function, and it went red again here for the same
+    reason (a comment pushed log.exception past the window). Third strike,
+    so it is now bounded by the function's END. The sqlite-only catch moved
+    into the extracted _write_batch, so that half is asserted there."""
     src = (REPO / "app" / "core" / "events.py").read_text()
     fn_anchor = src.index("def _flusher_loop(db_path: Path) -> None:")
-    body = src[fn_anchor:fn_anchor + 5000]
+    body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]
     # The broad catch + log.exception.
     assert "except Exception:" in body
     assert "log.exception(" in body
-    # The sqlite-only catch is still there (more specific log line).
-    assert "except sqlite3.Error as e:" in body
+    # The sqlite-only catch is still there — in the writer the loop calls.
+    writer_anchor = src.index("def _write_batch(")
+    writer = src[writer_anchor:src.index("\ndef ", writer_anchor + 1)]
+    assert "except sqlite3.Error as e:" in writer
 
 
 # ── M13: _scrub recurses into lists, expanded substrings ─────

@@ -4790,24 +4790,35 @@ def init_db(db_path: Path) -> None:
     log.info("Database initialized at %s", db_path)
 
 
+# v0.51.260: the canonical motif writer lock-wait budget, hoisted so the two
+# writers that DON'T use get_conn/transaction (the events flusher, the inbox
+# recorder — both own their connections by design) can be linted against it.
+# Total = LOCK_WAIT_S per attempt x (len(delays)+1) attempts + sum(delays)
+# ~= 157.5s. A hold that outlives THAT fails every writer alike, loudly;
+# anything shorter must not cost a row. See test_v0_51_260.
+LOCK_WAIT_S = 30.0
+LOCK_RETRY_DELAYS = (0.5, 1.0, 2.0, 4.0)
+
+
 @contextmanager
 def get_conn(db_path: Path) -> Iterator[sqlite3.Connection]:
     conn = sqlite3.connect(
         db_path,
-        timeout=30.0,
+        timeout=LOCK_WAIT_S,
         isolation_level=None,  # autocommit; we manage transactions explicitly
     )
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
-    # v1.13.50: PRAGMA busy_timeout makes every statement (not just
-    # the BEGIN IMMEDIATE that transaction() wraps) participate in
-    # SQLite's wait-for-lock queue. Pre-fix only the connection-
-    # level Python timeout=30.0 covered lock contention, which only
-    # kicks in when the C library returns SQLITE_BUSY immediately
-    # — leaving plain reads/writes outside an explicit transaction
-    # vulnerable to spurious lock failures during heavy sync /
-    # plex_enum writer activity. 30000ms matches the Python timeout.
-    conn.execute("PRAGMA busy_timeout = 30000")
+    # v1.13.50: every statement participates in SQLite's wait-for-lock queue.
+    # v0.51.260 CORRECTION (measured): this line is belt-and-braces, not the
+    # only thing installing a wait. sqlite3.connect(timeout=N) already calls
+    # sqlite3_busy_timeout(N*1000) — a fresh connection reads back
+    # `PRAGMA busy_timeout` = 30000 without this. The old comment claimed the
+    # Python timeout "only kicks in when the C library returns SQLITE_BUSY
+    # immediately"; a probe holding a real lock showed a connect(timeout=2.0)
+    # blocking the full 2.1s. Kept because it makes the budget explicit at the
+    # call site and survives someone changing the connect() kwargs.
+    conn.execute(f"PRAGMA busy_timeout = {int(LOCK_WAIT_S * 1000)}")
     try:
         yield conn
     finally:
@@ -4833,7 +4844,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     re-acquires it.
     """
     import time as _t
-    delays = (0.5, 1.0, 2.0, 4.0)
+    delays = LOCK_RETRY_DELAYS  # v0.51.260: hoisted so other writers can match it
     last_err: sqlite3.OperationalError | None = None
     for d in (0.0,) + delays:
         if d:

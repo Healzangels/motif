@@ -34,6 +34,13 @@ _EVENT_QUEUE: queue.Queue[tuple] = queue.Queue(maxsize=10000)
 _FLUSHER_STARTED = False
 _FLUSHER_LOCK = threading.Lock()
 
+# v0.51.260: MUST equal db.LOCK_WAIT_S / db.LOCK_RETRY_DELAYS — kept as literals
+# because events.py is deliberately stdlib-only (it is the logging substrate; a
+# db import would make a db-layer fault take the audit log down with it).
+# test_v0_51_260 lints the two against each other, so drift is loud not silent.
+_LOCK_WAIT_S = 30.0
+_LOCK_RETRY_DELAYS = (0.5, 1.0, 2.0, 4.0)
+
 
 def _ensure_flusher_running(db_path: Path) -> None:
     """Lazily start the background flusher thread on first log_event."""
@@ -49,6 +56,47 @@ def _ensure_flusher_running(db_path: Path) -> None:
         )
         t.start()
         _FLUSHER_STARTED = True
+
+
+def _write_batch(db_path: Path, insert_sql: str, batch: list[tuple]):
+    """Insert one batch, retrying ONLY `database is locked` (CLAUDE.md class 8).
+    Returns None on success, else the last error — the caller decides how loudly
+    to drop.
+
+    v0.51.260: extracted from _flusher_loop so the retry budget is testable
+    without a thread. The flusher is a process-global daemon bound to the FIRST
+    db_path it ever sees, so a test that goes through log_event() writes to
+    whichever DB some earlier test bound — which is exactly how the first cut of
+    test_v0_51_260 passed alone and failed in the full suite."""
+    last_err: Exception | None = None
+    last_attempt = len(_LOCK_RETRY_DELAYS)
+    for attempt in range(last_attempt + 1):
+        try:
+            # v1.20.16: explicit close. `with sqlite3.connect(...) as conn:`
+            # commits/rolls-back but does NOT close the connection — a
+            # per-batch connect would lean on refcounting/GC to reclaim the
+            # handle. close() makes it deterministic (audit round 3 LOW).
+            conn = sqlite3.connect(db_path, timeout=_LOCK_WAIT_S)
+            try:
+                with conn:
+                    # v1.12.84: section_id flows through every event row so the
+                    # INFO card's // HISTORY section can scope to the row's own
+                    # section. Pre-fix the events table was title-global and
+                    # HISTORY rendered every section's events on every card.
+                    conn.executemany(insert_sql, batch)
+            finally:
+                conn.close()
+            return None
+        except sqlite3.OperationalError as e:
+            last_err = e
+            if "database is locked" in str(e) and attempt < last_attempt:
+                threading.Event().wait(_LOCK_RETRY_DELAYS[attempt])
+                continue
+            break
+        except sqlite3.Error as e:
+            last_err = e
+            break
+    return last_err
 
 
 def _flusher_loop(db_path: Path) -> None:
@@ -81,57 +129,32 @@ def _flusher_loop(db_path: Path) -> None:
             # v1.15.35: bounded retry on `database is locked`. Pre-
             # fix a single lock-contention spike during a busy sync
             # dropped the whole batch with only a WARNING (audit-log
-            # gaps invisible without log review). Now: 3 attempts
-            # with linear backoff (0.5s / 1s / 1.5s); on persistent
-            # lock OR any non-lock sqlite3 error, log at ERROR and
-            # drop. Keeps the flusher draining (don't block the
-            # queue forever) while making drops loud.
+            # gaps invisible without log review). On persistent lock
+            # OR any non-lock sqlite3 error, log at ERROR and drop.
+            # Keeps the flusher draining (don't block the queue
+            # forever) while making drops loud.
+            # v0.51.260: the budget was 3 x 10s + 3s ~= 33s while every
+            # transaction() writer gets ~157.5s, so a lock hold in that gap
+            # dropped up to 200 events while the DB was demonstrably still
+            # usable. MEASURED, not inferred: a probe holding a real
+            # BEGIN IMMEDIATE for 40s logged "DROPPING batch" at 32.6s and
+            # the event row was gone (0 persisted). The trigger is any long
+            # hold — api_set_override_intent's plex_cloud PROMOTE can hold
+            # ~150s (30s drift-check + 2 x 60s upload attempts) — but the
+            # gap is the flusher's, so it is fixed here rather than in the
+            # one caller that surfaced it.
             insert_sql = (
                 "INSERT INTO events "
                 " (ts, level, component, media_type, tmdb_id, "
                 "  section_id, message, detail) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
             )
-            persisted = False
-            last_err: Exception | None = None
-            for attempt in range(3):
-                try:
-                    # v1.20.16: explicit close. `with sqlite3.connect(...)
-                    # as conn:` commits/rolls-back but does NOT close the
-                    # connection — a per-batch connect would lean on
-                    # refcounting/GC to reclaim the handle. close() makes
-                    # it deterministic (audit round 3 LOW).
-                    conn = sqlite3.connect(db_path, timeout=10.0)
-                    try:
-                        with conn:
-                            # v1.12.84: section_id flows through every event
-                            # row so the INFO card's // HISTORY section can
-                            # scope to the row's own section. Pre-fix the
-                            # events table was title-global and HISTORY
-                            # rendered every section's worker / sync / API
-                            # events on every card.
-                            conn.executemany(insert_sql, batch)
-                    finally:
-                        conn.close()
-                    persisted = True
-                    break
-                except sqlite3.OperationalError as e:
-                    last_err = e
-                    if "database is locked" in str(e) and attempt < 2:
-                        # Mirror the canonical motif retry pattern
-                        # (see CLAUDE.md class 8 — only retry the
-                        # lock-string, not all OperationalErrors).
-                        threading.Event().wait(0.5 * (attempt + 1))
-                        continue
-                    break
-                except sqlite3.Error as e:
-                    last_err = e
-                    break
-            if not persisted:
+            last_err = _write_batch(db_path, insert_sql, batch)
+            if last_err is not None:
                 log.error(
                     "Event flusher: DROPPING batch of %d events after "
-                    "3 attempts — last error: %s",
-                    len(batch), last_err,
+                    "%d attempts — last error: %s",
+                    len(batch), len(_LOCK_RETRY_DELAYS) + 1, last_err,
                 )
         except Exception:
             # v1.14.54: catch-all so a transient non-sqlite exception

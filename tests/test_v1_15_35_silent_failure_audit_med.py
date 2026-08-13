@@ -76,21 +76,28 @@ def test_event_flusher_retries_on_database_locked():
     lock-contention spike during a busy sync wiped the whole
     batch with only a WARNING — audit-log gaps invisible
     without log review. Now: 3 attempts with linear backoff."""
+    # v0.51.260: the retry moved into the extracted _write_batch, and the
+    # counts/backoff are no longer literals — they come from the shared
+    # _LOCK_RETRY_DELAYS ladder so the flusher's budget matches every other
+    # motif writer's (it was 33s vs 157.5s, which MEASURABLY dropped batches).
+    # So this asserts the CONTRACT — bounded, lock-string-only, loud on drop —
+    # instead of the specific numbers, which are now lint-checked in
+    # test_v0_51_260 against db.LOCK_RETRY_DELAYS.
     src = EVENTS_PY.read_text()
-    fn_anchor = src.index("def _flusher_loop(")
-    fn_end = src.index("\ndef ", fn_anchor + 1)
-    fn_body = src[fn_anchor:fn_end]
-    # v1.15.35 retry loop.
-    assert "v1.15.35: bounded retry" in fn_body
-    assert "for attempt in range(3):" in fn_body
+    w_anchor = src.index("def _write_batch(")
+    writer = src[w_anchor:src.index("\ndef ", w_anchor + 1)]
+    # Bounded — a finite ladder, not a while-True.
+    assert "for attempt in range(last_attempt + 1):" in writer
+    assert "threading.Event().wait(_LOCK_RETRY_DELAYS[attempt])" in writer
     # Lock-string match (motif's canonical retry pattern from
     # CLAUDE.md class 8 — only retry the lock string, not all
     # OperationalErrors).
-    assert '"database is locked" in str(e)' in fn_body
-    # Backoff.
-    assert "threading.Event().wait(0.5 * (attempt + 1))" in fn_body
-    # Persistent failure logged at ERROR (audit-log drop is
-    # serious).
+    assert '"database is locked" in str(e)' in writer
+    # Persistent failure logged at ERROR by the caller (audit-log
+    # drop is serious).
+    fn_anchor = src.index("def _flusher_loop(")
+    fn_body = src[fn_anchor:src.index("\ndef ", fn_anchor + 1)]
+    assert "v1.15.35: bounded retry" in fn_body
     assert "log.error(" in fn_body
     assert "DROPPING batch" in fn_body
 

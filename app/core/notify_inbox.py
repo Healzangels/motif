@@ -53,6 +53,16 @@ INBOX_EVENT_KINDS: frozenset[str] = frozenset({
 _LIST_LIMIT_DEFAULT = 50
 _LIST_LIMIT_MAX = 200
 
+# v0.51.260: record_notification's lock-wait budget, aligned with
+# db.LOCK_WAIT_S / db.LOCK_RETRY_DELAYS (lint: test_v0_51_260). It was 3 x 10s
+# + 3s ~= 31.5s against transaction()'s ~157.5s, so a long hold DROPPED the
+# inbox row — and a notification is generated once and never regenerated.
+# Deliberately NOT applied to the readers or to dismiss/seen below: those fail
+# visibly and are retried by reopening the drawer or clicking again, and a
+# 30s-per-attempt hang inside a request handler is worse than a fast error.
+_LOCK_WAIT_S = 30.0
+_LOCK_RETRY_DELAYS = (0.5, 1.0, 2.0, 4.0)
+
 
 def record_notification(
     db_path: Path,
@@ -90,9 +100,10 @@ def record_notification(
         params = (now_iso(), event_kind, severity or "info", safe_title, safe_body,
                   media_type, tmdb_id, section_id, edition_key)
         last_err: Exception | None = None
-        for attempt in range(3):
+        _last_attempt = len(_LOCK_RETRY_DELAYS)
+        for attempt in range(_last_attempt + 1):
             try:
-                conn = sqlite3.connect(db_path, timeout=10.0)
+                conn = sqlite3.connect(db_path, timeout=_LOCK_WAIT_S)
                 try:
                     with conn:
                         conn.execute(sql, params)
@@ -101,8 +112,9 @@ def record_notification(
                 return
             except sqlite3.OperationalError as e:
                 last_err = e
-                if "database is locked" in str(e) and attempt < 2:
-                    threading.Event().wait(0.5 * (attempt + 1))
+                if ("database is locked" in str(e)
+                        and attempt < _last_attempt):
+                    threading.Event().wait(_LOCK_RETRY_DELAYS[attempt])
                     continue
                 break
             except sqlite3.Error as e:

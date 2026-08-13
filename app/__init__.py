@@ -4816,7 +4816,25 @@
 #   Also adds the guard that was missing: app.js TIER/GROUP are a FOURTH event_kind
 #   registry nothing checked — a new kind without entries silently rendered with no
 #   tier stripe and a generic "N notifications" group label.
-__version__ = "0.51.259"
+# 0.51.260: align every write-once writer's lock-wait budget. Measuring the standing
+#   deferral #8 (api_set_override_intent holds the write lock across a Plex upload)
+#   found its recorded consequence — "no data loss, worst case a few-sec writer
+#   stall" — is only half right. A probe holding a real BEGIN IMMEDIATE for 40s:
+#   transaction() writers waited 7.5s and SUCCEEDED (budget 30s x 5 attempts + 7.5s
+#   backoff ~= 157.5s), but the events flusher DROPPED its batch at 32.6s and the
+#   row was gone — it and notify_inbox.record_notification own their connections and
+#   had 3 x 10s + 3s ~= 33s. So the gap belongs to the WRITERS, not to the one
+#   caller that surfaced it: both now match db.LOCK_WAIT_S / LOCK_RETRY_DELAYS,
+#   hoisted for a cross-module lint (they cannot import db — events.py is the
+#   logging substrate and a db-layer fault must not take the audit log with it).
+#   Deliberately NOT widened for the inbox READERS or dismiss/seen: those fail
+#   visibly and are retried, and a 30s-per-attempt hang in a request handler is
+#   worse than a fast error. Deferral #8 now degrades to what its record claims.
+#   Two corrections while here: sqlite3.connect(timeout=N) ALREADY installs
+#   busy_timeout=N*1000 (measured — a fresh conn reads the pragma back), so the
+#   v1.13.50 comment calling the pragma the only mechanism was wrong; and the
+#   flusher's drop message hardcoded "after 3 attempts", now the real count.
+__version__ = "0.51.260"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
