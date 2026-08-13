@@ -49,6 +49,15 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 
 
+def _next_sibling_fn(js: str, start: int) -> int:
+    """End of the app.js function beginning at `start`: the next SIBLING
+    declaration at 2-space indent. v0.51.261 — a structural boundary the
+    language guarantees, replacing a byte count that needed four bumps."""
+    nxt = [i for i in (js.find("\n  function ", start + 10),
+                       js.find("\n  async function ", start + 10)) if i != -1]
+    return min(nxt) if nxt else len(js)
+
+
 # ── Static-text guards on the fix ────────────────────────────
 
 
@@ -119,17 +128,13 @@ def test_refresh_topbar_status_offline_recovery_outside_hash_skip():
     to OFFLINE regardless of what the cached hash says."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
     fn_anchor = js.index("async function refreshTopbarStatus()")
-    # v1.18.52: widened from 50000 to 60000 chars — the function
-    # body grew past the prior window when v1.18.51 + v1.18.52
-    # added the row-refresh transition logic. Function is large
-    # but well-bounded by the next async function declaration,
-    # so a generous window is fine.
-    # v0.50.14: 60000 → 64000 — the collections-aware myTabBusy
-    # ternary + the plex_enum_busy stash pushed the OFFLINE catch a
-    # few hundred chars further down. Same growth-not-regression case.
-    # v0.51.63: 64000 → 66000 — the collections-scoped enum local +
-    # expanded lock comments grew the body again. Same case.
-    body = js[fn_anchor:fn_anchor + 68000]  # v0.51.120: +2000 (pre-bail stash write shifted the body)
+    # v0.51.261: was a byte count, bumped FOUR times for growth that was never
+    # a regression — 50000 (v1.18.52) → 60000 → 64000 (v0.50.14) → 66000
+    # (v0.51.63) → 68000 (v0.51.120), the last of which sat 485 chars from
+    # failing again. The comment those bumps carried already named the right
+    # boundary ("well-bounded by the next async function declaration") without
+    # using it. Now it does.
+    body = js[fn_anchor:_next_sibling_fn(js, fn_anchor)]
     # The catch{} block sets the OFFLINE class — must be present.
     catch_anchor = body.index("} catch (e) {")
     catch_block = body[catch_anchor:catch_anchor + 1000]

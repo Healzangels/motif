@@ -4834,7 +4834,26 @@
 #   busy_timeout=N*1000 (measured — a fresh conn reads the pragma back), so the
 #   v1.13.50 comment calling the pragma the only mechanism was wrong; and the
 #   flusher's drop message hardcoded "after 3 attempts", now the real count.
-__version__ = "0.51.260"
+# 0.51.261: ratchet against NEW fixed-width test windows. An audit for silent
+#   failures came back clean on the code — class-9 swallows all carry a fallback or
+#   a documented cosmetic-callback reason; the class-12 async lint's own documented
+#   blind spot (it walks only the DIRECT body of an async def, which is how the
+#   v0.51.246 auth freeze survived) was extended one level into same-module sync
+#   helpers and found ZERO. What it did find is in the SUITE: 1513 guards shaped
+#   `src[a:a + N]`, which fail when unrelated code GROWS rather than when the thing
+#   they protect breaks. Four went red in one session; v1.20.0's overshot the
+#   `except` it named into the next function and would have passed with that handler
+#   deleted. The everyday cost is worse than the phantom: a gate that manufactures a
+#   red every few tags trains you to read gate failures as noise. New guards are now
+#   blocked by an exact-count ratchet that only moves DOWN, and the worst single
+#   offender is converted — refreshTopbarStatus's window, bumped FOUR times
+#   (50000->60000->64000->66000->68000) and sitting 485 chars from failing again,
+#   now ends at the next sibling function declaration, which its own bump comments
+#   had named as the right boundary without using it. NOTE: this ratchets growth; it
+#   does NOT claim the other 1512 are sound. A detector that tried produced 72 false
+#   positives, then 4, all of them a brace-matcher tripping on an `extras = {}`
+#   default parameter — so no overshoot check ships here.
+__version__ = "0.51.261"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
