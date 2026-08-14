@@ -130,8 +130,12 @@ def test_detail_events_still_registered_in_config():
 def test_settings_toggles_reworded_as_sections():
     assert "SYNC: LIST NEW TITLES" in SETTINGS_HTML
     assert "SYNC: LIST UPDATED TITLES" in SETTINGS_HTML
-    # The SYNC COMPLETED hint notes the folding.
-    assert "fold a New / Updated titles section" in SETTINGS_HTML
+    # The v1.21.6 invariant: these two FOLD into the sync summary rather than
+    # firing their own notification. v0.51.263 moved that statement from the
+    # SYNC COMPLETED hint into the sub-toggles' own hints + the
+    # .form-checkbox-sub nesting, so pin the folding language where it lives
+    # now (the old exact-sentence pin was a presentation mirror).
+    assert SETTINGS_HTML.count("into the sync summary") >= 2
 
 
 # ── Version pin (loose) ──────────────────────────────────────

@@ -5456,6 +5456,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    spacing so legibility doesn't suffer. */
 .form-grid-tight { gap: 14px; }
 .form-grid-tight .form-hint { margin-top: var(--gap-1); line-height: 1.5; }
+/* v0.51.263: compact two-column checkbox grid (IN-APP INBOX). The ten inbox
+   kinds are named identically to their EVENTS twins above (v1.23.83 pins the
+   parity), so they carry no per-kind hints — a dense scannable allowlist
+   instead of ten hint-bearing rows. Collapses at the field-row breakpoint. */
+.form-grid.form-grid-cols2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 760px) {
+  .form-grid.form-grid-cols2 { grid-template-columns: minmax(0, 1fr); }
+}
 /* v1.13.49: subsection header inside a form-grid. Tightens the
    visual gap above (so the head reads as a label for the next
    group, not a stray paragraph) while preserving the grid's

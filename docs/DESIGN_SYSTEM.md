@@ -191,6 +191,13 @@ Adding a new settings section: copy the template above, pick a one-line subtitle
 
 Guards: `tests/test_v1_18_57_settings_design_audit.py` (header shape) + `tests/test_v1_22_35_settings_measure.py` (measure) both still pass against the new shape. When adding a settings field, reach for `.field-row` for scalars, `.form-checkbox` for toggles, `.control-group` for action+status surfaces — never reintroduce `.form-label-row` / `.dry-run-state` (retired) on a tab-panel.
 
+**Grouped checkbox stacks + the compact grid (v0.51.263 — NOTIFICATIONS relayout).** A long flat run of `.form-checkbox` toggles reads as a wall; the fix is structure, not prose:
+
+* **Group with `.form-subhead`** family headers inside the same `form-grid` (the v1.13.49 PLEX-panel pattern) — NOTIFICATIONS → EVENTS groups its 20 toggles under `// SYNC & BULK` / `// THEME LIFECYCLE` / `// AVAILABLE & ARRIVED` / `// LOSS & RECOVERY` / `// SYSTEM HEALTH`.
+* **Hints are ONE line** (≤ ~45 words, guarded by `test_v0_51_263_notifications_settings_layout.py`). The long-form WHY lives in PROJECT_HISTORY / tag comments, not settings prose. Pinned phrases (reason-branch titles, default rationales, action paths) survive — tests hold them.
+* **Dependent toggles nest with `.form-checkbox-sub`** (v1.21.19) — the two sync fold-in toggles sit indented under SYNC COMPLETED instead of stating the dependency in prose.
+* **`.form-grid-cols2`** — a two-column checkbox grid for toggle sets whose labels are self-explanatory (IN-APP INBOX: its ten kinds are named identically to their EVENTS twins, so they carry no per-kind hints). Collapses to one column ≤760px (the field-row breakpoint).
+
 ### Dialogs (`<dialog>`, `.dlg-close`)
 
 Modal `<dialog>` elements are the canonical modal surface. The `.dlg-close` `×` button uses the standard glyph and focus suppression pattern.

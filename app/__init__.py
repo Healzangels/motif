@@ -4869,7 +4869,21 @@
 #   file WARNS and boots anyway — stdout still works, so the cost is persistence,
 #   not logs. Raises the stakes on the v1.23.92 apprise clamp, which is what keeps
 #   webhook tokens out of DEBUG and therefore off the disk.
-__version__ = "0.51.262"
+# 0.51.263: NOTIFICATIONS settings relayout. The panel was one flat column of ~30
+#   checkboxes carrying 1,319 words of hint prose (avg 38/toggle, max 132) — the
+#   operator: "one long list ... a lot of text". Now: the 20 EVENTS toggles grouped
+#   under five .form-subhead family headers (the v1.13.49 PLEX-panel pattern), the
+#   two sync fold-in toggles NESTED under SYNC COMPLETED via .form-checkbox-sub
+#   (v1.21.19) so the dependency is shown not narrated, every hint cut to one line
+#   (440 words total, max 45 — the WHY lives in PROJECT_HISTORY, not the control
+#   surface), and IN-APP INBOX collapsed to a hint-less two-column grid (new
+#   .form-grid-cols2, 760px collapse) since its ten kinds are named identically to
+#   their EVENTS twins (v1.23.83 pins the parity). Nothing load-bearing moved: all
+#   data-cfg-fields, labels, chips, and the pinned hint phrases (reason-branch
+#   titles, the v0.51.256 default rationale, action paths) survive — the 237
+#   pre-existing tests over this panel pass unmodified. A word-budget ratchet
+#   (<=50/hint, <=600 total) stops the wall of text growing back.
+__version__ = "0.51.263"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

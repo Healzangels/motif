@@ -1532,272 +1532,202 @@
 
     <header class="block-head block-head--divided">
       <h2 class="block-title">// EVENTS</h2>
-      <span class="muted small">per-event toggles</span>
+      <span class="muted small">per-event toggles, grouped by family</span>
     </header>
     <p class="form-hint block-intro">
-      Aggregate / lifecycle events (default ON) keep noise down — one
-      ping per sync, one per bulk action, one per cookies-needed
-      transition. Per-row events (default OFF) can spam during big
-      libraries — enable selectively.
+      Aggregate events (default on) keep noise down — one ping per sync or
+      bulk run. Per-row events (default off) can spam on big libraries;
+      enable selectively. Bulk bursts coalesce into one summary.
     </p>
+    {# v0.51.263: the flat 20-toggle list regrouped under .form-subhead family
+       headers (the v1.13.49 PLEX-panel pattern) with one-line hints — the
+       long-form WHY for each kind lives in PROJECT_HISTORY / the tag comments,
+       not the settings page. Pinned phrases (reason-branch titles, default
+       rationales, action paths) are kept — tests hold them. #}
     <div class="form-grid form-grid-tight" data-config-form="notifications">
+      <p class="form-subhead">// SYNC &amp; BULK</p>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.sync_completed" />
         <span class="form-label-text">✅ SYNC COMPLETED <span class="muted small">(on)</span></span>
-        <p class="form-hint">One message after each ThemerrDB sync — counts (new / updated / errors). The two toggles below optionally fold a New / Updated titles section into this same message.</p>
+        <p class="form-hint">One summary per ThemerrDB sync — new / updated / error counts.</p>
+      </label>
+      {# v1.21.6: these two fold a titles section INSIDE the single SYNC
+         COMPLETED message rather than firing their own notification —
+         nested sub-toggles (v1.21.19 primitive) to show the dependency. #}
+      <label class="form-label form-checkbox form-checkbox-sub">
+        <input type="checkbox" data-cfg-field="notifications.events.themes_added_by_sync" />
+        <span class="form-label-text">🎵 SYNC: LIST NEW TITLES <span class="muted small">(off)</span></span>
+        <p class="form-hint">Folds a <code>🎵 New:</code> titles list (max 10, library-only) into the sync summary.</p>
+      </label>
+      <label class="form-label form-checkbox form-checkbox-sub">
+        <input type="checkbox" data-cfg-field="notifications.events.themes_updated_by_sync" />
+        <span class="form-label-text">🔄 SYNC: LIST UPDATED TITLES <span class="muted small">(off)</span></span>
+        <p class="form-hint">Folds a <code>🔄 Updated:</code> titles list (max 10) into the sync summary.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.sync_failed" />
         <span class="form-label-text">❌ SYNC FAILED <span class="muted small">(on)</span></span>
-        <p class="form-hint">Sync raised — error + recovery hint.</p>
+        <p class="form-hint">A sync run raised — error + recovery hint.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.bulk_action_completed" />
         <span class="form-label-text">✅ BULK ACTION COMPLETED <span class="muted small">(on)</span></span>
-        <p class="form-hint">One summary after a bulk PROBE TDB, LET PLEX SERVE, NORMALIZE, or UNDO run. (Bulk download / adopt don't fire this — each placement surfaces via THEME ADDED instead.)</p>
-      </label>
-      {# v1.21.6: these two now add a "🎵 New:" / "🔄 Updated:"
-         titles section INSIDE the single SYNC COMPLETED message
-         (gated by each toggle) rather than firing their own
-         separate notification. Pre-fix a changed sync produced up
-         to 3 messages that repeated the same lists — the user:
-         "really want to get notifications cleaned up." #}
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.themes_added_by_sync" />
-        <span class="form-label-text">🎵 SYNC: LIST NEW TITLES <span class="muted small">(off)</span></span>
-        <p class="form-hint">Adds a <code>🎵 New:</code> section (sample-capped at 10) to the SYNC COMPLETED message listing newly-added themes that are in your Plex library. Needs SYNC COMPLETED on.</p>
-      </label>
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.themes_updated_by_sync" />
-        <span class="form-label-text">🔄 SYNC: LIST UPDATED TITLES <span class="muted small">(off)</span></span>
-        <p class="form-hint">Adds a <code>🔄 Updated:</code> section (sample-capped at 10) to the SYNC COMPLETED message listing already-tracked rows where ThemerrDB shipped an update. Needs SYNC COMPLETED on.</p>
+        <p class="form-hint">One summary after a bulk PROBE TDB, LET PLEX SERVE, NORMALIZE, or UNDO run. Bulk download / adopt surface via THEME ADDED instead.</p>
       </label>
 
-      <!-- v1.17.4: remaining 6 events from _DEFAULT_NOTIFY_EVENTS
-           with hook sites wired this tag. Per-event dedupe lives
-           in app/core/notify_dedupe.py — cadence noted inline so
-           operators know what to expect. -->
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.cookies_needed" />
-        <span class="form-label-text">🍪 COOKIES NEEDED <span class="muted small">(on)</span></span>
-        <p class="form-hint">YouTube cookies expired or missing. Fires when a download hits <code>FailureKind.COOKIES_EXPIRED</code>; rate-limited to once per 6 hours so a sync run hitting many cookie-failed rows pings once, not N times.</p>
-      </label>
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.disk_low" />
-        <span class="form-label-text">🗄️ DISK SPACE LOW <span class="muted small">(on)</span></span>
-        <p class="form-hint">Themes directory free space below <code>paths.min_free_disk_mb</code>. Rate-limited to once per 12 hours; downloads continue retrying hourly until disk frees up.</p>
-      </label>
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.worker_restarted" />
-        <span class="form-label-text">⚠️ WORKER RESTARTED <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires only when motif's boot zombie-sweep finds stuck-running jobs from a prior session — signals the previous shutdown was unclean (SIGKILL, OOM, container crash). Clean restarts don't ping.</p>
-      </label>
+      <p class="form-subhead">// THEME LIFECYCLE</p>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.theme_added" />
         <span class="form-label-text">🎵 THEME ADDED <span class="muted small">(off)</span></span>
-        <p class="form-hint">Per-row notification when a place job successfully places a theme for the first time. No dedupe — opt-in is the dedupe. A bulk download of N rows will fire N notifications. v1.19.55: force-place dispatches (PUSH TO PLEX, REPLACE TDB, PROMOTE TO ACTIVE) now route through THEME PUSHED below, NOT this event — so THEME ADDED fires only on genuine first placements (sync-driven).</p>
+        <p class="form-hint">Per-row ping on a genuine first placement. Re-deploys route via THEME PUSHED instead (v1.19.55).</p>
       </label>
-      {# v1.19.55: theme_pushed — fires on force-place dispatches
-         (PUSH TO PLEX / REPLACE TDB / PROMOTE TO ACTIVE /
-         cloud-backup re-upload). Distinct from theme_added
-         (genuine first placement). Same per-row, no-dedupe
-         opt-in stance as theme_added. 📤 emoji to distinguish
-         from 🎵 added / 🔄 sync update / 🗑️ deleted. Reason-
-         aware title variants surface the specific deploy
-         path. #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.theme_pushed" />
         <span class="form-label-text">📤 THEME PUSHED <span class="muted small">(off)</span></span>
-        <p class="form-hint">Per-row notification when motif re-deploys an EXISTING theme (PUSH TO PLEX, REPLACE TDB, PROMOTE TO ACTIVE, force-place jobs). Distinct from THEME ADDED — the row already had the theme; this signals "Plex's serving state changed" not "new theme appeared." Title varies by reason: "Theme replaced via TDB" / "Theme promoted from backup" / "Cloud backup re-uploaded" / generic "Theme pushed to Plex". No dedupe — opt-in is the dedupe.</p>
+        <p class="form-hint">Per-row ping when an existing theme is re-deployed. The title names the path: "Theme replaced via TDB" / "Theme promoted from backup" / "Cloud backup re-uploaded".</p>
       </label>
-      {# v1.21.46: theme_backed_up — fires when a theme DOWNLOADS as a
-         backup (backup_only stamp, nothing placed) rather than going
-         live. Covers P-row bulk ACCEPT, DOWNLOAD TDB BACKUP, SET URL +
-         KEEP AS BACKUP, CSV import-as-backup. ON by default because the
-         landing was previously silent (theme_added/pushed are gated on
-         placement). Coalesced on a 60s window so a bulk collapses to one
-         summary; 💾 emoji distinguishes it from 🎵 added / 📤 pushed. #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.theme_backed_up" />
         <span class="form-label-text">💾 THEME BACKED UP <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires when motif DOWNLOADS a theme as a backup instead of placing it — accepting a TDB update on a Plex-served (P) row, DOWNLOAD TDB BACKUP, SET URL + KEEP AS BACKUP, or a CSV import set to "download as backup." Your current theme keeps playing; the backup sits staged until the active theme is lost (then BACKUP READY TO DEPLOY fires). ON by default because the landing used to be silent. Coalesced on a 60s window — a bulk ACCEPT collapses to one "💾 N themes backed up" summary, but the first one still pings immediately.</p>
+        <p class="form-hint">A theme downloaded as a backup, nothing placed — your current theme keeps playing.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.theme_deleted" />
         <span class="form-label-text">🗑️ THEME DELETED <span class="muted small">(off)</span></span>
-        <p class="form-hint">Per-row notification on UNMANAGE / FORGET / DELETE actions. No dedupe — opt-in is the dedupe. Useful for audit-trail surfaces.</p>
+        <p class="form-hint">Per-row ping on UNMANAGE / FORGET / DELETE.</p>
+      </label>
+
+      <p class="form-subhead">// AVAILABLE &amp; ARRIVED</p>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.new_tdb_theme_available" />
+        <span class="form-label-text">✨ THEME AVAILABLE TO ADD <span class="muted small">(off)</span></span>
+        <p class="form-hint">A newly-added Plex item matches a ThemerrDB theme it doesn't have yet — grab it via SOURCE → DOWNLOAD TDB. One digest per refresh.</p>
       </label>
       <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.release_available" />
-        <span class="form-label-text">🆕 RELEASE UPDATE AVAILABLE <span class="muted small">(off)</span></span>
-        <p class="form-hint">Daily release-check found a new motif version on GitHub. Tag-deduped — each new release pings exactly once, even across motif process restarts.</p>
+        <input type="checkbox" data-cfg-field="notifications.events.plex_item_arrived_themed" />
+        <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(off)</span></span>
+        <p class="form-hint">A newly-added Plex item arrived already themed by Plex — FYI, nothing to do. Primarily an INBOX kind (below).</p>
       </label>
-      {# v1.18.80: backup_ready_to_deploy event — fires when Plex
-         stops serving its own theme on a row with user_overrides.
-         intent='backup'. Default ON because it's rare AND
-         actionable (the user's backup is now eligible to deploy
-         via // PROMOTE TO ACTIVE). #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.backup_ready_to_deploy" />
         <span class="form-label-text">🎯 BACKUP READY TO DEPLOY <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires when Plex stops serving its own theme on a row with a <strong>backup</strong> override URL staged (intent='backup' in v1.18.77+). The user's backup is now the only candidate to serve. Notification body names the row + your override URL + tells you to click <code>// PROMOTE TO ACTIVE</code> on the row's INFO card to deploy. Motif never auto-deploys backups — the decision stays in your hands.</p>
+        <p class="form-hint">Plex dropped its own theme on a row with a staged backup override — deploying stays in your hands via <code>// PROMOTE TO ACTIVE</code> on the INFO card.</p>
       </label>
-      {# v1.22.60: the v1.19.41 tier-1/tier-2 theme-lost kinds —
-         dispatched by the reaper since v1.19.41 but never present
-         in _DEFAULT_NOTIFY_EVENTS (or here), so dispatch dropped
-         them as unknown and the notifications were dead. ON by
-         default: rare, actionable, 24h-dedupe-limited. #}
+
+      <p class="form-subhead">// LOSS &amp; RECOVERY</p>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.theme_lost_backup_ready" />
         <span class="form-label-text">💔 THEME LOST — BACKUP READY <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires when Plex stops serving a theme for a row where motif holds a <strong>staged backup</strong> (a backup-intent override or a cloud-theme backup file). The body names the row + tells you to click <code>// PROMOTE TO ACTIVE</code> on its INFO card to deploy — motif never auto-deploys. This is the primary payoff of <code>// BACKUP CLOUD THEMES</code>.</p>
+        <p class="form-hint">Plex stopped serving a theme; motif holds a staged backup — <code>// PROMOTE TO ACTIVE</code> deploys it.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.theme_lost_sidecar_available" />
         <span class="form-label-text">💔 THEME LOST — STILL PLAYING <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires when Plex stops serving a theme but a <code>theme.&lt;ext&gt;</code> sidecar still exists at the media folder. The body points at <code>// ADOPT</code> on the row's INFO card to bring the sidecar under motif's management.</p>
+        <p class="form-hint">Plex stopped serving a theme but the sidecar still exists — <code>// ADOPT</code> brings it under motif.</p>
       </label>
-      {# v1.24.26: theme_auto_restored — the hourly restore sweep
-         re-deployed a motif-owned sidecar whose Plex theme.mp3 went
-         missing (the delete+re-add churn the v1.18.90 reaper silently
-         skipped as 'other_fallback'). ON by default: rare + the
-         operator wants to know motif touched Plex on their behalf. #}
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.theme_auto_restored" />
-        <span class="form-label-text">🛠️ THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires when motif's hourly sweep finds a theme it placed has gone missing from its Plex folder — most often because the movie/show was <strong>removed and re-added in Plex</strong> (a new rating_key, the folder's <code>theme.mp3</code> wiped) — and <strong>re-deploys it automatically</strong> from motif's own backup. The body names the titles that were restored. This is a confirmation that motif self-healed; no action needed. <strong>On by default.</strong></p>
-      </label>
-      {# v1.18.90: plex_theme_lost event — fires when Plex stops
-         serving its own theme on a row AND motif has no fallback
-         (no user_override, no local_file, no placement). Default
-         OFF since the event is per-row and bulk Plex changes
-         could produce a burst; per-row dedup via notify_dedupe
-         with a 24h rate-limit caps the worst case even when
-         opted in. #}
+      {# v1.18.90 / v0.51.256: the no-recovery tier. Hint keeps the measured
+         default rationale + both action paths — tests pin them. #}
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.events.plex_theme_lost" />
         <span class="form-label-text">💔 THEME LOST — NO FALLBACK <span class="muted small">(on)</span></span>
-        <p class="form-hint">Fires when Plex was serving a theme for a row but it's no longer available <strong>and motif has no fallback</strong> (no user URL, no upload, no local file). Common cause: the item was removed + re-added in Plex, breaking its theme cache (caught by the v1.18.89 stale-row reaper). Notification body explains the cause + names both action paths (<code>// SET URL</code> / <code>// UPLOAD MP3</code>) on the row's INFO card. Per-row dedup at 24h so bulk Plex changes can't flood, and bursts coalesce into one summary since v0.51.255. <strong>On by default</strong> (v0.51.256) — this is the only tier meaning motif has <em>no</em> way to recover the theme automatically, so it's the one loss you most need to hear about. Turn it off if you'd rather triage these in the INBOX drawer alone.</p>
+        <p class="form-hint">Plex stopped serving a theme and motif has <em>no</em> way to recover it automatically — fix via <code>// SET URL</code> or <code>// UPLOAD MP3</code> on the INFO card. On by default (v0.51.256): the one loss that needs a human. 24h per-row dedupe; bursts coalesce.</p>
       </label>
-      {# v1.21.5: new_tdb_theme_available — fires after a plex refresh
-         when a NEW Plex item matches a ThemerrDB theme but has no
-         theme in Plex or motif (SRC=—). Hooks the plex_enum side
-         (post-resolve sweep over newly-inserted rks), NOT the
-         resolve_theme_ids hot loop the v1.17.0 deferral was about.
-         Bulk-shaped (one digest per refresh) + per-(mt,tmdb) dedupe.
-         Default OFF — opt-in like the other theme_* events. #}
       <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.new_tdb_theme_available" />
-        <span class="form-label-text">✨ THEME AVAILABLE TO ADD <span class="muted small">(off)</span></span>
-        <p class="form-hint">Fires after a Plex refresh when a <strong>newly-added</strong> Plex item matches a ThemerrDB theme but has no theme yet (no Plex theme, nothing in motif). Tells you that you <em>could</em> add a theme — open the row's <code>// MOTIF INFO</code> card and <code>// DOWNLOAD</code>. Only genuinely-new items fire (your existing themeless library stays surfaced via the in-app <code>// UPD</code> badge, not pushed). A batch import collapses into one digest; each title pings at most once. <strong>Off by default</strong> — opt in here.</p>
+        <input type="checkbox" data-cfg-field="notifications.events.theme_auto_restored" />
+        <span class="form-label-text">🛠️ THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
+        <p class="form-hint">motif's hourly sweep re-placed a theme whose Plex copy went missing (item removed + re-added) — a self-heal confirmation, no action needed.</p>
       </label>
-      {# v0.51.150: plex_item_arrived_themed — the inverse of the toggle above.
-         Fires when a genuinely-new Plex item arrives ALREADY themed by Plex
-         (has_theme=1) that motif doesn't own — a pure FYI, no action needed.
-         Baseline-gated (silent on a section's first enum) + per-(mt,tmdb) 30-day
-         dedupe. OFF for Discord; the in-app INBOX is the primary surface for these
-         passive arrivals and is controlled separately under // IN-APP INBOX below
-         (v0.51.210 — it was unconditional before that). 📺 = "new content in Plex". #}
+
+      <p class="form-subhead">// SYSTEM HEALTH</p>
       <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.events.plex_item_arrived_themed" />
-        <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(off)</span></span>
-        <p class="form-hint">Fires after a Plex refresh when a <strong>newly-added</strong> Plex item already has a theme that Plex is serving and motif doesn't own — a heads-up that new content showed up already themed, with <em>nothing to do</em>. Only genuinely-new arrivals fire, and only after a library's first scan (the initial seed stays silent); each title pings at most once per 30 days. <strong>Off for Discord</strong> — the in-app <code>// INBOX</code> drawer is its primary surface, toggled separately under <code>// IN-APP INBOX</code> below.</p>
+        <input type="checkbox" data-cfg-field="notifications.events.cookies_needed" />
+        <span class="form-label-text">🍪 COOKIES NEEDED <span class="muted small">(on)</span></span>
+        <p class="form-hint">A download hit <code>FailureKind.COOKIES_EXPIRED</code> — refresh cookies.txt. Max one ping per 6h.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.disk_low" />
+        <span class="form-label-text">🗄️ DISK SPACE LOW <span class="muted small">(on)</span></span>
+        <p class="form-hint">Themes-dir free space under <code>paths.min_free_disk_mb</code>. Max one ping per 12h.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.worker_restarted" />
+        <span class="form-label-text">⚠️ WORKER RESTARTED <span class="muted small">(on)</span></span>
+        <p class="form-hint">Boot found stuck jobs from an unclean shutdown (crash / OOM). Clean restarts don't ping.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.events.release_available" />
+        <span class="form-label-text">🆕 RELEASE UPDATE AVAILABLE <span class="muted small">(off)</span></span>
+        <p class="form-hint">A new motif release on GitHub — each tag pings once.</p>
       </label>
     </div>
-    <!-- v1.17.2: dedicated SAVE EVENTS button below the toggles
-         block (the user: "make events have it's own save box
-         below"). Both buttons trigger the same notifications
-         PATCH — the backend handles partials idempotently — so
-         the split is purely a UX-grouping affordance: URLs +
-         sinks up top with their own SAVE, per-event toggles
-         here with their own SAVE. Status pings on either button
-         flash on BOTH adjacent status elements (per the
-         v1.17.2 bindConfigSaves querySelectorAll change). -->
+    <!-- v1.17.2: dedicated SAVE EVENTS button (both buttons PATCH the same
+         notifications config; the split is a UX-grouping affordance). -->
     <div class="form-actions">
       <button class="btn btn-warn" data-save="notifications">// SAVE EVENTS</button>
       <span class="form-status" data-save-status="notifications"></span>
     </div>
-    <p class="form-hint">
-      Every notification event is now surfaced above. Each toggle
-      writes <code>notifications.events.&lt;kind&gt;</code> — the same
-      keys are also reachable via <code>/api/config</code> PATCH.
-    </p>
 
-    {# v0.51.210: per-kind toggles for the in-app INBOX drawer, INDEPENDENT of the
-       Apprise events above — a kind can be off for Discord yet on in the inbox (or off
-       entirely). Declarative data-cfg-field checkboxes; the generic config load/save
-       machinery handles them. Keys mirror notify_inbox.INBOX_EVENT_KINDS. #}
+    {# v0.51.210: per-kind toggles for the in-app INBOX drawer, INDEPENDENT of
+       the Apprise events above. v0.51.263: rendered as a compact two-column
+       grid with no per-kind hints — every kind is described by its EVENTS twin
+       above (v1.23.83 pins the names identical), so repeating ten hint
+       paragraphs here was pure height. Keys mirror notify_inbox.INBOX_EVENT_KINDS. #}
     <header class="block-head block-head--divided">
       <h2 class="block-title">// IN-APP INBOX</h2>
       <span class="muted small">which kinds reach the drawer</span>
     </header>
     <p class="form-hint block-intro">
-      These control the topbar <code>// INBOX</code> drawer <strong>independently</strong>
-      of the Discord/Apprise toggles above — a kind can be off for Discord yet still land in
-      the inbox, or turned off from the inbox entirely. All on by default; turning one off
-      stops <em>new</em> notices of that kind (existing rows stay until dismissed).
+      Controls the topbar <code>// INBOX</code> drawer <strong>independently</strong>
+      of the Discord/Apprise toggles above — a kind can be off for Discord yet
+      still land in the inbox. Each kind is described above; all on by default.
+      Turning one off stops <em>new</em> rows (existing rows stay until dismissed).
     </p>
-    <div class="form-grid form-grid-tight" data-config-form="notifications">
+    <div class="form-grid form-grid-tight form-grid-cols2" data-config-form="notifications">
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_added" />
         <span class="form-label-text">🎵 THEME ADDED <span class="muted small">(on)</span></span>
-        <p class="form-hint">A theme was placed for a row for the first time — sync auto-add, download, or adopt.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_pushed" />
         <span class="form-label-text">📤 THEME PUSHED <span class="muted small">(on)</span></span>
-        <p class="form-hint">motif re-deployed a theme the row already had — PUSH TO PLEX, REPLACE TDB, PROMOTE TO ACTIVE, force-place. On here even though the Discord toggle is off by default: a bulk push is exactly the kind of thing you want to look up afterwards without wanting a ping per row.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_backed_up" />
         <span class="form-label-text">💾 THEME BACKED UP <span class="muted small">(on)</span></span>
-        <p class="form-hint">A theme was downloaded as a backup rather than placed — your current theme keeps playing and the backup sits staged until it is lost.</p>
-      </label>
-      <label class="form-label form-checkbox">
-        <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_item_arrived_themed" />
-        <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(on)</span></span>
-        <p class="form-hint">A newly-added Plex item showed up already themed by Plex — a pure FYI, nothing to do.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_auto_restored" />
         <span class="form-label-text">🛠️ THEME AUTO-RESTORED <span class="muted small">(on)</span></span>
-        <p class="form-hint">motif re-deployed a sidecar whose Plex theme went missing — a self-heal confirmation.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.new_tdb_theme_available" />
         <span class="form-label-text">✨ THEME AVAILABLE TO ADD <span class="muted small">(on)</span></span>
-        <p class="form-hint">ThemerrDB now has a theme for an unthemed row you could download.</p>
+      </label>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_item_arrived_themed" />
+        <span class="form-label-text">📺 ARRIVED ALREADY THEMED <span class="muted small">(on)</span></span>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.backup_ready_to_deploy" />
         <span class="form-label-text">🎯 BACKUP READY TO DEPLOY <span class="muted small">(on)</span></span>
-        <p class="form-hint">A backup theme is eligible to promote to active — Plex dropped its own.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_lost_backup_ready" />
         <span class="form-label-text">💔 THEME LOST — BACKUP READY <span class="muted small">(on)</span></span>
-        <p class="form-hint">A Plex-served theme was lost, but motif has a backup ready to deploy.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.theme_lost_sidecar_available" />
         <span class="form-label-text">💔 THEME LOST — STILL PLAYING <span class="muted small">(on)</span></span>
-        <p class="form-hint">A Plex theme was lost; a motif sidecar is still playing it in the meantime.</p>
       </label>
       <label class="form-label form-checkbox">
         <input type="checkbox" data-cfg-field="notifications.inbox_events.plex_theme_lost" />
         <span class="form-label-text">💔 THEME LOST — NO FALLBACK <span class="muted small">(on)</span></span>
-        <p class="form-hint">A Plex-served theme was lost with no motif fallback — the item is now unthemed.</p>
       </label>
     </div>
     <div class="form-actions">
       <button class="btn btn-warn" data-save="notifications">// SAVE INBOX</button>
       <span class="form-status" data-save-status="notifications"></span>
     </div>
-    <p class="form-hint">
-      Each toggle writes <code>notifications.inbox_events.&lt;kind&gt;</code>. The Discord/
-      Apprise toggles above are separate — the inbox records for allowed kinds regardless
-      of the Apprise send-toggle, and this is the switch that governs the inbox itself.
-    </p>
   </div>
 </section>
 
