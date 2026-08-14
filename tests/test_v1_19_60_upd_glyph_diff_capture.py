@@ -81,6 +81,7 @@ the action is "swap your content for TDB URL" regardless of
 whether the prior URL is known.
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sqlite3
 import sys
@@ -94,6 +95,12 @@ sys.path.insert(0, str(REPO))
 
 API_PY = (REPO / "app" / "web" / "api.py").read_text()
 SYNC_PY = (REPO / "app" / "core" / "sync.py").read_text()
+
+
+def _url_changed_branch() -> str:
+    """The `elif url_changed:` branch — it is the last statement in
+    _flush_sync_batch, so the next top-level def bounds it exactly."""
+    return slice_to_next(SYNC_PY, "elif url_changed:", "\ndef ")
 
 
 # ── Source-text guards (helpers + mirror-drift safety) ───────
@@ -213,12 +220,9 @@ def test_url_changed_branch_captures_old_url():
 def test_pending_updates_insert_binds_old_url_not_none():
     """The pending_updates INSERT must bind the captured `old_url`
     variable, not the literal `None` that was there pre-v1.19.60."""
-    elif_idx = SYNC_PY.index("elif url_changed:")
-    # v1.21.10: widened 8000 → 10000 (the has_sidecar gate added ~700
-    # chars; the INSERT binding-tuple close sits at ~offset 9050).
-    # v1.22.45: 10000 → 10600 (the updated_titles append gained a
-    # media_type+tmdb_id comment + line split upstream of the INSERT).
-    block = SYNC_PY[elif_idx:elif_idx + 10600]
+    # v0.51.264: anchored to the end of _flush_sync_batch (was 10600, after
+    # two widenings) — the INSERT keeps drifting later as the branch grows.
+    block = _url_changed_branch()
     insert_idx = block.index("INSERT INTO pending_updates")
     binding_idx = block.index("(\n                            media_type",
                               insert_idx)
@@ -240,10 +244,7 @@ def test_sync_writes_urls_match_kind_for_override_coincidence():
     """When the user's override URL coincidentally matches the new
     TDB URL, sync.py must write kind='urls_match' instead of the
     default 'upstream_changed'. Beginning After the End repro."""
-    elif_idx = SYNC_PY.index("elif url_changed:")
-    # v1.22.39: widened 8000 → 9200 (the has_sidecar query grew, pushing the
-    # pending_updates INSERT later in the branch).
-    block = SYNC_PY[elif_idx:elif_idx + 9200]
+    block = _url_changed_branch()
     # The kind decision logic.
     assert "pu_kind" in block
     assert "'urls_match'" in block
@@ -257,8 +258,7 @@ def test_override_row_fetched_with_url():
     """The url_changed branch's user_overrides lookup must fetch
     youtube_url (was a bare EXISTS pre-fix) so the kind-decision
     can compare against the new TDB URL."""
-    elif_idx = SYNC_PY.index("elif url_changed:")
-    block = SYNC_PY[elif_idx:elif_idx + 2000]
+    block = _url_changed_branch()
     assert "SELECT youtube_url FROM user_overrides" in block, (
         "v1.19.60: must fetch youtube_url (was just SELECT 1)"
     )

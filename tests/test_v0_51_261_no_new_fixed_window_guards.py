@@ -44,7 +44,10 @@ _MIN_WIDTH = 100
 # Equality, not `<=`, is deliberate: `<=` lets the count sit stale forever, so
 # the ratchet never actually tightens. When you convert one to a structural
 # anchor the gate goes red and tells you the new number — that IS the ratchet.
-_BUDGET = 1512
+# v0.51.264: 1512 → 1504 (the eight `elif url_changed:` windows across three
+# files, all bounded now by the next top-level def — they had been re-widened
+# six times between v1.21.10 and v1.22.45 and broke again on a 40-line insert).
+_BUDGET = 1504
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

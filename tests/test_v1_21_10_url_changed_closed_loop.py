@@ -11,6 +11,7 @@ route M-rows into the prompt path (pending_update / blue TDB↑) instead of
 auto-download; gate the SRC=— auto-download on auto_download_new_themes.
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -20,9 +21,10 @@ SYNC_PY = (REPO / "app" / "core" / "sync.py").read_text()
 
 
 def _url_changed_block() -> str:
-    # The branch's else-gate sits at ~offset 11400; slice generously.
-    idx = SYNC_PY.index("elif url_changed:")
-    return SYNC_PY[idx:idx + 13000]
+    # v0.51.264: the branch is the last statement in _flush_sync_batch, so
+    # bound it by the next top-level def rather than a char count that has to
+    # be re-widened every time the branch grows.
+    return slice_to_next(SYNC_PY, "elif url_changed:", "\ndef ")
 
 
 def test_url_changed_computes_has_sidecar():

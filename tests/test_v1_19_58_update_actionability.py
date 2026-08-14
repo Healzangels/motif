@@ -48,6 +48,7 @@ to look at.
     (motif doesn't re-download for Plex-served rows)
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sys
 from pathlib import Path
@@ -59,6 +60,12 @@ sys.path.insert(0, str(REPO))
 SYNC_PY = (REPO / "app" / "core" / "sync.py").read_text()
 
 
+def _url_changed_branch() -> str:
+    """The `elif url_changed:` branch — it is the last statement in
+    _flush_sync_batch, so the next top-level def bounds it exactly."""
+    return slice_to_next(SYNC_PY, "elif url_changed:", "\ndef ")
+
+
 # ── Source guards ────────────────────────────────────────────
 
 
@@ -66,17 +73,11 @@ def test_updated_count_increment_inside_actionability_gate():
     """The `stats.updated_count += 1` line must be inside the
     new `if is_actionable:` block — NOT at the top of the elif
     url_changed branch (the pre-v1.19.58 location)."""
-    # Locate the url_changed branch.
-    idx = SYNC_PY.index("elif url_changed:")
-    # Walk to the next top-level branch / function (heuristic:
-    # next line at indent 8 starting with `elif`, `else`,
-    # `if `, or `def `).
-    # For our purposes the branch ends within ~3000 chars.
-    # v1.21.10: widened 4000 → 5000 (the has_sidecar gate added ~600
-    # chars ahead of the updated_count increment).
-    # v1.22.39: widened 5000 → 6200 (the has_sidecar query grew to the
-    # LEFT-JOIN-themes + theme_id linkage form).
-    block = SYNC_PY[idx:idx + 6200]
+    # v0.51.264: the branch runs to the end of _flush_sync_batch, so bound it
+    # there instead of re-widening the window a fourth time (4000 → 5000 →
+    # 6200 → …). The assertions below are ORDERING claims; they do not need
+    # a tight window, and an anchored one grows with the code.
+    block = _url_changed_branch()
     # is_actionable predicate must be declared.
     assert "is_actionable" in block, (
         "v1.19.58: elif url_changed branch must compute "
@@ -99,10 +100,8 @@ def test_updated_titles_append_inside_actionability_gate():
 
     v1.19.70: window widened 4000→6000 to absorb the
     in_plex gate comment block.
-    v1.22.45: 6000→6600 (the append gained a media_type+tmdb_id comment +
-    split across lines)."""
-    idx = SYNC_PY.index("elif url_changed:")
-    block = SYNC_PY[idx:idx + 6600]
+    v0.51.264: anchored to the end of _flush_sync_batch (was 6600)."""
+    block = _url_changed_branch()
     actionable_idx = block.index("is_actionable")
     append_idx = block.index("stats.updated_titles.append")
     assert append_idx > actionable_idx
@@ -113,9 +112,7 @@ def test_is_actionable_includes_will_enqueue_download():
     case (no local_files + no override + enqueue_downloads=True
     + not plex_supplies). That case re-downloads motif's
     canonical from the new URL — a user-visible DL transition."""
-    idx = SYNC_PY.index("elif url_changed:")
-    # v1.22.39: widened 4000 → 5200 (the has_sidecar query grew).
-    block = SYNC_PY[idx:idx + 5200]
+    block = _url_changed_branch()
     # Either the variable name OR the inline conjunction.
     assert (
         "will_enqueue_download" in block
@@ -130,9 +127,7 @@ def test_is_actionable_includes_already_have_or_override():
     """The actionability gate must include the case where the
     row has a local file or an override. Both cases trigger
     a pending_update INSERT (the !UPD glyph)."""
-    idx = SYNC_PY.index("elif url_changed:")
-    block = SYNC_PY[idx:idx + 4000]
-    assert "already_have or has_override" in block
+    assert "already_have or has_override" in _url_changed_branch()
 
 
 def test_silent_bookkeeping_path_still_updates_themes_youtube_url():

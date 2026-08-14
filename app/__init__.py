@@ -4883,7 +4883,29 @@
 #   titles, the v0.51.256 default rationale, action paths) survive — the 237
 #   pre-existing tests over this panel pass unmodified. A word-budget ratchet
 #   (<=50/hint, <=600 total) stops the wall of text growing back.
-__version__ = "0.51.263"
+# 0.51.264: an override row stops re-notifying "1 updated" every sync, and stops
+#   having its own !UPD prompt swept away. The operator kept getting "Motif sync
+#   — 1 updated / Updated: Anime · Vampire in the Garden (2022)" for a row
+#   showing TDB ∅, and one run log carried both halves of it: `updated:1` plus
+#   `cleared 1 stale pending update(s) — upstream theme removed`. Two defects,
+#   one wrong assumption — that themes.youtube_url is upstream's answer.
+#   (1) v1.22.8's url-less sweep reads `youtube_url IS NULL` as "TDB removed its
+#   theme". On a U-row the operator set BECAUSE TDB had nothing, v0.51.228
+#   deliberately WITHHOLDS that write when TDB later publishes one, so the column
+#   stays NULL and the sweep deleted the prompt the same run had just written —
+#   nothing to accept or decline, and the log blamed upstream for motif's own
+#   withheld write. The sweep now asks TDB's record (raw_json, which the withheld
+#   branch rewrites every sync) for override rows; json_valid guards legacy rows
+#   into the conservative no-delete answer (v1.18.10 amplifier rule).
+#   (2) stats.updated_count fired on every url_changed RE-detection. The withheld
+#   branch also leaves tdb_content_fingerprint stale by design, so url_changed
+#   re-fires forever for the same video; a KEEP CURRENT didn't silence it either
+#   (v1.20.14 holds the row 'declined', the count never read the decision). It
+#   now counts only when the UPSERT below would actually arm a prompt — no row
+#   yet, or a genuinely different video (the same IS-NOT test v1.20.14 re-arms
+#   on). Repro'd against a real DB first: 3 syncs → 3 notifications + 3 swept
+#   prompts pre-fix, 1 notification + a surviving prompt after.
+__version__ = "0.51.264"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

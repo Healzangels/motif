@@ -1488,7 +1488,30 @@ def _flush_sync_batch(
                 # applies: items not in user's Plex library
                 # should not surface in sync notifications.
                 # `in_plex` computed at outer scope (line ~865).
+                # v0.51.264: and only on a NEW detection. The v0.51.228
+                # withheld-write branch leaves themes.youtube_url +
+                # tdb_content_fingerprint stale for override rows, so
+                # url_changed re-fires on EVERY sync for the SAME upstream
+                # video — the operator got "Motif sync — 1 updated / Vampire in
+                # the Garden (2022)" every single run. A KEEP CURRENT didn't
+                # silence it either: v1.20.14 holds the row 'declined', but the
+                # count never read the decision. Notify only when the UPSERT
+                # below would actually arm a prompt — no row yet, or a
+                # genuinely different video (the same test v1.20.14 re-arms on).
+                _prev_pu = None
                 if is_actionable and in_plex:
+                    _prev_pu = conn.execute(
+                        "SELECT new_video_id FROM pending_updates "
+                        "WHERE media_type = ? AND tmdb_id = ? "
+                        "  AND section_id = '' AND edition_key = ''",
+                        (media_type, tmdb_id),
+                    ).fetchone()
+                newly_detected = (
+                    _prev_pu is None
+                    or _prev_pu["new_video_id"] != extract_video_id(
+                        record.get("youtube_theme_url"))
+                )
+                if is_actionable and in_plex and newly_detected:
                     stats.updated_count += 1
                     # v1.18.64: capture title+year for the
                     # sync_completed Apprise body. Cap at 50
@@ -3446,6 +3469,17 @@ def _clear_url_less_pending_updates(db_path) -> int:
     TDB-proposing kinds, gated on themes.youtube_url IS NULL — a POSITIVE
     condition that cannot amplify a broken/empty state the way a NOT-EXISTS
     sweep could."""
+    # v0.51.264: themes.youtube_url is NOT upstream's answer on an override row.
+    # The v0.51.228 branch deliberately WITHHOLDS that write while a
+    # user_override exists, so a U-row the operator set precisely BECAUSE TDB
+    # had nothing keeps youtube_url NULL forever — and this sweep read that as
+    # "upstream removed the theme" and deleted the !UPD prompt the same sync run
+    # had just written. Net effect on the operator's "Vampire in the Garden":
+    # every sync notified "1 updated", every sync silently ate the prompt, so
+    # the row showed TDB ∅ with nothing to accept or decline. For those rows ask
+    # TDB's own record instead — the withheld branch rewrites raw_json every
+    # sync, so it IS current. json_valid guards legacy/empty raw_json into the
+    # conservative answer (no delete).
     with get_conn(db_path) as conn:
         cur = conn.execute(
             "DELETE FROM pending_updates "
@@ -3454,7 +3488,13 @@ def _clear_url_less_pending_updates(db_path) -> int:
             "  AND EXISTS (SELECT 1 FROM themes t "
             "              WHERE t.media_type = pending_updates.media_type "
             "                AND t.tmdb_id = pending_updates.tmdb_id "
-            "                AND t.youtube_url IS NULL)"
+            "                AND t.youtube_url IS NULL "
+            "                AND (NOT EXISTS (SELECT 1 FROM user_overrides o "
+            "                                 WHERE o.media_type = t.media_type "
+            "                                   AND o.tmdb_id = t.tmdb_id) "
+            "                     OR (json_valid(t.raw_json) "
+            "                         AND COALESCE(json_extract(t.raw_json, "
+            "                             '$.youtube_theme_url'), '') = '')))"
         )
         return cur.rowcount or 0
 
