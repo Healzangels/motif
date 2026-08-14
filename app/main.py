@@ -15,6 +15,7 @@ import logging
 import signal
 import sys
 import threading
+from pathlib import Path
 
 import uvicorn
 
@@ -28,14 +29,42 @@ from .core.worker import start_worker
 from .web.api import create_app
 
 
-def configure_logging(level: str) -> None:
-    """Configure root logging once. Format mirrors the CRT-style UI."""
+# v0.51.262: one definition, consumed by BOTH the stdout and the file handler —
+# two copies would drift and make the file log harder to correlate with
+# `docker logs` line-for-line.
+_LOG_FORMAT = "%(asctime)s %(levelname)-7s %(name)-22s %(message)s"
+_LOG_DATEFMT = "%Y-%m-%d %H:%M:%S"
+# 10 MB x 5 backups = a ~60 MB ceiling on the appdata share. Sized so a busy
+# sync day still fits without an operator ever needing to prune by hand.
+_LOG_FILE_MAX_BYTES = 10 * 1024 * 1024
+_LOG_FILE_BACKUPS = 5
+
+
+def configure_logging(level: str, config_dir: Path | None = None) -> None:
+    """Configure root logging once. Format mirrors the CRT-style UI.
+
+    v0.51.262: `config_dir` adds a ROTATING FILE handler at
+    `<config_dir>/logs/motif.log`. stdout was the only place motif's Python
+    logs ever went, and an Unraid Force Update RECREATES the container and
+    discards its JSON log — so every deploy erased all history. That made two
+    forensic questions unanswerable on 2026-08-13: whether the events flusher
+    had ever logged `DROPPING batch`, and how slow `upload_collection_theme`
+    actually gets in the field. Neither can be reconstructed from the `events`
+    table (the flusher IS the events writer, so it cannot record its own
+    failure there, and the table prunes at 30 days). /config survives
+    container replacement; stdout does not.
+
+    Omitting `config_dir` keeps stdout-only — that is the signature the
+    v1.14.64 logger tests call.
+    """
     logging.basicConfig(
         level=getattr(logging, level.upper(), logging.INFO),
-        format="%(asctime)s %(levelname)-7s %(name)-22s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
+        format=_LOG_FORMAT,
+        datefmt=_LOG_DATEFMT,
         stream=sys.stdout,
     )
+    if config_dir is not None:
+        _attach_file_log(config_dir)
     # Quiet down chatty third-party loggers
     logging.getLogger("apscheduler").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -66,6 +95,42 @@ def configure_logging(level: str) -> None:
     # the webhook should still be treated as compromised + rotated if it ever
     # appeared in a DEBUG log.)
     logging.getLogger("apprise").setLevel(logging.WARNING)
+
+
+def _attach_file_log(config_dir: Path) -> None:
+    """Add the rotating file handler. Idempotent, and never fatal.
+
+    A read-only /config or a uid mismatch must NOT stop motif booting — the
+    stdout handler is already installed and keeps working, so the cost of a
+    failure here is losing persistence, not losing logs. Class-9 applies: it
+    warns loudly rather than swallowing, because a silently absent log file is
+    exactly the "I checked and there was nothing there" trap this handler
+    exists to close.
+
+    SECURITY: log lines now persist to disk instead of scrolling away, which
+    raises the stakes on the v1.23.92 apprise clamp above — that is what keeps
+    webhook tokens out of DEBUG output, and therefore out of this file."""
+    root = logging.getLogger()
+    if any(getattr(h, "_motif_file_log", False) for h in root.handlers):
+        return  # already attached (re-entry from a test or a second call)
+    try:
+        from logging.handlers import RotatingFileHandler
+        log_dir = config_dir / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        fh = RotatingFileHandler(
+            log_dir / "motif.log",
+            maxBytes=_LOG_FILE_MAX_BYTES,
+            backupCount=_LOG_FILE_BACKUPS,
+            encoding="utf-8",
+        )
+        fh.setFormatter(logging.Formatter(_LOG_FORMAT, datefmt=_LOG_DATEFMT))
+        fh._motif_file_log = True  # re-entry marker for the guard above
+        root.addHandler(fh)
+    except Exception as e:  # noqa: BLE001
+        logging.getLogger("motif.main").warning(
+            "persistent log unavailable at %s/logs/motif.log (%s) — stdout "
+            "logging continues, but history will NOT survive a container "
+            "recreate", config_dir, e)
 
 
 def _bootstrap_config_file(settings) -> None:
@@ -132,7 +197,7 @@ def _probe_writability(settings, log) -> None:
 
 def main() -> int:
     settings = get_settings()
-    configure_logging(settings.log_level)
+    configure_logging(settings.log_level, settings.config_dir)
     log = logging.getLogger("motif.main")
 
     # Verify config dir exists (it might be a fresh appdata mount)

@@ -4853,7 +4853,23 @@
 #   does NOT claim the other 1512 are sound. A detector that tried produced 72 false
 #   positives, then 4, all of them a brace-matcher tripping on an `extras = {}`
 #   default parameter — so no overshoot check ships here.
-__version__ = "0.51.261"
+# 0.51.262: a persistent rotating log at /config/logs/motif.log. stdout was the
+#   ONLY place motif's Python logs ever went, and an Unraid Force Update RECREATES
+#   the container and discards its JSON log — so every deploy erased all history.
+#   Not hypothetical: on 2026-08-13 two forensic questions were put to prod and BOTH
+#   were unanswerable for exactly this reason — had the events flusher ever logged
+#   "DROPPING batch" (the consequence .260 fixed), and how slow does
+#   upload_collection_theme actually get. The probe ran against a 35-line,
+#   six-minute-old log, so its 0 was an artifact rather than an answer, and the
+#   history is gone for good. The `events` table cannot substitute: the flusher IS
+#   the events writer, so it cannot record its own failure there, and rows prune at
+#   30 days. /config survives container replacement; stdout does not. Same format on
+#   both sinks (one shared constant, so they correlate line-for-line), 10 MB x 5
+#   backups for a ~60 MB ceiling on the appdata share, and a failure to open the
+#   file WARNS and boots anyway — stdout still works, so the cost is persistence,
+#   not logs. Raises the stakes on the v1.23.92 apprise clamp, which is what keeps
+#   webhook tokens out of DEBUG and therefore off the disk.
+__version__ = "0.51.262"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

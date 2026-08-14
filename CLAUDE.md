@@ -30,6 +30,7 @@ prompted the rule.
 | Placement | hardlink-first via `os.link()`, fallback to `shutil.copy2()` if cross-FS |
 | Auth | local bcrypt session cookie OR `X-Authentik-Username` forward-auth |
 | Notifications | Apprise (in-process via `apprise` pkg) + optional external apprise-api URL — `app/core/notify.py`, config in `notifications:` block of `motif.yaml` |
+| Logs | stdout (`docker logs`) **plus** a rotating file at `/config/logs/motif.log` (10 MB × 5, v0.51.262). Same format on both, so they correlate line-for-line. **Use the FILE for any question spanning a deploy** — an Unraid Force Update recreates the container and discards its JSON log, which is why "has the flusher ever dropped a batch?" was unanswerable on 2026-08-13. Note the `events` table is NOT a substitute: the events flusher is what writes it, so it cannot record its own failure there, and rows prune at 30 days. |
 
 Two-volume container layout: `/config` (appdata) + `/data` (mirrors
 Plex's view of the filesystem so hardlinks work).
