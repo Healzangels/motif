@@ -4905,7 +4905,23 @@
 #   yet, or a genuinely different video (the same IS-NOT test v1.20.14 re-arms
 #   on). Repro'd against a real DB first: 3 syncs → 3 notifications + 3 swept
 #   prompts pre-fix, 1 notification + a surviving prompt after.
-__version__ = "0.51.264"
+# 0.51.265: document the contract v0.51.264's bug was reading wrong — and pin it
+#   as behaviour, not prose. db.py said "themes.youtube_url — TDB's current URL",
+#   flatly, which is what made v1.22.8's sweep author reasonable in treating
+#   `youtube_url IS NULL` as "upstream removed the theme". It isn't: v0.51.228
+#   WITHHOLDS that write while a user_override exists, and adopt.py backfills a
+#   restored (non-TDB) url when the column is blank. So the column is "the TDB
+#   url motif last COMMITTED", and upstream's live answer is
+#   raw_json.youtube_theme_url. Corrected at the three sites that state or
+#   violate the meaning: the themes schema comment, the migration's safety
+#   analysis, and adopt.py's backfill. Correcting the comment ALONE would have
+#   been a phantom guard (v1.18.81 — prose nothing executes), so the exception
+#   ships as a behavioural test: an override row is synced against a NEW
+#   upstream video and asserted to keep its committed url + stale fingerprint,
+#   while raw_json carries the new one; the no-override base case asserts the
+#   rule the exception is an exception TO. Disabling the withheld branch turns
+#   two of them red (mutation-verified). No behaviour change in this tag.
+__version__ = "0.51.265"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

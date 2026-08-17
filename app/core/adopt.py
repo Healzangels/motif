@@ -380,6 +380,10 @@ def _maybe_restore_url_history(
                    note = excluded.note""",
             (media_type, tmdb_id, url, now_iso(), decided_by, edition_key or ''),
         )
+        # v0.51.265: this puts a NON-TDB url in themes.youtube_url (see the
+        # column comment) — the second of the two writers that make the column
+        # "last committed" rather than "upstream's answer". youtube_video_id is
+        # deliberately left alone: sync owns the pair and rewrites both.
         conn.execute(
             "UPDATE themes SET youtube_url = ? "
             "WHERE media_type = ? AND tmdb_id = ? "

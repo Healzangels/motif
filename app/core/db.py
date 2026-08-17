@@ -35,6 +35,13 @@ CREATE TABLE IF NOT EXISTS themes (
     original_title       TEXT,
     year                 TEXT,
     release_date         TEXT,
+    -- v0.51.265: the TDB url motif last COMMITTED — not upstream's live
+    -- answer. Two writers break that reading: v0.51.228 withholds this write
+    -- while a user_override exists (stays NULL if TDB had nothing when the
+    -- operator overrode), and adopt.py backfills a restored url when it's
+    -- NULL/''. For upstream's live answer read raw_json.youtube_theme_url,
+    -- which the withheld branch rewrites every sync. Reading this as upstream
+    -- truth is what made v1.22.8's sweep eat live !UPD prompts (fix v0.51.264).
     youtube_url          TEXT,
     youtube_video_id     TEXT,
     youtube_added_at     TEXT,
@@ -3744,7 +3751,10 @@ def _migrate_v41_to_v42(conn: sqlite3.Connection) -> None:
     Every URL the user can manipulate via REVERT / RESTORE / SET URL
     lives elsewhere and survives:
 
-      themes.youtube_url        — TDB's current URL. Different table.
+      themes.youtube_url        — the last TDB url motif committed (NOT
+                                   upstream's live answer on override rows —
+                                   see the column comment, v0.51.265).
+                                   Different table.
       user_overrides.youtube_url — the URL the user typed via SET URL.
                                    Different table.
       previous_urls.youtube_url — REVERT snapshot. Different table.
