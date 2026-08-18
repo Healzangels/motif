@@ -20783,6 +20783,7 @@
     if (!drawer || !pill) return;
     const listEl = document.getElementById('notif-list');
     const clearBtn = document.getElementById('notif-clear-all');
+    const readAllBtn = document.getElementById('notif-mark-all-read');
     const scrim = drawer.querySelector('.ops-drawer-scrim');
     const closeBtn = drawer.querySelector('.ops-drawer-close');
     let closeTimer = null;
@@ -20938,15 +20939,12 @@
               `remaining ${hidden}</span></li>`
             : '');
         if (clearBtn) clearBtn.hidden = false;
-        // snapshot-mark the unread set seen → badge clears on the next poll;
-        // clear the glow now too so the pill dims immediately (rows keep their
-        // unread highlight for this viewing, then read as seen next open).
-        if (items.some((i) => !i.seen)) {
-          api('POST', '/api/notifications/seen').catch(() => {});
-          const inboxCount = document.getElementById('topbar-inbox-count');
-          if (inboxCount) inboxCount.hidden = true;
-          pill.classList.remove('has-unread');
-        }
+        // v0.51.266: opening the drawer no longer marks anything seen. Pre-tag this
+        // fired the BULK mark_seen on every open, so reading one notification cleared
+        // unread on all of them (the operator's report) — there was no per-row read
+        // state at all. Rows are now marked read individually on click; // MARK ALL
+        // READ is the deliberate bulk action.
+        if (readAllBtn) readAllBtn.hidden = !items.some((i) => !i.seen);
       } catch (_) {
         if (listEl) listEl.innerHTML =
           '<li class="notif-empty">// could not load notifications</li>';
@@ -20993,6 +20991,40 @@
         api('POST', `/api/notifications/${li.dataset.nid}/dismiss`).catch(() => {})));
       if (listEl && !listEl.querySelector('.notif-row')) renderEmpty();
     }
+    // v0.51.266: mark ONE row read. Every row is markable, not just the
+    // .notif-clickable ones — a row with no item to open would otherwise have no
+    // way to clear its unread state short of dismissing it.
+    async function markRead(li) {
+      if (!li || !li.dataset.nid || !li.classList.contains('unread')) return;
+      li.classList.remove('unread');
+      li.classList.add('seen');
+      const groupLi = li.closest('.notif-group');
+      if (groupLi && !groupLi.querySelector('.notif-row.unread')) {
+        groupLi.classList.remove('unread');
+        groupLi.classList.add('seen');
+      }
+      bumpUnreadBadge(-1);
+      try { await api('POST', `/api/notifications/${li.dataset.nid}/seen`); }
+      catch (_) { /* the next poll re-reads the truth */ }
+    }
+    // Keep the topbar badge honest between polls (the poll is authoritative).
+    function bumpUnreadBadge(delta) {
+      const el = document.getElementById('topbar-inbox-count');
+      if (!el) return;
+      const next = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
+      el.textContent = String(next);
+      el.hidden = next === 0;
+      if (!next) pill.classList.remove('has-unread');
+    }
+    async function markAllRead() {
+      listEl?.querySelectorAll('.notif-row.unread, .notif-group.unread')
+        .forEach((el) => { el.classList.remove('unread'); el.classList.add('seen'); });
+      const el = document.getElementById('topbar-inbox-count');
+      if (el) { el.textContent = '0'; el.hidden = true; }
+      pill.classList.remove('has-unread');
+      if (readAllBtn) readAllBtn.hidden = true;
+      try { await api('POST', '/api/notifications/seen'); } catch (_) { /* best-effort */ }
+    }
     async function clearAll() {
       try { await api('POST', '/api/notifications/dismiss-all'); } catch (_) { /* best-effort */ }
       renderEmpty();
@@ -21033,6 +21065,7 @@
     if (closeBtn) closeBtn.addEventListener('click', close);
     if (scrim) scrim.addEventListener('click', close);
     if (clearBtn) clearBtn.addEventListener('click', clearAll);
+    if (readAllBtn) readAllBtn.addEventListener('click', markAllRead);
     if (listEl) listEl.addEventListener('click', (e) => {
       // v0.51.154: group dismiss-all (×) — check before the single-× branch.
       const gx = e.target.closest('.notif-x-group');
@@ -21053,6 +21086,10 @@
       // v0.51.151: click-through — navigate to the row's INFO card via the
       // info_open deep-link (the same mechanism /queue's REPROBE OPEN ROW uses,
       // so closing the card leaves the user on the library row).
+      // v0.51.266: reading is per-row now — mark THIS one read whether or not it
+      // has an item to open, then keep the v0.51.151 click-through behaviour.
+      const anyRow = e.target.closest('.notif-row');
+      if (anyRow) markRead(anyRow);
       const row = e.target.closest('.notif-row.notif-clickable');
       if (row) openNotifRow(row);
     });
@@ -21073,7 +21110,16 @@
       if (row) { e.preventDefault(); openNotifRow(row); }
     });
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && !drawer.hidden) close();
+      if (e.key === 'Escape' && !drawer.hidden) {
+        close();
+        // v0.51.266: a mouse click focuses the pill without painting a ring, but the
+        // Escape keypress flips Chrome's :focus-visible heuristic to "keyboard", so
+        // the ops.css .op-pill:focus-visible outline appeared on close and stuck —
+        // the same stuck-highlight class v1.15.131 fixed globally, resurfacing for
+        // the pills that later JOINED the focus-visible allow-list. Drop focus so
+        // the ring can't paint; the drawer is gone, so there's nothing to return to.
+        if (document.activeElement === pill) pill.blur();
+      }
     });
   }
 

@@ -23327,6 +23327,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         dismissed = await run_in_threadpool(notify_inbox.dismiss_all, db)
         return {"ok": True, "dismissed": dismissed}
 
+    @app.post("/api/notifications/{notification_id}/seen")
+    async def api_notifications_seen_one(
+        request: Request, notification_id: int, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.266: mark ONE notification seen (idempotent). The bulk twin above
+        is now only reached by // MARK ALL READ, not by opening the drawer."""
+        _require_admin(request)
+        marked = await run_in_threadpool(
+            notify_inbox.mark_seen_one, db, notification_id)
+        return {"ok": True, "marked": marked}
+
     @app.post("/api/notifications/{notification_id}/dismiss")
     async def api_notifications_dismiss(
         request: Request, notification_id: int, db: Path = Depends(get_db_path),

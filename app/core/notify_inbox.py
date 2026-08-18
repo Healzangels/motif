@@ -211,6 +211,25 @@ def dismiss_notification(db_path: Path, notification_id: int) -> int:
         conn.close()
 
 
+def mark_seen_one(db_path: Path, notification_id: int) -> int:
+    """v0.51.266: mark ONE row seen (idempotent). Pre-tag the only seen-writer was
+    the unconditional mark_seen() fired on drawer OPEN, so reading one notification
+    cleared unread on every one — the operator's report. Same short wait as the
+    dismiss path (see the .260 scope guard): a seen write fails visibly and the
+    next click retries it."""
+    conn = sqlite3.connect(db_path, timeout=10.0)
+    try:
+        with conn:
+            cur = conn.execute(
+                "UPDATE notifications SET seen_at = ? "
+                "WHERE id = ? AND seen_at IS NULL",
+                (now_iso(), int(notification_id)),
+            )
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def dismiss_all(db_path: Path) -> int:
     """Clear-all: dismiss every currently-undismissed row. Returns rows affected."""
     conn = sqlite3.connect(db_path, timeout=10.0)

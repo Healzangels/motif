@@ -369,6 +369,23 @@ Rules:
 - Form-actions row always has both submit + cancel. Submit is `.btn-warn` (amber, mutating); cancel is plain `.btn` (green).
 - Library dialogs (upload / override / manual-url) skip the `.form-label-row` wrapper. Settings-page convention uses it for the env-badge slot; dialog forms don't need it.
 
+### Drawer-head text buttons (v0.51.266)
+
+`.notif-clear-all` is the drawer-head text button primitive (muted, tiny, letter-
+spaced, `// ` prefixed). A second action in that header REUSES the class rather
+than mirroring its declarations — `// MARK ALL READ` ships as
+`class="notif-clear-all notif-mark-read"`, and the modifier overrides exactly one
+thing, the hover tone, because it is not destructive:
+
+```css
+.notif-clear-all:hover { color: var(--red); }
+.notif-clear-all.notif-mark-read:hover { color: var(--cyan); }
+```
+
+The rule generalises: when surface B needs surface A's shape, put A's actual class
+on B and add a modifier for the one property that genuinely differs. Copying the
+declarations into a new class is what drifts.
+
 ### Apprise notification dispatch contract (v1.17.0 / v1.17.4)
 
 `app/core/notify.py` exposes a single best-effort dispatch:

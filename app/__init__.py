@@ -4921,7 +4921,25 @@
 #   while raw_json carries the new one; the no-override base case asserts the
 #   rule the exception is an exception TO. Disabling the withheld branch turns
 #   two of them red (mutation-verified). No behaviour change in this tag.
-__version__ = "0.51.265"
+# 0.51.266: reading ONE notification stops clearing unread on all of them, and
+#   Escape stops leaving a ring on the INBOX pill. (1) `mark_seen()` was the only
+#   seen-writer and is unconditional (WHERE dismissed_at IS NULL AND seen_at IS
+#   NULL — no id), fired by the drawer's load() on every OPEN. There was no
+#   per-row read state at all: rows held an unread highlight for that one viewing
+#   and came back seen, so clicking one and returning looked like it had cleared
+#   the lot. New `mark_seen_one` + POST /api/notifications/{id}/seen; a click marks
+#   THAT row (every row, not just the .notif-clickable ones — a row with no item to
+#   open would otherwise never clear); opening marks nothing; `// MARK ALL READ`
+#   makes the old bulk gesture deliberate instead of a side effect of looking. It
+#   reuses the CLEAR ALL primitive with one token hover modifier (design-system
+#   rule: put the existing class on the new surface). (2) A mouse click focuses the
+#   pill without painting a ring, but the Escape keypress flips Chrome's
+#   :focus-visible heuristic to "keyboard", so ops.css's .op-pill:focus-visible
+#   outline painted as the drawer left and stuck — the stuck-highlight class
+#   v1.15.131 fixed globally, resurfacing for the pills that later JOINED the
+#   focus-visible allow-list. Escape now blurs the pill when it holds focus; the
+#   rule stays so Tab users still see it. All three mutation-verified.
+__version__ = "0.51.266"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

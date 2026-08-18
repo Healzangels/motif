@@ -178,7 +178,9 @@ def test_readers_and_dismiss_paths_deliberately_keep_the_short_wait():
     drawer or clicking again — a 30s-per-attempt hang inside a request handler
     is worse than a fast error, so they keep timeout=10.0 on purpose."""
     src = (Path(notify_inbox.__file__)).read_text()
-    assert src.count("sqlite3.connect(db_path, timeout=10.0)") == 7, (
+    # v0.51.266: 7 → 8. mark_seen_one joined the dismiss/seen class (a per-row
+    # read write) and deliberately keeps the short wait for the same reason.
+    assert src.count("sqlite3.connect(db_path, timeout=10.0)") == 8, (
         "expected the 7 reader/dismiss/prune connections to keep the short "
         "wait; if a path was intentionally promoted, update this count and "
         "say why"

@@ -1114,6 +1114,9 @@ body[data-ops-running="1"] #topbar-status-text {
   padding: 2px 4px;
 }
 .notif-clear-all:hover { color: var(--red); }
+/* v0.51.266: MARK ALL READ shares the CLEAR ALL primitive but is NOT destructive,
+   so only the hover tone differs. */
+.notif-clear-all.notif-mark-read:hover { color: var(--cyan); }
 .notif-clear-all[hidden] { display: none; }
 
 .notif-list {

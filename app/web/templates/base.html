@@ -701,6 +701,11 @@
       <header class="ops-drawer-head">
         <h2 class="ops-drawer-title">// NOTIFICATIONS</h2>
         <div class="notif-head-actions">
+          {# v0.51.266: opening the drawer no longer marks everything read, so the
+             bulk action needs its own control. Reuses .notif-clear-all (the
+             drawer-head text button) + one hover-tone modifier — not destructive. #}
+          <button class="notif-clear-all notif-mark-read" type="button"
+                  id="notif-mark-all-read" hidden>// MARK ALL READ</button>
           <button class="notif-clear-all" type="button" id="notif-clear-all"
                   hidden>// CLEAR ALL</button>
           <button class="ops-drawer-close" type="button" aria-label="Close">&times;</button>
