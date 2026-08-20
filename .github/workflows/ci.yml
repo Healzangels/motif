@@ -5,10 +5,12 @@
 #   1. the full pytest suite (7,000+ tests, incl. the JS-syntax + mirror-drift guards)
 #   2. ruff's pyflakes correctness rules minus 4 noise rules — clean today; this is
 #      the rule family that caught the v0.51.72 httpx NameError.
-# Three REPORT-ONLY signals (surfaced in the log, non-fatal until we ratchet):
-#   full ruff lint, mypy, and pip-audit (dependency CVE scan). The report-only
-#   tier avoids a red wall on ~300 pre-existing style/type findings while still
-#   giving visibility; flip individual ones to blocking as they're cleaned up.
+#   3. pip-audit (v0.51.267 — dependency CVEs; was report-only, ratcheted to
+#      blocking once measured clean)
+# Two REPORT-ONLY signals (surfaced in the log, non-fatal until we ratchet):
+#   full ruff lint and mypy. The report-only tier avoids a red wall on ~300
+#   pre-existing style/type findings while still giving visibility; flip
+#   individual ones to blocking as they're cleaned up.
 name: ci
 
 on:
@@ -52,5 +54,11 @@ jobs:
         run: ruff check app/ tests/ || true
       - name: mypy (report-only)
         run: mypy --ignore-missing-imports app/ || true
-      - name: pip-audit — dependency CVEs (report-only)
-        run: pip-audit -r requirements.txt || true
+      # v0.51.267: BLOCKING. Measured clean at this commit ("No known
+      # vulnerabilities found"), so the ratchet costs nothing today and a NEWLY
+      # published CVE now turns CI red instead of scrolling past in a log. To
+      # accept one, add `--ignore-vuln GHSA-xxxx` here WITH a rationale comment
+      # — never restore `|| true`, which hides every finding including the next
+      # unrelated one.
+      - name: pip-audit — dependency CVEs (BLOCKING)
+        run: pip-audit -r requirements.txt

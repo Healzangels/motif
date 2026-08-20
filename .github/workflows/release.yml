@@ -37,8 +37,34 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
+  # v0.51.267: the publish gate. Pre-tag release.yml ran NO tests and depended on
+  # no CI result — it assumed "a branch push already ran ci.yml for this commit",
+  # which is a process assumption, not an enforcement. ci.yml deliberately skips
+  # tags, and workflow_dispatch can publish any commit at all, so a red tree could
+  # reach :nightly — the channel every deployment tracks. This re-runs the two
+  # BLOCKING gates from ci.yml against the exact tagged source; build-and-push
+  # needs it, so a failure means nothing is published.
+  gate:
+    name: publish gate — pytest + ruff correctness (py3.12)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"   # matches the Dockerfile runtime
+          cache: pip
+      - name: install deps
+        run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: pytest — full suite (BLOCKING)
+        run: PYTHONPATH=$PWD pytest -q -p no:cacheprovider
+      - name: ruff — pyflakes correctness (BLOCKING)
+        run: ruff check app/ tests/ --select F --ignore F401,F811,F841,F541
+      - name: pip-audit — dependency CVEs (BLOCKING)
+        run: pip-audit -r requirements.txt
+
   build-and-push:
     name: build and push multi-arch image
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,9 +143,12 @@ jobs:
             org.opencontainers.image.licenses=MIT
 
       - name: Update Docker Hub description
-        # Only on stable releases; failure here is non-fatal (the README
-        # update is nice-to-have, not blocking)
-        if: steps.tags.outputs.is_stable == 'true'
+        # v0.51.267: dropped `if: steps.tags.outputs.is_stable == 'true'`. That
+        # output was retired at 0.50.0 when the stable/float tags went away (see
+        # Compute tags: "pushed unconditionally (no is_stable gate)") but the
+        # condition was left behind, so this step had been silently skipped on
+        # EVERY release since. The description update is idempotent and already
+        # non-fatal, so it just runs. test_v0_51_267 lints for the general class.
         continue-on-error: true
         uses: peter-evans/dockerhub-description@v4
         with:

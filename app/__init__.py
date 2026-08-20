@@ -4939,7 +4939,27 @@
 #   v1.15.131 fixed globally, resurfacing for the pills that later JOINED the
 #   focus-visible allow-list. Escape now blurs the pill when it holds focus; the
 #   rule stays so Tab users still see it. All three mutation-verified.
-__version__ = "0.51.266"
+# 0.51.267: three fixes from an external code-review validation brief (all 11 of
+#   its findings were factually accurate; these are the three cheap ones — the
+#   two HIGHs it named are inert on this deployment, and two more were declined
+#   with reasons, recorded in ~/motif-review-validation-2026-08-20.md).
+#   (#2) release.yml published images with NO test gate: it ran no pytest and
+#   depended on no CI result, resting on the comment "a branch push already ran
+#   this". ci.yml deliberately skips tags and workflow_dispatch can publish any
+#   commit, so a red tree could reach :nightly — the channel deployments track.
+#   New `gate` job re-runs ci.yml's BLOCKING checks against the exact tagged
+#   source; build-and-push `needs: gate`. (#8) pip-audit was `|| true`, so a new
+#   dependency CVE scrolled past while the job went green; measured clean at this
+#   commit, so the ratchet cost nothing and it is blocking now (ruff-full + mypy
+#   stay report-only — ~300 pre-existing findings). (#10) the Docker Hub
+#   description step was gated on `steps.tags.outputs.is_stable`, retired at
+#   0.50.0 and never emitted since, so it had been silently skipped on EVERY
+#   release. Removed, and the general class is now linted: a workflow step that
+#   reads an output nothing writes fails the suite. My own drift guard caught
+#   that the new gate had omitted the newly-blocking pip-audit; the output lint
+#   first flagged its own removal comment, so it now reads parsed YAML values
+#   rather than raw text. All three mutation-verified.
+__version__ = "0.51.267"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
