@@ -5000,7 +5000,26 @@
 #   classified message includes the URL, and a video ID like abc429xyz must stay
 #   VIDEO_REMOVED. No migration — failure_kind carries no CHECK. Three mutations
 #   verified red, including omitting the kind from is_indeterminate.
-__version__ = "0.51.269"
+# 0.51.270: five findings from reviewing v0.51.263-269, four of them in code
+#   shipped earlier the same day. (F1) renderEmpty hid CLEAR ALL but not MARK ALL
+#   READ — the button postdates it (v0.51.266) — so an emptied inbox kept
+#   offering an action with nothing to act on. (F2) markRead decremented the
+#   unread badge and dismiss did not, so dismissing an unread row left the topbar
+#   over-reporting until the next /api/stats poll; a v0.51.266 regression, since
+#   before it the drawer-open zeroed the badge and the paths could not drift.
+#   Fixed on BOTH the single-row and group paths, reading the class before the
+#   row leaves the DOM. (F3) the topbar comment still claimed "opening the drawer
+#   marks the set seen, so the next poll lands here with 0" — untrue since
+#   v0.51.266, and precisely the lying-contract class that caused v0.51.264 and
+#   that v0.51.265 shipped to fix. (F4) /readyz cached settings-derived answers
+#   on a wall-clock TTL only, so after the operator saved the setting that makes
+#   it ready it kept reporting NOT ready for up to 30s — reported broken at the
+#   moment it was fixed. Now keyed on Settings.revision, which exists for exactly
+#   this and which FolderIndex already invalidates against. (F5) the cache wrote
+#   its validity keys before its payload, letting a concurrent reader pair a
+#   fresh timestamp with the previous snapshot; payload is published first now.
+#   Three mutation-verified. Findings 1-3 were mine from .266, 4-5 from .268.
+__version__ = "0.51.270"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

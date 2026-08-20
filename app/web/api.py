@@ -27393,13 +27393,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # only breadcrumb was one boot log line. The write probe is TTL-cached
     # because /readyz can be polled and the probe touches the filesystem.
     _READYZ_TTL_S = 30.0
-    _readyz_cache: dict[str, object] = {"at": 0.0, "checks": None}
+    _readyz_cache: dict[str, object] = {"at": 0.0, "rev": -1, "checks": None}
 
     def _readyz_paths() -> dict[str, bool]:
-        """Writability of the dirs motif must own, memoized for _READYZ_TTL_S."""
+        """Writability of the dirs motif must own, memoized for _READYZ_TTL_S.
+
+        v0.51.270: also keyed on settings.revision. Both answers below are
+        settings-derived, so a wall-clock TTL alone made /readyz report a stale
+        paths_configured for up to 30s after the operator saved the setting that
+        fixes it — reporting not-ready at the exact moment it became ready.
+        Settings bumps `revision` on every save/reload for precisely this, and
+        FolderIndex (worker.py) already invalidates against it."""
         now = time.monotonic()
+        rev = settings.revision
         cached = _readyz_cache.get("checks")
-        if cached is not None and now - float(_readyz_cache["at"]) < _READYZ_TTL_S:
+        if (cached is not None and _readyz_cache.get("rev") == rev
+                and now - float(_readyz_cache["at"]) < _READYZ_TTL_S):
             return dict(cached)  # type: ignore[arg-type]
         from ..config import probe_dir_writable
         checks = {"config_dir_writable": probe_dir_writable(settings.config_dir) is None}
@@ -27409,8 +27418,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if checks["paths_configured"]:
             checks["themes_dir_writable"] = (
                 probe_dir_writable(settings.themes_dir) is None)
-        _readyz_cache["at"] = now
+        # v0.51.270: publish the payload BEFORE the keys that validate it. The
+        # old order let a concurrent reader pair a fresh timestamp with the
+        # previous snapshot; this way a reader either sees the stale key (and
+        # re-probes — safe, idempotent) or a fully-published entry.
         _readyz_cache["checks"] = dict(checks)
+        _readyz_cache["rev"] = rev
+        _readyz_cache["at"] = now
         return checks
 
     @app.get("/readyz")

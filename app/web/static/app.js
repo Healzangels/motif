@@ -1083,8 +1083,10 @@
       // v0.51.148: INBOX pill — unread count from the notification inbox.
       // Unlike the attention pills it is ALWAYS visible (dim at rest); it
       // lights green + shows the count when there are unread notifications,
-      // and dims back to a bare "INBOX" at zero. Opening the drawer marks the
-      // set seen, so the next poll lands here with 0 and clears the glow.
+      // and dims back to a bare "INBOX" at zero. v0.51.270: opening the drawer no
+      // longer marks anything seen (v0.51.266 made reading per-row), so this poll
+      // is the authority the client's local bumpUnreadBadge adjustments converge
+      // back to — it does NOT land on 0 just because the drawer was opened.
       const inboxBadge = $('#topbar-inbox-badge');
       if (inboxBadge) {
         const n = stats.notifications_unread || 0;
@@ -20912,6 +20914,9 @@
         + '<span class="notif-empty-sub">auto-added themes and alerts land here'
         + '</span></li>';
       if (clearBtn) clearBtn.hidden = true;
+      // v0.51.270: MARK ALL READ too. renderEmpty predates it (v0.51.266), so an
+      // emptied inbox kept offering an action with nothing to act on.
+      if (readAllBtn) readAllBtn.hidden = true;
     }
 
     async function load() {
@@ -20971,7 +20976,14 @@
       // v0.51.154: if this row lives inside a group, tidy the group after removal
       // (drop the group when its last child goes; else tick the header count down).
       const groupLi = li && li.closest('.notif-group');
+      // v0.51.270: a dismissed row stops being unread server-side (count_unread
+      // is dismissed_at IS NULL AND seen_at IS NULL), so the badge must drop
+      // here too. Pre-v0.51.266 this could not drift — opening the drawer zeroed
+      // the badge outright; now that it survives the open, dismiss owes the same
+      // decrement markRead does. Read the class BEFORE the row leaves the DOM.
+      const wasUnread = !!li && li.classList.contains('unread');
       try { await api('POST', `/api/notifications/${id}/dismiss`); } catch (_) { /* gone is fine */ }
+      if (wasUnread) bumpUnreadBadge(-1);
       if (li) li.remove();
       if (groupLi) {
         const rem = groupLi.querySelectorAll('.notif-row').length;
@@ -20986,6 +20998,9 @@
     async function dismissGroup(groupLi) {
       // v0.51.154: dismiss every child of a collapsed group as a unit.
       const kids = [...groupLi.querySelectorAll('.notif-row')];
+      // v0.51.270: same decrement as the single-row path, once per unread child.
+      const unread = kids.filter((li) => li.classList.contains('unread')).length;
+      if (unread) bumpUnreadBadge(-unread);
       groupLi.remove();
       await Promise.all(kids.map((li) =>
         api('POST', `/api/notifications/${li.dataset.nid}/dismiss`).catch(() => {})));
