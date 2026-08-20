@@ -4959,7 +4959,27 @@
 #   that the new gate had omitted the newly-blocking pip-audit; the output lint
 #   first flagged its own removal comment, so it now reads parsed YAML values
 #   rather than raw text. All three mutation-verified.
-__version__ = "0.51.267"
+# 0.51.268: GET /readyz — local operational readiness, separate from liveness.
+#   Milestone 1 of the feature-implementation brief, scoped to readiness only
+#   (no /metrics — nothing scrapes it here, and the brief's own guardrails make
+#   an unscraped exporter pure cost). The same gap is #9 in the code-review
+#   validation brief, reached independently. NOT hypothetical: a PUID mismatch
+#   on a permission-enforcing share (v1.22.4) denied every write while Docker
+#   reported the container healthy, and the only breadcrumb was one boot log
+#   line — it surfaced a week later as crash-looping downloads. /healthz stays
+#   LIVENESS and the Docker healthcheck deliberately stays pointed at it (a
+#   probe that restart-loops on a permissions problem fixes nothing); /readyz
+#   answers "can motif actually do its job here", 503s when it cannot, and NAMES
+#   the failing check — never the path, since it is public like /healthz. The
+#   write probe is TTL-cached (30s) so a poll cannot write a probe file per
+#   scrape. config.probe_dir_writable is now the single definition of writable,
+#   called by BOTH the boot probe and the endpoint, so they cannot drift; the
+#   loud uid/owner diagnostic stays at boot where an operator can act on it.
+#   Verified boundary, documented rather than papered over: the auth middleware
+#   calls setup_complete(db_path) on EVERY request before the public-path
+#   branch, so a vanished DB 500s before either probe runs — the db check covers
+#   the transient/busy case. Three mutations verified red.
+__version__ = "0.51.268"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

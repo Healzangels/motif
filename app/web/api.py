@@ -18,6 +18,7 @@ Routes:
 - GET  /api/coverage/plex      — Plex coverage report data
 - POST /api/sync/now           — kick off an immediate sync
 - GET  /healthz                — liveness probe
+- GET  /readyz                 — local operational readiness (v0.51.268)
 """
 from __future__ import annotations
 
@@ -31,6 +32,7 @@ import json
 import re
 import sqlite3
 import threading
+import time
 from urllib.parse import quote
 
 from fastapi import (
@@ -27382,6 +27384,64 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except sqlite3.OperationalError as e:
             return {"ok": False,
                     "reason": f"database busy — retry in a quiet window: {e}"}
+
+    # v0.51.268: readiness is NOT liveness. /healthz answers "is the process
+    # alive" and must never flap on an external or operator-fixable condition —
+    # a healthcheck that restart-loops on a permissions problem fixes nothing.
+    # /readyz answers "can motif actually do its job here", which is a different
+    # question with a different consumer. The gap this closes is real and cost
+    # this install a week: a PUID mismatch on a permission-enforcing share
+    # (v1.22.4) denied every write while the container reported healthy, and the
+    # only breadcrumb was one boot log line. The write probe is TTL-cached
+    # because /readyz can be polled and the probe touches the filesystem.
+    _READYZ_TTL_S = 30.0
+    _readyz_cache: dict[str, object] = {"at": 0.0, "checks": None}
+
+    def _readyz_paths() -> dict[str, bool]:
+        """Writability of the dirs motif must own, memoized for _READYZ_TTL_S."""
+        now = time.monotonic()
+        cached = _readyz_cache.get("checks")
+        if cached is not None and now - float(_readyz_cache["at"]) < _READYZ_TTL_S:
+            return dict(cached)  # type: ignore[arg-type]
+        from ..config import probe_dir_writable
+        checks = {"config_dir_writable": probe_dir_writable(settings.config_dir) is None}
+        # themes_dir is only a readiness requirement once it is configured;
+        # an unconfigured install is reported by paths_configured instead.
+        checks["paths_configured"] = settings.is_paths_ready()
+        if checks["paths_configured"]:
+            checks["themes_dir_writable"] = (
+                probe_dir_writable(settings.themes_dir) is None)
+        _readyz_cache["at"] = now
+        _readyz_cache["checks"] = dict(checks)
+        return checks
+
+    @app.get("/readyz")
+    def readyz(request: Request):
+        # Sync def → threadpool, so the blocking probe + SQLite read are safe
+        # here (same reasoning as /healthz, and exempt from the v1.22.58 lint).
+        checks: dict[str, bool] = {}
+        try:
+            with get_conn(settings.db_path) as _c:
+                _c.execute("SELECT 1")
+            checks["db"] = True
+        except Exception:  # noqa: BLE001 — any DB failure is not-ready
+            checks["db"] = False
+        checks.update(_readyz_paths())
+        wt = getattr(request.app.state, "worker_threads", None)
+        if wt is not None:
+            checks["worker"] = any(t.is_alive() for t in wt)
+        sch = getattr(request.app.state, "scheduler", None)
+        if sch is not None:
+            checks["scheduler"] = bool(getattr(sch, "running", False))
+        failing = sorted(k for k, v in checks.items() if not v)
+        # Name the failing CHECK, never the absolute path — /readyz is public
+        # (same as /healthz) and a path is an info leak. The boot log carries
+        # the full path + uid/owner detail for the operator who can act on it.
+        return JSONResponse(
+            {"status": "ready" if not failing else "not_ready",
+             "checks": checks, "failing": failing},
+            status_code=200 if not failing else 503,
+        )
 
     @app.get("/healthz")
     def healthz(request: Request):

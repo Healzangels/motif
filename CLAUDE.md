@@ -30,6 +30,7 @@ prompted the rule.
 | Placement | hardlink-first via `os.link()`, fallback to `shutil.copy2()` if cross-FS |
 | Auth | local bcrypt session cookie OR `X-Authentik-Username` forward-auth |
 | Notifications | Apprise (in-process via `apprise` pkg) + optional external apprise-api URL — `app/core/notify.py`, config in `notifications:` block of `motif.yaml` |
+| Probes | `/healthz` = **liveness** (DB + worker + scheduler; the Docker healthcheck points here and must never flap on an operator-fixable condition). `/readyz` = **local readiness** (v0.51.268 — adds config/themes writability + paths-configured; 503 + names the failing check). Both public. `config.probe_dir_writable` is the one definition of "writable", shared with the boot probe. Do NOT repoint the Docker healthcheck at `/readyz` — a permissions problem restart-looping the container fixes nothing. |
 | Logs | stdout (`docker logs`) **plus** a rotating file at `/config/logs/motif.log` (10 MB × 5, v0.51.262). Same format on both, so they correlate line-for-line. **Use the FILE for any question spanning a deploy** — an Unraid Force Update recreates the container and discards its JSON log, which is why "has the flusher ever dropped a batch?" was unanswerable on 2026-08-13. Note the `events` table is NOT a substitute: the events flusher is what writes it, so it cannot record its own failure there, and rows prune at 30 days. |
 
 Two-volume container layout: `/config` (appdata) + `/data` (mirrors

@@ -174,12 +174,12 @@ def _probe_writability(settings, log) -> None:
     if _ready:
         targets.append(("themes_dir", settings.themes_dir))
     for name, path in targets:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-            probe = path / ".motif-write-probe"
-            probe.write_bytes(b"")
-            probe.unlink()
-        except OSError as e:
+        # v0.51.268: the probe itself moved to config.probe_dir_writable so
+        # /readyz tests writability the SAME way; the loud uid/owner diagnostic
+        # below stays here (boot is where an operator can act on it).
+        from .config import probe_dir_writable
+        e = probe_dir_writable(path)
+        if e is not None:
             try:
                 st = path.stat()
                 owned = f"{st.st_uid}:{st.st_gid} mode={oct(st.st_mode & 0o777)}"

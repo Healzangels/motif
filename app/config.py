@@ -48,6 +48,24 @@ _DEFAULT_CONFIG_DIR = Path(os.environ.get("MOTIF_CONFIG_DIR", "/config"))
 _DEFAULT_DATA_DIR = Path(os.environ.get("MOTIF_DATA_DIR", "/data"))
 
 
+def probe_dir_writable(path) -> str | None:
+    """v0.51.268: the single definition of "motif can write here" — mkdir, write a
+    probe byte, unlink. Returns None when writable, else a short reason.
+
+    Extracted so the boot probe (main._probe_writability, which adds the loud
+    uid/owner diagnostic) and /readyz cannot drift on what writable MEANS. The
+    v1.22.4 incident this guards is a uid mismatch on a permission-enforcing
+    share (Unraid shfs) denying every write while the service looks fine."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        probe = path / ".motif-write-probe"
+        probe.write_bytes(b"")
+        probe.unlink()
+        return None
+    except OSError as e:
+        return f"{type(e).__name__}: {e.strerror or e}"
+
+
 class Settings:
     """Live, reloadable settings backed by motif.yaml + env overrides.
 

@@ -86,6 +86,9 @@ TOKEN_TOUCH_INTERVAL_SECONDS = 3600  # 1 hour
 # to anyone who could probe the URL.
 PUBLIC_PATHS: set[str] = {
     "/healthz",
+    # v0.51.268: same posture as /healthz — a probe endpoint an orchestrator
+    # must reach without a credential. It names failing CHECKS, never paths.
+    "/readyz",
     "/login",
     "/logout",
     "/setup",
