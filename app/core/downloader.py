@@ -39,6 +39,13 @@ class FailureKind(str, enum.Enum):
     VIDEO_AGE_RESTRICTED = "video_age_restricted"
     GEO_BLOCKED = "geo_blocked"
     NETWORK_ERROR = "network_error"
+    # v0.51.269: split OUT of NETWORK_ERROR. Both are transient and must stay
+    # that way (v1.15.12: mapping a throttle to a dead kind red-pilled 2005 of
+    # 2507 alive rows), but conflating them means motif cannot tell "the
+    # provider is throttling me" from "the network hiccuped" — so it cannot back
+    # off differently or report per-provider throttle state. Distinguishing them
+    # is the prerequisite for any adaptive rate control.
+    RATE_LIMITED = "rate_limited"
     UNKNOWN = "unknown"
 
     @property
@@ -54,6 +61,7 @@ class FailureKind(str, enum.Enum):
             FailureKind.VIDEO_AGE_RESTRICTED: "Track or video is age-restricted",
             FailureKind.GEO_BLOCKED: "Track or video is geo-blocked from your region",
             FailureKind.NETWORK_ERROR: "Network error reaching source",
+            FailureKind.RATE_LIMITED: "Source is rate-limiting this IP",
             FailureKind.UNKNOWN: "Unknown error",
         }[self]
 
@@ -66,6 +74,22 @@ class FailureKind(str, enum.Enum):
             FailureKind.VIDEO_REMOVED,
             FailureKind.VIDEO_AGE_RESTRICTED,
             FailureKind.GEO_BLOCKED,
+        )
+
+    @property
+    def is_indeterminate(self) -> bool:
+        """v0.51.269: not a definitive verdict about the URL — the probe paints
+        an amber `?` rather than a red ✗ and writes NO failure_kind.
+
+        Was a literal set inside api_probe (v1.14.42). Hoisted onto the enum so
+        a new kind cannot be added without inheriting an answer: the set was the
+        one place RATE_LIMITED HAD to be listed, and forgetting it would have
+        re-created the exact v1.15.12 false-dead this kind exists to prevent."""
+        return self in (
+            FailureKind.COOKIES_EXPIRED,
+            FailureKind.NETWORK_ERROR,
+            FailureKind.RATE_LIMITED,
+            FailureKind.UNKNOWN,
         )
 
 
@@ -99,8 +123,14 @@ def classify_yt_dlp_error(msg: str) -> FailureKind:
     # Bulk-probe handler treats NETWORK_ERROR as transient → does
     # NOT write failure_kind → row state is preserved instead of
     # being falsely marked dead.
-    if "rate-limited" in m or "rate limit" in m:
-        return FailureKind.NETWORK_ERROR
+    # v0.51.269: same position, own kind. Tokens are deliberately specific —
+    # a bare "429" appears inside video IDs ("[youtube] abc429xyz: Video
+    # unavailable" must stay VIDEO_REMOVED), and the message being matched
+    # includes the URL.
+    if ("rate-limited" in m or "rate limit" in m
+            or "http error 429" in m or "error 429" in m
+            or "too many requests" in m):
+        return FailureKind.RATE_LIMITED
     # v1.23.42 (mirrors the v1.15.12 rate-limit fix): transient signals MUST
     # be classified BEFORE the broad "video unavailable" / "is unavailable" /
     # "no longer available" dead patterns below. yt-dlp emits "try again later"

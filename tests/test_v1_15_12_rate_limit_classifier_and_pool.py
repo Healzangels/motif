@@ -53,11 +53,15 @@ API_PY = REPO / "app" / "web" / "api.py"
 
 def test_rate_limited_classifies_as_network_error():
     """Pin the classification of yt-dlp's rate-limit message.
-    NETWORK_ERROR is the load-bearing choice — bulk probe routes
-    NETWORK_ERROR to n_other (no failure_kind write), so rate-
-    limited probes don't corrupt row state. If a future change
-    moves rate-limit to a different kind, that kind MUST also be
-    treated as transient by the bulk probe handler."""
+
+    v0.51.269 took the option this docstring anticipated: rate-limiting moved to
+    its OWN kind (RATE_LIMITED) so an adaptive controller can distinguish a
+    throttle from a network fault. The condition it set — "that kind MUST also
+    be treated as transient by the bulk probe handler" — is what this test now
+    asserts, which is stronger than pinning the member: the bulk probe routes
+    dead-vs-other on `needs_manual_override`, so a False there IS the
+    no-failure_kind-write guarantee that keeps a throttled probe from corrupting
+    row state (the v1.15.11 repro: 2005 "dead" of 2507)."""
     import sys
     sys.path.insert(0, str(REPO))
     from app.core.downloader import classify_yt_dlp_error, FailureKind
@@ -68,9 +72,14 @@ def test_rate_limited_classifies_as_network_error():
         "recommended to use `-t sleep` to add a delay between "
         "video requests to avoid exceeding the rate limit."
     )
-    assert classify_yt_dlp_error(msg) == FailureKind.NETWORK_ERROR, (
-        "v1.15.12: rate-limit responses must classify as "
-        "NETWORK_ERROR (transient), not VIDEO_REMOVED (dead)"
+    kind = classify_yt_dlp_error(msg)
+    assert kind == FailureKind.RATE_LIMITED
+    assert kind.needs_manual_override is False, (
+        "the load-bearing property: bulk probe writes failure_kind ONLY for "
+        "needs_manual_override kinds, so a throttle must answer False here")
+    assert kind.is_indeterminate is True, (
+        "v1.15.12's invariant, unchanged: a rate-limit response is transient — "
+        "it must never render as VIDEO_REMOVED (dead)"
     )
 
 
@@ -154,11 +163,11 @@ def test_bulk_probe_max_workers_reduced_to_one():
 def test_classifier_handles_rate_limit_substring_variant():
     """Cover the alternate substring path. yt-dlp may use either
     "rate-limited" (hyphenated, current) or "rate limit" (spaced,
-    in some error variants). Both must classify as NETWORK_ERROR."""
+    in some error variants). Both are throttles (v0.51.269: RATE_LIMITED)."""
     import sys
     sys.path.insert(0, str(REPO))
     from app.core.downloader import classify_yt_dlp_error, FailureKind
     # Hyphenated form (the dominant message in the user's repro).
-    assert classify_yt_dlp_error("session has been rate-limited") == FailureKind.NETWORK_ERROR
+    assert classify_yt_dlp_error("session has been rate-limited") == FailureKind.RATE_LIMITED
     # Spaced form (yt-dlp variant phrasings).
-    assert classify_yt_dlp_error("exceeding the rate limit") == FailureKind.NETWORK_ERROR
+    assert classify_yt_dlp_error("exceeding the rate limit") == FailureKind.RATE_LIMITED

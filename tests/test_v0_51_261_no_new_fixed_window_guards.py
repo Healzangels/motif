@@ -47,7 +47,9 @@ _MIN_WIDTH = 100
 # v0.51.264: 1512 → 1504 (the eight `elif url_changed:` windows across three
 # files, all bounded now by the next top-level def — they had been re-widened
 # six times between v1.21.10 and v1.22.45 and broke again on a 40-line insert).
-_BUDGET = 1504
+# v0.51.269: 1504 → 1503 (api_probe_tdb's 12000-char window, already widened once
+# at v1.14.54, rotted again — the asserted literal landed 18 chars from the edge).
+_BUDGET = 1503
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

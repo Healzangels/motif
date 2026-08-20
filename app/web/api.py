@@ -11810,16 +11810,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # `needs_manual_override` still flags the "definitively
         # dead" set (video_private/removed/age/geo) — those get
         # red ✗ + failure_kind written.
-        indeterminate_set = {
-            FailureKind.COOKIES_EXPIRED,
-            FailureKind.NETWORK_ERROR,
-            FailureKind.UNKNOWN,
-        }
+        # v0.51.269: the set moved onto FailureKind.is_indeterminate so adding a
+        # kind cannot silently omit it here (RATE_LIMITED would have shown a red
+        # ✗ on a throttled probe — the v1.15.12 false-dead, exactly).
         return {
             "ok": False,
             "kind": result.value,
             "message": result.human,
-            "indeterminate": result in indeterminate_set,
+            "indeterminate": result.is_indeterminate,
             "url_probed": target_url,
             "target_is_pending": target_is_pending,
         }

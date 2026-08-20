@@ -4979,7 +4979,28 @@
 #   calls setup_complete(db_path) on EVERY request before the public-path
 #   branch, so a vanished DB 500s before either probe runs — the db check covers
 #   the transient/busy case. Three mutations verified red.
-__version__ = "0.51.268"
+# 0.51.269: throttling becomes its own FailureKind. Feature D of the
+#   implementation brief, first step only — the brief asks for an adaptive rate
+#   controller but misses the prerequisite: motif could not SEE throttling as
+#   distinct from any other network fault. YouTube's rate-limit prose AND a
+#   literal HTTP 429 both landed in NETWORK_ERROR — safe (transient, and
+#   correctly so since v1.15.12) but indistinguishable, so no controller could
+#   tell "the provider is throttling me" from "the network hiccuped", and
+#   neither could a human reading the log. A controller built without this
+#   signal would be guessing, so the split ships on its own.
+#   RATE_LIMITED behaves EXACTLY like NETWORK_ERROR everywhere that matters —
+#   the hazard here is historical and specific: v1.15.12, a throttle classified
+#   into a DEAD kind red-pilled 2005 of 2507 probed rows. "Transient" was
+#   expressed three ways (worker needs_manual_override, a literal
+#   indeterminate_set in api_probe, bulk-probe's err-is-not-None). The literal
+#   set was the trap — a new kind could silently miss it and paint a red ✗ — so
+#   it moved onto the enum as is_indeterminate, where a kind inherits an answer
+#   instead of needing to be remembered. Throttle tokens are deliberately
+#   specific ("http error 429" / "too many requests", never a bare "429"): the
+#   classified message includes the URL, and a video ID like abc429xyz must stay
+#   VIDEO_REMOVED. No migration — failure_kind carries no CHECK. Three mutations
+#   verified red, including omitting the kind from is_indeterminate.
+__version__ = "0.51.269"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

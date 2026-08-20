@@ -29,6 +29,7 @@ SQL filter) is v1.14.29 — substantial enough to deserve its
 own tag.
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 import sqlite3
 from pathlib import Path
@@ -173,18 +174,23 @@ def test_probe_tdb_response_shape():
     (`result in indeterminate_set`). Both prove the contract
     that the response shape carries the indeterminate flag."""
     src = (REPO / "app" / "web" / "api.py").read_text()
-    fn_anchor = src.index("async def api_probe_tdb(")
-    # v1.14.54: window widened from 8000 → 12000 chars (function
-    # grew when the sync block was extracted into _probe_sync for
-    # run_in_threadpool dispatch).
-    body = src[fn_anchor:fn_anchor + 12000]
+    # v0.51.269: bounded by the next route decorator instead of a char count.
+    # The window had been widened once already (8000 → 12000, v1.14.54) and rotted
+    # again here — the asserted literal landed at offset 11982 of 12000, truncated
+    # mid-string. An anchor grows with the handler.
+    body = slice_to_next(src, "async def api_probe_tdb(", "\n    @app.")
     # ok=True branch.
     assert '"ok": True, "kind": None, "message": None,' in body
     # ok=False branch with indeterminate flag.
     assert '"ok": False,' in body
+    # v0.51.269: third accepted form — the set moved onto the enum
+    # (FailureKind.is_indeterminate). This test's contract is the RESPONSE
+    # SHAPE (the flag is present and derived from the classified kind), not
+    # which spelling derives it, so the alternatives simply accumulate.
     assert (
         '"indeterminate": result == FailureKind.COOKIES_EXPIRED,' in body
         or '"indeterminate": result in indeterminate_set' in body
+        or '"indeterminate": result.is_indeterminate' in body
     )
 
 

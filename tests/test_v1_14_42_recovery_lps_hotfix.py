@@ -139,15 +139,21 @@ def test_probe_response_indeterminate_includes_unknown_and_network():
     indeterminate (alongside COOKIES_EXPIRED). Pre-fix only
     COOKIES_EXPIRED was marked, so UNKNOWN and NETWORK_ERROR
     rendered as hard red ✗."""
+    # v0.51.269: the set moved from a literal in api_probe onto the enum as
+    # FailureKind.is_indeterminate, so a new kind inherits an answer instead of
+    # having to be remembered at this call site. Assert the MEMBERSHIP directly
+    # — stronger than pinning the literal, and it survives the call site moving.
+    import sys
+    sys.path.insert(0, str(REPO))
+    from app.core.downloader import FailureKind
+    for kind in (FailureKind.COOKIES_EXPIRED, FailureKind.NETWORK_ERROR,
+                 FailureKind.UNKNOWN):
+        assert kind.is_indeterminate, f"{kind.value} must render amber, not red ✗"
     src = (REPO / "app" / "web" / "api.py").read_text()
     fn_anchor = src.index("async def api_probe_tdb(")
     body = src[fn_anchor:fn_anchor + 15000]
-    # The widened set.
-    assert "FailureKind.COOKIES_EXPIRED" in body
-    assert "FailureKind.NETWORK_ERROR" in body
-    assert "FailureKind.UNKNOWN" in body
-    # The new flag derivation.
-    assert '"indeterminate": result in indeterminate_set' in body
+    # The flag derivation.
+    assert '"indeterminate": result.is_indeterminate' in body
     # The pre-fix narrow form must NOT survive.
     assert (
         '"indeterminate": result == FailureKind.COOKIES_EXPIRED'
