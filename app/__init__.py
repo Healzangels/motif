@@ -5019,7 +5019,30 @@
 #   its validity keys before its payload, letting a concurrent reader pair a
 #   fresh timestamp with the previous snapshot; payload is published first now.
 #   Three mutation-verified. Findings 1-3 were mine from .266, 4-5 from .268.
-__version__ = "0.51.270"
+# 0.51.271: an edition replaced by a SIBLING edition is no longer a lost theme.
+#   The operator: pull the extended cut, put the theatrical cut in its place, and
+#   motif fires "💔 Theme lost … no backup configured" for a title whose theme
+#   never went anywhere. Two facts reframe it. (1) The canonical lives in motif's
+#   OWN store (themes_dir/…/Title (Year) {edition-<key>}/theme.mp3), not the media
+#   folder — only the placement and the edition-keyed association broke, so the
+#   old message was not merely annoying, it was false. (2) Edition separation
+#   exists to resolve AMBIGUITY (the edition-sibling bleed class), and ambiguity
+#   needs two editions; with exactly one survivor the edition key is a
+#   distinction without a difference, and there is nothing to bleed into.
+#   New app/core/edition_swap.py carries the theme to the survivor under four
+#   guards, each mutation-verified: exactly ONE surviving edition row for
+#   (media_type, tmdb_id, section_id) — two or more is the ambiguous case motif
+#   must not guess at; a genuinely different edition_key; a survivor with NO
+#   theme of its own (an operator's per-edition pick always wins); and the
+#   replacement PRESENT rather than the old row merely absent — a positive
+#   condition, because a transient enumeration gap shows only the absence and
+#   reading an absence as a removal is the shape v1.22.8 got wrong (v0.51.264).
+#   The canonical moves BEFORE any row is touched and outside the transaction
+#   (no write lock across filesystem work); a failed or blocked move aborts with
+#   nothing changed, so the reaper's existing loss path still runs. Idempotent by
+#   construction: after a carry-over the survivor HAS a theme, so guard 3 stops a
+#   second pass and reconciliation cannot loop.
+__version__ = "0.51.271"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

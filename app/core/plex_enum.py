@@ -2936,6 +2936,7 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     if lost_theme_candidates:
         try:
             from ..config import Settings
+            from . import edition_swap as _edition_swap
             from . import notify as _notify
             from . import notify_content as _nc
             from . import notify_dedupe as _ndedupe
@@ -2950,6 +2951,28 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                 # limited away by the 1st's edition-less key) and the enrich_item
                 # edition label below.
                 _disp_edition = edition_key_for_folder(cand.get("folder_path"))
+                # v0.51.271: an edition replaced by a SIBLING edition is not a
+                # lost theme — the canonical never left motif's store, only the
+                # edition-keyed association did. Carry it to the survivor when
+                # exactly one remains and it has no theme of its own: the case
+                # where the edition key is a distinction without a difference,
+                # so nothing edition separation protects is at risk. Runs here,
+                # after enumeration, because it touches the filesystem.
+                _swap = None
+                try:
+                    if _settings.is_paths_ready():
+                        _swap = _edition_swap.resolve_edition_swap(
+                            db_path, _settings.themes_dir,
+                            media_type=mt, tmdb_id=tid,
+                            section_id=cand["section_id"],
+                            lost_edition_key=_disp_edition,
+                        )
+                except Exception as e:  # noqa: BLE001 — never break the dispatch
+                    log.warning("edition-swap resolve failed for %s/%s: %s",
+                                mt, tid, e)
+                if _swap is not None:
+                    # Nothing was lost; the events breadcrumb records the move.
+                    continue
                 # Dedupe key includes tier so a row that flips from
                 # one tier to another inside the 24h window still
                 # gets a notification — e.g. user adds a KEEP AS
