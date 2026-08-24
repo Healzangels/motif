@@ -78,8 +78,11 @@ def test_ops_focus_visible_block_present():
     assert ".op-pill:focus-visible" in OPS_CSS
     assert ".ops-drawer-close:focus-visible" in OPS_CSS
     assert ".op-card-cancel:focus-visible" in OPS_CSS
+    # v0.51.274: sliced to the closing brace, not a byte count — the .274
+    # comment + .notif-clear-all selector pushed the properties past the old
+    # 220-char window (the v0.51.261 rot class).
     anchor = OPS_CSS.index(".op-pill:focus-visible")
-    block = OPS_CSS[anchor:anchor + 220]
+    block = OPS_CSS[anchor:OPS_CSS.index("}", anchor)]
     assert "outline: 2px solid var(--cyan)" in block
     assert "outline-offset: 2px" in block
 

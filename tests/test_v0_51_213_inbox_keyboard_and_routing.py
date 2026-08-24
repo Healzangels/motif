@@ -85,9 +85,11 @@ def test_clickable_rows_are_focusable_and_announced():
     """The v0.51.209 a11y pass fixed the header and left the rows mouse-only."""
     r = APP_JS.index("function rowHtml(")
     body = APP_JS[r:APP_JS.index("function renderEmpty(", r)]
-    # ...and only on rows that actually do something — a non-clickable digest row must not
-    # advertise itself as a control.
-    assert "const mainAttrs = clickable ? ' role=\"button\" tabindex=\"0\"' : ''" in body
+    # v0.51.274: EVERY row is a control now — activation marks it read
+    # (v0.51.266 made reading per-row), so the old "non-clickable rows must not
+    # advertise as controls" rationale is superseded: they DO something.
+    assert "const mainAttrs = ' role=\"button\" tabindex=\"0\"';" in body
+    assert "clickable ? ' role=" not in body, "the conditional form must not return"
     # The control is .notif-main, NOT the <li>: putting it on the list item would strip the
     # listitem role AND nest the dismiss <button> inside a role="button". Mirrors
     # .notif-group-head, which is likewise a div inside its <li>.

@@ -66,6 +66,10 @@
    clipped by the panel edge instead of framing the row. */
 .op-pill:focus-visible,
 .ops-drawer-close:focus-visible,
+.notif-clear-all:focus-visible,
+/* v0.51.274: the drawer-head text buttons (CLEAR ALL + MARK ALL READ) were
+   hover-bearing with NO focus ring — the exact trap the v0.51.213 note above
+   records. Measured: Tab reached them, nothing painted. */
 .op-card-cancel:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
@@ -383,6 +387,9 @@ body[data-ops-running="1"] #topbar-status-text {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  /* v0.51.274: let the notif head's actions row drop below the title instead
+     of shredding every label (LIVE OPS: one short title + ×, wrap is inert). */
+  flex-wrap: wrap;
   padding: 14px 18px;
   border-bottom: 1px solid var(--line);
 }
@@ -1101,9 +1108,17 @@ body[data-ops-running="1"] #topbar-status-text {
 .op-pill.op-notif.has-unread:hover { box-shadow: 0 0 10px rgba(var(--ok-rgb), 0.35); }
 .op-pill.op-notif .op-pill-count[hidden] { display: none; }
 
-.notif-head-actions { display: flex; align-items: center; gap: var(--gap-3); }
+/* v0.51.274: the head is a fixed 380px (92vw mobile) panel; with MARK ALL READ
+   present every label wrapped to 2-3 lines at ALL widths (measured). Labels
+   never break internally; the ACTIONS ROW drops below the title as one line
+   when it doesn't fit — the documented mobile idiom (rows wrap as units). */
+.notif-head-actions {
+  display: flex; align-items: center; gap: var(--gap-3);
+  flex-wrap: nowrap; margin-left: auto;
+}
 
 .notif-clear-all {
+  white-space: nowrap;
   background: none;
   border: 0;
   color: var(--fg-mute);

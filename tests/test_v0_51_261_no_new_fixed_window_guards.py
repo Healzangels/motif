@@ -49,7 +49,9 @@ _MIN_WIDTH = 100
 # six times between v1.21.10 and v1.22.45 and broke again on a 40-line insert).
 # v0.51.269: 1504 → 1503 (api_probe_tdb's 12000-char window, already widened once
 # at v1.14.54, rotted again — the asserted literal landed 18 chars from the edge).
-_BUDGET = 1503
+# v0.51.274: 1503 → 1502 (test_v1_20_46's 220-char focus-ring window, rotted by
+# this tag's own comment + selector insert — anchored to the closing brace).
+_BUDGET = 1502
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

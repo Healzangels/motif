@@ -20898,7 +20898,10 @@
       // v0.51.213: a clickable row IS a control, and it was mouse-only. role+tabindex go on
       // .notif-main — NOT the <li>, which would strip its listitem role and nest the
       // dismiss <button> inside a role="button". The title inside names it.
-      const mainAttrs = clickable ? ' role="button" tabindex="0"' : '';
+      // v0.51.274: EVERY row is a control now — markRead's own contract says a
+      // row with no item to open must still be clearable (v0.51.266), and a
+      // control a keyboard can't reach isn't one (the v0.51.213 class, again).
+      const mainAttrs = ' role="button" tabindex="0"';
       return `<li class="${cls}" data-nid="${n.id}"${idAttrs}>`
         + `<div class="notif-main"${mainAttrs}><div class="notif-title">`
         +   `${htmlEscape(n.title || '')}</div></div>`
@@ -20981,6 +20984,13 @@
       // here too. Pre-v0.51.266 this could not drift — opening the drawer zeroed
       // the badge outright; now that it survives the open, dismiss owes the same
       // decrement markRead does. Read the class BEFORE the row leaves the DOM.
+      // v0.51.274: re-entry guard. A double-click on × (or ×-then-row-body
+      // during the await) saw 'unread' twice and double-decremented the badge
+      // until the next poll bounced it back. markRead honors the same flag.
+      if (li) {
+        if (li.dataset.dismissing) return;
+        li.dataset.dismissing = '1';
+      }
       const wasUnread = !!li && li.classList.contains('unread');
       try { await api('POST', `/api/notifications/${id}/dismiss`); } catch (_) { /* gone is fine */ }
       if (wasUnread) bumpUnreadBadge(-1);
@@ -20991,9 +21001,21 @@
         else {
           const t = groupLi.querySelector('.notif-group-head .notif-title');
           if (t) t.textContent = t.textContent.replace(/^\d+/, String(rem));
+          // v0.51.274: dismissing the last UNREAD child must also dim the
+          // head — markRead tidied it, dismiss only updated the count text.
+          if (!groupLi.querySelector('.notif-row.unread')) {
+            groupLi.classList.remove('unread');
+            groupLi.classList.add('seen');
+          }
         }
       }
+      // v0.51.274: same "action with no object" class .270 fixed in
+      // renderEmpty — hide MARK ALL READ once nothing unread remains.
+      if (readAllBtn && listEl && !listEl.querySelector('.notif-row.unread')) {
+        readAllBtn.hidden = true;
+      }
       if (listEl && !listEl.querySelector('.notif-row')) renderEmpty();
+      setTimeout(refreshTopbarStatus, 1100);
     }
     async function dismissGroup(groupLi) {
       // v0.51.154: dismiss every child of a collapsed group as a unit.
@@ -21004,13 +21026,18 @@
       groupLi.remove();
       await Promise.all(kids.map((li) =>
         api('POST', `/api/notifications/${li.dataset.nid}/dismiss`).catch(() => {})));
+      if (readAllBtn && listEl && !listEl.querySelector('.notif-row.unread')) {
+        readAllBtn.hidden = true;
+      }
       if (listEl && !listEl.querySelector('.notif-row')) renderEmpty();
+      setTimeout(refreshTopbarStatus, 1100);
     }
     // v0.51.266: mark ONE row read. Every row is markable, not just the
     // .notif-clickable ones — a row with no item to open would otherwise have no
     // way to clear its unread state short of dismissing it.
     async function markRead(li) {
       if (!li || !li.dataset.nid || !li.classList.contains('unread')) return;
+      if (li.dataset.dismissing) return;
       li.classList.remove('unread');
       li.classList.add('seen');
       const groupLi = li.closest('.notif-group');
@@ -21019,14 +21046,28 @@
         groupLi.classList.add('seen');
       }
       bumpUnreadBadge(-1);
-      try { await api('POST', `/api/notifications/${li.dataset.nid}/seen`); }
-      catch (_) { /* the next poll re-reads the truth */ }
+      if (readAllBtn && listEl && !listEl.querySelector('.notif-row.unread')) {
+        readAllBtn.hidden = true;
+      }
+      // v0.51.274: keepalive — a clickable row's markRead races its OWN
+      // navigation (openNotifRow assigns location.href in the same task), and
+      // an aborted POST left the row unread server-side forever. keepalive
+      // survives the page teardown.
+      try {
+        await fetch(`/api/notifications/${li.dataset.nid}/seen`,
+                    { method: 'POST', cache: 'no-store', keepalive: true });
+      } catch (_) { /* the next poll re-reads the truth */ }
+      setTimeout(refreshTopbarStatus, 1100);
     }
     // Keep the topbar badge honest between polls (the poll is authoritative).
     function bumpUnreadBadge(delta) {
       const el = document.getElementById('topbar-inbox-count');
       if (!el) return;
-      const next = Math.max(0, (parseInt(el.textContent, 10) || 0) + delta);
+      // v0.51.274: a hidden badge IS zero — the poll's zero-branch hides it
+      // without clearing textContent, so stale digits could resurrect on a
+      // dim pill (two-tab case).
+      const cur = el.hidden ? 0 : (parseInt(el.textContent, 10) || 0);
+      const next = Math.max(0, cur + delta);
       el.textContent = String(next);
       el.hidden = next === 0;
       if (!next) pill.classList.remove('has-unread');
@@ -21039,6 +21080,10 @@
       pill.classList.remove('has-unread');
       if (readAllBtn) readAllBtn.hidden = true;
       try { await api('POST', '/api/notifications/seen'); } catch (_) { /* best-effort */ }
+      // v0.51.274: land past the /api/stats 1s TTL (bug class #7) — the 2s
+      // ops-cadence poll could re-read the pre-mutation cache and resurrect
+      // the old count for a full poll gap.
+      setTimeout(refreshTopbarStatus, 1100);
     }
     async function clearAll() {
       try { await api('POST', '/api/notifications/dismiss-all'); } catch (_) { /* best-effort */ }
@@ -21121,8 +21166,14 @@
       if (head) { e.preventDefault(); toggleGroupHead(head); return; }
       // v0.51.213: the v0.51.209 pass made the group HEADER operable and left the drawer's
       // primary action — the click-through rows — mouse-only.
+      // v0.51.274: pair the click path's markRead (v0.51.266 left keydown
+      // behind — the third instance of the v0.51.213 mouse-only class in this
+      // one handler's history). Every row marks read; clickable rows also
+      // navigate. preventDefault on both so Space cannot scroll the drawer.
+      const anyRow = e.target.closest('.notif-row');
+      if (anyRow) { e.preventDefault(); markRead(anyRow); }
       const row = e.target.closest('.notif-row.notif-clickable');
-      if (row) { e.preventDefault(); openNotifRow(row); }
+      if (row) { openNotifRow(row); }
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && !drawer.hidden) {

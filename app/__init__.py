@@ -5088,7 +5088,32 @@
 #   reap; and the '' title-global override stays keyed at the lost edition while
 #   ANOTHER section still carries it (the one-row residual of .272's F3). Five
 #   mutations verified red.
-__version__ = "0.51.273"
+# 0.51.274: the fan-out review's drawer batch. (1) Keyboard parity: v0.51.266
+#   wired markRead into the CLICK handler only — the third instance of the
+#   v0.51.213 mouse-only class in this one handler's history (found
+#   independently by two reviewers, one driving real Tab keypresses). Enter on
+#   an unread row navigated and left it unread forever, and non-clickable rows
+#   had no tabindex at all — the exact state markRead's own comment forbids.
+#   keydown now pairs the click path (markRead first, then navigate; Space
+#   preventDefault'd so it can't scroll), and EVERY row is tabbable. (2) The
+#   drawer-head text buttons were hover-bearing with NO focus-visible ring
+#   (measured: Tab reached them, nothing painted) — added to the ops.css ring
+#   block; and with MARK ALL READ present the fixed-width head wrapped every
+#   label to 2-3 lines at ALL viewports (measured) — labels are nowrap now and
+#   the actions ROW drops below the title as one unit (the documented mobile
+#   idiom; LIVE OPS shares the head class, wrap is inert there). (3) Bug class
+#   #7: markRead/markAllRead/dismiss/dismissGroup were the only mutating POSTs
+#   in the file missing setTimeout(refreshTopbarStatus, 1100) — the 2s
+#   ops-cadence poll re-read the 1s-TTL stats cache and resurrected the old
+#   badge count for a full poll gap. (4) Tidiness: dismiss re-entry guard
+#   (double-click double-decremented; markRead honors the same flag), markRead
+#   keepalive (its POST raced its OWN click's navigation and an aborted send
+#   left the row unread server-side forever), a group head now dims when its
+#   last unread child is dismissed, MARK ALL READ hides once nothing unread
+#   remains (the .270 renderEmpty class, one gap over), and a hidden badge
+#   reads as zero (stale digits resurrected on a dim pill in the two-tab
+#   case). Seven mutations verified red.
+__version__ = "0.51.274"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
