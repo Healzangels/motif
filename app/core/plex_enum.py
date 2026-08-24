@@ -2897,9 +2897,18 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 tier = "sidecar_available"
                                 backup_source = None
                             elif other_fallback:
-                                # Silent skip — row already has a
-                                # working theme. Existing behavior.
-                                continue
+                                # v0.51.273: no longer an unconditional skip.
+                                # The reaped row's OWN local_files + dead
+                                # placement satisfy this arm (edition-scoped
+                                # IN (?, '')), so every motif-placed edition
+                                # swap classified tier-3 and the v0.51.271
+                                # carry-over was structurally unreachable for
+                                # its flagship case — the fan-out review's F1.
+                                # Candidacy now flows to the dispatch loop,
+                                # which attempts the swap and then restores
+                                # this tier's historical silence either way.
+                                tier = "other_fallback"
+                                backup_source = None
                             else:
                                 tier = "no_fallback"
                                 backup_source = None
@@ -2972,6 +2981,11 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 mt, tid, e)
                 if _swap is not None:
                     # Nothing was lost; the events breadcrumb records the move.
+                    continue
+                # v0.51.273: tier-3 entered the loop ONLY for the swap attempt
+                # above — un-resolved, it keeps its pre-v0.51.273 silence (the
+                # title still has a working theme via another row).
+                if tier == "other_fallback":
                     continue
                 # Dedupe key includes tier so a row that flips from
                 # one tier to another inside the 24h window still

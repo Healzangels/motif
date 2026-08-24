@@ -5063,7 +5063,32 @@
 #   section's survivor-key override also stops vetoing this section's carry.
 #   (F4 LOW) the emptied {edition-X} folder is rmdir'd — rmdir refuses non-empty,
 #   which is the emptiness test. All four mutation-verified red.
-__version__ = "0.51.272"
+# 0.51.273: the edition carry-over is REACHABLE — the fan-out review's top
+#   finding, hand-verified. The tier classifier's other_fallback arm matches the
+#   reaped row's OWN local_files and dead placement (edition-scoped IN (?, '')),
+#   and tier-3 `continue`d before candidacy — so a motif-downloaded, PLACED
+#   theme whose edition was swapped never reached the v0.51.271 resolver at all;
+#   the carry-over only ever fired for tier-1 (backup) / tier-2 (sidecar) rows.
+#   It survived two tags because the only wiring test was a source-text pin
+#   while every behavioral test called the resolver directly — verbatim the
+#   v1.18.81 phantom-fix sub-pattern. Fix: tier-3 becomes a candidate, the
+#   dispatch loop attempts the swap first, and then restores tier-3's historical
+#   silence either way (resolved → carried, silent; unresolved → silent skip,
+#   exactly pre-.273). The load-bearing test now drives the REAL pipe:
+#   _upsert_items twice (grace threshold 2) → reap → tier → dispatch → resolver,
+#   with a notification spy proving the silence held. Also from the review:
+#   a malformed local_files.file_path (absolute / <3 components) is refused
+#   before anything is derived from it — pathlib DISCARDS the left side when
+#   joining an absolute right side, so a corrupted row would have sent every
+#   exists/mkdir/replace into a foreign tree (the first draft of THIS tag's own
+#   test seeded no file at the bad path and the mutation stayed green — rewritten
+#   to put the file there); the survivor lookup counts LIVE rows only
+#   (consecutive_missing == 0, the _do_place v0.51.253 idiom) so a mid-grace row
+#   neither vetoes as a phantom sibling nor receives a theme right before its
+#   reap; and the '' title-global override stays keyed at the lost edition while
+#   ANOTHER section still carries it (the one-row residual of .272's F3). Five
+#   mutations verified red.
+__version__ = "0.51.273"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

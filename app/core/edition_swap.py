@@ -44,10 +44,9 @@ intact and the caller falls back to the (now swap-aware) notification.
 """
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
-
-import json
 
 from .canonical import canonical_theme_subdir
 from .db import get_conn, transaction
@@ -62,12 +61,17 @@ def find_surviving_edition(conn, media_type: str, tmdb_id: int,
 
     None when: nothing survives (a real removal), more than one survives (the
     ambiguous case), or the only survivor is the edition we just lost."""
-    rows = conn.execute(
-        "SELECT rating_key, edition_key, folder_path, title, year, has_theme "
+    all_rows = conn.execute(
+        "SELECT rating_key, edition_key, folder_path, title, year, "
+        "       consecutive_missing "
         "  FROM plex_items "
         " WHERE media_type = ? AND section_id = ? AND guid_tmdb = ?",
         (_plex_media_type(media_type), section_id, tmdb_id),
     ).fetchall()
+    # v0.51.273: count LIVE rows only — a mid-grace row (consecutive_missing>0,
+    # not yet reaped) must neither veto as a phantom sibling nor be picked as a
+    # survivor about to be reaped. Mirrors _do_place's v0.51.253 live-row filter.
+    rows = [r for r in all_rows if not r["consecutive_missing"]]
     if len(rows) != 1:
         return None                       # guard 1: zero, or ambiguous
     row = dict(rows[0])
@@ -124,6 +128,21 @@ def resolve_edition_swap(db_path: Path, themes_dir: Path, *, media_type: str,
         ).fetchone()
         if lf is None or not lf["file_path"]:
             return None                   # nothing of ours to carry over
+        # v0.51.273: refuse a malformed file_path before deriving anything from
+        # it. The relative-to-themes_dir contract is reader discipline only
+        # (CLAUDE.md), and pathlib DISCARDS the left side when joining an
+        # absolute right side — a corrupted absolute row would make every
+        # exists/mkdir/replace below operate inside a foreign tree (most
+        # plausibly a Plex media folder). A short path (< subdir/title/file)
+        # breaks the parent.parent derivation the same way. Same posture as the
+        # other guards: log, return None, let the notification path run.
+        _shape = Path(lf["file_path"])
+        if _shape.is_absolute() or len(_shape.parts) < 3:
+            log.warning(
+                "edition-swap: refusing malformed local_files.file_path %r for "
+                "%s/%s — expected relative <subdir>/<title>/<file>",
+                lf["file_path"], media_type, tmdb_id)
+            return None
 
     # Move the canonical FIRST and outside any transaction — a write lock held
     # across filesystem work is the standing prohibition, and a failed move must
@@ -177,11 +196,24 @@ def resolve_edition_swap(db_path: Path, themes_dir: Path, *, media_type: str,
             # unscoped form re-keyed EVERY section's override — a 4K section
             # still holding the lost edition had its override moved off an
             # edition that exists there (class-2 cross-section bleed).
+            # v0.51.273: the '' title-global row is read by EVERY section, so
+            # re-keying it while another section still carries the lost edition
+            # would move that section's association off an edition it still has
+            # (the one-row residual of the .272 scoping fix). When any other
+            # section still lists the lost edition, restrict the re-key to this
+            # section's own row and leave '' where it is.
+            _others_have_lost = conn.execute(
+                "SELECT 1 FROM plex_items "
+                " WHERE media_type = ? AND guid_tmdb = ? AND section_id != ? "
+                "   AND COALESCE(edition_key, '') = ? LIMIT 1",
+                (_plex_media_type(media_type), tmdb_id, section_id,
+                 lost_edition_key or "")).fetchone() is not None
+            _ov_scope = "= ?" if _others_have_lost else "IN (?, '')"
             conn.execute(
                 "UPDATE user_overrides SET edition_key = ? "
                 " WHERE media_type = ? AND tmdb_id = ? "
                 "   AND COALESCE(edition_key, '') = ? "
-                "   AND section_id IN (?, '')",
+                f"   AND section_id {_ov_scope}",
                 (new_key, media_type, tmdb_id, lost_edition_key or "",
                  section_id))
             # v0.51.272: finish the job — the carry-over is only real once the
