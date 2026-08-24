@@ -41,8 +41,8 @@ jobs:
   # no CI result — it assumed "a branch push already ran ci.yml for this commit",
   # which is a process assumption, not an enforcement. ci.yml deliberately skips
   # tags, and workflow_dispatch can publish any commit at all, so a red tree could
-  # reach :nightly — the channel every deployment tracks. This re-runs the two
-  # BLOCKING gates from ci.yml against the exact tagged source; build-and-push
+  # reach :nightly — the channel every deployment tracks. This re-runs ci.yml's
+  # BLOCKING gates (pytest, ruff correctness, pip-audit) against the exact tagged source; build-and-push
   # needs it, so a failure means nothing is published.
   gate:
     name: publish gate — pytest + ruff correctness (py3.12)

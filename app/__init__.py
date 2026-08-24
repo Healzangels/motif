@@ -5113,7 +5113,34 @@
 #   remains (the .270 renderEmpty class, one gap over), and a hidden badge
 #   reads as zero (stale digits resurrected on a dim pill in the two-tab
 #   case). Seven mutations verified red.
-__version__ = "0.51.274"
+# 0.51.275: the fan-out review's docs batch — every committed doc that
+#   contradicted shipped reality, reconciled. The reviewer's headline held: the
+#   docs TOUCHED this week were accurate; the drift was in what wasn't touched.
+#   README: "only /healthz is public" was FALSE in three spots since /readyz
+#   (v0.51.268) — both prose sites + the endpoint table now carry /readyz, and
+#   the healthz response shape is stated honestly; the sync notification row
+#   claimed a `✅ Sync complete` SUBJECT (v1.19.55 moved the ✅ into the body —
+#   DESIGN_SYSTEM had it right, README contradicted it); the failure-kind table
+#   presented 7 kinds as exhaustive (rate_limited, v0.51.269, was absent) and
+#   now enumerates the enum with a guard test that walks FailureKind; the
+#   event-kind list is framed as a sample of the 20 with the loss/recovery
+#   kinds named; and the in-app INBOX + per-row read (v0.51.266) finally have a
+#   README home. ci.yml: "Two BLOCKING gates" listed three (the .267 edit never
+#   updated the count) and still gave the pre-gate "a branch push already ran
+#   this" rationale for skipping tags — release.yml gates itself now and both
+#   headers say so; release.yml's "the two BLOCKING gates" echo fixed the same
+#   way (names, not counts). DESIGN_SYSTEM's v1.22.55 settings section
+#   contradicted its own .263 addendum three ways (long-hints claim, the
+#   tight-split-is-gone claim — the class is INERT for gap but still appears on
+#   four tab-panel grids, now said so — and "5 sites" vs 16 form-subheads).
+#   CLAUDE.md sold PROJECT_HISTORY as "v1.4.0 → current" while its last entry
+#   is v1.22.28 — an entire versioning scheme (372 tags) ago; it now states the
+#   real coverage and points v0.5x archaeology at the per-tag changelog here.
+#   Regenerating the digest itself is its own project, deliberately NOT this
+#   tag. Guard tests hold the corrected claims to the code they describe
+#   (PUBLIC_PATHS walk, FailureKind walk, BLOCKING-step count) so the next
+#   drift in EITHER direction goes red.
+__version__ = "0.51.275"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

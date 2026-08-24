@@ -1,7 +1,9 @@
-# v0.51.73: CI quality gate. Runs on every branch push + PR (NOT on tags — the
-# tag build lives in release.yml and follows a branch push that already ran this).
+# v0.51.73: CI quality gate. Runs on every branch push + PR. NOT on tags — the
+# tag build lives in release.yml, which since v0.51.267 runs its own blocking
+# gate against the exact tagged source (the old "a branch push already ran
+# this" rationale was a process assumption, not an enforcement).
 #
-# Two BLOCKING gates (a red run here means don't ship):
+# Three BLOCKING gates (a red run here means don't ship):
 #   1. the full pytest suite (7,000+ tests, incl. the JS-syntax + mirror-drift guards)
 #   2. ruff's pyflakes correctness rules minus 4 noise rules — clean today; this is
 #      the rule family that caught the v0.51.72 httpx NameError.

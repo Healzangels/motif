@@ -184,7 +184,7 @@ motif supports two auth modes that coexist, plus API tokens:
 
 **3. API tokens.** From `/settings`, generate tokens scoped `read` (stats + browse only) or `admin` (everything). Pass as `Authorization: Bearer thmr_...` or `?api_key=thmr_...`. Tokens are stored hashed (bcrypt over sha256) — once created, the raw value is shown once and never again.
 
-Only one endpoint is public: `/healthz` (Docker healthcheck, returns `{"status":"ok"}`). Everything else — including `/api/public/stats` — returns 401 (JSON paths) or redirects to `/login` (HTML paths) when unauthenticated.
+Two endpoints are public: `/healthz` (liveness — the Docker healthcheck; returns `{"status":"ok"|"degraded", "checks": {…}}` with 503 when a check fails) and `/readyz` (v0.51.268 — local operational readiness: adds config/themes writability and paths-configured, 503s when not ready and names the failing check). Everything else — including `/api/public/stats` — returns 401 (JSON paths) or redirects to `/login` (HTML paths) when unauthenticated.
 
 ## Homepage integration
 
@@ -432,7 +432,7 @@ Adopted rows show up in `/movies` / `/tv` / `/anime` with a green `A` in the SRC
 
 ## Theme failures
 
-When a download fails, motif classifies the failure into one of:
+When a download fails, motif classifies the failure:
 
 | Kind | Meaning | What you can do |
 |------|---------|-----------------|
@@ -441,7 +441,8 @@ When a download fails, motif classifies the failure into one of:
 | `video_removed` | Video was deleted or made unavailable | Provide a different URL via override |
 | `video_age_restricted` | Video requires age verification | Provide a different URL or use a logged-in cookies file |
 | `geo_blocked` | Video is region-locked | Use a different network egress |
-| `network_error` | Couldn't reach YouTube | Usually transient — motif retries |
+| `network_error` | Couldn't reach the source | Usually transient — motif retries |
+| `rate_limited` | The source is throttling this IP (HTTP 429 / YouTube's rate-limit page) | Transient — motif retries; probes render amber `?`, never a red ✗ (v0.51.269) |
 | `unknown` | Something else | Check the event log |
 
 Items in the four "video unavailable" states (`private`, `removed`, `age_restricted`, `geo_blocked`) get a red `⚠` in the **STATUS** column on `/movies` / `/tv` / `/anime`. The topbar shows a red `N FAIL` badge with the unavailable count, linking to `/movies?attn_pills=fail` (migrated from `?status=failures` in v1.13.68 along with the ATTN chip axis). Open the item's detail dialog and paste a working YouTube URL into the override field to fix.
@@ -480,7 +481,7 @@ Subject lines use a cohesive emoji set so each event type is identifiable at a g
 
 | Event | Subject |
 |---|---|
-| Sync completed | `✅ Sync complete` |
+| Sync completed | `Motif sync — <state summary>` (the `✅ Sync complete` line closes the body — v1.19.55) |
 | Sync failed | `❌ Sync failed` |
 | Bulk action completed | `✅ Bulk PROBE TDB done — N/M` / `✅ Bulk LPS done — N` |
 | Themes added by sync | `🎵 N new themes added by sync` |
@@ -493,7 +494,7 @@ Subject lines use a cohesive emoji set so each event type is identifiable at a g
 
 For per-item events (theme added / removed), the body includes a `Source: <provenance> · <platform>` line + the theme URL plain. Discord auto-embeds YouTube + SoundCloud URLs with a rich preview card (thumbnail + title + channel + play); deletion events wrap the URL in `<...>` to suppress the embed since you don't usually want a giant preview on every deletion event.
 
-Per-event toggles control what fires. Events that can recur frequently are dedupe-gated (cadence noted) so enabling a toggle doesn't spam your notification channel:
+Per-event toggles control what fires — **20 kinds** as of v0.51.259, every one listed with a one-line hint under **Settings → NOTIFICATIONS** (grouped by family since v0.51.263). The highlights below are a sample, not the full set; theme-loss/recovery kinds (`plex_theme_lost`, `theme_lost_backup_ready`, `theme_lost_sidecar_available`, `theme_auto_restored`, `backup_ready_to_deploy`, `theme_pushed`, `theme_backed_up`, `plex_item_arrived_themed`) live in the settings panel with their defaults. Events that can recur frequently are dedupe-gated (cadence noted) so enabling a toggle doesn't spam your channel:
 
 **ON-by-default (aggregate / actionable):**
 
@@ -512,6 +513,8 @@ Per-event toggles control what fires. Events that can recur frequently are dedup
 * **Theme available to add** (opt-in) — after a Plex refresh, fires when a *newly-added* Plex item matches a ThemerrDB theme but has no theme yet (no Plex theme, nothing in motif). Tells you that you could add one. Bulk-shaped (one digest per refresh) + per-title dedupe; only genuinely-new items fire (your existing themeless library stays surfaced via the in-app `// UPD` badge)
 * **Release update available** — daily release-check found a new motif version on GitHub. Tag-deduped — each new release pings exactly once across motif process restarts
 
+**In-app inbox.** Alongside the external sinks, the topbar **INBOX** pill collects notifications in-app (10 kinds, per-kind toggles). Reading is per-notification since v0.51.266 — clicking (or pressing Enter on) a row marks that row read, `// MARK ALL READ` does the bulk action, and `// CLEAR ALL` dismisses. The badge counts unread until you act, not until you peek.
+
 All notification events are UI-surfaced under **Settings → NOTIFICATIONS**; each toggle also maps to a `notifications.events.<kind>` key reachable via `PATCH /api/config`. (v1.21.5 shipped `new_tdb_theme_available` — the "theme available to add" event above — by hooking the sparse plex_enum refresh path instead of `resolve_theme_ids`'s hot loop, which is what kept it deferred from v1.17.0.)
 
 The notification severity (info / warning / failure) is automatically routed per event kind so notification services with severity-based filtering (Discord embed color, Pushover priority, etc.) render `sync_failed` / `cookies_needed` / `disk_low` / `worker_restarted` with the correct urgency.
@@ -522,11 +525,12 @@ If a notification fails to dispatch (network blip, bad URL, service down), motif
 
 ## API endpoints
 
-All endpoints return JSON unless they're HTML pages. Authentication is via session cookie (interactive), `Authorization: Bearer` token (scripts), or the forward-auth header. Only `/healthz` is public.
+All endpoints return JSON unless they're HTML pages. Authentication is via session cookie (interactive), `Authorization: Bearer` token (scripts), or the forward-auth header. Only `/healthz` and `/readyz` are public.
 
 | Method | Path                                            | Auth     | Purpose                                |
 |--------|-------------------------------------------------|----------|----------------------------------------|
 | GET    | `/healthz`                                      | public   | Liveness                               |
+| GET    | `/readyz`                                       | public   | Local readiness (names failing checks) |
 | GET    | `/api/public/stats`                             | read     | Counters for Homepage etc.             |
 | GET    | `/api/stats`                                    | read     | Full dashboard JSON                    |
 | GET    | `/api/library?media_type=movie&page=1&q=…&attn_pills=…&src_pills=…` | read   | Paginated browse (replaced `/api/items` LIST in v1.14.41) |

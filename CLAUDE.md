@@ -7,9 +7,12 @@ automates Plex theme orchestration from ThemerrDB. Single developer
 
 For deep-dive context — recurring bug classes, architecture pivots,
 schema migration history, things-that-were-tried-and-removed —
-read **`docs/PROJECT_HISTORY.md`** (a structured digest of every
-tagged release v1.4.0 → current). When debugging, that file is the
-first place to look for the WHY behind a piece of code.
+read **`docs/PROJECT_HISTORY.md`** — a structured digest covering
+v1.4.0 → v1.22.28 (per-tag through v1.19.55, arcs after). It has
+NOT been extended into the v0.5x versioning era; for later tags the
+WHY lives in `app/__init__.py`'s per-tag changelog comments and the
+inline `# vX.Y.Z:` markers. When debugging older code, the digest
+is the first place to look.
 
 **Before any UI change** — read **`docs/DESIGN_SYSTEM.md`**. the user's
 v1.15.87 design-system rule: extract/follow the tokens (`:root` in
