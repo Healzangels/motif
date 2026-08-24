@@ -5042,7 +5042,28 @@
 #   nothing changed, so the reaper's existing loss path still runs. Idempotent by
 #   construction: after a carry-over the survivor HAS a theme, so guard 3 stops a
 #   second pass and reconciliation cannot loop.
-__version__ = "0.51.271"
+# 0.51.272: the edition carry-over finishes the job — four findings from
+#   reviewing v0.51.271 the day after it shipped (the one module written after
+#   that day's self-review; all four latent, the census proved the path had
+#   never fired in prod). (F1 HIGH) the resolver re-keyed the dead placement and
+#   never re-placed: the row's media_folder/rating-key died with the edition, so
+#   the library read PLACED (`!!media_folder`) while Plex played nothing, until
+#   the next enum stamped theme_present=0 and the row surfaced in NEEDS WORK as
+#   a generic broken placement with no connection to the swap. Now the dead
+#   placement is DELETED and a place job enqueued (v1.21.78 payload shape); the
+#   worker resolves the survivor's folder/rk edition-scoped and refreshes Plex.
+#   (F2 MED) the canonical moved BEFORE the row txn with no compensation — a row
+#   failure left the file at the new path while file_path pointed at the old
+#   one, plus a loss notification that never mentioned the half-move. The file
+#   now moves back on any row failure, making "a failed run leaves the old
+#   edition intact" true in both halves. (F3 MED) the user_overrides re-key was
+#   not section-scoped — a swap in section 1 re-keyed a 4K section's override
+#   off an edition that still exists there (class-2 bleed); now `section_id IN
+#   (?, '')` on both the UPDATE and guard 3's override arm, so a foreign
+#   section's survivor-key override also stops vetoing this section's carry.
+#   (F4 LOW) the emptied {edition-X} folder is rmdir'd — rmdir refuses non-empty,
+#   which is the emptiness test. All four mutation-verified red.
+__version__ = "0.51.272"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

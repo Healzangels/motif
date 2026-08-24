@@ -31,6 +31,13 @@ edition separation actually protects untouched:
      A positive condition cannot mistake a mid-scan blip for a removal — the
      shape v1.22.8's sweep got wrong (see v0.51.264).
 
+v0.51.272: the carry-over finishes the job — the dead placement row is DELETED
+(not re-keyed; its folder/rating-key died with the edition, and keeping it made
+the library read PLACED while Plex played nothing) and a place job is enqueued
+so the survivor actually serves the theme. A row failure after the file moved
+now moves the file back (compensation), so the failure contract holds in both
+halves.
+
 The filesystem move happens OUTSIDE the write transaction, and a failed move
 aborts before any row is touched, so a partial run leaves the old edition
 intact and the caller falls back to the (now swap-aware) notification.
@@ -40,9 +47,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import json
+
 from .canonical import canonical_theme_subdir
 from .db import get_conn, transaction
-from .events import log_event
+from .events import log_event, now_iso
 
 log = logging.getLogger(__name__)
 
@@ -75,6 +84,9 @@ def _plex_media_type(media_type: str) -> str:
 def survivor_already_themed(conn, media_type: str, tmdb_id: int,
                             section_id: str, survivor_edition: str) -> bool:
     """Guard 3. A theme the operator picked for the surviving edition wins."""
+    # v0.51.272: the override arm is scoped to THIS section plus the '' title-
+    # global row (the read-side IN (?, '') convention). Unscoped, an override a
+    # DIFFERENT section holds at the survivor key blocked this section's carry.
     return conn.execute(
         "SELECT 1 FROM local_files "
         " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
@@ -82,9 +94,10 @@ def survivor_already_themed(conn, media_type: str, tmdb_id: int,
         "UNION ALL "
         "SELECT 1 FROM user_overrides "
         " WHERE media_type = ? AND tmdb_id = ? AND COALESCE(edition_key, '') = ? "
+        "   AND section_id IN (?, '') "
         "LIMIT 1",
         (media_type, tmdb_id, section_id, survivor_edition,
-         media_type, tmdb_id, survivor_edition),
+         media_type, tmdb_id, survivor_edition, section_id),
     ).fetchone() is not None
 
 
@@ -141,24 +154,76 @@ def resolve_edition_swap(db_path: Path, themes_dir: Path, *, media_type: str,
                 media_type, tmdb_id, old_rel, new_rel, e)
             return None
 
-    with get_conn(db_path) as conn, transaction(conn):
-        for table in ("local_files", "placements"):
+    try:
+        with get_conn(db_path) as conn, transaction(conn):
             conn.execute(
-                f"UPDATE {table} SET edition_key = ? "
+                "UPDATE local_files SET edition_key = ?, file_path = ? "
                 " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
                 "   AND COALESCE(edition_key, '') = ?",
-                (new_key, media_type, tmdb_id, section_id, lost_edition_key or ""))
-        # user_overrides is title-global on section but still edition-keyed.
-        conn.execute(
-            "UPDATE user_overrides SET edition_key = ? "
-            " WHERE media_type = ? AND tmdb_id = ? "
-            "   AND COALESCE(edition_key, '') = ?",
-            (new_key, media_type, tmdb_id, lost_edition_key or ""))
-        conn.execute(
-            "UPDATE local_files SET file_path = ? "
-            " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-            "   AND COALESCE(edition_key, '') = ?",
-            (new_rel, media_type, tmdb_id, section_id, new_key))
+                (new_key, new_rel, media_type, tmdb_id, section_id,
+                 lost_edition_key or ""))
+            # v0.51.272: DELETE the dead placement rather than re-keying it.
+            # Its media_folder / uploaded rating_key died with the edition, and
+            # a re-keyed row read as PLACED (`!!media_folder`), so the library
+            # showed green while Plex played nothing — until the next enum
+            # stamped theme_present=0 and the row surfaced in NEEDS WORK as a
+            # generic broken placement with no connection to the swap.
+            conn.execute(
+                "DELETE FROM placements "
+                " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                "   AND COALESCE(edition_key, '') = ?",
+                (media_type, tmdb_id, section_id, lost_edition_key or ""))
+            # v0.51.272: scoped to THIS section + the '' title-global row. The
+            # unscoped form re-keyed EVERY section's override — a 4K section
+            # still holding the lost edition had its override moved off an
+            # edition that exists there (class-2 cross-section bleed).
+            conn.execute(
+                "UPDATE user_overrides SET edition_key = ? "
+                " WHERE media_type = ? AND tmdb_id = ? "
+                "   AND COALESCE(edition_key, '') = ? "
+                "   AND section_id IN (?, '')",
+                (new_key, media_type, tmdb_id, lost_edition_key or "",
+                 section_id))
+            # v0.51.272: finish the job — the carry-over is only real once the
+            # theme is PLACED for the survivor. Same enqueue shape as UPLOAD
+            # MP3 (v1.21.78); the place worker resolves the survivor's folder
+            # and rating key edition-scoped (v1.21.64) and runs the targeted
+            # Plex refresh itself.
+            conn.execute(
+                "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "
+                "                  payload, status, created_at, next_run_at) "
+                "VALUES ('place', ?, ?, ?, ?, 'pending', ?, ?)",
+                (media_type, tmdb_id, section_id,
+                 json.dumps({"edition_key": new_key}) if new_key else "{}",
+                 now_iso(), now_iso()))
+    except Exception as e:  # noqa: BLE001 — compensate, then fall back to loss path
+        # v0.51.272: the file moved BEFORE this transaction; a row failure must
+        # move it back or file_path points at a path that no longer exists — a
+        # broken canonical plus a loss notification that never mentions the
+        # half-move. With the file restored, returning None keeps the
+        # documented contract: a failed run leaves the old edition intact.
+        if old_rel != new_rel:
+            try:
+                new_abs.replace(old_abs)
+            except OSError as e2:
+                log.error(
+                    "edition-swap: row update failed AND the canonical could "
+                    "not be restored (%s → %s): %s / %s — file_path for "
+                    "%s/%s now points at a missing file",
+                    new_rel, old_rel, e, e2, media_type, tmdb_id)
+                return None
+        log.warning(
+            "edition-swap: row update failed for %s/%s — rolled back, "
+            "canonical restored: %s", media_type, tmdb_id, e)
+        return None
+    # v0.51.272: tidy the emptied {edition-X} folder. rmdir refuses a non-empty
+    # dir, which is the cheap emptiness test — OSError here means "not empty or
+    # already gone", both fine to leave.
+    if old_rel != new_rel:
+        try:
+            old_abs.parent.rmdir()
+        except OSError:
+            pass
     summary = {
         "media_type": media_type, "tmdb_id": tmdb_id, "section_id": section_id,
         "from_edition": lost_edition_key or "", "to_edition": new_key,
@@ -170,7 +235,8 @@ def resolve_edition_swap(db_path: Path, themes_dir: Path, *, media_type: str,
         message=(f"Edition swap: carried the theme for {title!r} from "
                  f"{lost_edition_key or 'standard'!r} to "
                  f"{new_key or 'standard'!r} — the replaced edition was the "
-                 f"only one in this section, so nothing was lost"),
+                 f"only one in this section, so nothing was lost; re-place "
+                 f"queued for the survivor"),
         detail=summary,
     )
     return summary
