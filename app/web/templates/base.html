@@ -772,8 +772,12 @@
                   id="notif-mark-all-read" hidden>// MARK ALL READ</button>
           <button class="notif-clear-all" type="button" id="notif-clear-all"
                   hidden>// CLEAR ALL</button>
-          <button class="ops-drawer-close" type="button" aria-label="Close">&times;</button>
         </div>
+        {# v0.51.283: × is a direct head child so it stays on the TITLE line
+           while the text buttons drop to their own left-aligned row — the
+           .274 wrap parked them right-hugging under a left title, which the
+           operator read as broken alignment. #}
+        <button class="ops-drawer-close" type="button" aria-label="Close">&times;</button>
       </header>
       <ul class="notif-list" id="notif-list">
         <li class="notif-empty">// loading&hellip;</li>

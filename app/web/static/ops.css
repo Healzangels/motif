@@ -1108,13 +1108,24 @@ body[data-ops-running="1"] #topbar-status-text {
 .op-pill.op-notif.has-unread:hover { box-shadow: 0 0 10px rgba(var(--ok-rgb), 0.35); }
 .op-pill.op-notif .op-pill-count[hidden] { display: none; }
 
-/* v0.51.274: the head is a fixed 380px (92vw mobile) panel; with MARK ALL READ
-   present every label wrapped to 2-3 lines at ALL widths (measured). Labels
-   never break internally; the ACTIONS ROW drops below the title as one line
-   when it doesn't fit — the documented mobile idiom (rows wrap as units). */
+/* v0.51.274: labels never break internally; the ACTIONS ROW moves as a unit.
+   v0.51.283: the wrapped row no longer right-hugs under a left title (the
+   operator: "pushed all the way to the right ... alignment looks off"). The
+   notif head is now a DETERMINISTIC two-row layout: title + × on row one,
+   the text buttons LEFT-aligned beneath — the labelled-rows-sit-left idiom.
+   Scoped to #notif-drawer; the LIVE OPS head (one short title + ×) is
+   untouched. */
 .notif-head-actions {
   display: flex; align-items: center; gap: var(--gap-3);
-  flex-wrap: nowrap; margin-left: auto;
+  flex-wrap: nowrap;
+}
+#notif-drawer .ops-drawer-head { row-gap: var(--gap-1); }
+#notif-drawer .ops-drawer-title { order: 1; }
+#notif-drawer .ops-drawer-close { order: 2; margin-left: auto; }
+#notif-drawer .notif-head-actions {
+  order: 3;
+  flex-basis: 100%;
+  justify-content: flex-start;
 }
 
 .notif-clear-all {

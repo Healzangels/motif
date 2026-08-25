@@ -5302,7 +5302,24 @@
 #   loudness hint points at // LEVEL LOUDNESS (the recorded deviation: the
 #   lossless mp3gain pipeline levels; the editor only trims and fades). Three
 #   mutations red.
-__version__ = "0.51.282"
+# 0.51.283: the drawer head is a deterministic two-row layout. The operator,
+#   with a prod screenshot of the freshly-deployed .274: "the mark all as read
+#   and the clear all are off centered or pushed all the way to the right
+#   which makes the alignment look off." The .274 fix stopped the
+#   label-shredding but parked the wrapped actions row right-hugging under a
+#   left-aligned title — technically wrapped, visually broken. Now, per the
+#   labelled-rows-sit-LEFT idiom: title + × on row one (× moved out of the
+#   actions div to a direct header child, pushed right by margin-left:auto),
+#   the two text buttons LEFT-aligned on their own always-present second row
+#   (flex-basis:100%, order-driven, no sometimes-wrap). Scoped to
+#   #notif-drawer throughout — the LIVE OPS head (one short title + ×) is
+#   untouched, and a property-matched guard pins that the ordering rules never
+#   leak unscoped (property-matched because "border:" CONTAINS "order:" — the
+#   test's own first draft flagged an innocent border rule, the v0.51.269
+#   substring trap again). The .274 halves that were right survive: labels
+#   still never break, the actions row still moves as a unit. Two mutations
+#   red.
+__version__ = "0.51.283"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
