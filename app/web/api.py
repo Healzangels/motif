@@ -21,6 +21,7 @@ Routes:
 - GET  /readyz                 — local operational readiness (v0.51.268)
 - POST /api/admin/reconcile    — run reconciliation, ?dry_run=true default (v0.51.276)
 - GET  /api/items/{mt}/{id}/revisions + POST /api/revisions/{id}/restore — theme history (v0.51.277)
+- GET  /api/admin/provider-health — per-provider download health (v0.51.280)
 """
 from __future__ import annotations
 
@@ -26329,6 +26330,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
         return summary
+
+    @app.get("/api/admin/provider-health")
+    async def api_provider_health(request: Request,
+                                  db: Path = Depends(get_db_path)):
+        """v0.51.280 (feature-brief D): per-provider download health — state,
+        effective rate, cooldowns. Recorded in BOTH rate modes, so this shows
+        real evidence before the operator ever flips to adaptive."""
+        _require_admin(request)
+        from ..core.provider_health import all_states
+        states = await run_in_threadpool(
+            all_states, db,
+            base_rate=float(settings.download_rate_per_hour))
+        return {"mode": settings.download_rate_mode,
+                "base_rate_per_hour": settings.download_rate_per_hour,
+                "adaptive_min_per_hour": settings.download_adaptive_min_per_hour,
+                "adaptive_max_per_hour": settings.download_adaptive_max_per_hour,
+                "providers": states}
 
     @app.post("/api/admin/reconcile")
     async def api_admin_reconcile(request: Request, dry_run: bool = True,

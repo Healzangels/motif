@@ -246,6 +246,18 @@ class Settings:
         return self._cfg.downloads.rate_per_hour
 
     @property
+    def download_rate_mode(self) -> str:
+        return self._cfg.downloads.rate_mode
+
+    @property
+    def download_adaptive_min_per_hour(self) -> int:
+        return self._cfg.downloads.adaptive_min_per_hour
+
+    @property
+    def download_adaptive_max_per_hour(self) -> int:
+        return self._cfg.downloads.adaptive_max_per_hour
+
+    @property
     def download_concurrency(self) -> int:
         return self._cfg.downloads.concurrency
 

@@ -606,6 +606,39 @@
   <div class="block-body">
     <div class="form-grid" data-config-form="downloads">
       <label class="field-row">
+        <span class="field-name">RATE MODE</span>
+        <span class="field-control">
+          <select class="input" data-cfg-field="downloads.rate_mode">
+            <option value="fixed">fixed</option>
+            <option value="adaptive">adaptive</option>
+          </select>
+          <p class="form-hint">
+            <code>fixed</code> keeps the flat RATE PER HOUR (v0.51.280 default).
+            <code>adaptive</code> lets a throttled provider cool down and the
+            rate breathe between MIN and MAX; health is tracked either way.
+          </p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">ADAPTIVE MIN / HOUR</span>
+        <span class="field-control">
+          <input class="input" type="number" min="1" max="600" step="1"
+                 data-cfg-field="downloads.adaptive_min_per_hour" />
+          <p class="form-hint">Floor the adaptive rate never drops below.</p>
+        </span>
+      </label>
+
+      <label class="field-row">
+        <span class="field-name">ADAPTIVE MAX / HOUR</span>
+        <span class="field-control">
+          <input class="input" type="number" min="1" max="600" step="1"
+                 data-cfg-field="downloads.adaptive_max_per_hour" />
+          <p class="form-hint">Ceiling successful traffic recovers toward.</p>
+        </span>
+      </label>
+
+      <label class="field-row">
         <span class="field-name">RATE PER HOUR</span>
         <span class="field-control">
           <input class="input" type="number" min="1" max="600" step="1"

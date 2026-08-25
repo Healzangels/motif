@@ -5228,7 +5228,32 @@
 #   title + click-through on BOTH tiles since v1.14.3/v1.19.60 — verified and
 #   recorded as MET with a pin rather than rebuilt. Default behavior without
 #   the param is byte-identical (pinned). Two mutations red.
-__version__ = "0.51.279"
+# 0.51.280: feature-brief D — per-provider download health + adaptive rate.
+#   The brief's own hard requirement leads: FIXED MODE BEHAVIOR IS UNCHANGED —
+#   'fixed' is the default, the worker's cooldown gate sits behind an explicit
+#   == "adaptive" check (mutation-verified: forcing the gate on breaks the
+#   fixed-mode pin), and health is OBSERVED in both modes so the operator has
+#   real evidence (GET /api/admin/provider-health) before ever opting in — the
+#   reason this tag was sequenced AFTER v0.51.269's RATE_LIMITED split, which
+#   is the signal it runs on. New app/core/provider_health.py: five providers
+#   (url-derived), state persisted per provider in runtime_settings (the
+#   brief's guardrail — a cooldown lost across a restart resumes hammering a
+#   throttled provider), transitions logged to events. RATE_LIMITED → COOLDOWN
+#   with 5min·2^streak backoff capped 6h + rate halves floored at adaptive_min;
+#   success → GOOD + 25%-per-success recovery toward adaptive_max (gradual,
+#   never a jump — pinned); NETWORK/UNKNOWN → DEGRADED only on a 3-streak;
+#   VIDEO_* kinds have ZERO health impact (one dead URL must never cool a
+#   provider); COOKIES_EXPIRED records last_error_class='auth' and does NOT
+#   pause — a deliberate, recorded deviation from the brief (per-job failure +
+#   cookies_needed already surface it, and one misclassified error must not
+#   halt every download). Adaptive mode defers a cooling provider's jobs via
+#   the v1.14.54 _mark_transient seam (attempt-free — cooldowns must not eat
+#   retry budget) with ±20% jitter. Config: downloads.rate_mode /
+#   adaptive_min_per_hour / adaptive_max_per_hour (dataclass fields, so the
+#   v1.17.10 closed-set admits them — proven by a PATCH round-trip test, not
+#   assumed), validation bounds, settings UI selector + min/max fields. Three
+#   mutations red.
+__version__ = "0.51.280"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

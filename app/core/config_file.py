@@ -80,6 +80,13 @@ class PlexConfigSection:
 @dataclass
 class DownloadsConfig:
     rate_per_hour: int = 30
+    # v0.51.280 (feature-brief D): 'fixed' preserves the historical token
+    # bucket byte-identically; 'adaptive' lets provider cooldowns defer jobs
+    # and the effective rate breathe between the min/max bounds. Health is
+    # OBSERVED in both modes so the operator has data before opting in.
+    rate_mode: str = "fixed"
+    adaptive_min_per_hour: int = 5
+    adaptive_max_per_hour: int = 120
     concurrency: int = 1
     audio_quality: int = 0       # LAME -V scale: 0=best
     # v1.13.53: yt-dlp geo-bypass + proxy options for routing
@@ -697,6 +704,14 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
             errors.append(f"downloads.rate_per_hour must be >= 1, got {cfg.downloads.rate_per_hour}")
         if cfg.downloads.rate_per_hour > 600:
             errors.append(f"downloads.rate_per_hour > 600 risks YouTube bot detection")
+        if cfg.downloads.rate_mode not in ("fixed", "adaptive"):
+            errors.append(
+                f"downloads.rate_mode must be 'fixed' or 'adaptive', "
+                f"got {cfg.downloads.rate_mode!r}")
+        if cfg.downloads.adaptive_min_per_hour < 1:
+            errors.append("downloads.adaptive_min_per_hour must be >= 1")
+        if cfg.downloads.adaptive_max_per_hour < cfg.downloads.adaptive_min_per_hour:
+            errors.append("downloads.adaptive_max_per_hour must be >= adaptive_min_per_hour")
 
         if cfg.downloads.concurrency < 1 or cfg.downloads.concurrency > 8:
             errors.append(f"downloads.concurrency must be 1-8, got {cfg.downloads.concurrency}")

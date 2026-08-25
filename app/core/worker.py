@@ -1945,6 +1945,21 @@ class Worker:
         # hardlink). Now we stash it + restore on a failed download (below in
         # the except) + drop it on success. The atomic rename also defeats
         # download_theme's "already exists" reuse short-circuit, like the unlink.
+        # v0.51.280 (feature-brief D): adaptive-mode cooldown gate. Fixed mode
+        # (the default) skips this entirely — behavior byte-identical. A
+        # provider in cooldown re-queues the job via the v1.14.54 attempt-free
+        # seam BEFORE anything is touched (no stash, no download), jittered so
+        # a same-provider queue cannot thunder back in one tick.
+        if self.settings.download_rate_mode == "adaptive":
+            from .provider_health import check_cooldown, provider_for_url
+            _ph_provider = provider_for_url(yt_url)
+            _cd = check_cooldown(self.settings.db_path, _ph_provider,
+                                 base_rate=float(self.settings.download_rate_per_hour))
+            if _cd > 0:
+                self._mark_transient(
+                    job["id"],
+                    f"provider {_ph_provider} cooling down ({_cd}s)", _cd)
+                return
         _stale_backup = None
         if should_unlink:
             _stale_candidate = target_mp3.with_name("theme.mp3.stale")
@@ -1976,6 +1991,16 @@ class Worker:
                 progress_callback=lambda f: _progress.set_download_progress(job_id, f),
             )
         except DownloadError as e:
+            # v0.51.280: report the classified outcome (both modes; see above).
+            try:
+                from .provider_health import provider_for_url, report_outcome
+                report_outcome(
+                    self.settings.db_path, provider_for_url(yt_url), e.kind,
+                    base_rate=float(self.settings.download_rate_per_hour),
+                    min_rate=float(self.settings.download_adaptive_min_per_hour),
+                    max_rate=float(self.settings.download_adaptive_max_per_hour))
+            except Exception as _phe:  # noqa: BLE001
+                log.warning("provider-health report failed: %s", _phe)
             # v1.22.40 (audit): the re-download failed — restore the stashed
             # canonical so the row keeps its working theme.mp3 on disk instead
             # of being left themeless after a dead-URL change.
@@ -2135,6 +2160,17 @@ class Worker:
                 _stale_backup = None
             raise
 
+        # v0.51.280: feed the health state machine (BOTH modes — fixed mode
+        # collects the evidence adaptive mode would act on). Never fatal.
+        try:
+            from .provider_health import provider_for_url, report_outcome
+            report_outcome(
+                self.settings.db_path, provider_for_url(yt_url), None,
+                base_rate=float(self.settings.download_rate_per_hour),
+                min_rate=float(self.settings.download_adaptive_min_per_hour),
+                max_rate=float(self.settings.download_adaptive_max_per_hour))
+        except Exception as e:  # noqa: BLE001 — health must not fail a download
+            log.warning("provider-health report failed: %s", e)
         # v1.22.40 (audit): download succeeded — the stashed old canonical is
         # no longer active. v0.51.277 (feature-brief B): instead of dropping it,
         # hand the inode to the revision recorder — a MOVE into
