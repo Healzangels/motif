@@ -695,6 +695,70 @@
   {# v0.51.148: NOTIFICATIONS drawer — the INBOX pill opens this. Reuses the
      LIVE-OPS drawer shell (.ops-drawer/.is-open/[hidden] animation, scrim, panel)
      per reuse-don't-mirror; only the row list is notification-specific. #}
+  {# v0.51.282 (feature-brief C, UI): trim/fade editor. The brief's own
+     acceptable v1: numeric start/end + fades, preview the RENDERED candidate,
+     SAVE creates a revision. Canonical dlg shell (v1.17.8). #}
+  <dialog class="dlg" id="edit-audio-dlg">
+    <article class="dlg-body">
+      <header class="dlg-head">
+        <h2 class="dlg-title">// EDIT AUDIO</h2>
+        <button class="dlg-close" id="edit-audio-close" type="button"
+                aria-label="Close dialog" title="Close">×</button>
+      </header>
+      <div class="dlg-meta" id="edit-audio-meta"></div>
+      <form id="edit-audio-form">
+        <div class="form-grid">
+          <label class="field-row">
+            <span class="field-name">TRIM START (S)</span>
+            <span class="field-control">
+              <input class="input" type="number" min="0" step="0.1" value="0"
+                     id="edit-trim-start" />
+            </span>
+          </label>
+          <label class="field-row">
+            <span class="field-name">TRIM END (S)</span>
+            <span class="field-control">
+              <input class="input" type="number" min="0.1" step="0.1"
+                     id="edit-trim-end" />
+              <p class="form-hint">Defaults to the full duration — set a
+                smaller end to shorten the theme.</p>
+            </span>
+          </label>
+          <label class="field-row">
+            <span class="field-name">FADE IN (S)</span>
+            <span class="field-control">
+              <input class="input" type="number" min="0" max="30" step="0.1"
+                     value="0" id="edit-fade-in" />
+            </span>
+          </label>
+          <label class="field-row">
+            <span class="field-name">FADE OUT (S)</span>
+            <span class="field-control">
+              <input class="input" type="number" min="0" max="30" step="0.1"
+                     value="0" id="edit-fade-out" />
+              <p class="form-hint">Loudness is deliberately NOT here — use
+                <code>// LEVEL LOUDNESS</code> (lossless, undoable) after
+                saving.</p>
+            </span>
+          </label>
+        </div>
+        <div class="dlg-section" id="edit-audio-preview-row" hidden>
+          <audio controls preload="auto" id="edit-audio-player"
+                 class="info-audio"></audio>
+          <p class="muted small" id="edit-audio-facts"></p>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-info" type="button"
+                  id="edit-audio-preview">// PREVIEW</button>
+          <button class="btn btn-warn" type="submit" id="edit-audio-save"
+                  disabled>// SAVE AS NEW REVISION</button>
+          <button class="btn" type="button" id="edit-audio-cancel">// CANCEL</button>
+          <span class="form-status" id="edit-audio-status"></span>
+        </div>
+      </form>
+    </article>
+  </dialog>
+
   <div id="notif-drawer" class="ops-drawer" hidden aria-hidden="true">
     <div class="ops-drawer-scrim"></div>
     <aside class="ops-drawer-panel" role="dialog" aria-label="Notifications">

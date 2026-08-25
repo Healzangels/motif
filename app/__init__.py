@@ -5280,7 +5280,29 @@
 #   render tests skip without ffmpeg (this dev Mac); ubuntu runners carry it,
 #   so CI + the release gate exercise them — verify the tag's CI skip count.
 #   UI dialog is the next tag.
-__version__ = "0.51.281"
+# 0.51.282: feature-brief C, UI — the // EDIT AUDIO dialog. THE FINAL ITEM OF
+#   THE ENTIRE FEATURE BRIEF. The brief's own acceptable v1 shape: numeric
+#   start/end + fade fields in the canonical dlg shell (v1.17.8; the footer is
+#   the REAL .form-actions primitive — the first draft invented .dlg-actions
+#   and was corrected against the upload dialog), // PREVIEW renders a server
+#   candidate and plays it in an <audio> (range-capable, the .281 stream
+#   endpoint), // SAVE AS NEW REVISION says exactly what happens — the
+#   outgoing audio becomes a restorable revision. TRIM END prefills from the
+#   card's own player duration when known. The candidate lifecycle is airtight
+#   from the UI side: a re-preview discards its predecessor, ×/CANCEL/Esc all
+#   discard (Esc via the <dialog> native cancel event), a successful save
+#   CONSUMES the candidate so the close that follows cannot cancel a file the
+#   server already moved, and the server TTL sweep backstops anything a closed
+#   tab leaves behind. A save 409 re-enables SAVE with the operator-readable
+#   reason visible (dialog-submit errors never auto-dismiss — the
+#   design-system rule); success runs the 1100ms stats-TTL convention + rapid
+#   poll so the re-place's chips follow. The card offers // EDIT AUDIO only in
+#   the same conditional branch as the player (no canonical, no editor) and
+#   the button carries the CURRENT sha — the save's optimistic lock. The
+#   loudness hint points at // LEVEL LOUDNESS (the recorded deviation: the
+#   lossless mp3gain pipeline levels; the editor only trims and fades). Three
+#   mutations red.
+__version__ = "0.51.282"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -17888,6 +17888,18 @@
             + `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
             + `your browser doesn't support inline audio playback`
             + `</audio>`
+            + `</dd>`
+            // v0.51.282 (feature-brief C, UI): trim/fade. Only offered where
+            // there is a canonical to edit (this branch already requires one);
+            // carries the row key + the CURRENT sha, which becomes the save's
+            // optimistic lock.
+            + `<dt>edit</dt><dd>`
+            + `<button class="btn btn-tiny btn-info" data-act="edit-audio"`
+            + ` data-mt="${htmlEscape(t.media_type)}" data-id="${htmlEscape(t.tmdb_id)}"`
+            + ` data-sec="${htmlEscape((lf && lf.section_id) || '')}"`
+            + ` data-edn="${htmlEscape((lf && lf.edition_key) || '')}"`
+            + ` data-sha="${htmlEscape((lf && lf.file_sha256) || '')}"`
+            + ` title="Trim the start/end or add fades — renders a preview first; saving keeps the current audio as a restorable revision.">// EDIT AUDIO</button>`
             + `</dd>`;
         })()
       : '';
@@ -18736,6 +18748,18 @@
           b.disabled = false;
         }
       }));
+    // v0.51.282: open the trim/fade editor with this row's key + current sha.
+    body.querySelector('button[data-act="edit-audio"]')?.addEventListener('click', (ev) => {
+      const b = ev.currentTarget;
+      openEditAudioDialog({
+        mt: b.dataset.mt, id: b.dataset.id, sec: b.dataset.sec || '',
+        edn: b.dataset.edn || '', sha: b.dataset.sha || '',
+        duration: (() => {
+          const a = body.querySelector('.info-audio');
+          return (a && Number.isFinite(a.duration)) ? a.duration : null;
+        })(),
+      });
+    });
     body.querySelector('button[data-act="loud-measure"]')?.addEventListener('click', async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
@@ -21235,6 +21259,103 @@
     });
   }
 
+  // v0.51.282 (feature-brief C, UI): the trim/fade editor dialog.
+  // Preview renders a server-side CANDIDATE (the brief's non-destructive
+  // pipeline); SAVE promotes it — the outgoing audio becomes a restorable
+  // revision, so the button says exactly what happens. CANCEL/close discard
+  // the candidate (the brief: temporary artifacts must be cleaned up).
+  let _editAudioCtx = null;   // {mt,id,sec,edn}, plus candidate/base once previewed
+  function openEditAudioDialog(ctx) {
+    const dlg = document.getElementById('edit-audio-dlg');
+    if (!dlg) return;
+    _editAudioCtx = { ...ctx, candidate: null, base: ctx.sha || '' };
+    const meta = document.getElementById('edit-audio-meta');
+    if (meta) meta.textContent = `${ctx.mt}/${ctx.id}` + (ctx.sec ? ` · section ${ctx.sec}` : '')
+      + (ctx.edn ? ` · ${ctx.edn}` : '');
+    const end = document.getElementById('edit-trim-end');
+    if (end) end.value = (ctx.duration != null) ? ctx.duration.toFixed(1) : '';
+    const start = document.getElementById('edit-trim-start');
+    if (start) start.value = '0';
+    for (const fid of ['edit-fade-in', 'edit-fade-out']) {
+      const f = document.getElementById(fid); if (f) f.value = '0';
+    }
+    const row = document.getElementById('edit-audio-preview-row');
+    if (row) row.hidden = true;
+    const save = document.getElementById('edit-audio-save');
+    if (save) save.disabled = true;
+    const st = document.getElementById('edit-audio-status');
+    if (st) st.textContent = '';
+    showModalNoFocusRing(dlg);
+  }
+  function bindEditAudioDialog() {
+    const dlg = document.getElementById('edit-audio-dlg');
+    if (!dlg) return;
+    const player = document.getElementById('edit-audio-player');
+    const st = document.getElementById('edit-audio-status');
+    const saveBtn = document.getElementById('edit-audio-save');
+    const discard = () => {
+      // fire-and-forget: the server's TTL sweep is the backstop.
+      if (_editAudioCtx && _editAudioCtx.candidate) {
+        api('POST', `/api/items/${_editAudioCtx.mt}/${_editAudioCtx.id}/edit-theme/cancel`,
+            { candidate_id: _editAudioCtx.candidate }).catch(() => {});
+        _editAudioCtx.candidate = null;
+      }
+    };
+    const close = () => { discard(); if (dlg.open) dlg.close(); };
+    document.getElementById('edit-audio-close')?.addEventListener('click', close);
+    document.getElementById('edit-audio-cancel')?.addEventListener('click', close);
+    dlg.addEventListener('cancel', () => discard());   // Esc — native close follows
+    document.getElementById('edit-audio-preview')?.addEventListener('click', async () => {
+      if (!_editAudioCtx) return;
+      discard();                                        // a re-preview replaces the candidate
+      if (st) st.textContent = '… rendering';
+      try {
+        const out = await api('POST',
+          `/api/items/${_editAudioCtx.mt}/${_editAudioCtx.id}/edit-theme`, {
+            section_id: _editAudioCtx.sec, edition_key: _editAudioCtx.edn,
+            trim_start: parseFloat(document.getElementById('edit-trim-start')?.value) || 0,
+            trim_end: parseFloat(document.getElementById('edit-trim-end')?.value) || 0,
+            fade_in: parseFloat(document.getElementById('edit-fade-in')?.value) || 0,
+            fade_out: parseFloat(document.getElementById('edit-fade-out')?.value) || 0,
+          });
+        _editAudioCtx.candidate = out.candidate_id;
+        _editAudioCtx.base = out.base_sha || _editAudioCtx.base;
+        if (player) player.src =
+          `/api/items/${_editAudioCtx.mt}/${_editAudioCtx.id}/edit-candidate/${out.candidate_id}.mp3`;
+        const row = document.getElementById('edit-audio-preview-row');
+        if (row) row.hidden = false;
+        const facts = document.getElementById('edit-audio-facts');
+        if (facts) facts.textContent =
+          `${out.duration_s}s · ${(out.file_size / 1048576).toFixed(1)}MB — listen, then save`;
+        if (saveBtn) saveBtn.disabled = false;
+        if (st) st.textContent = '';
+      } catch (e) {
+        if (st) st.textContent = `✗ ${e && e.message ? e.message : 'render failed'}`;
+      }
+    });
+    document.getElementById('edit-audio-form')?.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      if (!_editAudioCtx || !_editAudioCtx.candidate) return;
+      if (saveBtn) saveBtn.disabled = true;
+      if (st) st.textContent = '… saving';
+      try {
+        await api('POST',
+          `/api/items/${_editAudioCtx.mt}/${_editAudioCtx.id}/edit-theme/save`, {
+            candidate_id: _editAudioCtx.candidate, base_sha: _editAudioCtx.base,
+            section_id: _editAudioCtx.sec, edition_key: _editAudioCtx.edn,
+          });
+        _editAudioCtx.candidate = null;   // consumed by the save — nothing to discard
+        if (st) st.textContent = '✓ saved — previous audio kept as a revision';
+        setTimeout(refreshTopbarStatus, 1100);          // bug class #7
+        if (typeof libraryRapidPoll === 'function') libraryRapidPoll();
+        setTimeout(() => { if (dlg.open) dlg.close(); }, 1200);
+      } catch (e) {
+        if (st) st.textContent = `✗ ${e && e.message ? e.message : 'save failed'}`;
+        if (saveBtn) saveBtn.disabled = false;          // the 409 reason stays visible
+      }
+    });
+  }
+
   function bindUploadDialog() {
     const dlg = document.getElementById('upload-dlg');
     if (!dlg) return;
@@ -21536,6 +21657,7 @@
     // (the function no-ops when the elements are absent).
     bindLibraryPresets();
     bindUploadDialog();
+    bindEditAudioDialog();
     bindManualUrlDialog();
     bindInfoDialog();
     bindNotifInbox();  // v0.51.148: INBOX pill → notification drawer
