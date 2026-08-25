@@ -71,7 +71,8 @@ def _refresh_sections_job(settings: "Settings") -> None:
                   message=f"Plex section refresh failed: {e}")
 
 
-def _retry_pending_placements(db_path: Path) -> None:
+def _retry_pending_placements(db_path: Path, *,
+                              dry_run: bool = False) -> dict:
     """Re-enqueue placement for downloaded themes that haven't been placed yet.
 
     This catches the case where a movie was downloaded but the corresponding
@@ -211,7 +212,10 @@ def _retry_pending_placements(db_path: Path) -> None:
             LIMIT 500
             """
         ).fetchall()
-        for r in rows:
+        # v0.51.276: dry_run reports the candidate set without enqueuing — the
+        # reconciliation run's preview path. The hourly cron passes nothing and
+        # behaves exactly as before.
+        for r in ([] if dry_run else rows):
             # v1.12.81: include section_id when enqueueing the place job.
             # Pre-fix the worker rejected these with "place job missing
             # section_id (v1.11.0 requires per-section routing)" and the
@@ -300,7 +304,7 @@ def _retry_pending_placements(db_path: Path) -> None:
             LIMIT 500
             """
         ).fetchall()
-    if rows:
+    if rows and not dry_run:
         log_event(db_path, level="INFO", component="scheduler",
                   message=f"Retry sweep enqueued {len(rows)} placement jobs")
     # v1.18.94: emit the lockout summary OUTSIDE the conn-with block
@@ -325,6 +329,11 @@ def _retry_pending_placements(db_path: Path) -> None:
                 f"gate clears 24h after the most recent failure."
             ),
         )
+    # v0.51.276: counts for the reconciliation summary. The cron caller
+    # ignores the return, so this is purely additive.
+    return {"candidates": len(rows),
+            "enqueued": 0 if dry_run else len(rows),
+            "locked_out": n_locked}
 
 
 def _plex_claimed_folders(db_path) -> set:

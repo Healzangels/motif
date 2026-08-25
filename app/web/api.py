@@ -19,6 +19,7 @@ Routes:
 - POST /api/sync/now           — kick off an immediate sync
 - GET  /healthz                — liveness probe
 - GET  /readyz                 — local operational readiness (v0.51.268)
+- POST /api/admin/reconcile    — run reconciliation, ?dry_run=true default (v0.51.276)
 """
 from __future__ import annotations
 
@@ -26238,6 +26239,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "apply it — the current database is backed up "
                         "automatically just before the swap."),
         }
+
+    @app.post("/api/admin/reconcile")
+    async def api_admin_reconcile(request: Request, dry_run: bool = True,
+                                  db: Path = Depends(get_db_path)):
+        """v0.51.276 (feature-brief E): run reconciliation NOW — verify
+        canonical + placement health, repair the safe missing-placement class
+        (the hourly retry sweep's own rules), report the rest. dry_run=true is
+        the DEFAULT (conservative-by-default per the brief); pass
+        ?dry_run=false to enqueue the repairs. Long-running work is the place
+        WORKER's, not this request's — the run itself is FS stats + DB reads,
+        offloaded to the threadpool (class 12)."""
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409,
+                                detail="themes_dir not configured; visit /settings")
+        from ..core.reconcile import run_reconciliation
+        summary = await run_in_threadpool(
+            run_reconciliation, db, settings.themes_dir, dry_run=dry_run)
+        return summary
 
     @app.post("/api/admin/database-restore")
     async def api_admin_database_restore_from_backup(request: Request):

@@ -5140,7 +5140,32 @@
 #   tag. Guard tests hold the corrected claims to the code they describe
 #   (PUBLIC_PATHS walk, FailureKind walk, BLOCKING-step count) so the next
 #   drift in EITHER direction goes red.
-__version__ = "0.51.275"
+# 0.51.276: feature-brief E, first release — ONE reconciliation run. The
+#   pre-coding review found ~60% of E already shipped as scattered detectors
+#   (canonical health v1.23.37, placement health v1.23.25, the hourly
+#   missing-placement retry sweep, stale-temp/stuck-op sweeps, boot deorphan);
+#   what was missing was the brief's unifying concept: run them NOW as one
+#   action with a dry-run and a single classified summary. So this tag is
+#   deliberately a WRAPPER, not a subsystem. New app/core/reconcile.py
+#   run_reconciliation(db, themes_dir, dry_run) verifies canonical + placement
+#   health, runs the retry sweep (REUSED via a new dry_run param on
+#   _retry_pending_placements — its skip semantics took eleven tags to mature
+#   and are not re-implemented; the no-arg cron call is byte-identical), and
+#   reports the rest: broken canonicals, broken placements, and orphaned
+#   canonicals via BOTH plex_items linkages (guid_tmdb OR theme_id — the
+#   guid-only join over-reported orphans 10x in the 2026-08-22 census).
+#   Repair scope is exactly the sweep's existing class — every no-placement
+#   local_files row without a permanent-skip reason enqueues and the place
+#   WORKER applies its per-row rules; deletion and content-overwrite stay out
+#   of automation per the brief. One events breadcrumb per run, including the
+#   nothing-to-do run (v1.18.5). POST /api/admin/reconcile, admin-only,
+#   ?dry_run=true DEFAULT (conservative by default), threadpool-offloaded.
+#   Behavioral matrix test: repairable / orphan / theme_id-linked (must NOT
+#   count as orphan) / broken-canonical / permanent-skip rows; idempotent
+#   second run; endpoint auth + plumbing. Three mutations red — including one
+#   I wrote inverted first (`or` short-circuits the wrong way for a falsy
+#   guard) and redid.
+__version__ = "0.51.276"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
