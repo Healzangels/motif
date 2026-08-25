@@ -20,6 +20,7 @@ Routes:
 - GET  /healthz                — liveness probe
 - GET  /readyz                 — local operational readiness (v0.51.268)
 - POST /api/admin/reconcile    — run reconciliation, ?dry_run=true default (v0.51.276)
+- GET  /api/items/{mt}/{id}/revisions + POST /api/revisions/{id}/restore — theme history (v0.51.277)
 """
 from __future__ import annotations
 
@@ -14416,6 +14417,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 (theme_media_type, tmdb_id, section_id, _upl_edition),
             ).fetchone()
         is_mismatch = bool(existing_placement)
+        # v0.51.277 (feature-brief B): the OLD canonical becomes a revision
+        # before the new bytes land — captured by COPY (stashed_file=None): the
+        # active file must keep serving until write_bytes lands, and in the
+        # non-mismatch case the placement may share its inode, so nothing here
+        # may move it. The v1.11.99 mismatch unlink below is unchanged and
+        # still does the hardlink break. Never fails the upload.
+        from ..core.revisions import capture_revision
+        try:
+            await run_in_threadpool(
+                capture_revision, settings.db_path, settings.themes_dir,
+                media_type=theme_media_type, tmdb_id=tmdb_id,
+                section_id=section_id, edition_key=_upl_edition,
+                reason="replaced_by_upload", actor="admin",
+                stashed_file=None)
+        except Exception as e:  # noqa: BLE001 — history must not fail the upload
+            log.warning("upload: revision capture failed for %s/%s: %s",
+                        theme_media_type, tmdb_id, e)
         if is_mismatch:
             try:
                 if target.exists():
@@ -26239,6 +26257,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "apply it — the current database is backed up "
                         "automatically just before the swap."),
         }
+
+    @app.get("/api/items/{media_type}/{tmdb_id}/revisions")
+    async def api_list_revisions(request: Request, media_type: MediaType,
+                                 tmdb_id: int, section_id: str | None = None,
+                                 edition_key: str | None = None,
+                                 db: Path = Depends(get_db_path)):
+        """v0.51.277 (feature-brief B): revision metadata for one item, newest
+        first. `restorable` is per-row honesty — a rotated (metadata-only)
+        revision says so instead of promising an impossible rollback."""
+        from ..core.revisions import list_revisions
+        rows = await run_in_threadpool(
+            list_revisions, db, media_type=media_type, tmdb_id=tmdb_id,
+            section_id=section_id, edition_key=edition_key)
+        return {"revisions": rows}
+
+    @app.post("/api/revisions/{revision_id}/restore")
+    async def api_restore_revision(request: Request, revision_id: int,
+                                   db: Path = Depends(get_db_path)):
+        """v0.51.277: make a retained revision active again. The outgoing
+        current is captured first (restore is a transition), local_files is
+        updated, and a place job re-serves it (the v0.51.272 lesson: a carry
+        that stops at the DB row leaves Plex playing nothing)."""
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409,
+                                detail="themes_dir not configured; visit /settings")
+        from ..core.revisions import restore_revision
+        try:
+            summary = await run_in_threadpool(
+                restore_revision, db, settings.themes_dir,
+                revision_id=revision_id, actor="admin")
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return summary
 
     @app.post("/api/admin/reconcile")
     async def api_admin_reconcile(request: Request, dry_run: bool = True,

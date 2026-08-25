@@ -2135,12 +2135,32 @@ class Worker:
                 _stale_backup = None
             raise
 
-        # v1.22.40 (audit): download succeeded — drop the stashed old canonical.
+        # v1.22.40 (audit): download succeeded — the stashed old canonical is
+        # no longer active. v0.51.277 (feature-brief B): instead of dropping it,
+        # hand the inode to the revision recorder — a MOVE into
+        # themes_dir/.revisions/, zero copies, keep-last-2 retention. A
+        # byte-identical redownload records nothing (the recorder dedupes on
+        # the incoming sha) and the stash is then discarded here as before.
         if _stale_backup is not None:
+            from .revisions import capture_revision
             try:
-                _stale_backup.unlink()
-            except OSError:
-                pass
+                _rev_id = capture_revision(
+                    self.settings.db_path, self.settings.themes_dir,
+                    media_type=media_type, tmdb_id=tmdb_id,
+                    section_id=section_id, edition_key=_dl_edition_key or "",
+                    reason="replaced_by_download",
+                    stashed_file=_stale_backup,
+                    incoming_sha=result.file_sha256)
+            except Exception as e:  # noqa: BLE001 — history must not fail the download
+                log.warning("revision capture failed for %s/%s: %s — old "
+                            "canonical dropped without history",
+                            media_type, tmdb_id, e)
+                _rev_id = None
+            if _rev_id is None and _stale_backup.exists():
+                try:
+                    _stale_backup.unlink()
+                except OSError:
+                    pass
         # Record the local file (per-section). source_kind drives the
         # T/U/A badge (v1.10.12): 'url' when the download was driven by
         # a user_overrides row; 'themerrdb' otherwise.

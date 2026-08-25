@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 # ── schema ───────────────────────────────────────────────────────────────────
 
 def test_schema_bumped_to_78():
-    assert CURRENT_SCHEMA_VERSION == 78
+    assert CURRENT_SCHEMA_VERSION >= 78  # v0.51.277: floor, not mirror
 
 
 def test_notifications_has_edition_key_column(tmp_path):

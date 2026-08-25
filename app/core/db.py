@@ -1004,6 +1004,30 @@ CREATE INDEX IF NOT EXISTS idx_saved_filters_scope
 -- endpoint read it (per-section first, themes.failure_acked_at as
 -- a fallback) so a 4K-only adopt no longer dismisses the standard
 -- row's failure.
+-- v0.51.277 (schema v79, feature-brief B): theme revision history. One row per
+-- meaningful canonical replacement, recorded BEFORE the old bytes are destroyed
+-- (the worker's success-path stale-stash becomes the retained binary — a MOVE,
+-- never a copy). retained_path is relative to themes_dir; NULL = metadata-only
+-- (rotated out by the keep-last-2 retention, or the binary was already gone).
+-- Deliberately NO foreign keys: history must outlive section/theme churn.
+CREATE TABLE IF NOT EXISTS theme_revisions (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_type      TEXT NOT NULL,
+    tmdb_id         INTEGER NOT NULL,
+    section_id      TEXT NOT NULL,
+    edition_key     TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    source_kind     TEXT,
+    source_video_id TEXT,
+    content_sha256  TEXT,
+    file_size       INTEGER,
+    reason          TEXT NOT NULL,
+    actor           TEXT NOT NULL DEFAULT 'system',
+    retained_path   TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_theme_revisions_item
+    ON theme_revisions (media_type, tmdb_id, section_id, edition_key, id DESC);
+
 CREATE TABLE IF NOT EXISTS section_failure_acks (
     -- v1.18.0 (schema v55): 'collection' added so failure-ack flows
     -- (TDB URL probe failures, etc.) can apply to collection rows.
@@ -1018,7 +1042,7 @@ CREATE INDEX IF NOT EXISTS idx_section_failure_acks_lookup
     ON section_failure_acks (media_type, tmdb_id);
 """
 
-CURRENT_SCHEMA_VERSION = 78
+CURRENT_SCHEMA_VERSION = 79
 
 
 def _add_column(conn: sqlite3.Connection, table: str, column: str,
@@ -2886,6 +2910,32 @@ def _migrate_v77_to_v78(conn: sqlite3.Connection) -> None:
     log.info("Migrating to schema v78 "
              "(notifications.edition_key for edition-exact click-through — v0.51.220)")
     _add_column(conn, "notifications", "edition_key", "TEXT")
+
+
+def _migrate_v78_to_v79(conn: sqlite3.Connection) -> None:
+    """v79 (v0.51.277, feature-brief B): theme_revisions — per-replacement history
+    with keep-last-2 retained binaries. Plain CREATE IF NOT EXISTS + index, so a
+    crash between commit and stamp re-runs safely (the additive class)."""
+    log.info("Migrating to schema v79 (theme_revisions — revision history, v0.51.277)")
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS theme_revisions (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            media_type      TEXT NOT NULL,
+            tmdb_id         INTEGER NOT NULL,
+            section_id      TEXT NOT NULL,
+            edition_key     TEXT NOT NULL DEFAULT '',
+            created_at      TEXT NOT NULL,
+            source_kind     TEXT,
+            source_video_id TEXT,
+            content_sha256  TEXT,
+            file_size       INTEGER,
+            reason          TEXT NOT NULL,
+            actor           TEXT NOT NULL DEFAULT 'system',
+            retained_path   TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_theme_revisions_item
+            ON theme_revisions (media_type, tmdb_id, section_id, edition_key, id DESC);
+    """)
 
 
 def _migrate_v66_to_v67(conn: sqlite3.Connection) -> None:
@@ -4788,6 +4838,9 @@ def init_db(db_path: Path) -> None:
                 elif current == 77:
                     _migrate_v77_to_v78(conn)
                     current = 78
+                elif current == 78:
+                    _migrate_v78_to_v79(conn)
+                    current = 79
                 else:
                     raise RuntimeError(f"No migration from v{current}")
                 conn.execute(

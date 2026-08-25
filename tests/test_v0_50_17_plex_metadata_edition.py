@@ -108,7 +108,9 @@ def test_column_exists_at_current_schema(client):
     with get_conn(db) as c:
         cols = {r[1] for r in c.execute("PRAGMA table_info(plex_items)")}
     assert "plex_edition_title" in cols
-    assert CURRENT_SCHEMA_VERSION == 78  # v0.51.220: notifications.edition_key
+    # v0.51.277: >= — an exact pin re-broke on every later schema bump (a
+    # mirror, not a guard). The column this file cares about landed by v78.
+    assert CURRENT_SCHEMA_VERSION >= 78
 
 
 # ── guards: capture, migrate, render ─────────────────────────────────────────

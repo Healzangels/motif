@@ -5165,7 +5165,37 @@
 #   second run; endpoint auth + plumbing. Three mutations red — including one
 #   I wrote inverted first (`or` short-circuits the wrong way for a falsy
 #   guard) and redid.
-__version__ = "0.51.276"
+# 0.51.277: feature-brief B — theme revision history (backend). Schema v79:
+#   theme_revisions (deliberately NO foreign keys — history must outlive
+#   section/theme churn), retained binaries under themes_dir/.revisions/
+#   (inside themes_dir so moves stay same-filesystem; dot-prefixed so the
+#   orphan scan and Plex never see them). Retention per the operator's
+#   2026-08-24 decision: FULL metadata history, last 2 retained binaries per
+#   (media_type, tmdb_id, section_id, edition_key); rotation unlinks the
+#   oldest retained file and NULLs retained_path — the row survives
+#   metadata-only and the API says restorable=0 instead of promising an
+#   impossible rollback (the brief's rule). Recording seams are the
+#   replacement chokepoints, BEFORE the old bytes are destroyed: the worker's
+#   download-success path used to unlink() its stale-stash of the old
+#   canonical (v1.22.40) — that inode IS the outgoing revision, so it is
+#   MOVED into the store instead (zero copies; the failure paths that restore
+#   the stash are untouched, and a byte-identical redownload records nothing
+#   via the incoming-sha dedupe); UPLOAD MP3 captures by COPY before the new
+#   bytes land (the active file must keep serving, and the non-mismatch
+#   placement may share its inode — the v1.11.99 hardlink-break unlink is
+#   unchanged). restore_revision captures the OUTGOING current first (restore
+#   is a transition), refuses metadata-only / already-active / missing-file
+#   with operator-readable reasons, updates local_files, and enqueues a place
+#   job — the v0.51.272 lesson applied: a carry that stops at the DB row
+#   leaves Plex playing nothing. GET /api/items/{mt}/{id}/revisions (read,
+#   restorable flag per row) + POST /api/revisions/{id}/restore (admin, 409s
+#   with the refusal reason). Capture is never fatal to its caller (logged
+#   warning + the old unlink fallback). The upload chokepoint is tested
+#   END-TO-END over HTTP (two uploads → one revision holding the FIRST
+#   upload's bytes); five mutations red (retention, sha-dedupe, the
+#   restore-is-a-transition capture, the place enqueue, the upload hook). UI
+#   (history tab / RESTORE button) is the next tag.
+__version__ = "0.51.277"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
