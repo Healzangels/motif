@@ -5253,7 +5253,34 @@
 #   v1.17.10 closed-set admits them — proven by a PATCH round-trip test, not
 #   assumed), validation bounds, settings UI selector + min/max fields. Three
 #   mutations red.
-__version__ = "0.51.280"
+# 0.51.281: feature-brief C — trim/fade editing (backend). The design blocker
+#   this feature was parked on dissolved by our own construction: a trim is a
+#   lossy ffmpeg re-encode, which used to mean destroying the only copy — but
+#   revision history (v0.51.277) retains the pre-edit bytes as a restorable
+#   revision, so an edit is non-destructive the same way every replacement is
+#   (the save's revision reason is 'replaced_by_edit', and a test asserts the
+#   retained bytes are the ORIGINAL). Deliberate recorded deviations from the
+#   brief's §7.2: NO loudness normalization in the editor — motif's mp3gain
+#   pipeline is lossless/undoable and a second re-encode would break its undo
+#   anchors, so trim/fade here and // LEVEL LOUDNESS for leveling; and
+#   silence-detection deferred (the brief marks it optional). New
+#   app/core/audio_edit.py: render_candidate (ffmpeg ARG ARRAY, never a shell;
+#   -ss/-to after -i for sample-accurate trims; fades computed on the OUTPUT
+#   timeline; server-side bounds validation; candidates under
+#   themes_dir/.edit-candidates — dot-prefixed like .revisions, same FS so the
+#   save is an atomic replace; TTL sweep rides each render), candidate_path
+#   (32-hex traversal-safe), save_edit (NO ffmpeg needed: optimistic base_sha
+#   lock — the brief's concurrent-edit guard, no locks held across ffmpeg
+#   work; capture the outgoing revision; MOVE the candidate into place; clear
+#   the 11 mp3gain norm columns via the worker's own _cond_columns so undo
+#   anchors can't dangle; enqueue the re-place — the v0.51.272 lesson).
+#   Endpoints: POST edit-theme (preview render), GET edit-candidate/{cid}.mp3
+#   (range-capable stream, mirroring v1.12.90), POST /save (409 + reason on a
+#   stale base or spent candidate), POST /cancel. Four mutations red. The
+#   render tests skip without ffmpeg (this dev Mac); ubuntu runners carry it,
+#   so CI + the release gate exercise them — verify the tag's CI skip count.
+#   UI dialog is the next tag.
+__version__ = "0.51.281"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

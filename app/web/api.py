@@ -22,6 +22,7 @@ Routes:
 - POST /api/admin/reconcile    — run reconciliation, ?dry_run=true default (v0.51.276)
 - GET  /api/items/{mt}/{id}/revisions + POST /api/revisions/{id}/restore — theme history (v0.51.277)
 - GET  /api/admin/provider-health — per-provider download health (v0.51.280)
+- POST /api/items/{mt}/{id}/edit-theme (+/save,/cancel,/edit-candidate/{cid}.mp3) — trim/fade editor (v0.51.281)
 """
 from __future__ import annotations
 
@@ -26330,6 +26331,109 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as e:
             raise HTTPException(status_code=409, detail=str(e))
         return summary
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/edit-theme")
+    async def api_edit_theme_preview(request: Request, media_type: MediaType,
+                                     tmdb_id: int,
+                                     db: Path = Depends(get_db_path)):
+        """v0.51.281 (feature-brief C): render a trim/fade CANDIDATE for
+        preview. Body: {section_id, edition_key, trim_start, trim_end,
+        fade_in, fade_out}. Returns candidate_id + measured duration/size +
+        the base sha the eventual save must match (optimistic lock)."""
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409,
+                                detail="themes_dir not configured")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        section_id = str(body.get("section_id") or "")
+        edition_key = str(body.get("edition_key") or "")
+        with get_conn(db) as conn:
+            lf = conn.execute(
+                "SELECT file_path, file_sha256 FROM local_files "
+                " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                "   AND COALESCE(edition_key, '') = ?",
+                (media_type, tmdb_id, section_id, edition_key)).fetchone()
+        if lf is None or not lf["file_path"]:
+            raise HTTPException(status_code=404,
+                                detail="no canonical file to edit on this row")
+        from ..core.audio_edit import EditError, render_candidate
+        try:
+            def _num(k, default=0.0):
+                v = body.get(k, default)
+                return float(v if v is not None else default)
+            out = await run_in_threadpool(
+                render_candidate, settings.themes_dir, lf["file_path"],
+                trim_start=_num("trim_start"), trim_end=_num("trim_end"),
+                fade_in=_num("fade_in"), fade_out=_num("fade_out"),
+                quality=settings.download_audio_quality)
+        except (EditError, ValueError, TypeError) as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        out["base_sha"] = lf["file_sha256"]
+        return out
+
+    @app.get("/api/items/{media_type}/{tmdb_id}/edit-candidate/{candidate_id}.mp3")
+    async def api_edit_candidate_audio(request: Request, media_type: MediaType,
+                                       tmdb_id: int, candidate_id: str):
+        """v0.51.281: stream a rendered candidate for the preview <audio>.
+        The id is validated hex (traversal-safe); FileResponse handles range
+        requests, mirroring the canonical theme.mp3 endpoint (v1.12.90)."""
+        _require_admin(request)
+        from ..core.audio_edit import EditError, candidate_path
+        try:
+            path = candidate_path(settings.themes_dir, candidate_id)
+        except EditError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="candidate expired")
+        return FileResponse(path, media_type="audio/mpeg",
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/edit-theme/save")
+    async def api_edit_theme_save(request: Request, media_type: MediaType,
+                                  tmdb_id: int,
+                                  db: Path = Depends(get_db_path)):
+        """v0.51.281: promote a previewed candidate. Captures the outgoing
+        current as a revision (an edit is reversible via Feature B), refuses
+        with the reason when the canonical changed underneath (409), enqueues
+        the re-place. Body: {candidate_id, base_sha, section_id, edition_key}."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        from ..core.audio_edit import EditError, save_edit
+        try:
+            summary = await run_in_threadpool(
+                save_edit, db, settings.themes_dir,
+                media_type=media_type, tmdb_id=tmdb_id,
+                section_id=str(body.get("section_id") or ""),
+                edition_key=str(body.get("edition_key") or ""),
+                candidate_id=str(body.get("candidate_id") or ""),
+                base_sha=str(body.get("base_sha") or ""), actor="admin")
+        except EditError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+        return summary
+
+    @app.post("/api/items/{media_type}/{tmdb_id}/edit-theme/cancel")
+    async def api_edit_theme_cancel(request: Request, media_type: MediaType,
+                                    tmdb_id: int):
+        """v0.51.281: discard a candidate (the brief: CANCEL must delete the
+        temporary artifact)."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        from ..core.audio_edit import EditError, discard_candidate
+        try:
+            discard_candidate(settings.themes_dir,
+                              str(body.get("candidate_id") or ""))
+        except EditError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {"ok": True}
 
     @app.get("/api/admin/provider-health")
     async def api_provider_health(request: Request,
