@@ -5319,7 +5319,21 @@
 #   substring trap again). The .274 halves that were right survive: labels
 #   still never break, the actions row still moves as a unit. Two mutations
 #   red.
-__version__ = "0.51.283"
+# 0.51.284: the render tests cannot silently skip in CI. v0.51.281 shipped the
+#   trim/fade render path with skip-without-ffmpeg tests on the assumption
+#   ubuntu runners ship ffmpeg. VERIFIED WRONG on the tag's own CI run: 4
+#   skipped, identical to the dev Mac — the render path had never executed
+#   anywhere, and nothing would ever have said so (a skip hides inside a green
+#   run; the phantom class again, this time in test INFRASTRUCTURE rather than
+#   a test). Two-part fix, each half guarding the other: both workflows
+#   install ffmpeg before pytest, and both set MOTIF_REQUIRE_FFMPEG=1 — the
+#   .281 test module now raises at IMPORT under the flag when ffmpeg is
+#   missing, so dropping the install step turns CI red instead of quietly
+#   skipping again (proven locally: the flag on this ffmpeg-less Mac errors
+#   collection). The guard test parses both workflows' step ORDER (install
+#   before pytest) and both pytest invocations' flag; mutation-verified by
+#   dropping the install step.
+__version__ = "0.51.284"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

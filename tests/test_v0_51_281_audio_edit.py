@@ -26,6 +26,16 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 HAS_FFMPEG = shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+# v0.51.284: CI sets MOTIF_REQUIRE_FFMPEG=1 so a missing ffmpeg FAILS loudly
+# there instead of skipping. The v0.51.281 assumption that ubuntu runners ship
+# ffmpeg was WRONG — the tag's CI run showed the same 4 skips as the dev Mac,
+# meaning the render path had never executed anywhere. A skip that can hide in
+# a green run is the phantom class; the flag makes it impossible in CI.
+import os
+if os.environ.get("MOTIF_REQUIRE_FFMPEG") and not HAS_FFMPEG:
+    raise RuntimeError(
+        "MOTIF_REQUIRE_FFMPEG is set but ffmpeg/ffprobe are missing — the "
+        "render tests would silently skip; install ffmpeg in this runner")
 NOW = "2026-08-26T00:00:00+00:00"
 MT, TID, SEC = "movie", 281001, "1"
 
