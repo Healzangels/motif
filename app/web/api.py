@@ -16918,8 +16918,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         if _pi_has_theme is None:
                             _pi_has_theme = _pind["h"]
 
+            # v0.51.278 (feature-brief B, UI): revisions ride the SAME fetch —
+            # the INFO card is one request by design (v1.23.19 prefetch caches
+            # one promise), so a second round-trip per open is the wrong shape.
+            from ..core.revisions import list_revisions as _list_revs
+            _revisions = _list_revs(db, media_type=media_type, tmdb_id=tmdb_id)
             return {
                 "theme": dict(t),
+                "revisions": _revisions,
                 # v1.22.71: P-row discriminator for the playback-source line.
                 "plex_independent_theme": _pi_independent,
                 # v0.51.37: Plex-is-serving flag so the card explains a

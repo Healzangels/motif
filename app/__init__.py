@@ -5195,7 +5195,24 @@
 #   upload's bytes); five mutations red (retention, sha-dedupe, the
 #   restore-is-a-transition capture, the place enqueue, the upload hook). UI
 #   (history tab / RESTORE button) is the next tag.
-__version__ = "0.51.277"
+# 0.51.278: feature-brief B, UI — the INFO card's revisions section. Revisions
+#   ride api_item's single fetch (the card is ONE request by design — v1.23.19
+#   caches one promise; a second round-trip per open is the wrong shape). The
+#   section renders between loudness and file&placement, ONLY when history
+#   exists (a fresh row gets no empty shell); each row shows when / source /
+#   size / reason; a retained row gets // RESTORE (the MEASURE NOW button
+#   shape — btn btn-tiny btn-info + adjacent status span, per the reuse rule)
+#   and a rotated row says "metadata only" with the retention explanation in
+#   its title instead of offering a dead button. RESTORE renders the
+#   endpoint's operator-readable 409 detail inline (already-active /
+#   metadata-only), disables itself against double-clicks, lands past the
+#   stats TTL (bug class #7), and kicks libraryRapidPoll — the enqueued place
+#   job carries the per-row marker so the chips follow. The v1.18.81 rule is
+#   the test's spine: the pipe is proven at the ENDPOINT (api_item really
+#   carries the rows; restore-through-the-UI-contract runs the exact call the
+#   button makes end to end, including the 409 path), not just pinned in JS.
+#   Three mutations red.
+__version__ = "0.51.278"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

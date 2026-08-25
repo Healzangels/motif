@@ -51,7 +51,10 @@ _MIN_WIDTH = 100
 # at v1.14.54, rotted again — the asserted literal landed 18 chars from the edge).
 # v0.51.274: 1503 → 1502 (test_v1_20_46's 220-char focus-ring window, rotted by
 # this tag's own comment + selector insert — anchored to the closing brace).
-_BUDGET = 1502
+# v0.51.278: 1502 → 1501 (test_v1_19_89's info-card window, widened twice
+# before and squeezed to 2% headroom by the revisions section — the .222
+# headroom ratchet caught it BEFORE it broke this time; anchored now).
+_BUDGET = 1501
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

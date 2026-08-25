@@ -20,6 +20,7 @@ one genuine clarity gap the user flagged: the `provenance` value
        what it means (auto = motif-picked, manual = you set it).
 """
 from __future__ import annotations
+from _slice_helpers import slice_to_next
 
 from pathlib import Path
 
@@ -30,11 +31,12 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 
 def _info_body() -> str:
-    idx = APP_JS.index('<h3 class="info-title">${htmlEscape(t.title')
-    # v1.22.52: 4000→4400 (the upstream plex_orphan relabel added two lines).
-    # v1.24.86: 4400→4800 (the grid-into-hero move added a ~280-char comment
-    # before the thumbnail block, pushing it past the old window).
-    return APP_JS[idx:idx + 4800]
+    # v0.51.278: bounded by the recovery placeholder instead of a char count —
+    # widened twice already (4000→4400→4800) and squeezed to 2% headroom by the
+    # revisions section; an anchor grows with the card.
+    return slice_to_next(APP_JS,
+                         '<h3 class="info-title">${htmlEscape(t.title',
+                         "${historySection}")
 
 
 # ── M1: thumbnail divider reuses .dlg-section ────────────────

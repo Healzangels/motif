@@ -3923,7 +3923,7 @@
         }
         if (typeof libraryRapidPoll === 'function'
             && document.getElementById('library-body')) {
-          libraryRapidPoll();
+          if (typeof libraryRapidPoll === 'function') libraryRapidPoll();
         }
         // v1.19.45/v1.19.50 (relocated here from the SOURCE-menu handler in
         // v0.51.51): the run endpoint is async ({ok, op_id}); poll it via
@@ -18351,6 +18351,32 @@
       ${_grp('source', _linksRows)}
       ${_grp('history', _timelineRows)}
       ${_grp('loudness', _loudnessRows)}
+      ${(() => {
+        // v0.51.278 (feature-brief B, UI): revision history. Rendered only when
+        // history exists — a fresh row has no section, not an empty shell.
+        // Reuses the .dlg-section/.dlg-grid primitives + the MEASURE NOW button
+        // shape (btn btn-tiny btn-info + adjacent status span), per the
+        // design-system reuse rule.
+        const revs = data.revisions || [];
+        if (!revs.length) return '';
+        const rows = revs.map((r) => {
+          const when = htmlEscape(fmtRelativePast(r.created_at));
+          const src = htmlEscape(r.source_kind || '?');
+          const size = (typeof r.file_size === 'number')
+            ? `${(r.file_size / 1048576).toFixed(1)}MB` : '—';
+          const why = htmlEscape((r.reason || '').replace(/_/g, ' '));
+          const act = r.restorable
+            ? `<button class="btn btn-tiny btn-info" data-act="rev-restore"
+                       data-rev="${r.id}"
+                       title="Make this revision the active theme again — the current theme is captured first, so this is reversible.">// RESTORE</button>`
+            : `<span class="muted small" title="This revision's audio was rotated out by the keep-last-2 retention — metadata only. Re-download or SET URL to get this content back.">metadata only</span>`;
+          return `<dt>${when}</dt><dd>${src} · ${size} · ${why} ${act}</dd>`;
+        }).join('');
+        return `<div class="dlg-section info-group"><h4>revisions</h4>
+          <dl class="dlg-grid">${rows}</dl>
+          <span id="rev-restore-note" class="muted small info-probe-meta"></span>
+        </div>`;
+      })()}
       ${_grp('file & placement', _onDiskRows)}
       ${recoveryPlaceholder}
       ${diffSection}
@@ -18690,6 +18716,26 @@
                        ev.currentTarget.dataset.edn).catch(console.error);
       });
     });
+    // v0.51.278: RESTORE a revision. Delegated (N buttons, one listener); the
+    // 409 detail is the operator-readable refusal reason (already-active /
+    // metadata-only) and renders inline rather than as a dead generic error.
+    body.querySelectorAll('button[data-act="rev-restore"]').forEach((b) =>
+      b.addEventListener('click', async () => {
+        const slot = body.querySelector('#rev-restore-note');
+        b.disabled = true;
+        if (slot) slot.textContent = '… restoring';
+        try {
+          await api('POST', `/api/revisions/${b.dataset.rev}/restore`);
+          if (slot) slot.textContent = '✓ restored — re-place queued';
+          // bug class #7: land past the /api/stats 1s TTL, then re-open the
+          // card fresh so the sha/size/source rows reflect the restore.
+          setTimeout(refreshTopbarStatus, 1100);
+          libraryRapidPoll();
+        } catch (e) {
+          if (slot) slot.textContent = `✗ ${e && e.message ? e.message : 'restore failed'}`;
+          b.disabled = false;
+        }
+      }));
     body.querySelector('button[data-act="loud-measure"]')?.addEventListener('click', async (ev) => {
       ev.preventDefault();
       ev.stopPropagation();
