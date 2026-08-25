@@ -12340,6 +12340,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # (a sibling edition's blue !UPD pill must survive). UI-optional;
         # absent rk falls back to '' = standard (legacy behavior).
         rating_key: str | None = Query(None),
+        # v0.51.279 (feature-brief A): report-only mode — no writes.
+        dry_run: bool = Query(False),
         db: Path = Depends(get_db_path),
     ):
         """Accept an upstream theme update: enqueue a re-download with the new URL.
@@ -12479,6 +12481,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # stayed stale (mirrors the SET URL bug). For bulk
             # accept-all the section_id is None by design (the bulk
             # endpoint fans out, no per-row context).
+            # v0.51.279 (feature-brief A): dry-run ends here — everything
+            # above this line is reads (the pending-update row fetch + the
+            # override fetch), everything below writes. Returning inside the
+            # txn commits nothing. The plan names each side effect ACCEPT
+            # would perform so the UI can show it verbatim.
+            if dry_run:
+                _dr_has_lf = conn.execute(
+                    "SELECT 1 FROM local_files "
+                    " WHERE media_type = ? AND tmdb_id = ? "
+                    "   AND (? IS NULL OR section_id = ?) LIMIT 1",
+                    (media_type, tmdb_id, section_id, section_id),
+                ).fetchone() is not None
+                _dr_in_plex = conn.execute(
+                    "SELECT 1 FROM plex_items "
+                    " WHERE media_type = ? AND guid_tmdb = ? "
+                    "   AND (? IS NULL OR section_id = ?) LIMIT 1",
+                    ("show" if media_type == "tv" else media_type, tmdb_id,
+                     section_id, section_id),
+                ).fetchone() is not None
+                return {"dry_run": True, "would": {
+                    "delete_override": bool(override),
+                    "apply_url": update["new_youtube_url"],
+                    "edition_key": _acc_edition,
+                    "sections": ([section_id] if section_id
+                                 else "all-owning-sections"),
+                    # honest, not aspirational: the download fan-out targets
+                    # owning Plex rows — none in scope means zero jobs.
+                    "enqueue_download": _dr_in_plex,
+                    "revision_recorded_on_replace": _dr_has_lf,
+                }}
             _capture_previous_url(conn, media_type, tmdb_id,
                                   section_id=section_id)
 

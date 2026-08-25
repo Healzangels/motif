@@ -5212,7 +5212,23 @@
 #   carries the rows; restore-through-the-UI-contract runs the exact call the
 #   button makes end to end, including the 409 path), not just pinned in JS.
 #   Three mutations red.
-__version__ = "0.51.278"
+# 0.51.279: feature-brief A completion — dry-run on ACCEPT UPDATE. The brief's
+#   remaining A criterion verbatim: "Dry-run shows proposed behavior without
+#   downloading, replacing, or refreshing Plex." POST /api/updates/{mt}/{id}/
+#   accept?dry_run=true returns the plan and writes NOTHING — the branch sits
+#   at the handler's exact read/write boundary (everything above is the
+#   pending-row fetch + the override fetch; everything below writes), so
+#   returning inside the transaction commits nothing. The plan names each side
+#   effect verbatim: delete_override, apply_url, edition_key, sections, and an
+#   HONEST enqueue_download — it mirrors the fan-out's real gate (owning Plex
+#   rows in scope) rather than claiming True unconditionally; the first draft
+#   claimed True and the mutation only went red once a not-in-Plex case
+#   existed to discriminate it. A's OTHER criterion (preview-both) was already
+#   met by shipped code — renderPendingUpdateDiff draws thumbnail + oembed
+#   title + click-through on BOTH tiles since v1.14.3/v1.19.60 — verified and
+#   recorded as MET with a pin rather than rebuilt. Default behavior without
+#   the param is byte-identical (pinned). Two mutations red.
+__version__ = "0.51.279"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
