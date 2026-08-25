@@ -20,15 +20,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_to_next
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
+
+
+def _tile_render_block() -> str:
+    # v0.51.285: was a fixed `[i:i + 1400]` window — this tag's own comment
+    # above the dataset.src line pushed the pin past the edge (the .261 bug
+    # class). Anchored now to the paced-loader call that ends the render loop.
+    return slice_to_next(
+        APP_JS,
+        "img.className = 'recent-poster';",
+        "_loadCarouselPosters(strip);")
 
 
 def test_posters_are_staged_on_data_src_not_immediate_src():
     """The render loop must stage the art URL on data-src, not assign img.src
     directly (which would queue all ~40 at once again)."""
-    i = APP_JS.index("img.className = 'recent-poster';")
-    block = APP_JS[i:i + 1400]
+    block = _tile_render_block()
     assert "img.dataset.src = `/api/plex/art/" in block, (
         "v0.51.82: the poster URL must be staged on data-src for the paced loader")
     assert "img.src = `/api/plex/art/" not in block, (
@@ -65,6 +76,4 @@ def test_loader_frees_the_slot_on_load_or_error():
 def test_still_eager_not_native_lazy():
     """Regression guard for the v0.51.52 intent: the fix must not reach for
     native loading='lazy' (viewport-gated pop-in) as a shortcut."""
-    i = APP_JS.index("img.className = 'recent-poster';")
-    block = APP_JS[i:i + 1400]
-    assert "loading = 'lazy'" not in block
+    assert "loading = 'lazy'" not in _tile_render_block()

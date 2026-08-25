@@ -19,8 +19,14 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 
 def _load_recent_body():
-    idx = APP_JS.index("async function loadRecentlyAdded()")
-    return APP_JS[idx:idx + 3300]
+    # v0.51.285: was a fixed `[idx:idx + 3300]` window — the transcode comment
+    # above the dataset.src line pushed recent-meta-date past the edge (the
+    # .261 bug class). Anchored now to the next sibling function.
+    from _slice_helpers import slice_to_next
+    return slice_to_next(
+        APP_JS,
+        "async function loadRecentlyAdded()",
+        "\n  function ", "\n  async function ")
 
 
 def test_year_is_bracketed():

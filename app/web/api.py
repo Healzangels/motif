@@ -13170,12 +13170,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # recently-placed feed. Mirrors the IG-thumbnail proxy shape (sync fetch via
     # run_in_threadpool so the blocking httpx call stays off the event loop —
     # bug-class 12).
-    def _fetch_plex_art_bytes(rating_key: str) -> "tuple[bytes, str] | None":
+    def _fetch_plex_art_bytes(
+        rating_key: str, w: "int | None" = None,
+    ) -> "tuple[bytes, str] | None":
         # Fetch a Plex item's poster server-side. The token rides the
         # X-Plex-Token HEADER, never the URL, so it can't leak into logs/events.
         base = (settings.plex_url or "").rstrip("/")
         if not base:
             return None
+        # v0.51.285: optional server-side downscale via Plex's photo
+        # transcoder. The dashboard carousel paints 150px tiles; serving the
+        # full-res poster made each newly-scrolled-in tile rasterize a
+        # multi-megapixel bitmap (the user's dashboard hitch). Height is
+        # derived 2:3 (the poster aspect the strip renders). Any transcoder
+        # refusal falls through to the full-thumb fetch below, so a PMS
+        # without the endpoint behaves exactly as before.
+        if w:
+            try:
+                import httpx
+                with httpx.Client(timeout=8.0, follow_redirects=False) as c:
+                    resp = c.get(
+                        f"{base}/photo/:/transcode",
+                        params={
+                            "width": w, "height": w * 3 // 2,
+                            "minSize": 1, "upscale": 1,
+                            "url": f"/library/metadata/{rating_key}/thumb",
+                        },
+                        headers={"X-Plex-Token": settings.plex_token})
+                ctype = resp.headers.get("content-type", "")
+                if resp.status_code == 200 and ctype.startswith("image/"):
+                    return resp.content, ctype
+                log.debug("plex art transcode declined (HTTP %s) for rk=%s"
+                          " — falling back to the full thumb",
+                          resp.status_code, rating_key)
+            except Exception as e:  # noqa: BLE001
+                log.debug("plex art transcode failed for rk=%s: %s",
+                          rating_key, e)
         try:
             import httpx
             with httpx.Client(timeout=8.0, follow_redirects=False) as c:
@@ -13194,14 +13224,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return None
 
     @app.get("/api/plex/art/{rating_key}")
-    async def api_plex_art(rating_key: str):
+    async def api_plex_art(
+        rating_key: str,
+        w: "int | None" = Query(None, ge=60, le=1200),
+    ):
         """v1.24.52: same-origin Plex poster proxy for the dashboard carousel.
         rating_key must be all-digits (Plex library rks are ints) — blocks any
         path-injection into the metadata URL. Auth-gated like every endpoint;
-        404 on no-art so the carousel falls back to a placeholder tile."""
+        404 on no-art so the carousel falls back to a placeholder tile.
+        v0.51.285: optional ?w= (60–1200) requests a server-side transcode at
+        that width (2:3 height) instead of the full-res poster — the carousel
+        passes w=300 so its 150px tiles stop rasterizing multi-megapixel
+        bitmaps as they scroll in. Omitted w keeps the original full-thumb
+        behavior for every other consumer (INFO-card heroes)."""
         if not rating_key.isdigit():
             raise HTTPException(status_code=400, detail="bad rating key")
-        got = await run_in_threadpool(_fetch_plex_art_bytes, rating_key)
+        got = await run_in_threadpool(_fetch_plex_art_bytes, rating_key, w)
         if got is None:
             raise HTTPException(status_code=404, detail="no art")
         body, ctype = got

@@ -54,7 +54,12 @@ _MIN_WIDTH = 100
 # v0.51.278: 1502 → 1501 (test_v1_19_89's info-card window, widened twice
 # before and squeezed to 2% headroom by the revisions section — the .222
 # headroom ratchet caught it BEFORE it broke this time; anchored now).
-_BUDGET = 1501
+# v0.51.285: 1501 → 1497 (the carousel quartet: test_v0_51_82's two 1400-char
+# tile-render windows and test_v1_24_58's 3300-char loadRecentlyAdded window —
+# this tag's own comments pushed their pins past the edges — plus
+# test_v0_51_87's 4200-char autoscroll window, overrun by the rAF rewrite.
+# All anchored to the render loop's tail call / the next sibling function).
+_BUDGET = 1497
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

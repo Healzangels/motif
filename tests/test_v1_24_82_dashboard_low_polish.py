@@ -21,7 +21,7 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 
 def test_carousel_tick_bails_on_hidden_and_hover():
-    idx = APP_JS.index("function tick()")
+    idx = APP_JS.index("function tick(ts)")  # v0.51.285: rAF tick takes the frame timestamp
     tick = APP_JS[idx:APP_JS.index("}", APP_JS.index("{", idx))]
     assert "document.hidden" in tick
     assert "strip.matches(':hover')" in tick

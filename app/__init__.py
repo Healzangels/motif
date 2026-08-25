@@ -5333,7 +5333,24 @@
 #   collection). The guard test parses both workflows' step ORDER (install
 #   before pytest) and both pytest invocations' flag; mutation-verified by
 #   dropping the install step.
-__version__ = "0.51.284"
+# 0.51.285: dashboard carousel de-hitched (the user: "hitch every few
+#   seconds"). Two independent causes, both fixed. (1) The auto-scroll ran on
+#   setInterval(30ms) — not frame-aligned, so under load Chrome's timer
+#   coalescing landed two ticks in one 60Hz frame and none in the next,
+#   advancing the strip in 2px/0px bursts. Now a requestAnimationFrame loop
+#   scaled by the measured frame gap: same 33.3px/s, one even step per painted
+#   frame, dt clamped at 100ms so resuming from a throttled stretch steps
+#   instead of teleporting; all four freeze guards (hidden / unfocused /
+#   hover / dialog[open]) and the 3s end-dwell survive verbatim. (2) The art
+#   proxy served FULL-RES Plex posters into 150px tiles — every tile scrolling
+#   into view rasterized a multi-megapixel bitmap, one tile every ~5s at
+#   scroll speed, which IS the reported "every few seconds" beat.
+#   /api/plex/art/{rk} gains opt-in ?w= (60–1200, 422 outside): routed through
+#   Plex's photo transcoder at 2:3, any refusal falls back to the full thumb
+#   (a PMS without the endpoint behaves exactly as before). Only the carousel
+#   passes w=300 (150 CSS px @2x); the INFO-card heroes keep full-res URLs
+#   untouched.
+__version__ = "0.51.285"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

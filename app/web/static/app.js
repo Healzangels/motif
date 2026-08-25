@@ -2175,7 +2175,13 @@
       // — see there for why (unfocused-window stall). Still eager, not lazy.
       img.decoding = 'async';
       img.alt = '';
-      img.dataset.src = `/api/plex/art/${encodeURIComponent(rk)}`;
+      // v0.51.285: request a 300px transcode (?w=300), not the full-res
+      // poster. The tile paints at 150 CSS px (300 device px @2x); shipping
+      // the raw multi-megapixel thumb made every tile that scrolled into view
+      // rasterize a huge bitmap — one new tile every ~5s at auto-scroll speed,
+      // which was the user's "hitches every few seconds" beat. The proxy falls
+      // back to the full thumb server-side if Plex declines the transcode.
+      img.dataset.src = `/api/plex/art/${encodeURIComponent(rk)}?w=300`;
       img.addEventListener('error', () => card.classList.add('recent-card-noart'));
       const title = document.createElement('span');
       title.className = 'recent-title';
@@ -2263,7 +2269,8 @@
     const KEY = 'motif:recentAutoScroll2';
     const stored = localStorage.getItem(KEY);
     cb.checked = stored === null ? true : stored === '1';
-    let timer = null;
+    let rafId = null;
+    let lastTs = 0;  // v0.51.285: previous rAF timestamp, 0 = no delta yet
     let _carouselEndHold = 0;  // v0.51.113: Date.now() ms to hold at the strip's end, or 0
     // v1.24.61: hide the horizontal scrollbar while auto-scrolling — it's noise
     // when the strip drives itself (the user). Manual scroll (toggle off) keeps it.
@@ -2271,7 +2278,16 @@
     function applyScrollbarVis() {
       strip.classList.toggle('recent-strip-autoscroll', cb.checked);
     }
-    function tick() {
+    // v0.51.285: rAF + elapsed-time delta (was a 30ms setInterval advancing a
+    // fixed 1px per tick). A 30ms timer is not frame-aligned: at 60Hz the
+    // browser's timer coalescing lands two ticks inside one frame and none in
+    // the next whenever the machine is busy, so the strip advanced in 2px/0px
+    // bursts — the user's "hitches every few seconds". rAF fires exactly once
+    // per painted frame; scaling the step by the measured frame gap keeps the
+    // SAME 33.3px/s speed with one evenly-sized step per frame.
+    const SPEED_PX_PER_MS = 1 / 30;  // unchanged speed: 1px per 30ms
+    function tick(ts) {
+      rafId = requestAnimationFrame(tick);  // stay armed; guards below just skip
       // v1.24.64: pause while hovering OR while a modal dialog (the INFO card,
       // or any confirm) is open — the strip shouldn't drift behind it (the user).
       // `dialog[open]` is the codebase idiom for "a native modal is showing".
@@ -2289,7 +2305,13 @@
       if (document.hidden
           || !document.hasFocus()
           || strip.matches(':hover')
-          || document.querySelector('dialog[open]')) return;
+          || document.querySelector('dialog[open]')) { lastTs = ts; return; }
+      // v0.51.285: clamp the frame gap so resuming after a long throttled
+      // stretch (rAF suspension in a hidden tab, a modal held open) advances
+      // one normal step instead of teleporting the strip by the whole pause.
+      const dt = lastTs ? Math.min(ts - lastTs, 100) : 0;
+      lastTs = ts;
+      if (!dt) return;
       if (strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1) {
         // v0.51.113: dwell 3s at the end before snapping back to the start (the
         // user) — arm the hold on first arrival, then wait it out, then wrap.
@@ -2300,11 +2322,11 @@
         strip.scrollLeft = 0;
       } else {
         _carouselEndHold = 0;  // not at the end (incl. just after wrap) → disarm
-        strip.scrollLeft += 1;
+        strip.scrollLeft += dt * SPEED_PX_PER_MS;
       }
     }
-    function start() { if (!timer) timer = setInterval(tick, 30); }
-    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+    function start() { if (!rafId) { lastTs = 0; rafId = requestAnimationFrame(tick); } }
+    function stop() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; lastTs = 0; } }
     cb.addEventListener('change', () => {
       localStorage.setItem(KEY, cb.checked ? '1' : '0');
       applyScrollbarVis();

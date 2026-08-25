@@ -27,9 +27,14 @@ APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 
 def _autoscroll_fn() -> str:
-    i = APP_JS.index("function _setupCarouselAutoScroll(")
-    # the blur listener sits near the end of the function; window covers it.
-    return APP_JS[i:i + 4200]
+    # v0.51.285: was a fixed `[i:i + 4200]` window — the rAF rewrite's comments
+    # grew the function past it and the blur listener fell off the end (the
+    # .261 bug class). Anchored now to the next sibling function.
+    from _slice_helpers import slice_to_next
+    return slice_to_next(
+        APP_JS,
+        "function _setupCarouselAutoScroll(",
+        "\n  function ", "\n  async function ")
 
 
 def test_tick_pauses_on_window_blur():

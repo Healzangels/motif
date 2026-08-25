@@ -58,7 +58,7 @@ def test_autoscroll_pauses_while_a_dialog_is_open():
     # v1.24.64: the tick bails while a modal dialog (the INFO card) is open so
     # the strip doesn't drift behind it.
     body = _setup_body()
-    idx = body.index("function tick()")
+    idx = body.index("function tick(ts)")  # v0.51.285: rAF tick takes the frame timestamp
     tick = body[idx:body.index("}", body.index("{", idx))]
     assert "document.querySelector('dialog[open]')" in tick
     # v1.24.82: hover-pause is read live via :hover (was a `paused` flag that
