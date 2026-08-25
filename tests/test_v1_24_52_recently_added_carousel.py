@@ -155,7 +155,8 @@ def test_endpoints_and_carousel_are_wired():
     api = (repo / "app" / "web" / "api.py").read_text()
     assert '@app.get("/api/recently-placed")' in api
     assert '@app.get("/api/plex/art/{rating_key}")' in api
-    assert 'headers={"X-Plex-Token": settings.plex_token}' in api  # token in header
+    # token in header (v0.51.286: one headers dict serves both proxy fetches)
+    assert 'headers = {"X-Plex-Token": settings.plex_token}' in api
     js = (repo / "app" / "web" / "static" / "app.js").read_text()
     assert "async function loadRecentlyAdded()" in js
     assert "/api/recently-placed" in js and "/api/plex/art/" in js

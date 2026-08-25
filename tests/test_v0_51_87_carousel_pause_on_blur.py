@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_to_next
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
@@ -30,7 +32,6 @@ def _autoscroll_fn() -> str:
     # v0.51.285: was a fixed `[i:i + 4200]` window — the rAF rewrite's comments
     # grew the function past it and the blur listener fell off the end (the
     # .261 bug class). Anchored now to the next sibling function.
-    from _slice_helpers import slice_to_next
     return slice_to_next(
         APP_JS,
         "function _setupCarouselAutoScroll(",

@@ -5350,7 +5350,32 @@
 #   (a PMS without the endpoint behaves exactly as before). Only the carousel
 #   passes w=300 (150 CSS px @2x); the INFO-card heroes keep full-res URLs
 #   untouched.
-__version__ = "0.51.285"
+# 0.51.286: code-review follow-ups on the carousel de-hitch (max-effort review
+#   of .285, measured in a live Chromium). (1) THE BIG ONE: `scrollLeft +=
+#   0.556` never accumulated — browsers snap scroll WRITES to physical pixels
+#   and the getter returns the snapped value, so the sub-pixel step vanished:
+#   measured FROZEN at DPR=1 ≥75Hz and DPR=2 ≥133Hz, ~1.8x fast at 60Hz DPR=1;
+#   only the dev box's 60Hz@2x landed near the promised speed, which is why it
+#   looked right. The position now accumulates in a float (scrollPos) ASSIGNED
+#   to scrollLeft, re-seeded when the strip was moved externally; the lastTs
+#   bookkeeping hoisted to one capture-then-refresh pair no future guard can
+#   forget. (2) A transient transcoder refusal browser-cached the FULL-RES
+#   fallback under the ?w=300 key for 24h — the very hitch .285 fixed, pinned
+#   for a day; a w-requested fallback now serves max-age=300 so the transcoder
+#   is retried within minutes. (3) A 200 image/* EMPTY body from the transcoder
+#   was served (and cached) instead of falling through — now requires bytes.
+#   (4) Refusals logged DEBUG-only from the first occurrence (bug-class 9 hot
+#   path): the first now WARNs via _PLEX_ART_TRANSCODE_WARNED, rest at debug.
+#   (5) ONE httpx.Client spans both fetches (was two identical configs
+#   back-to-back — drift risk + a wasted TCP/TLS setup per fallback), and the
+#   fake now records ctor kwargs so timeout/redirect policy are pinned. Tests:
+#   the vacuous '__version__ = "0.' pin now pins .285's changelog line; the
+#   two brace-scan tick slices (v1_24_61/82) became slice_to_next (the rewrite
+#   had silently shrunk their scope to the guard line); test_v0_51_82's
+#   end anchor became slice_between (a rename must raise, not slide the slice
+#   to EOF); a mirror-drift guard ties the carousel's ?w= to 2x the
+#   .recent-card CSS width (the tile already resized once, 116→150).
+__version__ = "0.51.286"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

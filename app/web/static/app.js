@@ -2271,6 +2271,7 @@
     cb.checked = stored === null ? true : stored === '1';
     let rafId = null;
     let lastTs = 0;  // v0.51.285: previous rAF timestamp, 0 = no delta yet
+    let scrollPos = 0;  // v0.51.286: float scroll position — see the advance step in tick()
     let _carouselEndHold = 0;  // v0.51.113: Date.now() ms to hold at the strip's end, or 0
     // v1.24.61: hide the horizontal scrollbar while auto-scrolling — it's noise
     // when the strip drives itself (the user). Manual scroll (toggle off) keeps it.
@@ -2302,15 +2303,19 @@
       // tiles show a stale blank frame until a click refocuses (the user: "not
       // loading when not focussed"). Freezing on blur lets the loaded posters
       // paint; the blur listener below forces the settling repaint.
+      // v0.51.286: capture-then-refresh — EVERY frame (guarded or not) refreshes
+      // lastTs in one place, so no future guard can forget it, and dt reads the
+      // captured prev (the old read-lastTs-then-overwrite pair was order-coupled).
+      const prev = lastTs;
+      lastTs = ts;
       if (document.hidden
           || !document.hasFocus()
           || strip.matches(':hover')
-          || document.querySelector('dialog[open]')) { lastTs = ts; return; }
+          || document.querySelector('dialog[open]')) return;
       // v0.51.285: clamp the frame gap so resuming after a long throttled
       // stretch (rAF suspension in a hidden tab, a modal held open) advances
       // one normal step instead of teleporting the strip by the whole pause.
-      const dt = lastTs ? Math.min(ts - lastTs, 100) : 0;
-      lastTs = ts;
+      const dt = prev ? Math.min(ts - prev, 100) : 0;
       if (!dt) return;
       if (strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1) {
         // v0.51.113: dwell 3s at the end before snapping back to the start (the
@@ -2322,10 +2327,20 @@
         strip.scrollLeft = 0;
       } else {
         _carouselEndHold = 0;  // not at the end (incl. just after wrap) → disarm
-        strip.scrollLeft += dt * SPEED_PX_PER_MS;
+        // v0.51.286: browsers snap scrollLeft WRITES to physical pixels and the
+        // getter returns the snapped value, so a read-modify-write of a
+        // sub-pixel step never accumulates: += 0.28/frame reads back unchanged
+        // (measured — the strip FROZE at DPR=1 ≥75Hz and DPR=2 ≥133Hz), while a
+        // ≥half-physical-pixel step rounds to a whole pixel every frame (~1.8x
+        // speed at 60Hz DPR=1). Accumulate the true position in a float and
+        // ASSIGN it; re-seed when something else moved the strip (manual
+        // scroll, the wrap above, a content change).
+        if (Math.abs(strip.scrollLeft - scrollPos) > 1) scrollPos = strip.scrollLeft;
+        scrollPos += dt * SPEED_PX_PER_MS;
+        strip.scrollLeft = scrollPos;
       }
     }
-    function start() { if (!rafId) { lastTs = 0; rafId = requestAnimationFrame(tick); } }
+    function start() { if (!rafId) rafId = requestAnimationFrame(tick); }
     function stop() { if (rafId) { cancelAnimationFrame(rafId); rafId = null; lastTs = 0; } }
     cb.addEventListener('change', () => {
       localStorage.setItem(KEY, cb.checked ? '1' : '0');

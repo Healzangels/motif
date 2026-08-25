@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_to_next
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
@@ -22,7 +24,6 @@ def _load_recent_body():
     # v0.51.285: was a fixed `[idx:idx + 3300]` window — the transcode comment
     # above the dataset.src line pushed recent-meta-date past the edge (the
     # .261 bug class). Anchored now to the next sibling function.
-    from _slice_helpers import slice_to_next
     return slice_to_next(
         APP_JS,
         "async function loadRecentlyAdded()",

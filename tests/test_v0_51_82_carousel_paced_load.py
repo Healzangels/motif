@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from _slice_helpers import slice_to_next
+from _slice_helpers import slice_between
 
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
@@ -30,7 +30,10 @@ def _tile_render_block() -> str:
     # v0.51.285: was a fixed `[i:i + 1400]` window — this tag's own comment
     # above the dataset.src line pushed the pin past the edge (the .261 bug
     # class). Anchored now to the paced-loader call that ends the render loop.
-    return slice_to_next(
+    # v0.51.286 (code-review): slice_between, not slice_to_next — with a
+    # single non-structural end anchor, a rename of _loadCarouselPosters must
+    # raise loudly instead of silently sliding the slice to end-of-file.
+    return slice_between(
         APP_JS,
         "img.className = 'recent-poster';",
         "_loadCarouselPosters(strip);")

@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_to_next
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
@@ -58,8 +60,11 @@ def test_autoscroll_pauses_while_a_dialog_is_open():
     # v1.24.64: the tick bails while a modal dialog (the INFO card) is open so
     # the strip doesn't drift behind it.
     body = _setup_body()
-    idx = body.index("function tick(ts)")  # v0.51.285: rAF tick takes the frame timestamp
-    tick = body[idx:body.index("}", body.index("{", idx))]
+    # v0.51.286 (code-review): was a scan to the FIRST '}' after tick's brace —
+    # the rAF rewrite's braced guard silently shrank that scope to the guard
+    # line, and any future brace above it re-scopes again. Anchor to the next
+    # sibling function instead (v0.51.285: rAF tick takes the frame timestamp).
+    tick = slice_to_next(body, "function tick(ts)", "function start()")
     assert "document.querySelector('dialog[open]')" in tick
     # v1.24.82: hover-pause is read live via :hover (was a `paused` flag that
     # could stick true if a 30s poll re-rendered the strip mid-hover), and the

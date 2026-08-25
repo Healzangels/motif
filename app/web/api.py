@@ -76,6 +76,11 @@ from ..core.sync import extract_video_id, url_source
 
 log = logging.getLogger(__name__)
 
+# v0.51.286 (code-review): bug-class 9 hot-path flag — the art proxy's photo-
+# transcode refusal fires once per carousel tile, so only the FIRST occurrence
+# logs at WARNING (see _fetch_plex_art_bytes). Resets on process restart.
+_PLEX_ART_TRANSCODE_WARNED: bool = False
+
 # v1.18.6: 'collection' added so per-item API endpoints
 # (manual-url, redownload, forget, info, etc.) accept the new
 # media_type the user's v1.18.0 ship introduced. Pre-fix every
@@ -13172,45 +13177,72 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # bug-class 12).
     def _fetch_plex_art_bytes(
         rating_key: str, w: "int | None" = None,
-    ) -> "tuple[bytes, str] | None":
+    ) -> "tuple[bytes, str, bool] | None":
         # Fetch a Plex item's poster server-side. The token rides the
         # X-Plex-Token HEADER, never the URL, so it can't leak into logs/events.
+        # Returns (bytes, content_type, downscaled) — downscaled False means
+        # the full-res thumb (no ?w=, or the transcoder declined) — or None.
         base = (settings.plex_url or "").rstrip("/")
         if not base:
             return None
-        # v0.51.285: optional server-side downscale via Plex's photo
-        # transcoder. The dashboard carousel paints 150px tiles; serving the
-        # full-res poster made each newly-scrolled-in tile rasterize a
-        # multi-megapixel bitmap (the user's dashboard hitch). Height is
-        # derived 2:3 (the poster aspect the strip renders). Any transcoder
-        # refusal falls through to the full-thumb fetch below, so a PMS
-        # without the endpoint behaves exactly as before.
-        if w:
-            try:
-                import httpx
-                with httpx.Client(timeout=8.0, follow_redirects=False) as c:
-                    resp = c.get(
-                        f"{base}/photo/:/transcode",
-                        params={
-                            "width": w, "height": w * 3 // 2,
-                            "minSize": 1, "upscale": 1,
-                            "url": f"/library/metadata/{rating_key}/thumb",
-                        },
-                        headers={"X-Plex-Token": settings.plex_token})
-                ctype = resp.headers.get("content-type", "")
-                if resp.status_code == 200 and ctype.startswith("image/"):
-                    return resp.content, ctype
-                log.debug("plex art transcode declined (HTTP %s) for rk=%s"
-                          " — falling back to the full thumb",
-                          resp.status_code, rating_key)
-            except Exception as e:  # noqa: BLE001
-                log.debug("plex art transcode failed for rk=%s: %s",
-                          rating_key, e)
         try:
             import httpx
+            headers = {"X-Plex-Token": settings.plex_token}
+            # v0.51.286 (code-review): ONE client spans both fetches below
+            # (was two identically-configured clients back-to-back — the twin
+            # timeout/redirect/token configs could drift, and every fallback
+            # paid a second TCP/TLS setup for nothing).
             with httpx.Client(timeout=8.0, follow_redirects=False) as c:
+                # v0.51.285: optional server-side downscale via Plex's photo
+                # transcoder. The dashboard carousel paints 150px tiles;
+                # serving the full-res poster made each newly-scrolled-in tile
+                # rasterize a multi-megapixel bitmap (the user's dashboard
+                # hitch). Height is derived 2:3 (the poster aspect the strip
+                # renders). Any transcoder refusal falls through to the
+                # full-thumb fetch below, so a PMS without the endpoint
+                # behaves exactly as before.
+                if w:
+                    try:
+                        resp = c.get(
+                            f"{base}/photo/:/transcode",
+                            params={
+                                "width": w, "height": w * 3 // 2,
+                                "minSize": 1, "upscale": 1,
+                                "url": f"/library/metadata/{rating_key}/thumb",
+                            },
+                            headers=headers)
+                        ctype = resp.headers.get("content-type", "")
+                        # v0.51.286 (code-review): also require a non-empty
+                        # body — a 200 image/* with zero bytes must fall
+                        # through, not get served + browser-cached.
+                        if (resp.status_code == 200
+                                and ctype.startswith("image/")
+                                and resp.content):
+                            return resp.content, ctype, True
+                        reason = (f"HTTP {resp.status_code}"
+                                  if resp.status_code != 200 else
+                                  f"200 but ctype={ctype or '?'}"
+                                  f" len={len(resp.content)}")
+                    except Exception as e:  # noqa: BLE001
+                        reason = f"{type(e).__name__}: {e}"
+                    # v0.51.286 (code-review): bug-class 9 hot path — fires
+                    # once per carousel tile, so the FIRST refusal logs at
+                    # WARNING (a systematically broken transcoder must be
+                    # operator-visible), the rest drop to debug.
+                    global _PLEX_ART_TRANSCODE_WARNED
+                    if not _PLEX_ART_TRANSCODE_WARNED:
+                        _PLEX_ART_TRANSCODE_WARNED = True
+                        log.warning(
+                            "plex art transcode declined (%s) for rk=%s — "
+                            "falling back to the full thumb. Will not log "
+                            "subsequent occurrences above debug.",
+                            reason, rating_key)
+                    else:
+                        log.debug("plex art transcode declined (%s) for rk=%s"
+                                  " — falling back to the full thumb",
+                                  reason, rating_key)
                 resp = c.get(f"{base}/library/metadata/{rating_key}/thumb",
-                             headers={"X-Plex-Token": settings.plex_token})
+                             headers=headers)
             if resp.status_code != 200:
                 log.debug("plex art proxy: HTTP %s for rk=%s",
                           resp.status_code, rating_key)
@@ -13218,7 +13250,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ctype = resp.headers.get("content-type", "")
             if not ctype.startswith("image/"):
                 return None
-            return resp.content, ctype
+            return resp.content, ctype, False
         except Exception as e:  # noqa: BLE001
             log.debug("plex art proxy fetch failed for rk=%s: %s", rating_key, e)
             return None
@@ -13236,15 +13268,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         that width (2:3 height) instead of the full-res poster — the carousel
         passes w=300 so its 150px tiles stop rasterizing multi-megapixel
         bitmaps as they scroll in. Omitted w keeps the original full-thumb
-        behavior for every other consumer (INFO-card heroes)."""
+        behavior for every other consumer (INFO-card heroes).
+        v0.51.286: a ?w= request answered by the full-res FALLBACK caches
+        only briefly — see below."""
         if not rating_key.isdigit():
             raise HTTPException(status_code=400, detail="bad rating key")
         got = await run_in_threadpool(_fetch_plex_art_bytes, rating_key, w)
         if got is None:
             raise HTTPException(status_code=404, detail="no art")
-        body, ctype = got
-        return Response(content=body, media_type=ctype,
-                        headers={"Cache-Control": "private, max-age=86400"})
+        body, ctype, downscaled = got
+        # v0.51.286 (code-review): a ?w= request served by the FULL-RES
+        # fallback must not cache 24h under the w-keyed URL — a transient
+        # transcoder refusal would pin the multi-megapixel poster (the very
+        # hitch v0.51.285 fixed) into the browser for a day. Short TTL so the
+        # transcoder is retried within minutes; transcoded and no-w responses
+        # keep the day-long cache.
+        max_age = 86400 if (downscaled or not w) else 300
+        return Response(
+            content=body, media_type=ctype,
+            headers={"Cache-Control": f"private, max-age={max_age}"})
 
     def _recently_placed_sync(db: Path) -> list:
         # Distinct titles whose theme motif most-recently PLACED, newest first.

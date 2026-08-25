@@ -16,13 +16,18 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_to_next
+
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 
 def test_carousel_tick_bails_on_hidden_and_hover():
-    idx = APP_JS.index("function tick(ts)")  # v0.51.285: rAF tick takes the frame timestamp
-    tick = APP_JS[idx:APP_JS.index("}", APP_JS.index("{", idx))]
+    # v0.51.286 (code-review): was a scan to the FIRST '}' after tick's brace —
+    # the rAF rewrite's braced guard silently shrank that scope to the guard
+    # line, and any future brace above it re-scopes again. Anchor to the next
+    # sibling function instead (v0.51.285: rAF tick takes the frame timestamp).
+    tick = slice_to_next(APP_JS, "function tick(ts)", "function start()")
     assert "document.hidden" in tick
     assert "strip.matches(':hover')" in tick
 
