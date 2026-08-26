@@ -1135,7 +1135,9 @@ body[data-ops-running="1"] #topbar-status-text {
   color: var(--fg-mute);
   font-family: inherit;
   font-size: var(--t-tiny);
-  letter-spacing: 0.1em;
+  /* v0.51.291 (design audit): 0.1em was a third tracking value beside the
+     0.15em label convention — one voice, same as the .289 card unification. */
+  letter-spacing: 0.15em;
   cursor: pointer;
   padding: 2px 4px;
 }

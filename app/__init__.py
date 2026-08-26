@@ -5433,7 +5433,21 @@
 #   position-independently, the missing caret override is in, fold bodies
 #   carry the 480px bound (revisions metadata outlives audio retention),
 #   and casing moved to CSS so _grp and _fold share one mechanism.
-__version__ = "0.51.290"
+# 0.51.291: notifications design audit (the user: "confirm notifications css
+#   and design is consistent"). Verdict: consistent — head is the .283
+#   two-row layout, the three tier accents map the complete 10-kind inbox
+#   vocabulary (all info-severity, so no missing red tier), focus-visible
+#   ring list covers every notif control, tokens shared from :root, hover
+#   tones semantic (red destructive / cyan not). Two gaps closed: (1) a
+#   walker guard over the five-surface kind mirror — INBOX_EVENT_KINDS,
+#   _DEFAULT_INBOX_EVENTS (drives the settings grid), _EVENT_NOTIFY_TYPE,
+#   and the JS TIER + GROUP maps — a kind added to the Python set but
+#   forgotten in TIER rendered a TRANSPARENT accent and never grouped (the
+#   SRC-axis silent wrong-classification class; v1.18.53's walker pattern);
+#   (2) .notif-clear-all tracking 0.1em → 0.15em (was a third value beside
+#   the label convention). Raw-px paddings in the notif family are accepted
+#   legacy (pre-gap-token era, consistent with the rest of ops.css).
+__version__ = "0.51.291"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
