@@ -60,7 +60,11 @@ def probe_dir_writable(path) -> str | None:
         path.mkdir(parents=True, exist_ok=True)
         probe = path / ".motif-write-probe"
         probe.write_bytes(b"")
-        probe.unlink()
+        # v0.51.302 (holistic r2): two concurrent probes (parallel /readyz
+        # polls) race on the shared filename — the loser's unlink raised
+        # FileNotFoundError and reported an unwritable dir that is fine.
+        # The write above already proved writability.
+        probe.unlink(missing_ok=True)
         return None
     except OSError as e:
         return f"{type(e).__name__}: {e.strerror or e}"

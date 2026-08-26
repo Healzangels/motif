@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import socket
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 from urllib.parse import quote
 
@@ -125,7 +125,10 @@ class PlexLibraryItem:
 @dataclass
 class PlexConfig:
     url: str
-    token: str
+    # v0.51.302 (holistic r2): keep the token out of the auto-generated
+    # repr — any future log/exception interpolating the config would have
+    # leaked it verbatim.
+    token: str = field(repr=False)
     movie_section: str
     tv_section: str
     enabled: bool = True
@@ -1566,6 +1569,13 @@ class PlexClient:
                 "upload": None,
             }
         audio_bytes = r.content
+        if not audio_bytes:
+            # v0.51.302 (holistic r2): a 200 with an EMPTY body would have
+            # been POSTed verbatim — Plex content-dedupes by sha, so empty
+            # bytes could mint + select a zero-byte theme entry.
+            log.warning("re-upload fetch returned 200 with an empty body "
+                        "(rk=%s) — aborting the re-select", rating_key)
+            return {"ok": False, "reason": "empty_fetch", "upload": None}
         # v1.21.99: the re-upload POST hits Plex's ~10MB theme-upload
         # ceiling exactly like the place path's plex_upload does (worker.
         # _PLEX_THEME_UPLOAD_CEILING_MB → HTTP 500). A >10MB fallback theme

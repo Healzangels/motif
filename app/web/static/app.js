@@ -18818,7 +18818,16 @@
           // audit/health deep-link) has ratingKey undefined, so dropping the 5th arg
           // re-opened edition-blind → the card bounced back to the picker instead of
           // showing the cut we just leveled (ultra-review #2). Undefined on row-click.
-          setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey), 900);
+          setTimeout(() => {
+            // v0.51.302 (holistic r2): re-open only if the dialog is
+            // still open ON THIS CARD — the user may have closed it
+            // or navigated to another row during the delay.
+            const _d = document.getElementById('info-dlg');
+            if (_d && _d.open && _d.dataset.cardKey ===
+                _infoUrl(mediaType, tmdbId, sectionId, ratingKey, editionKey)) {
+              openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey);
+            }
+          }, 900);
         } catch (e) {
           if (slot) {
             slot.className = 'accent-red small info-probe-meta';
@@ -18922,7 +18931,16 @@
         // re-open so plays-at, the chip, and the stepper base re-read the new measurement.
         // v0.51.223: thread editionKey (see the normalize/undo re-open above) — else a
         // pick→measure→re-pick loop on an edition-deep-linked card (ultra-review #2).
-        setTimeout(() => openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey), 700);
+        setTimeout(() => {
+            // v0.51.302 (holistic r2): re-open only if the dialog is
+            // still open ON THIS CARD — the user may have closed it
+            // or navigated to another row during the delay.
+            const _d = document.getElementById('info-dlg');
+            if (_d && _d.open && _d.dataset.cardKey ===
+                _infoUrl(mediaType, tmdbId, sectionId, ratingKey, editionKey)) {
+              openInfoDialog(mediaType, tmdbId, sectionId, ratingKey, editionKey);
+            }
+          }, 700);
       } catch (e) {
         if (slot) {
           slot.className = 'accent-red small info-probe-meta';

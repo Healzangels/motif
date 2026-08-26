@@ -273,8 +273,13 @@ def update_progress(
                 and processed_total > (row["processed_total"] or 0)):
             try:
                 from datetime import datetime
+                # v0.51.302 (holistic r2): anchor dt to the LAST SAMPLE, not
+                # updated_at (the last write of ANY kind — an activity-text
+                # update mid-window shrank dt and spiked the rate).
+                _prev_iso = (throughput_buf[-1]["ts"] if throughput_buf
+                             else row["updated_at"])
                 prev_ts = datetime.fromisoformat(
-                    row["updated_at"].replace("Z", "+00:00"))
+                    _prev_iso.replace("Z", "+00:00"))
                 now_dt = datetime.fromisoformat(now.replace("Z", "+00:00"))
                 dt = max((now_dt - prev_ts).total_seconds(), 1.0)
                 delta = processed_total - (row["processed_total"] or 0)
@@ -589,7 +594,7 @@ def load_active(db_path: Path) -> list[dict]:
             """SELECT * FROM op_progress
                  WHERE status IN ('done', 'failed', 'cancelled')
                    AND finished_at IS NOT NULL
-                   AND finished_at > datetime('now', '-24 hours')
+                   AND julianday(finished_at) > julianday('now', '-24 hours')
                  ORDER BY finished_at DESC
                  LIMIT 10"""
         ).fetchall()
@@ -845,6 +850,11 @@ def load_active(db_path: Path) -> list[dict]:
     return out
 
 
+# v0.51.302 (holistic r2): the burst bookkeeping below is read-modify-write
+# module state hit from every /api/stats poll thread AND the ops poll — a
+# lost update mid-burst froze or reset the high-water denominator. One lock
+# wraps the whole synthesis pass.
+_QUEUE_BURST_LOCK = threading.Lock()
 _QUEUE_BURST_HW: dict[str, int] = {}
 
 # v1.13.66: per-kind previous-tick remaining count. Used to detect
@@ -948,6 +958,14 @@ def sweep_download_progress(active_job_ids: list[int]) -> None:
 
 def _synthesize_queue_ops(counts, running_dl_jobs=None, *,
                           running_dl_titles=None) -> list[dict]:
+    # v0.51.302: serialize the burst bookkeeping (see _QUEUE_BURST_LOCK).
+    with _QUEUE_BURST_LOCK:
+        return _synthesize_queue_ops_locked(
+            counts, running_dl_jobs, running_dl_titles=running_dl_titles)
+
+
+def _synthesize_queue_ops_locked(counts, running_dl_jobs=None, *,
+                                 running_dl_titles=None) -> list[dict]:
     """Build virtual op rows from jobs counts. Mirrors the shape of
     a real op_progress row so the UI doesn't need a separate render
     path. Status='running' whenever any job is running; 'pending'
@@ -1294,6 +1312,6 @@ def prune_finished(db_path: Path) -> int:
             "DELETE FROM op_progress "
             "WHERE status IN ('done', 'failed', 'cancelled') "
             "  AND finished_at IS NOT NULL "
-            "  AND finished_at < datetime('now', '-24 hours')"
+            "  AND julianday(finished_at) < julianday('now', '-24 hours')"  # v0.51.302: the v1.19.5 lex trap
         )
     return cur.rowcount

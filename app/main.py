@@ -152,7 +152,16 @@ def _bootstrap_config_file(settings) -> None:
         return
     log = logging.getLogger("motif.main")
     log.info("motif.yaml not present — seeding from env + defaults")
-    settings.save(settings.cfg, updated_by="bootstrap")
+    # v0.51.302 (holistic r2): an unwritable /config crashed boot with a raw
+    # PermissionError here, BEFORE the WRITABILITY diagnostic could explain
+    # it. Log loudly and continue — env-var config remains active, and the
+    # boot probe below names the uid-vs-owner fix.
+    try:
+        settings.save(settings.cfg, updated_by="bootstrap")
+    except OSError as e:
+        log.error("cannot seed motif.yaml — /config not writable (%s); "
+                  "env-var config remains active. See the WRITABILITY "
+                  "diagnostic below for the uid/owner fix.", e)
 
 
 def _probe_writability(settings, log) -> None:
@@ -222,6 +231,13 @@ def main() -> int:
                     _restore.get("safety_backup") or "(none)")
     elif _restore and _restore.get("error"):
         log.error("Staged restore not applied: %s", _restore["error"])
+
+    # v0.51.302 (holistic r2): schema BEFORE the first log_event — the
+    # fail-closed forward-auth WARNING at boot wrote to a table that did not
+    # exist yet on a fresh install (the exact install where it matters).
+    # Restore-before-any-DB-touch is preserved: the restore block above ran,
+    # and init_db migrates a restored file forward.
+    init_db(settings.db_path)
 
     # Seed motif.yaml on first run if missing (also handles v1.3.x migration)
     _bootstrap_config_file(settings)
@@ -321,7 +337,8 @@ def main() -> int:
         for e in config_errors:
             log.warning("  · %s", e)
 
-    init_db(settings.db_path)
+    # v0.51.302: init_db moved above the first log_event (see the boot
+    # block after the restore).
     # v1.21.0: the recovery_v55 boot walkers are RETIRED from the
     # startup path. They were one-shot repairs for historical bugs
     # (v1.18.0 FK-cascade data loss, v1.18.10 override wipe, the
@@ -409,6 +426,9 @@ def main() -> int:
     # startup (it hasn't started yet), so flipping every running row to
     # 'failed' is safe and clears the ghost.
     try:
+        from .core.db import get_conn  # noqa: F811 — v0.51.302: own binding;
+        # the previous try's import must not be this block's lifeline (a
+        # raise before that line left this one a NameError).
         from .core.events import now_iso  # noqa: F811 — defensive re-import
         with get_conn(settings.db_path) as conn:
             cur = conn.execute(
@@ -616,6 +636,14 @@ def main() -> int:
             log.warning("notify.flush_all_coalesced() raised: %s", e)
         log_event(settings.db_path, level="INFO", component="main",
                   message="motif shutting down")
+        # v0.51.302 (holistic r2): drain the events flusher too — it is a
+        # daemon thread; without a bounded drain the final events of a
+        # shutdown (this line included) could die in the queue.
+        try:
+            from .core.events import flush_events
+            flush_events(timeout=5.0)
+        except Exception as e:  # noqa: BLE001
+            log.warning("events.flush_events() raised: %s", e)
         # Uvicorn will receive its own signal handler; it'll stop the server
         # When uvicorn exits we proceed to thread-join below
     signal.signal(signal.SIGTERM, shutdown)

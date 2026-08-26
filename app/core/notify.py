@@ -567,7 +567,10 @@ def _dispatch_inline(
     body = _redact_url_credentials(body or "")
     sent_ok = 0
     sent_fail = 0
-    attach_path = _prepare_attachment(attach_url) if attach_url else None
+    # v0.51.302 (holistic r2): only embedded sinks carry attachments — an
+    # external-only config paid the fetch + ffmpeg pass for nothing.
+    attach_path = (_prepare_attachment(attach_url)
+                   if (attach_url and urls) else None)
     try:
         apprise_urls = urls
         if attach_path and urls:

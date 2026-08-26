@@ -5620,7 +5620,28 @@
 #   (3) release.yml never verified the pushed tag against __version__ —
 #   the documented pre-v1.13.79 drift class; a blocking gate step now
 #   compares them on tag pushes (dispatch builds carry no tag).
-__version__ = "0.51.301"
+# 0.51.302: holistic r2 wave 11 — sixteen low-severity closures. Boot:
+#   init_db now precedes the first log_event (a fresh install lost the
+#   fail-closed forward-auth WARNING — the exact install it mattered on);
+#   shutdown drains the events flusher after the coalescer (final events
+#   died in the daemon queue); an unwritable /config logs the WRITABILITY
+#   guidance instead of crashing boot before it; the zombie sweep owns its
+#   get_conn import (a NameError lifeline through the preceding try).
+#   Core: the queue-burst bookkeeping is serialized behind one lock (lost
+#   updates froze the HW denominator); two remaining lex timestamp
+#   compares moved to julianday (the v1.19.5 trap); throughput anchors to
+#   the last SAMPLE not the last write; tmdb drops datetime.utcnow();
+#   reconcile reports an indeterminate orphan census when canonicals
+#   exist but plex_items is empty (the v1.18.10 amplifier shape — a fresh
+#   DB keeps the honest zero); the notify attachment fetch is gated on an
+#   embedded sink existing; the events scrubber coerces non-JSON-native
+#   objects to REDACTED strings (a token-bearing URL object bypassed every
+#   redaction via repr); PlexConfig hides the token from its dataclass
+#   repr; the re-upload path aborts on a 200-with-empty-body (Plex would
+#   have minted + selected a zero-byte theme); the write-probe unlink is
+#   race-proof (missing_ok). UI: the two deferred INFO re-opens bail
+#   unless the dialog is still open on the same card.
+__version__ = "0.51.302"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -38,7 +38,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
@@ -173,7 +173,9 @@ class TMDBClient:
                         expires = expires.replace(tzinfo=None)
                 except (TypeError, ValueError):
                     expires = None
-                if expires and expires > datetime.utcnow():
+                # v0.51.302: naive-UTC replacement for the deprecated
+                # datetime.utcnow() — byte-identical comparisons, no tz rewrite.
+                if expires and expires > datetime.now(timezone.utc).replace(tzinfo=None):
                     return json.loads(row["response_json"]) or None
 
         try:
@@ -183,14 +185,14 @@ class TMDBClient:
             return None
 
         cached_value = json.dumps(result) if result is not None else "null"
-        expires_naive = datetime.utcnow() + timedelta(days=CACHE_TTL_DAYS)
+        expires_naive = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=CACHE_TTL_DAYS)
         with get_conn(self.db_path) as conn:
             conn.execute(
                 """INSERT OR REPLACE INTO tvdb_lookup_cache
                    (cache_key, response_json, fetched_at, expires_at)
                    VALUES (?, ?, ?, ?)""",
                 (key, cached_value,
-                 datetime.utcnow().isoformat(timespec="seconds"),
+                 datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="seconds"),
                  expires_naive.isoformat(timespec="seconds")),
             )
         return result

@@ -121,8 +121,10 @@ def test_dispatch_chain_threads_attach_url():
     # dispatch passes it on both the sync and pool paths.
     assert NOTIFY_PY.count("attach_url=attach_url") >= 2
     # the pool worker prepares + cleans up around the embedded send.
-    assert ("attach_path = _prepare_attachment(attach_url) "
-            "if attach_url else None") in NOTIFY_PY
+    # v0.51.302: the prepare is gated on an embedded sink existing —
+    # external-only configs no longer pay the fetch.
+    assert ("if (attach_url and urls) else None") in NOTIFY_PY
+    assert "_prepare_attachment(attach_url)" in NOTIFY_PY
     assert "attach_path=attach_path" in NOTIFY_PY
     # apprise gets the attachment.
     assert '{"attach": [attach_path]} if attach_path' in NOTIFY_PY

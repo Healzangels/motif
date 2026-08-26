@@ -58,6 +58,17 @@ def _ensure_flusher_running(db_path: Path) -> None:
         _FLUSHER_STARTED = True
 
 
+def flush_events(timeout: float = 5.0) -> None:
+    """v0.51.302 (holistic r2): bounded shutdown drain — the flusher is a
+    daemon thread, so without this the final events of a shutdown could die
+    in the queue. Waits for the queue to empty plus one batch cycle."""
+    import time as _time
+    deadline = _time.monotonic() + timeout
+    while not _EVENT_QUEUE.empty() and _time.monotonic() < deadline:
+        _time.sleep(0.05)
+    _time.sleep(0.3)   # one flusher cycle (~250ms) for the in-flight batch
+
+
 def _write_batch(db_path: Path, insert_sql: str, batch: list[tuple]):
     """Insert one batch, retrying ONLY `database is locked` (CLAUDE.md class 8).
     Returns None on success, else the last error — the caller decides how loudly
@@ -362,7 +373,13 @@ def _scrub_value(v: Any) -> Any:
         return [_scrub_value(item) for item in v]
     if isinstance(v, str):
         return _redact_url_credentials(v)
-    return v
+    if isinstance(v, (int, float, bool)) or v is None:
+        return v
+    # v0.51.302 (holistic r2): a non-JSON-native object (Path, exception,
+    # httpx.URL...) used to pass through un-scrubbed and serialize via its
+    # repr — a token-bearing URL object bypassed every redaction. Coerce to
+    # a redacted string instead.
+    return _redact_url_credentials(str(v))
 
 
 def _scrub(d: dict[str, Any]) -> dict[str, Any]:

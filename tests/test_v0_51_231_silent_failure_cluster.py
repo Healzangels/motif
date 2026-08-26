@@ -55,7 +55,9 @@ def test_attachment_failure_cleans_up_and_is_visible():
 # ── 3: concurrent-safe dict eviction ─────────────────────────────────────────
 
 def test_burst_dicts_are_evicted_idempotently():
-    i = PROGRESS_PY.index("def _synthesize_queue_ops(")
+    # v0.51.302: the body moved into _synthesize_queue_ops_locked (the
+    # public name is now a lock wrapper) — pin the impl.
+    i = PROGRESS_PY.index("def _synthesize_queue_ops_locked(")
     body = PROGRESS_PY[i:PROGRESS_PY.index("\ndef ", i + 1)]
     assert "del _QUEUE_BURST_HW[" not in body
     assert "del _QUEUE_BURST_START[" not in body

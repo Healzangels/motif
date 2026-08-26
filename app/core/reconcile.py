@@ -57,22 +57,39 @@ def run_reconciliation(db_path: Path, themes_dir: Path, *,
         broken_placements = conn.execute(
             "SELECT COUNT(*) FROM placements "
             "WHERE theme_present = 0").fetchone()[0]
-        orphan_rows = conn.execute(
-            "SELECT lf.media_type, lf.tmdb_id, COALESCE(t.title, '?') AS title "
-            "  FROM local_files lf "
-            "  LEFT JOIN themes t "
-            "    ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
-            " WHERE lf.file_path IS NOT NULL AND lf.file_path != '' "
-            "   AND NOT EXISTS (SELECT 1 FROM plex_items p "
-            "                    WHERE p.section_id = lf.section_id "
-            "                      AND (p.guid_tmdb = lf.tmdb_id "
-            "                           OR p.theme_id = t.id))"
-        ).fetchall()
-    orphans = {
-        "count": len(orphan_rows),
-        "sample": [f"{r['title']} ({r['media_type']}/{r['tmdb_id']})"
-                   for r in orphan_rows[:_ORPHAN_SAMPLE_CAP]],
-    }
+        _pi_n = conn.execute(
+            "SELECT COUNT(*) FROM plex_items").fetchone()[0]
+        # v0.51.302 (holistic r2): canonicals exist but plex_items is EMPTY
+        # (a failed / never-run enum) — the census would report EVERY
+        # canonical as orphaned, the v1.18.10 amplifier shape. Indeterminate,
+        # not a false mass-orphan report. A genuinely fresh DB (no canonicals
+        # either) keeps the honest zero census.
+        if _pi_n == 0 and scanned > 0:
+            orphan_rows = None
+        else:
+            orphan_rows = conn.execute(
+                "SELECT lf.media_type, lf.tmdb_id, COALESCE(t.title, '?') AS title "
+                "  FROM local_files lf "
+                "  LEFT JOIN themes t "
+                "    ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
+                " WHERE lf.file_path IS NOT NULL AND lf.file_path != '' "
+                "   AND NOT EXISTS (SELECT 1 FROM plex_items p "
+                "                    WHERE p.section_id = lf.section_id "
+                "                      AND (p.guid_tmdb = lf.tmdb_id "
+                "                           OR p.theme_id = t.id))"
+            ).fetchall()
+    if orphan_rows is None:
+        log.warning("reconciliation: plex_items is EMPTY with %d canonical(s)"
+                    " — enum failed or never ran; orphan census skipped as "
+                    "indeterminate", scanned)
+        orphans = {"count": None, "sample": [],
+                   "skipped": "plex_items empty — enum failed or never ran"}
+    else:
+        orphans = {
+            "count": len(orphan_rows),
+            "sample": [f"{r['title']} ({r['media_type']}/{r['tmdb_id']})"
+                       for r in orphan_rows[:_ORPHAN_SAMPLE_CAP]],
+        }
     summary = {
         "dry_run": dry_run,
         "scanned": scanned,
@@ -92,7 +109,7 @@ def run_reconciliation(db_path: Path, themes_dir: Path, *,
                  f"{place_retry['candidates'] if dry_run else place_retry['enqueued']}"
                  f" missing placement(s), {broken_canonicals} broken canonical(s), "
                  f"{broken_placements} broken placement(s), "
-                 f"{orphans['count']} orphan(s) — report only"),
+                 f"{orphans['count'] if orphans['count'] is not None else 'indeterminate'} orphan(s) — report only"),
         detail=summary,
     )
     return summary
