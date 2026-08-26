@@ -1574,7 +1574,8 @@ class PlexClient:
             # been POSTed verbatim — Plex content-dedupes by sha, so empty
             # bytes could mint + select a zero-byte theme entry.
             log.warning("re-upload fetch returned 200 with an empty body "
-                        "(rk=%s) — aborting the re-select", rating_key)
+                        "(item rk=%s, entry=%s) — aborting the re-select",
+                        item_rating_key, theme_rating_key)
             return {"ok": False, "reason": "empty_fetch", "upload": None}
         # v1.21.99: the re-upload POST hits Plex's ~10MB theme-upload
         # ceiling exactly like the place path's plex_upload does (worker.

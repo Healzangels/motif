@@ -5653,7 +5653,14 @@
 #   /api/dry-run had zero behavioral coverage — the flip now round-trips
 #   through is_dry_run, the truthiness parse is pinned, and non-admins are
 #   rejected.
-__version__ = "0.51.303"
+# 0.51.304: CI caught a REAL latent bug in .302's empty-body guard — the
+#   log line referenced `rating_key`, undefined in _fetch_and_reupload_theme
+#   (params are item_rating_key/theme_rating_key), so the guard would have
+#   NameError'd instead of warning if an empty 200 ever arrived. Ruff (F821,
+#   CI-only until now) flagged it; the local gate now runs ruff too. The
+#   .302/.303 tag builds failed on this line, so their images never
+#   published — this tag is the deployable head.
+__version__ = "0.51.304"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
