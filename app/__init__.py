@@ -5375,7 +5375,16 @@
 #   end anchor became slice_between (a rename must raise, not slide the slice
 #   to EOF); a mirror-drift guard ties the carousel's ?w= to 2x the
 #   .recent-card CSS width (the tile already resized once, 116→150).
-__version__ = "0.51.286"
+# 0.51.287: Esc-closing the ops drawer left the IDLE pill with a stuck focus
+#   ring (the user: "clicking esc to close the info panel leaves the info
+#   button selected"). closeDrawer() only blurred a focused DESCENDANT of the
+#   drawer — but a trigger-opened drawer keeps focus on the trigger pill, so
+#   the Esc keypress flipped Chrome's :focus-visible heuristic to "keyboard"
+#   and painted the ring on close. The v0.51.266 INBOX-pill class, resurfacing
+#   one panel over: closeDrawer now also blurs a focused [data-ops-trigger]
+#   element (IDLE pill / op-mini bar / overflow pill), covering Esc, scrim,
+#   and × close paths uniformly.
+__version__ = "0.51.287"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

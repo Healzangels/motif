@@ -222,8 +222,11 @@ def test_close_drawer_blurs_focus_then_restores_aria_hidden():
     fn_anchor = OPS_JS.index("function closeDrawer() {")
     fn_end = OPS_JS.index("\n  // ── DOM wiring", fn_anchor)
     body = OPS_JS[fn_anchor:fn_end]
-    assert "drawer.contains(document.activeElement)" in body
-    assert "document.activeElement.blur();" in body
+    # v0.51.287: the blur widened to also cover a focused drawer TRIGGER
+    # (stuck IDLE-pill ring on Esc-close); the invariant pinned here — focus
+    # moves out of the drawer before it re-hides — is unchanged.
+    assert "drawer.contains(_ae)" in body
+    assert "_ae.blur();" in body
     assert "drawer.setAttribute('aria-hidden', 'true');" in body
     # the blur/re-hide must happen BEFORE is-open is removed (which starts
     # the fade-out) so a screen reader never sees a visible, un-hidden

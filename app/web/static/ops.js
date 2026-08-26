@@ -2085,8 +2085,14 @@
     // button) still has focus trips the SAME aria-hidden/focus warning
     // openDrawer's removeAttribute above avoids on the way in — move focus
     // out first, mirroring showModalNoFocusRing's blur-on-open pattern.
-    if (drawer.contains(document.activeElement)) {
-      document.activeElement.blur();
+    // v0.51.287: also blur a focused drawer TRIGGER (the IDLE pill / op-mini
+    // bar). Esc-close flips Chrome's :focus-visible heuristic to "keyboard",
+    // so the pill that opened the drawer kept a stuck ring after close — the
+    // v0.51.266 INBOX-pill class, resurfacing on the ops drawer (the user).
+    const _ae = document.activeElement;
+    if (_ae && (drawer.contains(_ae)
+        || (_ae.closest && _ae.closest('[data-ops-trigger]')))) {
+      _ae.blur();
     }
     drawer.setAttribute('aria-hidden', 'true');
     drawer.classList.remove('is-open');
