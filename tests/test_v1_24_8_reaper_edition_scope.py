@@ -96,6 +96,11 @@ def _seed(tmp_path, monkeypatch, *, backup_edition):
     monkeypatch.setattr(
         _notify, "dispatch",
         lambda *a, **k: calls.append(k.get("event_kind")))
+    # v0.51.288: the reaper dispatches via the coalescer now — capture both so
+    # the fired/suppressed assertions keep seeing the theme-lost kinds.
+    monkeypatch.setattr(
+        _notify, "dispatch_coalesced",
+        lambda *a, **k: calls.append(k.get("event_kind")))
     return db, calls
 
 

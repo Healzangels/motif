@@ -59,7 +59,10 @@ _MIN_WIDTH = 100
 # this tag's own comments pushed their pins past the edges — plus
 # test_v0_51_87's 4200-char autoscroll window, overrun by the rAF rewrite.
 # All anchored to the render loop's tail call / the next sibling function).
-_BUDGET = 1497
+# v0.51.288: 1497 → 1496 (test_v1_23_75's 600-char reaper-attach window,
+# already widened once at v0.51.151, rotted again when the dispatch became
+# dispatch_coalesced — anchored to the record_fire statement after the call).
+_BUDGET = 1496
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

@@ -5384,7 +5384,21 @@
 #   one panel over: closeDrawer now also blurs a focused [data-ops-trigger]
 #   element (IDLE pill / op-mini bar / overflow pill), covering Esc, scrim,
 #   and × close paths uniformly.
-__version__ = "0.51.287"
+# 0.51.288: multi-loss theme-lost runs digest through the coalescer (the
+#   user: "after having multiple items removed that had a theme we get
+#   discord messages that end up being a bit spammy"). Each lost row fired
+#   its own full 💔 body — three near-identical paragraphs apiece, back to
+#   back. The reaper now routes dispatch through dispatch_coalesced: a lone
+#   loss keeps the immediate rich single (bulk=False, byte-identical), a
+#   ≥2-candidate run buffers per-kind and flushes as ONE digest — count
+#   title with the v1.23.81 tier qualifier ("no fallback" / "backups ready"
+#   / "still playing"), bulleted labels (capped 15, library-bucketed), and
+#   the tier's guidance ONCE. Inbox drawer rows stay per-item with
+#   click-through — dispatch_coalesced records them before the apprise gate
+#   — so only the Discord/apprise push collapses. Over-flagging bulk when
+#   some candidates swap-resolve away is safe: a bulk-of-one flushes as the
+#   rich single, costing only the trailing window on a no-urgency event.
+__version__ = "0.51.288"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

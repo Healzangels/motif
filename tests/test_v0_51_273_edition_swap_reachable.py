@@ -108,6 +108,11 @@ def env(tmp_path, monkeypatch):
     import app.core.notify as notify_mod
     monkeypatch.setattr(notify_mod, "dispatch",
                         lambda *a, **kw: dispatched.append((a, kw)))
+    # v0.51.288: the reaper dispatches via the coalescer now — capture BOTH
+    # into one list so this file's `dispatched == []` silence pins stay
+    # discriminating instead of going vacuous.
+    monkeypatch.setattr(notify_mod, "dispatch_coalesced",
+                        lambda *a, **kw: dispatched.append((a, kw)))
     return db, themes, dispatched
 
 

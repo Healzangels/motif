@@ -33,8 +33,12 @@ def test_attach_url_at_backup_ready_and_reaper():
     # click-through line landed between event_kind and attach_url in both calls.
     bi = PLEX_ENUM.index('event_kind="backup_ready_to_deploy"')
     assert "attach_url=_nc.attachment_thumb_url(" in PLEX_ENUM[bi:bi + 820]
+    # v0.51.288: the reaper call became dispatch_coalesced — the thumb rides
+    # single_attach_url now — and the fixed 600-char window rotted (the .261
+    # bug class). Anchor to the statement right after the call instead.
     ri = PLEX_ENUM.index("event_kind=_event_kind")
-    assert "attach_url=_nc.attachment_thumb_url(_ctx)" in PLEX_ENUM[ri:ri + 600]
+    reaper_call = PLEX_ENUM[ri:PLEX_ENUM.index("_ndedupe.record_fire", ri)]
+    assert "single_attach_url=_nc.attachment_thumb_url(_ctx)" in reaper_call
 
 
 def test_attach_url_at_theme_deleted_and_test_trigger():

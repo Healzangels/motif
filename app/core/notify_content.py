@@ -1280,3 +1280,59 @@ def format_theme_lost_sidecar_available_body(
         "24h per row.)",
     ]
     return "\n".join(lines)
+
+
+# v0.51.288: 💔 digest formatters — a multi-item removal fired one FULL
+# theme-lost body per row (three near-identical paragraphs apiece), reading
+# as a wall in Discord (the user: "a bit spammy"). ≥2 losses in one reaper
+# run now coalesce per-kind into one digest: count title + bulleted labels +
+# the tier's guidance ONCE. Titles keep the v1.23.81 tier qualifiers so the
+# three digests stay tellable-apart at a glance.
+def format_theme_lost_item(ctx: "ItemContext") -> str:
+    # one-line label for a 💔 digest bullet.
+    return _safe_display_title(ctx)
+
+
+def format_plex_theme_lost_batch_title(n: int) -> str:
+    return f"💔 {n} themes lost — no fallback"
+
+
+def format_plex_theme_lost_batch_body(labels: list[str],
+                                      buckets: dict | None = None) -> str:
+    return (
+        _format_batch_body(labels, buckets=buckets)
+        + "\n\nPlex no longer lists these items and motif has no backup for "
+        "them. If Plex re-added any under a new ID, the next // REFRESH PLEX "
+        "re-detects them — add a theme from each row's // MOTIF INFO card "
+        "via // SET URL or // UPLOAD MP3. Removed for good = no action "
+        "needed."
+    )
+
+
+def format_theme_lost_backup_ready_batch_title(n: int) -> str:
+    return f"💔 {n} themes lost — backups ready"
+
+
+def format_theme_lost_backup_ready_batch_body(
+        labels: list[str], buckets: dict | None = None) -> str:
+    return (
+        _format_batch_body(labels, buckets=buckets)
+        + "\n\nMotif holds a deploy-ready backup for each. When Plex re-adds "
+        "an item, // PROMOTE TO ACTIVE on its // MOTIF INFO card re-deploys "
+        "the backup."
+    )
+
+
+def format_theme_lost_sidecar_available_batch_title(n: int) -> str:
+    return f"💔 {n} themes lost — still playing"
+
+
+def format_theme_lost_sidecar_available_batch_body(
+        labels: list[str], buckets: dict | None = None) -> str:
+    return (
+        _format_batch_body(labels, buckets=buckets)
+        + "\n\nEach still has a theme.mp3 sidecar at its media folder, so "
+        "the theme keeps playing as a manual (M) source — no urgency. "
+        "// ADOPT from each row's // MOTIF INFO card brings it under "
+        "motif's management; // SET URL / // UPLOAD MP3 replace it instead."
+    )

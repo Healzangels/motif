@@ -74,6 +74,11 @@ def seeded(tmp_path, monkeypatch):
     monkeypatch.setattr(
         _notify, "dispatch",
         lambda *a, **k: calls.append(k.get("event_kind")))
+    # v0.51.288: the reaper dispatches via the coalescer now — capture both so
+    # the fired/suppressed assertions below keep seeing the theme-lost kinds.
+    monkeypatch.setattr(
+        _notify, "dispatch_coalesced",
+        lambda *a, **k: calls.append(k.get("event_kind")))
     return db, calls
 
 
@@ -186,6 +191,10 @@ def test_churning_glitch_does_not_slip_past_mass_guard(tmp_path, monkeypatch):
                  1 if i < 40 else 0, NOW, NOW))
         conn.commit()
     monkeypatch.setattr("app.core.notify.dispatch", lambda *a, **k: None)
+    # v0.51.288: the reaper now dispatches via the coalescer — null it too so
+    # a mass-reap test can't buffer real notifications.
+    monkeypatch.setattr("app.core.notify.dispatch_coalesced",
+                        lambda *a, **k: None)
     # Plex returns 100 of 200 (rk_0100..rk_0199) — rk_0000..rk_0099 are missing,
     # which includes the 40 pre-aged (→ cross threshold) + 60 fresh (→ miss 1).
     items = [_item(f"rk_{i:04d}", title=f"Movie {i}",

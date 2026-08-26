@@ -2950,6 +2950,14 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
             from . import notify_content as _nc
             from . import notify_dedupe as _ndedupe
             _settings = Settings()
+            # v0.51.288: a multi-item removal fired one FULL 💔 body per row —
+            # a Discord wall (the user: "a bit spammy"). ≥2 candidates route
+            # through the coalescer as ONE per-kind digest; a lone candidate
+            # keeps the immediate rich single (bulk=False fires instantly,
+            # v1.23.46 — and a bulk-of-one still flushes as the rich single,
+            # so over-flagging when some candidates swap-resolve away only
+            # costs the trailing window's delay on a no-urgency event).
+            _lost_bulk = len(lost_theme_candidates) >= 2
             for cand in lost_theme_candidates:
                 mt = cand["media_type"]
                 tid = cand["tmdb_id"]
@@ -3032,6 +3040,11 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 ],
                             )
                         )
+                        # v0.51.288: per-kind digest formatters.
+                        _batch_title_fn = (
+                            _nc.format_theme_lost_backup_ready_batch_title)
+                        _batch_body_fn = (
+                            _nc.format_theme_lost_backup_ready_batch_body)
                     elif tier == "sidecar_available":
                         _event_kind = "theme_lost_sidecar_available"
                         _title = (
@@ -3046,22 +3059,41 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 _ctx
                             )
                         )
+                        _batch_title_fn = (
+                            _nc.format_theme_lost_sidecar_available_batch_title)
+                        _batch_body_fn = (
+                            _nc.format_theme_lost_sidecar_available_batch_body)
                     else:  # no_fallback (Tier 4)
                         _event_kind = "plex_theme_lost"
                         _title = _nc.format_plex_theme_lost_title(_ctx)
                         _body = _nc.format_plex_theme_lost_body(_ctx)
-                    _notify.dispatch(
+                        _batch_title_fn = _nc.format_plex_theme_lost_batch_title
+                        _batch_body_fn = _nc.format_plex_theme_lost_batch_body
+                    # v0.51.288: dispatch → dispatch_coalesced. bulk=False (a
+                    # lone loss) fires the rich single IMMEDIATELY, unchanged;
+                    # bulk=True buffers this run's losses into one per-kind
+                    # digest. Inbox rows stay per-item either way — the
+                    # coalescer records them before the apprise gate — so only
+                    # the Discord/apprise push collapses.
+                    _notify.dispatch_coalesced(
                         db_path,
                         _settings.cfg.notifications,
                         event_kind=_event_kind,
-                        item_ctx=_ctx,  # v0.51.151: click-through identity
-                        title=_title,
-                        body=_body,
+                        single_item_ctx=_ctx,  # v0.51.151: click-through identity
+                        item_label=_nc.format_theme_lost_item(_ctx),
+                        single_title=_title,
+                        single_body=_body,
+                        batch_title_fn=_batch_title_fn,
+                        batch_body_fn=_batch_body_fn,
                         body_format="markdown",
                         # v1.23.75: FB-sourced backup/sidecar attaches its
                         # thumb (v1.22.94) — the reaper tiers were never
                         # retrofitted, so a fbcdn backup showed no image.
-                        attach_url=_nc.attachment_thumb_url(_ctx),
+                        # Batch flushes carry no per-item previews by design.
+                        single_attach_url=_nc.attachment_thumb_url(_ctx),
+                        bulk=_lost_bulk,
+                        # v1.23.75: library, for batch section grouping.
+                        section=_ctx.get("section_label") or "",
                     )
                     _ndedupe.record_fire(db_path, dedupe_key)
                 except Exception as _e:  # noqa: BLE001
