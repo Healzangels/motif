@@ -5522,7 +5522,21 @@
 #   ORDER BY against a 4-part PK) — notifications carried an arbitrary
 #   sibling's source_kind/source_video_id; now preference-ordered on the
 #   caller's scope with graceful sibling fallback.
-__version__ = "0.51.295"
+# 0.51.296: holistic-review wave 5 — class-12 event-loop offloads. Four
+#   blocking-in-async sites, all the catalogued class: (1)
+#   accept-all/decline-all ran the correlated-subquery scan + the whole
+#   per-row bulk loop inline (seconds on a 10K library per the v1.22.69
+#   measurement) — the full DB sequence now runs via run_in_threadpool;
+#   (2) AuthMiddleware resolved principals inline, so every API-token
+#   request ran a bcrypt rounds=10 checkpw (~60ms pure CPU) ON the event
+#   loop; (3) api_item_theme_audio's /data-mount syscall cluster (resolve,
+#   containment, is_file, 410-forensics iterdir, header sniff) stalled
+#   everything when a disk was spun down — one _resolve_and_sniff helper
+#   in the threadpool; (4) the test-trigger endpoint called
+#   _notify.dispatch inline (inbox record = sqlite connect + lock budget
+#   in the caller's thread since v0.51.147). Existing endpoint suites are
+#   green over the offloaded shapes.
+__version__ = "0.51.296"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

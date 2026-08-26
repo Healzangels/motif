@@ -509,7 +509,11 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         # Always resolve the principal first so handlers can read request.state.user
-        request.state.principal = self._resolve_principal(request)
+        # v0.51.296 (holistic review, class 12): the token path runs a bcrypt
+        # rounds=10 checkpw (~60ms pure CPU) — off the event loop, or every
+        # concurrent request stalls behind each API-token verification.
+        request.state.principal = await run_in_threadpool(
+            self._resolve_principal, request)
         request.state.user = request.state.principal.username
 
         # First-run gate: if no admin exists, force setup before anything else
@@ -13485,293 +13489,299 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         (e.g. "23 accepted · 5 eager-flipped · 18 downloads queued").
         """
         _require_admin(request)
-        accepted = 0
-        eager_flipped = 0
-        enqueued = 0
-        # v1.19.39: count P-row backup-only rows so the HISTORY
-        # summary line can distinguish "bulk accepted N, M of those
-        # routed through the P-row backup branch" from a fully
-        # force-placed bulk. Audit found that pre-v1.19.39 the
-        # single summary log_event had no `bulk_is_p_row` counter
-        # — post-incident "which rows took the backup branch?"
-        # required worker-telemetry inference instead of a single
-        # HISTORY read.
-        p_backup_count = 0
-        with get_conn(db) as conn, transaction(conn):
-            # v1.12.120: iterate (section × title) tuples that pass
-            # the same gate as the row pill / topbar count. Pre-fix
-            # the query was `WHERE decision='pending'` raw, which
-            # accepted: (a) no-op self-updates on T rows, (b) rows
-            # with no motif tracking presence in any section, (c) the
-            # legacy '' fallback row even when sections had their
-            # own per-section decisions. The result was bulk accept
-            # firing downloads for rows the user couldn't see as
-            # pending.
-            tuples = conn.execute(f"""
-                SELECT pi2.section_id, pi2.edition_key, t2.media_type, t2.tmdb_id,
-                       COALESCE(
-                         (SELECT pu.new_youtube_url FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = pi2.section_id AND pu.edition_key = ''),
-                         (SELECT pu.new_youtube_url FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = '' AND pu.edition_key = '')
-                       ) AS new_url,
-                       COALESCE(
-                         (SELECT pu.kind FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = pi2.section_id AND pu.edition_key = ''),
-                         (SELECT pu.kind FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = '' AND pu.edition_key = '')
-                       ) AS kind
-                  FROM plex_items pi2
-            INNER JOIN plex_sections ps2
-                    ON ps2.section_id = pi2.section_id AND ps2.included = 1
-            INNER JOIN themes t2 ON t2.id = pi2.theme_id
-                 WHERE COALESCE(
-                         (SELECT pu.decision FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = pi2.section_id AND pu.edition_key = pi2.edition_key),
-                         (SELECT pu.decision FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = '' AND pu.edition_key = pi2.edition_key)
-                       , 'pending') = 'pending'
-                       AND {_pending_update_detected_sql('t2', 'pi2')}
-                       AND {_pending_update_actionable_sql('t2', 'pi2')}
-                   AND (
-                       EXISTS (SELECT 1 FROM local_files lf2
-                                WHERE lf2.media_type = t2.media_type
-                                  AND lf2.tmdb_id = t2.tmdb_id
-                                  AND lf2.section_id = pi2.section_id)
-                       OR EXISTS (SELECT 1 FROM user_overrides uo2
-                                   WHERE uo2.media_type = t2.media_type
-                                     AND uo2.tmdb_id = t2.tmdb_id
-                                     AND uo2.section_id = pi2.section_id)
-                       OR EXISTS (SELECT 1 FROM placements p2
-                                   WHERE p2.media_type = t2.media_type
-                                     AND p2.tmdb_id = t2.tmdb_id
-                                     AND p2.section_id = pi2.section_id)
-                       OR pi2.local_theme_file = 1
-                       OR {_pending_update_new_theme_kind_sql('t2', 'pi2')}
-                   )
-            """).fetchall()
-            # v1.22.62 (audit round 2 #4): the actionable gate above was
-            # missing — present at all 13 sibling sites including
-            # /api/updates/count (the number the confirm dialog shows)
-            # and DECLINE ALL. Pre-fix ACCEPT ALL also acted on rows the
-            # UI deliberately HIDES (v1.22.12 pure-P new_theme_available
-            # detections, url-less upstream_changed no-ops): the user
-            # confirmed "Accept 3?" and could get hundreds of hidden-row
-            # decision flips + yt-dlp downloads behind one ok:true.
-            from ..core.sync import _enqueue_download
-            for tup in tuples:
-                section_id = tup["section_id"]
-                edition = tup["edition_key"]
-                media_type = tup["media_type"]
-                tmdb_id = tup["tmdb_id"]
-                new_tdb_url = tup["new_url"]
-                kind = tup["kind"]
-                applied = conn.execute(
-                    "SELECT COALESCE("
-                    "  (SELECT youtube_url FROM user_overrides "
-                    "    WHERE media_type = ? AND tmdb_id = ? "
-                    "      AND section_id = ?),"
-                    "  (SELECT youtube_url FROM user_overrides "
-                    "    WHERE media_type = ? AND tmdb_id = ? "
-                    "      AND section_id = ''),"
-                    "  (SELECT youtube_url FROM themes "
-                    "    WHERE media_type = ? AND tmdb_id = ?)"
-                    ") AS applied",
-                    (media_type, tmdb_id, section_id,
-                     media_type, tmdb_id,
-                     media_type, tmdb_id),
-                ).fetchone()
-                applied_url = applied["applied"] if applied else None
-                # No-op gate: skip rows where new_url == applied URL
-                # unless kind=urls_match (meaningful classification flip).
-                # v1.19.98: also exempt new_theme_available — those rows
-                # have NO prior theme, so applied_url falls back to
-                # themes.youtube_url which EQUALS new_tdb_url, making the
-                # gate skip every one (the user's bulk accept logged
-                # "Bulk-accepted 0"). Accepting a new-theme row must
-                # queue the download even though new == applied.
-                if (kind not in ("urls_match", "new_theme_available")
-                        and applied_url
-                        and new_tdb_url == applied_url):
-                    continue
-                # Per-section override fetch (v1.12.108+ semantics).
-                # v1.20.12: also fetch intent so the rollback can preserve
-                # it (mirrors api_accept_update's v1.19.36 fix).
-                # v1.22.16: scope to THIS edition (+ track which section the
-                # override lives at) — mirror per-row api_accept_update
-                # (v1.21.87). Pre-fix the fetch + the section-wide DELETE below
-                # were edition-blind, so accepting one edition wiped EVERY
-                # edition's override for the title (audit #2, data-loss).
-                ovr_section = section_id
-                override = conn.execute(
-                    "SELECT youtube_url, intent FROM user_overrides "
-                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-                    "  AND edition_key = ?",
-                    (media_type, tmdb_id, section_id, edition),
-                ).fetchone()
-                if override is None and section_id:
+        _username = request.state.principal.username
+        # v0.51.296 (holistic review, class 12): the whole DB/loop
+        # sequence runs off the event loop — the v1.22.69 audit measured
+        # this SQL shape at seconds on a 10K library.
+        def _run():
+            accepted = 0
+            eager_flipped = 0
+            enqueued = 0
+            # v1.19.39: count P-row backup-only rows so the HISTORY
+            # summary line can distinguish "bulk accepted N, M of those
+            # routed through the P-row backup branch" from a fully
+            # force-placed bulk. Audit found that pre-v1.19.39 the
+            # single summary log_event had no `bulk_is_p_row` counter
+            # — post-incident "which rows took the backup branch?"
+            # required worker-telemetry inference instead of a single
+            # HISTORY read.
+            p_backup_count = 0
+            with get_conn(db) as conn, transaction(conn):
+                # v1.12.120: iterate (section × title) tuples that pass
+                # the same gate as the row pill / topbar count. Pre-fix
+                # the query was `WHERE decision='pending'` raw, which
+                # accepted: (a) no-op self-updates on T rows, (b) rows
+                # with no motif tracking presence in any section, (c) the
+                # legacy '' fallback row even when sections had their
+                # own per-section decisions. The result was bulk accept
+                # firing downloads for rows the user couldn't see as
+                # pending.
+                tuples = conn.execute(f"""
+                    SELECT pi2.section_id, pi2.edition_key, t2.media_type, t2.tmdb_id,
+                           COALESCE(
+                             (SELECT pu.new_youtube_url FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = pi2.section_id AND pu.edition_key = ''),
+                             (SELECT pu.new_youtube_url FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = '' AND pu.edition_key = '')
+                           ) AS new_url,
+                           COALESCE(
+                             (SELECT pu.kind FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = pi2.section_id AND pu.edition_key = ''),
+                             (SELECT pu.kind FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = '' AND pu.edition_key = '')
+                           ) AS kind
+                      FROM plex_items pi2
+                INNER JOIN plex_sections ps2
+                        ON ps2.section_id = pi2.section_id AND ps2.included = 1
+                INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                     WHERE COALESCE(
+                             (SELECT pu.decision FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = pi2.section_id AND pu.edition_key = pi2.edition_key),
+                             (SELECT pu.decision FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = '' AND pu.edition_key = pi2.edition_key)
+                           , 'pending') = 'pending'
+                           AND {_pending_update_detected_sql('t2', 'pi2')}
+                           AND {_pending_update_actionable_sql('t2', 'pi2')}
+                       AND (
+                           EXISTS (SELECT 1 FROM local_files lf2
+                                    WHERE lf2.media_type = t2.media_type
+                                      AND lf2.tmdb_id = t2.tmdb_id
+                                      AND lf2.section_id = pi2.section_id)
+                           OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                       WHERE uo2.media_type = t2.media_type
+                                         AND uo2.tmdb_id = t2.tmdb_id
+                                         AND uo2.section_id = pi2.section_id)
+                           OR EXISTS (SELECT 1 FROM placements p2
+                                       WHERE p2.media_type = t2.media_type
+                                         AND p2.tmdb_id = t2.tmdb_id
+                                         AND p2.section_id = pi2.section_id)
+                           OR pi2.local_theme_file = 1
+                           OR {_pending_update_new_theme_kind_sql('t2', 'pi2')}
+                       )
+                """).fetchall()
+                # v1.22.62 (audit round 2 #4): the actionable gate above was
+                # missing — present at all 13 sibling sites including
+                # /api/updates/count (the number the confirm dialog shows)
+                # and DECLINE ALL. Pre-fix ACCEPT ALL also acted on rows the
+                # UI deliberately HIDES (v1.22.12 pure-P new_theme_available
+                # detections, url-less upstream_changed no-ops): the user
+                # confirmed "Accept 3?" and could get hundreds of hidden-row
+                # decision flips + yt-dlp downloads behind one ok:true.
+                from ..core.sync import _enqueue_download
+                for tup in tuples:
+                    section_id = tup["section_id"]
+                    edition = tup["edition_key"]
+                    media_type = tup["media_type"]
+                    tmdb_id = tup["tmdb_id"]
+                    new_tdb_url = tup["new_url"]
+                    kind = tup["kind"]
+                    applied = conn.execute(
+                        "SELECT COALESCE("
+                        "  (SELECT youtube_url FROM user_overrides "
+                        "    WHERE media_type = ? AND tmdb_id = ? "
+                        "      AND section_id = ?),"
+                        "  (SELECT youtube_url FROM user_overrides "
+                        "    WHERE media_type = ? AND tmdb_id = ? "
+                        "      AND section_id = ''),"
+                        "  (SELECT youtube_url FROM themes "
+                        "    WHERE media_type = ? AND tmdb_id = ?)"
+                        ") AS applied",
+                        (media_type, tmdb_id, section_id,
+                         media_type, tmdb_id,
+                         media_type, tmdb_id),
+                    ).fetchone()
+                    applied_url = applied["applied"] if applied else None
+                    # No-op gate: skip rows where new_url == applied URL
+                    # unless kind=urls_match (meaningful classification flip).
+                    # v1.19.98: also exempt new_theme_available — those rows
+                    # have NO prior theme, so applied_url falls back to
+                    # themes.youtube_url which EQUALS new_tdb_url, making the
+                    # gate skip every one (the user's bulk accept logged
+                    # "Bulk-accepted 0"). Accepting a new-theme row must
+                    # queue the download even though new == applied.
+                    if (kind not in ("urls_match", "new_theme_available")
+                            and applied_url
+                            and new_tdb_url == applied_url):
+                        continue
+                    # Per-section override fetch (v1.12.108+ semantics).
+                    # v1.20.12: also fetch intent so the rollback can preserve
+                    # it (mirrors api_accept_update's v1.19.36 fix).
+                    # v1.22.16: scope to THIS edition (+ track which section the
+                    # override lives at) — mirror per-row api_accept_update
+                    # (v1.21.87). Pre-fix the fetch + the section-wide DELETE below
+                    # were edition-blind, so accepting one edition wiped EVERY
+                    # edition's override for the title (audit #2, data-loss).
+                    ovr_section = section_id
                     override = conn.execute(
                         "SELECT youtube_url, intent FROM user_overrides "
-                        "WHERE media_type = ? AND tmdb_id = ? AND section_id = '' "
+                        "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
                         "  AND edition_key = ?",
-                        (media_type, tmdb_id, edition),
+                        (media_type, tmdb_id, section_id, edition),
                     ).fetchone()
-                    if override is not None:
-                        # The applied override was the global one — deleting it
-                        # drops it globally. Target the '' section on delete.
-                        ovr_section = ""
-                url_match = bool(
-                    override
-                    and new_tdb_url
-                    and override["youtube_url"]
-                    and override["youtube_url"].strip() == new_tdb_url.strip()
-                )
-                # v1.22.89: capture unconditionally — mirror per-row
-                # ACCEPT (v1.12.61), which dropped its url_match gate
-                # because skipping the capture left previous_url at the
-                # pre-SET-URL value with the wrong kind ("previous url:
-                # X themerrdb" for what was a user override moments
-                # earlier). Bulk kept the stale gate (mirror drift).
-                _capture_previous_url(
-                    conn, media_type, tmdb_id, section_id=section_id,
-                )
-                if override:
-                    # v1.22.16: delete only the override we actually found
-                    # (its section + THIS edition), not every edition in the
-                    # section. ovr_section is '' when the global override applied.
-                    conn.execute(
-                        "DELETE FROM user_overrides "
-                        "WHERE media_type = ? AND tmdb_id = ? "
-                        "  AND section_id = ? AND edition_key = ?",
-                        (media_type, tmdb_id, ovr_section, edition),
+                    if override is None and section_id:
+                        override = conn.execute(
+                            "SELECT youtube_url, intent FROM user_overrides "
+                            "WHERE media_type = ? AND tmdb_id = ? AND section_id = '' "
+                            "  AND edition_key = ?",
+                            (media_type, tmdb_id, edition),
+                        ).fetchone()
+                        if override is not None:
+                            # The applied override was the global one — deleting it
+                            # drops it globally. Target the '' section on delete.
+                            ovr_section = ""
+                    url_match = bool(
+                        override
+                        and new_tdb_url
+                        and override["youtube_url"]
+                        and override["youtube_url"].strip() == new_tdb_url.strip()
                     )
-                    if url_match:
+                    # v1.22.89: capture unconditionally — mirror per-row
+                    # ACCEPT (v1.12.61), which dropped its url_match gate
+                    # because skipping the capture left previous_url at the
+                    # pre-SET-URL value with the wrong kind ("previous url:
+                    # X themerrdb" for what was a user override moments
+                    # earlier). Bulk kept the stale gate (mirror drift).
+                    _capture_previous_url(
+                        conn, media_type, tmdb_id, section_id=section_id,
+                    )
+                    if override:
+                        # v1.22.16: delete only the override we actually found
+                        # (its section + THIS edition), not every edition in the
+                        # section. ovr_section is '' when the global override applied.
                         conn.execute(
-                            """UPDATE local_files
-                                  SET provenance = 'auto',
-                                      source_kind = 'themerrdb'
-                                WHERE media_type = ?
-                                  AND tmdb_id = ?
-                                  AND section_id = ?
-                                  AND edition_key = ?""",
-                            (media_type, tmdb_id, section_id, edition),
+                            "DELETE FROM user_overrides "
+                            "WHERE media_type = ? AND tmdb_id = ? "
+                            "  AND section_id = ? AND edition_key = ?",
+                            (media_type, tmdb_id, ovr_section, edition),
                         )
-                        eager_flipped += 1
-                _set_pending_update_decision(
-                    conn, media_type=media_type, tmdb_id=tmdb_id,
-                    section_id=section_id, decision="accepted",
-                    decided_by=request.state.principal.username,
-                    edition_key=edition,
-                )
-                # v1.20.12: stamp the same rollback as per-row ACCEPT
-                # UPDATE so a terminal download failure re-pends THIS
-                # row's decision (and restores its deleted override) —
-                # closing the bulk-path half of audit HIGH-1 (an accept
-                # with no override otherwise stuck the row 'accepted'
-                # with no theme + no recovery).
-                bulk_rollback = {"kind": "accept_update"}
-                # v1.22.21 (edition audit): scope the rollback to THIS edition.
-                bulk_rollback["edition_key"] = edition or ""
-                if override and override["youtube_url"]:
-                    bulk_rollback["replaced_user_url"] = override["youtube_url"]
-                    bulk_rollback["prior_intent"] = (
-                        override["intent"]
-                        if "intent" in override.keys() else "replace"
-                    )
-                # v1.19.33: P-row branch — mirrors api_accept_update.
-                # Bulk ACCEPT ALL iterates per-section and passes
-                # section_id, so the same predicate applies: if THIS
-                # section's row is currently SRC=P, force_place would
-                # steal Plex's serving slot. Use auto_place=False +
-                # the v1.19.32 backup reason so the BK badge surfaces
-                # and the hourly retry sweep skips.
-                bulk_is_p_row = _is_p_row_for_section(
-                    conn, media_type=media_type,
-                    tmdb_id=tmdb_id, section_id=section_id,
-                    edition_key=edition,
-                )
-                if bulk_is_p_row:
-                    _enqueue_download(
+                        if url_match:
+                            conn.execute(
+                                """UPDATE local_files
+                                      SET provenance = 'auto',
+                                          source_kind = 'themerrdb'
+                                    WHERE media_type = ?
+                                      AND tmdb_id = ?
+                                      AND section_id = ?
+                                      AND edition_key = ?""",
+                                (media_type, tmdb_id, section_id, edition),
+                            )
+                            eager_flipped += 1
+                    _set_pending_update_decision(
                         conn, media_type=media_type, tmdb_id=tmdb_id,
-                        reason="upstream_update_accepted_p_backup",
-                        auto_place=False,
-                        only_section_id=section_id,
-                        edition_key=edition,  # v1.22.16: scope to THIS edition
-                        rollback=bulk_rollback,
-                        bulk=True,  # v1.23.46: bulk ACCEPT ALL → one list
+                        section_id=section_id, decision="accepted",
+                        decided_by=_username,
+                        edition_key=edition,
                     )
-                    p_backup_count += 1
-                else:
-                    _enqueue_download(
-                        conn, media_type=media_type, tmdb_id=tmdb_id,
-                        reason="bulk_update_accepted",
-                        auto_place=True,
-                        force_place=True,
-                        only_section_id=section_id,
-                        edition_key=edition,  # v1.22.16: scope to THIS edition
-                        rollback=bulk_rollback,
-                        bulk=True,  # v1.23.46: bulk ACCEPT ALL → one list
+                    # v1.20.12: stamp the same rollback as per-row ACCEPT
+                    # UPDATE so a terminal download failure re-pends THIS
+                    # row's decision (and restores its deleted override) —
+                    # closing the bulk-path half of audit HIGH-1 (an accept
+                    # with no override otherwise stuck the row 'accepted'
+                    # with no theme + no recovery).
+                    bulk_rollback = {"kind": "accept_update"}
+                    # v1.22.21 (edition audit): scope the rollback to THIS edition.
+                    bulk_rollback["edition_key"] = edition or ""
+                    if override and override["youtube_url"]:
+                        bulk_rollback["replaced_user_url"] = override["youtube_url"]
+                        bulk_rollback["prior_intent"] = (
+                            override["intent"]
+                            if "intent" in override.keys() else "replace"
+                        )
+                    # v1.19.33: P-row branch — mirrors api_accept_update.
+                    # Bulk ACCEPT ALL iterates per-section and passes
+                    # section_id, so the same predicate applies: if THIS
+                    # section's row is currently SRC=P, force_place would
+                    # steal Plex's serving slot. Use auto_place=False +
+                    # the v1.19.32 backup reason so the BK badge surfaces
+                    # and the hourly retry sweep skips.
+                    bulk_is_p_row = _is_p_row_for_section(
+                        conn, media_type=media_type,
+                        tmdb_id=tmdb_id, section_id=section_id,
+                        edition_key=edition,
                     )
-                # v1.19.39: per-row audit so post-incident analysis can
-                # tell which rows took the v1.19.33 P-row backup branch
-                # vs the legacy force-place. Pre-fix bulk ACCEPT ALL
-                # only wrote one summary log_event after the loop —
-                # the single-row api_accept_update (api.py:~9477)
-                # already emits this per call. Symmetry across the
-                # two ACCEPT UPDATE entrypoints lets `details ->>
-                # 'p_row_backup'` queries on audit_events work
-                # regardless of which path the user took.
-                _record_audit(
-                    conn, actor=request.state.user,
-                    action="accept_update",
-                    media_type=media_type, tmdb_id=tmdb_id,
-                    section_id=section_id,
-                    details={
-                        "old_url": override["youtube_url"] if override else None,
-                        "new_url": new_tdb_url,
-                        "url_match": url_match,
-                        "p_row_backup": bulk_is_p_row,
-                        "bulk": True,
-                    },
-                )
-                enqueued += 1
-                accepted += 1
-        # v1.19.39: include the P-row backup count so HISTORY
-        # readers can correlate `bulk-accepted N (M as P-row
-        # backup)` with the v1.19.33 backup-branch behavior.
-        # Pre-fix the summary had no P-branch counter — readers
-        # had to infer from worker logs.
-        log_event(
-            db, level="INFO", component="api",
-            message=(
-                f"Bulk-accepted {accepted} pending update"
-                f"{'s' if accepted != 1 else ''} by "
-                f"{request.state.principal.username} "
-                f"({eager_flipped} eager-flipped, "
-                f"{enqueued} downloads queued"
-                f"{f', {p_backup_count} as P-row backup' if p_backup_count else ''}"
-                f")"
-            ),
-        )
-        return {
-            "ok": True,
-            "accepted": accepted,
-            "eager_flipped": eager_flipped,
-            "downloads_queued": enqueued,
-            "p_backup": p_backup_count,
-        }
+                    if bulk_is_p_row:
+                        _enqueue_download(
+                            conn, media_type=media_type, tmdb_id=tmdb_id,
+                            reason="upstream_update_accepted_p_backup",
+                            auto_place=False,
+                            only_section_id=section_id,
+                            edition_key=edition,  # v1.22.16: scope to THIS edition
+                            rollback=bulk_rollback,
+                            bulk=True,  # v1.23.46: bulk ACCEPT ALL → one list
+                        )
+                        p_backup_count += 1
+                    else:
+                        _enqueue_download(
+                            conn, media_type=media_type, tmdb_id=tmdb_id,
+                            reason="bulk_update_accepted",
+                            auto_place=True,
+                            force_place=True,
+                            only_section_id=section_id,
+                            edition_key=edition,  # v1.22.16: scope to THIS edition
+                            rollback=bulk_rollback,
+                            bulk=True,  # v1.23.46: bulk ACCEPT ALL → one list
+                        )
+                    # v1.19.39: per-row audit so post-incident analysis can
+                    # tell which rows took the v1.19.33 P-row backup branch
+                    # vs the legacy force-place. Pre-fix bulk ACCEPT ALL
+                    # only wrote one summary log_event after the loop —
+                    # the single-row api_accept_update (api.py:~9477)
+                    # already emits this per call. Symmetry across the
+                    # two ACCEPT UPDATE entrypoints lets `details ->>
+                    # 'p_row_backup'` queries on audit_events work
+                    # regardless of which path the user took.
+                    _record_audit(
+                        conn, actor=_username,
+                        action="accept_update",
+                        media_type=media_type, tmdb_id=tmdb_id,
+                        section_id=section_id,
+                        details={
+                            "old_url": override["youtube_url"] if override else None,
+                            "new_url": new_tdb_url,
+                            "url_match": url_match,
+                            "p_row_backup": bulk_is_p_row,
+                            "bulk": True,
+                        },
+                    )
+                    enqueued += 1
+                    accepted += 1
+            # v1.19.39: include the P-row backup count so HISTORY
+            # readers can correlate `bulk-accepted N (M as P-row
+            # backup)` with the v1.19.33 backup-branch behavior.
+            # Pre-fix the summary had no P-branch counter — readers
+            # had to infer from worker logs.
+            log_event(
+                db, level="INFO", component="api",
+                message=(
+                    f"Bulk-accepted {accepted} pending update"
+                    f"{'s' if accepted != 1 else ''} by "
+                    f"{_username} "
+                    f"({eager_flipped} eager-flipped, "
+                    f"{enqueued} downloads queued"
+                    f"{f', {p_backup_count} as P-row backup' if p_backup_count else ''}"
+                    f")"
+                ),
+            )
+            return {
+                "ok": True,
+                "accepted": accepted,
+                "eager_flipped": eager_flipped,
+                "downloads_queued": enqueued,
+                "p_backup": p_backup_count,
+            }
+        return await run_in_threadpool(_run)
 
     @app.post("/api/updates/decline-all")
     async def api_decline_all_updates(
@@ -13783,69 +13793,75 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         the user can actually see as actionable, leaves no-op /
         cross-section-bleed rows alone."""
         _require_admin(request)
-        declined = 0
-        with get_conn(db) as conn:
-            # v1.19.4: f-string for _not_p_row_sql interpolation in
-            # the urls_match gate below. Body has no other `{}`.
-            tuples = conn.execute(f"""
-                SELECT pi2.section_id, pi2.edition_key, t2.media_type, t2.tmdb_id
-                  FROM plex_items pi2
-            INNER JOIN plex_sections ps2
-                    ON ps2.section_id = pi2.section_id AND ps2.included = 1
-            INNER JOIN themes t2 ON t2.id = pi2.theme_id
-                 WHERE COALESCE(
-                         (SELECT pu.decision FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = pi2.section_id AND pu.edition_key = pi2.edition_key),
-                         (SELECT pu.decision FROM pending_updates pu
-                           WHERE pu.media_type = t2.media_type
-                             AND pu.tmdb_id = t2.tmdb_id
-                             AND pu.section_id = '' AND pu.edition_key = pi2.edition_key)
-                       , 'pending') = 'pending'
-                       AND {_pending_update_detected_sql('t2', 'pi2')}
-                   AND (
-                       EXISTS (SELECT 1 FROM local_files lf2
-                                WHERE lf2.media_type = t2.media_type
-                                  AND lf2.tmdb_id = t2.tmdb_id
-                                  AND lf2.section_id = pi2.section_id)
-                       OR EXISTS (SELECT 1 FROM user_overrides uo2
-                                   WHERE uo2.media_type = t2.media_type
-                                     AND uo2.tmdb_id = t2.tmdb_id
-                                     AND uo2.section_id = pi2.section_id)
-                       OR EXISTS (SELECT 1 FROM placements p2
-                                   WHERE p2.media_type = t2.media_type
-                                     AND p2.tmdb_id = t2.tmdb_id
-                                     AND p2.section_id = pi2.section_id)
-                       OR pi2.local_theme_file = 1
-                       OR {_pending_update_new_theme_kind_sql('t2', 'pi2')}
-                   )
-                   AND {_pending_update_actionable_sql('t2', 'pi2')}
-            """).fetchall()
-            for tup in tuples:
-                # v1.23.63 (audit #19): per-row BEGIN IMMEDIATE so each decision's
-                # SELECT-then-INSERT…ON CONFLICT is atomic (was bare autocommit,
-                # inconsistent with accept-all). Per-row keeps lock holds short.
-                with transaction(conn):
-                    _set_pending_update_decision(
-                        conn,
-                        media_type=tup["media_type"],
-                        tmdb_id=tup["tmdb_id"],
-                        section_id=tup["section_id"],
-                        decision="declined",
-                        decided_by=request.state.principal.username,
-                        edition_key=tup["edition_key"],
-                    )
-                declined += 1
-        log_event(
-            db, level="INFO", component="api",
-            message=(
-                f"Bulk-declined {declined} pending update"
-                f"{'s' if declined != 1 else ''} by "
-                f"{request.state.principal.username}"
-            ),
-        )
-        return {"ok": True, "declined": declined}
+        _username = request.state.principal.username
+        # v0.51.296 (holistic review, class 12): the whole DB/loop
+        # sequence runs off the event loop — the v1.22.69 audit measured
+        # this SQL shape at seconds on a 10K library.
+        def _run():
+            declined = 0
+            with get_conn(db) as conn:
+                # v1.19.4: f-string for _not_p_row_sql interpolation in
+                # the urls_match gate below. Body has no other `{}`.
+                tuples = conn.execute(f"""
+                    SELECT pi2.section_id, pi2.edition_key, t2.media_type, t2.tmdb_id
+                      FROM plex_items pi2
+                INNER JOIN plex_sections ps2
+                        ON ps2.section_id = pi2.section_id AND ps2.included = 1
+                INNER JOIN themes t2 ON t2.id = pi2.theme_id
+                     WHERE COALESCE(
+                             (SELECT pu.decision FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = pi2.section_id AND pu.edition_key = pi2.edition_key),
+                             (SELECT pu.decision FROM pending_updates pu
+                               WHERE pu.media_type = t2.media_type
+                                 AND pu.tmdb_id = t2.tmdb_id
+                                 AND pu.section_id = '' AND pu.edition_key = pi2.edition_key)
+                           , 'pending') = 'pending'
+                           AND {_pending_update_detected_sql('t2', 'pi2')}
+                       AND (
+                           EXISTS (SELECT 1 FROM local_files lf2
+                                    WHERE lf2.media_type = t2.media_type
+                                      AND lf2.tmdb_id = t2.tmdb_id
+                                      AND lf2.section_id = pi2.section_id)
+                           OR EXISTS (SELECT 1 FROM user_overrides uo2
+                                       WHERE uo2.media_type = t2.media_type
+                                         AND uo2.tmdb_id = t2.tmdb_id
+                                         AND uo2.section_id = pi2.section_id)
+                           OR EXISTS (SELECT 1 FROM placements p2
+                                       WHERE p2.media_type = t2.media_type
+                                         AND p2.tmdb_id = t2.tmdb_id
+                                         AND p2.section_id = pi2.section_id)
+                           OR pi2.local_theme_file = 1
+                           OR {_pending_update_new_theme_kind_sql('t2', 'pi2')}
+                       )
+                       AND {_pending_update_actionable_sql('t2', 'pi2')}
+                """).fetchall()
+                for tup in tuples:
+                    # v1.23.63 (audit #19): per-row BEGIN IMMEDIATE so each decision's
+                    # SELECT-then-INSERT…ON CONFLICT is atomic (was bare autocommit,
+                    # inconsistent with accept-all). Per-row keeps lock holds short.
+                    with transaction(conn):
+                        _set_pending_update_decision(
+                            conn,
+                            media_type=tup["media_type"],
+                            tmdb_id=tup["tmdb_id"],
+                            section_id=tup["section_id"],
+                            decision="declined",
+                            decided_by=_username,
+                            edition_key=tup["edition_key"],
+                        )
+                    declined += 1
+            log_event(
+                db, level="INFO", component="api",
+                message=(
+                    f"Bulk-declined {declined} pending update"
+                    f"{'s' if declined != 1 else ''} by "
+                    f"{_username}"
+                ),
+            )
+            return {"ok": True, "declined": declined}
+        return await run_in_threadpool(_run)
 
     # --- JSON: items ---
 
@@ -21422,106 +21438,115 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not settings.is_paths_ready():
             raise HTTPException(status_code=503, detail="themes_dir not configured")
         full = settings.themes_dir / row["file_path"]
-        try:
-            full = full.resolve()
-            themes_root = settings.themes_dir.resolve()
-        except OSError as e:
-            raise HTTPException(status_code=500, detail=f"path resolution failed: {e}")
-        # Reject path-traversal attempts — full must live under themes_dir.
-        if themes_root not in full.parents and full != themes_root:
-            raise HTTPException(status_code=400, detail="resolved path escapes themes_dir")
-        if not full.is_file():
-            # v1.15.126: detailed diagnostic — pre-fix the 410
-            # just said "canonical recorded but missing on disk"
-            # without any hint about WHY. the user's Watchmen case
-            # hit this 410 even though the file was visible in
-            # Unraid's file manager AT THE SAME PATH the UI
-            # displays. The mismatch sits somewhere between the
-            # UI's stringified `settings.themes_dir / file_path`
-            # (no resolve, no stat) and the endpoint's resolved
-            # + stat'd `full`. Log every step so the next 410
-            # report comes with actionable forensics.
+        # v0.51.296 (holistic review, class 12): the whole /data-mount
+        # syscall cluster — resolve, containment, is_file, the 410
+        # forensics iterdir, and the 12-byte header sniff — runs off the
+        # event loop; a spun-down disk stalled every concurrent request.
+        # HTTPException raises propagate through run_in_threadpool.
+        def _resolve_and_sniff(full):
             try:
-                parent = full.parent
-                parent_exists = parent.exists()
-                parent_is_dir = parent.is_dir() if parent_exists else False
-                # List parent siblings (cheap on dirs with <100 entries;
-                # capped just in case) so case-mismatch / encoding
-                # issues surface.
-                try:
-                    sibling_names = sorted(
-                        p.name for p in parent.iterdir()
-                    )[:20] if parent_is_dir else []
-                except OSError as e:
-                    sibling_names = [f"<iterdir failed: {e}>"]
+                full = full.resolve()
+                themes_root = settings.themes_dir.resolve()
             except OSError as e:
-                parent_exists = False
-                parent_is_dir = False
-                sibling_names = [f"<parent stat failed: {e}>"]
-            log.warning(
-                "theme.mp3 dlBroken — db row points to a path that "
-                "doesn't resolve to a regular file. media_type=%s "
-                "tmdb_id=%s section_id=%s | "
-                "themes_dir=%s | file_path=%r | "
-                "resolved_full=%s | full.exists=%s | "
-                "parent=%s | parent.exists=%s | parent.is_dir=%s | "
-                "parent_contents=%r",
-                media_type, tmdb_id, section_id,
-                settings.themes_dir, row["file_path"],
-                full, full.exists(),
-                parent, parent_exists, parent_is_dir,
-                sibling_names,
-            )
-            raise HTTPException(
-                status_code=410,
-                detail="canonical recorded but missing on disk (dlBroken)",
-            )
-        # v1.15.123: sniff the actual file format. yt-dlp + ffmpeg
-        # SHOULD produce a real MP3 for both YouTube and SoundCloud
-        # sources, but the user reported a SoundCloud-source theme
-        # whose <audio> element rendered 0:00 / 0:00 (browser
-        # couldn't decode). If the postprocessor silently left an
-        # opus/m4a/webm container with an .mp3 filename, serving
-        # `audio/mpeg` Content-Type tells the browser to decode as
-        # MP3 — which fails for non-MP3 bytes.
-        #
-        # Read the first 12 bytes to detect actual format:
-        #   ID3 / 0xFF 0xFB (or FA/F3) — real MP3 → audio/mpeg
-        #   OggS                         — Ogg/Opus → audio/ogg
-        #   fLaC                         — FLAC     → audio/flac
-        #   ftyp                         — MP4/M4A  → audio/mp4
-        # Default falls back to audio/mpeg so existing-working
-        # files keep working.
-        media_type_header = "audio/mpeg"
-        try:
-            with full.open("rb") as fh:
-                head = fh.read(12)
-            if head.startswith(b"OggS"):
-                media_type_header = "audio/ogg"
-            elif head.startswith(b"fLaC"):
-                media_type_header = "audio/flac"
-            elif len(head) >= 8 and head[4:8] == b"ftyp":
-                media_type_header = "audio/mp4"
-            elif head.startswith(b"ID3") or (
-                len(head) >= 2 and head[0] == 0xFF
-                and head[1] in (0xFB, 0xFA, 0xF3, 0xE3)
-            ):
-                media_type_header = "audio/mpeg"
-            else:
-                # Unknown header — log + fall through to audio/mpeg.
-                # The operator can grep this line + run `file` on
-                # the path to diagnose.
+                raise HTTPException(status_code=500, detail=f"path resolution failed: {e}")
+            # Reject path-traversal attempts — full must live under themes_dir.
+            if themes_root not in full.parents and full != themes_root:
+                raise HTTPException(status_code=400, detail="resolved path escapes themes_dir")
+            if not full.is_file():
+                # v1.15.126: detailed diagnostic — pre-fix the 410
+                # just said "canonical recorded but missing on disk"
+                # without any hint about WHY. the user's Watchmen case
+                # hit this 410 even though the file was visible in
+                # Unraid's file manager AT THE SAME PATH the UI
+                # displays. The mismatch sits somewhere between the
+                # UI's stringified `settings.themes_dir / file_path`
+                # (no resolve, no stat) and the endpoint's resolved
+                # + stat'd `full`. Log every step so the next 410
+                # report comes with actionable forensics.
+                try:
+                    parent = full.parent
+                    parent_exists = parent.exists()
+                    parent_is_dir = parent.is_dir() if parent_exists else False
+                    # List parent siblings (cheap on dirs with <100 entries;
+                    # capped just in case) so case-mismatch / encoding
+                    # issues surface.
+                    try:
+                        sibling_names = sorted(
+                            p.name for p in parent.iterdir()
+                        )[:20] if parent_is_dir else []
+                    except OSError as e:
+                        sibling_names = [f"<iterdir failed: {e}>"]
+                except OSError as e:
+                    parent_exists = False
+                    parent_is_dir = False
+                    sibling_names = [f"<parent stat failed: {e}>"]
                 log.warning(
-                    "theme.mp3 has unrecognized header for "
-                    "%s/%s section=%s path=%s head=%r — "
-                    "serving as audio/mpeg by default",
-                    media_type, tmdb_id, section_id, full, head,
+                    "theme.mp3 dlBroken — db row points to a path that "
+                    "doesn't resolve to a regular file. media_type=%s "
+                    "tmdb_id=%s section_id=%s | "
+                    "themes_dir=%s | file_path=%r | "
+                    "resolved_full=%s | full.exists=%s | "
+                    "parent=%s | parent.exists=%s | parent.is_dir=%s | "
+                    "parent_contents=%r",
+                    media_type, tmdb_id, section_id,
+                    settings.themes_dir, row["file_path"],
+                    full, full.exists(),
+                    parent, parent_exists, parent_is_dir,
+                    sibling_names,
                 )
-        except OSError as e:
-            log.warning(
-                "theme.mp3 header sniff failed for %s/%s: %s",
-                media_type, tmdb_id, e,
-            )
+                raise HTTPException(
+                    status_code=410,
+                    detail="canonical recorded but missing on disk (dlBroken)",
+                )
+            # v1.15.123: sniff the actual file format. yt-dlp + ffmpeg
+            # SHOULD produce a real MP3 for both YouTube and SoundCloud
+            # sources, but the user reported a SoundCloud-source theme
+            # whose <audio> element rendered 0:00 / 0:00 (browser
+            # couldn't decode). If the postprocessor silently left an
+            # opus/m4a/webm container with an .mp3 filename, serving
+            # `audio/mpeg` Content-Type tells the browser to decode as
+            # MP3 — which fails for non-MP3 bytes.
+            #
+            # Read the first 12 bytes to detect actual format:
+            #   ID3 / 0xFF 0xFB (or FA/F3) — real MP3 → audio/mpeg
+            #   OggS                         — Ogg/Opus → audio/ogg
+            #   fLaC                         — FLAC     → audio/flac
+            #   ftyp                         — MP4/M4A  → audio/mp4
+            # Default falls back to audio/mpeg so existing-working
+            # files keep working.
+            media_type_header = "audio/mpeg"
+            try:
+                with full.open("rb") as fh:
+                    head = fh.read(12)
+                if head.startswith(b"OggS"):
+                    media_type_header = "audio/ogg"
+                elif head.startswith(b"fLaC"):
+                    media_type_header = "audio/flac"
+                elif len(head) >= 8 and head[4:8] == b"ftyp":
+                    media_type_header = "audio/mp4"
+                elif head.startswith(b"ID3") or (
+                    len(head) >= 2 and head[0] == 0xFF
+                    and head[1] in (0xFB, 0xFA, 0xF3, 0xE3)
+                ):
+                    media_type_header = "audio/mpeg"
+                else:
+                    # Unknown header — log + fall through to audio/mpeg.
+                    # The operator can grep this line + run `file` on
+                    # the path to diagnose.
+                    log.warning(
+                        "theme.mp3 has unrecognized header for "
+                        "%s/%s section=%s path=%s head=%r — "
+                        "serving as audio/mpeg by default",
+                        media_type, tmdb_id, section_id, full, head,
+                    )
+            except OSError as e:
+                log.warning(
+                    "theme.mp3 header sniff failed for %s/%s: %s",
+                    media_type, tmdb_id, e,
+                )
+            return full, media_type_header
+        full, media_type_header = await run_in_threadpool(
+            _resolve_and_sniff, full)
         return FileResponse(full, media_type=media_type_header,
                             headers={"Cache-Control": "no-store"})
 
@@ -26006,17 +26031,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 _event_kind = "plex_theme_lost"
                 _title = _nc.format_plex_theme_lost_title(_ctx)
                 _body = _nc.format_plex_theme_lost_body(_ctx)
-            _notify.dispatch(
-                db,
-                settings.cfg.notifications,
-                event_kind=_event_kind,
-                title=_title,
-                body=_body,
-                body_format="markdown",
-                # v1.23.75: mirror prod's FB-thumb attachment so the test-
-                # trigger preview matches the real reaper dispatch.
-                attach_url=_nc.attachment_thumb_url(_ctx),
-            )
+            # v0.51.296 (holistic review, class 12): dispatch runs the inbox
+            # record (sqlite connect + lock budget) inline in the caller's
+            # thread since v0.51.147 — off the event loop.
+            def _send():
+                _notify.dispatch(
+                    db,
+                    settings.cfg.notifications,
+                    event_kind=_event_kind,
+                    title=_title,
+                    body=_body,
+                    body_format="markdown",
+                    # v1.23.75: mirror prod's FB-thumb attachment so the test-
+                    # trigger preview matches the real reaper dispatch.
+                    attach_url=_nc.attachment_thumb_url(_ctx),
+                )
+            await run_in_threadpool(_send)
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
                 status_code=502,
