@@ -5551,7 +5551,26 @@
 #   short-circuit atomically replaced the section's theme.mp3 with NO
 #   capture — a COPY-mode capture (incoming_sha guards byte-identical
 #   relinks) now precedes the atomic replace.
-__version__ = "0.51.297"
+# 0.51.298: holistic-review wave 7 — six small confirmed fixes. (1) Every
+#   rebuild migration's `finally: PRAGMA foreign_keys = ON` was a silent
+#   NO-OP (the pragma does nothing inside a transaction, and the rebuild's
+#   implicit txn was still open) — FK enforcement stayed OFF for the rest
+#   of init_db on any multi-step upgrade; all five sites now
+#   commit-on-success / rollback-on-error first. (2) synchronous is
+#   per-connection — init_db's NORMAL applied only to the boot connection,
+#   so every runtime get_conn ran at the FULL default; get_conn now pairs
+#   WAL+NORMAL. (3) A coalescer timer that expired while dispatch_coalesced
+#   held the lock flushed the just-appended item early and orphaned the
+#   re-armed replacement — the flush now verifies it is still the
+#   registered timer (the shutdown drain path is unaffected). (4) The
+#   interactive-login username reached logs unsanitized (forward-auth was
+#   hardened at v1.17.23, this path wasn't) — both log sites now strip
+#   control chars. (5) The notification attachment fetch declined silently
+#   (class 9) — now warns with url/status/ctype. (6) The edit-audio
+#   PREVIEW handler had no in-flight guard (class 3) — two concurrent
+#   renders raced last-response-wins and orphaned a candidate file; guarded
+#   with a finally re-arm.
+__version__ = "0.51.298"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

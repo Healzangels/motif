@@ -222,6 +222,11 @@ def _prepare_attachment(url: str) -> str | None:
             })
         ctype = resp.headers.get("content-type", "")
         if resp.status_code != 200 or not ctype.startswith("image/"):
+            # v0.51.298 (holistic review, class 9): the silent None shipped
+            # the notification with no image and no breadcrumb. Low-frequency
+            # path — plain warning, no warn-once flag needed.
+            log.warning("notify attachment fetch declined: %s -> HTTP %s "
+                        "ctype=%r", url, resp.status_code, ctype)
             return None
         fd, raw_path = tempfile.mkstemp(
             suffix=".jpg", prefix="motif-notify-thumb-")
@@ -814,6 +819,12 @@ def _arm_coalesce_timer(db_path, notifications, event_kind, window_seconds):
         window_seconds, _flush_coalesced,
         args=(db_path, notifications, event_kind),
     )
+    # v0.51.298 (holistic review): hand the callback its own identity — a
+    # timer that EXPIRED while dispatch_coalesced held _COALESCE_LOCK used to
+    # flush the just-appended item early and orphan the freshly re-armed
+    # replacement. The flush now no-ops unless it is still the registered
+    # timer for its kind.
+    timer.args = (db_path, notifications, event_kind, timer)
     timer.daemon = True
     _COALESCE_TIMERS[event_kind] = timer
     timer.start()
@@ -942,11 +953,18 @@ def dispatch_coalesced(
         _dispatch_batch(db_path, notifications, event_kind, flush_tail)
 
 
-def _flush_coalesced(db_path, notifications, event_kind: str) -> None:
+def _flush_coalesced(db_path, notifications, event_kind: str,
+                     _self_timer=None) -> None:
     """Trailing-window timer callback — close the burst window and
     flush whatever buffered in the tail."""
     try:
         with _COALESCE_LOCK:
+            # v0.51.298: stale-timer guard (see _arm_coalesce_timer). A
+            # cancelled-too-late timer must not steal the re-armed window's
+            # buffer. None (the shutdown drain path) always flushes.
+            if (_self_timer is not None
+                    and _COALESCE_TIMERS.get(event_kind) is not _self_timer):
+                return
             tail = _COALESCE_BUF.pop(event_kind, [])
             _COALESCE_TIMERS.pop(event_kind, None)
     except Exception as e:

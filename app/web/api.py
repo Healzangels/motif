@@ -8507,7 +8507,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             user_agent=request.headers.get("User-Agent"),
         )
         log_event(settings.db_path, level="INFO", component="auth",
-                  message=f"Initial admin '{username}' created and logged in")
+                  message=("Initial admin "
+                           f"'{_sanitize_forward_auth_username(username)}'"
+                           " created and logged in"))  # v0.51.298: sanitized
         resp = RedirectResponse("/", status_code=302)
         _set_session_cookie(resp, sid, request)
         return resp
@@ -8580,7 +8582,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not ok:
             record_login_failure(client_ip)
             log_event(settings.db_path, level="WARNING", component="auth",
-                      message=f"Failed login attempt for '{username}'")
+                      # v0.51.298 (holistic review): unauthenticated input —
+                      # strip control chars like the forward-auth path
+                      # (v1.17.23 MED 6) so a crafted username can't forge
+                      # log lines / inject terminal escapes.
+                      message=("Failed login attempt for "
+                               f"'{_sanitize_forward_auth_username(username)}'"))
             return templates.TemplateResponse(
                 request, "login.html",
                 {"error": "Invalid username or password", "next": next or "/"},
@@ -8592,7 +8599,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             user_agent=request.headers.get("User-Agent"),
         )
         log_event(settings.db_path, level="INFO", component="auth",
-                  message=f"User '{username}' logged in")
+                  message=("User "
+                           f"'{_sanitize_forward_auth_username(username)}'"
+                           " logged in"))  # v0.51.298: sanitized (see above)
         # Validate `next` to avoid open-redirect — must be a same-origin path
         target = next if (next and next.startswith("/") and not next.startswith("//")) else "/"
         resp = RedirectResponse(target, status_code=302)

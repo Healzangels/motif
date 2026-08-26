@@ -135,7 +135,10 @@ def test_v55_migration_restores_foreign_keys_in_finally():
     body = src[fn_start:fn_end]
     assert "finally:" in body
     finally_idx = body.index("finally:")
-    finally_block = body[finally_idx:finally_idx + 200]
+    # v0.51.298: was a 200-char window — the txn-close guard (the pragma is
+    # a no-op mid-txn) pushed the restore past the edge. The body already
+    # ends at the next def, so slice to its end (the .261 structural form).
+    finally_block = body[finally_idx:]
     assert "PRAGMA foreign_keys = ON" in finally_block, (
         "v1.18.5: foreign_keys = ON restoration must live in the "
         "finally block so a crash mid-rebuild doesn't leak FK-off "

@@ -20989,6 +20989,7 @@
       // v0.51.259: a re-deploy / a staged backup are both additive, not loss.
       theme_pushed:                 'tier-add',
       theme_backed_up:              'tier-add',
+
       plex_item_arrived_themed:     'tier-add',
       theme_auto_restored:          'tier-add',
       new_tdb_theme_available:      'tier-avail',
@@ -21423,8 +21424,15 @@
     document.getElementById('edit-audio-close')?.addEventListener('click', close);
     document.getElementById('edit-audio-cancel')?.addEventListener('click', close);
     dlg.addEventListener('cancel', () => discard());   // Esc — native close follows
+    // v0.51.298 (holistic review): class-3 in-flight guard — two concurrent
+    // renders could complete out of order, the LAST response winning
+    // _editAudioCtx.candidate and orphaning the other candidate file until
+    // the TTL sweep. Same guard the sibling upload/manual-url handlers carry.
+    let _previewRendering = false;
     document.getElementById('edit-audio-preview')?.addEventListener('click', async () => {
       if (!_editAudioCtx) return;
+      if (_previewRendering) return;
+      _previewRendering = true;
       discard();                                        // a re-preview replaces the candidate
       if (st) st.textContent = '… rendering';
       try {
@@ -21449,6 +21457,8 @@
         if (st) st.textContent = '';
       } catch (e) {
         if (st) st.textContent = `✗ ${e && e.message ? e.message : 'render failed'}`;
+      } finally {
+        _previewRendering = false;   // v0.51.298: re-arm on every exit path
       }
     });
     document.getElementById('edit-audio-form')?.addEventListener('submit', async (ev) => {

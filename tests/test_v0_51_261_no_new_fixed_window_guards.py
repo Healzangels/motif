@@ -68,7 +68,9 @@ _MIN_WIDTH = 100
 # v0.51.295: 1495 → 1493 (test_v1_22_32's 900-char and test_v1_23_64's
 # 700-char still_p windows — both rotted by the phantom-P qualifier, both
 # anchored to .fetchone(); the SAME query had THREE independent windows).
-_BUDGET = 1493
+# v0.51.298: 1493 → 1492 (test_v1_18_5's 200-char finally window, rotted by
+# the FK txn-close guard — sliced to the function body's end).
+_BUDGET = 1492
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

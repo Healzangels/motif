@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -1409,6 +1410,16 @@ def _migrate_v4_to_v5(conn: sqlite3.Connection) -> None:
         );
     """)
     finally:
+        # v0.51.298 (holistic review): PRAGMA foreign_keys is a NO-OP inside
+        # a transaction — the rebuild's implicit txn made this restore
+        # silent-fail, leaving FK enforcement OFF for the rest of init_db.
+        # Close the txn first: commit on success, rollback on error (a bare
+        # commit here would persist a partial rebuild).
+        if conn.in_transaction:
+            if sys.exc_info()[0] is None:
+                conn.commit()
+            else:
+                conn.rollback()
         conn.execute("PRAGMA foreign_keys = ON")
 
 
@@ -2301,6 +2312,16 @@ def _migrate_v57_to_v58(conn: sqlite3.Connection) -> None:
                 f"first 5: {violations[:5]}"
             )
     finally:
+        # v0.51.298 (holistic review): PRAGMA foreign_keys is a NO-OP inside
+        # a transaction — the rebuild's implicit txn made this restore
+        # silent-fail, leaving FK enforcement OFF for the rest of init_db.
+        # Close the txn first: commit on success, rollback on error (a bare
+        # commit here would persist a partial rebuild).
+        if conn.in_transaction:
+            if sys.exc_info()[0] is None:
+                conn.commit()
+            else:
+                conn.rollback()
         conn.execute("PRAGMA foreign_keys = ON")
 
 
@@ -2426,6 +2447,16 @@ def _migrate_v59_to_v60(conn: sqlite3.Connection) -> None:
                 f"first 5: {violations[:5]}"
             )
     finally:
+        # v0.51.298 (holistic review): PRAGMA foreign_keys is a NO-OP inside
+        # a transaction — the rebuild's implicit txn made this restore
+        # silent-fail, leaving FK enforcement OFF for the rest of init_db.
+        # Close the txn first: commit on success, rollback on error (a bare
+        # commit here would persist a partial rebuild).
+        if conn.in_transaction:
+            if sys.exc_info()[0] is None:
+                conn.commit()
+            else:
+                conn.rollback()
         conn.execute("PRAGMA foreign_keys = ON")
 
 
@@ -2607,6 +2638,16 @@ def _migrate_v62_to_v63(conn: sqlite3.Connection) -> None:
                 f"v63: foreign_key_check found {len(violations)} "
                 f"violation(s) post-rebuild — first 5: {violations[:5]}")
     finally:
+        # v0.51.298 (holistic review): PRAGMA foreign_keys is a NO-OP inside
+        # a transaction — the rebuild's implicit txn made this restore
+        # silent-fail, leaving FK enforcement OFF for the rest of init_db.
+        # Close the txn first: commit on success, rollback on error (a bare
+        # commit here would persist a partial rebuild).
+        if conn.in_transaction:
+            if sys.exc_info()[0] is None:
+                conn.commit()
+            else:
+                conn.rollback()
         conn.execute("PRAGMA foreign_keys = ON")
 
 
@@ -3122,6 +3163,16 @@ def _migrate_v54_to_v55(conn: sqlite3.Connection) -> None:
                 f"first 5: {violations[:5]}"
             )
     finally:
+        # v0.51.298 (holistic review): PRAGMA foreign_keys is a NO-OP inside
+        # a transaction — the rebuild's implicit txn made this restore
+        # silent-fail, leaving FK enforcement OFF for the rest of init_db.
+        # Close the txn first: commit on success, rollback on error (a bare
+        # commit here would persist a partial rebuild).
+        if conn.in_transaction:
+            if sys.exc_info()[0] is None:
+                conn.commit()
+            else:
+                conn.rollback()
         conn.execute("PRAGMA foreign_keys = ON")
 
 
@@ -4882,6 +4933,11 @@ def get_conn(db_path: Path) -> Iterator[sqlite3.Connection]:
     # blocking the full 2.1s. Kept because it makes the budget explicit at the
     # call site and survives someone changing the connect() kwargs.
     conn.execute(f"PRAGMA busy_timeout = {int(LOCK_WAIT_S * 1000)}")
+    # v0.51.298 (holistic review): synchronous is PER-CONNECTION (unlike the
+    # persistent journal_mode=WAL) — init_db's NORMAL applied only to the
+    # throwaway boot connection, so every runtime connection silently ran at
+    # the FULL default, forfeiting the intended WAL+NORMAL pairing.
+    conn.execute("PRAGMA synchronous = NORMAL")
     try:
         yield conn
     finally:
