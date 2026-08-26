@@ -2096,7 +2096,8 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                     # one column to a per-row SELECT is cheap; the
                     # alternative (separate roundtrip) wasn't.
                     "SELECT plex_theme_uri, has_theme, guid_tmdb, "
-                    "       media_type, theme_id FROM plex_items "
+                    "       media_type, theme_id, folder_path, edition_key "
+                    "  FROM plex_items "
                     "WHERE rating_key = ?",
                     (it.rating_key,),
                 ).fetchone()
@@ -2106,6 +2107,26 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                 # mirror. '' for a standard/untagged folder = today.
                 ek = edition_key_for_folder(it.folder_path)
                 if existing:
+                    # v0.51.301 (holistic r2): preserve-on-empty. A failed
+                    # /library/metadata bulk path fetch degrades show
+                    # folder_path to '' (plex.py returns {} per batch, the
+                    # enum still reports success) — overwriting a known-good
+                    # path with '' also blanked edition_key and poisoned every
+                    # folder-derived surface until the next lucky refresh.
+                    # Collections legitimately carry no folder — only movies/
+                    # shows preserve, and only over a real prior (v1.11.67
+                    # indeterminate-preservation shape).
+                    _eff_folder = it.folder_path
+                    _eff_ek = ek
+                    if (not it.folder_path
+                            and (existing["folder_path"] or "")
+                            and it.media_type != "collection"):
+                        _eff_folder = existing["folder_path"]
+                        _eff_ek = existing["edition_key"] or ""
+                        log.info(
+                            "enum: preserving folder_path for rk=%s — the "
+                            "path fetch degraded to '' (batch failure?)",
+                            it.rating_key)
                     # v1.12.112: detect theme-URI change. Plex's URL
                     # has a trailing version suffix that bumps when
                     # the underlying theme content changes (or when
@@ -2134,7 +2155,7 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                WHERE rating_key = ?""",
                             (it.section_id, it.media_type, it.title, it.year,
                              it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                             it.folder_path, ek, it.plex_edition_title or '',
+                             _eff_folder, _eff_ek, it.plex_edition_title or '',
                              1 if it.has_theme else 0, sidecar,
                              tn, now, new_uri, indep_observation, it.rating_key),
                         )
@@ -2152,7 +2173,7 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                WHERE rating_key = ?""",
                             (it.section_id, it.media_type, it.title, it.year,
                              it.guid_imdb, it.guid_tmdb, it.guid_tvdb,
-                             it.folder_path, ek, it.plex_edition_title or '',
+                             _eff_folder, _eff_ek, it.plex_edition_title or '',
                              1 if it.has_theme else 0, sidecar,
                              tn, now, indep_observation, it.rating_key),
                         )

@@ -17574,6 +17574,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             ratingKey = e.get("ratingKey", "")
                             if not ratingKey.startswith("upload://"):
                                 continue
+                            # v0.51.301 (holistic r2): the SELECTED upload on
+                            # a plex_upload row IS motif's entry even when its
+                            # hash differs from the canonical — the v1.24.47
+                            # downscale uploads RE-ENCODED bytes, and a
+                            # normalize/edit leaves motif's older upload://
+                            # entry behind. Hash-only matching picked motif's
+                            # own theme as the 'fallback' and re-selected it,
+                            # defeating the unplace.
+                            if e.get("selected"):
+                                continue
                             entry_hash = ratingKey.rsplit("/", 1)[-1]
                             if motif_hash is None or entry_hash != motif_hash:
                                 fallback_rk = ratingKey

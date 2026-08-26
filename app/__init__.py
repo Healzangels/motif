@@ -5605,7 +5605,22 @@
 #   window). (4) The restore sweep's two silent re-stat skip branches log
 #   aggregated INFO (the v1.18.7 cold-path rule; OSError counts flag a
 #   mount problem).
-__version__ = "0.51.300"
+# 0.51.301: holistic r2 wave 10 — three confirmed mediums. (1) plex.py's
+#   bulk folder-path fetch degrades to '' per failed /library/metadata
+#   batch while the enum reports success — _upsert_items then overwrote a
+#   known-good folder_path/edition_key with '' and the freshness stamp hid
+#   the damage until the next lucky refresh; the upsert now preserves the
+#   prior path for movie/show rows when the incoming path is empty
+#   (collections legitimately carry none; a real move still updates).
+#   (2) The UNPLACE fallback chooser matched motif's Plex entry by the
+#   CANONICAL sha1 only — the v1.24.47 downscale uploads RE-ENCODED bytes
+#   (and normalize/edit leaves motif's older upload:// entry behind), so
+#   the chooser picked motif's own theme as the "fallback" and re-selected
+#   it, defeating the unplace; it now also skips the SELECTED upload.
+#   (3) release.yml never verified the pushed tag against __version__ —
+#   the documented pre-v1.13.79 drift class; a blocking gate step now
+#   compares them on tag pushes (dispatch builds carry no tag).
+__version__ = "0.51.301"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
