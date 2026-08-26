@@ -26,7 +26,12 @@ def test_grp_helper_hides_empty_groups():
     # ON DISK group on a metadata-only row leaves no dangling header).
     assert "const _grp = (title, rows) => rows.trim()" in APP_JS
     # v0.51.64: title htmlEscape'd (the '&' in "file & placement").
-    assert '<div class="dlg-section info-group"><h4>${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>' in APP_JS
+    # v0.51.289: `// ` prefix — one header voice across the card.
+    assert '<div class="dlg-section info-group"><h4>// ${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>' in APP_JS
+    # the fold twin hides empty sections the same way (guard then details).
+    fold = APP_JS[APP_JS.index("const _fold = (title, rows,"):
+                  APP_JS.index('<details class="history-section info-fold"')]
+    assert "rows.trim()" in fold
 
 
 def test_four_group_row_consts_defined():
@@ -38,13 +43,26 @@ def test_four_groups_rendered_in_order():
     # v0.51.64 (the user): labels reverted to the original demo names
     # IDENTITY/SOURCE/HISTORY/FILE & PLACEMENT (were IDS/LINKS/TIMELINE/ON DISK).
     # The row consts keep their internal names.
-    calls = ["_grp('identity', _idsRows)", "_grp('source', _linksRows)",
-             "_grp('history', _timelineRows)", "_grp('file & placement', _onDiskRows)"]
+    # v0.51.289 (design audit): intent-based order — the expanded actionable
+    # groups (SOURCE, FILE & PLACEMENT) render first, then the collapsed
+    # reference folds (IDENTITY, TIMELINE — renamed from 'history' to end the
+    # // HISTORY collision — LOUDNESS, revisions).
+    calls = ["_grp('source', _linksRows)",
+             "_grp('file & placement', _onDiskRows)",
+             "_fold('identity', _idsRows",
+             "_fold('timeline', _timelineRows",
+             "_fold('loudness', _loudnessRows"]
     idxs = []
     for c in calls:
         assert c in APP_JS, f"missing group render call {c}"
         idxs.append(APP_JS.index(c))
-    assert idxs == sorted(idxs), "groups must render in identity/source/history/file order"
+    assert idxs == sorted(idxs), (
+        "card order must be source/file first, then the reference folds")
+    # the retired shapes must be gone — a stray expanded identity/history
+    # group would resurrect the pre-.289 wall.
+    assert "_grp('identity'" not in APP_JS
+    assert "_grp('history'" not in APP_JS
+    assert "_grp('loudness'" not in APP_JS
 
 
 def test_group_membership_preserved():

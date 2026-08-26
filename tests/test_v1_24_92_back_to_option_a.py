@@ -37,7 +37,10 @@ def test_grid_is_full_width_sibling_after_hero():
     # v0.51.62: the flat <dl> became four ${_grp(...)} sibling groups; the first
     # (v0.51.64: 'identity', was 'ids') is the full-width detail block right after
     # the hero, before recovery.
-    i_grid = APP_JS.index("${_grp('identity', _idsRows)}", i_hero)
+    # v0.51.289 (design audit): SOURCE leads the card now (identity folded
+    # into the reference tail) — the invariant is unchanged: the first
+    # detail group is a full-width SIBLING after the hero closes.
+    i_grid = APP_JS.index("${_grp('source', _linksRows)}", i_hero)
     i_recovery = APP_JS.index('${recoveryPlaceholder}', i_grid)
     assert i_hero < i_close < i_grid < i_recovery
 

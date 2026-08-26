@@ -5398,7 +5398,22 @@
 #   — so only the Discord/apprise push collapses. Over-flagging bulk when
 #   some candidates swap-resolve away is safe: a bulk-of-one flushes as the
 #   rich single, costing only the trailing window on a no-urgency event.
-__version__ = "0.51.288"
+# 0.51.289: INFO card design rework (the user: "a bit overwhelming/not as
+#   refined as it could be since we've added the edit file and placement").
+#   The card had accreted to twelve sections, ten always-expanded, under two
+#   competing header voices. Four fixes: (1) intent-based order — SOURCE,
+#   FILE & PLACEMENT, TRY THIS NEXT, PROPOSED CHANGE first, reference detail
+#   last; (2) identity/timeline/loudness/revisions collapse by default via a
+#   _fold twin of the // HISTORY details primitive (v1.12.101's bounded-
+#   height idiom, extended) — loudness stays open only while actionable
+#   (ambiguous-cut picker or LOUD marker); (3) one header voice — // prefix
+#   on the h4 groups, 0.15em tracking everywhere, folds in the dim reference
+#   tone (cyan stays the audit-trail color); (4) density — EDIT AUDIO joined
+#   the play row, the source_kind/source_video_id codes moved off
+#   `downloaded` into IDENTITY's `derivation` row (v1.18.56 verifiability
+#   kept, at reference depth), and the 'history' dates group is renamed
+#   'timeline' to end the collision with // HISTORY.
+__version__ = "0.51.289"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

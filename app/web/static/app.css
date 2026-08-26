@@ -3870,7 +3870,16 @@ body.help-mode .settings-help-about { display: block; }
 }
 .info-hero-meta { flex: 1 1 auto; min-width: 0; }
 .dlg-section { margin-top: var(--gap-5); padding-top: var(--gap-4); border-top: 1px solid var(--line); }
-.dlg-section h4 { font-size: var(--t-tiny); letter-spacing: 0.2em; color: var(--fg-dim); text-transform: uppercase; margin-bottom: var(--gap-2); }
+/* v0.51.289 (design audit): 0.2em → 0.15em so the h4 group titles and the
+   //-chip section titles (.diff/.recovery/.history-section-title) share one
+   tracking — the card ran two header voices. */
+.dlg-section h4 { font-size: var(--t-tiny); letter-spacing: 0.15em; color: var(--fg-dim); text-transform: uppercase; margin-bottom: var(--gap-2); }
+/* v0.51.289: reference folds reuse the // HISTORY details primitive but keep
+   the reference (dim) tone — cyan stays the audit-trail color. [open] lifts
+   to fg, not green: expanding a reference fold isn't a state change. */
+.info-fold .history-section-title { color: var(--fg-dim); }
+.info-fold[open] .history-section-title { color: var(--fg); }
+.info-fold .info-fold-body { margin-top: var(--gap-2); }
 /* v0.51.62 (the user, polish): the INFO card detail grid is split into labeled
    .dlg-section.info-group blocks (IDENTITY / SOURCE / HISTORY / FILE & PLACEMENT —
    renamed from IDS/LINKS/TIMELINE/ON DISK in v0.51.64). The first group sits

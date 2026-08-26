@@ -17859,8 +17859,15 @@
             : lf.source_video_id
         )}</code>`
       : '';
+    // v0.51.289 (design audit): the source_kind/source_video_id codes moved
+    // off the `downloaded` line — debug-grade density at eye level — into the
+    // collapsed IDENTITY fold as a `derivation` row, keeping their v1.18.56
+    // verifiability role. The hint consts stay; only the render site moved.
+    const derivationRow = (sourceKindHint || sourceVidHint)
+      ? `<dt>derivation</dt><dd class="muted small">${(sourceKindHint + sourceVidHint).replace(/^ · /, '')}</dd>`
+      : '';
     const dlBlock = lf
-      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="How motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP).">${htmlEscape(lf.provenance)}</span>${sourceKindHint}${sourceVidHint}</dd>`
+      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="How motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP).">${htmlEscape(lf.provenance)}</span></dd>`
       : '';
     // v0.50.35: compact "a recoverable backup exists" line — the user wants to
     // know a backup is on disk for EVERY row (HL, placed, dead-url …), not just
@@ -17921,16 +17928,16 @@
           // <audio> controls' ⋮ overflow menu already has "Download" (the
           // user), so the extra arrow was redundant. The player now owns the
           // whole play row, giving its volume slider + seek bar more width.
+          // v0.51.289 (design audit): EDIT AUDIO joined the play row — one
+          // file, one row of controls (was its own `edit` dt/dd grid row).
+          // The flex info-play-row wraps the button under the player when
+          // narrow. v0.51.282 semantics unchanged: only offered where there
+          // is a canonical to edit; carries the row key + the CURRENT sha,
+          // which becomes the save's optimistic lock.
           return `<dt>play</dt><dd class="info-play-row">`
             + `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
             + `your browser doesn't support inline audio playback`
             + `</audio>`
-            + `</dd>`
-            // v0.51.282 (feature-brief C, UI): trim/fade. Only offered where
-            // there is a canonical to edit (this branch already requires one);
-            // carries the row key + the CURRENT sha, which becomes the save's
-            // optimistic lock.
-            + `<dt>edit</dt><dd>`
             + `<button class="btn btn-tiny btn-info" data-act="edit-audio"`
             + ` data-mt="${htmlEscape(t.media_type)}" data-id="${htmlEscape(t.tmdb_id)}"`
             + ` data-sec="${htmlEscape((lf && lf.section_id) || '')}"`
@@ -18312,15 +18319,35 @@
       return `${lvl}${measuredRow}${state}${raw}${controls}`;
     })();
 
+    // v0.51.289 (design audit): `// ` prefix on the expanded group titles —
+    // the card ran two header voices (quiet lowercase h4s vs //-prefixed
+    // chips); one voice now, per the design-system section-header convention.
     const _grp = (title, rows) => rows.trim()
-      ? `<div class="dlg-section info-group"><h4>${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>`
+      ? `<div class="dlg-section info-group"><h4>// ${htmlEscape(title)}</h4><dl class="dlg-grid">${rows}</dl></div>`
       : '';
+    // v0.51.289: collapsed-by-default reference section (the audit: ten of
+    // twelve sections always-expanded is the "overwhelming" feel). Reuses the
+    // // HISTORY details primitive — v1.12.101's bounded-height idiom,
+    // extended to the reference groups the card accreted since. `open` pins a
+    // section expanded when it carries an actionable CTA; `extra` renders
+    // after the grid (the revisions restore-note slot).
+    const _fold = (title, rows, { open = false, note = '', extra = '' } = {}) =>
+      rows.trim()
+        ? `<details class="history-section info-fold" data-info-section="fold-${htmlEscape(title)}"${open ? ' open' : ''}>
+            <summary>
+              <span class="history-section-title">// ${htmlEscape(title.toUpperCase())}</span>
+              <span class="muted small">${htmlEscape(note || 'click to expand')}</span>
+            </summary>
+            <dl class="dlg-grid info-fold-body">${rows}</dl>${extra}
+          </details>`
+        : '';
     const _idsRows = `
         <dt>imdb</dt><dd>${imdb}</dd>
         <dt>tmdb</dt><dd>${tmdbLink}</dd>
         <dt>upstream</dt><dd>${t.upstream_source === 'plex_orphan'
           ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
-          : htmlEscape(t.upstream_source || '')}</dd>`;
+          : htmlEscape(t.upstream_source || '')}</dd>
+        ${derivationRow}`;
     const _linksRows = `
         ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
         <dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}</dd>
@@ -18396,36 +18423,7 @@
           <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
         </div>
       </div>
-      ${_grp('identity', _idsRows)}
       ${_grp('source', _linksRows)}
-      ${_grp('history', _timelineRows)}
-      ${_grp('loudness', _loudnessRows)}
-      ${(() => {
-        // v0.51.278 (feature-brief B, UI): revision history. Rendered only when
-        // history exists — a fresh row has no section, not an empty shell.
-        // Reuses the .dlg-section/.dlg-grid primitives + the MEASURE NOW button
-        // shape (btn btn-tiny btn-info + adjacent status span), per the
-        // design-system reuse rule.
-        const revs = data.revisions || [];
-        if (!revs.length) return '';
-        const rows = revs.map((r) => {
-          const when = htmlEscape(fmtRelativePast(r.created_at));
-          const src = htmlEscape(r.source_kind || '?');
-          const size = (typeof r.file_size === 'number')
-            ? `${(r.file_size / 1048576).toFixed(1)}MB` : '—';
-          const why = htmlEscape((r.reason || '').replace(/_/g, ' '));
-          const act = r.restorable
-            ? `<button class="btn btn-tiny btn-info" data-act="rev-restore"
-                       data-rev="${r.id}"
-                       title="Make this revision the active theme again — the current theme is captured first, so this is reversible.">// RESTORE</button>`
-            : `<span class="muted small" title="This revision's audio was rotated out by the keep-last-2 retention — metadata only. Re-download or SET URL to get this content back.">metadata only</span>`;
-          return `<dt>${when}</dt><dd>${src} · ${size} · ${why} ${act}</dd>`;
-        }).join('');
-        return `<div class="dlg-section info-group"><h4>revisions</h4>
-          <dl class="dlg-grid">${rows}</dl>
-          <span id="rev-restore-note" class="muted small info-probe-meta"></span>
-        </div>`;
-      })()}
       ${_grp('file & placement', _onDiskRows)}
       ${recoveryPlaceholder}
       ${diffSection}
@@ -18510,6 +18508,47 @@
           </div>`;
         }
         return '';
+      })()}
+      <!-- v0.51.289 (design audit): intent-based order. Actionable surfaces
+           (source, file & placement, TRY THIS NEXT, proposed change) render
+           first; the reference tail below is collapsed-by-default folds —
+           the v1.12.101 bounded-height idiom extended to the groups the card
+           accreted since. The 'history' group is renamed 'timeline' to end
+           the collision with // HISTORY (the audit log). -->
+      ${_fold('identity', _idsRows, { note: 'ids & derivation' })}
+      ${_fold('timeline', _timelineRows, { note: 'dates' })}
+      ${_fold('loudness', _loudnessRows, {
+        // open while actionable: the ambiguous-cut picker is the CTA, and a
+        // LOUD row's leveling controls shouldn't hide. Leveled/raw rows are
+        // summarized by the hero chip; the fold is their detail view.
+        open: _ambiguousCut || !!(lf && lf.loudness_marker === 'outlier'),
+        note: _ambiguousCut ? 'pick an edition'
+          : ((lf && lf.loudness_marker) || 'no file'),
+      })}
+      ${(() => {
+        // v0.51.278 (feature-brief B, UI): revision history. Rendered only when
+        // history exists — a fresh row has no section, not an empty shell.
+        // v0.51.289: folds with the other reference sections; the restore-note
+        // span rides `extra` so it stays inside the details.
+        const revs = data.revisions || [];
+        if (!revs.length) return '';
+        const rows = revs.map((r) => {
+          const when = htmlEscape(fmtRelativePast(r.created_at));
+          const src = htmlEscape(r.source_kind || '?');
+          const size = (typeof r.file_size === 'number')
+            ? `${(r.file_size / 1048576).toFixed(1)}MB` : '—';
+          const why = htmlEscape((r.reason || '').replace(/_/g, ' '));
+          const act = r.restorable
+            ? `<button class="btn btn-tiny btn-info" data-act="rev-restore"
+                       data-rev="${r.id}"
+                       title="Make this revision the active theme again — the current theme is captured first, so this is reversible.">// RESTORE</button>`
+            : `<span class="muted small" title="This revision's audio was rotated out by the keep-last-2 retention — metadata only. Re-download or SET URL to get this content back.">metadata only</span>`;
+          return `<dt>${when}</dt><dd>${src} · ${size} · ${why} ${act}</dd>`;
+        }).join('');
+        return _fold('revisions', rows, {
+          note: `${revs.length} kept`,
+          extra: `<span id="rev-restore-note" class="muted small info-probe-meta"></span>`,
+        });
       })()}
       ${auditPlaceholder}
       ${historySection}

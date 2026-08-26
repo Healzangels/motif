@@ -145,6 +145,8 @@ def test_loudness_block_is_wired_into_the_card():
 
     Deliberately narrow — it asserts the block is REACHABLE, not what it renders.
     """
-    assert "${_grp('loudness', _loudnessRows)}" in APP_JS
+    # v0.51.289 (design audit): loudness renders as a reference FOLD now
+    # (open only while actionable) — same reachability pin, new shape.
+    assert "_fold('loudness', _loudnessRows" in APP_JS
     assert "data-act=\"loud-normalize\"" in APP_JS
     assert "data-act=\"loud-undo\"" in APP_JS

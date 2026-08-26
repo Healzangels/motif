@@ -125,17 +125,23 @@ def test_restore_through_the_ui_contract(client):
 # ── the card render + binding (structural, anchored) ─────────
 
 
-def test_card_renders_revisions_between_loudness_and_disk():
-    i = APP_JS.index("${_grp('loudness', _loudnessRows)}")
-    j = APP_JS.index("${_grp('file & placement', _onDiskRows)}")
+def test_card_renders_revisions_in_the_reference_tail():
+    # v0.51.289 (design audit): revisions moved into the collapsed reference
+    # tail — after the loudness fold, before the PROVENANCE slot — rendered
+    # via the _fold primitive instead of an always-expanded h4 group.
+    i = APP_JS.index("_fold('loudness', _loudnessRows")
+    j = APP_JS.index("${auditPlaceholder}")
     section = APP_JS[i:j]
     assert "data.revisions" in section
-    assert "<h4>revisions</h4>" in section
+    assert "_fold('revisions', rows," in section
     assert "if (!revs.length) return '';" in section, (
         "a fresh row gets no empty shell")
     assert 'data-act="rev-restore"' in section
     assert "metadata only" in section, (
         "a rotated revision says so instead of offering a dead button")
+    assert 'id="rev-restore-note"' in section, (
+        "the restore-note slot must ride the fold's `extra` so it stays "
+        "inside the details")
 
 
 def test_restore_button_binding_and_conventions():
