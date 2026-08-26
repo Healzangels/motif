@@ -253,14 +253,24 @@ def enrich_item(
             # local_files lookup silently never ran. Latent bug since
             # the table was created. Caught while fixing the user's
             # provenance leak.
+            # v0.51.295 (holistic review): prefer the caller's exact
+            # section/edition row — the bare LIMIT 1 (no ORDER BY) against a
+            # PK of (mt, tmdb, section, edition) handed multi-section/edition
+            # titles an ARBITRARY sibling's source_kind/source_video_id in
+            # notifications. Falls back to a sibling when the exact row is
+            # gone (best-effort semantics for lost/removed rows preserved).
             lf = conn.execute(
                 """
                 SELECT source_video_id, provenance, source_kind
                 FROM local_files
                 WHERE media_type = ? AND tmdb_id = ?
+                ORDER BY (section_id = ?) DESC,
+                         (COALESCE(edition_key, '') = ?) DESC
                 LIMIT 1
                 """,
-                (media_type, tmdb_id),
+                (media_type, tmdb_id,
+                 str(section_id) if section_id is not None else "",
+                 edition_key or ""),
             ).fetchone()
             if lf:
                 # video_id backfill — only set if step-1 didn't.

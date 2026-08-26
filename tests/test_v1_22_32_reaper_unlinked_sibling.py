@@ -132,7 +132,9 @@ def test_still_p_uses_left_join_and_guid_clause():
     i = PLEX_ENUM_PY.index("still_p = conn.execute(")
     # v1.23.64: widened 600 -> 900 — the new plex_sections included-gate JOIN
     # pushed the guid clause further down the query.
-    block = PLEX_ENUM_PY[i:i + 900]
+    # v0.51.295: was a fixed 900-char window (already widened once) — the
+    # phantom-P qualifier comment rotted it again. Anchor to the query end.
+    block = PLEX_ENUM_PY[i:PLEX_ENUM_PY.index(".fetchone()", i)]
     assert "LEFT JOIN themes t ON t.id = pi.theme_id" in block
     assert "pi.guid_tmdb = ?" in block
     assert "INNER JOIN themes" not in block, (

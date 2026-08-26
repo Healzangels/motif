@@ -135,21 +135,31 @@ def _section_enum_overdue(
     """
     from datetime import datetime, timezone, timedelta
     try:
+        # v0.51.295 (holistic review): per-cohort freshness. A partial walk
+        # (collections-only v1.18.4, items-only v1.23.77) used to refresh the
+        # section-wide MAX and indefinitely defer the 24h bypass the reaper
+        # needs for the OTHER cohort's stale rows. Either stale cohort now
+        # trips the bypass; an empty cohort contributes nothing (fail-safe).
         with get_conn(db_path) as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 "SELECT MAX(last_seen_at) FROM plex_items "
-                "WHERE section_id = ?",
-                (section_id,),
-            ).fetchone()
-        max_seen = row[0] if row else None
-        if not max_seen:
+                "WHERE section_id = ? AND media_type = 'collection' "
+                "UNION ALL "
+                "SELECT MAX(last_seen_at) FROM plex_items "
+                "WHERE section_id = ? AND media_type != 'collection'",
+                (section_id, section_id),
+            ).fetchall()
+        cohort_max = [r[0] for r in rows if r and r[0]]
+        if not cohort_max:
             return False
-        # Normalize Z-suffix → +00:00 for fromisoformat.
-        max_seen_dt = datetime.fromisoformat(
-            max_seen.replace("Z", "+00:00")
-        )
-        age = datetime.now(timezone.utc) - max_seen_dt
-        return age > timedelta(hours=hours)
+        for max_seen in cohort_max:
+            # Normalize Z-suffix → +00:00 for fromisoformat.
+            max_seen_dt = datetime.fromisoformat(
+                max_seen.replace("Z", "+00:00")
+            )
+            if datetime.now(timezone.utc) - max_seen_dt > timedelta(hours=hours):
+                return True
+        return False
     except Exception as e:  # noqa: BLE001
         # v1.20.21: warn-once (was a flat log.debug that hid a
         # persistently-failing overdue check). The bypass exists to
@@ -2691,7 +2701,12 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 "  AND ps.included = 1 "
                                 "LEFT JOIN themes t ON t.id = pi.theme_id "
                                 "WHERE pi.has_theme = 1 "
-                                "  AND ( (t.media_type = ? AND t.tmdb_id = ?) "
+                                "  AND COALESCE(pi.plex_theme_verified_ok, 1) = 1 "
+                                # v0.51.295 (holistic review): the repo-
+                                # canonical phantom-P qualifier — a sibling
+                                # whose theme claim motif HEAD-verified dead
+                                # must not suppress the theme-lost pipeline.
+                                                                "  AND ( (t.media_type = ? AND t.tmdb_id = ?) "
                                 "        OR (pi.media_type = ? "
                                 "            AND pi.guid_tmdb = ?) ) "
                                 "LIMIT 1",
@@ -2767,7 +2782,11 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 " WHERE media_type = ? AND tmdb_id = ? "
                                 "   AND last_place_attempt_reason "
                                 "       = 'backup_only' "
-                                "   AND source_kind != 'plex_cloud' "
+                                # v0.51.295: COALESCE mirrors the tier-3 arm
+                                # — a NULL source_kind row failed this test
+                                # (NULL != x is no row) and mis-tiered the
+                                # loss into other_fallback silence.
+                                "   AND COALESCE(source_kind, '') != 'plex_cloud' "
                                 "   AND COALESCE(edition_key, '') IN (?, '') "
                                 "LIMIT 1",
                                 (mt, tid, _cand_edition,

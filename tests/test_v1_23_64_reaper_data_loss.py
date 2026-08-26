@@ -124,7 +124,9 @@ def test_legit_complete_walk_still_succeeds():
 
 def test_still_p_survivor_check_gates_on_included_section():
     i = ENUM_PY.index("still_p = conn.execute(")
-    block = ENUM_PY[i:i + 700]
+    # v0.51.295: was a 700-char window — the phantom-P qualifier comment
+    # rotted it (the .261 class). Anchored to the query end.
+    block = ENUM_PY[i:ENUM_PY.index(".fetchone()", i)]
     assert "JOIN plex_sections ps" in block, (
         "v1.23.64: the still_p survivor check must join plex_sections"
     )

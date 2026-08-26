@@ -5502,7 +5502,27 @@
 #   success — validators now stage on the snapshot and persist via
 #   commit_sync_ok() behind the same detection_ok/errors==0 gate as the
 #   git baseline advance.
-__version__ = "0.51.294"
+# 0.51.295: holistic-review wave 4 — reaper/tier classification. (1) The
+#   reaper's surviving-sibling suppression tested bare has_theme=1, so a
+#   phantom-P sibling (theme claim HEAD-verified dead) suppressed the whole
+#   theme-lost pipeline — now carries the repo-canonical
+#   COALESCE(plex_theme_verified_ok, 1) = 1 qualifier. (2) The backup_only
+#   tier-1 arm filtered source_kind != 'plex_cloud' without COALESCE — a
+#   NULL source_kind row matched NO tier-1 arm and the loss mis-tiered
+#   into other_fallback silence. (3) _section_enum_overdue read the
+#   section-wide MAX(last_seen_at), so a partial walk (collections-only /
+#   items-only) deferred the 24h reaper bypass for the OTHER cohort
+#   indefinitely — now per-cohort, either stale cohort trips it. (4)
+#   resolve_edition_swap carried a STAGED BACKUP to the surviving edition
+#   and enqueued a place job — auto-deploying a notify-only backup and
+#   skipping the PROMOTE TO ACTIVE notification; the resolver now declines
+#   backup-intent rows (plex_cloud / backup_only stamp / intent='backup'
+#   override) and the tier-1 pipeline takes over. (5) enrich_item's
+#   local_files lookup ignored its section/edition args (bare LIMIT 1, no
+#   ORDER BY against a 4-part PK) — notifications carried an arbitrary
+#   sibling's source_kind/source_video_id; now preference-ordered on the
+#   caller's scope with graceful sibling fallback.
+__version__ = "0.51.295"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

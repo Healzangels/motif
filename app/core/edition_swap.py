@@ -121,13 +121,32 @@ def resolve_edition_swap(db_path: Path, themes_dir: Path, *, media_type: str,
         if survivor_already_themed(conn, media_type, tmdb_id, section_id, new_key):
             return None
         lf = conn.execute(
-            "SELECT file_path FROM local_files "
+            "SELECT file_path, source_kind, last_place_attempt_reason "
+            "  FROM local_files "
             " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
             "   AND COALESCE(edition_key, '') = ?",
             (media_type, tmdb_id, section_id, lost_edition_key or ""),
         ).fetchone()
         if lf is None or not lf["file_path"]:
             return None                   # nothing of ours to carry over
+        # v0.51.295 (holistic review): a STAGED backup is notify-only by
+        # contract — auto-carrying it to the survivor would deploy it (the
+        # place enqueue below) and silently skip the theme_lost_backup_ready
+        # PROMOTE TO ACTIVE notification the tier-1 pipeline owes the
+        # operator. Decline the swap; the reaper's tier routing takes over.
+        if (lf["source_kind"] == "plex_cloud"
+                or lf["last_place_attempt_reason"] == "backup_only"
+                or conn.execute(
+                    "SELECT 1 FROM user_overrides "
+                    " WHERE media_type = ? AND tmdb_id = ? "
+                    "   AND COALESCE(section_id, ?) = ? "
+                    "   AND intent = 'backup' LIMIT 1",
+                    (media_type, tmdb_id, section_id, section_id),
+                ).fetchone() is not None):
+            log.info("edition-swap: declining carry for %s/%s — the lost "
+                     "edition's file is a staged backup (tier-1 notify path "
+                     "owns it)", media_type, tmdb_id)
+            return None
         # v0.51.273: refuse a malformed file_path before deriving anything from
         # it. The relative-to-themes_dir contract is reader discipline only
         # (CLAUDE.md), and pathlib DISCARDS the left side when joining an

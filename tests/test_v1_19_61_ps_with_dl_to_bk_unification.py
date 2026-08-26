@@ -143,7 +143,9 @@ def test_reaper_backup_signal_includes_backup_only_stamp_clause():
     assert "'backup_only'" in block
     # Exclude plex_cloud from this third clause to avoid double-
     # counting (the second clause already handles plex_cloud).
-    assert "source_kind != 'plex_cloud'" in block
+    # v0.51.295: COALESCE'd — a NULL source_kind row failed the bare
+    # comparison (NULL != x is no row) and mis-tiered into silence.
+    assert "COALESCE(source_kind, '') != 'plex_cloud'" in block
 
 
 # ── Walker ───────────────────────────────────────────────────

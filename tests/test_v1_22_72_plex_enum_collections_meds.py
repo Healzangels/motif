@@ -74,7 +74,9 @@ def test_surviving_collection_sibling_matches_extracted_sql(tmp_path):
         conn.execute(
             "CREATE TABLE plex_items (rating_key TEXT PRIMARY KEY,"
             " section_id TEXT, media_type TEXT, guid_tmdb TEXT,"
-            " has_theme INTEGER, theme_id INTEGER)")
+            " has_theme INTEGER, theme_id INTEGER,"
+            # v0.51.295: the still_p SQL gained the phantom-P qualifier.
+            " plex_theme_verified_ok INTEGER)")
         conn.execute(
             "CREATE TABLE themes (id INTEGER PRIMARY KEY,"
             " media_type TEXT, tmdb_id INTEGER)")
@@ -85,7 +87,7 @@ def test_surviving_collection_sibling_matches_extracted_sql(tmp_path):
         conn.execute("INSERT INTO plex_sections VALUES ('9', 1)")
         conn.execute(
             "INSERT INTO plex_items VALUES"
-            " ('c-4k', '9', 'collection', '123', 1, NULL)")
+            " ('c-4k', '9', 'collection', '123', 1, NULL, NULL)")
         conn.commit()
         sql = _extract_still_p_sql()
         # New behavior: collection→collection finds the survivor.
@@ -97,6 +99,16 @@ def test_surviving_collection_sibling_matches_extracted_sql(tmp_path):
         miss = conn.execute(
             sql, ("collection", 123, "movie", 123)).fetchone()
         assert miss is None
+        # v0.51.295: a HEAD-verified-dead survivor must not suppress either —
+        # the phantom-P qualifier, demonstrated on the real SQL.
+        conn.execute("UPDATE plex_items SET plex_theme_verified_ok = 0 "
+                     "WHERE rating_key = 'c-4k'")
+        conn.commit()
+        assert conn.execute(
+            sql, ("collection", 123, "collection", 123)).fetchone() is None
+        conn.execute("UPDATE plex_items SET plex_theme_verified_ok = NULL "
+                     "WHERE rating_key = 'c-4k'")
+        conn.commit()
         # v1.23.64: disable the section — the survivor must no longer suppress
         # (a stale has_theme=1 row in a disabled section can't mask a real loss).
         conn.execute(
