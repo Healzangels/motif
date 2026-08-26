@@ -822,7 +822,7 @@ class Worker:
                     # in-memory progress map may have a stale entry.
                     log.debug(
                         "Worker: clear_download_progress(%s) failed: %s",
-                        job.get("id"), e,
+                        job["id"], e,  # v0.51.294: sqlite3.Row has no .get — the breadcrumb itself crashed the worker thread
                     )
         log.info("Worker loop stopped")
 
@@ -1536,7 +1536,8 @@ class Worker:
             log_event(self.settings.db_path, level="WARNING",
                       component="scan",
                       message="Skipped: themes_dir not configured.")
-            raise RuntimeError("themes_dir not configured")
+            raise _JobTransient("themes_dir not configured — set it on /settings",
+                                retry_after_seconds=3600)  # v0.51.294: was RuntimeError — it burned the 3-attempt budget in ~6min and terminal-failed, contradicting its own log line
 
         payload = {}
         if job["payload"]:
@@ -1574,7 +1575,8 @@ class Worker:
             log_event(self.settings.db_path, level="WARNING",
                       component="adopt",
                       message="Skipped: themes_dir not configured.")
-            raise RuntimeError("themes_dir not configured")
+            raise _JobTransient("themes_dir not configured — set it on /settings",
+                                retry_after_seconds=3600)  # v0.51.294: was RuntimeError — it burned the 3-attempt budget in ~6min and terminal-failed, contradicting its own log line
 
         if not job["payload"]:
             raise RuntimeError("adopt job missing payload")
@@ -1608,7 +1610,8 @@ class Worker:
                 media_type=media_type, tmdb_id=tmdb_id,
                 message="Skipped: themes_dir not configured. Set it on /settings.",
             )
-            raise RuntimeError("themes_dir not configured")
+            raise _JobTransient("themes_dir not configured — set it on /settings",
+                                retry_after_seconds=3600)  # v0.51.294: was RuntimeError — it burned the 3-attempt budget in ~6min and terminal-failed, contradicting its own log line
 
         # v1.13.11: pre-download free-space guard. yt-dlp + ffmpeg can
         # eat several hundred MB of working space mid-extract; on a full
@@ -1887,6 +1890,24 @@ class Worker:
                     )
                     # fall through to the actual download
 
+        # v0.51.280 (feature-brief D): adaptive-mode cooldown gate.
+        # v0.51.294 (holistic review): hoisted ABOVE bucket.acquire() — a
+        # cooldown bounce used to first BLOCK on a shared rate token and
+        # then discard it on the no-op re-queue, starving fixed-rate slots. Fixed mode
+        # (the default) skips this entirely — behavior byte-identical. A
+        # provider in cooldown re-queues the job via the v1.14.54 attempt-free
+        # seam BEFORE anything is touched (no stash, no download), jittered so
+        # a same-provider queue cannot thunder back in one tick.
+        if self.settings.download_rate_mode == "adaptive":
+            from .provider_health import check_cooldown, provider_for_url
+            _ph_provider = provider_for_url(yt_url)
+            _cd = check_cooldown(self.settings.db_path, _ph_provider,
+                                 base_rate=float(self.settings.download_rate_per_hour))
+            if _cd > 0:
+                self._mark_transient(
+                    job["id"],
+                    f"provider {_ph_provider} cooling down ({_cd}s)", _cd)
+                return
         # Apply rate limit (only when we'll really hit YouTube)
         self.bucket.acquire()
 
@@ -1945,21 +1966,6 @@ class Worker:
         # hardlink). Now we stash it + restore on a failed download (below in
         # the except) + drop it on success. The atomic rename also defeats
         # download_theme's "already exists" reuse short-circuit, like the unlink.
-        # v0.51.280 (feature-brief D): adaptive-mode cooldown gate. Fixed mode
-        # (the default) skips this entirely — behavior byte-identical. A
-        # provider in cooldown re-queues the job via the v1.14.54 attempt-free
-        # seam BEFORE anything is touched (no stash, no download), jittered so
-        # a same-provider queue cannot thunder back in one tick.
-        if self.settings.download_rate_mode == "adaptive":
-            from .provider_health import check_cooldown, provider_for_url
-            _ph_provider = provider_for_url(yt_url)
-            _cd = check_cooldown(self.settings.db_path, _ph_provider,
-                                 base_rate=float(self.settings.download_rate_per_hour))
-            if _cd > 0:
-                self._mark_transient(
-                    job["id"],
-                    f"provider {_ph_provider} cooling down ({_cd}s)", _cd)
-                return
         _stale_backup = None
         if should_unlink:
             _stale_candidate = target_mp3.with_name("theme.mp3.stale")
@@ -2622,7 +2628,8 @@ class Worker:
                 media_type=media_type, tmdb_id=tmdb_id,
                 message="Skipped: themes_dir not configured. Set it on /settings.",
             )
-            raise RuntimeError("themes_dir not configured")
+            raise _JobTransient("themes_dir not configured — set it on /settings",
+                                retry_after_seconds=3600)  # v0.51.294: was RuntimeError — it burned the 3-attempt budget in ~6min and terminal-failed, contradicting its own log line
 
         with get_conn(self.settings.db_path) as conn:
             theme = conn.execute(

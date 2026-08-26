@@ -5483,7 +5483,26 @@
 #   deferred behavioral coverage to it. A pytest wrapper now runs it inside
 #   the gate (skip without node locally; MOTIF_REQUIRE_NODE=1 in both CI
 #   workflows hard-fails if node vanishes, the ffmpeg precedent).
-__version__ = "0.51.293"
+# 0.51.294: holistic-review wave 3 — worker + sync. (1) The adaptive
+#   cooldown pre-flight ran AFTER bucket.acquire(), so a cooldown bounce
+#   blocked on a shared rate token then discarded it on the no-op re-queue
+#   — hoisted above the acquire (fixed mode byte-identical). (2) Four
+#   'themes_dir not configured' bails raised plain RuntimeError, burning
+#   the 3-attempt budget and terminal-failing in ~6min while their own log
+#   lines promised the job would wait for /settings — now _JobTransient
+#   (retry 1h), the low-disk guard's attempt-free seam. (3) run()'s
+#   class-9 finally breadcrumb called job.get("id") on a sqlite3.Row (no
+#   .get) — the breadcrumb itself crashed the worker thread. (4) The
+#   _GIT_MIRROR_MAX_CHANGES bail raised from the differential upsert where
+#   no handler exists, so the designed git→snapshot cascade never fired —
+#   run_sync now probes list_changes() inside the cascade try (memoized;
+#   the upsert reuses it). (5) The snapshot tier persisted its ETag/
+#   Last-Modified validators at DOWNLOAD time, so a run that died
+#   mid-upsert made the retry 304-skip the never-applied delta and report
+#   success — validators now stage on the snapshot and persist via
+#   commit_sync_ok() behind the same detection_ok/errors==0 gate as the
+#   git baseline advance.
+__version__ = "0.51.294"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

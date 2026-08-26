@@ -1757,6 +1757,10 @@ class _DatabaseSnapshot:
         # Modified-Since; codeload returns 304 if the database branch
         # head hasn't moved, and we skip the whole upsert pipeline.
         self.meta_path = self.cache_dir / "themerrdb-database.tar.gz.meta"
+        # v0.51.294: validators STAGE here and persist only via
+        # commit_sync_ok() — writing them at download time made a run that
+        # died mid-walk 304-skip the never-applied delta on retry.
+        self._pending_meta: dict | None = None
         # Populated on acquire().
         self._tmpdir: tempfile.TemporaryDirectory | None = None
         self.root: Path | None = None
@@ -1765,6 +1769,18 @@ class _DatabaseSnapshot:
         self._unchanged = False
 
     # -- acquisition --
+
+    def commit_sync_ok(self) -> None:
+        """v0.51.294: persist the staged conditional-GET validators — called
+        only after the upsert walk completes cleanly (the git tier's
+        commit_sync_ok twin). No-op when nothing was staged (304 path)."""
+        if not self._pending_meta:
+            return
+        try:
+            self.meta_path.write_text(json.dumps(self._pending_meta))
+        except OSError as e:
+            log.warning("snapshot meta write failed: %s", e)
+        self._pending_meta = None
 
     def is_unchanged(self) -> bool:
         return self._unchanged
@@ -1922,10 +1938,12 @@ class _DatabaseSnapshot:
                     meta_payload["etag"] = fresh_etag
                 if fresh_last_mod:
                     meta_payload["last_modified"] = fresh_last_mod
-                try:
-                    self.meta_path.write_text(json.dumps(meta_payload))
-                except OSError as e:
-                    log.warning("snapshot meta write failed: %s", e)
+                # v0.51.294 (holistic review): STAGE, don't persist — the run
+                # may still fail or be cancelled mid-upsert, and a persisted
+                # validator would make the retry 304-skip the never-applied
+                # delta and report success (the git tier defers its cursor the
+                # same way). commit_sync_ok() writes it at the success point.
+                self._pending_meta = meta_payload
             op_progress.update_progress(
                 self.db_path, self.op_id,
                 stage_current=received, stage_total=received,
@@ -3913,6 +3931,13 @@ def run_sync(db_path, base_url: str, *,
                             message=f"Sync run #{run_id}: git mirror "
                                     f"acquired from {resolved_git_url}",
                         )
+                        # v0.51.294 (holistic review): probe the changeset size
+                        # HERE — the _GIT_MIRROR_MAX_CHANGES bail used to raise
+                        # from the differential upsert, where no handler exists,
+                        # so the designed git→snapshot cascade never fired and
+                        # the sync failed outright. list_changes memoizes
+                        # (v1.20.21); the upsert reuses this result.
+                        git_mirror.list_changes()
                 except _GitMirrorError as e:
                     log_event(
                         db_path, level="WARNING", component="sync",
@@ -4450,6 +4475,13 @@ def run_sync(db_path, base_url: str, *,
                         "dropped); a repeat of the SAME failures next run "
                         "triggers the chronic escape above",
                         run_id, stats.errors)
+            # v0.51.294: the snapshot tier's validator commit — same gate
+            # shape as the git baseline advance below.
+            if snapshot is not None and detection_ok and stats.errors == 0:
+                try:
+                    snapshot.commit_sync_ok()
+                except Exception as e:
+                    log.warning("snapshot validator commit failed: %s", e)
             if ran_git_diff and detection_ok and stats.errors == 0:
                 try:
                     git_mirror.commit_sync_ok()

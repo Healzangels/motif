@@ -488,8 +488,11 @@ def test_snapshot_first_run_persists_etag(db_path: Path):
         # First-run shouldn't send conditional headers.
         assert "If-None-Match" not in handler.last_request_headers
         assert "If-Modified-Since" not in handler.last_request_headers
-        # Meta file written.
-        assert snap.meta_path.is_file()
+        # v0.51.294: validators STAGE at download and persist only via
+        # commit_sync_ok() — persisting at download time made a run that
+        # died mid-upsert 304-skip the never-applied delta on retry.
+        assert not snap.meta_path.exists(), "must not persist before success"
+        snap.commit_sync_ok()
         meta = json.loads(snap.meta_path.read_text())
         assert meta.get("etag") == 'W/"abc123"'
         assert meta.get("last_modified") == "Tue, 05 May 2026 21:00:00 GMT"
@@ -581,6 +584,10 @@ def test_snapshot_200_with_changed_etag_advances_meta(db_path: Path):
     try:
         snap.acquire(client)
         assert snap.is_unchanged() is False
+        # v0.51.294: the OLD meta survives until the success-point commit —
+        # a failed walk must retry with the old validators, not skip.
+        assert json.loads(snap.meta_path.read_text()).get("etag") == 'W/"old"'
+        snap.commit_sync_ok()
         meta = json.loads(snap.meta_path.read_text())
         assert meta.get("etag") == 'W/"new"'
     finally:

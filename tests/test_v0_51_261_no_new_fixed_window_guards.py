@@ -62,7 +62,10 @@ _MIN_WIDTH = 100
 # v0.51.288: 1497 → 1496 (test_v1_23_75's 600-char reaper-attach window,
 # already widened once at v0.51.151, rotted again when the dispatch became
 # dispatch_coalesced — anchored to the record_fire statement after the call).
-_BUDGET = 1496
+# v0.51.294: 1496 → 1495 (test_v1_22_74's commit-gate window, already widened
+# TWICE (3200→4000→7000), rotted a third time when the snapshot validator
+# commit landed before the gate — anchored to the compaction line).
+_BUDGET = 1495
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:
