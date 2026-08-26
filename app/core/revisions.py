@@ -120,10 +120,20 @@ def capture_revision(db_path: Path, themes_dir: Path, *, media_type: str,
         for old in stale:
             conn.execute("UPDATE theme_revisions SET retained_path = NULL "
                          "WHERE id = ?", (old["id"],))
+        # v0.51.292 (holistic review): the sha-keyed dedupe above lets SEVERAL
+        # rows share one retained file (content recurrence A→B→A′ reuses the
+        # sha path). Unlinking by the rotated row's path destroyed the binary
+        # a NEWER row still referenced — and still reported restorable=1.
+        # Collect the paths that remain referenced inside the same txn.
+        _still_referenced = {r["retained_path"] for r in conn.execute(
+            "SELECT DISTINCT retained_path FROM theme_revisions "
+            " WHERE retained_path IS NOT NULL")}
     for old in stale:
         try:
             # v1.18.10 amplifier rule: only ever delete files THIS module put
             # in .revisions/ — never anything outside it.
+            if old["retained_path"] in _still_referenced:
+                continue  # v0.51.292: shared with a newer retained row
             if old["retained_path"] and old["retained_path"].startswith(_REV_DIR):
                 (themes_dir / old["retained_path"]).unlink(missing_ok=True)
         except OSError as e:
@@ -182,28 +192,48 @@ def restore_revision(db_path: Path, themes_dir: Path, *, revision_id: int,
         raise ValueError("the row no longer has a local file to restore over")
     if cur_row["file_sha256"] and cur_row["file_sha256"] == rev["content_sha256"]:
         raise ValueError("this revision is already the active content")
-    capture_revision(db_path, themes_dir, media_type=key["media_type"],
-                     tmdb_id=key["tmdb_id"], section_id=key["section_id"],
-                     edition_key=key["edition_key"],
-                     reason="replaced_by_restore", actor=actor)
     target = themes_dir / cur_row["file_path"]
     tmp = target.with_suffix(".rev-restore-tmp")
     import shutil
     target.parent.mkdir(parents=True, exist_ok=True)
+    # v0.51.292 (holistic review): secure the restore-target's bytes BEFORE the
+    # capture below — its keep-last-2 rotation can NULL + unlink THIS revision's
+    # file (restoring the OLDER of the two retained revisions always did: the
+    # new capture made it 3rd-newest), which crashed the copy at this line AND
+    # permanently destroyed the binary being restored.
     shutil.copy2(src, tmp)                # COPY: the retained binary stays retained
+    try:
+        capture_revision(db_path, themes_dir, media_type=key["media_type"],
+                         tmdb_id=key["tmdb_id"], section_id=key["section_id"],
+                         edition_key=key["edition_key"],
+                         reason="replaced_by_restore", actor=actor)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
     tmp.replace(target)
     size = target.stat().st_size
     import json
+    # v0.51.292: restore is a byte-replacement writer like save_edit — the 11
+    # loudness/norm columns must clear (the restored bytes' loudness is
+    # unknown; stale norm anchors would let // UNDO LEVELING run mp3gain -u
+    # against the wrong file), plus norm_plex_entry_uri (the v0.51.185 anchor).
+    from .worker import _cond_columns
+    _lc = _cond_columns(None, rev["content_sha256"])
     with get_conn(db_path) as conn, transaction(conn):
         conn.execute(
             "UPDATE local_files SET file_sha256 = ?, file_size = ?, "
             "       source_kind = COALESCE(?, source_kind), "
             "       source_video_id = COALESCE(?, source_video_id), "
-            "       downloaded_at = ?, canonical_present = 1 "
+            "       downloaded_at = ?, canonical_present = 1, "
+            "       loudness_i=?, loudness_tp=?, loudness_lra=?, "
+            "       loudness_measured_at=?, loudness_measured_sha256=?, "
+            "       norm_state=?, norm_gain_db=?, norm_target=?, norm_at=?, "
+            "       norm_orig_sha256=?, norm_orig_pcm_sha256=?, "
+            "       norm_plex_entry_uri = NULL "
             " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
             "   AND COALESCE(edition_key, '') = ?",
             (rev["content_sha256"], size, rev["source_kind"],
-             rev["source_video_id"], now_iso(), key["media_type"],
+             rev["source_video_id"], now_iso(), *_lc, key["media_type"],
              key["tmdb_id"], key["section_id"], key["edition_key"]))
         conn.execute(
             "INSERT INTO jobs (job_type, media_type, tmdb_id, section_id, "

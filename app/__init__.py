@@ -5447,7 +5447,24 @@
 #   (2) .notif-clear-all tracking 0.1em → 0.15em (was a third value beside
 #   the label convention). Raw-px paddings in the notif family are accepted
 #   legacy (pre-gap-token era, consistent with the rest of ops.css).
-__version__ = "0.51.291"
+# 0.51.292: holistic-review wave 1 — revision restore/rotation data loss.
+#   The 50-agent fresh-eyes review's top finding: restore_revision captured
+#   the outgoing canonical BEFORE copying the restore-target, and the
+#   capture's keep-last-2 rotation NULLed + unlinked the older retained
+#   revision — so restoring the older of the two retained revisions ALWAYS
+#   crashed (FileNotFoundError → HTTP 500) and permanently destroyed the
+#   binary it was asked to restore. The copy-to-tmp now happens first (a
+#   failed capture unlinks the tmp and re-raises). Two adjacent holes in the
+#   same module: (a) the sha-keyed dedupe lets several revisions share one
+#   retained file (content recurrence A→B→A′), and rotation unlinked by the
+#   rotated row's path — destroying a NEWER revision's binary that still
+#   reported restorable=1; rotation now skips paths any row still
+#   references. (b) restore never cleared the 11 loudness/norm columns (or
+#   norm_plex_entry_uri), leaving stale anchors that would let // UNDO
+#   LEVELING run mp3gain -u against the restored bytes; it now mirrors
+#   save_edit's _cond_columns(None, sha) clear, and save_edit gained the
+#   12th (norm_plex_entry_uri) clear as well.
+__version__ = "0.51.292"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -201,7 +201,11 @@ def save_edit(db_path: Path, themes_dir: Path, *, media_type: str,
             "       loudness_i=?, loudness_tp=?, loudness_lra=?, "
             "       loudness_measured_at=?, loudness_measured_sha256=?, "
             "       norm_state=?, norm_gain_db=?, norm_target=?, norm_at=?, "
-            "       norm_orig_sha256=?, norm_orig_pcm_sha256=? "
+            "       norm_orig_sha256=?, norm_orig_pcm_sha256=?, "
+            # v0.51.292: the 12th anchor — a Plex entry uri recorded for the
+            # replaced bytes is stale the moment new bytes land (same clear
+            # restore_revision now does).
+            "       norm_plex_entry_uri = NULL "
             " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
             "   AND COALESCE(edition_key, '') = ?",
             (new_sha, new_size, now_iso(), *_lc,
