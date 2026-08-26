@@ -1836,6 +1836,26 @@ class Worker:
                         except OSError:
                             _same_inode = False
                         if not _same_inode:
+                            # v0.51.297 (holistic review): the short-circuit
+                            # replaces this section's canonical without the
+                            # direct path's stash→capture — the outgoing audio
+                            # got no revision entry. COPY-mode capture keeps
+                            # the file serving until the atomic replace below.
+                            from .revisions import capture_revision
+                            try:
+                                capture_revision(
+                                    self.settings.db_path,
+                                    self.settings.themes_dir,
+                                    media_type=media_type, tmdb_id=tmdb_id,
+                                    section_id=section_id,
+                                    edition_key=_dl_edition_key or "",
+                                    reason="replaced_by_download",
+                                    incoming_sha=sibling["file_sha256"])
+                            except Exception as _cap_e:  # noqa: BLE001
+                                log.warning(
+                                    "sibling-link revision capture failed "
+                                    "for %s/%s: %s", media_type, tmdb_id,
+                                    _cap_e)
                             # v1.22.73: link to a temp sibling then atomic
                             # replace — unlink-then-link was the v1.22.40
                             # destroy-before-fail class: a copy fallback

@@ -5536,7 +5536,22 @@
 #   _notify.dispatch inline (inbox record = sqlite connect + lock budget
 #   in the caller's thread since v0.51.147). Existing endpoint suites are
 #   green over the offloaded shapes.
-__version__ = "0.51.296"
+# 0.51.297: holistic-review wave 6 — capture-revision writer coverage.
+#   Three canonical-replacement paths were missing from the v0.51.277
+#   revision surface: (1) api_adopt_from_plex swapped the canonical to the
+#   placement's DIFFERENT bytes but left the 11 loudness/norm anchors (and
+#   norm_plex_entry_uri) describing the discarded upload — // UNDO
+#   LEVELING would have run mp3gain -u against the adopted file; the
+#   UPDATE now clears them like save_edit/restore. (2) backup_cloud_theme
+#   (force-capture / allow_existing_local) os.replace'd an existing
+#   canonical with NO capture — the previous audio was silently destroyed;
+#   a COPY-mode capture (reason replaced_by_cloud_backup, db_path derived
+#   from the live conn) now runs before the swap, and the identical-bytes
+#   dedupe path still mints nothing. (3) The worker's sibling-hardlink
+#   short-circuit atomically replaced the section's theme.mp3 with NO
+#   capture — a COPY-mode capture (incoming_sha guards byte-identical
+#   relinks) now precedes the atomic replace.
+__version__ = "0.51.297"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

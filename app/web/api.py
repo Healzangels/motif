@@ -18535,14 +18535,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_size
 
             sha, size = await run_in_threadpool(_rehash)
+            # v0.51.297 (holistic review): adopt swaps the canonical to the
+            # placement's DIFFERENT bytes — a byte-replacement writer, so the
+            # 11 loudness/norm anchors (and norm_plex_entry_uri) must clear
+            # like save_edit/restore, else // UNDO LEVELING targets the wrong
+            # file via anchors describing the discarded upload.
+            from ..core.worker import _cond_columns as _adopt_cond
+            _alc = _adopt_cond(None, sha)
             with get_conn(db) as conn, transaction(conn):
                 conn.execute(
                     """UPDATE local_files SET file_sha256 = ?, file_size = ?,
                                               downloaded_at = ?,
-                                              mismatch_state = NULL
+                                              mismatch_state = NULL,
+                                              loudness_i=?, loudness_tp=?,
+                                              loudness_lra=?,
+                                              loudness_measured_at=?,
+                                              loudness_measured_sha256=?,
+                                              norm_state=?, norm_gain_db=?,
+                                              norm_target=?, norm_at=?,
+                                              norm_orig_sha256=?,
+                                              norm_orig_pcm_sha256=?,
+                                              norm_plex_entry_uri = NULL
                        WHERE media_type = ? AND tmdb_id = ? AND section_id = ?
                          AND edition_key = ?""",
-                    (sha, size, now_iso(),
+                    (sha, size, now_iso(), *_alc,
                      media_type, tmdb_id, r["section_id"], r["edition_key"]),
                 )
                 conn.execute(

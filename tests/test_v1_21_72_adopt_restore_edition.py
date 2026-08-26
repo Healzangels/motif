@@ -136,3 +136,43 @@ def test_restore_canonical_placement_kind_scoped_to_edition(app_client):
     assert kinds["a"] == "hardlink", kinds
     assert kinds["b"] == "copy", (
         f"restoring edition A clobbered edition B's placement_kind: {kinds}")
+
+
+def test_adopt_clears_norm_anchors(app_client):
+    """v0.51.297 (holistic review): adopt swaps the canonical to the
+    placement's DIFFERENT bytes — a byte-replacement writer, so the 11
+    loudness/norm anchors (and norm_plex_entry_uri) must clear like
+    save_edit/restore. Pre-fix the anchors described the discarded upload
+    and // UNDO LEVELING would run mp3gain -u against the adopted file."""
+    client, db, tmp_path, settings = app_client
+    folder_a = tmp_path / "media" / "LotR {edition-A}"
+    folder_a.mkdir(parents=True, exist_ok=True)
+    (folder_a / "theme.mp3").write_bytes(b"ADOPTED-bytes")
+    (tmp_path / "themes" / "movies").mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db) as conn:
+        cur = conn.execute(
+            "INSERT INTO themes (media_type, tmdb_id, title, year,"
+            " upstream_source, last_seen_sync_at, first_seen_sync_at,"
+            " youtube_url) VALUES ('movie',120,'LotR','2001','imdb',?,?,'u')",
+            (NOW, NOW))
+        tid = cur.lastrowid
+        _base_rows(conn, tid)
+        _lf(conn, "a", "movies/a.mp3", "pending")
+        _pl(conn, tid, "a", folder_a, "hardlink")
+        conn.execute(
+            "UPDATE local_files SET loudness_i=-9.9, norm_state='normalized',"
+            " norm_gain_db=-3.0, norm_orig_sha256='cafe',"
+            " norm_plex_entry_uri='upload://themes/xyz'"
+            " WHERE edition_key='a'")
+        conn.commit()
+    r = client.post("/api/items/movie/120/adopt-from-plex",
+                    headers={"X-Authentik-Username": "testadmin"})
+    assert r.status_code == 200, r.text
+    with sqlite3.connect(db) as conn:
+        conn.row_factory = sqlite3.Row
+        row = dict(conn.execute(
+            "SELECT loudness_i, norm_state, norm_gain_db, norm_orig_sha256,"
+            "       norm_plex_entry_uri FROM local_files"
+            " WHERE edition_key='a'").fetchone())
+    assert all(v is None for v in row.values()), (
+        f"adopt left stale norm anchors over the swapped bytes: {row}")

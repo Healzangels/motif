@@ -963,6 +963,23 @@ def backup_cloud_theme(
                 "skipped_identical": True,
                 "error": None,
             }
+    if existing is not None:
+        # v0.51.297 (holistic review): a differing-bytes swap replaces the
+        # canonical — this was the one byte-replacement writer missing from
+        # the v0.51.277 revision surface, so a force-capture silently
+        # destroyed the previous audio. Capture first (COPY mode — the file
+        # keeps serving until the swap); db_path derived from the live conn.
+        from .revisions import capture_revision
+        try:
+            _dbfile = conn.execute("PRAGMA database_list").fetchone()[2]
+            capture_revision(Path(_dbfile), themes_dir,
+                             media_type=media_type, tmdb_id=tmdb_id,
+                             section_id=section_id, edition_key=edition_key,
+                             reason="replaced_by_cloud_backup",
+                             incoming_sha=file_sha256)
+        except Exception as e:  # noqa: BLE001 — capture must not block backup
+            log.warning("backup_cloud_theme: revision capture failed for "
+                        "rk=%s: %s — proceeding with the swap", rk, e)
     # Stage to disk. Parent dirs created on demand — themes_dir
     # itself must already exist (caller's responsibility — the
     # settings validator guarantees it).
