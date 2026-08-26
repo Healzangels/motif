@@ -38,7 +38,7 @@ Foreground text:    --fg (#c8e8d4)  --fg-dim (#6b8779)  --fg-mute (#4a5e54)
 
 Primary (motif identity):
   --green        #6dffb5   default action / default button border-color
-  --green-bright #9affc9   hover state, THEMERRDB tone (T pill, sync button)
+  --green-bright #9affc9   hover state / themeable accent alias (v0.51.116 — the T pill's source tone is the FIXED --src-t-bright, not this)
   --green-deep   #2d8c5c   button border at rest
 
 Semantic / state colors:
@@ -48,10 +48,14 @@ Semantic / state colors:
   --brown / --brown-bright #c08552 / #d8a47a      Cookies-needed family (v1.15.43)
 
 Source-attribution colors (T/A/U/M/P axis):
-  T (ThemerrDB)     --green-bright
+  T (ThemerrDB)     --src-t-bright #9affc9   (FIXED --src-* family — v0.51.108/116:
+                    source identity never re-themes; --green-bright is a themeable
+                    accent alias and must NOT be used for source identity)
   A (Adopted)       --cyan        #6dd3ff
   U (User URL)      --violet      #c46dff
-  M (Manual)        --red         #ff6b6b
+  M (Manual)        --magenta     #ff7ad6   (v0.51.299 doc fix: every live surface
+                    — .link-badge-manual, .source-pie-M, the legend swatch — uses
+                    magenta; --red is the FAIL/danger tone, never the M source)
   P (Plex-served)   --amber       #ffb84a
 
 Aux:

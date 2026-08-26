@@ -5570,7 +5570,23 @@
 #   PREVIEW handler had no in-flight guard (class 3) — two concurrent
 #   renders raced last-response-wins and orphaned a candidate file; guarded
 #   with a finally re-arm.
-__version__ = "0.51.298"
+# 0.51.299: holistic-review wave 8 — docs + phantom-guard closures. (1)
+#   DESIGN_SYSTEM.md § 1's source-attribution table — the doc's self-
+#   declared most important consistency contract — listed M (Manual) as
+#   --red while every live surface uses --magenta, and T as the themeable
+#   --green-bright while the v0.51.108/116 split made source identity the
+#   FIXED --src-t family; the table now matches the code and documents the
+#   split. (2) The saved-filters endpoints (GET/POST/DELETE + the
+#   (scope,name) update-vs-insert dedup) had ZERO behavioral coverage
+#   behind nine frontend source-pin files (the v1.18.81 phantom-guard
+#   class) — a real-TestClient module now exercises round-trip, in-place
+#   update, scope isolation, delete scoping, and body validation. (3) The
+#   v1.23.69 relink double-enqueue fix was pinned by a source string any
+#   transaction line satisfied — the endpoint is now driven twice and the
+#   already_queued/same-job/single-row contract asserted, plus the
+#   done-sweep re-enqueue path. Both new modules mutation-verified against
+#   their dedup branches.
+__version__ = "0.51.299"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
