@@ -1346,3 +1346,20 @@ def format_theme_lost_sidecar_available_batch_body(
         "// ADOPT from each row's // MOTIF INFO card brings it under "
         "motif's management; // SET URL / // UPLOAD MP3 replace it instead."
     )
+
+
+# v0.51.300 (holistic r2): backup_ready digest pair — the in-place dispatch
+# gained the coalescer route; a Plex-Pass lapse flips has_theme on every
+# staged P-row in one enum, which must digest, not fan out.
+def format_backup_ready_batch_title(n: int) -> str:
+    return f"🎯 {n} backups ready to deploy"
+
+
+def format_backup_ready_batch_body(labels: list[str],
+                                   buckets: dict | None = None) -> str:
+    return (
+        _format_batch_body(labels, buckets=buckets)
+        + "\n\nPlex stopped serving its own theme on each of these rows and "
+        "motif holds a staged backup. // PROMOTE TO ACTIVE on a row's "
+        "// MOTIF INFO card deploys it."
+    )

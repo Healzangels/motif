@@ -99,7 +99,7 @@ def test_plex_enum_dispatch_passes_fallback_title():
     plex_items.title as fallback_title so the subject names the row."""
     anchor = PLEX_ENUM.index("lost_theme_candidates:")
     block = PLEX_ENUM[anchor:]
-    dispatch = block[block.index("enrich_item("):block.index("enrich_item(") + 900]
+    dispatch = block[block.index("enrich_item(", block.index("if lost_theme_candidates:")):]
     assert "fallback_title=cand.get(\"title\")" in dispatch, (
         "plex_enum theme-lost dispatch must pass the candidate title"
     )

@@ -142,7 +142,9 @@ def test_still_p_survivor_check_gates_on_included_section():
 
 
 def test_theme_lost_dispatch_failure_writes_durable_event():
-    i = ENUM_PY.index("dispatch failed for %s/%s")
+    # v0.51.300: the backup-ready block's warn text matches the old anchor
+    # and now precedes the reaper's — anchor on the tier-specific form.
+    i = ENUM_PY.index("(tier=%s): %s. Subsequent")
     # window covers the except block + the new durable log_event.
     block = ENUM_PY[i:i + 2300]
     assert 'log_event(' in block, (

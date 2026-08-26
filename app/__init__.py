@@ -5586,7 +5586,26 @@
 #   already_queued/same-job/single-row contract asserted, plus the
 #   done-sweep re-enqueue path. Both new modules mutation-verified against
 #   their dedup branches.
-__version__ = "0.51.299"
+# 0.51.300: holistic round 2, wave 9 — sweep lockouts + notify dedupe. A
+#   second 37-agent pass (4 finders over the round-1 coverage gaps +
+#   adversarial verification of ALL 18 uncapped leftovers) confirmed 22.
+#   This wave: (1) _restore_lost_placements claimed its gating "mirrors
+#   _retry_pending_placements" but never mirrored the v1.18.94
+#   plex_rejected 2-failure/24h lockout — a rejected re-PUSH re-enqueued
+#   EVERY HOUR forever (fresh unacked failed job + FAIL-dot relight each
+#   time); both candidate queries now carry the lockout (julianday form
+#   per the v1.19.5 trap, edition-scoped per v1.22.87). (2) The retry
+#   sweep's lockout COUNT (and its summary twin) had no edition scope —
+#   one edition's failures locked out its sibling after a single failure.
+#   (3) The in-place backup_ready_to_deploy dispatch had NO rate limit —
+#   every enum re-fired it for every staged row (a Plex-Pass lapse ≈ 2k
+#   messages per enum, repeatedly); it now keys a 24h edition-aware dedupe
+#   and routes through the v0.51.288 digest coalescer (bulk=True — a mass
+#   transition digests, a lone one lands as the rich single after the
+#   window). (4) The restore sweep's two silent re-stat skip branches log
+#   aggregated INFO (the v1.18.7 cold-path rule; OSError counts flag a
+#   mount problem).
+__version__ = "0.51.300"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

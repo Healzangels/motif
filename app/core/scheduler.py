@@ -185,6 +185,12 @@ def _retry_pending_placements(db_path: Path, *,
                         AND j2.media_type = lf.media_type
                         AND j2.tmdb_id = lf.tmdb_id
                         AND j2.section_id = lf.section_id
+                        -- v0.51.300: edition scope (v1.22.87's dedup already
+                        -- had it) — one edition's failures locked out its
+                        -- sibling after a single failure.
+                        AND COALESCE(CASE WHEN json_valid(j2.payload)
+                                THEN json_extract(j2.payload, '$.edition_key')
+                                END, '') = COALESCE(lf.edition_key, '')
                         AND j2.status = 'failed'
                         AND j2.finished_at IS NOT NULL
                         -- v1.19.5 (silent prod-bug from v1.18.94):
@@ -286,6 +292,12 @@ def _retry_pending_placements(db_path: Path, *,
                     AND j2.media_type = lf.media_type
                     AND j2.tmdb_id = lf.tmdb_id
                     AND j2.section_id = lf.section_id
+                    -- v0.51.300: edition scope (v1.22.87's dedup already
+                    -- had it) — one edition's failures locked out its
+                    -- sibling after a single failure.
+                    AND COALESCE(CASE WHEN json_valid(j2.payload)
+                            THEN json_extract(j2.payload, '$.edition_key')
+                            END, '') = COALESCE(lf.edition_key, '')
                     AND j2.status = 'failed'
                     AND j2.finished_at IS NOT NULL
                     -- v1.20.20: julianday() to match the lockout GATE
@@ -418,6 +430,30 @@ def _restore_lost_placements(settings: "Settings") -> None:
                                NOT LIKE 'existing_theme:%'
                            AND lf.last_place_attempt_reason
                                NOT LIKE 'placement_error:%'))
+                  -- v0.51.300 (holistic r2): the v1.18.94 lockout, which the
+                  -- docstring claimed was mirrored but never was — a
+                  -- plex_rejected row re-enqueued EVERY HOUR forever (fresh
+                  -- unacked failed job + FAIL-dot relight each time).
+                  -- julianday() per the v1.19.5 lex-compare trap; edition
+                  -- scope per v1.22.87 (siblings share the other keys).
+                  AND NOT (
+                      lf.last_place_attempt_reason LIKE 'plex_rejected:%'
+                      AND (
+                          SELECT COUNT(*) FROM jobs jr
+                          WHERE jr.job_type = 'place'
+                            AND jr.media_type = lf.media_type
+                            AND jr.tmdb_id = lf.tmdb_id
+                            AND jr.section_id = lf.section_id
+                            AND COALESCE(CASE WHEN json_valid(jr.payload)
+                                    THEN json_extract(jr.payload,
+                                                      '$.edition_key')
+                                    END, '') = COALESCE(lf.edition_key, '')
+                            AND jr.status = 'failed'
+                            AND jr.finished_at IS NOT NULL
+                            AND julianday(jr.finished_at)
+                                > julianday('now', '-24 hours')
+                      ) >= 2
+                  )
                   -- v1.24.35 (review #2): never auto-restore when motif's own
                   -- canonical is CONFIRMED gone (canonical_present=0). The place
                   -- would raise "source file missing" WITHOUT stamping a skip
@@ -477,6 +513,30 @@ def _restore_lost_placements(settings: "Settings") -> None:
                                NOT LIKE 'existing_theme:%'
                            AND lf.last_place_attempt_reason
                                NOT LIKE 'placement_error:%'))
+                  -- v0.51.300 (holistic r2): the v1.18.94 lockout, which the
+                  -- docstring claimed was mirrored but never was — a
+                  -- plex_rejected row re-enqueued EVERY HOUR forever (fresh
+                  -- unacked failed job + FAIL-dot relight each time).
+                  -- julianday() per the v1.19.5 lex-compare trap; edition
+                  -- scope per v1.22.87 (siblings share the other keys).
+                  AND NOT (
+                      lf.last_place_attempt_reason LIKE 'plex_rejected:%'
+                      AND (
+                          SELECT COUNT(*) FROM jobs jr
+                          WHERE jr.job_type = 'place'
+                            AND jr.media_type = lf.media_type
+                            AND jr.tmdb_id = lf.tmdb_id
+                            AND jr.section_id = lf.section_id
+                            AND COALESCE(CASE WHEN json_valid(jr.payload)
+                                    THEN json_extract(jr.payload,
+                                                      '$.edition_key')
+                                    END, '') = COALESCE(lf.edition_key, '')
+                            AND jr.status = 'failed'
+                            AND jr.finished_at IS NOT NULL
+                            AND julianday(jr.finished_at)
+                                > julianday('now', '-24 hours')
+                      ) >= 2
+                  )
                   -- v1.24.35 (review #2): never auto-restore when motif's own
                   -- canonical is CONFIRMED gone (canonical_present=0). The place
                   -- would raise "source file missing" WITHOUT stamping a skip
@@ -517,6 +577,8 @@ def _restore_lost_placements(settings: "Settings") -> None:
         # comparison is a set lookup, so no N+1.
         claimed = _plex_claimed_folders(db_path)
         skipped_unclaimed = 0
+        skipped_present = 0
+        skipped_oserror = 0
         for r in cands:
             key = (str(r["section_id"]), r["media_type"], r["media_folder"])
             if key not in claimed:
@@ -524,14 +586,27 @@ def _restore_lost_placements(settings: "Settings") -> None:
                 continue
             try:
                 if (Path(r["media_folder"]) / "theme.mp3").is_file():
+                    skipped_present += 1   # stale stamp — next enum re-stamps
                     continue
             except OSError:
+                skipped_oserror += 1       # indeterminate stat — mount blip?
                 continue
             to_place.append(r)
         if skipped_unclaimed:
             log.info("restore-lost-placements: %d candidate(s) skipped — no "
                      "plex_items row still points at that folder",
                      skipped_unclaimed)
+        # v0.51.300 (holistic r2): the two re-stat skip branches were silent —
+        # the cold-path rule (v1.18.7): recovery code that early-returns must
+        # say WHY. Aggregated, not per-row (the v1.17.11 hot-path rule).
+        if skipped_present:
+            log.info("restore-lost-placements: %d candidate(s) skipped — "
+                     "sidecar present on disk (stale theme_present stamp; "
+                     "the next enum re-stamps)", skipped_present)
+        if skipped_oserror:
+            log.info("restore-lost-placements: %d candidate(s) skipped — "
+                     "indeterminate stat (OSError — mount blip? persistent "
+                     "counts here mean a mount problem)", skipped_oserror)
         # v1.24.29: plex_uploads have no on-disk sidecar — the SQL rk-liveness
         # gate above is their authority, so accept them directly.
         to_place.extend(pu_cands)

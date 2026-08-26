@@ -1792,6 +1792,11 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     Pre-1.9.6 this was a single 10K-row transaction that soft-locked
     the API for 10+ seconds per enum.
     """
+    # v0.51.300: in-place backup-ready transitions collected in-txn,
+    # dispatched after the txn (see the dispatch block below for why).
+    # Hoisted to function top — several paths (empty-items mass-reap
+    # guard included) reach the dispatch block without the main txn.
+    _backup_ready_pending: list = []
     # Phase 1: stat sidecars outside the transaction. List of (item, sidecar)
     # pairs. v1.11.62: parallelized + the per-folder check now goes
     # through folder_has_theme_sidecar (host→container path translation
@@ -2290,92 +2295,34 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
                                 # dispatch wrapped in try/except so
                                 # a notify-side failure doesn't
                                 # interrupt the plex_enum loop.
-                                try:
-                                    # v1.18.80: load Settings() inside
-                                    # the dispatch block — same pattern
-                                    # the v1.16.0 tvdb_bridge uses at
-                                    # line ~1703. plex_enum's signature
-                                    # doesn't carry a settings object;
-                                    # this is the established way.
-                                    from ..config import Settings
-                                    from . import notify as _notify
-                                    from . import notify_content as _nc
-                                    _settings = Settings()
-                                    # edition-blind OK (v1.21.94): notify-only.
-                                    _ovr_url_row = conn.execute(
-                                        "SELECT youtube_url FROM user_overrides "
-                                        "WHERE media_type = ? "
-                                        "  AND tmdb_id = ? "
-                                        "  AND intent = 'backup' "
-                                        "ORDER BY (section_id = ?) DESC "
-                                        "LIMIT 1",
-                                        (_row_mt, _row_tmdb,
-                                         it.section_id),
-                                    ).fetchone()
-                                    _ovr_url = (
+                                # v0.51.300 (holistic r2): COLLECT here,
+                                # dispatch AFTER the txn like the reaper —
+                                # the in-txn dispatch deadlocked the 24h
+                                # dedupe's record_fire (a second connection
+                                # writing against this held txn) and could
+                                # drop inbox rows past the v0.51.260 wait
+                                # budget on a long enum.
+                                # edition-blind OK (v1.21.94): notify-only.
+                                _ovr_url_row = conn.execute(
+                                    "SELECT youtube_url FROM user_overrides "
+                                    "WHERE media_type = ? "
+                                    "  AND tmdb_id = ? "
+                                    "  AND intent = 'backup' "
+                                    "ORDER BY (section_id = ?) DESC "
+                                    "LIMIT 1",
+                                    (_row_mt, _row_tmdb,
+                                     it.section_id),
+                                ).fetchone()
+                                _backup_ready_pending.append({
+                                    "mt": _row_mt,
+                                    "tid": _row_tmdb,
+                                    "section_id": it.section_id,
+                                    "edition": edition_key_for_folder(
+                                        it.folder_path) or "",
+                                    "ovr_url": (
                                         _ovr_url_row["youtube_url"]
-                                        if _ovr_url_row else None
-                                    )
-                                    _ctx = _nc.enrich_item(
-                                        db_path,
-                                        media_type=_row_mt,
-                                        tmdb_id=_row_tmdb,
-                                        section_id=it.section_id,
-                                        # v1.21.76: name the edition.
-                                        edition_key=edition_key_for_folder(
-                                            it.folder_path),
-                                    )
-                                    _notify.dispatch(
-                                        db_path,
-                                        _settings.cfg.notifications,
-                                        event_kind="backup_ready_to_deploy",
-                                        item_ctx=_ctx,  # v0.51.151: click-through
-                                        title=_nc.format_backup_ready_title(_ctx),
-                                        body=_nc.format_backup_ready_body(
-                                            _ctx, override_url=_ovr_url),
-                                        body_format="markdown",
-                                        # v1.23.75: FB-sourced backups attach
-                                        # their thumb (v1.22.94) — was worker-
-                                        # only; a fbcdn backup showed no image.
-                                        attach_url=_nc.attachment_thumb_url(
-                                            _ctx),
-                                    )
-                                except Exception as _e:  # noqa: BLE001
-                                    # v1.19.41: hot-path silent-fail
-                                    # downgrade per CLAUDE.md class-9
-                                    # sub-pattern. First occurrence
-                                    # per process gets log.warning so
-                                    # an operator with a genuinely-
-                                    # broken Apprise config sees ONE
-                                    # warning at boot; subsequent
-                                    # fall through to log.debug. Was
-                                    # log.debug unconditionally —
-                                    # invisible at INFO log level.
-                                    global _BACKUP_READY_NOTIFY_WARNED
-                                    if not _BACKUP_READY_NOTIFY_WARNED:
-                                        log.warning(
-                                            "v1.19.41: "
-                                            "backup_ready_to_deploy "
-                                            "notify dispatch failed "
-                                            "for %s/%s: %s. "
-                                            "Subsequent failures "
-                                            "downgrade to debug; "
-                                            "investigate Apprise "
-                                            "config if this is a "
-                                            "fresh deploy.",
-                                            _row_mt, _row_tmdb, _e,
-                                        )
-                                        _BACKUP_READY_NOTIFY_WARNED = True
-                                    else:
-                                        # Single-line message so the
-                                        # v1.18.80 test's substring
-                                        # search ("notify dispatch
-                                        # suppressed") finds it
-                                        # contiguous in source.
-                                        log.debug(
-                                            "backup_ready_to_deploy notify dispatch suppressed for %s/%s: %s",
-                                            _row_mt, _row_tmdb, _e,
-                                        )
+                                        if _ovr_url_row else None),
+                                })
                 else:
                     conn.execute(
                         """INSERT INTO plex_items
@@ -2961,6 +2908,66 @@ def _upsert_items(db_path: Path, items: list[PlexLibraryItem],
     # Tier 3 (other fallback) is excluded above via `continue` —
     # rows with placement / replace-intent override already have
     # a working theme so no notification fires.
+    if _backup_ready_pending:
+        # v0.51.300 (holistic r2): the in-place backup-ready dispatch — now
+        # OUTSIDE the txn, 24h-deduped (it had NO rate limit: every enum
+        # re-fired for every staged row; a Plex-Pass lapse ~= 2k messages
+        # per enum), and routed through the v0.51.288 digest coalescer
+        # (bulk=True: a mass transition digests; a lone one still lands as
+        # the rich single after the window — notify-only, no urgency).
+        try:
+            from ..config import Settings
+            from . import notify as _notify
+            from . import notify_content as _nc
+            from . import notify_dedupe as _ndd
+            _settings = Settings()
+            for _brd in _backup_ready_pending:
+                _brd_key = ("backup_ready_to_deploy:"
+                            f"{_brd['mt']}:{_brd['tid']}:{_brd['edition']}")
+                if not _ndd.should_fire(db_path, _brd_key,
+                                        rate_limit_seconds=86400):
+                    continue
+                try:
+                    _ctx = _nc.enrich_item(
+                        db_path, media_type=_brd["mt"], tmdb_id=_brd["tid"],
+                        section_id=_brd["section_id"],
+                        edition_key=_brd["edition"] or None)
+                    _notify.dispatch_coalesced(
+                        db_path,
+                        _settings.cfg.notifications,
+                        event_kind="backup_ready_to_deploy",
+                        single_item_ctx=_ctx,
+                        item_label=_nc.format_theme_lost_item(_ctx),
+                        single_title=_nc.format_backup_ready_title(_ctx),
+                        single_body=_nc.format_backup_ready_body(
+                            _ctx, override_url=_brd["ovr_url"]),
+                        batch_title_fn=_nc.format_backup_ready_batch_title,
+                        batch_body_fn=_nc.format_backup_ready_batch_body,
+                        body_format="markdown",
+                        # v1.23.75: FB-sourced backups attach their thumb.
+                        single_attach_url=_nc.attachment_thumb_url(_ctx),
+                        bulk=True,
+                        section=_ctx.get("section_label") or "",
+                    )
+                    _ndd.record_fire(db_path, _brd_key)
+                except Exception as _e:  # noqa: BLE001
+                    # v1.19.41 class-9 hot-path shape: warn once, then debug.
+                    global _BACKUP_READY_NOTIFY_WARNED
+                    if not _BACKUP_READY_NOTIFY_WARNED:
+                        log.warning(
+                            "v1.19.41: backup_ready_to_deploy notify "
+                            "dispatch failed for %s/%s: %s. Subsequent "
+                            "failures downgrade to debug; investigate "
+                            "Apprise config if this is a fresh deploy.",
+                            _brd["mt"], _brd["tid"], _e)
+                        _BACKUP_READY_NOTIFY_WARNED = True
+                    else:
+                        log.debug(
+                            "backup_ready_to_deploy notify dispatch suppressed for %s/%s: %s",
+                            _brd["mt"], _brd["tid"], _e)
+        except Exception as _e:  # noqa: BLE001
+            log.debug("backup-ready dispatch block failed: %s", _e)
+
     if lost_theme_candidates:
         try:
             from ..config import Settings

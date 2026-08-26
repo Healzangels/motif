@@ -163,7 +163,9 @@ def test_plex_enum_dispatches_after_transaction_commits():
     fn_end = src.index("\ndef ", fn_idx + 1)
     body = src[fn_idx:fn_end]
     assert "if lost_theme_candidates:" in body
-    assert "_notify.dispatch(" in body
+    # v0.51.300: the last plain dispatch in _upsert_items became
+    # dispatch_coalesced (.288 reaper + .300 backup-ready move).
+    assert "_notify.dispatch_coalesced(" in body
     # All three event_kinds from the v1.19.41 tier split.
     # The dispatch's `event_kind=` param now binds to the
     # `_event_kind` local computed by the tier branches above

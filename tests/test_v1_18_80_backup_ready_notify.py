@@ -181,7 +181,11 @@ def test_plex_enum_dispatch_loads_settings_inline():
     pattern as v1.16.0 tvdb_bridge uses at line ~1703."""
     src = (REPO / "app" / "core" / "plex_enum.py").read_text()
     dispatch_idx = src.index('event_kind="backup_ready_to_deploy"')
-    pre_dispatch = src[max(0, dispatch_idx - 2500):dispatch_idx]
+    # v0.51.300: was a fixed backward 2500-char window (the .261 class) —
+    # the dedupe block rotted it. Anchor to the transition gate instead.
+    gate_idx = src.rindex("if _prior_has_theme and not it.has_theme:",
+                          0, dispatch_idx)
+    pre_dispatch = src[gate_idx:dispatch_idx]
     assert "from ..config import Settings" in pre_dispatch
     assert "_settings = Settings()" in pre_dispatch
 
@@ -191,12 +195,15 @@ def test_plex_enum_dispatch_uses_enrich_item():
     source provenance + thumbnail URL). enrich_item builds this
     from the DB — same pattern as theme_added's dispatch."""
     src = (REPO / "app" / "core" / "plex_enum.py").read_text()
-    dispatch_idx = src.index('event_kind="backup_ready_to_deploy"')
-    pre_dispatch = src[max(0, dispatch_idx - 2500):dispatch_idx]
+    # v0.51.300: the dispatch moved to a post-txn block (the in-txn
+    # dispatch deadlocked record_fire); candidates carry a dict now.
+    blk_start = src.index("if _backup_ready_pending:")
+    dispatch_idx = src.index('event_kind="backup_ready_to_deploy"', blk_start)
+    pre_dispatch = src[blk_start:dispatch_idx]
     assert "_nc.enrich_item(" in pre_dispatch
     body_flat = re.sub(r"\s+", " ", pre_dispatch)
-    assert "media_type=_row_mt" in body_flat
-    assert "tmdb_id=_row_tmdb" in body_flat
+    assert 'media_type=_brd["mt"]' in body_flat
+    assert 'tmdb_id=_brd["tid"]' in body_flat
 
 
 def test_plex_enum_dispatch_passes_override_url():
@@ -205,16 +212,16 @@ def test_plex_enum_dispatch_passes_override_url():
     URL the user staged. SELECTed from user_overrides inside
     the dispatch block."""
     src = (REPO / "app" / "core" / "plex_enum.py").read_text()
-    dispatch_idx = src.index('event_kind="backup_ready_to_deploy"')
-    # Widened slice — the SELECT lives in the pre-dispatch block
-    # but `override_url=` is in the call args AFTER the
-    # event_kind line. Slice both sides.
-    block = src[max(0, dispatch_idx - 3000):dispatch_idx + 1500]
-    assert "SELECT youtube_url FROM user_overrides" in block
-    assert "intent = 'backup'" in block
-    # Override URL passed to the body formatter.
-    body_flat = re.sub(r"\s+", " ", block)
-    assert "override_url=_ovr_url" in body_flat
+    # v0.51.300: the SELECT stays at the in-txn COLLECT site; the url rides
+    # the pending dict into the post-txn dispatch.
+    collect_idx = src.index("_backup_ready_pending.append(")
+    collect_blk = src[max(0, collect_idx - 1800):collect_idx]
+    assert "SELECT youtube_url FROM user_overrides" in collect_blk
+    assert "intent = 'backup'" in collect_blk
+    blk_start = src.index("if _backup_ready_pending:")
+    dispatch_end = src.index("_ndd.record_fire", blk_start)
+    body_flat = re.sub(r"\s+", " ", src[blk_start:dispatch_end])
+    assert 'override_url=_brd["ovr_url"]' in body_flat
 
 
 def test_plex_enum_dispatch_uses_markdown_body_format():
@@ -242,8 +249,11 @@ def test_plex_enum_dispatch_is_best_effort():
     the dispatch (same structural-comment-drift class)."""
     src = (REPO / "app" / "core" / "plex_enum.py").read_text()
     dispatch_idx = src.index('event_kind="backup_ready_to_deploy"')
-    # The try statement precedes the dispatch.
-    pre_dispatch = src[max(0, dispatch_idx - 3200):dispatch_idx]
+    # The try statement precedes the dispatch. v0.51.300: structural anchor
+    # (was a twice-widened backward 3200-char window, the .261 class).
+    gate_idx = src.rindex("if _prior_has_theme and not it.has_theme:",
+                          0, dispatch_idx)
+    pre_dispatch = src[gate_idx:dispatch_idx]
     assert "try:" in pre_dispatch
     # The except handler follows the dispatch.
     post_dispatch = src[dispatch_idx:dispatch_idx + 4500]
@@ -260,11 +270,11 @@ def test_plex_enum_v1_18_80_marker_explains_dispatch():
     adjacent string-literal comment lines — flatten and
     collapse `# ` prefixes before substring-checking."""
     src = (REPO / "app" / "core" / "plex_enum.py").read_text()
-    dispatch_idx = src.index('event_kind="backup_ready_to_deploy"')
-    # Widened window — the v1.18.80 marker comment block sits
-    # ~50 indented lines before the dispatch call (above the
-    # try:), well past the prior -2500 char ceiling.
-    pre_dispatch = src[max(0, dispatch_idx - 5000):dispatch_idx]
+    # v0.51.300: the v1.18.80 design-choice narration lives at the in-txn
+    # COLLECT gate now; anchor on the transition gate, span to the append.
+    gate_idx = src.index("if _prior_has_theme and not it.has_theme:")
+    append_idx = src.index("_backup_ready_pending.append(", gate_idx)
+    pre_dispatch = src[gate_idx:append_idx]
     assert "v1.18.80" in pre_dispatch
     # Strip Python comment markers + collapse whitespace so the
     # design-choice phrase matches across line wraps.
