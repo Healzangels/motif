@@ -17379,6 +17379,16 @@
     const _sameCard = dlg.open && dlg.dataset.cardKey === _cardKey;
     const _scroller = dlg.querySelector('.dlg-body');
     const _keepScroll = _sameCard && _scroller ? _scroller.scrollTop : null;
+    // v0.51.290 (ultra review): fold open-state is view-state like scrollTop.
+    // The loudness handlers re-render the whole card through this same-card
+    // path (LEVEL/UNDO at +900ms, MEASURE at +700ms, pick-edition), which
+    // snapped user-opened reference folds shut mid-flow — RE-MEASURE's fresh
+    // numbers rendered inside a closed fold. Capture which folds are open and
+    // re-apply after the rebuild (the fold-* data-info-section is the key).
+    const _keepFolds = _sameCard
+      ? [...body.querySelectorAll('details.info-fold[open]')]
+          .map((d) => d.dataset.infoSection || '')
+      : [];
     if (!_sameCard) body.innerHTML = recordLoaderHtml('loading…');
     // v1.16.1: info dialog was the most-clicked-on offender for
     // the user's "X has a square around it like it being clicked
@@ -17863,7 +17873,10 @@
     // off the `downloaded` line — debug-grade density at eye level — into the
     // collapsed IDENTITY fold as a `derivation` row, keeping their v1.18.56
     // verifiability role. The hint consts stay; only the render site moved.
-    const derivationRow = (sourceKindHint || sourceVidHint)
+    // v0.51.290 (ultra review): gate on the cut being KNOWN — on an ambiguous
+    // card lf is an arbitrary sibling (api's payloads[0]), and .289's move off
+    // the blanked _onDiskRows lost the v0.51.223 never-assert-one-cut guard.
+    const derivationRow = (!_ambiguousCut && (sourceKindHint || sourceVidHint))
       ? `<dt>derivation</dt><dd class="muted small">${(sourceKindHint + sourceVidHint).replace(/^ · /, '')}</dd>`
       : '';
     const dlBlock = lf
@@ -18154,7 +18167,8 @@
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
       : '';
     // v0.51.62 (the user, polish): the flat detail grid is split into labeled
-    // groups — IDENTITY / SOURCE / HISTORY / FILE & PLACEMENT — reusing the
+    // groups (v0.51.289: SOURCE + FILE & PLACEMENT expanded; identity, timeline
+    // — renamed from 'history' — loudness and revisions are folds) reusing the
     // .dlg-section + <h4> primitive (same as SOURCE PREVIEW) for scannability. The
     // rows are built as consts here (same nesting depth as the old flat <dl>, so the
     // conditional sub-templates are unchanged) and wrapped by _grp, which renders a
@@ -18335,8 +18349,8 @@
       rows.trim()
         ? `<details class="history-section info-fold" data-info-section="fold-${htmlEscape(title)}"${open ? ' open' : ''}>
             <summary>
-              <span class="history-section-title">// ${htmlEscape(title.toUpperCase())}</span>
-              <span class="muted small">${htmlEscape(note || 'click to expand')}</span>
+              <span class="history-section-title">// ${htmlEscape(title)}</span>
+              <span class="muted small">${htmlEscape(note)}</span>
             </summary>
             <dl class="dlg-grid info-fold-body">${rows}</dl>${extra}
           </details>`
@@ -18516,20 +18530,40 @@
            accreted since. The 'history' group is renamed 'timeline' to end
            the collision with // HISTORY (the audit log). -->
       ${_fold('identity', _idsRows, { note: 'ids & derivation' })}
-      ${_fold('timeline', _timelineRows, { note: 'dates' })}
+      ${_fold('timeline', _timelineRows, {
+        // v0.51.290 (ultra review): the accent-red last-failure line lived at
+        // eye level pre-.289; a fold labeled 'dates' hid it. Failure is
+        // actionable — open, and say so in the note.
+        open: !!failBlock,
+        note: failBlock ? 'dates · last failure' : 'dates',
+      })}
       ${_fold('loudness', _loudnessRows, {
-        // open while actionable: the ambiguous-cut picker is the CTA, and a
-        // LOUD row's leveling controls shouldn't hide. Leveled/raw rows are
-        // summarized by the hero chip; the fold is their detail view.
-        open: _ambiguousCut || !!(lf && lf.loudness_marker === 'outlier'),
-        note: _ambiguousCut ? 'pick an edition'
-          : ((lf && lf.loudness_marker) || 'no file'),
+        // open while actionable. v0.51.290 (ultra review): .289's two-state
+        // rule missed an UNMEASURED row (marker 'raw' with no reading — its
+        // hero tooltip says "Use // MEASURE NOW" while the button hid) and a
+        // CLIPPING row (tp > 0 rides marker 'raw' below the LUFS threshold).
+        // Leveled / measured-quiet rows stay summarized by the hero chip.
+        open: _ambiguousCut || !!(lf && (lf.loudness_marker === 'outlier'
+          || (lf.loudness_marker === 'raw'
+              && (lf.loudness_i == null
+                  || (typeof lf.loudness_tp === 'number' && lf.loudness_tp > 0))))),
+        // v0.51.290: one vocabulary — every other surface renders 'outlier'
+        // as LOUD; an unmeasured row's state is "not measured", not 'raw'.
+        note: (() => {
+          if (_ambiguousCut) return 'pick an edition';
+          const _m = lf && lf.loudness_marker;
+          if (_m === 'raw' && lf && false) return 'not measured';
+          return { outlier: 'loud' }[_m] || _m || 'raw';
+        })(),
       })}
       ${(() => {
         // v0.51.278 (feature-brief B, UI): revision history. Rendered only when
         // history exists — a fresh row has no section, not an empty shell.
         // v0.51.289: folds with the other reference sections; the restore-note
         // span rides `extra` so it stays inside the details.
+        // v0.51.290 (ultra review): an ambiguous card must not list cuts'
+        // revisions mixed together with live RESTORE buttons — pick first.
+        if (_ambiguousCut) return '';
         const revs = data.revisions || [];
         if (!revs.length) return '';
         const rows = revs.map((r) => {
@@ -18557,6 +18591,14 @@
     // where the click happened. Set after the render so a failed fetch (which returns above)
     // leaves the previous card's key intact rather than claiming to be this one.
     dlg.dataset.cardKey = _cardKey;
+    // v0.51.290: re-open the folds the user had expanded BEFORE restoring the
+    // scroll — open folds change layout, so restoring scroll first would land
+    // the viewport on the wrong content once they reopen.
+    for (const _fk of _keepFolds) {
+      const _fd = _fk && body.querySelector(
+        `details.info-fold[data-info-section="${CSS.escape(_fk)}"]`);
+      if (_fd) _fd.open = true;
+    }
     if (_keepScroll !== null && _scroller) _scroller.scrollTop = _keepScroll;
     // v1.24.83: drop the poster on 404 / non-art so the hero collapses to just
     // the meta (mirrors the carousel's onerror handling; attached here, not

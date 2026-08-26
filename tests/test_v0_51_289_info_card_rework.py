@@ -36,7 +36,9 @@ def test_reference_folds_are_collapsed_by_default():
         "folds must reuse the // HISTORY details primitive, not mint a twin")
     # identity + timeline + revisions pass no open flag (collapsed).
     assert "_fold('identity', _idsRows, { note: 'ids & derivation' })" in APP_JS
-    assert "_fold('timeline', _timelineRows, { note: 'dates' })" in APP_JS
+    # v0.51.290: timeline gained an open-on-failure exception — pin the
+    # call, not the option literals (they live in .290's tests).
+    assert "_fold('timeline', _timelineRows, {" in APP_JS
 
 
 def test_loudness_fold_opens_only_while_actionable():
@@ -78,15 +80,17 @@ def test_derivation_codes_moved_to_identity():
 
 
 def test_one_header_voice():
-    # expanded groups carry the // prefix; tracking unified at 0.15em.
-    assert '<h4>// ${htmlEscape(title)}</h4>' in APP_JS
+    # tracking unified at 0.15em (the h4 template pin lives in test_v0_51_62).
     h4 = APP_CSS[APP_CSS.index(".dlg-section h4 {"):]
     h4 = h4[:h4.index("}")]
     assert "letter-spacing: 0.15em" in h4
-    # folds keep the reference tone — dim at rest, fg when open (cyan is
-    # reserved for the audit-trail sections).
-    assert ".info-fold .history-section-title { color: var(--fg-dim); }" in APP_CSS
-    assert ".info-fold[open] .history-section-title { color: var(--fg); }" in APP_CSS
+    # folds keep the reference tone at rest — dim, not cyan. The [open]
+    # overrides are pinned as CASCADE OUTCOMES in test_v0_51_290 (the .289
+    # string pin here was a mirror: its rule tied on specificity with the
+    # later green-bright rule and silently lost — the ultra review's find).
+    blk = APP_CSS[APP_CSS.index(".info-fold .history-section-title {"):]
+    blk = blk[:blk.index("}")]
+    assert "color: var(--fg-dim)" in blk
 
 
 def test_v0_51_289_version_pin():

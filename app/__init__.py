@@ -5413,7 +5413,27 @@
 #   `downloaded` into IDENTITY's `derivation` row (v1.18.56 verifiability
 #   kept, at reference depth), and the 'history' dates group is renamed
 #   'timeline' to end the collision with // HISTORY.
-__version__ = "0.51.289"
+# 0.51.290: ultra-review fixes on the .289 card rework. (1) Fold open-state
+#   is view-state: the loudness handlers re-render the whole card (LEVEL/
+#   UNDO/MEASURE/pick-edition), snapping user-opened folds shut — RE-MEASURE's
+#   fresh numbers rendered inside a closed fold. Open folds are captured
+#   beside v0.51.244's _keepScroll and restored BEFORE the scroll (they
+#   change layout). (2) The loudness open-rule missed UNMEASURED and
+#   CLIPPING rows (both ride marker 'raw'); its note said 'outlier' where
+#   every other surface says LOUD, and 'raw' for never-measured rows — now
+#   'loud' / 'not measured'. (3) TIMELINE opens on a last-failure row (the
+#   accent-red line was at eye level pre-.289; a fold labeled 'dates' hid
+#   it). (4) v0.51.223 ambiguity discipline restored: derivationRow and the
+#   revisions fold blank on ambiguous cards, and api_item scopes
+#   list_revisions to the resolved section/edition — unscoped, a two-edition
+#   title listed BOTH cuts' revisions with live RESTORE buttons. (5) The
+#   .289 [open] title override tied (0,3,0) with the green-bright rule 2400
+#   lines later and LOST on source order (the mid-file trap) — its own test
+#   pinned the rule TEXT, a mirror. Class-stacked selectors now win
+#   position-independently, the missing caret override is in, fold bodies
+#   carry the 480px bound (revisions metadata outlives audio retention),
+#   and casing moved to CSS so _grp and _fold share one mechanism.
+__version__ = "0.51.290"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

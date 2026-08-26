@@ -17036,7 +17036,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # the INFO card is one request by design (v1.23.19 prefetch caches
             # one promise), so a second round-trip per open is the wrong shape.
             from ..core.revisions import list_revisions as _list_revs
-            _revisions = _list_revs(db, media_type=media_type, tmdb_id=tmdb_id)
+            # v0.51.290 (ultra review): scope to the card's cut. Unscoped, a
+            # two-edition title listed BOTH cuts' revisions with live RESTORE
+            # buttons on either card — the v0.51.223 cut-specific-surface
+            # discipline. section_id=None (legacy caller) keeps the global
+            # list; _info_edition=None (no rk/edition named) lists the section.
+            _revisions = _list_revs(db, media_type=media_type, tmdb_id=tmdb_id,
+                                    section_id=section_id,
+                                    edition_key=_info_edition)
             return {
                 "theme": dict(t),
                 "revisions": _revisions,
