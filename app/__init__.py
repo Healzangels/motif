@@ -5641,7 +5641,19 @@
 #   have minted + selected a zero-byte theme); the write-probe unlink is
 #   race-proof (missing_ok). UI: the two deferred INFO re-opens bail
 #   unless the dialog is still open on the same card.
-__version__ = "0.51.302"
+# 0.51.303: holistic r2 wave 12 — phantom-guard closures (the v1.18.81
+#   class: guards that never exercised their pipe). (1) api_release_latest's
+#   corrupt-cache WARNING was pinned by source text only — now driven
+#   behaviorally: invalid JSON degrades to 200/latest=None WITH the warning,
+#   and a valid cache round-trips. (2) The v1.19.38 SRC-axis placement lint
+#   matched only a subset of predicate shapes — generalized: every CODE
+#   occurrence of a bare !it.media_folder (comments stripped; all 8 current
+#   matches are historical-fix narration) must carry a plex_upload widening
+#   in its statement, vacuity-guarded on the widened-site census. (3) POST
+#   /api/dry-run had zero behavioral coverage — the flip now round-trips
+#   through is_dry_run, the truthiness parse is pinned, and non-admins are
+#   rejected.
+__version__ = "0.51.303"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
