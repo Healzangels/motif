@@ -58,7 +58,7 @@ jobs:
       - name: install ffmpeg (render tests must RUN here, not skip)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: pytest — full suite (BLOCKING)
-        run: PYTHONPATH=$PWD MOTIF_REQUIRE_FFMPEG=1 pytest -q -p no:cacheprovider
+        run: PYTHONPATH=$PWD MOTIF_REQUIRE_FFMPEG=1 MOTIF_REQUIRE_NODE=1 pytest -q -p no:cacheprovider
       - name: ruff — pyflakes correctness (BLOCKING)
         run: ruff check app/ tests/ --select F --ignore F401,F811,F841,F541
       - name: pip-audit — dependency CVEs (BLOCKING)
@@ -107,10 +107,18 @@ jobs:
           # nightly moves on every build — it's the active channel, so it's
           # pushed unconditionally (no is_stable gate).
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          # v0.51.293: workflow_dispatch (manual build, default 0.0.0-dev)
+          # must NOT move the rolling :nightly pointer every deployment
+          # tracks — only real v*.*.* tag pushes advance the channel.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "nightly_tag=" >> "$GITHUB_OUTPUT"
+          else
+            echo "nightly_tag=${IMAGE_NAME}:nightly" >> "$GITHUB_OUTPUT"
+          fi
 
           echo "Will tag image as:"
           echo "  ${IMAGE_NAME}:${VERSION}"
-          echo "  ${IMAGE_NAME}:nightly"
+          echo "  nightly: '${{ github.event_name }}' != 'workflow_dispatch' only"
 
       - name: Build and push (multi-arch)
         uses: docker/build-push-action@v5
@@ -125,7 +133,7 @@ jobs:
           # build, so deployments track `:nightly` instead of `:latest`.
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.tags.outputs.version }}
-            ${{ env.IMAGE_NAME }}:nightly
+            ${{ steps.tags.outputs.nightly_tag }}
           # Cache layers between runs. ignore-error on the export:
           # GHA's cache backend intermittently 404s blob writes
           # ("error writing layer blob: not_found"), and buildx fails

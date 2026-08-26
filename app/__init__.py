@@ -5464,7 +5464,26 @@
 #   LEVELING run mp3gain -u against the restored bytes; it now mirrors
 #   save_edit's _cond_columns(None, sha) clear, and save_edit gained the
 #   12th (norm_plex_entry_uri) clear as well.
-__version__ = "0.51.292"
+# 0.51.293: holistic-review wave 2 — ops/deploy + test-gate fixes. (1) The
+#   shipped docker-compose.yml kept cap_drop ALL from the pre-v1.22.4
+#   static-USER era while the current entrypoint starts as root and
+#   gosu-drops — SETUID/SETGID (the drop) and CHOWN (/config) are now
+#   cap_add'd back, so the composed container boots instead of
+#   crash-looping (the catalogued contract-drift class; test_v1_22_4 only
+#   guarded the env vars). no-new-privileges stays — gosu only lowers.
+#   README's security model updated off the static-UID description. (2) The
+#   Dockerfile HEALTHCHECK hardcoded :5309 — now ${MOTIF_WEB_PORT:-5309},
+#   so a port override doesn't render the container permanently unhealthy.
+#   (3) release.yml's workflow_dispatch (manual 0.0.0-dev builds) pushed
+#   the rolling :nightly pointer unconditionally — nightly now moves only
+#   on real v*.*.* tag pushes. (4) The tests/js menu-actions harness (38
+#   behavioral subtests for the SOURCE/PLACE/REMOVE gating) was executed by
+#   NOTHING — no CI step, no wrapper, and its documented invocation
+#   (`node --test tests/js/`) errored on Node 22 — while two pytest files
+#   deferred behavioral coverage to it. A pytest wrapper now runs it inside
+#   the gate (skip without node locally; MOTIF_REQUIRE_NODE=1 in both CI
+#   workflows hard-fails if node vanishes, the ffmpeg precedent).
+__version__ = "0.51.293"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

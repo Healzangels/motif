@@ -261,7 +261,7 @@ If your User Share allocation forces themes and media onto different filesystems
 
 motif is designed to live behind your existing NPM + Authentik setup, with these layers:
 
-1. **Container hardening** — runs as UID 99 (nobody) in a read-only root filesystem, all capabilities dropped, `no-new-privileges` set. Only `/config`, `/themes`, and Plex media volumes are writable.
+1. **Container hardening** — starts as root only to apply PUID/PGID (default 99:100) then `gosu`-drops for the app process; read-only root filesystem, all capabilities dropped except the three the drop itself needs (`SETUID`, `SETGID`, `CHOWN`), `no-new-privileges` set. Only `/config`, `/themes`, and Plex media volumes are writable.
 2. **Network exposure** — binds to `192.168.1.10:5309` only (LAN IP), not `0.0.0.0`.
 3. **Reverse proxy** — NPM with the standard `Local+VPN only` ACL block applied via custom location config.
 4. **App-layer auth** — local password (bcrypt, 30-day session cookies) or Authentik forward-auth, your choice

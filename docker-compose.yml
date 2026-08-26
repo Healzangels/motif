@@ -76,6 +76,15 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    # v0.51.293: the v1.22.4 entrypoint starts as root and gosu-drops to
+    # PUID:PGID — the drop needs SETUID/SETGID and the /config chown needs
+    # CHOWN. cap_drop ALL alone (the pre-v1.22.4 static-USER hardening) made
+    # the container crash-loop at boot. gosu only ever LOWERS privileges, so
+    # no-new-privileges stays.
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
     read_only: true
     tmpfs:
       - /tmp:rw,size=512m,mode=1777

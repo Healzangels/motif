@@ -3,9 +3,12 @@
 // in app/web/static/lib/menu-actions.js — these tests pin which
 // actions appear for representative row states (and which DON'T)
 // so a v1.12.51-style "ACCEPT UPDATE leaks onto src='-' rows"
-// regression fails CI before reaching the UI.
+// regression fails CI before reaching the UI — via the pytest wrapper
+// tests/test_v0_51_293_js_harness_executes.py (v0.51.293: nothing ran
+// this file before; `node --test tests/js/` even errored, the filename
+// matches none of node's default test patterns).
 //
-// Run: `node --test tests/js/`
+// Run: `node --test tests/js/test_menu_actions.js`
 
 "use strict";
 

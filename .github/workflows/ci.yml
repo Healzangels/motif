@@ -43,7 +43,7 @@ jobs:
       - name: install ffmpeg (render tests must RUN here, not skip)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
       - name: pytest — full suite (BLOCKING)
-        run: PYTHONPATH=$PWD MOTIF_REQUIRE_FFMPEG=1 pytest -q -p no:cacheprovider
+        run: PYTHONPATH=$PWD MOTIF_REQUIRE_FFMPEG=1 MOTIF_REQUIRE_NODE=1 pytest -q -p no:cacheprovider
 
   quality:
     name: lint + types + audit (py3.12)

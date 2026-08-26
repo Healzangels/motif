@@ -110,7 +110,7 @@ RUN mkdir -p /config /data && \
 EXPOSE 5309
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD curl --fail --silent --show-error http://127.0.0.1:5309/healthz || exit 1
+  CMD curl --fail --silent --show-error http://127.0.0.1:${MOTIF_WEB_PORT:-5309}/healthz || exit 1
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "-m", "app.main"]
