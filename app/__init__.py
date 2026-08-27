@@ -5680,7 +5680,21 @@
 #   out of the 24h window and all three flipped red (CI's nightly runs
 #   would have too). Both .300 and .301 now derive stamps from the real
 #   clock. The .213 keydown pin retargeted to the widened guard selector.
-__version__ = "0.51.305"
+# 0.51.306: the ?info_open deep-link is consume-once now (the user: after an
+#   inbox click-through, refreshing the library page re-opened the INFO card
+#   every time until you navigated away). The v1.14.85 gate read the params
+#   on every load and nothing ever removed them from the address bar. The
+#   gate now strips all four info_* params via history.replaceState right
+#   after reading them — synchronously and OUTSIDE the open-branch, so a
+#   malformed link (info_open without info_mt) cleans up too — preserving
+#   any other query params and the hash. The dialog still opens (the values
+#   live on in the deferred-open closure); refresh after arrival now behaves
+#   exactly like refresh after a manual row-click open. Every producer
+#   (inbox click-through, /queue REPROBE OPEN ROW, loudness outliers,
+#   canonical-health) gets the fix through the one consumer. The .82/.85
+#   gate pins' 2000-byte fixed windows overflowed — re-anchored to the
+#   gate's catch line; ratchet banked 1492 → 1490.
+__version__ = "0.51.306"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

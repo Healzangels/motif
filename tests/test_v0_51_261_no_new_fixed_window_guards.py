@@ -70,7 +70,10 @@ _MIN_WIDTH = 100
 # anchored to .fetchone(); the SAME query had THREE independent windows).
 # v0.51.298: 1493 → 1492 (test_v1_18_5's 200-char finally window, rotted by
 # the FK txn-close guard — sliced to the function body's end).
-_BUDGET = 1492
+# v0.51.306: 1492 → 1490 (test_v1_14_82 + test_v1_14_85's 2000-char deep-link
+# gate windows, rotted by the consume-once strip — both anchored to the
+# gate's catch line).
+_BUDGET = 1490
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:

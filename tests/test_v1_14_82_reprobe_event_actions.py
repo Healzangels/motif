@@ -194,7 +194,9 @@ def test_library_page_auto_opens_info_dialog_from_url_params():
     anchor = js.index(
         "v1.14.85: ?info_open=<tmdb_id>&info_mt=<movie|tv>"
     )
-    block = js[anchor:anchor + 2000]
+    # v0.51.306: structural end (the gate's catch line), not a 2000-byte
+    # window — the consume-once strip grew the block past the old width.
+    block = js[anchor:js.index("URLSearchParams not supported", anchor)]
     # Path guard.
     assert "path === '/movies' || path === '/tv' || path === '/anime'" in block
     # Reads all three params.

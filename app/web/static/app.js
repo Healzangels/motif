@@ -22007,6 +22007,17 @@
         // pass info_edition; `.has` not `.get()||undefined`, since '' is a real edition a
         // truthiness fallback would drop back into the v0.51.218 picker.
         const infoEdition = sp.has('info_edition') ? sp.get('info_edition') : undefined;
+        // v0.51.306: the deep-link is a ONE-SHOT instruction — strip it once read,
+        // or every refresh re-opens the card until the user navigates away (the
+        // user's report). Synchronous, and outside the open-branch, so malformed
+        // links clean up too; the values live on in the closure below.
+        const infoKeys = ['info_open', 'info_mt', 'info_section', 'info_edition'];
+        if (infoKeys.some((k) => sp.has(k))) {
+          infoKeys.forEach((k) => sp.delete(k));
+          const qs = sp.toString();
+          history.replaceState(null, '', path + (qs ? `?${qs}` : '')
+            + window.location.hash);
+        }
         if (infoOpen && infoMt) {
           // Defer past the loadLibrary tbody render so the
           // dialog opens over a populated library, not a
