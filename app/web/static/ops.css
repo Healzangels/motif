@@ -1244,6 +1244,37 @@ body[data-ops-running="1"] #topbar-status-text {
 }
 .notif-x:hover { opacity: 1; color: var(--red); }
 
+/* v0.51.305: the unread dot — a mark-read-only control (row click = read + open,
+   × = delete; this is read-and-stay). Hidden unless the row is .unread, so
+   markRead's class flip retires it in place. --ok, not a source tone: it is the
+   same generic "you have unread" signal the topbar INBOX pill wears. */
+.notif-dot {
+  display: none;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 2px 4px;
+  line-height: 1;
+}
+.notif-row.unread .notif-dot { display: block; }
+.notif-dot::before {
+  content: '';
+  display: block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  box-shadow: 0 0 6px rgba(var(--ok-rgb), 0.5);
+}
+.notif-dot:hover::before {
+  background: var(--green-bright);
+  box-shadow: 0 0 8px rgba(var(--ok-rgb), 0.85);
+}
+.notif-dot:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
 .notif-empty {
   display: flex;
   flex-direction: column;
@@ -1277,6 +1308,6 @@ body[data-ops-running="1"] #topbar-status-text {
    ≤600px; just enlarge the touch targets to ≥44px (the v0.50.88 tap-target
    rule). A full bottom-sheet treatment is a possible later refinement. */
 @media (max-width: 600px) {
-  .notif-x { padding: 10px 12px; }
+  .notif-x, .notif-dot { padding: 10px 12px; }
   .notif-clear-all { padding: 8px 10px; }
 }

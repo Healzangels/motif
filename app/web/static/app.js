@@ -21113,6 +21113,11 @@
         + `<div class="notif-main"${mainAttrs}><div class="notif-title">`
         +   `${htmlEscape(n.title || '')}</div></div>`
         + `<div class="notif-meta">`
+        // v0.51.305: the unread dot — mark THIS row read without the click-through
+        // (a row click navigates away; the × deletes; there was no read-and-stay).
+        // Rendered on every row; CSS shows it only while .unread, so markRead's
+        // class flip retires the affordance with the state.
+        +   `<button class="notif-dot" type="button" aria-label="Mark read" title="mark read"></button>`
         +   `<span class="notif-time">${htmlEscape(fmtRelativePast(n.ts))}</span>`
         +   `<button class="notif-x" type="button" aria-label="Dismiss">&times;</button>`
         + `</div></li>`;
@@ -21347,6 +21352,14 @@
         if (li) dismiss(li.dataset.nid, li);
         return;
       }
+      // v0.51.305: the unread dot marks read WITHOUT navigating — the return is
+      // the point (falling through would hit the click-through branch below).
+      const dot = e.target.closest('.notif-dot');
+      if (dot) {
+        const li = dot.closest('.notif-row');
+        if (li) markRead(li);
+        return;
+      }
       // v0.51.154: expand/collapse a group header (reveals the clickable children).
       const head = e.target.closest('.notif-group-head');
       if (head) { toggleGroupHead(head); return; }
@@ -21368,7 +21381,9 @@
       // v0.51.213: a nested × owns its own Enter/Space. The group's Dismiss-all button is
       // a CHILD of .notif-group-head, so matching the head first swallowed its activation
       // and toggled the group instead — dismissGroup was keyboard-unreachable.
-      if (e.target.closest('.notif-x')) return;
+      // v0.51.305: same deal for the unread dot — its native activation clicks
+      // through the delegate's dot branch; the row branch below would ALSO navigate.
+      if (e.target.closest('.notif-x, .notif-dot')) return;
       const head = e.target.closest('.notif-group-head');
       if (head) { e.preventDefault(); toggleGroupHead(head); return; }
       // v0.51.213: the v0.51.209 pass made the group HEADER operable and left the drawer's

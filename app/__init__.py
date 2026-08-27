@@ -5660,7 +5660,27 @@
 #   CI-only until now) flagged it; the local gate now runs ruff too. The
 #   .302/.303 tag builds failed on this line, so their images never
 #   published — this tag is the deployable head.
-__version__ = "0.51.304"
+# 0.51.305: inbox unread dot (the user: mark ONE row read without being
+#   navigated away). Every per-row read path had a side effect — row click
+#   marks read but click-throughs to the INFO card, × deletes the row — so
+#   read-and-stay didn't exist. Unread rows now render a --ok dot in
+#   .notif-meta (the same generic unread signal the topbar INBOX pill
+#   wears); clicking it routes to the v0.51.266 markRead and RETURNS before
+#   the click-through branch. The keydown delegate's v0.51.213 nested-button
+#   guard widens to `.notif-x, .notif-dot` so the dot's native Enter/Space
+#   activation isn't doubled by the row branch (which would also navigate).
+#   CSS shows the dot only while .unread — markRead's class flip retires the
+#   affordance in place — and the ≤600px block gives it the .notif-x tap
+#   target. Hover-marks-read was considered and rejected: mouse travel to
+#   the scrollbar/× would sweep rows read unseen, hover has no touch or
+#   keyboard equivalent, and it would quietly undo .266's per-row reading.
+#   Test health, caught by this tag's gate: the .300 lockout tests anchored
+#   their "hours ago" stamps to a FIXED calendar date while the lockout SQL
+#   compares julianday('now') — one real day after authoring the seeds aged
+#   out of the 24h window and all three flipped red (CI's nightly runs
+#   would have too). Both .300 and .301 now derive stamps from the real
+#   clock. The .213 keydown pin retargeted to the widened guard selector.
+__version__ = "0.51.305"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

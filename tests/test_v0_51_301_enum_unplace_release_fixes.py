@@ -22,7 +22,10 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-NOW = "2026-08-26T12:00:00+00:00"
+# v0.51.305: clock-derived, not a fixed calendar date — the .300 file's fixed
+# anchor aged past a julianday('now') window one real day after authoring.
+from datetime import datetime as _dt, timezone as _tz
+NOW = _dt.now(_tz.utc).isoformat()
 SEC = "1"
 
 

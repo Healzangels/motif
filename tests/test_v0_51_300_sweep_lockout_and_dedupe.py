@@ -23,14 +23,19 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parent.parent
-NOW = "2026-08-26T12:00:00+00:00"
 SEC = "1"
 
 
 def _iso_minus_hours(h):
+    # v0.51.305: derive from the REAL clock — the lockout SQL compares
+    # julianday(finished_at) to julianday('now','-24 hours'), so stamps
+    # anchored to a fixed calendar date aged out of the window one real
+    # day after authoring and flipped all three lockout tests red.
     from datetime import datetime, timedelta, timezone
-    return (datetime(2026, 8, 26, 12, tzinfo=timezone.utc)
-            - timedelta(hours=h)).isoformat()
+    return (datetime.now(timezone.utc) - timedelta(hours=h)).isoformat()
+
+
+NOW = _iso_minus_hours(0)
 
 
 def _seed_base(db):

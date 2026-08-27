@@ -62,8 +62,11 @@ def test_dismiss_all_is_not_swallowed_by_the_group_toggle():
     """The × lives INSIDE .notif-group-head, so the head lookup matches it too — the
     handler must bail on a nested control BEFORE it claims the event."""
     blk = _keydown_block(code_only=True)
-    assert "closest('.notif-x')" in blk, "keydown must recognise the dismiss buttons"
-    assert blk.index("closest('.notif-x')") < blk.index("closest('.notif-group-head')"), (
+    # v0.51.305: the guard's selector widened to cover the unread dot too —
+    # pin the INVARIANT (a bail that recognises .notif-x, ahead of the head
+    # match), not the selector's exact membership.
+    assert "closest('.notif-x" in blk, "keydown must recognise the dismiss buttons"
+    assert blk.index("closest('.notif-x") < blk.index("closest('.notif-group-head')"), (
         "the nested-control bail must come BEFORE the group-head match, mirroring the click "
         "handler's ordering — otherwise Enter/Space on Dismiss-all toggles the group")
 
