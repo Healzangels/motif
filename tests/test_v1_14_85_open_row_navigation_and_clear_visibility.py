@@ -88,8 +88,12 @@ def test_open_row_path_inference_from_media_type():
     body = js[fn_start:fn_end]
     # v0.51.308: the ternary grew an anime branch — pin the routing
     # INVARIANTS (movie -> /movies, anime -> /anime, default /tv).
+    # v0.51.309: anime is tested BEFORE the movie short-circuit (movie-
+    # typed anime sections live on /anime) — pin membership + ORDER.
     assert "mt === 'movie' ? '/movies'" in body
-    assert "? '/anime' : '/tv'" in body
+    assert "dataset.anime === '1' ? '/anime'" in body
+    assert (body.index("dataset.anime === '1'")
+            < body.index("mt === 'movie' ? '/movies'"))
 
 
 def test_library_page_load_parses_info_open_params():

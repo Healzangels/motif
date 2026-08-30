@@ -68,6 +68,12 @@ def test_dismiss_all_is_not_swallowed_by_the_group_toggle():
     # v0.51.307 (audit): membership not member-ORDER — the prefix form froze
     # .notif-x as the first selector, so alphabetising the list red'd this.
     assert ".notif-x" in blk, "keydown must recognise the dismiss buttons"
+    # v0.51.309 (audit r2): the bail must actually BAIL — pin the guard line
+    # as if→return (a mutant stripping the return survived the old pins).
+    gi = blk.index(".notif-x")
+    line = blk[blk.rindex("\n", 0, gi) + 1:blk.index("\n", gi)].strip()
+    assert line.startswith("if (") and line.endswith("return;"), (
+        f"nested-control guard must return: {line!r}")
     assert blk.index(".notif-x") < blk.index("closest('.notif-group-head')"), (
         "the nested-control bail must come BEFORE the group-head match, mirroring the click "
         "handler's ordering — otherwise Enter/Space on Dismiss-all toggles the group")
@@ -115,6 +121,8 @@ def test_every_tabbable_drawer_surface_has_a_visible_focus_ring():
     strictly worse than not being tabbable at all. v0.51.209 did exactly that to the group
     header. Anything we give tabindex in this drawer must land on the list."""
     ops_css = (REPO / "app" / "web" / "static" / "ops.css").read_text()
+    # v0.51.309 (audit r2): the ring covers EVERY row's main now — digest
+    # rows are controls too (v0.51.274) and the .307 focus park lands there.
     for sel in (".notif-group-head:focus-visible",
-                ".notif-row.notif-clickable .notif-main:focus-visible"):
+                ".notif-row .notif-main:focus-visible"):
         assert sel in ops_css, f"{sel} is tabbable but has no focus ring"

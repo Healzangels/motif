@@ -3870,6 +3870,10 @@ body.help-mode .settings-help-about { display: block; }
 }
 .info-hero-meta { flex: 1 1 auto; min-width: 0; }
 .dlg-section { margin-top: var(--gap-5); padding-top: var(--gap-4); border-top: 1px solid var(--line); }
+/* v0.51.309 (audit r2): the primitive is styled as a FOLLOWER (mid-card
+   divider). A card whose only content is one section — the 404 NOT IN
+   LIBRARY state — must not open with a stray rule + dead space. */
+#info-dlg-body > .dlg-section:only-child { margin-top: 0; padding-top: 0; border-top: 0; }
 /* v0.51.289 (design audit): 0.2em → 0.15em so the h4 group titles and the
    //-chip section titles (.diff/.recovery/.history-section-title) share one
    tracking — the card ran two header voices. */

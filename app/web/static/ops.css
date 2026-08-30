@@ -75,7 +75,11 @@
   outline-offset: 2px;
 }
 .notif-group-head:focus-visible,
-.notif-row.notif-clickable .notif-main:focus-visible {
+/* v0.51.309 (audit r2): EVERY row's main is a control since v0.51.274 (digest
+   rows mark-read too), and the .307 focus park lands there — the .notif-clickable
+   qualifier left non-clickable rows ringless (focus visibly vanished, the exact
+   v0.51.213 trap this list documents). */
+.notif-row .notif-main:focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: -2px;
 }

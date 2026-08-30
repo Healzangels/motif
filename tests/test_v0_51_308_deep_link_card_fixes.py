@@ -74,6 +74,10 @@ def client(tmp_path, monkeypatch):
     (tmp_path / "data").mkdir()
     (tmp_path / "motif.yaml").write_text("paths: {}\n")
     monkeypatch.setenv("MOTIF_TRUST_FORWARD_AUTH", "true")
+    # v0.51.309 (audit r2): sibling-fixture parity — contain any env-derived
+    # Settings() a future code path might construct under create_app.
+    monkeypatch.setenv("MOTIF_CONFIG_DIR", str(tmp_path))
+    monkeypatch.setenv("MOTIF_DATA_DIR", str(tmp_path / "data"))
     s = Settings(config_dir=tmp_path, data_dir=tmp_path / "data")
     init_db(s.db_path)
     init_auth_schema(s.db_path)
@@ -122,10 +126,14 @@ def test_api_item_prefers_the_named_cut(client):
 
 
 def test_api_item_echoes_a_passed_rating_key(client):
-    r = client.get("/api/items/tv/308101?section_id=1&rating_key=4321",
+    # v0.51.309 (audit r2): rk '7777' resolves to NOTHING (no plex_items
+    # row), so only a real echo returns it — the first draft passed '4321',
+    # which the no-rk fallback would also have produced, so an always-resolve
+    # mutant stayed green.
+    r = client.get("/api/items/tv/308101?section_id=1&rating_key=7777",
                    headers=AUTH)
     assert r.status_code == 200
-    assert r.json()["plex_rating_key"] == "4321"
+    assert r.json()["plex_rating_key"] == "7777"
 
 
 def test_api_item_unknown_title_still_404s(client):
@@ -142,23 +150,35 @@ def test_drawer_row_carries_data_anime():
     assert "n.is_anime" in blk and 'data-anime="1"' in blk
 
 
-def test_open_notif_row_routes_anime():
+def test_open_notif_row_routes_anime_before_movie():
     i = APP_JS.index("function openNotifRow(")
     blk = APP_JS[i:APP_JS.index("window.location.href", i)]
-    assert "row.dataset.anime === '1' ? '/anime' : '/tv'" in blk, (
+    assert "row.dataset.anime === '1' ? '/anime'" in blk, (
         "the v0.51.209 map defaulted every show to /tv — anime cards "
         "opened on the wrong page (posterless, no row behind them)")
+    # v0.51.309 (audit r2): ORDER is the invariant — /movies excludes
+    # is_anime sections while /anime takes movie-typed anime rows, so the
+    # movie short-circuit misrouted anime FILMS.
+    assert (blk.index("row.dataset.anime === '1'")
+            < blk.index("row.dataset.mt === 'movie'")), (
+        "anime must be tested before the movie short-circuit")
 
 
-def test_queue_open_row_routes_anime():
-    i = APP_JS.index('data-act="reprobe-open-row"',
-                     APP_JS.index("const openBtn = e.target.closest"))
+def test_queue_open_row_routes_anime_before_movie():
     blk = APP_JS[APP_JS.index("const openBtn = e.target.closest"):
                  APP_JS.index("window.location.href = `${tabPath}")]
-    assert "openBtn.dataset.anime === '1' ? '/anime' : '/tv'" in blk
-    # the button renderer must emit the attr the handler reads.
-    j = APP_JS.index('data-act="reprobe-open-row" ')
-    assert "animeAttr" in APP_JS[j - 2000:j + 400]
+    assert "openBtn.dataset.anime === '1' ? '/anime'" in blk
+    assert (blk.index("openBtn.dataset.anime === '1'")
+            < blk.index("mt === 'movie'")), (
+        "anime before the movie short-circuit (movie-typed anime sections "
+        "live on /anime)")
+    # v0.51.309 (audit r2): the renderer must EMIT the attr the handler
+    # reads — the first draft matched the dead `const animeAttr` declaration
+    # through a backward fixed window, so deleting the template's
+    # ${animeAttr} survived every test.
+    j = APP_JS.index("const sectionAttr = det.section_id")
+    tmpl = APP_JS[j:APP_JS.index("// OPEN ROW</button>", j)]
+    assert "${animeAttr}" in tmpl
 
 
 def test_info_card_renders_not_in_library_on_404():

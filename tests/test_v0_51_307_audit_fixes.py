@@ -98,11 +98,17 @@ def test_dot_hover_stays_in_the_fixed_ok_family():
 def test_deep_link_strip_has_its_own_catch():
     i = APP_JS.index("v1.14.85: ?info_open=<tmdb_id>")
     gate = APP_JS[i:APP_JS.index("URLSearchParams not supported", i)]
-    r = gate.index("history.replaceState")
-    assert "try {" in gate[:r] and "console.warn" in gate[r:], (
-        "a replaceState throw before the deferred open would hit the gate's "
-        "silent outer catch and kill every deep-link open with no signal — "
-        "the strip needs its own try + breadcrumb (the clear-filters shape)")
+    # v0.51.309 (audit r2): scope to the STRIP itself — the gate's outer
+    # `try {` satisfied the old `in gate[:r]` check, so unwrapping the inner
+    # try survived as long as a console.warn existed anywhere after it.
+    strip = gate[gate.index("const qs = sp.toString()"):
+                 gate.index("if (infoOpen && infoMt)")]
+    assert "try {" in strip and "history.replaceState" in strip, (
+        "the replaceState must sit inside ITS OWN try — a throw before the "
+        "deferred open otherwise hits the gate's silent outer catch and "
+        "kills every deep-link open with no signal")
+    assert "console.warn" in strip[strip.index("history.replaceState"):], (
+        "the strip's catch needs its breadcrumb")
 
 
 # ── 6: the empty-body guard's failure shape, driven ──────────

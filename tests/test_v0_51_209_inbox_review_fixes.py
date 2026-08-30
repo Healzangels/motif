@@ -53,4 +53,10 @@ def test_clickthrough_routes_collection_to_its_own_tab():
     assert "'collection' ? '/collections'" in fn
     assert "=== 'movie' ? '/movies'" in fn
     # the old blanket "everything else is /tv" ternary must be gone.
-    assert "=== 'movie' ? '/movies' : '/tv'" not in fn
+    # v0.51.309: the movie/tv pair is a legitimate TAIL now (collection and
+    # anime peel off first) — pin that both special branches precede it
+    # instead of banning the substring outright.
+    assert fn.index("'collection' ? '/collections'") < fn.index(
+        "=== 'movie' ? '/movies'")
+    assert fn.index("dataset.anime === '1' ? '/anime'") < fn.index(
+        "=== 'movie' ? '/movies'")

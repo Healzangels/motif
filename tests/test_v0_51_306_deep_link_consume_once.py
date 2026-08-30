@@ -36,7 +36,14 @@ def test_gate_strips_the_params_after_reading():
     # v0.51.307 (audit): bind deletion to EVERY key — the first draft
     # accepted any single .delete( call, so sp.delete(infoKeys[0]) passed
     # while three params stayed sticky.
-    assert re.search(r"infoKeys\s*\.forEach\(\(k\) => sp\.delete\(k\)\)", strip), (
+    # v0.51.309 (audit r2): accept the EQUIVALENT loop spellings (forEach
+    # with/without parens/braces, for-of) — the exact-lambda regex was a
+    # formatting mirror that a routine refactor would red with the
+    # invariant intact. Still rejects sp.delete(infoKeys[0]).
+    assert re.search(
+        r"(infoKeys\s*\.\s*forEach\(\s*\(?(\w+)\)?\s*=>\s*\{?\s*sp\.delete\(\2\)"
+        r"|for\s*\(\s*(?:const|let)\s+(\w+)\s+of\s+infoKeys\s*\)\s*\{?\s*sp\.delete\(\3\))",
+        strip), (
         "the strip must delete each listed key (loop over infoKeys)")
 
 

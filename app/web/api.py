@@ -17071,9 +17071,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # first edition (stable ORDER BY, mirrors the picker order).
                 _poster_rk = rating_key
                 if not _poster_rk:
+                    # v0.51.309 (audit r2): two-arm match (the v1.22.17 class) —
+                    # AniDB anime and most collections have guid_tmdb NULL and
+                    # bond via theme_id only, so the guid-only arm left exactly
+                    # the fix's target rows (anime P-rows) posterless.
                     _pq = ("SELECT rating_key FROM plex_items "
-                           "WHERE guid_tmdb = ? AND media_type = ?")
-                    _pa = [tmdb_id, _info_plex_type]
+                           "WHERE (guid_tmdb = ? OR theme_id = ?) "
+                           "  AND media_type = ?")
+                    _pa = [tmdb_id, t["id"], _info_plex_type]
                     if section_id:
                         _pq += " AND section_id = ?"
                         _pa.append(section_id)

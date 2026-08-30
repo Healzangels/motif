@@ -5676,8 +5676,12 @@
           // of the movie so it truly would result in bringing
           // up just that row."
           // v0.51.308: anime → /anime (data-anime from the event's is_anime).
-          const tabPath = mt === 'movie' ? '/movies'
-            : openBtn.dataset.anime === '1' ? '/anime' : '/tv';
+          // v0.51.309 (audit r2): anime BEFORE movie — movie-typed anime
+          // sections live on /anime, so the movie short-circuit misrouted
+          // anime films. NOTE: events logged pre-.308 carry no is_anime and
+          // route /tv until they age out (~30d) or a new reprobe re-logs.
+          const tabPath = openBtn.dataset.anime === '1' ? '/anime'
+            : mt === 'movie' ? '/movies' : '/tv';
           const params = new URLSearchParams();
           params.set('info_open', String(id));
           params.set('info_mt', String(mt));
@@ -21352,9 +21356,12 @@
       // the wrong tab), a movie on /movies.
       // v0.51.308: anime sections route to /anime (server-enriched data-anime) —
       // "tv/anime default to /tv" landed anime cards on the wrong page.
-      const tab = row.dataset.mt === 'movie' ? '/movies'
-        : row.dataset.mt === 'collection' ? '/collections'
-        : row.dataset.anime === '1' ? '/anime' : '/tv';
+      // v0.51.309 (audit r2): anime BEFORE movie — /movies excludes is_anime
+      // sections while /anime takes movie-typed anime rows (api tab_where),
+      // so the movie short-circuit misrouted anime FILMS the same way.
+      const tab = row.dataset.mt === 'collection' ? '/collections'
+        : row.dataset.anime === '1' ? '/anime'
+        : row.dataset.mt === 'movie' ? '/movies' : '/tv';
       const params = new URLSearchParams();
       params.set('info_open', row.dataset.tid);
       params.set('info_mt', row.dataset.mt);
@@ -21444,6 +21451,11 @@
       const anyRow = e.target.closest('.notif-row');
       if (anyRow) { e.preventDefault(); markRead(anyRow); }
       const row = e.target.closest('.notif-row.notif-clickable');
+      // v0.51.309 (audit r2): the .307 double-activation absorb existed only
+      // in the CLICK path — after the dot's focus park, a fast second Enter
+      // (or key-repeat) activated .notif-main and navigated anyway.
+      if (row && row.dataset.dotReadTs
+          && Date.now() - Number(row.dataset.dotReadTs) < 400) return;
       if (row) { openNotifRow(row); }
     });
     document.addEventListener('keydown', (e) => {

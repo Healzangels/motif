@@ -66,7 +66,13 @@ def test_keydown_guard_covers_the_dot():
     bail = blk[:blk.index("const head")]
     assert "'.notif-dot" in bail or ".notif-dot'" in bail, (
         "the nested-button bail must recognise the dot")
-    assert "return" in bail
+    # v0.51.309 (audit r2): pin the guard LINE as an if→return — a bare
+    # "return" in the segment was satisfied by the handler's key-filter, so
+    # a neutered guard (closest() call without the if/return) stayed green.
+    gi = bail.index("closest('.notif-x")
+    line = bail[bail.rindex("\n", 0, gi) + 1:bail.index("\n", gi)].strip()
+    assert line.startswith("if (") and line.endswith("return;"), (
+        f"the nested-control guard must BAIL, not just look: {line!r}")
     assert blk.index(".notif-dot") < blk.index("closest('.notif-row')"), (
         "the v0.51.213 nested-button guard must fire before the row branch — "
         "else Enter on a focused dot marks read AND navigates (double-fire)")
@@ -92,12 +98,15 @@ def test_css_mobile_tap_target_covers_the_dot():
     blk = blk[:blk.index("}", blk.index(".notif-clear-all"))]
     # v0.51.307 (audit): presence wasn't enough — equal padding on an 8px
     # circle yields ~28px, and a missed tap falls through to the row and
-    # NAVIGATES. The dot needs its own larger padding to reach the 44px
-    # v0.50.88 floor (8 + 2×18 = 44).
+    # NAVIGATES.
+    # v0.51.309 (audit r2): the EXACT values (18px/-12px) are owned by ONE
+    # pin — test_v0_51_307_audit_fixes — two files mirroring the literal
+    # red'd in tandem on any equivalent rework. Here: the dot has its own
+    # sizing rule at all.
     i = blk.index(".notif-dot")
     rule = blk[blk.index("{", i):blk.index("}", i)]
-    assert "padding: 18px" in rule, (
-        "the ≤600px dot rule must pad the 8px circle to the 44px tap floor")
+    assert "padding" in rule, (
+        "the ≤600px dot rule must enlarge the 8px circle's tap target")
 
 
 def test_v0_51_305_version_pin():

@@ -5736,7 +5736,36 @@
 #   (named-cut row first, else the section's first edition) and the hero
 #   chain uses it as the final fallback — fixes the wrong-tab case AND
 #   rk-less opens on the right tab (Grey's had no poster either).
-__version__ = "0.51.308"
+# 0.51.309: build audit round 2 (5 finders over the .307/.308 delta) — five
+#   fixes + a ratchet extension. (1) Anime MOVIES still misrouted: both
+#   .308 ternaries tested mt==='movie' before data-anime, but /movies
+#   excludes is_anime sections while /anime takes movie-typed anime rows —
+#   anime is tested FIRST at both sites now. Pre-.308 reprobe events carry
+#   no is_anime and route /tv until they age out (~30d) — accepted. (2)
+#   The .307 double-activation absorb was click-path only: after the dot's
+#   focus park, a fast second Enter / key-repeat activated .notif-main via
+#   the KEYDOWN delegate and navigated — same 400ms dotReadTs bail there.
+#   (3) plex_rating_key resolution matched guid_tmdb only; AniDB anime and
+#   most collections bond via theme_id with NULL guids (the v1.22.17
+#   two-arm class), leaving the fix's own target rows posterless — now
+#   (guid_tmdb = ? OR theme_id = ?). (4) The focus-visible ring was scoped
+#   to .notif-clickable mains, so the .307 park visibly lost focus on
+#   digest rows — the ring covers every row's main (they are ALL controls
+#   since v0.51.274). (5) The 404 card rendered .dlg-section as the
+#   dialog's ONLY child — a mid-card-divider primitive — drawing a stray
+#   rule + dead space; #info-dlg-body > .dlg-section:only-child sheds it.
+#   Test health: verifier mutants proved FIVE pins escapable — the keydown
+#   bail's return (satisfied by the key-filter line; now pinned as an
+#   if→return LINE in .305/.213), the queue animeAttr EMISSION (dead
+#   declaration matched through a backward window; now the template's
+#   ${animeAttr}), the rk echo (fixture value collided with the resolver;
+#   now an unresolvable rk), the strip's inner try (the OUTER try satisfied
+#   the check; now scoped to the strip), and the forEach regex (formatting
+#   mirror; now accepts equivalent loops). The .261 ratchet was BLIND to
+#   backward windows `x[a-N:a+M]` — one shipped THROUGH it in .308 — so
+#   the detector now censuses that shape too: _BACKWARD_BUDGET = 79
+#   banked, same equality-only-down rules.
+__version__ = "0.51.309"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

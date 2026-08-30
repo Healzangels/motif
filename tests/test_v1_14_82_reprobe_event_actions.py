@@ -183,8 +183,12 @@ def test_open_row_click_handler_navigates_to_library_with_info_params():
     # tabPath inferred from media_type.
     # v0.51.308: the ternary grew an anime branch — pin the routing
     # INVARIANTS (movie -> /movies, anime -> /anime, default /tv).
+    # v0.51.309: anime is tested BEFORE the movie short-circuit (movie-
+    # typed anime sections live on /anime) — pin membership + ORDER.
     assert "mt === 'movie' ? '/movies'" in body
-    assert "? '/anime' : '/tv'" in body
+    assert "dataset.anime === '1' ? '/anime'" in body
+    assert (body.index("dataset.anime === '1'")
+            < body.index("mt === 'movie' ? '/movies'"))
 
 
 def test_library_page_auto_opens_info_dialog_from_url_params():

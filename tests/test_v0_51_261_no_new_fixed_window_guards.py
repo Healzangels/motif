@@ -77,6 +77,12 @@ _MIN_WIDTH = 100
 # rotted by the 404 empty-state — anchored to the success path's first read).
 _BUDGET = 1489
 
+# v0.51.309 (audit r2): the BACKWARD shape `x[a - N:a + M]` was invisible to
+# the detector (its lower bound is a BinOp, not a bare Name) — and a new one
+# shipped straight through the gate in v0.51.308, which is exactly the hole
+# a ratchet cannot afford. Same rules: equality, only ever DOWN.
+_BACKWARD_BUDGET = 79
+
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:
     """(lineno, width) for each `x[a:a + <int>]` with a matching lower bound.
@@ -107,9 +113,47 @@ def _fixed_windows(path: Path) -> list[tuple[int, int]]:
     return out
 
 
+def _backward_windows(path: Path) -> list[tuple[int, int]]:
+    """(lineno, width) for each `x[a - N:...]` slice — the shape the forward
+    detector cannot see (BinOp lower bound). Width = N plus the forward reach
+    when the upper bound is the same name + M."""
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return []
+    out: list[tuple[int, int]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Subscript):
+            continue
+        sl = node.slice
+        if not isinstance(sl, ast.Slice):
+            continue
+        lo, up = sl.lower, sl.upper
+        if not (isinstance(lo, ast.BinOp) and isinstance(lo.op, ast.Sub)
+                and isinstance(lo.left, ast.Name)
+                and isinstance(lo.right, ast.Constant)
+                and isinstance(lo.right.value, int)):
+            continue
+        width = lo.right.value
+        if (isinstance(up, ast.BinOp) and isinstance(up.op, ast.Add)
+                and isinstance(up.left, ast.Name)
+                and up.left.id == lo.left.id
+                and isinstance(up.right, ast.Constant)
+                and isinstance(up.right.value, int)):
+            width += up.right.value
+        if width >= _MIN_WIDTH:
+            out.append((node.lineno, width))
+    return out
+
+
 def _census() -> dict[str, list[tuple[int, int]]]:
     return {p.name: w for p in sorted(TESTS.glob("test_*.py"))
             if (w := _fixed_windows(p))}
+
+
+def _backward_census() -> dict[str, list[tuple[int, int]]]:
+    return {p.name: w for p in sorted(TESTS.glob("test_*.py"))
+            if (w := _backward_windows(p))}
 
 
 def test_no_new_fixed_width_window_guards():
@@ -138,6 +182,28 @@ def test_no_new_fixed_width_window_guards():
     )
 
 
+def test_no_new_backward_window_guards():
+    """v0.51.309: the `x[a - N:a + M]` shape — invisible to the forward
+    detector — gets its own equality ratchet after one shipped through the
+    gate unseen in v0.51.308."""
+    census = _backward_census()
+    total = sum(len(v) for v in census.values())
+    if total == _BACKWARD_BUDGET:
+        return
+    widest = sorted(
+        ((w, f, ln) for f, hits in census.items() for ln, w in hits),
+        reverse=True)[:10]
+    listing = "\n".join(f"    {w:>6} chars  {f}:{ln}" for w, f, ln in widest)
+    if total > _BACKWARD_BUDGET:
+        raise AssertionError(
+            f"v0.51.309: {total - _BACKWARD_BUDGET} NEW backward window "
+            f"guard(s) ({total} vs budget {_BACKWARD_BUDGET}). Anchor "
+            f"structurally instead.\nWidest:\n{listing}")
+    raise AssertionError(
+        f"v0.51.309: good — {_BACKWARD_BUDGET - total} backward guard(s) "
+        f"converted. Lower _BACKWARD_BUDGET to {total} to bank it.")
+
+
 def test_detector_is_not_vacuous():
     """A ratchet that matches nothing passes forever. Prove the detector both
     fires on the real shape and ignores the shapes it must not claim."""
@@ -154,9 +220,30 @@ def test_detector_is_not_vacuous():
             "    return a, b, c, d, e\n"
         )
         found = _fixed_windows(p)
+        back = _backward_windows(p)
     assert found == [(2, 4000)], (
         f"detector must catch exactly the fixed-width guard, got {found}"
     )
+    assert back == [], f"no backward shapes in the sample, got {back}"
+
+
+def test_backward_detector_is_not_vacuous():
+    """Same proof for the v0.51.309 backward-shape detector."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d) / "sample.py"
+        p.write_text(
+            "def f(src, i, j, n):\n"
+            "    a = src[i - 500:i + 1500]\n"   # backward+forward -> 2000
+            "    b = src[i - 300:i]\n"          # backward only -> 300
+            "    c = src[i - 2:i + 2]\n"        # short -> ignored
+            "    d = src[i - n:i]\n"            # variable -> ignored
+            "    e = src[i - 500:j + 100]\n"    # mixed names -> 500 only
+            "    return a, b, c, d, e\n"
+        )
+        back = _backward_windows(p)
+    assert back == [(2, 2000), (3, 300), (6, 500)], (
+        f"backward detector mis-census: {back}")
 
 
 def test_budget_matches_a_real_census():
