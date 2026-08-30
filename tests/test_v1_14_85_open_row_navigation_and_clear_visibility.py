@@ -86,7 +86,10 @@ def test_open_row_path_inference_from_media_type():
     fn_start = js.index("function bindQueue() {")
     fn_end = js.index("\n  }\n", fn_start)
     body = js[fn_start:fn_end]
-    assert "mt === 'movie' ? '/movies' : '/tv'" in body
+    # v0.51.308: the ternary grew an anime branch — pin the routing
+    # INVARIANTS (movie -> /movies, anime -> /anime, default /tv).
+    assert "mt === 'movie' ? '/movies'" in body
+    assert "? '/anime' : '/tv'" in body
 
 
 def test_library_page_load_parses_info_open_params():

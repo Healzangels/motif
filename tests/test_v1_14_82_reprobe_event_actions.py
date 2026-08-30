@@ -181,7 +181,10 @@ def test_open_row_click_handler_navigates_to_library_with_info_params():
     assert "info_mt" in body
     assert "info_section" in body
     # tabPath inferred from media_type.
-    assert "mt === 'movie' ? '/movies' : '/tv'" in body
+    # v0.51.308: the ternary grew an anime branch — pin the routing
+    # INVARIANTS (movie -> /movies, anime -> /anime, default /tv).
+    assert "mt === 'movie' ? '/movies'" in body
+    assert "? '/anime' : '/tv'" in body
 
 
 def test_library_page_auto_opens_info_dialog_from_url_params():

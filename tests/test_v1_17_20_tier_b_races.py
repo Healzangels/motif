@@ -161,7 +161,9 @@ def test_open_info_dialog_uses_seq_guard():
     click has superseded the current one."""
     src = APP_JS.read_text()
     idx = src.index("async function openInfoDialog(")
-    body = src[idx:idx + 4000]
+    # v0.51.308: structural end — the 404 empty-state grew the catch past
+    # the fixed 4000 window and hid the second seq check.
+    body = src[idx:src.index("const t = data.theme || {};", idx)]
     # Seq token declared.
     assert "openInfoDialog._seq" in body, (
         "v1.17.20: openInfoDialog must declare an _seq token "

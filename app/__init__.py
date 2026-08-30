@@ -5717,7 +5717,26 @@
 #   mirrors). On record, no fix: consume-once means a deep-link whose
 #   deferred open fails (backend restarting at +600ms) is spent — refresh
 #   shows a bare library; re-click the producer. Accepted trade-off.
-__version__ = "0.51.307"
+# 0.51.308: three deep-link card fixes from the operator's first .306 deploy.
+#   (1) A theme-lost notice for an item REMOVED from Plex deep-linked to a
+#   raw `404: {"detail":"not found"}` card (api_item 404s when the themes
+#   row is gone — which is exactly the state the notice describes; the
+#   user's NCIS: LA repro, while re-added Grey's worked). The card now
+#   renders a designed // NOT IN LIBRARY state for 404s and keeps the raw
+#   message for real errors. (2) Anime click-throughs landed on /tv — the
+#   v0.51.209 tab map defaulted every show there ("tv/anime default to
+#   /tv"). list_notifications now LEFT JOINs the section for is_anime
+#   (live flag, not a frozen stamp), the row carries data-anime, and
+#   openNotifRow routes it to /anime; the /queue REPROBE OPEN ROW path had
+#   the same gap — its event detail now stamps is_anime and the handler
+#   routes on it. (3) Deep-link opens rendered posterless cards (the
+#   user's Strike the Blood): every producer passes rating_key=None and
+#   the poster hero only fell back to a placement's plex_rating_key, which
+#   P-rows lack. api_item now resolves and returns plex_rating_key
+#   (named-cut row first, else the section's first edition) and the hero
+#   chain uses it as the final fallback — fixes the wrong-tab case AND
+#   rk-less opens on the right tab (Grey's had no poster either).
+__version__ = "0.51.308"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

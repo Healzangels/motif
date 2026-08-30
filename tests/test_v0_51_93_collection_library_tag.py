@@ -89,7 +89,10 @@ def test_library_response_labels_each_collection_with_its_library(admin_client):
 def test_select_dropped_the_dead_type_and_anime_aliases():
     # v0.51.93 removed the dot → ps.type/ps.is_anime are no longer selected.
     assert "ps.type AS section_type" not in API_PY
-    assert "ps.is_anime AS section_is_anime" not in API_PY
+    # v0.51.308: the alias is ALIVE again — the reprobe OPEN ROW detail
+    # stamps is_anime from it for /anime routing. Pin the CONSUMER so
+    # the column cannot go dead-weight silently a second time.
+    assert 'r_orig["section_is_anime"]' in API_PY
 
 
 # ── source guards: the dot is gone, the name tag is in ───────────────────────

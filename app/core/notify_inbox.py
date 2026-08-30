@@ -133,11 +133,19 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
     conn = sqlite3.connect(db_path, timeout=10.0)
     try:
         conn.row_factory = sqlite3.Row
+        # v0.51.308: LEFT JOIN the section so the drawer can route anime
+        # click-throughs to /anime — the v0.51.209 tab map defaulted every
+        # show to /tv, landing anime cards on the wrong page (no poster, no
+        # row behind the card). Joined at LIST time so it tracks the
+        # section's CURRENT flag, not a stamp frozen at notify time.
         rows = conn.execute(
-            "SELECT id, ts, event_kind, severity, title, body, seen_at, "
-            "       media_type, tmdb_id, section_id, edition_key "
-            "FROM notifications WHERE dismissed_at IS NULL "
-            "ORDER BY ts DESC, id DESC LIMIT ?",
+            "SELECT n.id, n.ts, n.event_kind, n.severity, n.title, n.body, "
+            "       n.seen_at, n.media_type, n.tmdb_id, n.section_id, "
+            "       n.edition_key, COALESCE(s.is_anime, 0) AS is_anime "
+            "FROM notifications n "
+            "LEFT JOIN plex_sections s ON s.section_id = n.section_id "
+            "WHERE n.dismissed_at IS NULL "
+            "ORDER BY n.ts DESC, n.id DESC LIMIT ?",
             (limit,),
         ).fetchall()
     finally:
@@ -159,6 +167,8 @@ def list_notifications(db_path: Path, limit: int = _LIST_LIMIT_DEFAULT) -> list[
             # v0.51.220: the exact cut, so the click-through skips the picker. NULL on
             # digests → the drawer omits info_edition and the card falls back to it.
             "edition_key": r["edition_key"],
+            # v0.51.308: anime rows deep-link to /anime, not /tv.
+            "is_anime": bool(r["is_anime"]),
         }
         for r in rows
     ]

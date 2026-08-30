@@ -124,8 +124,10 @@ def test_open_row_button_stamps_fourk_and_title():
     deep-link to the correct library variant + prefill search."""
     src = JS.read_text()
     # Anchor on the OPEN ROW button rendering.
-    anchor = src.index('data-act="reprobe-open-row"')
-    block = src[anchor - 500:anchor + 1500]
+    # v0.51.308: structural block (the attr builders through the button's
+    # close) — the fixed -500 window lost det.is_4k when animeAttr landed.
+    a = src.index("const sectionAttr = det.section_id")
+    block = src[a:src.index("// OPEN ROW</button>", a)]
     assert "data-fourk" in block, (
         "OPEN ROW button must stamp data-fourk for variant routing"
     )

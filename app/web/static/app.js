@@ -5419,13 +5419,17 @@
             // search to find the row that errored.
             const fourkAttr = (det.is_4k === 1 || det.is_4k === true)
               ? ' data-fourk="1"' : ' data-fourk="0"';
+            // v0.51.308: anime routes OPEN ROW to /anime (same gap as the
+            // inbox click-through — every show landed on /tv).
+            const animeAttr = (det.is_anime === 1 || det.is_anime === true)
+              ? ' data-anime="1"' : '';
             const titleAttr = det.title
               ? ` data-title="${htmlEscape(String(det.title))}"` : '';
             actionsHtml += (
               `<button class="btn btn-tiny" data-act="reprobe-open-row" `
               + `data-mt="${htmlEscape(String(det.media_type))}" `
               + `data-id="${htmlEscape(String(det.tmdb_id))}"`
-              + `${sectionAttr}${fourkAttr}${titleAttr} `
+              + `${sectionAttr}${fourkAttr}${animeAttr}${titleAttr} `
               + `title="Open the INFO dialog for this row so you can `
               + `PURGE / UNPLACE / etc. via the SOURCE menu.">`
               + `// OPEN ROW</button>`
@@ -5671,7 +5675,9 @@
           // could make it fill in the search bar with the name
           // of the movie so it truly would result in bringing
           // up just that row."
-          const tabPath = mt === 'movie' ? '/movies' : '/tv';
+          // v0.51.308: anime → /anime (data-anime from the event's is_anime).
+          const tabPath = mt === 'movie' ? '/movies'
+            : openBtn.dataset.anime === '1' ? '/anime' : '/tv';
           const params = new URLSearchParams();
           params.set('info_open', String(id));
           params.set('info_mt', String(mt));
@@ -17422,6 +17428,22 @@
       // a newer click is already loading, don't clobber its
       // 'loading…' with our stale error.
       if (openInfoDialog._seq !== _myToken) return;
+      // v0.51.308: a 404 here is a REAL state, not an error to dump raw — the
+      // title has no themes row any more, which is exactly what a theme-lost
+      // notification for a REMOVED item deep-links to (the user's NCIS: LA
+      // repro: the card read `404: {"detail":"not found"}`). Re-adding the
+      // item rebuilds the record and this card comes back on its own.
+      if (e && e.status === 404) {
+        body.innerHTML = `<div class="dlg-section">`
+          + `<h4>// NOT IN LIBRARY</h4>`
+          + `<p class="muted">motif no longer has a record for this title — `
+          + `it was likely removed from Plex after the notification that `
+          + `linked here (theme-lost notices describe exactly that). If it `
+          + `returns to a managed section, this card comes back on its own.</p>`
+          + `<p class="muted small">${htmlEscape(String(mediaType))}`
+          + ` · tmdb ${htmlEscape(String(tmdbId))}</p></div>`;
+        return;
+      }
       body.innerHTML = `<p class="accent-red">${htmlEscape(e.message)}</p>`;
       return;
     }
@@ -18160,8 +18182,12 @@
     // clicked edition's rating_key, falling back to a placement's plex_rating_key
     // for the 2-arg callers. The <img> error handler (attached after innerHTML,
     // below) removes it on 404 / non-art so the hero collapses to just the meta.
+    // v0.51.308: third fallback — the API-resolved rk. Every deep-link
+    // producer passes no rating_key and a P-row has no placements, so those
+    // cards (the user's Strike the Blood) rendered heroless.
     const posterRk = String(ratingKey
-      || placements.map((p) => p.plex_rating_key).find(Boolean) || '');
+      || placements.map((p) => p.plex_rating_key).find(Boolean)
+      || data.plex_rating_key || '');
     const posterImgHtml = /^\d+$/.test(posterRk)
       ? `<img class="info-poster" loading="lazy" alt=""`
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
@@ -21097,6 +21123,10 @@
         ? ` data-mt="${htmlEscape(String(n.media_type))}"`
           + ` data-tid="${htmlEscape(String(n.tmdb_id))}"`
           + (n.section_id ? ` data-sec="${htmlEscape(String(n.section_id))}"` : '')
+          // v0.51.308: anime rows deep-link to /anime — the v0.51.209 tab map
+          // defaulted every show to /tv (the user's Strike the Blood repro:
+          // wrong tab, posterless card, no row behind it).
+          + (n.is_anime ? ' data-anime="1"' : '')
           // v0.51.220: the exact cut, so the click-through opens THAT edition, not the
           // picker. `!= null` — '' is the untagged standard edition; NULL (digest) omits
           // the attr and correctly falls back to the picker.
@@ -21319,9 +21349,12 @@
     function openNotifRow(row) {
       if (!row.dataset.mt || !row.dataset.tid) return;
       // v0.51.209: route by media_type — a collection lands on /collections (was /tv,
-      // the wrong tab), a movie on /movies; tv/anime default to /tv.
+      // the wrong tab), a movie on /movies.
+      // v0.51.308: anime sections route to /anime (server-enriched data-anime) —
+      // "tv/anime default to /tv" landed anime cards on the wrong page.
       const tab = row.dataset.mt === 'movie' ? '/movies'
-        : row.dataset.mt === 'collection' ? '/collections' : '/tv';
+        : row.dataset.mt === 'collection' ? '/collections'
+        : row.dataset.anime === '1' ? '/anime' : '/tv';
       const params = new URLSearchParams();
       params.set('info_open', row.dataset.tid);
       params.set('info_mt', row.dataset.mt);

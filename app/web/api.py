@@ -6059,7 +6059,8 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
                 "       pi.folder_path, pi.title AS plex_title, "
                 "       t.media_type, t.tmdb_id, "
                 "       t.title AS theme_title, "
-                "       ps.is_4k AS section_is_4k "
+                "       ps.is_4k AS section_is_4k, "
+                "       ps.is_anime AS section_is_anime "
                 "  FROM plex_items pi "
                 "  LEFT JOIN themes t ON t.id = pi.theme_id "
                 "  LEFT JOIN plex_sections ps "
@@ -6273,6 +6274,11 @@ def _reprobe_plex_themes_run(db_path: Path, settings) -> None:
                             # wins over last-visited.
                             "is_4k": (
                                 int(r_orig["section_is_4k"] or 0)
+                                if r_orig else 0
+                            ),
+                            # v0.51.308: routes OPEN ROW to /anime, not /tv.
+                            "is_anime": (
+                                int(r_orig["section_is_anime"] or 0)
                                 if r_orig else 0
                             ),
                             "title": (
@@ -17057,6 +17063,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         if _pi_has_theme is None:
                             _pi_has_theme = _pind["h"]
 
+                # v0.51.308: resolve THIS card's plex rating_key — every
+                # deep-link producer (inbox, /queue OPEN ROW, loudness,
+                # canonical-health) passes rk=None, so the poster hero and
+                # anything else keyed on a numeric rk rendered blank there.
+                # Prefer the named cut's row; fall back to the section's
+                # first edition (stable ORDER BY, mirrors the picker order).
+                _poster_rk = rating_key
+                if not _poster_rk:
+                    _pq = ("SELECT rating_key FROM plex_items "
+                           "WHERE guid_tmdb = ? AND media_type = ?")
+                    _pa = [tmdb_id, _info_plex_type]
+                    if section_id:
+                        _pq += " AND section_id = ?"
+                        _pa.append(section_id)
+                    _prow = None
+                    if _info_edition is not None:
+                        _prow = conn.execute(
+                            _pq + " AND edition_key = ? LIMIT 1",
+                            (*_pa, _info_edition)).fetchone()
+                    if _prow is None:
+                        _prow = conn.execute(
+                            _pq + " ORDER BY edition_key LIMIT 1",
+                            _pa).fetchone()
+                    _poster_rk = _prow["rating_key"] if _prow else None
+
             # v0.51.278 (feature-brief B, UI): revisions ride the SAME fetch —
             # the INFO card is one request by design (v1.23.19 prefetch caches
             # one promise), so a second round-trip per open is the wrong shape.
@@ -17072,6 +17103,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return {
                 "theme": dict(t),
                 "revisions": _revisions,
+                # v0.51.308: the resolved rk (or the caller's own) — the
+                # card's poster-hero fallback for rk-less deep-link opens.
+                "plex_rating_key": _poster_rk,
                 # v1.22.71: P-row discriminator for the playback-source line.
                 "plex_independent_theme": _pi_independent,
                 # v0.51.37: Plex-is-serving flag so the card explains a

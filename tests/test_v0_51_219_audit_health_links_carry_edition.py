@@ -65,7 +65,8 @@ def test_a_link_without_an_edition_still_defers_to_the_picker():
     """The /queue reprobe OPEN ROW carries mt/id/section/fourk/title but no edition — its
     event isn't edition-specific — so it must NOT invent info_edition; it correctly lands
     on the v0.51.218 picker for a multi-edition title. Guard that it stayed edition-free."""
-    fn = _fn("const tabPath = mt === 'movie' ? '/movies' : '/tv';",
+    # v0.51.308: the ternary grew an anime branch — anchor its first line.
+    fn = _fn("const tabPath = mt === 'movie' ? '/movies'",
              "window.location.href = `${tabPath}")
     assert "info_edition" not in fn, (
         "the queue OPEN ROW has no edition to carry — it must defer to the picker, not "

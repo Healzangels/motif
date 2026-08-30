@@ -73,7 +73,9 @@ _MIN_WIDTH = 100
 # v0.51.306: 1492 → 1490 (test_v1_14_82 + test_v1_14_85's 2000-char deep-link
 # gate windows, rotted by the consume-once strip — both anchored to the
 # gate's catch line).
-_BUDGET = 1490
+# v0.51.308: 1490 → 1489 (test_v1_17_20's 4000-char openInfoDialog window,
+# rotted by the 404 empty-state — anchored to the success path's first read).
+_BUDGET = 1489
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:
