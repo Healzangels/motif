@@ -169,8 +169,11 @@ def test_attachment_fetch_gated_on_embedded_sink():
 
 
 def test_reupload_aborts_on_empty_body():
+    # v0.51.307: anchor moved — the one-off "empty_fetch" reason key was
+    # reshaped to the sibling step_failed/fetch contract; the invariant here
+    # is unchanged (an empty 200 body aborts before the POST).
     src = (REPO / "app" / "core" / "plex.py").read_text()
-    i = src.index("empty_fetch")
+    i = src.index("aborting the re-select")
     assert "if not audio_bytes:" in src[i - 600:i]
 
 

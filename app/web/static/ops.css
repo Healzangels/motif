@@ -1266,8 +1266,12 @@ body[data-ops-running="1"] #topbar-status-text {
   background: var(--ok);
   box-shadow: 0 0 6px rgba(var(--ok-rgb), 0.5);
 }
+/* v0.51.307 (audit): --ok-bright, NOT --green-bright — the dot is the FIXED
+   generic unread signal (same family as the INBOX pill); --green-bright is the
+   themeable accent alias and would flip the dot's meaning mid-hover under a
+   non-green theme (the v0.51.108/116 fixed-vs-themed split). */
 .notif-dot:hover::before {
-  background: var(--green-bright);
+  background: var(--ok-bright);
   box-shadow: 0 0 8px rgba(var(--ok-rgb), 0.85);
 }
 .notif-dot:focus-visible {
@@ -1308,6 +1312,12 @@ body[data-ops-running="1"] #topbar-status-text {
    ≤600px; just enlarge the touch targets to ≥44px (the v0.50.88 tap-target
    rule). A full bottom-sheet treatment is a possible later refinement. */
 @media (max-width: 600px) {
-  .notif-x, .notif-dot { padding: 10px 12px; }
+  .notif-x { padding: 10px 12px; }
+  /* v0.51.307 (audit): the dot needs MORE padding than the × to reach the
+     v0.50.88 44px tap floor — its content box is an 8px circle vs the ×'s
+     text glyph, and a missed tap falls through to the row and NAVIGATES
+     (the exact side effect the control exists to avoid). Negative vertical
+     margin keeps the 44px hit box from inflating the row. */
+  .notif-dot { padding: 18px; margin: -12px 0; }
   .notif-clear-all { padding: 8px 10px; }
 }

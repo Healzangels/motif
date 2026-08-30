@@ -11,6 +11,7 @@ preserves the rest of the URL (pathname + surviving query + hash).
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -32,7 +33,11 @@ def test_gate_strips_the_params_after_reading():
         assert f"'{k}'" in strip, (
             f"{k} missing from the strip list — one sticky param is enough "
             f"to keep the URL dirty")
-    assert ".delete(" in strip
+    # v0.51.307 (audit): bind deletion to EVERY key — the first draft
+    # accepted any single .delete( call, so sp.delete(infoKeys[0]) passed
+    # while three params stayed sticky.
+    assert re.search(r"infoKeys\s*\.forEach\(\(k\) => sp\.delete\(k\)\)", strip), (
+        "the strip must delete each listed key (loop over infoKeys)")
 
 
 def test_strip_runs_before_the_open_branch():

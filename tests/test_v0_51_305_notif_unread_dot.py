@@ -31,10 +31,15 @@ def _notif_click_block() -> str:
 def test_row_markup_renders_the_dot_button():
     blk = APP_JS[APP_JS.index("function rowHtml("):
                  APP_JS.index("function renderEmpty(")]
-    assert 'class="notif-dot"' in blk and 'type="button"' in blk, (
-        "unread rows must render the mark-read dot as a REAL button "
-        "(native Enter/Space activation is what the keydown guard defers to)")
-    assert 'aria-label="Mark read"' in blk
+    # v0.51.307 (audit): bind the checks to the dot's OWN tag — the first
+    # draft's three independent substring checks were satisfied by the
+    # sibling ×'s type="button", so a <span class="notif-dot"> passed.
+    i = blk.index('class="notif-dot"')
+    tag = blk[blk.rindex("<", 0, i):blk.index(">", i)]
+    assert tag.startswith("<button"), (
+        "the dot must be a REAL button — native Enter/Space activation is "
+        "what the keydown guard defers to; a span kills keyboard mark-read")
+    assert 'type="button"' in tag and 'aria-label="Mark read"' in tag
 
 
 def test_dot_click_marks_read_and_returns_before_the_click_through():
@@ -55,9 +60,14 @@ def test_dot_click_marks_read_and_returns_before_the_click_through():
 def test_keydown_guard_covers_the_dot():
     i = APP_JS.index("listEl.addEventListener('keydown'")
     blk = APP_JS[i:APP_JS.index("openNotifRow(row);", i)]
-    g = blk.index("'.notif-x, .notif-dot'")
-    assert "return" in blk[g:g + 80]
-    assert g < blk.index("closest('.notif-row')"), (
+    # v0.51.307 (audit): membership, not the selector literal — the first
+    # draft froze member ORDER ('.notif-x, .notif-dot'), so a harmless
+    # reorder or a third nested control would red this pin (mirror class).
+    bail = blk[:blk.index("const head")]
+    assert "'.notif-dot" in bail or ".notif-dot'" in bail, (
+        "the nested-button bail must recognise the dot")
+    assert "return" in bail
+    assert blk.index(".notif-dot") < blk.index("closest('.notif-row')"), (
         "the v0.51.213 nested-button guard must fire before the row branch — "
         "else Enter on a focused dot marks read AND navigates (double-fire)")
 
@@ -68,15 +78,26 @@ def test_css_shows_the_dot_only_while_unread():
     assert "display: none" in base, (
         "the dot's base state is hidden — it is rendered on EVERY row and "
         "gated by class, so markRead's unread→seen flip retires it in place")
-    assert ".notif-row.unread .notif-dot" in OPS_CSS
+    # v0.51.307 (audit): the unread rule must actually FLIP display — the
+    # first draft only checked the selector existed, so a rule that lost its
+    # display declaration (invisible dot, dead feature) stayed green.
+    j = OPS_CSS.index(".notif-row.unread .notif-dot")
+    body = OPS_CSS[OPS_CSS.index("{", j):OPS_CSS.index("}", j)]
+    assert "display:" in body and "none" not in body, (
+        "the .unread rule must set display to a visible value")
 
 
 def test_css_mobile_tap_target_covers_the_dot():
     blk = OPS_CSS[OPS_CSS.index("@media (max-width: 600px)"):]
     blk = blk[:blk.index("}", blk.index(".notif-clear-all"))]
-    assert ".notif-dot" in blk, (
-        "the ≤600px block enlarges drawer touch targets (v0.50.88 rule) — "
-        "the dot needs the same treatment as the ×")
+    # v0.51.307 (audit): presence wasn't enough — equal padding on an 8px
+    # circle yields ~28px, and a missed tap falls through to the row and
+    # NAVIGATES. The dot needs its own larger padding to reach the 44px
+    # v0.50.88 floor (8 + 2×18 = 44).
+    i = blk.index(".notif-dot")
+    rule = blk[blk.index("{", i):blk.index("}", i)]
+    assert "padding: 18px" in rule, (
+        "the ≤600px dot rule must pad the 8px circle to the 44px tap floor")
 
 
 def test_v0_51_305_version_pin():

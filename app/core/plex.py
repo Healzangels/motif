@@ -1576,7 +1576,19 @@ class PlexClient:
             log.warning("re-upload fetch returned 200 with an empty body "
                         "(item rk=%s, entry=%s) — aborting the re-select",
                         item_rating_key, theme_rating_key)
-            return {"ok": False, "reason": "empty_fetch", "upload": None}
+            # v0.51.307 (audit): sibling failure shape — the one-off 'reason'
+            # key made set_active_theme_via_reupload log "step_failed=None".
+            return {
+                "ok": False,
+                "step_failed": "fetch",
+                "fetch": {
+                    "http_status": r.status_code,
+                    "error": "empty body",
+                    "url": file_url, "bytes": 0,
+                    "body_preview": "(empty)",
+                },
+                "upload": None,
+            }
         # v1.21.99: the re-upload POST hits Plex's ~10MB theme-upload
         # ceiling exactly like the place path's plex_upload does (worker.
         # _PLEX_THEME_UPLOAD_CEILING_MB → HTTP 500). A >10MB fallback theme

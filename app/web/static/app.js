@@ -21357,7 +21357,19 @@
       const dot = e.target.closest('.notif-dot');
       if (dot) {
         const li = dot.closest('.notif-row');
-        if (li) markRead(li);
+        if (li) {
+          markRead(li);
+          // v0.51.307 (audit): the class flip display:none's the dot mid-gesture
+          // and the row grid expands into its pixels — a double-click's SECOND
+          // click would fall through to the click-through below and navigate.
+          // Stamp the row; the row branch absorbs clicks for a beat.
+          // v0.51.307 (audit): the focused button just went display:none, which
+          // drops keyboard focus to <body>; park it on the row control so
+          // Tab continues from THIS row, not the top of the page.
+          li.dataset.dotReadTs = String(Date.now());
+          const m = li.querySelector('.notif-main');
+          if (m && document.activeElement === dot) m.focus();
+        }
         return;
       }
       // v0.51.154: expand/collapse a group header (reveals the clickable children).
@@ -21371,6 +21383,10 @@
       const anyRow = e.target.closest('.notif-row');
       if (anyRow) markRead(anyRow);
       const row = e.target.closest('.notif-row.notif-clickable');
+      // v0.51.307 (audit): absorb the tail of a dot double-click — the dot
+      // vanished under the cursor after click 1, so click 2 lands on the row.
+      if (row && row.dataset.dotReadTs
+          && Date.now() - Number(row.dataset.dotReadTs) < 400) return;
       if (row) openNotifRow(row);
     });
     // v0.51.209: keyboard operation of the group header (Enter/Space) — pairs with the
@@ -22015,8 +22031,14 @@
         if (infoKeys.some((k) => sp.has(k))) {
           infoKeys.forEach((k) => sp.delete(k));
           const qs = sp.toString();
-          history.replaceState(null, '', path + (qs ? `?${qs}` : '')
-            + window.location.hash);
+          // v0.51.307 (audit): own try + breadcrumb — this sits BEFORE the
+          // deferred open, so a replaceState throw (sandboxed iframe embed)
+          // hitting the gate's silent outer catch would kill every deep-link
+          // open with zero signal. Mirrors the clear-filters strip's isolation.
+          try {
+            history.replaceState(null, '', path + (qs ? `?${qs}` : '')
+              + window.location.hash);
+          } catch (err) { console.warn('deep-link strip failed:', err); }
         }
         if (infoOpen && infoMt) {
           // Defer past the loadLibrary tbody render so the

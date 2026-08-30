@@ -5694,7 +5694,30 @@
 #   canonical-health) gets the fix through the one consumer. The .82/.85
 #   gate pins' 2000-byte fixed windows overflowed — re-anchored to the
 #   gate's catch line; ratchet banked 1492 → 1490.
-__version__ = "0.51.306"
+# 0.51.307: post-arc delta audit (5 finder angles over .304-.306) — six
+#   confirmed fixes. (1) Double-clicking the unread dot NAVIGATED: click
+#   1's class flip display:none'd the dot mid-gesture, the row grid
+#   expanded into its pixels, click 2 fell through to the click-through —
+#   the dot branch stamps dotReadTs and the row branch absorbs clicks for
+#   400ms. (2) Keyboard dot activation dropped focus to <body> (the
+#   focused button went display:none) — focus parks on the row's
+#   .notif-main. (3) The mobile dot tap target was ~28px against the
+#   claimed 44px v0.50.88 floor, and a miss navigated — padding 18px
+#   (8+36=44) with negative margin so the row keeps its height. (4) The
+#   dot's hover used THEMEABLE --green-bright on a FIXED-signal control
+#   (v0.51.108 split) — now --ok-bright. (5) The .306 replaceState sat
+#   bare inside the gate's silent catch BEFORE the deferred open — a throw
+#   (sandboxed iframe embed) would kill every deep-link open with no
+#   breadcrumb; it gets its own try + console.warn (the clear-filters
+#   shape). (6) The .302/.304 empty-body guard's one-off 'reason' key made
+#   set_active_theme_via_reupload log "step_failed=None" — reshaped to the
+#   sibling step_failed/fetch contract, now driven by a stubbed-client
+#   test. Audit also tightened four .305/.306 pins its verifiers proved
+#   mutable (span-swap, single-key delete, display-less CSS, selector-order
+#   mirrors). On record, no fix: consume-once means a deep-link whose
+#   deferred open fails (backend restarting at +600ms) is spent — refresh
+#   shows a bare library; re-click the producer. Accepted trade-off.
+__version__ = "0.51.307"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
