@@ -28,7 +28,8 @@ def test_bare_card_poster_matches_full_card_pattern():
     end = APP_JS.index("function openBareInfoDialog(", start)
     src = APP_JS[start:end]
     assert 'class="info-poster"' in src
-    assert "src=\"/api/plex/art/${encodeURIComponent(posterRk)}\"" in src
+    # v0.51.310: .jpg spelling (IDS static-classification).
+    assert "src=\"/api/plex/art/${encodeURIComponent(posterRk)}.jpg\"" in src
     # numeric-rk guard (Plex art proxy 400s on non-digits) mirrors the full card
     assert "/^\\d+$/.test(posterRk)" in src
     # poster is the FIRST hero child (poster-left layout), before the meta div
@@ -71,7 +72,7 @@ def _run(call: str) -> str:
 def test_numeric_rating_key_renders_poster():
     out = _run("renderBareInfoCard({plex_title:'Blade Runner',rating_key:'9001'});")
     assert '<img class="info-poster"' in out
-    assert 'src="/api/plex/art/9001"' in out
+    assert 'src="/api/plex/art/9001.jpg"' in out
 
 
 def test_non_numeric_rating_key_renders_no_poster():

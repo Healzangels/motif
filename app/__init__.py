@@ -5765,7 +5765,24 @@
 #   backward windows `x[a-N:a+M]` — one shipped THROUGH it in .308 — so
 #   the detector now censuses that shape too: _BACKWARD_BUDGET = 79
 #   banked, same equality-only-down rules.
-__version__ = "0.51.309"
+# 0.51.310: IDS-friendly art proxy (the operator's CrowdSec banned their own
+#   WAN IP browsing motif through the reverse proxy — twice over). (1) The
+#   poster proxy gains a canonical .jpg spelling (/api/plex/art/{rk}.jpg,
+#   bare path still registered for pre-deploy HTML in open tabs; all three
+#   JS emitters updated): IDS layers classify static-vs-crawl by extension,
+#   and a dashboard's burst of extension-less poster GETs read as
+#   http-crawl-non_statics. (2) "No art" returns 204 instead of 404: it is
+#   a DESIGNED outcome (every artless row emits one), and pages of them fed
+#   the http-probing 4xx counter. An <img> fires onerror on 204 exactly as
+#   on 404 — verified in a live-server harness (naturalWidth 0, error
+#   handler fired) — so the placeholder-tile / hero-collapse fallbacks are
+#   unchanged; the 204 carries a short private cache so a later-added
+#   poster appears within minutes. The user-initiated /api/items 404 stays:
+#   correct semantics for a genuinely missing record, and rare. The polls
+#   remain extension-less by nature — the operator-side allowlist covers
+#   that half (a poll-heavy single-user SPA behind an IDS needs its
+#   operator allowlisted regardless).
+__version__ = "0.51.310"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

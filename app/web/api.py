@@ -13274,7 +13274,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             log.debug("plex art proxy fetch failed for rk=%s: %s", rating_key, e)
             return None
 
+    # v0.51.310: the .jpg spelling is CANONICAL — IDS layers (the operator's
+    # CrowdSec) classify static-vs-crawl by extension, and a dashboard's burst
+    # of extension-less poster GETs read as a non-static crawl. The bare path
+    # stays registered: same live handler, and pre-deploy HTML in open tabs
+    # still references it.
+    # NOTE decorator order: the BOTTOM decorator registers first and Starlette
+    # matches in registration order — the .jpg route must register before the
+    # bare one, or {rating_key} greedily eats "123.jpg" and 400s.
     @app.get("/api/plex/art/{rating_key}")
+    @app.get("/api/plex/art/{rating_key}.jpg")
     async def api_plex_art(
         rating_key: str,
         w: "int | None" = Query(None, ge=60, le=1200),
@@ -13294,7 +13303,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail="bad rating key")
         got = await run_in_threadpool(_fetch_plex_art_bytes, rating_key, w)
         if got is None:
-            raise HTTPException(status_code=404, detail="no art")
+            # v0.51.310: 204, not 404 — "no art" is a DESIGNED outcome (every
+            # artless row on a page emits one), and a page of them fed the
+            # operator's CrowdSec http-probing 4xx counter. An <img> fires
+            # onerror on 204 exactly as on 404 (verified in the harness), so
+            # the placeholder-tile fallback contract is unchanged. Short cache
+            # so a later-added poster shows within minutes.
+            return Response(status_code=204,
+                            headers={"Cache-Control": "private, max-age=300"})
         body, ctype, downscaled = got
         # v0.51.286 (code-review): a ?w= request served by the FULL-RES
         # fallback must not cache 24h under the w-keyed URL — a transient

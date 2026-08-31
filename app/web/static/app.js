@@ -2181,7 +2181,7 @@
       // rasterize a huge bitmap — one new tile every ~5s at auto-scroll speed,
       // which was the user's "hitches every few seconds" beat. The proxy falls
       // back to the full thumb server-side if Plex declines the transcode.
-      img.dataset.src = `/api/plex/art/${encodeURIComponent(rk)}?w=300`;
+      img.dataset.src = `/api/plex/art/${encodeURIComponent(rk)}.jpg?w=300`;
       img.addEventListener('error', () => card.classList.add('recent-card-noart'));
       const title = document.createElement('span');
       title.className = 'recent-title';
@@ -17319,7 +17319,7 @@
     const posterRk = String(it.rating_key || '');
     const posterImgHtml = /^\d+$/.test(posterRk)
       ? `<img class="info-poster" loading="lazy" alt=""`
-        + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
+        + ` src="/api/plex/art/${encodeURIComponent(posterRk)}.jpg">`
       : '';
     return `
       <div class="info-hero">
@@ -18194,7 +18194,7 @@
       || data.plex_rating_key || '');
     const posterImgHtml = /^\d+$/.test(posterRk)
       ? `<img class="info-poster" loading="lazy" alt=""`
-        + ` src="/api/plex/art/${encodeURIComponent(posterRk)}">`
+        + ` src="/api/plex/art/${encodeURIComponent(posterRk)}.jpg">`
       : '';
     // v0.51.62 (the user, polish): the flat detail grid is split into labeled
     // groups (v0.51.289: SOURCE + FILE & PLACEMENT expanded; identity, timeline

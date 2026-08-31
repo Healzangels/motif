@@ -121,7 +121,8 @@ def test_carousel_requests_the_300px_transcode():
         APP_JS,
         "async function loadRecentlyAdded()",
         "\n  function ", "\n  async function ")
-    assert "/api/plex/art/${encodeURIComponent(rk)}?w=300`" in fn, (
+    # v0.51.310: .jpg spelling (IDS static-classification).
+    assert "/api/plex/art/${encodeURIComponent(rk)}.jpg?w=300`" in fn, (
         "the carousel tiles paint at 150 CSS px (300 device px @2x) — they "
         "must request the ?w=300 transcode, not the full-res poster whose "
         "rasterize spike on scroll-in was the reported hitch"
@@ -139,7 +140,7 @@ def test_transcode_width_tracks_the_css_tile_width():
     m = re.search(r"width:\s*(\d+)px", card)
     assert m, ".recent-card must declare the px tile width ?w= derives from"
     css_w = int(m.group(1))
-    m2 = re.search(r"/api/plex/art/\$\{encodeURIComponent\(rk\)\}\?w=(\d+)", APP_JS)
+    m2 = re.search(r"/api/plex/art/\$\{encodeURIComponent\(rk\)\}\.jpg\?w=(\d+)", APP_JS)
     assert m2, "the carousel must request a ?w= transcode"
     assert int(m2.group(1)) == 2 * css_w, (
         f"?w={m2.group(1)} must be 2x the .recent-card width ({css_w}px, "

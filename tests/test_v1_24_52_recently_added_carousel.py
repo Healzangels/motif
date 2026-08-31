@@ -143,11 +143,13 @@ def test_art_proxy_rejects_non_numeric_rating_key(client):
     assert c.get("/api/plex/art/12x", headers=AUTH).status_code == 400
 
 
-def test_art_proxy_404_when_no_plex_configured(client):
+def test_art_proxy_204_when_no_plex_configured(client):
     c, _ = client
     # numeric rk is accepted, but with no Plex URL configured the server-side
-    # fetch returns nothing → 404 so the carousel shows its placeholder tile.
-    assert c.get("/api/plex/art/123", headers=AUTH).status_code == 404
+    # fetch returns nothing. v0.51.310: 204, not 404 — "no art" is a designed
+    # outcome and pages of 404s fed the operator's IDS probing counter; the
+    # <img> onerror → placeholder-tile fallback fires identically on 204.
+    assert c.get("/api/plex/art/123", headers=AUTH).status_code == 204
 
 
 def test_endpoints_and_carousel_are_wired():
