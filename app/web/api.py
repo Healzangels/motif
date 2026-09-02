@@ -13293,9 +13293,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # v0.51.311 (review): a 200 image/* with ZERO bytes is no usable
             # art — pre-fix it was served and browser-cached 24h as a 0-byte
             # image (the transcoder branch had this guard since v0.51.286).
+            # v0.51.312 (audit): classified FAILED, not no_art — Plex's designed
+            # no-art signal is 404; an empty 200 is at least as plausibly a
+            # truncated response mid-restart, which must not cache for 5 min
+            # and must be operator-visible.
             if not resp.content:
-                log.debug("plex art proxy: empty image body for rk=%s", rating_key)
-                return "no_art"
+                _art_fetch_warn("200 with an EMPTY body", rating_key)
+                return "failed"
             return resp.content, ctype, False
         except Exception as e:  # noqa: BLE001
             _art_fetch_warn(f"{type(e).__name__}: {e}", rating_key)
@@ -13338,16 +13342,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # the placeholder-tile fallback contract is unchanged. Short cache
             # so a later-added poster shows within minutes.
             return Response(status_code=204,
-                            headers={"Cache-Control": "private, max-age=300",
-                                     "Vary": "Cookie"})
-        if got == "failed":
+                            headers={"Cache-Control": "private, max-age=300"})
+        # v0.51.312 (audit): ANY other string is a failure — an unrecognised
+        # sentinel would otherwise fall into the tuple unpack below (a 3-char
+        # one silently as a 1-byte "image"). isinstance, not == "failed".
+        if isinstance(got, str):
             # v0.51.311 (review): a TRANSIENT failure (Plex restart, timeout,
             # rotated token) must not be cached as "no art" — .310 pinned
             # blank posters for five minutes after Plex recovered. no-store,
             # so the next render re-asks.
             return Response(status_code=204,
-                            headers={"Cache-Control": "no-store",
-                                     "Vary": "Cookie"})
+                            headers={"Cache-Control": "no-store"})
         body, ctype, downscaled = got
         # v0.51.286 (code-review): a ?w= request served by the FULL-RES
         # fallback must not cache 24h under the w-keyed URL — a transient
@@ -13356,13 +13361,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # transcoder is retried within minutes; transcoded and no-w responses
         # keep the day-long cache.
         max_age = 86400 if (downscaled or not w) else 300
-        # v0.51.311 (review): Vary: Cookie — the .jpg spelling matches the
-        # reverse proxy's asset-cache regex class, and a shared cache must not
-        # hand one session's authenticated image to another client.
+        # v0.51.312 (audit): NO Vary: Cookie — browsers key their cache on the
+        # full cookie value, so any rotating edge cookie would evict every
+        # cached poster (the .285 transcoder-burst fix undone), and it did not
+        # even cover bearer-token clients. `private` handles shared caches; the
+        # reverse-proxy asset-cache trap is a CONFIG rule (README).
         return Response(
             content=body, media_type=ctype,
-            headers={"Cache-Control": f"private, max-age={max_age}",
-                     "Vary": "Cookie"})
+            headers={"Cache-Control": f"private, max-age={max_age}"})
 
     def _recently_placed_sync(db: Path) -> list:
         # Distinct titles whose theme motif most-recently PLACED, newest first.
@@ -16546,11 +16552,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # WITHHOLDS (the v1.21.95 write gate) — the read claimed placed, the
                 # write no-op'd (the user's Watchmen "card says placed, LPS does 0/0").
                 _info_plex_type = "show" if media_type == "tv" else media_type
+                # v0.51.312 (audit): the theme_id arm applies to guid-NULL rows ONLY — a
+                # row Fix-Matched away keeps a stale theme_id and must not count here.
                 _info_single_edition = bool(
                     section_id and _info_edition not in (None, "")
                     and conn.execute(
                         "SELECT COUNT(DISTINCT edition_key) FROM plex_items "
-                        "WHERE (guid_tmdb = ? OR theme_id = ?) "
+                        "WHERE (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
                         "  AND section_id = ? AND media_type = ?",
                         (tmdb_id, t["id"], section_id, _info_plex_type),
                     ).fetchone()[0] == 1)
@@ -16731,11 +16739,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # has no motif state (no override / placement /
                     # canonical / sidecar), don't surface a pending
                     # update for it even if Plex has one for this title.
+                    # v0.51.312 (audit): guid-NULL-only theme_id arm (stale-link guard).
                     has_presence = conn.execute(
                         "SELECT 1 FROM plex_items pi "
                         "WHERE pi.section_id = ? "
                         "  AND ((CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END) = ?) "
-                        "  AND (pi.guid_tmdb = ? OR pi.theme_id = ?) "
+                        "  AND (pi.guid_tmdb = ? OR (pi.guid_tmdb IS NULL AND pi.theme_id = ?)) "
                         "  AND ("
                         "       pi.local_theme_file = 1 "
                         "    OR EXISTS (SELECT 1 FROM local_files lf "
@@ -17050,11 +17059,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "WHERE rating_key = ?",
                                 (rating_key,),
                             ).fetchone()
+                        # v0.51.312 (audit): guid-NULL-only theme_id arm (stale-link guard).
                         if pi_row is None:
                             pi_row = conn.execute(
                                 "SELECT folder_path FROM plex_items "
                                 "WHERE section_id = ? "
-                                "  AND (guid_tmdb = ? OR theme_id = ?) "
+                                "  AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
                                 "  AND media_type = ? "
                                 "LIMIT 1",
                                 (section_id, str(tmdb_id), t["id"],
@@ -17100,11 +17110,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # siblings (regressed the +P label to (none)). Run each tier if
                 # EITHER is still unresolved, and fill only the column still None
                 # so a resolved rk value is never clobbered by a sibling MAX.
+                # v0.51.312 (audit): both tiers take the theme_id arm for guid-NULL rows
+                # ONLY — MAX() cannot prefer, so a Fix-Matched-away row's stale theme_id
+                # was borrowing its has_theme onto another title's card.
                 if (_pi_independent is None or _pi_has_theme is None) and section_id:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
-                        "WHERE section_id = ? AND (guid_tmdb = ? OR theme_id = ?) "
+                        "WHERE section_id = ? AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
                         "  AND media_type = ?",
                         (section_id, str(tmdb_id), t["id"],
                          _info_plex_type)).fetchone()
@@ -17117,7 +17130,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
-                        "WHERE (guid_tmdb = ? OR theme_id = ?) AND media_type = ?",
+                        "WHERE (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) AND media_type = ?",
                         (str(tmdb_id), t["id"], _info_plex_type)).fetchone()
                     if _pind:
                         if _pi_independent is None:
@@ -17138,7 +17151,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # bond via theme_id only, so the guid-only arm left exactly
                     # the fix's target rows (anime P-rows) posterless.
                     _pq = ("SELECT rating_key FROM plex_items "
-                           "WHERE (guid_tmdb = ? OR theme_id = ?) "
+                           "WHERE (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
                            "  AND media_type = ?")
                     _pa = [tmdb_id, t["id"], _info_plex_type]
                     if section_id:
@@ -17150,6 +17163,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # rewrites the guid, never theme_id), and the old pair of
                     # LIMIT 1 reads let index-scan order pick between it and
                     # the correct guid-matched row — the wrong title's poster.
+                    # v0.51.312 (audit): the theme_id arm is now guid-NULL-only, so
+                    # such a row is excluded outright; precedence stays for order.
                     _prow = conn.execute(
                         _pq + " ORDER BY CASE WHEN guid_tmdb = ? THEN 0 ELSE 1 END,"
                               "          (edition_key = ?) DESC, edition_key,"

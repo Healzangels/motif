@@ -43,7 +43,7 @@ def client(tmp_path, monkeypatch):
 
 
 def test_no_art_is_204_not_404(client):
-    # no plex_url configured -> _fetch_plex_art_bytes returns None -> the
+    # no plex_url configured -> _fetch_plex_art_bytes returns "no_art" -> the
     # designed "no art" outcome. Pre-fix: 404 (probing fodder); now 204.
     r = client.get("/api/plex/art/123.jpg", headers=AUTH)
     assert r.status_code == 204, (
@@ -77,7 +77,13 @@ def test_every_js_art_emitter_uses_the_jpg_spelling():
     # v0.51.311 (review): EVERY code reference (comments stripped) must be a
     # `${...}.jpg` template emitter — the old 80-char forward window accepted
     # a `.jpg` in a trailing comment and ignored string-concatenation forms.
-    code = "\n".join(l.split("//", 1)[0] for l in APP_JS.split("\n"))
+    # v0.51.312 (audit): strip /* block */ comments too, and only strip a
+    # `//` that starts a comment (whitespace/line-start before it) so a URL
+    # scheme inside a string cannot truncate an emitter line.
+    # block comments that START a line only — a `/*` inside a JS regex
+    # literal mid-line must not open a "comment" that swallows an emitter.
+    code = re.sub(r"(?m)^[ \t]*/\*.*?\*/", "", APP_JS, flags=re.DOTALL)
+    code = re.sub(r"(^|\s)//.*$", "", code, flags=re.MULTILINE)
     refs = re.findall(r"/api/plex/art/", code)
     good = re.findall(r"/api/plex/art/\$\{[^}]*\}\.jpg", code)
     assert len(refs) >= 3, "the three known emitters must be visible"

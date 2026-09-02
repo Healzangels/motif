@@ -96,16 +96,20 @@ def test_transport_failure_is_uncacheable_and_warns_once(tmp_path, monkeypatch, 
         ".310 pinned blank posters for five minutes after recovery")
     assert any("FAILED" in rec.message for rec in caplog.records), (
         "class 9: a dead Plex must be operator-visible (warn-once)")
-    # second failure: debug only (hot-path sub-pattern)
+    # second failure: debug only (hot-path sub-pattern). v0.51.312 (audit):
+    # pin the LEVEL — a substring pin let a per-miss WARNING with different
+    # wording through.
     caplog.clear()
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         c.get("/api/plex/art/124.jpg", headers=AUTH)
-    assert not any("FAILED" in rec.message for rec in caplog.records)
+    assert not any(rec.levelno >= logging.WARNING and "plex art" in rec.message
+                   for rec in caplog.records), (
+        "a dead Plex must log ONE warning, then debug — not one per tile")
 
 
 @pytest.mark.parametrize("resp,cache", [
     (_Resp(404), "private, max-age=300"),                      # genuine no art
-    (_Resp(200, "image/jpeg", b""), "private, max-age=300"),   # empty body = no art
+    (_Resp(200, "image/jpeg", b""), "no-store"),               # empty body = failure (.312)
     (_Resp(503), "no-store"),                                  # Plex trouble
     (_Resp(401), "no-store"),                                  # rotated token
     (_Resp(200, "text/html", b"<html>"), "no-store"),          # not an image
@@ -118,15 +122,16 @@ def test_miss_classification(tmp_path, monkeypatch, resp, cache):
     assert r.headers["Cache-Control"] == cache
 
 
-def test_art_response_varies_on_cookie(tmp_path, monkeypatch):
+def test_art_response_has_no_vary_cookie(tmp_path, monkeypatch):
+    # v0.51.312 (audit): Vary: Cookie keyed the BROWSER cache on the full
+    # cookie value — any rotating edge cookie evicted every cached poster —
+    # and never covered bearer clients. `private` + the README rule instead.
     c, _ = _make_app(tmp_path, monkeypatch)
     _plex_answers(monkeypatch, resp=_Resp(200, "image/jpeg", b"\xff\xd8jpg"))
     r = c.get("/api/plex/art/123.jpg", headers=AUTH)
     assert r.status_code == 200 and r.content == b"\xff\xd8jpg"
-    assert r.headers.get("Vary") == "Cookie", (
-        "the .jpg spelling sits in the reverse proxy's asset-cache regex "
-        "class — a shared cache must not hand one session's image to another")
-    assert "max-age=86400" in r.headers["Cache-Control"]
+    assert "Vary" not in r.headers
+    assert "private, max-age=86400" in r.headers["Cache-Control"]
 
 
 # ── 3 + 4: api_item's guid-NULL siblings + guid precedence ───
@@ -260,20 +265,31 @@ def test_canonical_health_and_loudness_rows_carry_is_anime(tmp_path):
             """INSERT INTO themes (media_type, tmdb_id, title,
                  upstream_source, last_seen_sync_at, first_seen_sync_at)
                VALUES ('tv', 311009, 'A', 'imdb', ?, ?)""", (NOW, NOW))
+        # v0.51.312 (audit): a NON-anime section too — a one-sided True pin
+        # let a constant-true / inverted is_anime through.
         conn.execute(
-            """INSERT INTO local_files (media_type, tmdb_id, section_id,
-                 edition_key, file_path, file_sha256, file_size,
-                 downloaded_at, source_video_id, provenance, source_kind,
-                 canonical_present, loudness_i, loudness_tp)
-               VALUES ('tv', 311009, '9', '', 'p.mp3', 's', 1, ?, 'v',
-                       'auto', 'themerrdb', 0, -14.0, -1.0)""", (NOW,))
+            """INSERT INTO plex_sections (section_id, title, type, is_anime,
+                 is_4k, themes_subdir, included, discovered_at, last_seen_at)
+               VALUES ('8', 'TV', 'show', 0, 0, 'tv', 1, ?, ?)""",
+            (NOW, NOW))
+        for sid, loud in (("9", -14.0), ("8", -30.0)):
+            conn.execute(
+                """INSERT INTO local_files (media_type, tmdb_id, section_id,
+                     edition_key, file_path, file_sha256, file_size,
+                     downloaded_at, source_video_id, provenance, source_kind,
+                     canonical_present, loudness_i, loudness_tp)
+                   VALUES ('tv', 311009, ?, '', 'p.mp3', 's', 1, ?, 'v',
+                           'auto', 'themerrdb', 0, ?, -1.0)""", (sid, NOW, loud))
     with get_conn(db) as conn:
-        rows = _broken_rows(conn)
-        assert rows and _entry(rows[0])["is_anime"] is True, (
-            "the canonical-health OPEN link routed anime rows to /tv")
+        by_sec = {_entry(r)["section_id"]: _entry(r)["is_anime"]
+                  for r in _broken_rows(conn)}
+        assert by_sec == {"9": True, "8": False}, (
+            "the canonical-health OPEN link must route anime → /anime and "
+            "everything else NOT to /anime")
         rep = build_report(conn)
-        assert rep["loudest"][0]["is_anime"] is True, (
-            "the loudness-outlier link routed anime rows to /tv")
+        loud = {r["section_id"]: r["is_anime"] for r in rep["loudest"]}
+        assert loud == {"9": True, "8": False}, (
+            "the loudness-outlier link must carry a two-sided is_anime")
 
 
 def test_both_remaining_producers_route_anime_first():
@@ -281,6 +297,9 @@ def test_both_remaining_producers_route_anime_first():
         i = APP_JS.index(fn)
         blk = APP_JS[i:APP_JS.index("new URLSearchParams()", i)]
         assert "r.is_anime ? '/anime'" in blk, fn
+        # v0.51.312 (audit): collection FIRST (a collection in an anime section
+        # belongs on /collections), then anime, then movie, then the /tv tail.
+        assert blk.index("=== 'collection'") < blk.index("r.is_anime"), fn
         assert blk.index("r.is_anime") < blk.index("=== 'movie' ? '/movies'"), fn
         assert "=== 'movie' ? '/movies' : '/tv';" in blk, fn
 
@@ -294,7 +313,12 @@ def test_keydown_drops_key_repeats():
     assert "if (e.repeat)" in blk, (
         "a HELD Enter auto-repeats past the 400ms absorb onto the parked "
         ".notif-main and navigates — repeats are never a deliberate activation")
-    assert blk.index("if (e.repeat)") < blk.index("closest('.notif-row')")
+    # v0.51.312 (audit): it must precede the GROUP-HEAD branch too (a held
+    # Enter on a header auto-toggled it), and must preventDefault (a held
+    # Space on the role=button div scrolled the drawer per repeat).
+    assert blk.index("if (e.repeat)") < blk.index("closest('.notif-group-head')")
+    rep_line = next(l for l in blk.splitlines() if "if (e.repeat)" in l)
+    assert "e.preventDefault()" in rep_line and "return" in rep_line
 
 
 # ── docs + markers ───────────────────────────────────────────

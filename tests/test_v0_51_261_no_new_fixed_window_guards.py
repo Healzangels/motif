@@ -83,60 +83,21 @@ _BUDGET = 1489
 # shipped straight through the gate in v0.51.308, which is exactly the hole
 # a ratchet cannot afford. Same rules: equality, only ever DOWN.
 # v0.51.311 (review): 79 → 214 — not growth: the detector learned the two
-# shapes it was blind to (`max(0, a - N)` ×127 and Call bases ×4), so the
-# census now sees the whole population. Still equality, still only DOWN.
+# shapes it was blind to (`max(0, a - N)` and Call bases — 135 windows, the
+# measured 214 − 79), so the census sees the whole population. Still equality,
+# still only DOWN.
 _BACKWARD_BUDGET = 214
 
 
-@functools.lru_cache(maxsize=None)
-def _tree(path: Path):
-    """v0.51.311 (review): ONE parse per file per process — the forward census
-    runs twice per gate and the backward census once, and each re-read and
-    re-parsed all of tests/ (~1.6s of the ~2.4s was redundant)."""
-    try:
-        return ast.parse(path.read_text())
-    except SyntaxError:
-        return None
-
-
-def _fixed_windows(path: Path) -> list[tuple[int, int]]:
-    """(lineno, width) for each `x[a:a + <int>]` with a matching lower bound.
-
-    AST, not regex. The audit that motivated this tag used a regex and was
-    wrong twice; a Subscript/Slice walk cannot mistake a default parameter or
-    a template literal for a slice."""
-    tree = _tree(path)
-    if tree is None:
-        return []
-    out: list[tuple[int, int]] = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Subscript):
-            continue
-        sl = node.slice
-        if not isinstance(sl, ast.Slice):
-            continue
-        lo, up = sl.lower, sl.upper
-        if not (isinstance(lo, ast.Name)
-                and isinstance(up, ast.BinOp) and isinstance(up.op, ast.Add)
-                and isinstance(up.left, ast.Name) and up.left.id == lo.id
-                and isinstance(up.right, ast.Constant)
-                and isinstance(up.right.value, int)):
-            continue
-        if up.right.value >= _MIN_WIDTH:
-            out.append((node.lineno, up.right.value))
-    return out
-
-
 def _backward_base(node):
-    """v0.51.311 (review): unwrap the suite's real backward shapes — `a - N`,
-    `max(0, a - N)` (130 instances) and `x.index(m) - N` (Call bases) — to
-    (base_dump, N). The .309 detector accepted only a bare Name base, so
-    ~63% of the population could neither trip the gate nor bank."""
+    """Unwrap `a - N`, `max(0, a - N)` / `max(a - N, 0)`, `x.index(m) - N` → (base_dump, N)."""
     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-            and node.func.id == "max" and len(node.args) == 2
-            and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value == 0):
-        node = node.args[1]
+            and node.func.id == "max" and len(node.args) == 2):
+        # v0.51.312 (audit): either arg order — `max(i - N, 0)` was unseen.
+        consts = [i for i, arg in enumerate(node.args)
+                  if isinstance(arg, ast.Constant) and arg.value == 0]
+        if consts:
+            node = node.args[1 - consts[0]]
     if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub)
             and isinstance(node.right, ast.Constant)
             and isinstance(node.right.value, int)):
@@ -144,33 +105,53 @@ def _backward_base(node):
     return None
 
 
-def _backward_windows(path: Path) -> list[tuple[int, int]]:
-    """(lineno, width) for each `x[a - N:...]` slice — the shape the forward
-    detector cannot see (BinOp lower bound). Width = N plus the forward reach
-    when the upper bound is the same base + M."""
-    tree = _tree(path)
-    if tree is None:
-        return []
-    out: list[tuple[int, int]] = []
+@functools.lru_cache(maxsize=None)
+def _windows(path: Path) -> "tuple[tuple, tuple]":
+    """ONE parse + ONE walk per file per process; caches only the two small
+    (lineno, width) tuples — v0.51.312 (audit): the .311 tree cache held every
+    parsed AST (~190 MB) for the rest of the suite."""
+    try:
+        tree = ast.parse(path.read_text())
+    except SyntaxError:
+        return (), ()
+    fwd: list[tuple[int, int]] = []
+    back: list[tuple[int, int]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Subscript):
+        if not isinstance(node, ast.Subscript) or not isinstance(node.slice, ast.Slice):
             continue
-        sl = node.slice
-        if not isinstance(sl, ast.Slice):
+        lo, up = node.slice.lower, node.slice.upper
+        # forward: x[a:a + N] with a bare Name lower bound
+        if (isinstance(lo, ast.Name)
+                and isinstance(up, ast.BinOp) and isinstance(up.op, ast.Add)
+                and isinstance(up.left, ast.Name) and up.left.id == lo.id
+                and isinstance(up.right, ast.Constant)
+                and isinstance(up.right.value, int)):
+            if up.right.value >= _MIN_WIDTH:
+                fwd.append((node.lineno, up.right.value))
             continue
-        base = _backward_base(sl.lower)
+        # backward: x[a - N:...] incl. max()-wrapped and Call bases
+        base = _backward_base(lo)
         if base is None:
             continue
         base_dump, width = base
-        up = sl.upper
         if (isinstance(up, ast.BinOp) and isinstance(up.op, ast.Add)
                 and ast.dump(up.left) == base_dump
                 and isinstance(up.right, ast.Constant)
                 and isinstance(up.right.value, int)):
             width += up.right.value
         if width >= _MIN_WIDTH:
-            out.append((node.lineno, width))
-    return out
+            back.append((node.lineno, width))
+    return tuple(fwd), tuple(back)
+
+
+def _fixed_windows(path: Path) -> list[tuple[int, int]]:
+    """(lineno, width) for each `x[a:a + <int>]` guard (AST, not regex)."""
+    return list(_windows(path)[0])
+
+
+def _backward_windows(path: Path) -> list[tuple[int, int]]:
+    """(lineno, width) for each `x[a - N:...]` guard the forward walk cannot see."""
+    return list(_windows(path)[1])
 
 
 def _census() -> dict[str, list[tuple[int, int]]]:

@@ -5814,7 +5814,35 @@
 #   the .261 backward-window detector now unwraps max(0, a-N) and Call
 #   bases (135 windows it could not see) and banks 214; both walkers share
 #   one lru_cached parse (three full parses of tests/ per gate → one).
-__version__ = "0.51.311"
+# 0.51.312: audit of the .311 batch (5 finders) — six fixes + errata.
+#   (1) The five widened lookups and the resolver take the theme_id arm for
+#   guid-NULL rows ONLY: `(guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id
+#   = ?))`. Four finders independently showed the .311 widening leaking a
+#   Fix-Matched-away row's stale theme_id into another title's card —
+#   MAX()/COUNT()/EXISTS cannot prefer, so has_theme / the edition tag /
+#   presence were borrowed from a row Plex now says is a DIFFERENT title
+#   (the resolver's guid precedence never reached them). (2) An empty 200
+#   image body is a FAILURE (no-store + warn-once), not designed no-art —
+#   Plex's no-art signal is 404; an empty 200 is a truncated response.
+#   (3) Any unrecognised sentinel string is a failure (isinstance, not ==).
+#   (4) Vary: Cookie dropped: browsers key on the full cookie value, so a
+#   rotating edge cookie evicted every cached poster (the .285 fix undone),
+#   and it never covered bearer clients — `private` + the README rule.
+#   (5) The .261 census caches the small window lists per file, not ASTs
+#   (~190 MB held for the whole suite), and counts `max(a - N, 0)` too.
+#   Tests: the audit mutation-proved eight .311 pins escapable — level not
+#   substring for warn-once, two-sided is_anime, repeat-guard position +
+#   preventDefault, collection-before-anime, block-comment-safe drift guard;
+#   plus behavioral pins for the global tier, the single-edition gate and
+#   the presence check (all three had NO pin). ERRATA for the .311 entry:
+#   seven stale comments were rewritten (not six); the producer ternaries
+#   test collection first, then anime; the enum DOES re-point theme_id when
+#   the new guid has a ThemerrDB row (stale links persist only for targets
+#   absent from TDB); the backward census gained 135 windows (214 − 79);
+#   and "no-store, so the next render re-asks" does not reach the dashboard
+#   carousel, whose error handler marks a tile text-only for the life of
+#   the tab (pre-existing; a retry-on-poll is a possible follow-up).
+__version__ = "0.51.312"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
