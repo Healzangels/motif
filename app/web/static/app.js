@@ -2106,7 +2106,7 @@
   // recently placed a theme on. Cards are built via DOM APIs (textContent) so a
   // Plex title can't inject markup. A content hash skips the rebuild when the
   // poll returns the same set. Posters load from the same-origin Plex art proxy;
-  // a 404 (no art / Plex down) flips the card to a text-only tile. Click → the
+  // a 204 (no art; v0.51.310, was 404) flips the card to a text-only tile. Click → the
   // same INFO dialog a library row opens.
   function _shortDate(iso) {
     if (!iso) return '';
@@ -2181,6 +2181,7 @@
       // rasterize a huge bitmap — one new tile every ~5s at auto-scroll speed,
       // which was the user's "hitches every few seconds" beat. The proxy falls
       // back to the full thumb server-side if Plex declines the transcode.
+      // v0.51.310: .jpg spelling — IDS static-classification is extension-based.
       img.dataset.src = `/api/plex/art/${encodeURIComponent(rk)}.jpg?w=300`;
       img.addEventListener('error', () => card.classList.add('recent-card-noart'));
       const title = document.createElement('span');
@@ -7583,8 +7584,12 @@
     const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString());
 
     function link(r) {
-      const tab = r.media_type === 'movie' ? '/movies'
-        : r.media_type === 'collection' ? '/collections' : '/tv';
+      // v0.51.311 (review): anime BEFORE movie/tv — the .308/.309 routing fix
+      // reached the inbox + /queue producers only; an anime row here landed on
+      // a tab whose filter hides it (card over an empty list).
+      const tab = r.media_type === 'collection' ? '/collections'
+        : r.is_anime ? '/anime'
+        : r.media_type === 'movie' ? '/movies' : '/tv';
       const p = new URLSearchParams();
       p.set('info_open', String(r.tmdb_id));
       p.set('info_mt', String(r.media_type));
@@ -7866,8 +7871,12 @@
     }
 
     function outRow(r) {
-      const tab = r.media_type === 'movie' ? '/movies'
-        : r.media_type === 'collection' ? '/collections' : '/tv';
+      // v0.51.311 (review): anime BEFORE movie/tv — the .308/.309 routing fix
+      // reached the inbox + /queue producers only; an anime row here landed on
+      // a tab whose filter hides it (card over an empty list).
+      const tab = r.media_type === 'collection' ? '/collections'
+        : r.is_anime ? '/anime'
+        : r.media_type === 'movie' ? '/movies' : '/tv';
       const p = new URLSearchParams();
       p.set('info_open', String(r.tmdb_id));
       p.set('info_mt', String(r.media_type));
@@ -17315,10 +17324,11 @@
     // guard as the full card (openInfoDialog ~16483), built client-side
     // from the row's rating_key so an untemed row shows its cover like a
     // themed one. The img error handler (attached in openBareInfoDialog)
-    // collapses the hero to just the meta on 404 / non-art.
+    // collapses the hero to just the meta on 204 (no art; was 404) / non-art.
     const posterRk = String(it.rating_key || '');
     const posterImgHtml = /^\d+$/.test(posterRk)
       ? `<img class="info-poster" loading="lazy" alt=""`
+        // v0.51.310: .jpg spelling — IDS static-classification is extension-based.
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}.jpg">`
       : '';
     return `
@@ -17363,7 +17373,7 @@
     } else {
       body.innerHTML = renderBareInfoCard(it);
       // v0.50.66: mirror the full card's poster-error collapse — remove the
-      // <img> on 404 / non-art so the hero falls back to just the meta.
+      // <img> on 204 (no art; was 404) / non-art so the hero falls back to just the meta.
       body.querySelector('.info-poster')
         ?.addEventListener('error', (ev) => ev.target.remove());
     }
@@ -18185,7 +18195,7 @@
     // poster (same /api/plex/art proxy the carousel uses). posterRk prefers the
     // clicked edition's rating_key, falling back to a placement's plex_rating_key
     // for the 2-arg callers. The <img> error handler (attached after innerHTML,
-    // below) removes it on 404 / non-art so the hero collapses to just the meta.
+    // below) removes it on 204 (no art; was 404) / non-art so the hero collapses to just the meta.
     // v0.51.308: third fallback — the API-resolved rk. Every deep-link
     // producer passes no rating_key and a P-row has no placements, so those
     // cards (the user's Strike the Blood) rendered heroless.
@@ -18194,6 +18204,7 @@
       || data.plex_rating_key || '');
     const posterImgHtml = /^\d+$/.test(posterRk)
       ? `<img class="info-poster" loading="lazy" alt=""`
+        // v0.51.310: .jpg spelling — IDS static-classification is extension-based.
         + ` src="/api/plex/art/${encodeURIComponent(posterRk)}.jpg">`
       : '';
     // v0.51.62 (the user, polish): the flat detail grid is split into labeled
@@ -18630,7 +18641,7 @@
       if (_fd) _fd.open = true;
     }
     if (_keepScroll !== null && _scroller) _scroller.scrollTop = _keepScroll;
-    // v1.24.83: drop the poster on 404 / non-art so the hero collapses to just
+    // v1.24.83: drop the poster on 204 (no art; was 404) / non-art so the hero collapses to just
     // the meta (mirrors the carousel's onerror handling; attached here, not
     // inline, so a future CSP can't block it).
     body.querySelector('.info-poster')
@@ -21440,6 +21451,11 @@
       // v0.51.305: same deal for the unread dot — its native activation clicks
       // through the delegate's dot branch; the row branch below would ALSO navigate.
       if (e.target.closest('.notif-x, .notif-dot')) return;
+      // v0.51.311 (review): a HELD Enter auto-repeats past the 400ms absorb
+      // below (first repeat lands at ~500ms on Windows defaults) onto the
+      // parked .notif-main and navigates. Repeats are never a deliberate
+      // second activation — drop them outright.
+      if (e.repeat) { e.preventDefault(); return; }
       const head = e.target.closest('.notif-group-head');
       if (head) { e.preventDefault(); toggleGroupHead(head); return; }
       // v0.51.213: the v0.51.209 pass made the group HEADER operable and left the drawer's

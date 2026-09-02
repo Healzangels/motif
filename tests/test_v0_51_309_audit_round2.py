@@ -18,7 +18,8 @@
      vanished on digest rows. The ring covers every row's main now.
   5. The 404 NOT IN LIBRARY card rendered .dlg-section as the dialog's
      only child — a primitive styled as a mid-card divider, drawing a
-     stray rule + dead space. An :only-child neutralizer fixes it.
+     stray rule + dead space. A leading-section neutralizer fixes it
+     (:first-child since v0.51.311 — :only-child broke on a 2nd element).
 """
 from __future__ import annotations
 
@@ -113,7 +114,7 @@ def test_focus_ring_covers_every_rows_main():
 
 
 def test_lone_dlg_section_sheds_its_divider():
-    i = APP_CSS.index("#info-dlg-body > .dlg-section:only-child")
+    i = APP_CSS.index("#info-dlg-body > .dlg-section:first-child")
     rule = APP_CSS[APP_CSS.index("{", i):APP_CSS.index("}", i)]
     for prop in ("margin-top: 0", "padding-top: 0", "border-top: 0"):
         assert prop in rule, (

@@ -80,6 +80,8 @@ log = logging.getLogger(__name__)
 # transcode refusal fires once per carousel tile, so only the FIRST occurrence
 # logs at WARNING (see _fetch_plex_art_bytes). Resets on process restart.
 _PLEX_ART_TRANSCODE_WARNED: bool = False
+# v0.51.311 (review): hot-path warn-once for art-proxy transport/auth failures.
+_PLEX_ART_FETCH_WARNED: bool = False
 
 # v1.18.6: 'collection' added so per-item API endpoints
 # (manual-url, redownload, forget, info, etc.) accept the new
@@ -13194,16 +13196,32 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # recently-placed feed. Mirrors the IG-thumbnail proxy shape (sync fetch via
     # run_in_threadpool so the blocking httpx call stays off the event loop —
     # bug-class 12).
+    def _art_fetch_warn(reason: str, rating_key: str) -> None:
+        # v0.51.311 (review): bug-class 9 hot path — the FIRST transport/auth
+        # failure logs at WARNING (a dead Plex must be operator-visible), the
+        # rest drop to debug; the flag resets on restart (deploy cadence).
+        global _PLEX_ART_FETCH_WARNED
+        if not _PLEX_ART_FETCH_WARNED:
+            _PLEX_ART_FETCH_WARNED = True
+            log.warning("plex art proxy fetch FAILED (%s) for rk=%s — served as "
+                        "UNCACHEABLE no-art; further failures log at debug",
+                        reason, rating_key)
+        else:
+            log.debug("plex art proxy fetch failed (%s) for rk=%s", reason, rating_key)
+
     def _fetch_plex_art_bytes(
         rating_key: str, w: "int | None" = None,
-    ) -> "tuple[bytes, str, bool] | None":
+    ) -> "tuple[bytes, str, bool] | str":
         # Fetch a Plex item's poster server-side. The token rides the
         # X-Plex-Token HEADER, never the URL, so it can't leak into logs/events.
         # Returns (bytes, content_type, downscaled) — downscaled False means
-        # the full-res thumb (no ?w=, or the transcoder declined) — or None.
+        # the full-res thumb (no ?w=, or the transcoder declined) — or a
+        # sentinel: "no_art" (Plex has none: a DESIGNED, cacheable miss) vs
+        # "failed" (transport/auth trouble the browser must NOT cache as
+        # no-art). v0.51.311 (review): the .310 single None conflated them.
         base = (settings.plex_url or "").rstrip("/")
         if not base:
-            return None
+            return "no_art"
         try:
             import httpx
             headers = {"X-Plex-Token": settings.plex_token}
@@ -13262,17 +13280,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                   reason, rating_key)
                 resp = c.get(f"{base}/library/metadata/{rating_key}/thumb",
                              headers=headers)
+            if resp.status_code == 404:
+                log.debug("plex art proxy: no art for rk=%s", rating_key)
+                return "no_art"
             if resp.status_code != 200:
-                log.debug("plex art proxy: HTTP %s for rk=%s",
-                          resp.status_code, rating_key)
-                return None
+                _art_fetch_warn(f"HTTP {resp.status_code}", rating_key)
+                return "failed"
             ctype = resp.headers.get("content-type", "")
             if not ctype.startswith("image/"):
-                return None
+                _art_fetch_warn(f"200 but ctype={ctype or '?'}", rating_key)
+                return "failed"
+            # v0.51.311 (review): a 200 image/* with ZERO bytes is no usable
+            # art — pre-fix it was served and browser-cached 24h as a 0-byte
+            # image (the transcoder branch had this guard since v0.51.286).
+            if not resp.content:
+                log.debug("plex art proxy: empty image body for rk=%s", rating_key)
+                return "no_art"
             return resp.content, ctype, False
         except Exception as e:  # noqa: BLE001
-            log.debug("plex art proxy fetch failed for rk=%s: %s", rating_key, e)
-            return None
+            _art_fetch_warn(f"{type(e).__name__}: {e}", rating_key)
+            return "failed"
 
     # v0.51.310: the .jpg spelling is CANONICAL — IDS layers (the operator's
     # CrowdSec) classify static-vs-crawl by extension, and a dashboard's burst
@@ -13291,7 +13318,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """v1.24.52: same-origin Plex poster proxy for the dashboard carousel.
         rating_key must be all-digits (Plex library rks are ints) — blocks any
         path-injection into the metadata URL. Auth-gated like every endpoint;
-        404 on no-art so the carousel falls back to a placeholder tile.
+        204 on no-art (v0.51.310; was 404) so the carousel falls back to a
+        placeholder tile.
         v0.51.285: optional ?w= (60–1200) requests a server-side transcode at
         that width (2:3 height) instead of the full-res poster — the carousel
         passes w=300 so its 150px tiles stop rasterizing multi-megapixel
@@ -13302,7 +13330,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not rating_key.isdigit():
             raise HTTPException(status_code=400, detail="bad rating key")
         got = await run_in_threadpool(_fetch_plex_art_bytes, rating_key, w)
-        if got is None:
+        if got == "no_art":
             # v0.51.310: 204, not 404 — "no art" is a DESIGNED outcome (every
             # artless row on a page emits one), and a page of them fed the
             # operator's CrowdSec http-probing 4xx counter. An <img> fires
@@ -13310,7 +13338,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # the placeholder-tile fallback contract is unchanged. Short cache
             # so a later-added poster shows within minutes.
             return Response(status_code=204,
-                            headers={"Cache-Control": "private, max-age=300"})
+                            headers={"Cache-Control": "private, max-age=300",
+                                     "Vary": "Cookie"})
+        if got == "failed":
+            # v0.51.311 (review): a TRANSIENT failure (Plex restart, timeout,
+            # rotated token) must not be cached as "no art" — .310 pinned
+            # blank posters for five minutes after Plex recovered. no-store,
+            # so the next render re-asks.
+            return Response(status_code=204,
+                            headers={"Cache-Control": "no-store",
+                                     "Vary": "Cookie"})
         body, ctype, downscaled = got
         # v0.51.286 (code-review): a ?w= request served by the FULL-RES
         # fallback must not cache 24h under the w-keyed URL — a transient
@@ -13319,9 +13356,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # transcoder is retried within minutes; transcoded and no-w responses
         # keep the day-long cache.
         max_age = 86400 if (downscaled or not w) else 300
+        # v0.51.311 (review): Vary: Cookie — the .jpg spelling matches the
+        # reverse proxy's asset-cache regex class, and a shared cache must not
+        # hand one session's authenticated image to another client.
         return Response(
             content=body, media_type=ctype,
-            headers={"Cache-Control": f"private, max-age={max_age}"})
+            headers={"Cache-Control": f"private, max-age={max_age}",
+                     "Vary": "Cookie"})
 
     def _recently_placed_sync(db: Path) -> list:
         # Distinct titles whose theme motif most-recently PLACED, newest first.
@@ -16509,8 +16550,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     section_id and _info_edition not in (None, "")
                     and conn.execute(
                         "SELECT COUNT(DISTINCT edition_key) FROM plex_items "
-                        "WHERE guid_tmdb = ? AND section_id = ? AND media_type = ?",
-                        (tmdb_id, section_id, _info_plex_type),
+                        "WHERE (guid_tmdb = ? OR theme_id = ?) "
+                        "  AND section_id = ? AND media_type = ?",
+                        (tmdb_id, t["id"], section_id, _info_plex_type),
                     ).fetchone()[0] == 1)
                 # v1.11.0: per-section local_files — return the list so the
                 # UI can render one row per section. legacy `local_file`
@@ -16693,7 +16735,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "SELECT 1 FROM plex_items pi "
                         "WHERE pi.section_id = ? "
                         "  AND ((CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END) = ?) "
-                        "  AND pi.guid_tmdb = ? "
+                        "  AND (pi.guid_tmdb = ? OR pi.theme_id = ?) "
                         "  AND ("
                         "       pi.local_theme_file = 1 "
                         "    OR EXISTS (SELECT 1 FROM local_files lf "
@@ -16707,7 +16749,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "                  AND p.section_id = pi.section_id) "
                         "  ) "
                         "LIMIT 1",
-                        (section_id, media_type, tmdb_id,
+                        (section_id, media_type, tmdb_id, t["id"],
                          media_type, tmdb_id,
                          media_type, tmdb_id,
                          media_type, tmdb_id),
@@ -17011,10 +17053,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         if pi_row is None:
                             pi_row = conn.execute(
                                 "SELECT folder_path FROM plex_items "
-                                "WHERE section_id = ? AND guid_tmdb = ? "
+                                "WHERE section_id = ? "
+                                "  AND (guid_tmdb = ? OR theme_id = ?) "
                                 "  AND media_type = ? "
                                 "LIMIT 1",
-                                (section_id, str(tmdb_id), _info_plex_type),
+                                (section_id, str(tmdb_id), t["id"],
+                                 _info_plex_type),
                             ).fetchone()
                     if pi_row and pi_row["folder_path"]:
                         edition_label = edition_label_for_folder(
@@ -17060,8 +17104,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
-                        "WHERE section_id = ? AND guid_tmdb = ? AND media_type = ?",
-                        (section_id, str(tmdb_id), _info_plex_type)).fetchone()
+                        "WHERE section_id = ? AND (guid_tmdb = ? OR theme_id = ?) "
+                        "  AND media_type = ?",
+                        (section_id, str(tmdb_id), t["id"],
+                         _info_plex_type)).fetchone()
                     if _pind:
                         if _pi_independent is None:
                             _pi_independent = _pind["v"]
@@ -17071,8 +17117,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
-                        "WHERE guid_tmdb = ? AND media_type = ?",
-                        (str(tmdb_id), _info_plex_type)).fetchone()
+                        "WHERE (guid_tmdb = ? OR theme_id = ?) AND media_type = ?",
+                        (str(tmdb_id), t["id"], _info_plex_type)).fetchone()
                     if _pind:
                         if _pi_independent is None:
                             _pi_independent = _pind["v"]
@@ -17098,15 +17144,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     if section_id:
                         _pq += " AND section_id = ?"
                         _pa.append(section_id)
-                    _prow = None
-                    if _info_edition is not None:
-                        _prow = conn.execute(
-                            _pq + " AND edition_key = ? LIMIT 1",
-                            (*_pa, _info_edition)).fetchone()
-                    if _prow is None:
-                        _prow = conn.execute(
-                            _pq + " ORDER BY edition_key LIMIT 1",
-                            _pa).fetchone()
+                    # v0.51.311 (review): ONE statement, guid precedence + a
+                    # deterministic tie-break. The theme_id arm can hit a row
+                    # whose theme_id went STALE after a Plex Fix Match (enum
+                    # rewrites the guid, never theme_id), and the old pair of
+                    # LIMIT 1 reads let index-scan order pick between it and
+                    # the correct guid-matched row — the wrong title's poster.
+                    _prow = conn.execute(
+                        _pq + " ORDER BY CASE WHEN guid_tmdb = ? THEN 0 ELSE 1 END,"
+                              "          (edition_key = ?) DESC, edition_key,"
+                              "          rating_key"
+                              " LIMIT 1",
+                        (*_pa, tmdb_id, _info_edition)).fetchone()
                     _poster_rk = _prow["rating_key"] if _prow else None
 
             # v0.51.278 (feature-brief B, UI): revisions ride the SAME fetch —

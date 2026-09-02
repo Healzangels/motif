@@ -3830,7 +3830,7 @@ body.help-mode .settings-help-about { display: block; }
 }
 /* v1.24.83: INFO card poster hero — the title/scope block sits beside the
    title's Plex poster (same /api/plex/art proxy as the dashboard carousel).
-   The hero collapses to just the meta when the poster 404s (the <img> is
+   The hero collapses to just the meta when the poster 204s (no art; was 404 — the <img> is
    removed in JS, so the flex row is left with one child).
    v1.24.92: back to option A (the user kept A over B) — the poster is the FIRST
    hero child (top-left); beside it the meta holds the title, scope chip +
@@ -3873,7 +3873,9 @@ body.help-mode .settings-help-about { display: block; }
 /* v0.51.309 (audit r2): the primitive is styled as a FOLLOWER (mid-card
    divider). A card whose only content is one section — the 404 NOT IN
    LIBRARY state — must not open with a stray rule + dead space. */
-#info-dlg-body > .dlg-section:only-child { margin-top: 0; padding-top: 0; border-top: 0; }
+/* v0.51.311 (review): :first-child, not :only-child — 'leading' is the property
+   that matters; a second element on the 404 card would have re-drawn the rule. */
+#info-dlg-body > .dlg-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
 /* v0.51.289 (design audit): 0.2em → 0.15em so the h4 group titles and the
    //-chip section titles (.diff/.recovery/.history-section-title) share one
    tracking — the card ran two header voices. */

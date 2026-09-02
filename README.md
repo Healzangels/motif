@@ -276,7 +276,13 @@ Create a new proxy host:
 * **Forward Hostname/IP**: `192.168.1.10`
 * **Forward Port**: `5309`
 * **Block Common Exploits**: ON
-* **Cache Assets**: OFF
+* **Cache Assets**: OFF — **must stay off.** NPM's asset cache is a server-level
+  regex location (`\.(css|js|jpe?g|...)$`) that runs *before* the `/` location
+  carrying your `auth_request`, ignores upstream `Cache-Control`, and caches for
+  30 minutes. motif's poster proxy answers on `/api/plex/art/{rk}.jpg` (v0.51.310),
+  so with Cache Assets on, posters would reach motif *without* the forward-auth
+  header (a cached 401 for everyone) — or a cookie-authenticated image would be
+  cached and served to unauthenticated clients.
 * **SSL**: Force SSL, HTTP/2, HSTS
 
 In **Custom Locations**, add a single location `/` with this advanced config:

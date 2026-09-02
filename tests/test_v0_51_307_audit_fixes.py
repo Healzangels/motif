@@ -103,11 +103,14 @@ def test_deep_link_strip_has_its_own_catch():
     # try survived as long as a console.warn existed anywhere after it.
     strip = gate[gate.index("const qs = sp.toString()"):
                  gate.index("if (infoOpen && infoMt)")]
-    assert "try {" in strip and "history.replaceState" in strip, (
+    # v0.51.311 (review): ORDER, not co-occurrence — a mutant that hoists
+    # replaceState above an empty try still had all three tokens present.
+    assert strip.index("try {") < strip.index("history.replaceState") \
+        < strip.index("} catch"), (
         "the replaceState must sit inside ITS OWN try — a throw before the "
         "deferred open otherwise hits the gate's silent outer catch and "
         "kills every deep-link open with no signal")
-    assert "console.warn" in strip[strip.index("history.replaceState"):], (
+    assert "console.warn" in strip[strip.index("} catch"):], (
         "the strip's catch needs its breadcrumb")
 
 

@@ -276,9 +276,11 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
     def _outliers(order: str) -> list[dict]:
         q = conn.execute(
             "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
-            "       lf.loudness_i, lf.loudness_tp, t.title, t.year "
+            "       lf.loudness_i, lf.loudness_tp, t.title, t.year, "
+            "       COALESCE(ps.is_anime, 0) AS is_anime "
             "FROM local_files lf "
             "LEFT JOIN themes t ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
+            "LEFT JOIN plex_sections ps ON ps.section_id = lf.section_id "
             "WHERE lf.loudness_i IS NOT NULL "
             "  AND lf.loudness_i > -1e30 AND lf.loudness_i < 1e30 "   # v0.51.163: exclude ±inf
             f"ORDER BY lf.loudness_i {order} LIMIT ?",
@@ -289,6 +291,8 @@ def build_report(conn, *, outlier_n: int = 40, bin_width: float = 1.0) -> dict:
              "section_id": r["section_id"], "edition_key": r["edition_key"],
              "title": r["title"] or f'{r["media_type"]}/{r["tmdb_id"]}',
              "year": r["year"], "loudness_i": r["loudness_i"],
+             # v0.51.311 (review): anime rows deep-link to /anime, not /tv.
+             "is_anime": bool(r["is_anime"]),
              # v0.51.163: a -inf peak on an otherwise-finite row → null (valid JSON).
              "true_peak": (r["loudness_tp"]
                            if r["loudness_tp"] is not None and math.isfinite(r["loudness_tp"])

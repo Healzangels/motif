@@ -162,6 +162,9 @@ def test_open_notif_row_routes_anime_before_movie():
     assert (blk.index("row.dataset.anime === '1'")
             < blk.index("row.dataset.mt === 'movie'")), (
         "anime must be tested before the movie short-circuit")
+    # v0.51.311 (review): the /tv DEFAULT is load-bearing too — with only
+    # membership + order pinned, a '/movies' tail passed the whole suite.
+    assert "row.dataset.mt === 'movie' ? '/movies' : '/tv';" in blk
 
 
 def test_queue_open_row_routes_anime_before_movie():
@@ -172,6 +175,8 @@ def test_queue_open_row_routes_anime_before_movie():
             < blk.index("mt === 'movie'")), (
         "anime before the movie short-circuit (movie-typed anime sections "
         "live on /anime)")
+    # v0.51.311 (review): pin the /tv default tail as well.
+    assert "mt === 'movie' ? '/movies' : '/tv';" in blk
     # v0.51.309 (audit r2): the renderer must EMIT the attr the handler
     # reads — the first draft matched the dead `const animeAttr` declaration
     # through a backward fixed window, so deleting the template's

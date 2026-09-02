@@ -69,8 +69,10 @@ def test_keydown_guard_covers_the_dot():
     # v0.51.309 (audit r2): pin the guard LINE as an if→return — a bare
     # "return" in the segment was satisfied by the handler's key-filter, so
     # a neutered guard (closest() call without the if/return) stayed green.
-    gi = bail.index("closest('.notif-x")
-    line = bail[bail.rindex("\n", 0, gi) + 1:bail.index("\n", gi)].strip()
+    # v0.51.311 (review): the guard LINE is the one calling closest() with
+    # .notif-x in ANY position — the prefix anchor re-froze member order.
+    line = next(l.strip() for l in bail.splitlines()
+                if "closest(" in l and ".notif-x" in l)
     assert line.startswith("if (") and line.endswith("return;"), (
         f"the nested-control guard must BAIL, not just look: {line!r}")
     assert blk.index(".notif-dot") < blk.index("closest('.notif-row')"), (

@@ -98,10 +98,12 @@ def _broken_rows(conn) -> list:
         "              WHERE p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id "
         "                AND p.section_id = lf.section_id "
         "                AND p.edition_key = lf.edition_key "
-        "                AND p.theme_present = 1) AS has_live_placement "
+        "                AND p.theme_present = 1) AS has_live_placement, "
+        "       COALESCE(ps.is_anime, 0) AS is_anime "
         "FROM local_files lf "
         "LEFT JOIN themes t "
         "  ON t.media_type = lf.media_type AND t.tmdb_id = lf.tmdb_id "
+        "LEFT JOIN plex_sections ps ON ps.section_id = lf.section_id "
         "WHERE lf.canonical_present = 0 "
         "ORDER BY lf.media_type, t.title, lf.tmdb_id, lf.section_id, lf.edition_key"
     ).fetchall()
@@ -119,6 +121,9 @@ def _entry(r) -> dict:
         "year": r["year"],
         "source_kind": r["source_kind"] or "",
         "file_path": r["file_path"],
+        "is_anime": bool(r["is_anime"]),
+        # v0.51.311 (review): anime rows deep-link to /anime, not /tv — the
+        # .308/.309 routing fix reached the inbox + /queue producers only.
     }
 
 

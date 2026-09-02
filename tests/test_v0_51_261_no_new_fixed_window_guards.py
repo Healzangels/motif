@@ -32,6 +32,7 @@ Anchor to a construct the language guarantees; never to a byte count.
 from __future__ import annotations
 
 import ast
+import functools
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -81,7 +82,21 @@ _BUDGET = 1489
 # the detector (its lower bound is a BinOp, not a bare Name) — and a new one
 # shipped straight through the gate in v0.51.308, which is exactly the hole
 # a ratchet cannot afford. Same rules: equality, only ever DOWN.
-_BACKWARD_BUDGET = 79
+# v0.51.311 (review): 79 → 214 — not growth: the detector learned the two
+# shapes it was blind to (`max(0, a - N)` ×127 and Call bases ×4), so the
+# census now sees the whole population. Still equality, still only DOWN.
+_BACKWARD_BUDGET = 214
+
+
+@functools.lru_cache(maxsize=None)
+def _tree(path: Path):
+    """v0.51.311 (review): ONE parse per file per process — the forward census
+    runs twice per gate and the backward census once, and each re-read and
+    re-parsed all of tests/ (~1.6s of the ~2.4s was redundant)."""
+    try:
+        return ast.parse(path.read_text())
+    except SyntaxError:
+        return None
 
 
 def _fixed_windows(path: Path) -> list[tuple[int, int]]:
@@ -90,9 +105,8 @@ def _fixed_windows(path: Path) -> list[tuple[int, int]]:
     AST, not regex. The audit that motivated this tag used a regex and was
     wrong twice; a Subscript/Slice walk cannot mistake a default parameter or
     a template literal for a slice."""
-    try:
-        tree = ast.parse(path.read_text())
-    except SyntaxError:
+    tree = _tree(path)
+    if tree is None:
         return []
     out: list[tuple[int, int]] = []
     for node in ast.walk(tree):
@@ -113,13 +127,29 @@ def _fixed_windows(path: Path) -> list[tuple[int, int]]:
     return out
 
 
+def _backward_base(node):
+    """v0.51.311 (review): unwrap the suite's real backward shapes — `a - N`,
+    `max(0, a - N)` (130 instances) and `x.index(m) - N` (Call bases) — to
+    (base_dump, N). The .309 detector accepted only a bare Name base, so
+    ~63% of the population could neither trip the gate nor bank."""
+    if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+            and node.func.id == "max" and len(node.args) == 2
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == 0):
+        node = node.args[1]
+    if (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Sub)
+            and isinstance(node.right, ast.Constant)
+            and isinstance(node.right.value, int)):
+        return ast.dump(node.left), node.right.value
+    return None
+
+
 def _backward_windows(path: Path) -> list[tuple[int, int]]:
     """(lineno, width) for each `x[a - N:...]` slice — the shape the forward
     detector cannot see (BinOp lower bound). Width = N plus the forward reach
-    when the upper bound is the same name + M."""
-    try:
-        tree = ast.parse(path.read_text())
-    except SyntaxError:
+    when the upper bound is the same base + M."""
+    tree = _tree(path)
+    if tree is None:
         return []
     out: list[tuple[int, int]] = []
     for node in ast.walk(tree):
@@ -128,16 +158,13 @@ def _backward_windows(path: Path) -> list[tuple[int, int]]:
         sl = node.slice
         if not isinstance(sl, ast.Slice):
             continue
-        lo, up = sl.lower, sl.upper
-        if not (isinstance(lo, ast.BinOp) and isinstance(lo.op, ast.Sub)
-                and isinstance(lo.left, ast.Name)
-                and isinstance(lo.right, ast.Constant)
-                and isinstance(lo.right.value, int)):
+        base = _backward_base(sl.lower)
+        if base is None:
             continue
-        width = lo.right.value
+        base_dump, width = base
+        up = sl.upper
         if (isinstance(up, ast.BinOp) and isinstance(up.op, ast.Add)
-                and isinstance(up.left, ast.Name)
-                and up.left.id == lo.left.id
+                and ast.dump(up.left) == base_dump
                 and isinstance(up.right, ast.Constant)
                 and isinstance(up.right.value, int)):
             width += up.right.value
@@ -239,10 +266,12 @@ def test_backward_detector_is_not_vacuous():
             "    c = src[i - 2:i + 2]\n"        # short -> ignored
             "    d = src[i - n:i]\n"            # variable -> ignored
             "    e = src[i - 500:j + 100]\n"    # mixed names -> 500 only
-            "    return a, b, c, d, e\n"
+            "    g = src[max(0, i - 400):i + 100]\n"   # max-wrapped -> 500
+            "    h = src[src.index('x') - 300:src.index('x') + 50]\n"  # Call base -> 350
+            "    return a, b, c, d, e, g, h\n"
         )
         back = _backward_windows(p)
-    assert back == [(2, 2000), (3, 300), (6, 500)], (
+    assert back == [(2, 2000), (3, 300), (6, 500), (7, 500), (8, 350)], (
         f"backward detector mis-census: {back}")
 
 

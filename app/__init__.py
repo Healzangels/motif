@@ -5782,7 +5782,39 @@
 #   remain extension-less by nature — the operator-side allowlist covers
 #   that half (a poll-heavy single-user SPA behind an IDS needs its
 #   operator allowlisted regardless).
-__version__ = "0.51.310"
+# 0.51.311: code review of .309/.310 (fresh eyes) — 15 findings shipped.
+#   Art proxy: (1) the .310 204 carried max-age=300 for EVERY miss, and the
+#   fetch helper's single None covered transport errors, 5xx/401 and
+#   timeouts too — a Plex restart mid-render cached blank posters for five
+#   minutes after recovery. The helper now classifies: "no_art" (Plex 404,
+#   no plex_url, EMPTY image body — the latter was served + cached 24h as a
+#   0-byte image, pre-existing) → 204 + short cache; "failed" (transport,
+#   non-404 status, non-image body) → 204 + no-store with a warn-once
+#   breadcrumb. (2) The .jpg spelling matches the reverse proxy's asset-
+#   cache regex class: README now says WHY Cache Assets must stay off, and
+#   art responses carry Vary: Cookie. INFO card: (3) the .309 two-arm
+#   (guid OR theme_id) match reached only the poster resolver — five sibling
+#   lookups (theme tiers, edition folder, single-edition gate, presence)
+#   still missed guid-NULL rows, so a deep-linked AniDB card painted a
+#   poster over WRONG state ("no theme staged" for a theme Plex serves);
+#   all five widened. (4) The theme_id arm could return a row whose
+#   theme_id went stale after a Plex Fix Match (enum rewrites the guid,
+#   never theme_id), with an index-order tie-break — the resolver is one
+#   statement with guid precedence + a deterministic ORDER BY. Routing:
+#   (5) anime rows from the canonical-health and loudness producers still
+#   routed to /tv — both payloads carry is_anime now, both ternaries test
+#   it first. Inbox: (6) a HELD Enter auto-repeats past the 400ms absorb
+#   onto the parked row control — key repeats are dropped outright. UI:
+#   :first-child (not :only-child) for the lone-section divider. Docs: the
+#   six stale "404 on no-art" comments + the bare-path mention updated;
+#   the three .jpg emitters carry their marker. Tests: five pins the
+#   review proved escapable were re-armed (the /tv default tail, the
+#   strip's try→replaceState→catch ORDER, real route-table order + a
+#   regex-equality emitter drift guard, a position-free guard-line anchor);
+#   the .261 backward-window detector now unwraps max(0, a-N) and Call
+#   bases (135 windows it could not see) and banks 214; both walkers share
+#   one lru_cached parse (three full parses of tests/ per gate → one).
+__version__ = "0.51.311"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -56,7 +56,9 @@ def test_api_item_edition_label_uses_info_plex_type():
     # 'collection') instead of the hardcoded-movie map.
     import re
     flat = re.sub(r"\s+", " ", API_PY)
-    assert "(section_id, str(tmdb_id), _info_plex_type)," in flat
+    # v0.51.311: the fallback is two-arm now (guid_tmdb OR theme_id) — the
+    # invariant is unchanged: it threads _info_plex_type, not the movie map.
+    assert '(section_id, str(tmdb_id), t["id"], _info_plex_type),' in flat
     # no (section_id, str(tmdb_id)) plex_items query still pairs with the hardcoded
     # movie map (the collection→movie edition-label bug is gone).
     assert '(section_id, str(tmdb_id), "show" if media_type == "tv" else "movie")' not in flat
