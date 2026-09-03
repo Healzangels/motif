@@ -4,8 +4,8 @@
      image body → "no_art" (204 + short cache); transport errors, non-404
      statuses and non-image bodies → "failed" (204 + no-store, warn-once).
      The .310 single None cached a Plex restart as "no art" for 5 minutes.
-  2. Art responses carry Vary: Cookie (the .jpg spelling sits in the
-     reverse proxy's asset-cache regex class).
+  2. (Vary: Cookie was added here and dropped again in .312 — browsers
+     key their cache on the cookie value; the README rule is the control.)
   3. The two-arm (guid_tmdb OR theme_id) match now covers the sibling
      lookups in api_item — a guid-NULL row's has_theme tier resolves.
   4. The poster resolver prefers a guid match over a theme_id match whose
@@ -102,7 +102,9 @@ def test_transport_failure_is_uncacheable_and_warns_once(tmp_path, monkeypatch, 
     caplog.clear()
     with caplog.at_level(logging.DEBUG):
         c.get("/api/plex/art/124.jpg", headers=AUTH)
-    assert not any(rec.levelno >= logging.WARNING and "plex art" in rec.message
+    # v0.51.313 (audit): by LOGGER, not a substring — a per-tile WARNING
+    # with different wording slipped past 'plex art'.
+    assert not any(rec.levelno >= logging.WARNING and rec.name.startswith("app.")
                    for rec in caplog.records), (
         "a dead Plex must log ONE warning, then debug — not one per tile")
 
@@ -317,8 +319,9 @@ def test_keydown_drops_key_repeats():
     # Enter on a header auto-toggled it), and must preventDefault (a held
     # Space on the role=button div scrolled the drawer per repeat).
     assert blk.index("if (e.repeat)") < blk.index("closest('.notif-group-head')")
-    rep_line = next(l for l in blk.splitlines() if "if (e.repeat)" in l)
-    assert "e.preventDefault()" in rep_line and "return" in rep_line
+    # v0.51.313 (audit): structural — the one-line pin red'd on a re-wrap.
+    seg = blk[blk.index("if (e.repeat)"):blk.index("closest('.notif-group-head')")]
+    assert "e.preventDefault()" in seg and "return" in seg
 
 
 # ── docs + markers ───────────────────────────────────────────

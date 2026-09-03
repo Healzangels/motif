@@ -83,14 +83,17 @@ def test_every_js_art_emitter_uses_the_jpg_spelling():
     # block comments that START a line only — a `/*` inside a JS regex
     # literal mid-line must not open a "comment" that swallows an emitter.
     code = re.sub(r"(?m)^[ \t]*/\*.*?\*/", "", APP_JS, flags=re.DOTALL)
-    code = re.sub(r"(^|\s)//.*$", "", code, flags=re.MULTILINE)
+    code = re.sub(r"(^|\s|;)//.*$", "", code, flags=re.MULTILINE)
     refs = re.findall(r"/api/plex/art/", code)
     good = re.findall(r"/api/plex/art/\$\{[^}]*\}\.jpg", code)
     assert len(refs) >= 3, "the three known emitters must be visible"
     assert len(refs) == len(good), (
         f"{len(refs) - len(good)} art reference(s) are not `${{...}}.jpg` "
         f"emitters — IDS layers classify static-vs-crawl by extension, and "
-        f"poster bursts through a bare spelling read as a non-static crawl")
+        f"poster bursts through a bare spelling read as a non-static crawl. "
+        f"(Comments are stripped only in line-start /* */ and whitespace-, "
+        f"line-start- or ;-preceded // forms — a mid-line block comment "
+        f"naming the path reads as a reference.)")
 
 
 def test_v0_51_310_version_pin():

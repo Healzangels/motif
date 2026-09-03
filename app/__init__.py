@@ -5842,7 +5842,40 @@
 #   and "no-store, so the next render re-asks" does not reach the dashboard
 #   carousel, whose error handler marks a tile text-only for the life of
 #   the tab (pre-existing; a retry-on-poll is a possible follow-up).
-__version__ = "0.51.312"
+# 0.51.313: audit of the .312 batch (5 finders) — the .312 narrowing was
+#   WRONG and is replaced. Measured A/B by three finders: the guid-NULL-only
+#   theme_id arm dropped motif's OWN bonds — every SET URL / UPLOAD MP3 theme
+#   on a TDB-less title (a plex_orphan theme with a negative id stamped on a
+#   row that keeps Plex's real guid) and every imdb / title+year relink (a
+#   real TDB theme keyed under a different tmdb than Plex's guid) — from its
+#   own card: no poster, "no theme staged", "not downloaded", no pending
+#   update, while the library (theme_id join by design) showed it themed.
+#   Those rows and a Fix-Matched-away stale link are INDISTINGUISHABLE by
+#   guid nullity (both: a real guid with no TDB entry). The model that
+#   handles both: guid-matched rows are authoritative; theme-linked rows
+#   count only when the title has NO guid-matched row in scope. Aggregates
+#   (theme tiers ×2, single-edition gate, presence) express it as
+#   `theme_id = ? AND NOT EXISTS (guid row in scope)`; the single-row picks
+#   (poster resolver, edition-folder lookup) as a guid-first ORDER BY. The
+#   two WRITE gates (unplace, delete-sidecar) now mirror the read gate —
+#   guid-only there withheld the '' fallback the card granted (the v1.22.7
+#   "card says placed, LPS does 0/0" symptom on the anime cohort).
+#   Accepted residual: a title with no guid row at all still admits a stale
+#   link (the schema records no bond provenance; an enum-side clear of
+#   theme_id on a guid change is a designed follow-up). Art proxy: any
+#   non-3-tuple fetch result is a failure (None / bytes / short tuple would
+#   500 per tile) with a breadcrumb for unrecognised values; an empty body
+#   warns once on ITS OWN flag so a zero-byte poster cannot burn the
+#   process-wide "Plex is dead" warning. Tests: the .312 file is rewritten
+#   around the model (orphan bond, cross-keyed bond, stale row under both
+#   insertion orders, per-site stale exclusions, write-gate mirror, the
+#   memory INVARIANT instead of a helper name); the .311 warn-once pin
+#   filters by logger, the repeat pin is structural. ERRATA of the .312
+#   errata: the "135 windows" item was never wrong in the .311 entry (the
+#   wrong figures lived in .261's comments, which .312 fixed), and the
+#   carousel does re-request posters whenever the placed set changes (its
+#   hash-triggered rebuild) — only an unchanged set skips the retry.
+__version__ = "0.51.313"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

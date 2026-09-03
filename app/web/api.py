@@ -82,6 +82,9 @@ log = logging.getLogger(__name__)
 _PLEX_ART_TRANSCODE_WARNED: bool = False
 # v0.51.311 (review): hot-path warn-once for art-proxy transport/auth failures.
 _PLEX_ART_FETCH_WARNED: bool = False
+# v0.51.313 (audit): a per-ITEM empty poster must not burn the process-wide
+# 'Plex is dead' warn-once above.
+_PLEX_ART_EMPTY_WARNED: bool = False
 
 # v1.18.6: 'collection' added so per-item API endpoints
 # (manual-url, redownload, forget, info, etc.) accept the new
@@ -8373,10 +8376,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _ed_clause = "" if edition_key is None else " AND edition_key = ?"
             _ed_args: tuple = () if edition_key is None else (edition_key,)
             if edition_key is None:
+                # v0.51.313 (audit): mirror the INFO card's guid-first gate.
                 _n_ed = conn.execute(
                     "SELECT COUNT(DISTINCT edition_key) FROM plex_items "
-                    "WHERE guid_tmdb = ? AND media_type = ? AND section_id = ?",
-                    (str(tmdb_id), plex_mt, section_id),
+                    "WHERE (guid_tmdb = ? OR (theme_id = (SELECT id FROM themes "
+                    "         WHERE media_type = ? AND tmdb_id = ?) AND NOT EXISTS ("
+                    "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
+                    "           AND g.section_id = plex_items.section_id "
+                    "           AND g.media_type = ?))) "
+                    "  AND media_type = ? AND section_id = ?",
+                    (str(tmdb_id), media_type, tmdb_id, str(tmdb_id), plex_mt,
+                     plex_mt, section_id),
                 ).fetchone()[0]
                 if _n_ed > 1:
                     raise HTTPException(
@@ -13298,7 +13308,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # truncated response mid-restart, which must not cache for 5 min
             # and must be operator-visible.
             if not resp.content:
-                _art_fetch_warn("200 with an EMPTY body", rating_key)
+                global _PLEX_ART_EMPTY_WARNED
+                if not _PLEX_ART_EMPTY_WARNED:
+                    _PLEX_ART_EMPTY_WARNED = True
+                    log.warning("plex art proxy: 200 with an EMPTY body for rk=%s — "
+                                "served as uncacheable no-art; further empties log "
+                                "at debug", rating_key)
+                else:
+                    log.debug("plex art proxy: empty body for rk=%s", rating_key)
                 return "failed"
             return resp.content, ctype, False
         except Exception as e:  # noqa: BLE001
@@ -13346,7 +13363,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # v0.51.312 (audit): ANY other string is a failure — an unrecognised
         # sentinel would otherwise fall into the tuple unpack below (a 3-char
         # one silently as a 1-byte "image"). isinstance, not == "failed".
-        if isinstance(got, str):
+        # v0.51.313 (audit): not just strings — None / bytes / a short tuple
+        # would 500 in the unpack; an UNRECOGNISED value gets a breadcrumb.
+        if not (isinstance(got, tuple) and len(got) == 3):
+            if got != "failed":
+                log.warning("plex art proxy: unknown fetch result %r for rk=%s",
+                            got, rating_key)
             # v0.51.311 (review): a TRANSIENT failure (Plex restart, timeout,
             # rotated token) must not be cached as "no art" — .310 pinned
             # blank posters for five minutes after Plex recovered. no-store,
@@ -13361,7 +13383,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # transcoder is retried within minutes; transcoded and no-w responses
         # keep the day-long cache.
         max_age = 86400 if (downscaled or not w) else 300
-        # v0.51.312 (audit): NO Vary: Cookie — browsers key their cache on the
+        # v0.51.312 (audit): NO Vary: Cookie (v0.51.311 added it) — browsers key their cache on the
         # full cookie value, so any rotating edge cookie would evict every
         # cached poster (the .285 transcoder-burst fix undone), and it did not
         # even cover bearer-token clients. `private` handles shared caches; the
@@ -16552,15 +16574,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # WITHHOLDS (the v1.21.95 write gate) — the read claimed placed, the
                 # write no-op'd (the user's Watchmen "card says placed, LPS does 0/0").
                 _info_plex_type = "show" if media_type == "tv" else media_type
-                # v0.51.312 (audit): the theme_id arm applies to guid-NULL rows ONLY — a
-                # row Fix-Matched away keeps a stale theme_id and must not count here.
+                # v0.51.313 (audit): guid-first — a guid-matched row is authoritative;
+                # theme-linked rows count only when the title has NO guid row in
+                # scope. The .312 guid-NULL-only arm broke motif's own SET URL /
+                # UPLOAD orphan bonds and the imdb/title bonds (real guid, TDB-less);
+                # nullity cannot separate those from a Fix-Matched-away stale link.
                 _info_single_edition = bool(
                     section_id and _info_edition not in (None, "")
                     and conn.execute(
                         "SELECT COUNT(DISTINCT edition_key) FROM plex_items "
-                        "WHERE (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
+                        "WHERE (guid_tmdb = ? OR (theme_id = ? AND NOT EXISTS ("
+                        "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
+                        "           AND g.section_id = plex_items.section_id "
+                        "           AND g.media_type = ?))) "
                         "  AND section_id = ? AND media_type = ?",
-                        (tmdb_id, t["id"], section_id, _info_plex_type),
+                        (tmdb_id, t["id"], tmdb_id, _info_plex_type, section_id,
+                         _info_plex_type),
                     ).fetchone()[0] == 1)
                 # v1.11.0: per-section local_files — return the list so the
                 # UI can render one row per section. legacy `local_file`
@@ -16739,12 +16768,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # has no motif state (no override / placement /
                     # canonical / sidecar), don't surface a pending
                     # update for it even if Plex has one for this title.
-                    # v0.51.312 (audit): guid-NULL-only theme_id arm (stale-link guard).
+                    # v0.51.313 (audit): guid-first (see the single-edition gate).
                     has_presence = conn.execute(
                         "SELECT 1 FROM plex_items pi "
                         "WHERE pi.section_id = ? "
                         "  AND ((CASE pi.media_type WHEN 'show' THEN 'tv' ELSE pi.media_type END) = ?) "
-                        "  AND (pi.guid_tmdb = ? OR (pi.guid_tmdb IS NULL AND pi.theme_id = ?)) "
+                        "  AND (pi.guid_tmdb = ? OR (pi.theme_id = ? AND NOT EXISTS ("
+                        "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
+                        "           AND g.section_id = pi.section_id "
+                        "           AND g.media_type = ?))) "
                         "  AND ("
                         "       pi.local_theme_file = 1 "
                         "    OR EXISTS (SELECT 1 FROM local_files lf "
@@ -16758,7 +16790,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         "                  AND p.section_id = pi.section_id) "
                         "  ) "
                         "LIMIT 1",
-                        (section_id, media_type, tmdb_id, t["id"],
+                        (section_id, media_type, tmdb_id, t["id"], tmdb_id,
+                         _info_plex_type,
                          media_type, tmdb_id,
                          media_type, tmdb_id,
                          media_type, tmdb_id),
@@ -17059,16 +17092,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 "WHERE rating_key = ?",
                                 (rating_key,),
                             ).fetchone()
-                        # v0.51.312 (audit): guid-NULL-only theme_id arm (stale-link guard).
+                        # v0.51.313 (audit): guid-first ORDER BY (a single-row pick
+                        # can prefer), then the named cut — the .312 arm dropped
+                        # orphan/imdb-bonded rows; a bare LIMIT 1 picked by rowid.
                         if pi_row is None:
                             pi_row = conn.execute(
                                 "SELECT folder_path FROM plex_items "
                                 "WHERE section_id = ? "
-                                "  AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
+                                "  AND (guid_tmdb = ? OR theme_id = ?) "
                                 "  AND media_type = ? "
+                                "ORDER BY CASE WHEN guid_tmdb = ? THEN 0 ELSE 1 END, "
+                                "         (edition_key = ?) DESC, edition_key "
                                 "LIMIT 1",
                                 (section_id, str(tmdb_id), t["id"],
-                                 _info_plex_type),
+                                 _info_plex_type, str(tmdb_id), _info_edition),
                             ).fetchone()
                     if pi_row and pi_row["folder_path"]:
                         edition_label = edition_label_for_folder(
@@ -17110,17 +17147,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # siblings (regressed the +P label to (none)). Run each tier if
                 # EITHER is still unresolved, and fill only the column still None
                 # so a resolved rk value is never clobbered by a sibling MAX.
-                # v0.51.312 (audit): both tiers take the theme_id arm for guid-NULL rows
-                # ONLY — MAX() cannot prefer, so a Fix-Matched-away row's stale theme_id
-                # was borrowing its has_theme onto another title's card.
+                # v0.51.313 (audit): both tiers are guid-first — MAX() cannot prefer,
+                # so theme-linked rows enter only when the title has no guid row in
+                # scope (the .312 guid-NULL-only arm broke orphan/imdb bonds).
                 if (_pi_independent is None or _pi_has_theme is None) and section_id:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
-                        "WHERE section_id = ? AND (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
+                        "WHERE section_id = ? AND (guid_tmdb = ? OR (theme_id = ? AND NOT EXISTS ("
+                        "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
+                        "           AND g.section_id = plex_items.section_id "
+                        "           AND g.media_type = ?))) "
                         "  AND media_type = ?",
-                        (section_id, str(tmdb_id), t["id"],
-                         _info_plex_type)).fetchone()
+                        (section_id, str(tmdb_id), t["id"], str(tmdb_id),
+                         _info_plex_type, _info_plex_type)).fetchone()
                     if _pind:
                         if _pi_independent is None:
                             _pi_independent = _pind["v"]
@@ -17130,8 +17170,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     _pind = conn.execute(
                         "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
                         "FROM plex_items "
-                        "WHERE (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) AND media_type = ?",
-                        (str(tmdb_id), t["id"], _info_plex_type)).fetchone()
+                        "WHERE (guid_tmdb = ? OR (theme_id = ? AND NOT EXISTS ("
+                        "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
+                        "           AND g.media_type = ?))) "
+                        "  AND media_type = ?",
+                        (str(tmdb_id), t["id"], str(tmdb_id), _info_plex_type,
+                         _info_plex_type)).fetchone()
                     if _pind:
                         if _pi_independent is None:
                             _pi_independent = _pind["v"]
@@ -17151,7 +17195,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # bond via theme_id only, so the guid-only arm left exactly
                     # the fix's target rows (anime P-rows) posterless.
                     _pq = ("SELECT rating_key FROM plex_items "
-                           "WHERE (guid_tmdb = ? OR (guid_tmdb IS NULL AND theme_id = ?)) "
+                           "WHERE (guid_tmdb = ? OR theme_id = ?) "
                            "  AND media_type = ?")
                     _pa = [tmdb_id, t["id"], _info_plex_type]
                     if section_id:
@@ -17159,12 +17203,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                         _pa.append(section_id)
                     # v0.51.311 (review): ONE statement, guid precedence + a
                     # deterministic tie-break. The theme_id arm can hit a row
-                    # whose theme_id went STALE after a Plex Fix Match (enum
-                    # rewrites the guid, never theme_id), and the old pair of
+                    # whose theme_id went STALE after a Plex Fix Match (the enum
+                    # re-points theme_id only when the new guid has a TDB row —
+                    # v0.51.313 errata; stale otherwise), and the old pair of
                     # LIMIT 1 reads let index-scan order pick between it and
                     # the correct guid-matched row — the wrong title's poster.
-                    # v0.51.312 (audit): the theme_id arm is now guid-NULL-only, so
-                    # such a row is excluded outright; precedence stays for order.
+                    # v0.51.313 (audit): back to the plain two-arm — the .312
+                    # guid-NULL-only arm dropped orphan/imdb-bonded rows (real guid,
+                    # TDB-less). The guid-first ORDER BY IS the stale guard here.
                     _prow = conn.execute(
                         _pq + " ORDER BY CASE WHEN guid_tmdb = ? THEN 0 ELSE 1 END,"
                               "          (edition_key = ?) DESC, edition_key,"
@@ -17361,10 +17407,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # edition independence for shared-folder editions is the separate
             # per-rk-upload arc.
             _plex_type = "show" if media_type == "tv" else media_type
+            # v0.51.313 (audit): mirror the INFO card's read gate (guid-first;
+            # theme-linked rows when no guid row) — guid-only here withheld the
+            # '' fallback for AniDB/orphan titles the card counted ("card says
+            # placed, LPS does 0/0", the v1.22.7 symptom, on the anime cohort).
             _edition_count = (conn.execute(
                 "SELECT COUNT(DISTINCT edition_key) FROM plex_items "
-                "WHERE guid_tmdb = ? AND section_id = ? AND media_type = ?",
-                (tmdb_id, section_id, _plex_type),
+                "WHERE (guid_tmdb = ? OR (theme_id = (SELECT id FROM themes "
+                "         WHERE media_type = ? AND tmdb_id = ?) AND NOT EXISTS ("
+                "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
+                "           AND g.section_id = plex_items.section_id "
+                "           AND g.media_type = ?))) "
+                "  AND section_id = ? AND media_type = ?",
+                (tmdb_id, media_type, tmdb_id, tmdb_id, _plex_type, section_id,
+                 _plex_type),
             ).fetchone()[0] if (section_id and _unplace_edition) else 0)
             _has_own_pl = bool(section_id and _unplace_edition and conn.execute(
                 "SELECT 1 FROM placements WHERE media_type = ? AND tmdb_id = ? "
