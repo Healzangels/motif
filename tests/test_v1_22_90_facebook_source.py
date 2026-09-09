@@ -188,6 +188,8 @@ def test_labels_mention_facebook():
     assert "Facebook" in NOTIFY  # notify source label
     # SET URL error message (literal wraps across two source lines).
     assert "URL must be a YouTube, SoundCloud, Instagram, " in API_PY
-    assert "or Facebook link" in API_PY
+    # v0.51.315: the message now ends "Facebook, or AnimeThemes link" — pin the
+    # Facebook mention, not the old tail.
+    assert "Instagram, " in API_PY and "Facebook, or AnimeThemes link" in API_PY
     assert "facebook.com" in LIB_HTML  # SET URL placeholder
-    assert "Instagram, or Facebook URL" in LIB_HTML  # dialog hint
+    assert "Instagram, Facebook, or AnimeThemes URL" in LIB_HTML  # dialog hint (v0.51.315 wording)

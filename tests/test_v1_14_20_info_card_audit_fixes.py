@@ -126,7 +126,9 @@ def test_diff_tile_proposed_yt_still_gets_thumbnail():
     PROPOSED tile only when newSrc==='youtube'."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
     fn_anchor = js.index("function renderPendingUpdateDiff(pu, lf, t, ovr)")
-    body = js[fn_anchor:fn_anchor + 8000]
+    # v0.51.315: the whole function (to the next top-level function), not a
+    # fixed 8000-char window — a fifth source branch pushed the tail out.
+    body = js[fn_anchor:js.index("\n  function ", fn_anchor + 10)]
     # newVid extraction gated on YT.
     assert "const newVid = newSrc === 'youtube'" in body
     assert "extractYouTubeVideoId(newUrl)" in body

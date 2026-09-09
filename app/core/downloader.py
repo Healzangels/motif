@@ -292,6 +292,9 @@ _FETCH_ALLOWED_HOSTS = (
     "soundcloud.com",
     "instagram.com",
     "facebook.com", "fb.watch",
+    # v0.51.315: AnimeThemes audio host ONLY (a.animethemes.moe) — the API host
+    # (api.animethemes.moe) stays outside the download allowlist on purpose.
+    "a.animethemes.moe",
 )
 
 
@@ -435,6 +438,11 @@ def _source_for(url: str) -> str:
     # Same default non-YT yt-dlp path as Instagram.
     if "facebook.com" in url or "fb.watch" in url:
         return "facebook"
+    # v0.51.315: AnimeThemes direct audio — yt-dlp's generic extractor (direct
+    # media URL), the same non-YT opts path as Instagram/Facebook; the
+    # FFmpegExtractAudio postprocessor turns the .ogg into theme.mp3.
+    if "a.animethemes.moe" in url:
+        return "animethemes"
     return "unknown"
 
 

@@ -1278,7 +1278,9 @@ def _src_letter_sql(
             # v1.22.90: fb-<id> (Facebook) joins the same family.
             f"OR {source_video_id} LIKE 'sc-%' "
             f"OR {source_video_id} LIKE 'ig-%' "
-            f"OR {source_video_id} LIKE 'fb-%'"
+            f"OR {source_video_id} LIKE 'fb-%' "
+            # v0.51.315: at-<slug> (AnimeThemes) joins the family. Mirror in computeSrcLetter.
+            f"OR {source_video_id} LIKE 'at-%'"
         ") THEN 'U' "
         f"WHEN {media_folder} IS NOT NULL AND {provenance} = 'manual' THEN 'A' "
         f"WHEN {media_folder} IS NULL AND pi.local_theme_file = 1 THEN 'M' "
@@ -12991,7 +12993,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # like Instagram (FB's oEmbed needs a Graph API app token).
         if _host_is("facebook.com") or _host_is("fb.watch"):
             return "facebook"
+        # v0.51.315: AnimeThemes audio — the preview is synthesized from the
+        # URL itself (no provider, no network): the basename IS the title.
+        if _host_is("a.animethemes.moe"):
+            return "animethemes"
         return None
+
+    def _animethemes_preview(url: str) -> dict:
+        """v0.51.315: {title, author_name, author_url, thumbnail_url} for an
+        AnimeThemes audio link without a round-trip — the catalogue slug in
+        the basename (CowboyBebop-OP1) is the most useful title we have."""
+        from urllib.parse import urlparse
+        base = (urlparse(url).path.rsplit("/", 1)[-1]).rsplit(".", 1)[0]
+        return {"title": base, "author_name": "AnimeThemes.moe",
+                "author_url": "https://animethemes.moe/", "thumbnail_url": None}
 
     def _instagram_preview_via_ytdlp(url: str) -> dict | None:
         """v1.20.26: resolve an Instagram reel/post preview via yt-dlp
@@ -13101,6 +13116,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 return None
             _oembed_cache_put(url, slim_ig)
             return slim_ig
+        if source == "animethemes":  # v0.51.315: no provider — synthesized, cached like the rest
+            slim_at = _animethemes_preview(url)
+            _oembed_cache_put(url, slim_at)
+            return slim_at
         provider = _OEMBED_PROVIDERS[source]
         try:
             import httpx
@@ -14851,7 +14870,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(
                 status_code=400,
                 detail=("URL must be a YouTube, SoundCloud, Instagram, "
-                        "or Facebook link"),
+                        "Facebook, or AnimeThemes link"),
             )
         vid = extract_video_id(url)
         if not vid:

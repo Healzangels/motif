@@ -3772,8 +3772,11 @@
   // Forms: /<page>/videos/[<slug>/]<id>, /reel/<id>, /share/v/<code>,
   // /watch?v=<id>, /video.php?v=<id>, fb.watch/<code>.
   const FACEBOOK_URL_RE = /^https?:\/\/(?:(?:www\.|m\.|web\.|mbasic\.)?facebook\.com\/(?:(?:[A-Za-z0-9.\-]+\/)?videos\/(?:[^/?#]+\/)?\d+|reel\/\d+|share\/[vr]\/[A-Za-z0-9_-]+|(?:watch\/?|video\.php)\?(?:[^#]*&)?v=\d+)|fb\.watch\/[A-Za-z0-9_-]+)/i;
+  // v0.51.315: AnimeThemes.moe hosted audio (a.animethemes.moe/<Slug>-OP1.ogg).
+  // Mirror of _AT_URL_RE in app/core/sync.py — keep in lockstep.
+  const ANIMETHEMES_URL_RE = /^https?:\/\/a\.animethemes\.moe\/[A-Za-z0-9._-]+?\.(?:ogg|oga|opus|flac|mp3|m4a)(?:[?#]|$)/i;
   const THEME_URL_RE = new RegExp(
-    `(${YOUTUBE_URL_RE.source})|(${SOUNDCLOUD_URL_RE.source})|(${INSTAGRAM_URL_RE.source})|(${FACEBOOK_URL_RE.source})`,
+    `(${YOUTUBE_URL_RE.source})|(${SOUNDCLOUD_URL_RE.source})|(${INSTAGRAM_URL_RE.source})|(${FACEBOOK_URL_RE.source})|(${ANIMETHEMES_URL_RE.source})`,
     'i',
   );
 
@@ -3791,6 +3794,7 @@
     // unanchored `v=` regex forces FB-first there; keep the mirrors
     // in the same order so a future regex tweak can't drift them.
     if (FACEBOOK_URL_RE.test(url)) return 'facebook';
+    if (ANIMETHEMES_URL_RE.test(url)) return 'animethemes';  // v0.51.315
     if (YOUTUBE_URL_RE.test(url)) return 'youtube';
     if (SOUNDCLOUD_URL_RE.test(url)) return 'soundcloud';
     if (INSTAGRAM_URL_RE.test(url)) return 'instagram';  // v1.20.26
@@ -3840,8 +3844,11 @@
       } else if (src === 'facebook') {  // v1.22.90
         status.textContent = 'detected: Facebook';
         status.classList.remove('err'); status.classList.add('ok');
+      } else if (src === 'animethemes') {  // v0.51.315
+        status.textContent = 'detected: AnimeThemes (direct audio)';
+        status.classList.remove('err'); status.classList.add('ok');
       } else {
-        status.textContent = 'detected: not recognized (must be YouTube, SoundCloud, Instagram, or Facebook)';
+        status.textContent = 'detected: not recognized (must be YouTube, SoundCloud, Instagram, Facebook, or AnimeThemes)';
         status.classList.remove('ok'); status.classList.add('err');
       }
       status.dataset.live = '1';
@@ -10371,7 +10378,7 @@
     if (placed && placedProv === 'manual') {
       const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId
         || svid.startsWith('sc-') || svid.startsWith('ig-')
-        || svid.startsWith('fb-'));
+        || svid.startsWith('fb-') || svid.startsWith('at-'));
       return (!isOrphanRow || wasUploadedOrUrl) ? 'U' : 'A';
     }
     if (sidecarOnly) return 'M';
@@ -10494,7 +10501,7 @@
       // Legacy fallback heuristic for rows without source_kind.
       const wasUploadedOrUrl = (svid === '' || looksLikeYoutubeId
         || svid.startsWith('sc-') || svid.startsWith('ig-')
-        || svid.startsWith('fb-'));
+        || svid.startsWith('fb-') || svid.startsWith('at-'));
       const kind = (!isOrphanRow || wasUploadedOrUrl) ? 'url' : 'adopt';
       if (kind === 'adopt') {
         srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link).">A</span>';
@@ -11226,7 +11233,7 @@
       // URLs — all 'url', not 'adopt' (mirrors _SRC_LETTER_SQL).
       if (/^[A-Za-z0-9_-]{11}$/.test(svid)
           || svid.startsWith('sc-') || svid.startsWith('ig-')
-          || svid.startsWith('fb-')) return 'url';
+          || svid.startsWith('fb-') || svid.startsWith('at-')) return 'url';
       return 'adopt';
     })();
     const isManualPlacement = placed && placedProv === 'manual';
@@ -17694,7 +17701,7 @@
         ytId = (lf && lf.source_video_id) || '';
         if (ytId === 'recovered') ytId = '';
         if ((ytId.startsWith('sc-') || ytId.startsWith('ig-')
-             || ytId.startsWith('fb-'))
+             || ytId.startsWith('fb-') || ytId.startsWith('at-'))
             && urlSource(currentUrl) === 'youtube') {
           ytId = '';
         }
@@ -20339,6 +20346,10 @@
       // SC path — preserve the URL verbatim; vid is the synthetic
       // sc-<artist>-<slug> sentinel from extract_video_id (used
       // by oembed lookup as the slot key).
+      currentUrl = currentRawUrl;
+      currentVid = currentVidFromLf || '';
+    } else if (currentSrc === 'animethemes') {
+      // v0.51.315: AnimeThemes (at-<slug>) — same verbatim-URL path as SC.
       currentUrl = currentRawUrl;
       currentVid = currentVidFromLf || '';
     } else if (currentVidFromLf) {

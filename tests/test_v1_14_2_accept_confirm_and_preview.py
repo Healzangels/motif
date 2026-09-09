@@ -114,7 +114,9 @@ def test_preview_emits_correct_label_per_source():
     recognized'. Pin so a copy refactor doesn't drop a source."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
     fn_anchor = js.index("function bindUrlSourcePreview(inputId, statusId)")
-    body = js[fn_anchor:fn_anchor + 1500]
+    # v0.51.315: the whole helper (to its listener registration), not a fixed
+    # 1500-char window — a fifth source label pushed the tail out of it.
+    body = js[fn_anchor:js.index("input.addEventListener('input', update);", fn_anchor)]
     assert "'detected: YouTube'" in body
     assert "'detected: SoundCloud'" in body
     assert "not recognized" in body

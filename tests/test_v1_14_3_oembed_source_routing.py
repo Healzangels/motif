@@ -90,7 +90,9 @@ def test_fetch_oembed_routes_via_provider_table():
     we're regressing against."""
     api = (REPO / "app" / "web" / "api.py").read_text()
     anchor = api.index("def _fetch_oembed(url: str)")
-    body = api[anchor:anchor + 1500]
+    # v0.51.315: the whole function (to the next def), not a fixed 1500-char
+    # window — the synthesized AnimeThemes branch pushed the call out of it.
+    body = api[anchor:api.index("def ", anchor + 10)]
     # Routing path: source lookup → provider table → request.
     assert "source = _oembed_source_for(url)" in body
     assert "provider = _OEMBED_PROVIDERS[source]" in body

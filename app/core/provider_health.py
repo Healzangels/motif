@@ -47,7 +47,8 @@ _COOLDOWN_CAP_S = 6 * 3600
 _RECOVERY_FACTOR = 1.25
 _BACKOFF_FACTOR = 0.5
 
-PROVIDERS = ("youtube", "soundcloud", "instagram", "facebook", "other")
+# v0.51.315: + animethemes (its own adaptive-rate/cooldown lane — a YouTube throttle must not slow AnimeThemes fetches).
+PROVIDERS = ("youtube", "soundcloud", "instagram", "facebook", "animethemes", "other")
 
 
 def provider_for_url(url: str | None) -> str:
@@ -60,6 +61,8 @@ def provider_for_url(url: str | None) -> str:
         return "instagram"
     if "facebook.com" in u or "fb.watch" in u:
         return "facebook"
+    if "a.animethemes.moe" in u:  # v0.51.315
+        return "animethemes"
     return "other"
 
 

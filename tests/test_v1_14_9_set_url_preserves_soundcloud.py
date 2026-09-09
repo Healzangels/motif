@@ -73,7 +73,8 @@ def test_manual_url_endpoint_routes_canonicalization_by_source():
     # v1.20.26: message widened to include Instagram.
     # v1.22.90: the detail literal wraps across two source lines.
     assert "URL must be a YouTube, SoundCloud, Instagram, " in body
-    assert "or Facebook link" in body
+    # v0.51.315: message now ends "Facebook, or AnimeThemes link".
+    assert "Facebook, or AnimeThemes link" in body
     # YouTube branch keeps the canonicalization.
     assert 'if src == "youtube":' in body
     assert 'canonical_url = f"https://www.youtube.com/watch?v={vid}"' in body

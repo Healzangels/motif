@@ -30,7 +30,8 @@ _FROZEN_DEFAULT = (
         "OR length(lf.source_video_id) = 11 "
         "OR lf.source_video_id LIKE 'sc-%' "
         "OR lf.source_video_id LIKE 'ig-%' "
-        "OR lf.source_video_id LIKE 'fb-%'"
+        "OR lf.source_video_id LIKE 'fb-%' "
+        "OR lf.source_video_id LIKE 'at-%'"  # v0.51.315: AnimeThemes joins the family
     ") THEN 'U' "
     "WHEN p.media_folder IS NOT NULL AND p.provenance = 'manual' THEN 'A' "
     "WHEN p.media_folder IS NULL AND pi.local_theme_file = 1 THEN 'M' "

@@ -116,8 +116,9 @@ def _youtube_thumb(video_id: str | None) -> str | None:
     # — only true 11-char YouTube ids get a thumb URL.
     # v1.22.90: ig-/fb- too — an 8-char shortcode/id would make an
     # 11-char prefixed value that slips the length check.
+    # v0.51.315: + at- (AnimeThemes basenames are free-length; an 8-char one would slip the check too)
     if (len(video_id) != 11
-            or video_id.startswith(("sc-", "ig-", "fb-"))):
+            or video_id.startswith(("sc-", "ig-", "fb-", "at-"))):
         return None
     return f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
 
@@ -541,6 +542,8 @@ def _format_provenance_line(ctx: ItemContext) -> str:
         plat = "Instagram"
     elif "facebook.com" in url or "fb.watch" in url:  # v1.22.90
         plat = "Facebook"
+    elif "a.animethemes.moe" in url:  # v0.51.315
+        plat = "AnimeThemes"
     return f"Source: {dot}{prov} · {plat}"
 
 

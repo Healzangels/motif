@@ -133,6 +133,17 @@ _FB_URL_RE = re.compile(
 )
 
 
+# v0.51.315: AnimeThemes.moe hosted audio as a theme source (feature brief #2
+# candidate B, docs/specs/ANIMETHEMES_SPEC.md). Form: a.animethemes.moe/<Slug>-OP1.ogg
+# (the API's audio.link). The id stashed in source_video_id is "at-<basename>"
+# (mirrors sc-/ig-/fb-). Host-anchored; a USER source only (ThemerrDB never
+# publishes these) — v0.51.314's resolver hands the picker exactly these links.
+_AT_URL_RE = re.compile(
+    r"^https?://a\.animethemes\.moe/([A-Za-z0-9._-]+?)\.(?:ogg|oga|opus|flac|mp3|m4a)(?:[?#]|$)",
+    re.IGNORECASE,
+)
+
+
 def url_source(url: str | None) -> str:
     """v1.14.0: classify a theme URL by its source platform.
     Returns 'youtube' | 'soundcloud' | 'instagram' | 'facebook'
@@ -152,6 +163,9 @@ def url_source(url: str | None) -> str:
     # host-anchored and can't steal a real YouTube URL.
     if _FB_URL_RE.search(url):
         return "facebook"
+    # v0.51.315: AnimeThemes is host-anchored too — checked with FB, before the unanchored YT regex.
+    if _AT_URL_RE.search(url):
+        return "animethemes"
     if _YT_VID_RE.search(url):
         return "youtube"
     if _SC_URL_RE.search(url):
@@ -183,6 +197,10 @@ def extract_video_id(url: str | None) -> str | None:
     if m_fb:
         fb_id = next(g for g in m_fb.groups() if g)
         return f"fb-{fb_id[:60]}"
+    # v0.51.315: AnimeThemes basename → "at-<Slug-OP1>" (case preserved: the basename IS the catalogue slug).
+    m_at = _AT_URL_RE.search(url)
+    if m_at:
+        return f"at-{m_at.group(1)[:60]}"
     m_yt = _YT_VID_RE.search(url)
     if m_yt:
         return m_yt.group(1)

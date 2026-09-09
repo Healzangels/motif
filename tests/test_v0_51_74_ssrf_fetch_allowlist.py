@@ -38,6 +38,7 @@ ALLOWED = [
     "https://www.instagram.com/reel/Abc123/",
     "https://www.facebook.com/watch?v=123456789",
     "https://fb.watch/aBcDeF/",
+    "https://a.animethemes.moe/CowboyBebop-OP1.ogg",  # v0.51.315: AnimeThemes audio host
     "http://youtube.com/watch?v=x",  # scheme http is allowed (behind Authentik/LAN)
 ]
 
@@ -50,6 +51,8 @@ BLOCKED = [
     "http://evil.com/watch?v=aaaaaaaaaaa",         # arbitrary host with a v= param
     "http://youtube.com.attacker.com/watch?v=x",   # suffix-spoof host
     "http://ayoutube.com/watch?v=x",               # not a youtube subdomain
+    "https://api.animethemes.moe/anime",           # v0.51.315: the API host is NOT a download target
+    "https://a.animethemes.moe.evil.com/x.ogg",    # suffix-spoof of the audio host
     "file:///etc/passwd",
     "ftp://youtube.com/x",                         # non-http scheme
     "gopher://127.0.0.1:6379/x",

@@ -206,8 +206,10 @@ def test_health_endpoint_shape_and_auth(client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert body["mode"] == "fixed"
-    assert set(body["providers"]) == {"youtube", "soundcloud", "instagram",
-                                      "facebook", "other"}
+    # v0.51.315: pin the INVARIANT (the endpoint mirrors PROVIDERS), not a literal
+    # set that rots every time a source kind lands (animethemes did).
+    from app.core.provider_health import PROVIDERS
+    assert set(body["providers"]) == set(PROVIDERS)
     assert body["providers"]["youtube"]["state"] == "GOOD"
 
 

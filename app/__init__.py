@@ -5896,7 +5896,29 @@
 #   (4) tools/animethemes_eval.py runs the PRODUCT resolver over a motif.db
 #   and writes the coverage table; the blocking ruff in ci.yml + release.yml
 #   now covers tools/ (the .267 mirror pin and the .73 literal pin updated).
-__version__ = "0.51.314"
+# 0.51.315: AnimeThemes source, tag 2 — the `animethemes` source kind end to
+#   end, so a pasted a.animethemes.moe audio link works through SET URL today
+#   and the v0.51.314 resolver's picks have a landing path (spec §3.4).
+#   Sites (the v1.22.90 Facebook checklist): sync.url_source + extract_video_id
+#   (host-anchored _AT_URL_RE, id `at-<Slug-OP1>`, checked with FB before the
+#   unanchored YT regex), downloader._source_for mirror + _FETCH_ALLOWED_HOSTS
+#   (`a.animethemes.moe` ONLY — the API host stays outside the download
+#   allowlist), provider_health PROVIDERS/provider_for_url (own adaptive lane),
+#   notify_content _youtube_thumb prefix filter + platform label, api.py
+#   _src_letter_sql LIKE 'at-%' (U not A), the manual-url rejection message,
+#   _oembed_source_for + a synthesized no-network preview (basename = title),
+#   app.js ANIMETHEMES_URL_RE / urlSource / detected label / 3 svid sites /
+#   ytId guard / diff-tile verbatim-URL fork, library.html placeholder + hint.
+#   Download path unchanged by design: the non-YouTube yt-dlp opts (generic
+#   extractor, direct media) + FFmpegExtractAudio → theme.mp3 → conditioner.
+#   Local smoke: yt-dlp fetches the .ogg through the product opts (ffmpeg is
+#   absent on the dev Mac, so the mp3 step is the container's live check).
+#   Pins that rotted with a fifth source: v1.21.57's frozen SQL constant gains
+#   the at- arm; v1.14.2 / v1.14.3 / v1.14.20 fixed-char windows converted to
+#   anchor slices (the .261 forward budget re-banked 1489 -> 1486); v0.51.280 now
+#   asserts the PROVIDERS invariant; v1.18.65's diff-tile anchor kept intact
+#   by giving AnimeThemes its own branch.
+__version__ = "0.51.315"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
