@@ -57,7 +57,7 @@ jobs:
       - name: install tooling
         run: pip install -r requirements-dev.txt
       - name: ruff — pyflakes correctness (BLOCKING)
-        run: ruff check app/ tests/ --select F --ignore F401,F811,F841,F541
+        run: ruff check app/ tests/ tools/ --select F --ignore F401,F811,F841,F541
       - name: ruff — full lint (report-only)
         run: ruff check app/ tests/ || true
       - name: mypy (report-only)

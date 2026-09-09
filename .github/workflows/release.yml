@@ -73,7 +73,7 @@ jobs:
       - name: pytest — full suite (BLOCKING)
         run: PYTHONPATH=$PWD MOTIF_REQUIRE_FFMPEG=1 MOTIF_REQUIRE_NODE=1 pytest -q -p no:cacheprovider
       - name: ruff — pyflakes correctness (BLOCKING)
-        run: ruff check app/ tests/ --select F --ignore F401,F811,F841,F541
+        run: ruff check app/ tests/ tools/ --select F --ignore F401,F811,F841,F541
       - name: pip-audit — dependency CVEs (BLOCKING)
         run: pip-audit -r requirements.txt
 

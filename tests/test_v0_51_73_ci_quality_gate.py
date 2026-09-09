@@ -36,7 +36,7 @@ def test_ci_runs_the_full_pytest_suite_blocking():
 def test_ci_ruff_correctness_gate_is_blocking():
     # the pyflakes-correctness gate (the family that caught the v0.51.72 httpx
     # NameError) must run and stay blocking.
-    assert "ruff check app/ tests/ --select F --ignore F401,F811,F841,F541" in CI
+    assert "ruff check app/ tests/ tools/ --select F --ignore F401,F811,F841,F541" in CI
     ruff_gate = next(l for l in CI.splitlines()
                      if "--select F --ignore F401,F811,F841,F541" in l)
     assert "|| true" not in ruff_gate, "the ruff correctness gate must stay BLOCKING"

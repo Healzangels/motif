@@ -5875,7 +5875,28 @@
 #   wrong figures lived in .261's comments, which .312 fixed), and the
 #   carousel does re-request posters whenever the placed set changes (its
 #   hash-triggered rebuild) — only an unchanged set skips the retry.
-__version__ = "0.51.313"
+# 0.51.314: AnimeThemes source, tag 1 of feature brief #2 candidate B —
+#   bridge + client + resolver + harness, no UI (docs/specs/ANIMETHEMES_SPEC.md).
+#   Measured first (docs/specs/animethemes_eval/2026-09-09-baseline.md): on
+#   the operator's 1,280 anime shows AnimeThemes has an opening with audio for
+#   87%, and for 300 of the 376 rows with NO theme; 95% of matches are clean
+#   by ID (season-1 bridge entry, year agrees). Candidate A (FIND THEME) is
+#   SHELVED: YouTube search measured 41-49% strict top-5 vs ThemerrDB's picks.
+#   (1) app/core/animethemes.py: Fribb/anime-lists bridge (tvdb+season / tmdb
+#   tv -> AniDB), cached weekly with ETag under config_dir; stale beats
+#   nothing (warn-once), no cache + fetch failure RAISES BridgeUnavailable.
+#   (2) AnimeThemesClient: paced 60/min (docs say 90), batched 50 ids, the
+#   two-step shape the live probe forced (/resource refuses deep includes;
+#   list filters must be SCOPED as filter[anime][id] or the include is
+#   empty), Retry-After honoured and capped, non-2xx RAISES and is never
+#   cached (the tmdb.py v1.22.43 lesson), 24h in-memory cache, versioned UA.
+#   (3) resolve(): season-1-first ordering; confidence clean / glance (fell
+#   through to a later season, or year off by >1) / name (search, human
+#   confirm only); default = OP1, version 1, BD over WEB.
+#   (4) tools/animethemes_eval.py runs the PRODUCT resolver over a motif.db
+#   and writes the coverage table; the blocking ruff in ci.yml + release.yml
+#   now covers tools/ (the .267 mirror pin and the .73 literal pin updated).
+__version__ = "0.51.314"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
