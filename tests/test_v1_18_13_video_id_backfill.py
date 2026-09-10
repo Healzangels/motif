@@ -112,7 +112,7 @@ def _extract_thumbnail_block() -> str:
     the SoundCloud branch). Returns the source text inside.
     """
     js = APP_JS.read_text()
-    start_marker = "v1.15.129: source-aware thumbnail block"
+    start_marker = "const _sourceVideoRow = (() => {"  # v0.51.324: the IDENTITY fold row
     block_start = js.index(start_marker)
     # Walk forward to the SoundCloud/Instagram branch which closes the
     # youtube branch's scope. v1.20.26 merged Instagram into this branch

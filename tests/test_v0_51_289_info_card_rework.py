@@ -35,7 +35,9 @@ def test_reference_folds_are_collapsed_by_default():
     assert 'class="history-section info-fold"' in fold, (
         "folds must reuse the // HISTORY details primitive, not mint a twin")
     # identity + timeline + revisions pass no open flag (collapsed).
-    assert "_fold('identity', _idsRows, { note: 'ids & derivation' })" in APP_JS
+    # v0.51.324: the note names the source-video thumb when the row renders one
+    assert ("_fold('identity', _idsRows, { note: _sourceVideoRow ? 'ids · derivation · source video' : 'ids · derivation' })"
+            in APP_JS)
     # v0.51.290: timeline gained an open-on-failure exception — pin the
     # call, not the option literals (they live in .290's tests).
     assert "_fold('timeline', _timelineRows, {" in APP_JS
@@ -91,7 +93,9 @@ def test_one_header_voice():
     # overrides are pinned as CASCADE OUTCOMES in test_v0_51_290 (the .289
     # string pin here was a mirror: its rule tied on specificity with the
     # later green-bright rule and silently lost — the ultra review's find).
-    blk = APP_CSS[APP_CSS.index(".info-fold .history-section-title {"):]
+    # v0.51.324: one fold voice — the dim tone is the BASE rule now, shared by
+    # the reference folds and the PROVENANCE / HISTORY audit sections.
+    blk = APP_CSS[APP_CSS.index(".history-section-title {"):]
     blk = blk[:blk.index("}")]
     assert "color: var(--fg-dim)" in blk
 

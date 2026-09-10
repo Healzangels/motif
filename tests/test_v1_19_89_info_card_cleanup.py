@@ -49,8 +49,13 @@ def test_thumbnail_divider_uses_dlg_section():
         "v1.19.89: the thumbnail divider must reuse .dlg-section, not "
         "an inline margin/padding/border"
     )
-    assert "info-thumb-caption" in body
-    assert ".info-thumb-caption" in APP_CSS
+    # v0.51.324: the still moved into the IDENTITY fold; its caption is a plain
+    # `muted small` span beside the thumb (no class, no inline style), so the
+    # centered-caption primitive is retired rather than left dangling.
+    assert "info-thumb-caption" not in APP_JS and ".info-thumb-caption {" not in APP_CSS
+    row = slice_to_next(APP_JS, "const _sourceVideoRow = (() => {", "    })();")
+    assert '<span class="muted small">▸ click to watch on YouTube</span>' in row
+    assert 'style="' not in row.split("<span")[1] if "<span" in row else True
 
 
 # ── M2: source/state tags are classes ────────────────────────

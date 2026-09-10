@@ -17349,6 +17349,10 @@
   // so a themed and an untemed row's cards read as the same surface.
   // v0.51.320: `anime` is a parameter, not a libraryState read — the v0.50.64
   // tests evaluate this renderer alone in quickjs (a pure function of its inputs).
+  // v0.51.324 (card review, tag B): grouped like the full card — hero, the
+  // AUDIO group (plex serves + SERVING) when Plex has a theme, a PLEX
+  // METADATA group, then the copy with its action. Stays pure (no
+  // libraryState read) so the v0.50.64 harness can execute it in isolation.
   function renderBareInfoCard(it, { anime = false } = {}) {
     const title = htmlEscape(it.plex_title || '—');
     const yr = it.year ? ` (${htmlEscape(it.year)})` : '';
@@ -17381,10 +17385,17 @@
         ${posterImgHtml}
         <div class="info-hero-meta">
           <h3 class="info-title">${title}${yr}${it.section_is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}</h3>
-          <p class="info-hero-playback muted small">no theme — Plex metadata only</p>
+          <p class="info-hero-playback muted small">${it.plex_has_theme ? 'nothing on disk · Plex serves its own theme' : 'nothing on disk · no theme — Plex metadata only'}</p>
         </div>
       </div>
-      <dl class="dlg-grid">
+      ${it.plex_has_theme
+        ? `<div class="dlg-section info-group"><h4>// audio</h4><dl class="dlg-grid"><dt>plex serves</dt><dd class="info-play-row">`
+          + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span>`
+          + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(it.rating_key || '')}.mp3" class="info-audio" data-plex-theme="1">`
+          + `your browser doesn't support inline audio playback</audio>`
+          + `<span class="muted small info-probe-meta"></span></dd></dl></div>`
+        : ''}
+      <div class="dlg-section info-group"><h4>// plex metadata</h4><dl class="dlg-grid">
         <dt>type</dt><dd>${htmlEscape(mt || '—')}</dd>
         <dt>section</dt><dd>${htmlEscape(it.section_title || it.section_id || '—')}</dd>
         ${editionRow}
@@ -17392,13 +17403,7 @@
         <dt>tmdb</dt><dd>${tmdb}</dd>
         <dt>folder</dt><dd class="muted small">${it.folder_path ? htmlEscape(it.folder_path) : '—'}</dd>
         <dt>rating key</dt><dd class="muted small">${htmlEscape(it.rating_key || '—')}</dd>
-      </dl>
-      ${it.plex_has_theme
-        ? `<div class="dlg-section"><dl class="dlg-grid"><dt>plex theme</dt><dd class="info-play-row">`
-          + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(it.rating_key || '')}.mp3" class="info-audio" data-plex-theme="1">`
-          + `your browser doesn't support inline audio playback</audio>`
-          + `<span class="muted small info-probe-meta">what Plex serves for this item</span></dd></dl></div>`
-        : ''}
+      </dl></div>
       <div class="dlg-section">
         <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3${anime ? '' : ', or ANIME THEMES on anime rows'}).</p>
         ${anime
@@ -18494,13 +18499,60 @@
             <dl class="dlg-grid info-fold-body">${rows}</dl>${extra}
           </details>`
         : '';
+    // v0.51.324 (card review, tag B): the source-video still lives in the
+    // IDENTITY fold as a small thumb beside its own row — the card's subject
+    // is audio, and a 360px frame of the backup's source above the folds was
+    // the tallest thing on it. Same YouTube / oembed branches (v1.15.129),
+    // same wrapper-div aspect pattern (v1.16.1), still a link. Skipped when
+    // the proposed-change diff already shows both thumbnails.
+    const _sourceVideoRow = (() => {
+      // v1.18.67: skipped when the proposed-change diff already shows the
+      // CURRENT tile — the operator: "like you're seeing it twice".
+      if (diffSection) return '';
+      const tUrlSrc = urlSource(ytUrl);
+      if (tUrlSrc === 'youtube' && ytId) {
+        return `<dt>source video</dt><dd class="info-play-row">
+          <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener" class="info-source-link">
+            <div class="info-source-thumb-wrap">
+              <img class="info-source-thumb"
+                   src="https://img.youtube.com/vi/${htmlEscape(ytId)}/hqdefault.jpg"
+                   alt="YouTube thumbnail" loading="lazy" />
+            </div>
+          </a>
+          <span class="muted small">▸ click to watch on YouTube</span>
+        </dd>`;
+      }
+      if ((tUrlSrc === 'soundcloud' || tUrlSrc === 'instagram'
+           || tUrlSrc === 'facebook') && ytUrl) {
+        const _igLabel = tUrlSrc === 'instagram' ? 'Instagram'
+          : tUrlSrc === 'facebook' ? 'Facebook' : 'SoundCloud';
+        const _igVerb = tUrlSrc === 'instagram' ? 'watch on Instagram'
+          : tUrlSrc === 'facebook' ? 'watch on Facebook'
+          : 'listen on SoundCloud';
+        // The oembed hydrator reveals the whole dt+dd group once the
+        // thumbnail lands, so no bare label waits on the round-trip.
+        return `<div class="info-dl-group" data-sc-thumbnail-wrap hidden>
+          <dt>source video</dt><dd class="info-play-row">
+          <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener" class="info-source-link">
+            <div class="info-source-thumb-wrap">
+              <img class="info-source-thumb"
+                   data-sc-oembed-url="${htmlEscape(ytUrl)}"
+                   alt="${_igLabel} thumbnail" loading="lazy" />
+            </div>
+          </a>
+          <span class="muted small">▸ click to ${_igVerb}</span>
+        </dd></div>`;
+      }
+      return '';
+    })();
     const _idsRows = `
         <dt>imdb</dt><dd>${imdb}</dd>
         <dt>tmdb</dt><dd>${tmdbLink}</dd>
         <dt>upstream</dt><dd>${t.upstream_source === 'plex_orphan'
           ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
           : htmlEscape(t.upstream_source || '')}</dd>
-        ${derivationRow}`;
+        ${derivationRow}
+        ${_sourceVideoRow}`;
     // v0.51.323 (card review): one URL, one row. The applied-url row renders
     // only when it differs from ThemerrDB's (an override, or a row with no
     // ThemerrDB row at all); the video id rides whichever row is the applied
@@ -18615,95 +18667,13 @@
       ${_grp('source', _linksRows)}
       ${_grp('file', _onDiskRows)}
       ${diffSection}
-      ${(() => {
-        // v1.15.129: source-aware thumbnail block. YouTube renders
-        // synchronously from the video id (img.youtube.com/vi/{vid}
-        // /hqdefault.jpg is deterministic, no API call needed).
-        // SoundCloud uses an oembed-fetched thumbnail_url —
-        // rendered with a data attribute that `hydrateSourceThumbnails`
-        // post-paint fills in. Pre-fix only YouTube got a
-        // thumbnail; the user: "for the soundcloud link if its
-        // possible to display the thumbnail in the info card same
-        // as the youtube url."
-        // v1.18.67: skip when the PROPOSED CHANGE diff is rendered.
-        // The diff's CURRENT tile already shows the currently-applied
-        // thumbnail; a second large copy below was redundant. the user:
-        // "have the large current below becomes confusing like you're
-        // seeing it twice. it's showing the right thing just the way
-        // we're displaying it is a bit confusing." On rows without a
-        // pending update (diffSection is ''), keep the bottom
-        // thumbnail as the only "what's playing" preview.
-        if (diffSection) return '';
-        const tUrlSrc = urlSource(ytUrl);
-        if (tUrlSrc === 'youtube' && ytId) {
-          // v1.15.144 / v1.16.1: the <img> now lives INSIDE a
-          // .info-source-thumb-wrap div. The wrapper enforces
-          // 4:3 aspect-ratio (reliable on non-replaced elements);
-          // the img fills the wrapper via object-fit:cover. Pre-
-          // v1.16.1 we set aspect-ratio on the img directly, but
-          // browser behavior for aspect-ratio on replaced elements
-          // with intrinsic dimensions is inconsistent and SC's
-          // 1:1 thumbnails still rendered taller than YT's 4:3
-          // hqdefault.
-          return `<div class="dlg-section">
-            <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
-               style="display:block;text-decoration:none">
-              <div class="info-source-thumb-wrap">
-                <img class="info-source-thumb"
-                     src="https://img.youtube.com/vi/${htmlEscape(ytId)}/hqdefault.jpg"
-                     alt="YouTube thumbnail" loading="lazy" />
-              </div>
-              <p class="muted small info-thumb-caption">
-                ▸ click to watch on YouTube
-              </p>
-            </a>
-          </div>`;
-        }
-        // v1.20.26: Instagram shares SoundCloud's oembed-hydration
-        // path. The backend's /api/source/oembed resolves the IG
-        // thumbnail via yt-dlp metadata (IG's public oEmbed is
-        // deprecated), returning the same {thumbnail_url} shape the
-        // hydrator already consumes — so the only frontend change is a
-        // source-aware caption/alt.
-        if ((tUrlSrc === 'soundcloud' || tUrlSrc === 'instagram'
-             || tUrlSrc === 'facebook') && ytUrl) {
-          // The src attribute is left empty; hydrateSourceThumbnails
-          // fills it in from oembed.thumbnail_url. data-sc-oembed-url
-          // is the trigger attribute the hydrator scans for.
-          // hidden=true initially on the outer wrapper so the empty
-          // <img> doesn't show a broken-image icon during the
-          // oembed round-trip.
-          // v1.16.1: same wrapper-div pattern as the YT branch —
-          // the 4:3 aspect-ratio lives on the wrapper, not the img.
-          const _igLabel = tUrlSrc === 'instagram' ? 'Instagram'
-            : tUrlSrc === 'facebook' ? 'Facebook' : 'SoundCloud';
-          const _igVerb = tUrlSrc === 'instagram' ? 'watch on Instagram'
-            : tUrlSrc === 'facebook' ? 'watch on Facebook'
-            : 'listen on SoundCloud';
-          return `<div class="dlg-section"
-                       data-sc-thumbnail-wrap hidden>
-            <a href="${htmlEscape(ytUrl)}" target="_blank" rel="noopener"
-               style="display:block;text-decoration:none">
-              <div class="info-source-thumb-wrap">
-                <img class="info-source-thumb"
-                     data-sc-oembed-url="${htmlEscape(ytUrl)}"
-                     alt="${_igLabel} thumbnail" loading="lazy" />
-              </div>
-              <p class="muted small info-thumb-caption">
-                ▸ click to ${_igVerb}
-              </p>
-            </a>
-          </div>`;
-        }
-        return '';
-      })()}
       <!-- v0.51.289 (design audit): intent-based order. Actionable surfaces
            (v0.51.323: the state strip, then audio, source, file, proposed
            change) render first; the reference tail below is collapsed-by-default folds —
            the v1.12.101 bounded-height idiom extended to the groups the card
            accreted since. The 'history' group is renamed 'timeline' to end
            the collision with // HISTORY (the audit log). -->
-      ${_fold('identity', _idsRows, { note: 'ids & derivation' })}
+      ${_fold('identity', _idsRows, { note: _sourceVideoRow ? 'ids · derivation · source video' : 'ids · derivation' })}
       ${_fold('timeline', _timelineRows, {
         // v0.51.290 (ultra review): the accent-red last-failure line lived at
         // eye level pre-.289; a fold labeled 'dates' hid it. Failure is

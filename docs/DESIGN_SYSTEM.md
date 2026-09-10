@@ -147,6 +147,8 @@ Column-class conventions: `.col-state`, `.col-title`, `.col-imdb`, `.col-X` per 
 * `.link-badge` + `.link-badge-X` — source-attribution pill (T/A/U/M/P palette). One canonical family across library, info card, and dashboard donut.
 * `.state-pill` + `.state-pill-pending` — row state dots (DL/PL). Pulse-amber for in-flight.
 * `.tdb-pill`, `.attn-pill`, `.op-pill` — semantic pills carrying status counts in the topbar.
+* `.tier-badge` + `.tier-badge-X` — small mono chips (v0.51.324 doc). In the INFO card title: `-4k` (library version), `-lvl` / `-loud` / `-raw` (loudness state). In the AUDIO group's play rows (v0.51.323): `-serving` (amber — what Plex plays), `-standing` (cyan — a backup-intent file waiting), `-placed` (green — motif's file deployed), `-unplaced` (dim outline). Colour ENCODES state — theme SPLIT, not chrome.
+* `.info-scope-chip` + `-section` / `-edition` — the INFO card hero's scope chips under the title (which library section, which edition).
 
 ### Form layout
 
@@ -246,6 +248,8 @@ When a library page loads and any row has `job_in_flight` set, kick `libraryRapi
 ### // TRY THIS NEXT — recovery options
 
 Failure recovery options surface in the info card under "// TRY THIS NEXT" (or "✓ RESOLVED" / "✓ ACKED" / "✓ PLEX SERVES" depending on state). The action set is recipe-keyed by `failure_kind`. **Additive recoveries** (ADOPT) surface regardless of ack state; **transitional recoveries** (REVERT, LET PLEX SERVE) gate on `not effective_acked_at`. See v1.15.86 entry.
+
+v0.51.323 (card review): the section is the INFO card's state strip — it renders directly under the hero, ahead of the AUDIO / SOURCE / FILE groups (`.info-hero + .recovery-section` drops the divider the way the first group does); the intent-flip button sits in its header; its caption and the acked note share the one `.recovery-section-note` line. The headline under the title says only what motif holds and what plays — the strip is the one place that names the state and the action.
 
 ### Two-state pill pairs SSR'd in inverse
 
@@ -516,7 +520,7 @@ Rules:
   * **RE-SCAN** — post-place per-folder Plex nudge (`// RE-SCAN QUEUE`)
 * Source letters always in single-quoted form when in prose: 'T-row', 'M-source', 'P-available'.
 * Failure-related copy: `// TRY THIS NEXT` (live) / `✓ RESOLVED` / `✓ ACKED` / `✓ PLEX SERVES — OPTIONAL UPGRADES` (resolved-via-plex) / `✓ BACKUP READY — DEFERRING TO PLEX` (user explicitly chose backup intent via KEEP AS BACKUP, v1.18.77+).
-* Intent-flip button pair (v1.18.77+, lives in the recovery section): `// PROMOTE TO ACTIVE` (flip backup → replace, force-place motif's URL) + `// MARK AS BACKUP` (flip replace → backup, stop trying to push past plex_has_theme). Both are `.btn-warn` (amber, mutating — they change `user_overrides.intent` and trigger worker-side state changes). PROMOTE shows whenever intent='backup'; MARK AS BACKUP only when intent='replace' AND `data.plex_resolved` (Plex has a fallback theme to serve).
+* Intent-flip button pair (v1.18.77+; since v0.51.323 it lives in the state strip's HEADER, right of the title, and its caption is the strip's one note line): `// PROMOTE TO ACTIVE` (flip backup → replace, force-place motif's URL) + `// MARK AS BACKUP` (flip replace → backup, stop trying to push past plex_has_theme). MARK AS BACKUP is `.btn-warn` (amber, mutating); PROMOTE TO ACTIVE carries a source-toned `.btn-promote-pb` / `.btn-promote-tb` / `.btn-promote-ab` / `.btn-promote-ub` (v1.19.86 — the tone names what gets deployed: Plex-cloud, ThemerrDB, adopted, user). Both change `user_overrides.intent` and trigger worker-side state changes. PROMOTE shows whenever intent='backup'; MARK AS BACKUP only when intent='replace' AND `data.plex_resolved` (Plex has a fallback theme to serve).
 * **Row-menu labels stay BARE — the `// ` prefix is the ONE exception to the universal rule (v1.20.49 → reverted v1.20.51).** v1.20.49 added the `// `/`× ` prefix to the per-row SOURCE/PLACE/REMOVE menu (summaries + items) to match the bulk-bar voice. It broke the layout: the `.row-menu > summary` buttons have `min-width: 78px` sized for `SOURCE ▾`/`PLACE ▾`/`REMOVE ▾`, and `// SOURCE ▾` overran it, overflowing the right-anchored `.row-actions` cluster (320px cell, flex-end) left into the IMDB column (the user's repro). v1.20.51 reverted it — **the library row menu (`menuItemHtml` / `menuButtonHtml`) renders bare labels** (`SOURCE ▾`, `PUSH TO PLEX`, `DEL`, `× PURGE`). Don't re-add the prefix here without first widening the actions cell / summary min-width. The bulk bar keeps `// ` (it has room); the orphans page keeps its `// `/`× ` labels (roomy findings table, no overlap) + the red `.btn-danger` `DELETE SIDECAR`. Guard: `tests/test_v1_20_49_row_menu_label_voice.py` (now pins the row menu BARE).
 
 ## 8. Definition of done

@@ -110,13 +110,15 @@ def test_revisions_blank_on_ambiguous_card():
 def test_fold_open_overrides_out_specify_the_audit_rules():
     # class-stacked (0,4,0)/(0,3,0) beats the audit rules position-
     # independently; the .289 losing spelling must be GONE, not coexist.
-    assert (".history-section.info-fold[open] .history-section-title "
-            "{ color: var(--fg); }") in APP_CSS
-    assert (".history-section.info-fold[open] > summary::before "
-            "{ color: var(--fg-dim); }") in APP_CSS
-    lose = ".info-fold[open] .history-section-title"
-    assert f"\n{lose} {{" not in APP_CSS, (
-        "the tied-specificity spelling loses to the later green-bright rule")
+    # v0.51.324 (one fold voice): the audit rules themselves went dim/fg, so the
+    # class-stacked overrides are gone rather than coexisting with a rule that
+    # no longer disagrees with them. The invariant: an open fold's title is fg
+    # and its caret dim — and nothing later in the file paints them green.
+    assert ".history-section[open] .history-section-title { color: var(--fg); }" in APP_CSS
+    i = APP_CSS.index(".history-section[open] > summary::before {")
+    assert "color: var(--fg-dim)" in APP_CSS[i:APP_CSS.index("}", i)]
+    assert ".history-section.info-fold[open]" not in APP_CSS
+    assert "green-bright" not in APP_CSS[APP_CSS.index(".history-section-title {"):APP_CSS.index(".info-clear-btn {")]
 
 
 def test_fold_body_carries_the_bounding_half_of_the_idiom():
@@ -128,7 +130,7 @@ def test_fold_body_carries_the_bounding_half_of_the_idiom():
 
 
 def test_fold_casing_lives_in_css_not_js():
-    i = APP_CSS.index(".info-fold .history-section-title {")
+    i = APP_CSS.index(".history-section-title {")  # v0.51.324: the base rule
     blk = APP_CSS[i:APP_CSS.index("}", i)]
     assert "text-transform: uppercase" in blk
     assert "title.toUpperCase()" not in APP_JS, (

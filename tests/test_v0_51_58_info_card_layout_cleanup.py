@@ -63,10 +63,11 @@ def test_thumbnail_centered_at_smaller_size():
     assert "aspect-ratio: 4 / 3" in block
 
 
-def test_thumb_caption_centered():
-    block = _rule(".info-thumb-caption")
-    assert "text-align: center" in block, (
-        "v0.51.59: caption follows the re-centered thumbnail")
+def test_fold_thumb_is_a_fixed_small_box_beside_its_row():
+    # v0.51.324: the still lives in the IDENTITY fold beside its own row — a
+    # 160px box, no centering (the base rule keeps the 360 centered shape).
+    block = _rule(".info-fold-body .info-source-thumb-wrap")
+    assert "width: 160px" in block and "margin: 0" in block
 
 
 def test_v0_51_58_version_pin():

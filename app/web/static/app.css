@@ -3889,18 +3889,10 @@ body.help-mode .settings-help-about { display: block; }
    //-chip section titles (.diff/.recovery/.history-section-title) share one
    tracking — the card ran two header voices. */
 .dlg-section h4 { font-size: var(--t-tiny); letter-spacing: 0.15em; color: var(--fg-dim); text-transform: uppercase; margin-bottom: var(--gap-2); }
-/* v0.51.289: reference folds reuse the // HISTORY details primitive but keep
-   the reference (dim) tone — cyan stays the audit-trail color. [open] lifts
-   to fg, not green: expanding a reference fold isn't a state change.
-   v0.51.290 (ultra review): the .289 [open] override tied (0,3,0) with the
-   green-bright rule ~2400 lines LATER and lost on source order — the repo's
-   mid-file source-order trap. Class-stacked selectors out-specify it
-   position-independently, and the caret override (missing in .289) stops
-   the [open] summary::before going green-deep. text-transform here lets the
-   JS drop its .toUpperCase() — casing lives in CSS for _grp and _fold alike. */
-.info-fold .history-section-title { color: var(--fg-dim); text-transform: uppercase; }
-.history-section.info-fold[open] .history-section-title { color: var(--fg); }
-.history-section.info-fold[open] > summary::before { color: var(--fg-dim); }
+/* v0.51.324 (card review, tag B): one fold voice — the .289/.290 dim override
+   for reference folds became the base .history-section-title rule (beside
+   .history-section), so // PROVENANCE and // HISTORY read in the same voice
+   as IDENTITY / TIMELINE / LOUDNESS. Casing still lives in CSS. */
 /* v0.51.290: carry the BOUNDING half of the v1.12.101 idiom too — revisions
    metadata rows outlive the keep-last-2 audio retention, so the list can
    grow past // HISTORY's 480px cap while claiming the same idiom. */
@@ -3932,11 +3924,8 @@ body.help-mode .settings-help-about { display: block; }
 .info-src-tag-user { color: var(--violet); }
 .info-src-tag-tdb  { color: var(--src-t-bright); }
 .info-tag-pending  { color: var(--blue); }
-/* v1.19.89: caption under the source thumbnail (was inline margin-top +
-   text-align). The divider above it reuses .dlg-section.
-   v0.51.58/59: v0.51.58 briefly left-aligned this; v0.51.59 restored center to
-   match the re-centered thumbnail (the user: "I prefer it centered"). */
-.info-thumb-caption { margin-top: var(--gap-2); text-align: center; }
+/* v0.51.324: .info-thumb-caption retired — the still sits in the IDENTITY fold
+   beside a plain muted caption (see .info-source-link below). */
 /* v1.19.89: probe-result + last-probed spacing (was inline
    margin-left:10px → --gap-3). */
 .info-probe-meta { margin-left: var(--gap-3); }
@@ -4012,6 +4001,15 @@ body.help-mode .settings-help-about { display: block; }
   display: block;
   object-fit: cover;
 }
+/* v0.51.324 (card review, tag B): inside the IDENTITY fold the still is a
+   160px thumb beside its own row, not a centered 360px frame above the folds.
+   The base rule keeps the full-size shape. .info-dl-group lets the SoundCloud /
+   Instagram / Facebook branch hide its dt+dd pair together until the oembed
+   thumbnail lands (display:contents keeps the grid intact once shown). */
+.info-fold-body .info-source-thumb-wrap { width: 160px; max-width: 100%; margin: 0; }
+.info-source-link { display: block; text-decoration: none; flex: 0 0 auto; }
+.info-dl-group { display: contents; }
+.info-dl-group[hidden] { display: none; }
 /* v1.13.8 (#5): TDB preview button + iframe. The button collapses
    to a single small chip until clicked; on click it replaces with
    a 320x180 YouTube embed clipped to 30s. Distinct visual identity
@@ -6365,15 +6363,21 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 }
 .history-section[open] > summary::before {
   transform: rotate(90deg);
-  color: var(--green-deep);
+  color: var(--fg-dim);  /* v0.51.324: one fold voice (was green-deep) */
 }
+/* v0.51.324 (card review, tag B): one fold voice. Every collapsible section on
+   the INFO card — the reference folds and the PROVENANCE / HISTORY audit
+   sections — is dim closed and lifts to fg open; expanding a section isn't a
+   state change, so neither cyan nor green. Casing lives here, not in the JS
+   (v0.51.290). */
 .history-section-title {
   font-family: var(--font-mono);
   font-size: var(--t-tiny);
   letter-spacing: 0.15em;
-  color: var(--cyan);
+  color: var(--fg-dim);
+  text-transform: uppercase;
 }
-.history-section[open] .history-section-title { color: var(--green-bright); }
+.history-section[open] .history-section-title { color: var(--fg); }
 /* v1.12.83: CLEAR button in the // HISTORY / // PROVENANCE summary
    right-aligns past the section title + count text. Click on the
    button is intercepted in JS (preventDefault + stopPropagation

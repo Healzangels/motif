@@ -6052,7 +6052,20 @@
 #   intent-flip button in its header and one caption line. Tag B (video still
 #   into IDENTITY, one fold voice, bare-card grouping, design-system doc)
 #   follows.
-__version__ = "0.51.323"
+# 0.51.324: INFO card restructure, tag B of two. (1) The source-video still
+#   moves out of the body (a 360px frame above the folds, the tallest thing on
+#   an audio card) into the IDENTITY fold as a 160px thumb beside its own
+#   "source video" row — still a link, same YouTube / oembed branches; the
+#   SoundCloud / Instagram / Facebook pair hides as one dt+dd group until the
+#   thumbnail lands. (2) One fold voice — the PROVENANCE / HISTORY audit
+#   sections drop the cyan / green-bright header tone for the reference folds'
+#   dim / fg, so every collapsible section on the card reads the same. (3) The
+#   bare card (rows with no ThemerrDB entry) is grouped like the full card:
+#   hero with the two-facts headline, AUDIO (plex serves + SERVING) when Plex
+#   has a theme, PLEX METADATA, then the copy. (4) docs/DESIGN_SYSTEM.md:
+#   the intent-flip pair's real tones (PROMOTE is .btn-promote-*, not
+#   .btn-warn) + home, and the tier-badge / info-scope-chip families.
+__version__ = "0.51.324"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

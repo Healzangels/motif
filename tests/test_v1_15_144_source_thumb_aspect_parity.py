@@ -107,9 +107,9 @@ def _info_card_thumb_block() -> str:
     """Slice out the renderInfoCard IIFE that produces the
     source-thumbnail markup. Anchored on the v1.15.129 marker."""
     js = APP_JS.read_text()
-    start = js.index("// v1.15.129: source-aware thumbnail block")
-    # Walk forward to the closing `})()` of the IIFE.
-    end_marker = "return '';\n      })()"
+    # v0.51.324: the block is the `_sourceVideoRow` const (IDENTITY fold row).
+    start = js.index("const _sourceVideoRow = (() => {")
+    end_marker = "    })();"
     end = js.index(end_marker, start)
     return js[start:end + len(end_marker)]
 

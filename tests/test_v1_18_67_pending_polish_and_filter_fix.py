@@ -128,9 +128,9 @@ def test_bottom_thumbnail_skips_when_diff_section_renders():
     you're seeing it twice.'"""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
     # The thumbnail IIFE is anchored on the v1.15.129 comment.
-    iife_idx = js.index("v1.15.129: source-aware thumbnail block")
+    iife_idx = js.index("const _sourceVideoRow = (() => {")  # v0.51.324: the IDENTITY fold row
     # Walk to the closing })() that ends the IIFE.
-    iife_end = js.index("})()", iife_idx)
+    iife_end = js.index("})();", iife_idx)
     iife = js[iife_idx:iife_end]
     # The early-return must fire on diffSection.
     assert "if (diffSection) return '';" in iife, (
@@ -146,8 +146,8 @@ def test_bottom_thumbnail_still_renders_when_no_diff():
     SoundCloud thumbnail branches must still fire — that's the only
     'what's playing' preview for normal T/U/P rows."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    iife_idx = js.index("v1.15.129: source-aware thumbnail block")
-    iife_end = js.index("})()", iife_idx)
+    iife_idx = js.index("const _sourceVideoRow = (() => {")  # v0.51.324: the IDENTITY fold row
+    iife_end = js.index("})();", iife_idx)
     iife = js[iife_idx:iife_end]
     # The YT + SC branches survive.
     assert "tUrlSrc === 'youtube'" in iife
@@ -166,8 +166,8 @@ def test_bottom_thumbnail_marker_present():
     """v1.18.67 archaeology marker explains why the early-return
     exists. Pin so a refactor doesn't silently drop it."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    iife_idx = js.index("v1.15.129: source-aware thumbnail block")
-    iife_end = js.index("})()", iife_idx)
+    iife_idx = js.index("const _sourceVideoRow = (() => {")  # v0.51.324: the IDENTITY fold row
+    iife_end = js.index("})();", iife_idx)
     iife = js[iife_idx:iife_end]
     assert "v1.18.67" in iife
     # the user's quote anchor — survives line-wrap.
