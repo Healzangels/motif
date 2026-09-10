@@ -6077,7 +6077,13 @@
 #   APPLY SELECTED through each row's own manual-url, Plex-served rows as
 #   backups), NEEDS A LOOK (GLANCE — the picker), NOT FOUND (the picker's name
 #   search). New: animethemes.sweep / sweep_row_to_json.
-__version__ = "0.51.325"
+# 0.51.326: page navigation at the bottom of the library table (the operator:
+#   "when we get to the bottom we can go to the next page"). A .block-foot strip
+#   under the table carries a second pager mirrored from the header's markup —
+#   one template, one state, two places; the shared click handler scrolls the
+#   results head back into view after a footer click so the new page is read
+#   from its first row. Mobile centres it like the head's.
+__version__ = "0.51.326"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

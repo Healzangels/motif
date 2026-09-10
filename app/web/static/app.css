@@ -1349,6 +1349,15 @@ a.stat-card-link:hover .stat-foot::after { opacity: 1; }
   align-items: center;
   gap: var(--gap-3);
 }
+/* v0.51.326: the block's footer strip — home of the RESULTS table's bottom
+   pager. The .block-head mirror: same padding + elevated ground, the divider on
+   TOP; the pager sits right, where the header's lives. */
+.block-foot {
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: 12px 18px;
+  border-top: 1px solid var(--line);
+  background: var(--bg-elev-2);
+}
 .block-title {
   font-family: var(--font-display);
   font-size: var(--t-small);
@@ -6099,6 +6108,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      to the RESULTS header and never touches the LOGS/queue block-heads. */
   .block-head-actions { flex-wrap: wrap; width: 100%; justify-content: center; }
   .pager { flex-wrap: wrap; justify-content: center; }
+  .block-foot { justify-content: center; }  /* v0.51.326: the bottom pager centres like the head's */
 
   /* v0.50.51: the 13 settings tabs wrapped into a ragged multi-row block that
      read as "one big list stacked on itself" (the user). Scroll them as a single

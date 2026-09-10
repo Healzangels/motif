@@ -10077,6 +10077,10 @@
       <button data-lib-page="${libraryState.page + 1}" ${onLast ? 'disabled' : ''}>next »</button>
       <button data-lib-page="${totalPages}" ${onLast ? 'disabled' : ''}>last »</button>
     `;
+    // v0.51.326: the footer pager under the table mirrors the header's markup —
+    // one template, one state, two places.
+    const _pagerFoot = document.getElementById('library-pager-foot');
+    if (_pagerFoot) _pagerFoot.innerHTML = document.getElementById('library-pager').innerHTML;
   }
 
   // v1.11.66: standalone SRC-letter classifier. Mirrors the badge
@@ -14766,12 +14770,23 @@
     });
 
     // Pager
-    document.getElementById('library-pager')?.addEventListener('click', (e) => {
+    document.getElementById('library-pager')?.addEventListener('click', _onLibraryPagerClick);
+    document.getElementById('library-pager-foot')?.addEventListener('click', _onLibraryPagerClick);  // v0.51.326
+    function _onLibraryPagerClick(e) {
       const b = e.target.closest('button[data-lib-page]');
       if (!b || b.disabled) return;
       libraryState.page = Number(b.dataset.libPage);
-      loadLibrary().catch(console.error);
-    });
+      // v0.51.326: a click on the footer pager would leave the user at the
+      // bottom of the NEW page — bring the results head back into view once
+      // it has painted, so the page is read from its first row.
+      const fromFoot = !!b.closest('#library-pager-foot');
+      loadLibrary().then(() => {
+        if (fromFoot) {
+          document.getElementById('library-count')?.closest('.block')
+            ?.scrollIntoView({ block: 'start' });
+        }
+      }).catch(console.error);
+    }
 
     // v1.12.68: // NEEDS WORK chip toggles the attention sort.
     // Stores the prior (column) sort on first activation so a

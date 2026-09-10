@@ -1028,6 +1028,14 @@
     </tbody>
   </table>
   </div>{# /.table-scroll #}
+  {# v0.51.326 (the operator): the pager again under the table — at the bottom
+     of a 50-row page the header's pager is a screen away. Same buttons, same
+     state: loadLibrary mirrors #library-pager's markup into this footer, and
+     the shared click handler scrolls the results back to the top so the new
+     page is read from its first row. #}
+  <footer class="block-foot">
+    <div class="pager" id="library-pager-foot"></div>
+  </footer>
 </section>
 
 <dialog class="dlg" id="upload-dlg">
