@@ -89,6 +89,15 @@
          Busy label matches the JS busy state (// REFRESHING…). #}
       <button class="btn" id="library-refresh-btn" type="button"
               {% if refresh_in_flight %}disabled{% endif %}>{% if refresh_in_flight %}// REFRESHING…{% else %}// REFRESH {% if all_res and tab != "collections" %}ALL {% elif fourk and tab != "collections" %}4K {% endif %}{{ title|upper }}{% endif %}</button>
+      {# v0.51.325 (AnimeThemes tag 4): the review page's entry point on the
+         anime tab — a link, not a bulk action, so it needs no selection.
+         Rendered on EVERY library tab (movies / tv / anime share one page for
+         the v0.51.12 in-place tab switch — no tab-equality gates here);
+         SSR paints the right display for the first paint and
+         _syncTabOnlyEls keeps it in step when the tab switches in place. #}
+      <a class="btn" id="library-anime-themes-link" href="/admin/anime-themes" data-tab-only="anime"
+         style="{{ '' if tab == 'anime' else 'display:none' }}"
+         title="Sweep the anime rows with no motif theme against AnimeThemes.moe and apply the clean matches in bulk.">// ANIME THEMES ▸</a>
     </div>
   </div>
   <p class="muted hero-sub" id="library-subtitle">{{ title|lower }} from your managed Plex sections · click badges or column headers to filter / sort</p>

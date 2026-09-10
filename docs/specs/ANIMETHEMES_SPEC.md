@@ -7,7 +7,8 @@ theme, one row per theme) as v0.51.318. §6 decisions 1 and 2 taken 2026-09-09
 (dialog; backup default). The "are these real themes?" question is measured in
 `animethemes_eval/2026-09-09-tdb-agreement.md` (OP1 = the show's first opening;
 human picks differ only by preference among the show's own themes).
-Next: tag 4 (§3.6 review list + sweep).
+Tag 4 (§3.6 review page + sweep + apply-selected) shipped as v0.51.325 — as a
+page-scoped job, not an op kind (§6 decision 5). Next: tag 5 (polish).
 Candidate A (`// FIND THEME`) is shelved (see FIND_THEME_SPEC.md).
 
 ## 1. Problem
@@ -141,19 +142,30 @@ notifications apply unchanged. No new SRC letter in phases 1–2.
 - `// USE THIS` → manual-url; `download_only` pre-ticked when the row
   already has a theme (lands as a backup revision, never a silent replace).
 
-### 3.6 Phase 2 — review list + sweep
+### 3.6 Phase 2 — review page + sweep (shipped v0.51.325)
 
-- `// REVIEW ANIME THEMES` (Library bulk bar on anime sections): runs the
-  resolver over the section's rows as an `op_progress` kind
-  `animethemes_sweep` (the six-site op-kind checklist applies: db CHECK,
-  KIND_LABEL, TONE_BY_KIND, OP_MINI_PRIORITY, progress kinds, the
-  row-refresh contract test). ~60 API calls for the whole library.
-- Result page: no-theme rows with a CLEAN default, each with the resolved
-  name/year, OP1, size, and a checkbox; `// APPLY SELECTED` enqueues one
-  manual-url apply per row (existing job queue + download rate limit — 300
-  rows ≈ 2.5 h at 120/h). GLANCE/NAME rows are listed separately and
-  cannot be bulk-applied.
-- P-rows (Plex-served) are offered with `download_only` (backup) by default.
+- Page `/admin/anime-themes` (linked from the anime tab's hero as
+  `// ANIME THEMES ▸` and from Settings › Diagnostics, like ORPHAN SCAN).
+  `// RUN SWEEP` resolves every row of the INCLUDED anime sections that has
+  no motif file and no user override (edition-scoped, theme_id-or-guid
+  linked — `_animethemes_eligible_rows`) as a page-scoped background job
+  (`_AT_SWEEP_STATE` + `/api/admin/animethemes-sweep/{start,cancel,status}`,
+  the loudness-audit / orphan-scan shape). One `prefetch` then a cache-only
+  `resolve` per row, **no name search** — a handful of API calls for the whole
+  library. The report is a file (`config_dir/animethemes/sweep.json`, atomic
+  replace) served by `GET /api/admin/animethemes-sweep`, which re-runs the
+  eligibility query so rows applied since the sweep are flagged `applied`.
+- Three buckets: **READY TO APPLY** (CLEAN + an audio default) with a
+  checkbox per row, `// SELECT ALL` / `// CLEAR` / `// APPLY SELECTED`;
+  **NEEDS A LOOK** (GLANCE — season-1 entry absent or year off; the picker
+  per row, never the bulk path); **NOT FOUND** (no bridge entry / no audio;
+  the picker's name search per row). Each row shows title (year), the
+  AnimeThemes name (year), the pick (OP1 · song · artist · size) and the
+  state (no theme / Plex serves → backup).
+- `// APPLY SELECTED` walks the selection through each row's own
+  `manual-url` (the picker's apply, §3.4) sequentially from the page with a
+  running count; Plex-served rows send `download_only` (decision 2). The
+  downloads then run through the normal queue + rate limit.
 
 ### 3.7 Never
 
@@ -186,7 +198,7 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
 | 1 | `app/core/animethemes.py` (bridge, client, resolver), `tools/animethemes_eval.py`, banked baseline, offline pins | pytest + ruff; harness reproduces the baseline on the snapshot |
 | 2 | source kind `animethemes` end-to-end: url_source/_source_for/allowlist, download branch, SET URL accepts an AnimeThemes link; mirror-drift pins | pytest; live: one row themed from a pasted `.ogg` link |
 | 3 | Phase 1 dialog, preview via the candidate pipe, entry points | pytest; live on 5 no-theme rows incl. one GLANCE |
-| 4 | Phase 2 sweep op kind + review list + apply-selected | pytest incl. the six-site op-kind guards; live dry run on the anime section |
+| 4 | Phase 2 review page + page-scoped sweep + apply-selected (v0.51.325) | pytest (offline sweep on the tag-1 fake API; eligibility SQL; endpoints; page); live on the scratch instance |
 | 5 | Polish: bridge refresh schedule, README/CLAUDE.md, digest notification for bulk applies | pytest |
 
 ## 6. Open decisions
@@ -201,3 +213,10 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
    cost) — not before phase 2 has run on the real library.
 4. Bridge file licence is unstated in its README; attribution line in
    README either way.
+5. ~~Sweep as an `op_progress` kind (proposed in §3.6) vs a page-scoped
+   job.~~ DECIDED 2026-09-10 (tag 4): page-scoped — the two read-only
+   diagnostics that exist (orphan scan, loudness audit) run exactly that
+   way, the sweep is watched from its own page, and an op kind costs a
+   schema migration + the six-site mirror for a job that never mutates a
+   row. Promote to an op kind later only if the operator wants it in the
+   ops drawer.

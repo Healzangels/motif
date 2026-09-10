@@ -6065,7 +6065,19 @@
 #   has a theme, PLEX METADATA, then the copy. (4) docs/DESIGN_SYSTEM.md:
 #   the intent-flip pair's real tones (PROMOTE is .btn-promote-*, not
 #   .btn-warn) + home, and the tier-badge / info-scope-chip families.
-__version__ = "0.51.324"
+# 0.51.325: ANIME THEMES tag 4 — the review page (docs/specs/ANIMETHEMES_SPEC.md
+#   §3.6). /admin/anime-themes (linked from the anime tab's hero and Settings ›
+#   Diagnostics): RUN SWEEP resolves every row of the included anime sections
+#   that has no motif file and no user override (edition-scoped, theme_id-or-
+#   guid linked) with one prefetch + cache-only resolves — no name search, a
+#   handful of API calls — as a page-scoped background job (the loudness-audit
+#   / orphan-scan shape; spec §6 decision 5: not an op kind, no schema bump).
+#   The report file is served with each row re-checked against eligibility so
+#   applied rows drop out. READY TO APPLY (clean season-1 matches, checkbox +
+#   APPLY SELECTED through each row's own manual-url, Plex-served rows as
+#   backups), NEEDS A LOOK (GLANCE — the picker), NOT FOUND (the picker's name
+#   search). New: animethemes.sweep / sweep_row_to_json.
+__version__ = "0.51.325"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

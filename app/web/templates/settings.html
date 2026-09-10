@@ -1197,6 +1197,25 @@
   </div>
 </section>
 
+{# v0.51.325: ANIME THEMES review (AnimeThemes tag 4) — link-out to the
+   /admin/anime-themes page, the same shape as ORPHAN SCAN above. #}
+<section class="block tab-panel" data-panel="diagnostics" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// ANIME THEMES</h2>
+    <span class="muted small">openings from AnimeThemes.moe for anime rows with no motif theme</span>
+  </header>
+  <div class="block-body">
+    <p class="form-hint block-intro">
+      Sweeps every row of your anime sections that has no motif theme against
+      AnimeThemes.moe and lists the clean matches with their first opening,
+      ready to apply in bulk (Plex-served rows land as backups). Rows that
+      need a second look get the per-row picker. Read-only until you apply.
+    </p>
+    <div class="form-actions">
+      <a class="btn btn-warn" href="/admin/anime-themes">// OPEN ANIME THEMES ▸</a>
+    </div>
+  </div>
+</section>
 {# v0.51.158: LOUDNESS AUDIT block (Phase 0 of the loudness feature) —
    read-only measurement sweep. Measures every local-bytes theme with
    ffmpeg's EBU R128 loudnorm analysis (no re-encode, no file written)

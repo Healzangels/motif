@@ -7712,6 +7712,260 @@
     load();
   }
 
+  // v0.51.325 (AnimeThemes tag 4, spec §3.6): /admin/anime-themes — RUN SWEEP,
+  // poll its status, render the three buckets, APPLY SELECTED through each
+  // row's own manual-url path (the picker's apply: same origin detail, same
+  // download_only-for-Plex-served default). Gated on #at-sweep-root so it only
+  // fires on that page. Mirrors bindCanonicalHealth / bindLoudnessAudit.
+  function bindAnimeThemesSweep() {
+    const root = document.getElementById('at-sweep-root');
+    if (!root) return;
+    const runBtn = document.getElementById('at-sweep-btn');
+    const cancelBtn = document.getElementById('at-sweep-cancel-btn');
+    const runStatus = document.getElementById('at-sweep-status');
+    const summary = document.getElementById('at-sweep-summary');
+    const readyBlock = document.getElementById('at-ready-block');
+    const readyCount = document.getElementById('at-ready-count');
+    const readyBody = document.getElementById('at-ready-tbody');
+    const reviewBlock = document.getElementById('at-review-block');
+    const reviewCount = document.getElementById('at-review-count');
+    const reviewBody = document.getElementById('at-review-tbody');
+    const unresBlock = document.getElementById('at-unresolved-block');
+    const unresCount = document.getElementById('at-unresolved-count');
+    const unresBody = document.getElementById('at-unresolved-tbody');
+    const clearBlock = document.getElementById('at-clear-block');
+    const selectPage = document.getElementById('at-select-page');
+    const selectAllBtn = document.getElementById('at-select-all-btn');
+    const clearBtn = document.getElementById('at-clear-btn');
+    const applyBtn = document.getElementById('at-apply-btn');
+    const applyStatus = document.getElementById('at-apply-status');
+    const num = (n) => (n == null ? '?' : Number(n).toLocaleString());
+    let rows = [];            // the report's rows, applied ones dropped
+    const selected = new Set();
+    let applying = false;
+
+    const titleCell = (r) => {
+      const yr = r.year ? ` <span class="muted">(${htmlEscape(String(r.year))})</span>` : '';
+      const p = new URLSearchParams();
+      if (r.title) p.set('q', r.title);
+      return `<a href="/anime?${p.toString()}">${htmlEscape(r.title || '—')}</a>${yr}`;
+    };
+    const resolvedCell = (r) => r.name
+      ? `${htmlEscape(r.name)}${r.at_year ? ` <span class="muted">(${htmlEscape(String(r.at_year))})</span>` : ''}`
+      : '<span class="muted">—</span>';
+    const pickCell = (r) => {
+      const d = r.default;
+      if (!d) return '<span class="muted">—</span>';
+      const song = d.song ? `${htmlEscape(d.song)}${d.artists && d.artists.length ? ' · ' + htmlEscape(d.artists.join(', ')) : ''}` : '';
+      const size = d.size ? ` <span class="muted small">${htmlEscape(fmt.bytes(d.size))}</span>` : '';
+      const label = _atThemeLabel({ type: d.type, sequence: d.sequence, slug: d.theme });
+      return `${htmlEscape(label)}${song ? ' — ' + song : ''}${size}`;
+    };
+    const stateCell = (r) => r.plex_has_theme
+      ? '<span class="tier-badge tier-badge-standing" title="Plex already serves its own theme for this row — the pick lands as a backup (standing by), Plex keeps playing its own until you PROMOTE TO ACTIVE.">BACKUP</span>'
+      : '<span class="muted small">no theme</span>';
+    const pickerBtn = (r) => `<button type="button" class="btn btn-tiny btn-info" data-act="at-picker"
+        data-rk="${htmlEscape(r.rating_key)}" data-title="${htmlEscape(r.title || '')}"
+        data-year="${htmlEscape(String(r.year || ''))}" data-has-theme="${r.plex_has_theme ? '1' : ''}"
+        title="Open the per-row picker: every season and opening, with a preview.">// PICKER</button>`;
+
+    function renderSummary(rep) {
+      const c = rep.counts || {};
+      const when = rep.scanned_at ? fmt.timeAuto(rep.scanned_at) : '';
+      summary.textContent =
+        `${num(rep.eligible)} anime row${rep.eligible === 1 ? '' : 's'} with no motif theme swept${when ? ' ' + when : ''}`
+        + ` · ${num(c.ready)} ready · ${num(c.review)} to look at · ${num(c.unresolved)} not found`
+        + (rep.applied ? ` · ${num(rep.applied)} applied since` : '')
+        + (rep.api_calls != null ? ` · ${num(rep.api_calls)} API call${rep.api_calls === 1 ? '' : 's'}` : '')
+        + (rep.cancelled ? ' · cancelled part-way' : '');
+      summary.style.display = '';
+    }
+    function updateApplyBtn() {
+      const n = selected.size;
+      applyBtn.disabled = applying || n === 0;
+      applyBtn.textContent = n ? `// APPLY SELECTED (${num(n)})` : '// APPLY SELECTED';
+      const ready = rows.filter((r) => r.group === 'ready');
+      selectPage.checked = ready.length > 0 && ready.every((r) => selected.has(r.rating_key));
+      selectPage.indeterminate = n > 0 && !selectPage.checked;
+    }
+
+    function render(rep) {
+      rows = (rep.rows || []).filter((r) => !r.applied);
+      for (const rk of Array.from(selected)) {
+        if (!rows.some((r) => r.rating_key === rk && r.group === 'ready')) selected.delete(rk);
+      }
+      const ready = rows.filter((r) => r.group === 'ready');
+      const review = rows.filter((r) => r.group === 'review');
+      const unres = rows.filter((r) => r.group === 'unresolved');
+      renderSummary(rep);
+      if (ready.length) {
+        readyBody.innerHTML = ready.map((r) => `<tr data-rk="${htmlEscape(r.rating_key)}">
+          <td class="col-state"><input type="checkbox" data-at-select="${htmlEscape(r.rating_key)}"${selected.has(r.rating_key) ? ' checked' : ''} /></td>
+          <td>${titleCell(r)}</td><td>${resolvedCell(r)}</td><td>${pickCell(r)}</td>
+          <td>${stateCell(r)}</td><td>${pickerBtn(r)}</td></tr>`).join('');
+        readyCount.textContent = `${num(ready.length)} clean match${ready.length === 1 ? '' : 'es'}`;
+        readyBlock.style.display = '';
+      } else {
+        readyBlock.style.display = 'none';
+      }
+      if (review.length) {
+        reviewBody.innerHTML = review.map((r) => `<tr data-rk="${htmlEscape(r.rating_key)}">
+          <td>${titleCell(r)}</td><td>${resolvedCell(r)}</td>
+          <td class="muted small">${htmlEscape(r.reason || '')}</td><td>${pickerBtn(r)}</td></tr>`).join('');
+        reviewCount.textContent = `${num(review.length)} to look at`;
+        reviewBlock.style.display = '';
+      } else {
+        reviewBlock.style.display = 'none';
+      }
+      if (unres.length) {
+        unresBody.innerHTML = unres.map((r) => `<tr data-rk="${htmlEscape(r.rating_key)}">
+          <td>${titleCell(r)}</td><td class="muted small">${htmlEscape(r.reason || '')}</td><td>${pickerBtn(r)}</td></tr>`).join('');
+        unresCount.textContent = `${num(unres.length)} not found`;
+        unresBlock.style.display = '';
+      } else {
+        unresBlock.style.display = 'none';
+      }
+      clearBlock.style.display = rows.length ? 'none' : '';
+      updateApplyBtn();
+    }
+
+    async function load() {
+      try {
+        const rep = await api('GET', '/api/admin/animethemes-sweep');
+        if (rep && rep.status === 'ok') render(rep);
+      } catch (e) { console.error('anime themes report load failed:', e); }
+    }
+
+    let pollTimer = null;
+    async function poll() {
+      let st;
+      try { st = await api('GET', '/api/admin/animethemes-sweep/status'); }
+      catch (_) { return; }
+      if (st.status === 'running') {
+        runBtn.disabled = true;
+        runBtn.textContent = '// SWEEPING…';
+        cancelBtn.style.display = '';
+        const stage = st.stage === 'resolving' && st.total
+          ? `resolving ${num(st.done)} / ${num(st.total)}`
+          : st.stage === 'fetching' ? `fetching AnimeThemes for ${num(st.total)} row${st.total === 1 ? '' : 's'}…`
+          : 'listing rows…';
+        runStatus.textContent = stage;
+        runStatus.className = 'form-status';
+        pollTimer = setTimeout(poll, 1500);
+        return;
+      }
+      runBtn.disabled = false;
+      runBtn.textContent = '// RUN SWEEP';
+      cancelBtn.style.display = 'none';
+      if (st.status === 'done' || st.status === 'cancelled') {
+        runStatus.textContent = st.status === 'done' ? '✓ sweep complete' : '✓ sweep cancelled — partial report';
+        runStatus.className = 'form-status form-status-ok';
+        _autoDismissOpStatus(runStatus, 6000);
+        await load();
+      } else if (st.status === 'failed') {
+        runStatus.textContent = '✗ ' + (st.error || 'sweep failed');
+        runStatus.className = 'form-status form-status-fail';
+      }
+    }
+
+    runBtn.addEventListener('click', async () => {
+      runBtn.disabled = true;
+      runStatus.textContent = 'starting…';
+      runStatus.className = 'form-status';
+      try {
+        await api('POST', '/api/admin/animethemes-sweep/start');
+        if (pollTimer) clearTimeout(pollTimer);
+        poll();
+      } catch (e) {
+        runStatus.textContent = '✗ ' + (e && e.message ? e.message : 'could not start');
+        runStatus.className = 'form-status form-status-fail';
+        runBtn.disabled = false;
+      }
+    });
+    cancelBtn.addEventListener('click', async () => {
+      try { await api('POST', '/api/admin/animethemes-sweep/cancel'); } catch (_) { /* status poll reports */ }
+      cancelBtn.disabled = true;
+      setTimeout(() => { cancelBtn.disabled = false; }, 3000);
+    });
+
+    readyBody.addEventListener('change', (ev) => {
+      const box = ev.target.closest('input[data-at-select]');
+      if (!box) return;
+      if (box.checked) selected.add(box.dataset.atSelect); else selected.delete(box.dataset.atSelect);
+      updateApplyBtn();
+    });
+    const selectAll = () => {
+      rows.filter((r) => r.group === 'ready').forEach((r) => selected.add(r.rating_key));
+      readyBody.querySelectorAll('input[data-at-select]').forEach((b) => { b.checked = true; });
+      updateApplyBtn();
+    };
+    const clearAll = () => {
+      selected.clear();
+      readyBody.querySelectorAll('input[data-at-select]').forEach((b) => { b.checked = false; });
+      updateApplyBtn();
+    };
+    selectAllBtn.addEventListener('click', selectAll);
+    clearBtn.addEventListener('click', clearAll);
+    selectPage.addEventListener('change', () => (selectPage.checked ? selectAll() : clearAll()));
+
+    // Every bucket's // PICKER opens the per-row dialog (the srcLetter only
+    // decides the download_only default: P when Plex serves its own theme).
+    root.parentElement.addEventListener('click', (ev) => {
+      const b = ev.target.closest('button[data-act="at-picker"]');
+      if (!b) return;
+      ev.preventDefault();
+      openAnimeThemesDialog({ ratingKey: b.dataset.rk, title: b.dataset.title || '',
+                              year: b.dataset.year || '', srcLetter: b.dataset.hasTheme ? 'P' : '' });
+    });
+
+    // APPLY SELECTED — sequential per-row manual-url calls (the ADOPT SELECTED /
+    // PUSH TO PLEX shape); a failure is counted and the loop goes on.
+    applyBtn.addEventListener('click', async () => {
+      if (applying || !selected.size) return;
+      const targets = rows.filter((r) => r.group === 'ready' && selected.has(r.rating_key) && r.default && r.default.link);
+      if (!targets.length) return;
+      applying = true;
+      updateApplyBtn();
+      let ok = 0, failed = 0;
+      const failures = [];
+      for (const r of targets) {
+        const d = r.default;
+        const body = { youtube_url: d.link,
+                       origin: { source: 'animethemes', slug: d.theme || '', confidence: r.confidence || '',
+                                 song: d.song ? `${d.song}${d.artists && d.artists.length ? ' · ' + d.artists.join(', ') : ''}` : '',
+                                 anidb: r.anidb, name: r.name || '' } };
+        if (r.plex_has_theme) body.download_only = true;
+        applyStatus.textContent = `applying ${num(ok + failed + 1)} / ${num(targets.length)}…`;
+        applyStatus.className = 'form-status';
+        try {
+          await api('POST', `/api/plex_items/${encodeURIComponent(r.rating_key)}/manual-url`, body);
+          ok += 1;
+          selected.delete(r.rating_key);
+          const tr = readyBody.querySelector(`tr[data-rk="${CSS.escape(r.rating_key)}"]`);
+          if (tr) tr.remove();
+          r.applied = true;
+        } catch (e) {
+          failed += 1;
+          failures.push(`${r.title}: ${e && e.message ? e.message : 'failed'}`);
+        }
+      }
+      rows = rows.filter((r) => !r.applied);
+      applying = false;
+      applyStatus.textContent = `✓ queued ${num(ok)}${failed ? ` · ${num(failed)} failed` : ''}`
+        + (ok ? ' — downloads run through the queue' : '');
+      applyStatus.className = failed ? 'form-status form-status-fail' : 'form-status form-status-ok';
+      if (failures.length) applyStatus.title = failures.join('\n');
+      if (ok) { try { window.motifOps && window.motifOps.setOptimisticPlaceholder('download_queue', '// THEME DOWNLOAD QUEUED'); } catch (_) { /* ops.js optional */ } }
+      if (!readyBody.querySelector('tr')) readyBlock.style.display = 'none';
+      clearBlock.style.display = rows.length ? 'none' : '';
+      readyCount.textContent = `${num(rows.filter((x) => x.group === 'ready').length)} clean matches`;
+      updateApplyBtn();
+    });
+
+    load();
+    poll();
+  }
+
   function bindLoudnessAudit() {
     const btn = document.getElementById('loudness-audit-btn');
     const status = document.getElementById('loudness-audit-status');
@@ -9316,8 +9570,19 @@
     });
   }
 
+  // v0.51.325: elements that belong to ONE library tab (data-tab-only="anime" —
+  // the ANIME THEMES ▸ hero link) are rendered on every tab so the in-place
+  // switch (v0.51.12: movies/tv/anime share one page) can show/hide them
+  // instead of the template gating them out of the shared markup.
+  function _syncTabOnlyEls(tab) {
+    document.querySelectorAll('[data-tab-only]').forEach((el) => {
+      el.style.display = el.dataset.tabOnly === tab ? '' : 'none';
+    });
+  }
+
   function hydrateLibraryStateForTab(tab, sp) {
     libraryState.tab = tab;
+    _syncTabOnlyEls(tab);
     libraryState.page = 1;
     // v0.51.12 (audit #16): selection does NOT survive a tab switch. The old
     // full-nav always dropped it (selection is in-memory only), but the
@@ -14314,6 +14579,7 @@
           x.classList.remove('chip-active'));
         b.classList.add('chip-active');
         libraryState.tab = b.dataset.libtab;
+        _syncTabOnlyEls(libraryState.tab);
         const tabEl = document.getElementById('library-tab');
         if (tabEl) tabEl.value = libraryState.tab;
         libraryState.page = 1;
@@ -22440,6 +22706,7 @@
     bindLoudnessAudit();
     bindLoudnessReport();
     bindCanonicalHealth();
+    bindAnimeThemesSweep();  // v0.51.325
     bindLoudnessAudition();
     bindTestCookies();
     bindTestNotification();

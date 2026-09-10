@@ -476,6 +476,63 @@ def prefetch(rows: Iterable[Mapping[str, Any]], bridge: Bridge, client: AnimeThe
 # ── endpoint helpers (v0.51.317: the picker dialog) ─────────────
 
 
+# ── Phase 2: the sweep (spec §3.6, v0.51.325) ─────────────────────────────
+
+
+def sweep_row_to_json(row: Mapping[str, Any], res: "Resolution") -> dict[str, Any]:
+    """One review-list row. `group` is the operator's bucket: 'ready' (CLEAN with an
+    audio default — bulk-appliable), 'review' (GLANCE / NAME — the picker, never the
+    bulk path, spec §3.7) or 'unresolved' (no AnimeThemes entry with audio)."""
+    d = resolution_to_json(res, title=row.get("title"), year=row.get("year"))
+    default = d["default"]
+    if res.confidence == "clean" and default:
+        group = "ready"
+    elif d["seasons"]:
+        group = "review"
+    else:
+        group = "unresolved"
+    anidb = None
+    if default is not None:
+        anidb = d["seasons"][default["season_index"]]["anidb"]
+        _, theme, _ = res.default
+        default = {**default, "type": theme.type, "sequence": theme.sequence}  # the picker's label inputs
+    first = d["seasons"][0] if d["seasons"] else None
+    return {
+        "rating_key": str(row.get("rating_key") or ""),
+        "title": row.get("title"), "year": row.get("year"),
+        "media_type": row.get("media_type"), "section_id": row.get("section_id"),
+        "section_title": row.get("section_title"), "guid_tmdb": row.get("guid_tmdb"),
+        "plex_has_theme": 1 if row.get("has_theme") else 0,
+        "confidence": res.confidence, "via": res.via, "reason": res.reason, "group": group,
+        "name": default["name"] if default else (first["name"] if first else None),
+        "at_year": default["year"] if default else (first["year"] if first else None),
+        "anidb": anidb, "seasons": len(d["seasons"]),
+        "default": default,
+    }
+
+
+def sweep(rows: Iterable[Mapping[str, Any]], bridge: Bridge, client: AnimeThemesClient, *,
+          progress_cb: Callable[[int, int], None] | None = None,
+          cancel_check: Callable[[], bool] | None = None) -> list[dict[str, Any]]:
+    """Resolve many rows for the review list. One prefetch warms the client
+    (~2 batched passes for a whole library), then the per-row loop is cache-only,
+    so a cancel between rows costs nothing. No name search: an unbridged row is
+    listed as unresolved and the picker (which does search) is one click away —
+    the sweep's promise is a handful of API calls, not one per row."""
+    rows = list(rows)
+    total = len(rows)
+    prefetch(rows, bridge, client)
+    out: list[dict[str, Any]] = []
+    for i, r in enumerate(rows):
+        if cancel_check is not None and cancel_check():
+            break
+        res = resolve(r, bridge, client, name_search=False)
+        out.append(sweep_row_to_json(r, res))
+        if progress_cb is not None:
+            progress_cb(i + 1, total)
+    return out
+
+
 def resolution_to_json(res: "Resolution", *, title: str | None = None, year: Any = None) -> dict[str, Any]:
     """The wire shape the picker renders. Seasons keep resolver order; `default`
     points INTO that list so the UI never re-derives the OP1 preference."""

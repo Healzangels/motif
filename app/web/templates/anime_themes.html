@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Anime Themes{% endblock %}
+{% block content %}
+{# v0.51.325 (AnimeThemes tag 4, docs/specs/ANIMETHEMES_SPEC.md §3.6): the review
+   page. RUN SWEEP resolves every row of the included anime sections that has no
+   motif theme (a handful of AnimeThemes API calls, cached 24h); the report splits
+   into READY TO APPLY (CLEAN season-1 matches — checkbox + APPLY SELECTED, each
+   pick lands through the row's own manual-url path, Plex-served rows as backups),
+   NEEDS A LOOK (GLANCE / NAME — the picker, never the bulk path) and NOT FOUND.
+   All render logic is bindAnimeThemesSweep in app.js, gated on these ids so it
+   only fires here. Mirrors canonical_health.html / loudness.html. #}
+<section class="hero">
+  <h1 class="title">// ANIME THEMES</h1>
+  <p class="muted hero-sub">openings from AnimeThemes.moe for rows with no motif theme · sweep, review, then apply</p>
+</section>
+<section class="block" id="at-sweep-root">
+  <header class="block-head">
+    <h2 class="block-title">// SWEEP</h2>
+    <div class="chips chips-inline">
+      <button type="button" id="at-sweep-btn" class="btn lib-source-themerrdb"{% if sweep_running %} disabled{% endif %}>{% if sweep_running %}// SWEEPING…{% else %}// RUN SWEEP{% endif %}</button>
+      <button type="button" id="at-sweep-cancel-btn" class="btn btn-tiny"{% if not sweep_running %} style="display:none"{% endif %}>// CANCEL</button>
+      <span id="at-sweep-status" class="form-status">{% if sweep_running %}sweeping…{% endif %}</span>
+    </div>
+  </header>
+  <p class="form-hint block-intro">
+    Resolves every row of your anime sections that has no motif theme against
+    AnimeThemes.moe — the same lookup the row's <strong>// ANIME THEMES</strong>
+    picker does, batched (a handful of API calls for the whole library, cached for a
+    day). <strong>Read-only</strong>: the sweep writes a report, nothing else.
+    Rows that already have a theme or a user URL are left alone.
+  </p>
+  <p class="form-hint" id="at-sweep-summary" style="display:none"></p>
+</section>
+{# READY TO APPLY — CLEAN matches (season-1 entry, year agrees) with an OP1
+   default. APPLY SELECTED walks the selection through each row's manual-url
+   path (the picker's own apply), so provenance, revisions and notifications
+   are exactly the per-row ones. Plex-served rows land as backups. #}
+<section class="block" id="at-ready-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// READY TO APPLY</h2>
+    <div class="chips chips-inline">
+      <span class="muted small" id="at-ready-count"></span>
+      <button type="button" id="at-select-all-btn" class="btn btn-tiny">// SELECT ALL</button>
+      <button type="button" id="at-clear-btn" class="btn btn-tiny">// CLEAR</button>
+      <button type="button" id="at-apply-btn" class="btn btn-tiny btn-warn" disabled>// APPLY SELECTED</button>
+      <span id="at-apply-status" class="form-status"></span>
+    </div>
+  </header>
+  <p class="form-hint">
+    Clean matches: the show's season-1 entry on AnimeThemes with the year agreeing,
+    and its first opening picked (first version, Blu-ray over web). Each apply sets
+    that opening as the row's theme through the normal download queue. Rows Plex
+    already serves are marked <strong>backup</strong> — the file lands as a
+    standing-by revision, Plex keeps playing its own until you promote it.
+  </p>
+  <div class="table-scroll">
+    <table class="table table-compact">
+      <thead><tr>
+        <th class="col-state"><input type="checkbox" id="at-select-page" title="Select every ready row (click again to clear)." /></th>
+        <th>TITLE</th><th>RESOLVED AS</th><th>PICK</th><th>STATE</th><th></th>
+      </tr></thead>
+      <tbody id="at-ready-tbody"></tbody>
+    </table>
+  </div>
+</section>
+{# NEEDS A LOOK — GLANCE (season-1 entry absent / year off) and NAME matches.
+   Never bulk-applied (spec §3.7); the picker shows every season and theme. #}
+<section class="block" id="at-review-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// NEEDS A LOOK</h2>
+    <span class="muted small" id="at-review-count"></span>
+  </header>
+  <p class="form-hint">
+    AnimeThemes has these, but the match is not clean — the season-1 entry is
+    missing or the year disagrees. Open the picker to choose from every season and
+    opening with a preview; nothing here is applied without a click.
+  </p>
+  <div class="table-scroll">
+    <table class="table table-compact">
+      <thead><tr><th>TITLE</th><th>RESOLVED AS</th><th>WHY</th><th></th></tr></thead>
+      <tbody id="at-review-tbody"></tbody>
+    </table>
+  </div>
+</section>
+{# NOT FOUND — no bridge entry (the anime-lists mapping has no AniDB id for the
+   row's guids) or no AnimeThemes entry with audio. The picker's name search is
+   still available per row. #}
+<section class="block" id="at-unresolved-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// NOT FOUND</h2>
+    <span class="muted small" id="at-unresolved-count"></span>
+  </header>
+  <p class="form-hint">
+    No AnimeThemes entry with audio was reachable from these rows' ids. The row's
+    picker still searches by name — worth a try on titles you know are there.
+  </p>
+  <div class="table-scroll">
+    <table class="table table-compact">
+      <thead><tr><th>TITLE</th><th>WHY</th><th></th></tr></thead>
+      <tbody id="at-unresolved-tbody"></tbody>
+    </table>
+  </div>
+</section>
+{# All-clear state — a report with nothing left to review. #}
+<section class="block" id="at-clear-block" style="display:none">
+  <p class="form-hint">✓ Every anime row either has a theme already or was applied from this list. Run the sweep again after the next Plex refresh.</p>
+</section>
+{% endblock %}

@@ -6438,6 +6438,71 @@ def _orphan_scan_run(settings: "Settings", db_path: Path) -> None:
 _LOUDNESS_AUDIT_LOCK = threading.Lock()
 _LOUDNESS_AUDIT_STATE: dict = {"status": "idle"}
 
+# v0.51.325 (AnimeThemes tag 4, spec §3.6): the review sweep is a page-scoped
+# background job like the loudness audit + orphan scan — read-only (it writes a
+# report file under config_dir/animethemes, never a library row), so it is NOT
+# an op_progress kind (spec §6 decision 5: no schema bump, no six-site drift for
+# a job the operator watches from its own page).
+_AT_SWEEP_LOCK = threading.Lock()
+_AT_SWEEP_STATE: dict = {"status": "idle"}
+_AT_SWEEP_FILE = "sweep.json"
+
+
+def _animethemes_eligible_rows(conn) -> list[dict]:
+    """Rows the sweep covers: items of INCLUDED anime sections with no motif
+    file and no user override — edition-scoped like the library's own join
+    (v1.23.65) and linked by theme_id OR guid_tmdb (the collections lesson).
+    Plex-served rows (has_theme=1) stay in: the apply path offers them as
+    backups (spec §6 decision 2). The read side re-runs this so a row applied
+    since the sweep drops out of the list on reload."""
+    # The item's own themes row (pi.theme_id) is the link for orphan rows: a
+    # manual-url on a row ThemerrDB doesn't track mints a plex_orphan theme with a
+    # synthetic negative tmdb_id, and the override / local file are keyed by THAT
+    # (guid_tmdb never matches; user_overrides.theme_id stays NULL) — caught live
+    # on the scratch instance when an applied orphan row stayed "eligible".
+    return [dict(r) for r in conn.execute("""
+        SELECT pi.rating_key, pi.media_type, pi.title, pi.year, pi.guid_tvdb, pi.guid_tmdb,
+               pi.has_theme, pi.section_id, pi.theme_id, pi.edition_key,
+               ps.title AS section_title
+        FROM plex_items pi
+        JOIN plex_sections ps ON ps.section_id = pi.section_id
+        LEFT JOIN themes t ON t.id = pi.theme_id
+        WHERE ps.is_anime = 1 AND ps.included = 1
+          AND pi.media_type IN ('show', 'movie')
+          AND NOT EXISTS (
+                SELECT 1 FROM local_files lf
+                WHERE lf.section_id = pi.section_id
+                  AND lf.edition_key = pi.edition_key
+                  AND (lf.theme_id = pi.theme_id
+                       OR (t.id IS NOT NULL AND lf.media_type = t.media_type AND lf.tmdb_id = t.tmdb_id)
+                       OR (lf.tmdb_id = pi.guid_tmdb
+                           AND lf.media_type = CASE pi.media_type WHEN 'show' THEN 'tv' ELSE 'movie' END)))
+          AND NOT EXISTS (
+                SELECT 1 FROM user_overrides uo
+                WHERE uo.section_id IN (pi.section_id, '')
+                  AND uo.edition_key IN (pi.edition_key, '')
+                  AND (uo.theme_id = pi.theme_id
+                       OR (t.id IS NOT NULL AND uo.media_type = t.media_type AND uo.tmdb_id = t.tmdb_id)
+                       OR (uo.tmdb_id = pi.guid_tmdb
+                           AND uo.media_type = CASE pi.media_type WHEN 'show' THEN 'tv' ELSE 'movie' END)))
+        ORDER BY ps.title, pi.title, pi.rating_key
+    """).fetchall()]
+
+
+def _animethemes_sweep_path(settings) -> Path:
+    return Path(settings.config_dir) / "animethemes" / _AT_SWEEP_FILE
+
+
+def _animethemes_sweep_read(settings) -> dict | None:
+    p = _animethemes_sweep_path(settings)
+    try:
+        return json.loads(p.read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        log.warning("anime-themes sweep report unreadable (%s): %s", p, e)
+        return None
+
 
 def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
     from ..core.loudness_audit import run_loudness_audit
@@ -8482,6 +8547,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # the orphans page v0.51.99 fix); the first status poll reconciles.
         return templates.TemplateResponse(request, "loudness.html", {
             "loudness_audit_running": _LOUDNESS_AUDIT_STATE.get("status") == "running",
+        })
+
+    @app.get("/admin/anime-themes", response_class=HTMLResponse)
+    async def admin_anime_themes_page(request: Request):
+        """v0.51.325: the ANIME THEMES review page (spec §3.6) — RUN SWEEP, then
+        the CLEAN matches with checkboxes + APPLY SELECTED, the GLANCE/NAME rows
+        that need the picker, and the unresolved rest. Mirrors /admin/loudness
+        (SSR-locks the RUN button while a sweep drains)."""
+        _require_admin(request)
+        return templates.TemplateResponse(request, "anime_themes.html", {
+            "sweep_running": _AT_SWEEP_STATE.get("status") == "running",
         })
 
     @app.get("/admin/canonical-health", response_class=HTMLResponse)
@@ -27012,6 +27088,126 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         out["media_type"] = "movie" if row["media_type"] == "movie" else "tv"
         out["tmdb_id"] = int(row["guid_tmdb"] or 0)
         return out
+
+    def _animethemes_sweep_run(db_path: Path) -> None:
+        """v0.51.325: the sweep thread. Eligible rows → one prefetch → cache-only
+        resolve per row → report file (atomic replace). Failure is a named state
+        on the status dict, never a half-written file."""
+        import os
+        import tempfile
+        from ..core import animethemes as _at
+        cache_dir = settings.config_dir / "animethemes"
+
+        def _cb(done: int, total: int) -> None:
+            with _AT_SWEEP_LOCK:
+                _AT_SWEEP_STATE["done"] = done
+                _AT_SWEEP_STATE["total"] = total
+
+        def _cancel() -> bool:
+            with _AT_SWEEP_LOCK:
+                return bool(_AT_SWEEP_STATE.get("cancel"))
+
+        try:
+            with get_conn(db_path) as conn:
+                rows = _animethemes_eligible_rows(conn)
+            with _AT_SWEEP_LOCK:
+                _AT_SWEEP_STATE.update(total=len(rows), done=0, stage="fetching")
+            bridge = _at.load_bridge(cache_dir)
+            calls_before = _animethemes_client().requests
+            with _AT_SWEEP_LOCK:
+                _AT_SWEEP_STATE["stage"] = "resolving"
+            out = _at.sweep(rows, bridge, _animethemes_client(),
+                            progress_cb=_cb, cancel_check=_cancel)
+            cancelled = _cancel()
+            counts = {"ready": 0, "review": 0, "unresolved": 0}
+            for r in out:
+                counts[r["group"]] = counts.get(r["group"], 0) + 1
+            counts["total"] = len(out)
+            sections = sorted({(r["section_id"], r["section_title"]) for r in rows})
+            report = {
+                "scanned_at": now_iso(),
+                "cancelled": cancelled,
+                "eligible": len(rows),
+                "api_calls": _animethemes_client().requests - calls_before,
+                "sections": [{"section_id": sid, "title": t} for sid, t in sections],
+                "counts": counts,
+                "rows": out,
+            }
+            dest = _animethemes_sweep_path(settings)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(prefix=".sweep-", suffix=".json", dir=str(dest.parent))
+            with os.fdopen(fd, "w") as fh:
+                json.dump(report, fh)
+            os.replace(tmp, dest)
+            with _AT_SWEEP_LOCK:
+                _AT_SWEEP_STATE.update(
+                    status="cancelled" if cancelled else "done",
+                    done=len(out), total=len(rows), counts=counts,
+                    scanned_at=report["scanned_at"], error=None, stage=None)
+            log_event(db_path, level="INFO", component="api",
+                      message=(f"ANIME THEMES sweep {'cancelled' if cancelled else 'done'}: "
+                               f"{counts['ready']} ready · {counts['review']} to review · "
+                               f"{counts['unresolved']} unresolved of {len(rows)} eligible "
+                               f"({report['api_calls']} API calls)"),
+                      detail={"counts": counts, "eligible": len(rows),
+                              "api_calls": report["api_calls"]})
+        except Exception as e:  # noqa: BLE001
+            log.exception("anime-themes sweep failed")
+            with _AT_SWEEP_LOCK:
+                _AT_SWEEP_STATE.update(status="failed", error=str(e), stage=None)
+
+    @app.post("/api/admin/animethemes-sweep/start")
+    async def api_animethemes_sweep_start(request: Request, db: Path = Depends(get_db_path)):
+        """v0.51.325: kick off the review sweep (spec §3.6) as a page-scoped
+        background job; the /admin/anime-themes page polls .../status."""
+        _require_admin(request)
+        with _AT_SWEEP_LOCK:
+            if _AT_SWEEP_STATE.get("status") == "running":
+                return {"ok": True, "started": False, "already_running": True}
+            _AT_SWEEP_STATE.clear()
+            _AT_SWEEP_STATE.update(status="running", done=0, total=0, stage="listing",
+                                   counts=None, scanned_at=None, error=None, cancel=False)
+        t = threading.Thread(target=_animethemes_sweep_run, args=(db,),
+                             name="animethemes-sweep", daemon=True)
+        t.start()
+        return {"ok": True, "started": True}
+
+    @app.post("/api/admin/animethemes-sweep/cancel")
+    async def api_animethemes_sweep_cancel(request: Request):
+        _require_admin(request)
+        with _AT_SWEEP_LOCK:
+            running = _AT_SWEEP_STATE.get("status") == "running"
+            if running:
+                _AT_SWEEP_STATE["cancel"] = True
+        return {"ok": True, "cancelling": running}
+
+    @app.get("/api/admin/animethemes-sweep/status")
+    async def api_animethemes_sweep_status(request: Request):
+        _require_admin(request)
+        with _AT_SWEEP_LOCK:
+            return {k: v for k, v in _AT_SWEEP_STATE.items() if k != "cancel"}
+
+    @app.get("/api/admin/animethemes-sweep")
+    async def api_animethemes_sweep_report(request: Request, db: Path = Depends(get_db_path)):
+        """v0.51.325: the read side — the last report, with each row re-checked
+        against the eligibility query so anything applied (or themed) since the
+        sweep is flagged `applied` and the page can drop it without a re-sweep."""
+        _require_admin(request)
+        rep = await run_in_threadpool(_animethemes_sweep_read, settings)
+        if rep is None:
+            return {"status": "none"}
+
+        def _still_eligible() -> set[str]:
+            with get_conn(db) as conn:
+                return {r["rating_key"] for r in _animethemes_eligible_rows(conn)}
+        eligible = await run_in_threadpool(_still_eligible)
+        applied = 0
+        for r in rep.get("rows", []):
+            r["applied"] = r.get("rating_key") not in eligible
+            applied += 1 if r["applied"] else 0
+        rep["status"] = "ok"
+        rep["applied"] = applied
+        return rep
 
     @app.get("/api/admin/provider-health")
     async def api_provider_health(request: Request,
