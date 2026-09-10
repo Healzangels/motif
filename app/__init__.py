@@ -6012,7 +6012,17 @@
 #   shape; the bare "no theme yet" card gets the same button on anime rows; one
 #   shared binder (_bindAnimeThemesCardButton) serves both cards. CSS uses
 #   gap tokens only.
-__version__ = "0.51.320"
+# 0.51.321: restore tests/test_v1_13_79_link_fixes.py — the version-pin test.
+#   The v0.51.318 bump script rewrote the file with the in-place pattern
+#   `open(t, "w").write(open(t).read()...)`: Python evaluates the write-open
+#   FIRST, truncating the file before the read, so the file was committed
+#   EMPTY and the __version__ pin (plus the /queue link and UPD-pill pins)
+#   silently stopped existing for .318-.320. Restored from v0.51.317's copy
+#   with the pin at this version. Rule (memory: python-inplace-rewrite-
+#   truncates): read into a variable first, then open for write.
+#   The restored file's one fixed window (the banner slice) is anchor-based
+#   now — the .261 ratchet had banked its disappearance.
+__version__ = "0.51.321"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
