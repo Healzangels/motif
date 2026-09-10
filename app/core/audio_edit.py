@@ -226,3 +226,31 @@ def save_edit(db_path: Path, themes_dir: Path, *, media_type: str,
                        f"audio kept as a revision, re-place queued"),
               detail=summary)
     return summary
+
+
+def transcode_to_candidate(themes_dir: Path, src: Path, *, quality: int = 0) -> dict:
+    """v0.51.317: an arbitrary local audio file → a candidate mp3 in the same
+    .edit-candidates dir render_candidate uses (id rule, TTL sweep, stream route
+    all shared). The AnimeThemes picker previews a downloaded .ogg through it —
+    Safari does not play Vorbis in <audio>."""
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        raise EditError("ffmpeg/ffprobe not available on this install")
+    if not src.exists() or src.stat().st_size == 0:
+        raise EditError("the downloaded audio is missing or empty")
+    cand_dir = themes_dir / _CAND_DIR
+    cand_dir.mkdir(parents=True, exist_ok=True)
+    _sweep_stale(cand_dir)
+    cid = secrets.token_hex(16)
+    dest = cand_dir / f"{cid}.mp3"
+    cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(src), "-vn",
+           "-codec:a", "libmp3lame", "-q:a", str(int(quality)), str(dest)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=_FFMPEG_TIMEOUT_S)
+    if proc.returncode != 0 or not dest.exists():
+        tail = (proc.stderr or "").strip()[-300:]
+        dest.unlink(missing_ok=True)
+        raise EditError(f"ffmpeg failed: {tail or 'no output'}")
+    dur = probe_duration(dest)
+    if dur is None:
+        dest.unlink(missing_ok=True)
+        raise EditError("the transcoded preview has no readable duration")
+    return {"candidate_id": cid, "duration_s": round(dur, 1), "file_size": dest.stat().st_size}

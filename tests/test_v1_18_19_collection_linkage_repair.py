@@ -62,7 +62,9 @@ def test_manual_url_insert_sets_title_norm():
     title_norm so future orphan creations don't need backfill."""
     src = API_PY.read_text()
     fn_idx = src.index("async def api_manual_url(")
-    body = src[fn_idx:fn_idx + 8000]
+    # v0.51.317: the whole handler (to the next route decorator), not a fixed
+    # 8000-char window — the picker's provenance block pushed the INSERT past it.
+    body = src[fn_idx:src.index("    @app.", fn_idx + 10)]
     # The INSERT column list + value placeholders must include
     # title_norm.
     assert "first_seen_sync_at, title_norm" in body, (

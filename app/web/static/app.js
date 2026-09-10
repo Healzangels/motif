@@ -11589,6 +11589,16 @@
         appliedUrl: it.applied_youtube_url || '',
         srcLetter: srcLetter },
     ));
+    // v0.51.317: AnimeThemes picker — the /anime tab is the gate (the row
+    // payload carries no section-is-anime flag; the INFO card gates on
+    // section_context.is_anime). Label stays bare like its siblings (v1.20.51).
+    if (libraryState.tab === 'anime') {
+      sourceItems.push(menuItemHtml(
+        'anime-themes', 'ANIME THEMES',
+        'Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row\'s theme.',
+        { rk: it.rating_key, tone: 'user', srcLetter: srcLetter },
+      ));
+    }
     sourceItems.push(menuItemHtml(
       'upload-theme', 'UPLOAD MP3',
       'Upload an MP3 file as the theme.',
@@ -17141,6 +17151,13 @@
           // intact while landing a backup file).
           srcLetter: btn.dataset.srcLetter || '',
         });
+      } else if (act === 'anime-themes') {  // v0.51.317
+        openAnimeThemesDialog({
+          ratingKey: btn.dataset.rk,
+          title: btn.dataset.title || '',
+          year: btn.dataset.year || '',
+          srcLetter: btn.dataset.srcLetter || '',
+        });
       } else if (act === 'manual-url') {
         openManualUrlDialog({
           ratingKey: btn.dataset.rk,
@@ -17375,7 +17392,7 @@
         <dt>rating key</dt><dd class="muted small">${htmlEscape(it.rating_key || '—')}</dd>
       </dl>
       <div class="dlg-section">
-        <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3).</p>
+        <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3, or ANIME THEMES on anime rows).</p>
       </div>`;
   }
 
@@ -18148,6 +18165,15 @@
             : '')
         + (sc.edition
             ? `<span class="info-scope-chip info-scope-chip-edition">edition: ${htmlEscape(sc.edition)}</span>`
+            : '')
+        // v0.51.317: the AnimeThemes picker from the card — anime sections only
+        // (section_context.is_anime has been on the wire since v1.21.68).
+        + ((sc.is_anime && ratingKey)
+            ? `<button class="btn btn-tiny btn-info" data-act="anime-themes"`
+              + ` data-rk="${htmlEscape(ratingKey)}"`
+              + ` data-title="${htmlEscape((data.theme && data.theme.title) || data.plex_title || '')}"`
+              + ` data-year="${htmlEscape(String((data.theme && data.theme.year) || ''))}"`
+              + ` title="Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row's theme.">// ANIME THEMES</button>`
             : '')
         + `</div>`;
     }
@@ -18942,6 +18968,16 @@
           b.disabled = false;
         }
       }));
+    // v0.51.317: AnimeThemes picker from the card (anime sections only).
+    body.querySelector('button[data-act="anime-themes"]')?.addEventListener('click', (ev) => {
+      const b = ev.currentTarget;
+      const rowItem = (libraryState.items || []).find((it) => it.rating_key === b.dataset.rk);
+      closeInfoDialog();
+      openAnimeThemesDialog({
+        ratingKey: b.dataset.rk, title: b.dataset.title || '', year: b.dataset.year || '',
+        srcLetter: rowItem ? computeSrcLetter(rowItem) : (b.dataset.srcLetter || ''),
+      });
+    });
     // v0.51.282: open the trim/fade editor with this row's key + current sha.
     body.querySelector('button[data-act="edit-audio"]')?.addEventListener('click', (ev) => {
       const b = ev.currentTarget;
@@ -20709,6 +20745,230 @@
     else dlg.removeAttribute('open');
   }
 
+
+  // ── v0.51.317: AnimeThemes picker dialog (feature brief #2 candidate B, tag 3) ──
+  // Sibling of the SET URL dialog: one surface for the row SOURCE menu and the
+  // INFO card. Resolution is fetched on open (never in the background); a pick
+  // lands through the manual-url endpoint like SET URL; the preview rides the
+  // v0.51.281 candidate pipe (transcoded server-side — Safari won't play Vorbis).
+  let _animeThemesCtx = { rk: '', mt: 'tv', id: 0, candidate: null, defaultLink: '', data: null };
+  const _AT_CONF_PILL = {
+    clean: ['pill btn-tone-ok', 'CLEAN MATCH'],
+    glance: ['pill pill-warn', 'NEEDS A GLANCE'],
+    name: ['pill btn-tone-attn', 'NAME MATCH'],
+  };
+
+  function _atFmtSize(bytes) {
+    return bytes ? `${(bytes / 1048576).toFixed(1)} MB` : '';
+  }
+
+  function _atThemeRows(seasonIdx, theme) {
+    // one row per audio version (v2 gets its own pill); order = server order
+    return theme.audio.map((a, ai) => {
+      const pills = [
+        `<span class="pill">${htmlEscape(_atFmtSize(a.size))}</span>`,
+        a.source ? `<span class="pill">${htmlEscape(a.source)}</span>` : '',
+        (a.version && a.version > 1) ? `<span class="pill">v${htmlEscape(String(a.version))}</span>` : '',
+        a.nsfw ? `<span class="pill pill-warn">NSFW</span>` : '',
+      ].filter(Boolean).join(' ');
+      const label = theme.audio.length > 1 ? `${theme.slug} · ${ai + 1}/${theme.audio.length}` : theme.slug;
+      return `<dt>${htmlEscape(label)}</dt>`
+        + `<dd>${pills} `
+        + `<button class="btn btn-tiny btn-info" type="button" data-act="at-preview" data-link="${htmlEscape(a.link)}">// PREVIEW</button> `
+        + `<button class="btn btn-tiny btn-warn" type="button" data-act="at-use" data-link="${htmlEscape(a.link)}"`
+        + ` data-slug="${htmlEscape(theme.slug)}">// USE THIS</button></dd>`;
+    }).join('');
+  }
+
+  function renderAnimeThemesDialog(data) {
+    const meta = document.getElementById('anime-themes-dlg-meta');
+    const warn = document.getElementById('anime-themes-warn');
+    const body = document.getElementById('anime-themes-body');
+    const useDefault = document.getElementById('anime-themes-use-default');
+    const ylabel = data.year ? ` (${htmlEscape(String(data.year))})` : '';
+    const conf = data.confidence;
+    const pill = conf && _AT_CONF_PILL[conf]
+      ? ` <span class="${_AT_CONF_PILL[conf][0]}">${_AT_CONF_PILL[conf][1]}</span>` : '';
+    const resolved = data.default
+      ? ` <span class="muted">→ ${htmlEscape(data.default.name || '')}`
+        + `${data.default.year ? ` (${htmlEscape(String(data.default.year))})` : ''}</span>` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((data.title || 'untitled').toUpperCase())}${ylabel}${resolved}${pill}</p>`;
+    // GLANCE / NAME / none: one line of why, above the list; nothing pre-selected
+    if (!conf) {
+      warn.textContent = `No AnimeThemes match — ${data.reason || 'unmapped'}. Use SET URL if you know the link.`;
+      warn.hidden = false;
+    } else if (conf !== 'clean') {
+      warn.textContent = conf === 'glance'
+        ? `Check the match before using it — ${data.reason}.`
+        : `Matched by name only (${data.reason}) — confirm it is the right show before using it.`;
+      warn.hidden = false;
+    } else {
+      warn.hidden = true;
+    }
+    body.innerHTML = (data.seasons || []).map((s, si) => {
+      // season 0 = specials in the anime-lists bridge; null = the bridge gave no season
+      const head = s.season === 0 ? '// SPECIALS'
+        : s.season != null ? `// SEASON ${htmlEscape(String(s.season))}` : '// MATCH';
+      const name = `${htmlEscape(s.name || '')}${s.year ? ` (${htmlEscape(String(s.year))})` : ''}`;
+      const rows = (s.themes || []).map((t) => _atThemeRows(si, t)).join('');
+      return `<div class="dlg-section"><h4>${head} — ${name}</h4><dl class="dlg-grid">${rows}</dl></div>`;
+    }).join('') || '';
+    // the submit action is the resolver's default (season 1 OP1) — CLEAN only
+    _animeThemesCtx.defaultLink = (conf === 'clean' && data.default) ? data.default.link : '';
+    if (useDefault) {
+      useDefault.style.display = _animeThemesCtx.defaultLink ? '' : 'none';
+      if (_animeThemesCtx.defaultLink) {
+        useDefault.textContent = `// USE ${htmlEscape(data.default.theme)} (SEASON ${htmlEscape(String((data.seasons[data.default.season_index] || {}).season ?? 1))})`;
+      }
+    }
+  }
+
+  async function openAnimeThemesDialog({ ratingKey, title, year, srcLetter }) {
+    const dlg = document.getElementById('anime-themes-dlg');
+    if (!dlg) return;
+    const meta = document.getElementById('anime-themes-dlg-meta');
+    const warn = document.getElementById('anime-themes-warn');
+    const body = document.getElementById('anime-themes-body');
+    const status = document.getElementById('anime-themes-status');
+    const previewRow = document.getElementById('anime-themes-preview-row');
+    const player = document.getElementById('anime-themes-player');
+    const dlOnlyRow = document.getElementById('anime-themes-download-only-row');
+    const dlOnly = document.getElementById('anime-themes-download-only');
+    const useDefault = document.getElementById('anime-themes-use-default');
+    _animeThemesCtx = { rk: ratingKey, mt: 'tv', id: 0, candidate: null, defaultLink: '', data: null };
+    const ylabel = year ? ` (${htmlEscape(String(year))})` : '';
+    meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
+    warn.hidden = true; warn.textContent = '';
+    body.innerHTML = '<p class="muted small">// RESOLVING…</p>';
+    status.textContent = ''; status.className = 'form-status';
+    if (previewRow) previewRow.hidden = true;
+    if (player) { player.pause(); player.removeAttribute('src'); }
+    // a row that already has a theme lands the pick as a BACKUP revision by
+    // default (decision 2 in the spec) — never a silent replace
+    const hasTheme = !!srcLetter && srcLetter !== '-';
+    // inline display, not `hidden`: .form-checkbox's flex rule wins over the attribute (SET URL does the same)
+    if (dlOnlyRow) dlOnlyRow.style.display = hasTheme ? '' : 'none';
+    if (dlOnly) dlOnly.checked = hasTheme;
+    if (useDefault) useDefault.style.display = 'none';
+    showModalNoFocusRing(dlg);
+    try {
+      const data = await api('GET', `/api/plex_items/${encodeURIComponent(ratingKey)}/anime-themes`);
+      if (_animeThemesCtx.rk !== ratingKey) return;  // reopened for another row meanwhile
+      _animeThemesCtx.mt = data.media_type || 'tv';
+      _animeThemesCtx.id = data.tmdb_id || 0;
+      _animeThemesCtx.data = data;
+      renderAnimeThemesDialog(data);
+    } catch (err) {
+      body.innerHTML = '';
+      status.textContent = '✗ ' + err.message;  // dialog errors are not auto-dismissed
+      status.classList.add('err');
+    }
+  }
+
+  function closeAnimeThemesDialog() {
+    const dlg = document.getElementById('anime-themes-dlg');
+    if (!dlg) return;
+    if (typeof dlg.close === 'function') dlg.close(); else dlg.removeAttribute('open');
+  }
+
+  function bindAnimeThemesDialog() {
+    const dlg = document.getElementById('anime-themes-dlg');
+    if (!dlg) return;
+    const body = document.getElementById('anime-themes-body');
+    const status = document.getElementById('anime-themes-status');
+    const previewRow = document.getElementById('anime-themes-preview-row');
+    const player = document.getElementById('anime-themes-player');
+    const facts = document.getElementById('anime-themes-facts');
+    const dlOnly = document.getElementById('anime-themes-download-only');
+    const form = document.getElementById('anime-themes-form');
+    let _previewing = false;
+    let _using = false;
+    const discard = () => {
+      // fire-and-forget: the server's TTL sweep is the backstop
+      const c = _animeThemesCtx.candidate;
+      if (!c) return;
+      _animeThemesCtx.candidate = null;
+      api('POST', `/api/items/${_animeThemesCtx.mt}/${_animeThemesCtx.id}/edit-theme/cancel`,
+          { candidate_id: c }).catch(() => {});
+    };
+    const close = () => { discard(); if (player) player.pause(); if (dlg.open) dlg.close(); };
+    document.getElementById('anime-themes-dlg-close')?.addEventListener('click', close);
+    document.getElementById('anime-themes-cancel')?.addEventListener('click', close);
+    dlg.addEventListener('cancel', (ev) => { ev.preventDefault(); close(); });
+
+    const preview = async (link, btn) => {
+      if (_previewing) return;
+      _previewing = true;
+      const orig = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = '// FETCHING…'; }
+      status.textContent = ''; status.className = 'form-status';
+      try {
+        discard();
+        const out = await api('POST', `/api/plex_items/${encodeURIComponent(_animeThemesCtx.rk)}/anime-themes/preview`, { link });
+        _animeThemesCtx.candidate = out.candidate_id;
+        if (player) {
+          player.src = `/api/items/${_animeThemesCtx.mt}/${_animeThemesCtx.id}/edit-candidate/${out.candidate_id}.mp3`;
+          player.play().catch(() => {});
+        }
+        if (facts) facts.textContent = `${out.duration_s}s · ${(out.file_size / 1048576).toFixed(1)}MB — listen, then // USE THIS`;
+        if (previewRow) previewRow.hidden = false;
+      } catch (err) {
+        status.textContent = '✗ ' + err.message;
+        status.classList.add('err');
+      } finally {
+        _previewing = false;
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+      }
+    };
+
+    const use = async (link, slug, btn) => {
+      if (_using) return;
+      _using = true;
+      const orig = btn ? btn.textContent : '';
+      if (btn) { btn.disabled = true; btn.textContent = '// SAVING…'; }
+      status.textContent = ''; status.className = 'form-status';
+      const d = _animeThemesCtx.data || {};
+      const body = { youtube_url: link,
+                     origin: { source: 'animethemes', slug: slug || '', confidence: d.confidence || '',
+                               anidb: (d.default && d.seasons && d.seasons[d.default.season_index]) ? d.seasons[d.default.season_index].anidb : null,
+                               name: (d.default && d.default.name) || '' } };
+      if (dlOnly && dlOnly.checked) body.download_only = true;
+      try {
+        await api('POST', `/api/plex_items/${encodeURIComponent(_animeThemesCtx.rk)}/manual-url`, body);
+        status.textContent = body.download_only ? '✓ queued as a backup' : '✓ queued — downloading';
+        status.classList.add('ok');
+        try { window.motifOps && window.motifOps.setOptimisticPlaceholder('download_queue', '// THEME DOWNLOAD QUEUED'); } catch (_) { /* ops.js optional */ }
+        // mirror the SET URL submit: close, refresh the rows, catch the download → place transitions
+        setTimeout(() => {
+          close();
+          _using = false;
+          if (btn) { btn.disabled = false; btn.textContent = orig; }
+          loadLibrary().catch(() => {});
+          libraryRapidPoll();
+        }, 700);
+      } catch (err) {
+        status.textContent = '✗ ' + err.message;  // dialog-submit errors never auto-dismiss
+        status.classList.add('err');
+        _using = false;
+        if (btn) { btn.disabled = false; btn.textContent = orig; }
+      }
+    };
+
+    body?.addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-act]');
+      if (!btn) return;
+      e.preventDefault();
+      if (btn.dataset.act === 'at-preview') preview(btn.dataset.link, btn);
+      else if (btn.dataset.act === 'at-use') use(btn.dataset.link, btn.dataset.slug, btn);
+    });
+    form?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (!_animeThemesCtx.defaultLink) return;
+      const d = _animeThemesCtx.data || {};
+      use(_animeThemesCtx.defaultLink, (d.default && d.default.theme) || '', document.getElementById('anime-themes-use-default'));
+    });
+  }
+
   function bindManualUrlDialog() {
     const dlg = document.getElementById('manual-url-dlg');
     if (!dlg) return;
@@ -21927,6 +22187,7 @@
     bindUploadDialog();
     bindEditAudioDialog();
     bindManualUrlDialog();
+    bindAnimeThemesDialog();  // v0.51.317
     bindInfoDialog();
     bindNotifInbox();  // v0.51.148: INBOX pill → notification drawer
 

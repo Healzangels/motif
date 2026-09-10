@@ -5932,7 +5932,47 @@
 #   Pins: v1.19.39's two fixed windows around the confirm converted to
 #   anchor slices (the .222 headroom ratchet caught one at 1%); the .261
 #   forward budget re-banked 1486 -> 1484; v1.14.15's call-shape pin updated.
-__version__ = "0.51.316"
+# 0.51.317: AnimeThemes source, tag 3 — the `// ANIME THEMES` picker dialog
+#   (feature brief #2 candidate B; docs/specs/ANIMETHEMES_SPEC.md §3.5). The
+#   operator took the two open decisions: a DIALOG (one surface for the row
+#   SOURCE menu and the INFO card, like SET URL) and BACKUP-by-default for
+#   rows that already have a theme (KEEP AS BACKUP pre-ticked — a pick lands
+#   as a revision, never a silent replace).
+#   (1) GET /api/plex_items/{rk}/anime-themes resolves the row (bridge +
+#   API off the event loop, one process-wide paced client with the 24h
+#   cache) into the picker's wire shape; every failure is a named status:
+#   503 bridge unavailable, 502 API HTTP n, 404 unknown row, 200 with a
+#   reason when unmapped. (2) POST …/anime-themes/preview downloads the
+#   .ogg (capped, one at a time, AnimeThemes links only) and transcodes it
+#   into the v0.51.281 candidate dir via audio_edit.transcode_to_candidate
+#   (same id rule, TTL sweep, stream + cancel routes; Safari can't play
+#   Vorbis); 409 busy, 400 bad link/too large, 502 fetch, 503 no ffmpeg.
+#   (3) manual-url accepts an optional `origin` provenance dict into the
+#   event DETAIL and the audit details — the event MESSAGE stays
+#   byte-identical for the v1.18.10 recovery walker. (4) #anime-themes-dlg
+#   in base.html on the canonical shell: confidence pill (CLEAN / NEEDS A
+#   GLANCE / NAME MATCH via the existing pill tones), an amber form-hint
+#   line for GLANCE/NAME/none, one dlg-section per season with dl.dlg-grid
+#   rows (size / BD / v2 / NSFW pills, // PREVIEW, // USE THIS), the EDIT
+#   AUDIO player row, KEEP AS BACKUP, and a // USE <OP1> (SEASON n) submit
+#   offered for CLEAN resolutions only. Preview discards the previous
+#   candidate first; close / cancel / Esc discard; USE THIS mirrors the SET
+#   URL submit (optimistic placeholder, close, loadLibrary, rapid poll).
+#   Entry points: the row SOURCE menu on the /anime tab (rows carry no
+#   is_anime flag), the INFO card's scope row when section_context.is_anime
+#   (a direct per-button binding like EDIT AUDIO), and the bare card copy.
+#   (5) Found by the live check: the bridge now falls back to season.tmdb when
+#   season.tvdb is absent (70 TV entries — Bleach 2004 sorted LAST and the
+#   resolver fell through to season 17) and TV sorts before MOVIE/OVA within
+#   a season. Harness on the July snapshot: clean 1,059 -> 1,082, glance
+#   47 -> 44, nothing lost (docs/specs/animethemes_eval/2026-09-09-tag3-
+#   bridge-fix.md). Dialog toggles use inline display — `hidden` lost to the
+#   .form-checkbox flex rule and the .btn rule (KEEP AS BACKUP showed on a
+#   theme-less row).
+#   Pins: v1.18.19's manual-url window converted to an anchor slice (.261
+#   forward budget 1484 -> 1483); the origin test reads the audit row and pins
+#   the event at source (the flusher is process-global).
+__version__ = "0.51.317"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

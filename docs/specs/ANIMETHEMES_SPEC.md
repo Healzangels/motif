@@ -1,8 +1,9 @@
 # `// ANIME THEMES` — design spec (feature brief #2, candidate B)
 
-Status: v1 — 2026-09-09. Tag 1 (resolver + client + harness, no UI) shipped as v0.51.314;
-the UI tags wait for review of §3.5
-and §6. Candidate A (`// FIND THEME`) is shelved (see FIND_THEME_SPEC.md).
+Status: v1 — 2026-09-09. Tag 1 (resolver + client + harness) shipped as v0.51.314;
+tag 2 (the `animethemes` source kind end to end) as v0.51.315. §6 decisions 1
+and 2 taken 2026-09-09 (dialog; backup default) — tag 3 builds §3.5.
+Candidate A (`// FIND THEME`) is shelved (see FIND_THEME_SPEC.md).
 
 ## 1. Problem
 
@@ -185,8 +186,12 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
 
 ## 6. Open decisions
 
-1. Dialog (proposed) vs an in-card section for phase 1.
-2. Phase 2 default for P-rows: backup (proposed) vs replace.
+1. ~~Dialog (proposed) vs an in-card section for phase 1.~~ DECIDED 2026-09-09:
+   dialog — one surface for both entry paths (like SET URL), the card stays
+   short, the modal owns the preview lifecycle (close discards).
+2. ~~Phase 2 default for P-rows: backup (proposed) vs replace.~~ DECIDED
+   2026-09-09: backup — a row that already has a theme pre-ticks KEEP AS
+   BACKUP so a pick lands as a revision, never a silent replace.
 3. A dedicated SRC letter for AnimeThemes-sourced rows later (six-site
    cost) — not before phase 2 has run on the real library.
 4. Bridge file licence is unstated in its README; attribution line in

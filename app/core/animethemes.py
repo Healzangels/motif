@@ -86,7 +86,11 @@ class Bridge:
             if not anidb:
                 continue
             b.entries += 1
-            season = (e.get("season") or {}).get("tvdb") if isinstance(e.get("season"), dict) else None
+            # v0.51.317 (live check): 70 TV entries carry only season.tmdb (Bleach's
+            # 2004 series) — without the fallback they sorted LAST and the resolver
+            # fell through to season 17.
+            sd = e.get("season") if isinstance(e.get("season"), dict) else {}
+            season = sd.get("tvdb") if "tvdb" in sd else sd.get("tmdb")
             ent = BridgeEntry(anidb=int(anidb), season=season, kind=str(e.get("type") or ""),
                               mal=e.get("mal_id"))
             if e.get("tvdb_id"):
@@ -106,9 +110,11 @@ class Bridge:
 
 
 def _season_order(ents: list[BridgeEntry]) -> list[BridgeEntry]:
-    # season 1 first, then ascending seasons, specials (0/None) last
+    # season 1 first, then ascending seasons, specials (0/None) last; TV before
+    # MOVIE/OVA/SPECIAL within a season (v0.51.317)
     return sorted(ents, key=lambda e: (0 if e.season == 1 else 1,
-                                       e.season if e.season else 10_000, e.anidb))
+                                       e.season if e.season else 10_000,
+                                       0 if e.kind == "TV" else 1, e.anidb))
 
 
 _BRIDGE_LOCK = threading.Lock()
@@ -456,3 +462,82 @@ def prefetch(rows: Iterable[Mapping[str, Any]], bridge: Bridge, client: AnimeThe
         anidb.update(e.anidb for e in ents)
     anime = client.lookup_anidb(anidb)
     client.themes_for(a.anime_id for lst in anime.values() for a in lst)
+
+
+# ── endpoint helpers (v0.51.317: the picker dialog) ─────────────
+
+
+def resolution_to_json(res: "Resolution", *, title: str | None = None, year: Any = None) -> dict[str, Any]:
+    """The wire shape the picker renders. Seasons keep resolver order; `default`
+    points INTO that list so the UI never re-derives the OP1 preference."""
+    seasons = []
+    for sm in res.seasons:
+        seasons.append({
+            "season": sm.season, "anidb": sm.anidb, "anime_id": sm.info.anime_id,
+            "name": sm.info.name, "year": sm.info.year, "slug": sm.info.slug,
+            "themes": [{
+                "slug": t.slug, "type": t.type, "sequence": t.sequence,
+                "audio": [{"link": a.link, "size": a.size, "version": a.version, "source": a.source,
+                           "nc": a.nc, "nsfw": a.nsfw} for a in t.audio],
+            } for t in sm.themes if t.audio],
+        })
+    default = None
+    if res.default:
+        sm, theme, audio = res.default
+        default = {"season_index": res.seasons.index(sm), "theme": theme.slug, "link": audio.link,
+                   "size": audio.size, "name": sm.info.name, "year": sm.info.year}
+    return {"title": title, "year": year, "confidence": res.confidence, "via": res.via,
+            "reason": res.reason, "seasons": seasons, "default": default}
+
+
+PREVIEW_MAX_BYTES = 40 * 1024 * 1024
+_PREVIEW_LOCK = threading.Lock()
+
+
+class PreviewBusy(RuntimeError):
+    """One preview download at a time per process — a second click waits for the first."""
+
+
+def download_preview_audio(link: str, dest: Path, *, client: httpx.Client | None = None,
+                           max_bytes: int = PREVIEW_MAX_BYTES) -> int:
+    """Stream an AnimeThemes audio link to `dest` (bytes written). Refuses non-AnimeThemes
+    links (the SSRF allowlist is downloader's; this is the belt to its braces) and files
+    over `max_bytes` — the picker previews TV-size openings, not full albums."""
+    from .downloader import is_fetchable_theme_url
+    from .sync import url_source
+    if url_source(link) != "animethemes" or not is_fetchable_theme_url(link):
+        raise ValueError("not an AnimeThemes audio link")
+    if not _PREVIEW_LOCK.acquire(blocking=False):
+        raise PreviewBusy("a preview is already downloading")
+    own = client is None
+    c = client or httpx.Client(timeout=_HTTP_TIMEOUT, follow_redirects=True,
+                               headers={"User-Agent": _user_agent()})
+    try:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        written = 0
+        with c.stream("GET", link) as r:
+            if r.status_code != 200:
+                raise AnimeThemesError(r.status_code, link)
+            try:
+                declared = int(r.headers.get("content-length") or 0)
+            except ValueError:
+                declared = 0
+            if declared > max_bytes:
+                raise ValueError(f"audio is {declared / 1e6:.0f} MB — too large to preview")
+            tmp = dest.with_suffix(dest.suffix + ".part")
+            with tmp.open("wb") as fh:
+                for chunk in r.iter_bytes():
+                    written += len(chunk)
+                    if written > max_bytes:
+                        fh.close(); tmp.unlink(missing_ok=True)
+                        raise ValueError(f"audio exceeded {max_bytes / 1e6:.0f} MB while downloading")
+                    fh.write(chunk)
+            if written == 0:
+                tmp.unlink(missing_ok=True)
+                raise AnimeThemesError(200, link + " (empty body)")
+            tmp.replace(dest)
+        return written
+    finally:
+        if own:
+            c.close()
+        _PREVIEW_LOCK.release()

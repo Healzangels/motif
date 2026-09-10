@@ -758,6 +758,35 @@
       </form>
     </article>
   </dialog>
+  {# v0.51.317: AnimeThemes picker — feature brief #2 candidate B, tag 3
+     (docs/specs/ANIMETHEMES_SPEC.md §3.5). Lives in base.html like #info-dlg
+     and #edit-audio-dlg because the INFO card (cross-page) opens it. #}
+  <dialog class="dlg" id="anime-themes-dlg">
+    <article class="dlg-body">
+      <header class="dlg-head">
+        <h2 class="dlg-title">// ANIME THEMES</h2>
+        <button class="dlg-close" id="anime-themes-dlg-close" type="button" aria-label="Close dialog" title="Close">×</button>
+      </header>
+      <div class="dlg-meta" id="anime-themes-dlg-meta"></div>
+      <p class="form-hint form-hint-warn" id="anime-themes-warn" hidden></p>
+      <div id="anime-themes-body"></div>
+      <div class="dlg-section" id="anime-themes-preview-row" hidden>
+        <audio controls preload="auto" id="anime-themes-player" class="info-audio"></audio>
+        <p class="muted small" id="anime-themes-facts"></p>
+      </div>
+      <form id="anime-themes-form" class="form-grid form-grid-tight">
+        <label class="form-label form-checkbox" id="anime-themes-download-only-row" style="display:none">
+          <input type="checkbox" id="anime-themes-download-only" />
+          <span class="form-label-text">KEEP AS BACKUP (Plex keeps serving)</span>
+        </label>
+        <div class="form-actions">
+          <button class="btn btn-warn" type="submit" id="anime-themes-use-default" style="display:none">// USE DEFAULT</button>
+          <button class="btn" type="button" id="anime-themes-cancel">// CANCEL</button>
+          <span class="form-status" id="anime-themes-status"></span>
+        </div>
+      </form>
+    </article>
+  </dialog>
 
   <div id="notif-drawer" class="ops-drawer" hidden aria-hidden="true">
     <div class="ops-drawer-scrim"></div>

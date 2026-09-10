@@ -14893,6 +14893,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         url = (body or {}).get("youtube_url", "")
         if not url:
             raise HTTPException(status_code=400, detail="youtube_url required")
+        # v0.51.317: optional provenance from the AnimeThemes picker — goes into
+        # the audit/event DETAIL only; the event MESSAGE below stays byte-identical
+        # (the v1.18.10 recovery walker parses it).
+        _origin_raw = (body or {}).get("origin")
+        _origin = None
+        if isinstance(_origin_raw, dict):
+            _origin = {k: (str(v)[:80] if v is not None else None)
+                       for k, v in _origin_raw.items()
+                       if k in ("source", "slug", "anidb", "confidence", "name")}
         # v1.14.9: route canonicalization by source. Pre-fix this
         # path called extract_video_id() and reconstructed the URL
         # as `https://www.youtube.com/watch?v={vid}` unconditionally.
@@ -15139,6 +15148,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "rating_key": rating_key,
                     "old_intent": _prior_intent,
                     "new_intent": _intent,
+                    "origin": _origin,  # v0.51.317
                 },
             )
             # v1.12.62: eager synthetic urls_match detection. If the
@@ -15417,7 +15427,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                   media_type=theme_media_type, tmdb_id=tmdb_id,
                   section_id=section_id,
                   message=f"Manual URL set by {request.state.user}: {canonical_url}",
-                  detail={"rating_key": rating_key, "title": pi["title"]})
+                  detail={"rating_key": rating_key, "title": pi["title"],
+                          "origin": _origin})  # v0.51.317: picker provenance, detail only
         return {"ok": True, "media_type": theme_media_type, "tmdb_id": tmdb_id,
                 "youtube_url": canonical_url}
 
@@ -26819,6 +26830,111 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except EditError as e:
             raise HTTPException(status_code=400, detail=str(e))
         return {"ok": True}
+
+    # ── v0.51.317: AnimeThemes picker (feature brief #2 candidate B, tag 3) ──
+    _ANIMETHEMES_CLIENT_LOCK = threading.Lock()
+    _ANIMETHEMES_CLIENT: dict = {}
+
+    def _animethemes_client():
+        """One process-wide client so the 24h lookup cache and the 60/min pacing
+        are shared across clicks (a per-request client would re-fetch and burst)."""
+        from ..core.animethemes import AnimeThemesClient
+        with _ANIMETHEMES_CLIENT_LOCK:
+            c = _ANIMETHEMES_CLIENT.get("c")
+            if c is None:
+                c = AnimeThemesClient()
+                _ANIMETHEMES_CLIENT["c"] = c
+            return c
+
+    def _anime_themes_row(conn, rating_key: str):
+        return conn.execute(
+            "SELECT pi.rating_key, pi.media_type, pi.title, pi.year, pi.guid_tvdb, pi.guid_tmdb, "
+            "       pi.has_theme, pi.section_id, COALESCE(ps.is_anime, 0) AS is_anime "
+            "FROM plex_items pi LEFT JOIN plex_sections ps ON ps.section_id = pi.section_id "
+            "WHERE pi.rating_key = ?", (rating_key,)).fetchone()
+
+    @app.get("/api/plex_items/{rating_key}/anime-themes")
+    async def api_anime_themes_resolve(request: Request, rating_key: str,
+                                       db: Path = Depends(get_db_path)):
+        """Resolve one row against AnimeThemes (docs/specs/ANIMETHEMES_SPEC.md §3.2)
+        and return the picker's wire shape. Bridge + API work runs off the event
+        loop (class 12); every failure is a named state, never an empty list."""
+        _require_admin(request)
+        from ..core import animethemes as _at
+        with get_conn(db) as conn:
+            row = _anime_themes_row(conn, rating_key)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown rating_key")
+        rowd = dict(row)
+        cache_dir = settings.config_dir / "animethemes"
+
+        def _run():
+            bridge = _at.load_bridge(cache_dir)
+            return _at.resolve(rowd, bridge, _animethemes_client())
+        try:
+            res = await run_in_threadpool(_run)
+        except _at.BridgeUnavailable as e:
+            raise HTTPException(status_code=503, detail=f"anime-lists bridge unavailable — retry later ({e})")
+        except _at.AnimeThemesError as e:
+            raise HTTPException(status_code=502, detail=f"AnimeThemes API returned HTTP {e.status} — retry later")
+        except Exception as e:  # noqa: BLE001
+            log.warning("anime-themes resolve failed for rk=%s: %s", rating_key, e)
+            raise HTTPException(status_code=500, detail=f"resolve failed: {e}")
+        out = _at.resolution_to_json(res, title=rowd["title"], year=rowd["year"])
+        out["rating_key"] = rating_key
+        # the candidate stream/cancel routes are keyed by media_type/tmdb_id but only
+        # validate the candidate id — hand the picker a stable pair to fill the URL
+        out["media_type"] = "movie" if rowd["media_type"] == "movie" else "tv"
+        out["tmdb_id"] = int(rowd["guid_tmdb"] or 0)
+        out["is_anime_section"] = bool(rowd["is_anime"])
+        out["has_theme"] = bool(rowd["has_theme"])
+        return out
+
+    @app.post("/api/plex_items/{rating_key}/anime-themes/preview")
+    async def api_anime_themes_preview(request: Request, rating_key: str,
+                                       db: Path = Depends(get_db_path)):
+        """Download one AnimeThemes audio link and transcode it into the v0.51.281
+        candidate dir (stream route + TTL sweep shared). One preview at a time."""
+        _require_admin(request)
+        if not settings.is_paths_ready():
+            raise HTTPException(status_code=409, detail="paths not configured")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        link = str((body or {}).get("link") or "")
+        from ..core import animethemes as _at
+        from ..core.audio_edit import EditError, transcode_to_candidate
+        from ..core.sync import url_source
+        if url_source(link) != "animethemes":
+            raise HTTPException(status_code=400, detail="not an AnimeThemes audio link")
+        with get_conn(db) as conn:
+            row = _anime_themes_row(conn, rating_key)
+        if row is None:
+            raise HTTPException(status_code=404, detail="unknown rating_key")
+        themes_dir = settings.themes_dir
+        quality = settings.download_audio_quality
+
+        def _run():
+            import tempfile
+            with tempfile.TemporaryDirectory(prefix="motif-at-preview-") as td:
+                src = Path(td) / "preview.ogg"
+                _at.download_preview_audio(link, src)
+                return transcode_to_candidate(themes_dir, src, quality=int(quality))
+        try:
+            out = await run_in_threadpool(_run)
+        except _at.PreviewBusy:
+            raise HTTPException(status_code=409, detail="a preview is already downloading — wait a moment")
+        except EditError as e:  # before ValueError: EditError IS a ValueError (audio_edit.py)
+            code = 503 if "not available" in str(e) else 500
+            raise HTTPException(status_code=code, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except _at.AnimeThemesError as e:
+            raise HTTPException(status_code=502, detail=f"AnimeThemes audio fetch failed (HTTP {e.status})")
+        out["media_type"] = "movie" if row["media_type"] == "movie" else "tv"
+        out["tmdb_id"] = int(row["guid_tmdb"] or 0)
+        return out
 
     @app.get("/api/admin/provider-health")
     async def api_provider_health(request: Request,
