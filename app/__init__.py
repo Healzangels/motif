@@ -6037,7 +6037,22 @@
 #   under an ambiguous cut (the v0.51.223 contract stands). Pins: v1.15.125's
 #   preload pin now anchors on the card's own player (its first-match backward
 #   window landed on the new bare-card element); .261 backward budget re-banked.
-__version__ = "0.51.322"
+# 0.51.323: INFO card restructure, tag A of two (the operator, after the .322
+#   Plex-theme preview: "info card is looking a bit cluttered/confusing now …
+#   let's take a full review of the info cards to optimize" → the review found
+#   the same state said three times and the same URL three times). (1) AUDIO
+#   group — the two players get their own group right under the state strip,
+#   labelled by what they are ("plex serves" / "motif file") and badged by
+#   state (SERVING / STANDING BY / PLACED / NOT PLACED); FILE keeps only the
+#   on-disk facts. (2) SOURCE dedup — the applied-url row renders only when it
+#   differs from ThemerrDB's, previous url only when set, the video id rides
+#   the applied row as a muted suffix, probe + anime themes share one actions
+#   row. (3) State said once — the headline is two plain facts (what motif
+#   holds · what plays), the strip moved directly under the hero with the
+#   intent-flip button in its header and one caption line. Tag B (video still
+#   into IDENTITY, one fold voice, bare-card grouping, design-system doc)
+#   follows.
+__version__ = "0.51.323"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

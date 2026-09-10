@@ -146,9 +146,11 @@ def test_full_card_plex_theme_row_gate_and_placement():
     b = _blk("const plexThemeBlock = (data.plex_has_theme === 1 && _plexRk && (!lf || _plexSrc === 'P'))", "      : '';")
     assert 'preload="none"' in b, "nothing is fetched until play (IDS-friendly)"
     assert "/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" in b and 'data-plex-theme="1"' in b
-    assert "<dt>plex theme</dt><dd class=\"info-play-row\">" in b, "the existing play-row primitive"
+    assert "<dt>plex serves</dt><dd class=\"info-play-row\">" in b, "the existing play-row primitive"
     assert "const _onDiskRows = _ambiguousCut ? '' : `" in APP_JS, "the v0.51.223 ambiguous-cut contract is untouched"
-    assert "${audioBlock}\n        ${plexThemeBlock}`;" in APP_JS
+    # v0.51.323: the players live in the AUDIO group, Plex's row first.
+    assert "const _audioRows = _ambiguousCut ? '' : `" in APP_JS
+    assert "${plexThemeBlock}\n        ${audioBlock}`;" in APP_JS
 
 
 def test_bare_card_plex_theme_row_is_pure_and_bound():

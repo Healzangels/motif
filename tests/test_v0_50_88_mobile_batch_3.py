@@ -194,7 +194,7 @@ def test_info_audio_fills_the_play_row():
 
 
 def test_info_play_row_dd_wraps_the_audio_and_download_link():
-    assert '<dt>play</dt><dd class="info-play-row">' in APP_JS
+    assert '<dt>motif file</dt><dd class="info-play-row">' in APP_JS  # v0.51.323 label
     assert "class=\"info-audio\"" in APP_JS
 
 

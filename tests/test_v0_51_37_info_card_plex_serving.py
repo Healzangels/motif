@@ -37,7 +37,7 @@ def test_js_playback_label_has_plex_serving_branch():
     # the "(none)" fallback.
     indep = APP_JS.index("data.plex_independent_theme === 1")
     has = APP_JS.index("data.plex_has_theme === 1")
-    none = APP_JS.index("'(none — row has no theme staged)'")
+    none = APP_JS.index("'nothing on disk · no theme staged'")  # v0.51.323 wording
     assert indep < has < none
 
 

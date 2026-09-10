@@ -3916,6 +3916,8 @@ body.help-mode .settings-help-about { display: block; }
    directly under the hero — which already separates it — so drop its top divider
    + gap; later groups keep the .dlg-section divider above. */
 .info-hero + .info-group { margin-top: var(--gap-4); padding-top: 0; border-top: 0; }
+/* v0.51.323: the state strip's equivalents of this rule sit beside
+   .recovery-section (the "+ .recovery-section" / "[hidden] + .info-group" pair). */
 .dlg-grid { display: grid; grid-template-columns: 140px 1fr; gap: var(--gap-2) var(--gap-4); font-size: var(--t-small); }
 .dlg-grid dt { color: var(--fg-dim); }
 /* v0.51.61 (the user, polish): overflow-wrap:anywhere (was word-break:break-all)
@@ -4801,6 +4803,34 @@ body.auth-page .auth-card { margin: 0; }
   border: 1px solid var(--amber);
   background: rgba(var(--amber-rgb), 0.14);
 }
+/* v0.51.323 (card review): the INFO card's AUDIO group badges each player by
+   its state so the two rows read apart without parsing the labels. SERVING is
+   the Plex amber (the P tone: .btn-plex, the strip title); STANDING BY is cyan,
+   the policy-hold tone (a backup-intent row waits by choice); PLACED is green,
+   the deployed/ok tone; NOT PLACED is the quiet outlined dim so a file that is
+   not in play doesn't compete with the one that is. The badge keeps its width
+   when the play row is squeezed — the player is the one that shrinks. */
+.tier-badge-serving {
+  color: var(--amber-bright);
+  border: 1px solid var(--amber);
+  background: rgba(var(--amber-rgb), 0.14);
+}
+.tier-badge-standing {
+  color: var(--cyan);
+  border: 1px solid rgba(var(--cyan-rgb), 0.55);
+  background: rgba(var(--cyan-rgb), 0.12);
+}
+.tier-badge-placed {
+  color: var(--green-bright);
+  border: 1px solid rgba(var(--green-rgb), 0.55);
+  background: rgba(var(--green-rgb), 0.12);
+}
+.tier-badge-unplaced {
+  color: var(--fg-dim);
+  border: 1px solid var(--line);
+  background: none;
+}
+.info-play-row > .tier-badge { flex: 0 0 auto; }
 /* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
    overwrite something the user might care about; info (cyan) for
    policy-driven holds; muted for transient queued state. */
@@ -6173,6 +6203,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   padding-top: var(--gap-4);  /* v1.23.66: match .dlg-section (was 14px) */
   border-top: 1px solid var(--line);
 }
+/* v0.51.323 (card review): the state strip (// TRY THIS NEXT and its resolved
+   titles) moved directly under the hero, ahead of the groups. The hero already
+   separates it, so it drops the divider the way the first group does
+   (.info-hero + .info-group); and while the strip is hidden (before hydration,
+   or on a row with nothing to try) the first group is still the hero's visual
+   neighbour and drops its divider too. */
+.info-hero + .recovery-section { margin-top: var(--gap-4); padding-top: 0; border-top: 0; }
+.recovery-section[hidden] + .info-group { margin-top: var(--gap-4); padding-top: 0; border-top: 0; }
 .recovery-section-head {
   display: flex;
   align-items: baseline;
@@ -6213,11 +6251,14 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    carries the spacing + lays out button + caption with
    `gap: var(--gap-4)` so v1.18.77/.78/.81's inline drift is
    absorbed into the design system. */
+/* v0.51.323 (card review): the flip lives in the strip's header now — pushed
+   to the right of the title by margin-left:auto; its caption became the
+   strip's note line, so the block no longer needs a row of its own. */
 .recovery-section-flip {
   display: flex;
   align-items: center;
-  gap: var(--gap-4);
-  margin-top: var(--gap-3);
+  gap: var(--gap-2);
+  margin-left: auto;
 }
 /* v1.12.92: dedicated line for the post-ack note so the header's
    vertical size doesn't grow when ack happens. Always rendered (an

@@ -40,9 +40,11 @@ def test_grid_is_full_width_sibling_after_hero():
     # v0.51.289 (design audit): SOURCE leads the card now (identity folded
     # into the reference tail) — the invariant is unchanged: the first
     # detail group is a full-width SIBLING after the hero closes.
-    i_grid = APP_JS.index("${_grp('source', _linksRows)}", i_hero)
-    i_recovery = APP_JS.index('${recoveryPlaceholder}', i_grid)
-    assert i_hero < i_close < i_grid < i_recovery
+    # v0.51.323 (card review): the state strip sits directly under the hero and
+    # AUDIO is the first group — both still full-width siblings after the hero.
+    i_recovery = APP_JS.index('${recoveryPlaceholder}', i_close)
+    i_grid = APP_JS.index("${_grp('audio', _audioRows)}", i_recovery)
+    assert i_hero < i_close < i_recovery < i_grid
 
 
 def test_cover_back_to_120():

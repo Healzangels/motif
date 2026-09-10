@@ -79,16 +79,17 @@ def test_helper_handles_all_source_kinds():
 
 
 def test_helper_special_cases_plex_cloud_backup_only():
-    """A plex_cloud + backup_only row must produce a label that
-    references the B badge + PROMOTE TO ACTIVE recovery — the
-    user-facing action."""
+    """A plex_cloud + backup_only row must say what motif holds and what
+    plays. v0.51.323 (card review): the headline is two plain facts — the
+    badge letters and the PROMOTE action moved to the state strip, which is
+    the one place that says them. plex_cloud is named by the noun helper."""
     idx = APP_JS.index("function _derivePlaybackSourceLabel(")
     fn_end = APP_JS.index("\n    function _humanSourceKind", idx)
     body = APP_JS[idx:fn_end]
-    assert "plex_cloud" in body
     assert "backup_only" in body
-    assert "PROMOTE TO ACTIVE" in body
-    assert "B badge" in body
+    assert "on disk as backup" in body
+    held = APP_JS[APP_JS.index("function _heldWord(sk) {"):idx]
+    assert "case 'plex_cloud': return \"copy of Plex's cloud theme\";" in held
 
 
 def test_helper_handles_bk_rows():
@@ -99,8 +100,11 @@ def test_helper_handles_bk_rows():
     idx = APP_JS.index("function _derivePlaybackSourceLabel(")
     fn_end = APP_JS.index("\n    function _humanSourceKind", idx)
     body = APP_JS[idx:fn_end]
-    assert "TB badge" in body
-    assert "UB badge" in body
+    # v0.51.323: one source-agnostic backup branch; the strip owns the badge
+    # letters and the action, so neither may creep back into the headline.
+    assert "badge" not in body
+    assert "PROMOTE TO ACTIVE" not in body
+    assert "Plex serves its own theme" in body
 
 
 def test_helper_handles_plex_agent_no_local_file():
@@ -111,7 +115,7 @@ def test_helper_handles_plex_agent_no_local_file():
     body = APP_JS[idx:fn_end]
     assert "plex_independent_theme" in body or "is_plex_agent" in body
     assert "Plex serves its own theme" in body
-    assert "motif standing by" in body
+    assert "nothing on disk" in body  # v0.51.323: what motif holds, in plain words
 
 
 def test_helper_surfaces_placement_kind():

@@ -50,9 +50,12 @@ def test_loudness_fold_opens_only_while_actionable():
 
 
 def test_actionable_sections_render_before_the_reference_tail():
-    order = ["${_grp('source', _linksRows)}",
-             "${_grp('file & placement', _onDiskRows)}",
-             "${recoveryPlaceholder}",
+    # v0.51.323 (card review): the state strip leads, then AUDIO, SOURCE,
+    # FILE — still actionable-first, reference folds last.
+    order = ["${recoveryPlaceholder}",
+             "${_grp('audio', _audioRows)}",
+             "${_grp('source', _linksRows)}",
+             "${_grp('file', _onDiskRows)}",
              "${diffSection}",
              "_fold('identity'",
              "${auditPlaceholder}",
@@ -64,8 +67,8 @@ def test_actionable_sections_render_before_the_reference_tail():
 
 
 def test_edit_audio_joined_the_play_row():
-    row = slice_to_next(APP_JS, '<dt>play</dt><dd class="info-play-row">',
-                        "</dd>")
+    row = slice_to_next(APP_JS, '<dt>motif file</dt><dd class="info-play-row">',
+                        "</dd>")  # v0.51.323: the row is labelled by what it is
     assert 'data-act="edit-audio"' in row, (
         "one file, one row of controls — EDIT AUDIO rides the play row")
     assert "<dt>edit</dt>" not in APP_JS, "the separate edit grid row is gone"

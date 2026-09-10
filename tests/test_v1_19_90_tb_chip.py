@@ -74,7 +74,10 @@ def test_promote_tone_branches_on_themerrdb():
 
 
 def test_playback_label_has_tb_branch():
-    assert "(TB badge · backup-only" in APP_JS
+    # v0.51.323: the headline names the source in plain words and the backup
+    # state once; the TB letters live on the library badge + the strip.
+    assert "case 'themerrdb': return 'ThemerrDB theme';" in APP_JS
+    assert "on disk as backup · Plex serves its own theme" in APP_JS
 
 
 # ── SQL: tb matches themerrdb; bk excludes it ────────────────

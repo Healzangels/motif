@@ -45,11 +45,13 @@ def test_rhythm_rules_use_tokens_only():
 
 
 def test_card_button_is_a_source_row_not_a_hero_chip():
-    assert "const animeThemesRowHtml = (sc && sc.is_anime && ratingKey)" in APP_JS
-    row = _blk("const animeThemesRowHtml = (sc && sc.is_anime && ratingKey)", "      : '';")
-    assert "<dt>anime themes</dt><dd>" in row and 'data-act="anime-themes"' in row
-    assert "openings and endings from AnimeThemes.moe" in row, "the probe row's muted meta shape"
-    assert "${probeBtnHtml}\n        ${animeThemesRowHtml}`;" in APP_JS, "rendered in the SOURCE group after the probe row"
+    # v0.51.323 (card review): a button on the SOURCE group's one actions row,
+    # beside PROBE TDB URL; the explainer moved into its tooltip.
+    assert "const animeThemesBtnHtml = (sc && sc.is_anime && ratingKey)" in APP_JS
+    row = _blk("const animeThemesBtnHtml = (sc && sc.is_anime && ratingKey)", "      : '';")
+    assert 'data-act="anime-themes"' in row and "<dt>" not in row
+    assert "Openings and endings from AnimeThemes.moe" in row, "the explainer rides the tooltip"
+    assert "${probeBtnHtml}${animeThemesBtnHtml}${probeMetaHtml}" in APP_JS, "one actions row in the SOURCE group"
     scope = _blk("scopeChips = `<div class=\"info-scope-row\">`", "+ `</div>`;")
     assert 'data-act="anime-themes"' not in scope, "the hero chip row is chips again"
 

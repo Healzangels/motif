@@ -17418,6 +17418,8 @@
     a.addEventListener('error', () => {
       const meta = a.parentElement && a.parentElement.querySelector('.info-probe-meta');
       if (meta) meta.textContent = 'Plex reports a theme but it did not play — removed, or Plex unreachable';
+      const badge = a.parentElement && a.parentElement.querySelector('.tier-badge');
+      if (badge) badge.remove();  // v0.51.323: no SERVING badge on a player that didn't
       a.remove();
     });
   }
@@ -17567,63 +17569,46 @@
     // actual playback is the uploaded MP3. New line collapses the
     // four signals (source_kind, provenance, ovr, placements)
     // into ONE phrase per row.
+    // v0.51.323 (card review): the headline says two facts in plain words —
+    // what motif holds, and what plays. Pre-.323 it also named the badge
+    // letters and the action ("TB badge · backup-only · PROMOTE TO ACTIVE to
+    // deploy"), which the state strip under the hero already says: its title
+    // is the state, its header button is the action. One statement each.
+    function _heldWord(sk) {
+      switch (sk) {
+        case 'themerrdb': return 'ThemerrDB theme';
+        case 'url': return 'user-URL theme';
+        case 'upload': return 'uploaded MP3';
+        case 'adopt': return 'adopted sidecar theme';
+        case 'plex_cloud': return "copy of Plex's cloud theme";
+        default: return sk ? `source_kind=${sk} file` : 'theme file';
+      }
+    }
     function _derivePlaybackSourceLabel() {
-      // v0.51.223: an ambiguous card can't say what plays — that depends on which cut,
-      // and the fields below read the arbitrary `lf`. Point at the picker instead of
-      // asserting one cut's playback source (ultra-review #3).
       if (_ambiguousCut) {
         return '(multiple cuts — pick one in the loudness section to see what plays)';
       }
-      // Plex agent — Plex serves its own theme; motif standing by.
-      // v1.22.71: read the top-level field api_item actually returns.
-      // Pre-fix this read data.theme.plex_independent_theme (a
-      // plex_items column, never on the themes dict) plus an
-      // is_plex_agent field api_item never returned — both undefined,
-      // so every pure-P row fell through to "(none — row has no theme
-      // staged)".
       if (!lf && data.plex_independent_theme === 1) {
-        return 'Plex serves its own theme (motif standing by)';
+        return 'nothing on disk · Plex serves its own theme';
       }
-      // v0.51.37 (the user): a Plex-serving row with no motif theme (e.g. right
-      // after UNMANAGE of a plex_upload row — motif untracked it but Plex keeps
-      // serving the theme it uploaded, before plex_enum sets the independent
-      // flag) used to fall to "(none)", which read as "motif lost the theme".
-      // Name the real state + the recovery paths so it isn't confusing.
       if (!lf && data.plex_has_theme === 1) {
-        return 'Plex is serving a theme motif no longer manages — SOURCE → '
-             + 'RE-DOWNLOAD TDB to take it over, or REMOVE → PURGE to clear it';
+        // v0.51.37: the window right after UNMANAGE, before plex_enum's next
+        // cycle sets plex_independent_theme. Nothing else on the card names
+        // the way out, so the hint stays here.
+        return 'nothing on disk · Plex is serving a theme motif no longer manages '
+             + '(RE-DOWNLOAD TDB takes it over, PURGE clears it)';
       }
-      if (!lf) return '(none — row has no theme staged)';
-      const sk = lf.source_kind || '';
-      const reason = lf.last_place_attempt_reason || '';
-      // Cloud-themes-backup row (v1.19.42).
-      if (sk === 'plex_cloud' && reason === 'backup_only') {
-        return 'Plex cloud backup staged (B badge · PROMOTE TO ACTIVE to deploy)';
+      if (!lf) return 'nothing on disk · no theme staged';
+      const held = _heldWord(lf.source_kind || '');
+      if ((lf.last_place_attempt_reason || '') === 'backup_only') {
+        return `${held} on disk as backup · Plex serves its own theme`;
       }
-      // v1.19.90: ThemerrDB-sourced backup → TB badge.
-      if (sk === 'themerrdb' && reason === 'backup_only') {
-        return `${_humanSourceKind(sk)} (TB badge · backup-only · PROMOTE TO ACTIVE to deploy)`;
-      }
-      // v1.20.17: adopted sidecar staged as backup → AB badge.
-      if (sk === 'adopt' && reason === 'backup_only') {
-        return `${_humanSourceKind(sk)} (AB badge · backup-only · PROMOTE TO ACTIVE to deploy)`;
-      }
-      // BK/UB rows — user-explicit backup intent (url/upload).
-      if (reason === 'backup_only') {
-        return `${_humanSourceKind(sk)} (UB badge · backup-only · PROMOTE TO ACTIVE to deploy)`;
-      }
-      const friendly = _humanSourceKind(sk);
-      // Surface the placement kind so "uploaded MP3" reads
-      // as "uploaded MP3 → Plex stores it" rather than the
-      // ambiguous "user uploaded an MP3 (but is Plex serving
-      // it? where?)".
       const placedKinds = placements
         .map((p) => p.placement_kind)
         .filter(Boolean);
-      const placedSuffix = placedKinds.length
-        ? ` · placed: ${placedKinds.join(', ')}`
-        : ' · not placed';
-      return `${friendly}${placedSuffix}`;
+      return placedKinds.length
+        ? `${held} on disk · placed: ${placedKinds.join(', ')}`
+        : `${held} on disk · not placed`;
     }
     function _humanSourceKind(sk) {
       switch (sk) {
@@ -17907,9 +17892,11 @@
     }
     const hidePrev = (previousUrl !== '' && previousUrl === currentUrl)
                   || (previousUrl !== '' && !!revertHint);
+    // v0.51.323: empty when there is nothing to show — the row is omitted,
+    // not rendered as a dash (card review: "an empty previous url row").
     const previousUrlLink = (previousUrl && !hidePrev)
       ? `${linkOrDash(previousUrl, prevColor)} ${prevKindLabel}`
-      : '<span class="muted">—</span>';
+      : '';
     const failBlock = t.failure_kind
       ? `<dt>last failure</dt><dd class="accent-red">${htmlEscape(t.failure_kind)}${t.failure_message ? ' · ' + htmlEscape(t.failure_message) : ''}</dd>`
       : '';
@@ -17998,7 +17985,7 @@
       ? `<dt>derivation</dt><dd class="muted small">${(sourceKindHint + sourceVidHint).replace(/^ · /, '')}</dd>`
       : '';
     const dlBlock = lf
-      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.num(lf.file_size)}B · <span title="How motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP).">${htmlEscape(lf.provenance)}</span></dd>`
+      ? `<dt>downloaded</dt><dd class="muted small">${htmlEscape(lf.abs_path || lf.file_path)} · ${fmt.bytes(lf.file_size)} · <span title="How motif got this file — auto = motif picked it automatically (e.g. from ThemerrDB sync); manual = you set it (SET URL / UPLOAD MP3 / DOWNLOAD TDB BACKUP).">${htmlEscape(lf.provenance)}</span></dd>`
       : '';
     // v0.50.35: compact "a recoverable backup exists" line — the user wants to
     // know a backup is on disk for EVERY row (HL, placed, dead-url …), not just
@@ -18065,7 +18052,20 @@
           // narrow. v0.51.282 semantics unchanged: only offered where there
           // is a canonical to edit; carries the row key + the CURRENT sha,
           // which becomes the save's optimistic lock.
-          return `<dt>play</dt><dd class="info-play-row">`
+          // v0.51.323 (card review): the row is labelled by what it is (motif's
+          // file) and badged by its state, so it reads apart from the "plex
+          // serves" row above it without the reader parsing the dt.
+          const _placedKinds = placements.map((p) => p.placement_kind).filter(Boolean);
+          const _fileBadge = lfIsBackupOnly
+            ? ['tier-badge-standing', 'STANDING BY',
+               "motif's copy waits on disk as a backup — Plex keeps serving its own theme until PROMOTE TO ACTIVE deploys this."]
+            : _placedKinds.length
+              ? ['tier-badge-placed', 'PLACED',
+                 `motif's file is placed where Plex reads it (${_placedKinds.join(', ')}).`]
+              : ['tier-badge-unplaced', 'NOT PLACED',
+                 "motif's file is on disk but not placed for Plex yet."];
+          return `<dt>motif file</dt><dd class="info-play-row">`
+            + `<span class="tier-badge ${_fileBadge[0]}" title="${htmlEscape(_fileBadge[2])}">${_fileBadge[1]}</span>`
             + `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
             + `your browser doesn't support inline audio playback`
             + `</audio>`
@@ -18211,15 +18211,14 @@
     // probe row's shape) — the .317 hero-chip button was the only button in the
     // hero and sat off the chips' baseline. Anime sections only
     // (section_context.is_anime has been on the wire since v1.21.68).
-    const animeThemesRowHtml = (sc && sc.is_anime && ratingKey)
-      ? `<dt>anime themes</dt><dd>
-           <button class="btn btn-tiny btn-info" data-act="anime-themes"
+    // v0.51.323: a button on the SOURCE actions row (was its own dl row with
+    // an explainer span — the tooltip carries the explainer now).
+    const animeThemesBtnHtml = (sc && sc.is_anime && ratingKey)
+      ? `<button class="btn btn-tiny btn-info" data-act="anime-themes"
                    data-rk="${htmlEscape(ratingKey)}"
                    data-title="${htmlEscape((data.theme && data.theme.title) || data.plex_title || '')}"
                    data-year="${htmlEscape(String((data.theme && data.theme.year) || ''))}"
-                   title="Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row's theme.">// ANIME THEMES</button>
-           <span class="muted small info-probe-meta">openings and endings from AnimeThemes.moe</span>
-         </dd>`
+                   title="Openings and endings from AnimeThemes.moe — pick one, preview it, then set it as this row's theme.">// ANIME THEMES</button>`
       : '';
     // v1.14.20 (M2): harmonize the themerrdb / applied url /
     // previous url label format. All three now use the muted
@@ -18274,18 +18273,21 @@
     // has nothing TDB-side to probe. Pre-fix the button showed for
     // those rows, then 409'd on click after the user's repro that
     // the probe was misdirected to the override.
+    // v0.51.323 (card review): the probe is a button on the SOURCE group's one
+    // "actions" row (with ANIME THEMES), not a definition-list row of its own;
+    // its result + last-probed metas trail the buttons on the same row.
     const probeBtnHtml = tdbUrl
-      ? `<dt>probe</dt><dd>
-           <button class="btn btn-tiny btn-info"
+      ? `<button class="btn btn-tiny btn-info"
                    data-act="probe-tdb"
                    data-mt="${htmlEscape(t.media_type || '')}"
                    data-id="${htmlEscape(t.tmdb_id ?? '')}"
-                   title="Run yt-dlp --simulate against the TDB URL to confirm it's still playable. Doesn't download anything. Override URLs are NOT probed — this only verifies the TDB URL.">// PROBE TDB URL</button>
-           <span id="probe-result" class="muted small info-probe-meta"></span>
+                   title="Run yt-dlp --simulate against the TDB URL to confirm it's still playable. Doesn't download anything. Override URLs are NOT probed — this only verifies the TDB URL.">// PROBE TDB URL</button>`
+      : '';
+    const probeMetaHtml = tdbUrl
+      ? `<span id="probe-result" class="muted small info-probe-meta"></span>
            ${data.theme && data.theme.last_probed_at
              ? `<span class="muted small info-probe-meta">last probed: ${htmlEscape(fmt.timeAuto(data.theme.last_probed_at))}</span>`
-             : ''}
-         </dd>`
+             : ''}`
       : '';
     // v1.24.83: poster hero — the title/scope block sits beside the title's Plex
     // poster (same /api/plex/art proxy the carousel uses). posterRk prefers the
@@ -18499,13 +18501,25 @@
           ? `local <span class="muted small">(manual / adopted — not from themerrdb)</span>`
           : htmlEscape(t.upstream_source || '')}</dd>
         ${derivationRow}`;
+    // v0.51.323 (card review): one URL, one row. The applied-url row renders
+    // only when it differs from ThemerrDB's (an override, or a row with no
+    // ThemerrDB row at all); the video id rides whichever row is the applied
+    // one as a muted suffix instead of restating the link a third time; the
+    // previous url appears only when there is one; probe + anime themes share
+    // one actions row.
+    const _tdbRowShown = t.upstream_source !== 'plex_orphan';
+    const _appliedShown = !!currentUrl && (!_tdbRowShown || currentUrl !== tdbUrl);
+    const _vidSuffix = ytId
+      ? ` <span class="muted small" title="video id">· ${htmlEscape(ytId)}</span>`
+      : '';
+    const _actionsRow = (probeBtnHtml || animeThemesBtnHtml)
+      ? `<dt>actions</dt><dd class="info-play-row">${probeBtnHtml}${animeThemesBtnHtml}${probeMetaHtml}</dd>`
+      : '';
     const _linksRows = `
-        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}</dd>`}
-        <dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}</dd>
-        <dt>previous url</dt><dd>${previousUrlLink}</dd>
-        <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
-        ${probeBtnHtml}
-        ${animeThemesRowHtml}`;
+        ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}${_appliedShown ? '' : _vidSuffix}</dd>`}
+        ${_appliedShown ? `<dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}${_vidSuffix}</dd>` : ''}
+        ${previousUrlLink ? `<dt>previous url</dt><dd>${previousUrlLink}</dd>` : ''}
+        ${_actionsRow}`;
     const _timelineRows = `
         ${t.upstream_source === 'plex_orphan' ? '' : `
         <dt>themerrdb added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_added_at))}</dd>
@@ -18529,17 +18543,22 @@
     const _plexRowItem = (libraryState.items || []).find((it) => String(it.rating_key) === String(_plexRk));
     const _plexSrc = _plexRowItem ? computeSrcLetter(_plexRowItem) : '';
     const plexThemeBlock = (data.plex_has_theme === 1 && _plexRk && (!lf || _plexSrc === 'P'))
-      ? `<dt>plex theme</dt><dd class="info-play-row">`
+      ? `<dt>plex serves</dt><dd class="info-play-row">`
+        + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span>`
         + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" class="info-audio" data-plex-theme="1">`
         + `your browser doesn't support inline audio playback</audio>`
-        + `<span class="muted small info-probe-meta">what Plex serves for this item</span></dd>`
+        + `<span class="muted small info-probe-meta"></span></dd>`
       : '';
     const _onDiskRows = _ambiguousCut ? '' : `
         ${dlBlock}
         ${backupBlock}
-        ${placedBlock}
-        ${audioBlock}
-        ${plexThemeBlock}`;
+        ${placedBlock}`;
+    // v0.51.323 (card review): the players are the card's subject, so they get
+    // their own group ahead of SOURCE — what plays first, then what motif
+    // holds. Same ambiguous-cut blanking as the file rows (v0.51.223).
+    const _audioRows = _ambiguousCut ? '' : `
+        ${plexThemeBlock}
+        ${audioBlock}`;
     // v0.51.207: at-a-glance loudness chip beside the 4K badge. Reads the SAME
     // server-derived marker (lf.loudness_marker) the library row glyphs use, so the card
     // and the list can't disagree. Colours are FIXED across themes — they ENCODE loudness
@@ -18588,12 +18607,13 @@
         <div class="info-hero-meta">
           <h3 class="info-title">${htmlEscape(t.title || '—')}${t.year ? ' (' + htmlEscape(t.year) + ')' : ''}${sc && sc.is_4k ? ' <span class="tier-badge tier-badge-4k" title="4K library version">4K</span>' : ''}${_loudChip}</h3>
           ${scopeChips}
-          <p class="info-hero-playback muted small" title="What's actually playing on this row. Synthesized from source_kind + placement_kind + override state — directly answers 'why is this row's SRC letter what it is?'">${htmlEscape(_derivePlaybackSourceLabel())}</p>
+          <p class="info-hero-playback muted small" title="What motif holds for this row, and what plays — read from source_kind, placement_kind and the override intent. It is why the row's SRC letter is what it is.">${htmlEscape(_derivePlaybackSourceLabel())}</p>
         </div>
       </div>
-      ${_grp('source', _linksRows)}
-      ${_grp('file & placement', _onDiskRows)}
       ${recoveryPlaceholder}
+      ${_grp('audio', _audioRows)}
+      ${_grp('source', _linksRows)}
+      ${_grp('file', _onDiskRows)}
       ${diffSection}
       ${(() => {
         // v1.15.129: source-aware thumbnail block. YouTube renders
@@ -18678,8 +18698,8 @@
         return '';
       })()}
       <!-- v0.51.289 (design audit): intent-based order. Actionable surfaces
-           (source, file & placement, TRY THIS NEXT, proposed change) render
-           first; the reference tail below is collapsed-by-default folds —
+           (v0.51.323: the state strip, then audio, source, file, proposed
+           change) render first; the reference tail below is collapsed-by-default folds —
            the v1.12.101 bounded-height idiom extended to the groups the card
            accreted since. The 'history' group is renamed 'timeline' to end
            the collision with // HISTORY (the audit log). -->
@@ -19484,9 +19504,6 @@
     // header height constant pre/post ack. The line is always in
     // the DOM (empty when not acked) so the section's vertical
     // size doesn't shift either.
-    const ackedNoteLine = data.acked
-      ? '<p class="recovery-section-note muted small">failure acknowledged — these options stay available until upstream changes</p>'
-      : '<p class="recovery-section-note recovery-section-note-empty"></p>';
     // v1.13.74: tone→class map. Pre-fix every tone became
     // `lib-source-{tone}`, which only had CSS rules for
     // {themerrdb,user,adopt}. Tones like 'info' and 'danger' fell
@@ -19629,6 +19646,11 @@
     // RESOLVED row would un-deploy motif's URL with no fallback
     // unless Plex has its own theme to serve.
     let intentFlipBtnsHtml = '';
+    // v0.51.323 (card review): the flip button sits in the strip's header,
+    // right of the title; its caption is the strip's one note line (shared
+    // with the acked note). Pre-.323 the button had its own row under the
+    // options with a caption that restated the headline and the title.
+    let intentFlipCaption = '';
     if (overrideIntent) {
       // v1.19.35: read mt/tid from the function parameters (or
       // the v1.19.35 `data.theme` passthrough as a redundant
@@ -19696,38 +19718,46 @@
               ? 'btn-promote-ab'
               : 'btn-promote-ub';
         intentFlipBtnsHtml = `
-          <div class="recovery-section-flip">
+          <span class="recovery-section-flip">
             <button class="btn btn-tiny ${promoteToneClass}"
                     data-act="promote-to-active"
                     data-mt="${htmlEscape(mt)}"
                     data-id="${htmlEscape(tid)}"
                     title="${htmlEscape(promoteTip)}">// PROMOTE TO ACTIVE</button>
-            <span class="muted small">deploy the backup over Plex's theme</span>
-          </div>`;
+          </span>`;
+        intentFlipCaption = "motif keeps its copy as a safety net; PROMOTE deploys it over Plex's theme";
       } else if (overrideIntent === 'replace' && data.plex_resolved) {
         // v1.18.78: MARK AS BACKUP only meaningful when Plex has
         // its own theme to fall back to. Demoting a RESOLVED
         // intent=replace row (placement landed) would un-deploy
         // motif's URL with no theme to serve — hide the button.
         intentFlipBtnsHtml = `
-          <div class="recovery-section-flip">
+          <span class="recovery-section-flip">
             <button class="btn btn-tiny btn-warn"
                     data-act="mark-as-backup"
                     data-mt="${htmlEscape(mt)}"
                     data-id="${htmlEscape(tid)}"
                     title="Flip the override to backup intent. Motif stops trying to force the placement past plex_has_theme; the URL stays downloaded as a safety net.">// MARK AS BACKUP</button>
-            <span class="muted small">stop trying to replace Plex's theme; keep as safety net</span>
-          </div>`;
+          </span>`;
+        intentFlipCaption = "motif keeps trying to replace Plex's theme; MARK AS BACKUP stops that and keeps the file as a safety net";
       }
     }
+    // One note line under the header: the acked note and/or the flip caption.
+    // Always rendered (empty keeps its height — v1.12.92) so ack doesn't reflow.
+    const _noteParts = [];
+    if (data.acked) _noteParts.push('failure acknowledged — these options stay available until upstream changes');
+    if (intentFlipCaption) _noteParts.push(intentFlipCaption);
+    const noteLine = _noteParts.length
+      ? `<p class="recovery-section-note muted small">${htmlEscape(_noteParts.join(' · '))}</p>`
+      : '<p class="recovery-section-note recovery-section-note-empty"></p>';
     section.innerHTML = `
       <header class="recovery-section-head">
         <span class="recovery-section-title">${htmlEscape(sectionTitleText)}</span>
         <span class="muted small">${htmlEscape(human)}</span>
+        ${intentFlipBtnsHtml}
       </header>
-      ${ackedNoteLine}
+      ${noteLine}
       <div class="recovery-section-body">${items}</div>
-      ${intentFlipBtnsHtml}
     `;
     // v1.18.77: wire the intent-flip buttons. Same shape as the
     // probe-tdb handler above — POST to the endpoint, refresh on

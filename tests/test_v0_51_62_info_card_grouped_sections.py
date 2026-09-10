@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _slice_helpers import slice_to_next
+
 
 REPO = Path(__file__).resolve().parent.parent
 APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
@@ -47,8 +49,9 @@ def test_four_groups_rendered_in_order():
     # groups (SOURCE, FILE & PLACEMENT) render first, then the collapsed
     # reference folds (IDENTITY, TIMELINE — renamed from 'history' to end the
     # // HISTORY collision — LOUDNESS, revisions).
-    calls = ["_grp('source', _linksRows)",
-             "_grp('file & placement', _onDiskRows)",
+    calls = ["_grp('audio', _audioRows)",  # v0.51.323: the players lead
+             "_grp('source', _linksRows)",
+             "_grp('file', _onDiskRows)",
              "_fold('identity', _idsRows",
              "_fold('timeline', _timelineRows",
              "_fold('loudness', _loudnessRows"]
@@ -70,11 +73,14 @@ def test_group_membership_preserved():
     ids = APP_JS[APP_JS.index("const _idsRows = "):APP_JS.index("const _linksRows = ")]
     assert "<dt>imdb</dt>" in ids and "<dt>tmdb</dt>" in ids and "<dt>upstream</dt>" in ids
     links = APP_JS[APP_JS.index("const _linksRows = "):APP_JS.index("const _timelineRows = ")]
-    assert "${appliedUrlLabel}" in links and "<dt>video id</dt>" in links and "${probeBtnHtml}" in links
+    # v0.51.323: the id rides the applied row; probe is on the actions row.
+    assert "${appliedUrlLabel}" in links and "${_vidSuffix}" in links and "${_actionsRow}" in links
     timeline = APP_JS[APP_JS.index("const _timelineRows = "):APP_JS.index("const _onDiskRows = ")]
     assert "<dt>motif added</dt>" in timeline and "${failBlock}" in timeline and "${ovrBlock}" in timeline and "${puBlock}" in timeline
-    ondisk = APP_JS[APP_JS.index("const _onDiskRows = "):APP_JS.index("const _onDiskRows = ") + 220]
-    assert "${dlBlock}" in ondisk and "${backupBlock}" in ondisk and "${placedBlock}" in ondisk and "${audioBlock}" in ondisk
+    ondisk = slice_to_next(APP_JS, "const _onDiskRows = ", "`;")
+    assert "${dlBlock}" in ondisk and "${backupBlock}" in ondisk and "${placedBlock}" in ondisk
+    audio = slice_to_next(APP_JS, "const _audioRows = ", "`;")  # v0.51.323: players moved out
+    assert "${audioBlock}" in audio and "${plexThemeBlock}" in audio
 
 
 def test_old_flat_grid_is_gone():

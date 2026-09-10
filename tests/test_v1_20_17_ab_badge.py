@@ -84,7 +84,9 @@ def test_promote_tone_branches_on_adopt():
 
 
 def test_playback_label_has_ab_branch():
-    assert "(AB badge · backup-only" in APP_JS
+    # v0.51.323: the headline names the source in plain words (see v1.19.90).
+    assert "case 'adopt': return 'adopted sidecar theme';" in APP_JS
+    assert "on disk as backup · Plex serves its own theme" in APP_JS
 
 
 # ── SQL: ab matches adopt; bk excludes it ────────────────────
