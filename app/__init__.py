@@ -5918,7 +5918,21 @@
 #   anchor slices (the .261 forward budget re-banked 1489 -> 1486); v0.51.280 now
 #   asserts the PROVIDERS invariant; v1.18.65's diff-tile anchor kept intact
 #   by giving AnimeThemes its own branch.
-__version__ = "0.51.315"
+# 0.51.316: ACCEPT ALL UPDATES / KEEP ALL CURRENT are scoped to the library
+#   tab being displayed. The bulk bar's count is per tab (6 on /movies, 1 on
+#   /tv) but the no-selection path called /api/updates/count and
+#   /api/updates/accept-all with NO scope — "Accept 7 pending ThemerrDB
+#   updates?" on the TV tab, and OK would have accepted the Movies rows too
+#   (the user's report). Fix: the three bulk endpoints (count, accept-all,
+#   decline-all) take optional tab/fourk/all_res query params applying the
+#   library page's own tab predicate (pi2/ps2 aliases; unknown tab -> 400;
+#   no tab = the legacy global scope the topbar UPD badge still uses); the
+#   JS sends the displayed tab + resolution via libraryUpdatesScopeQs() and
+#   the confirm/alert/summary text names the scope ("… in 4K MOVIES").
+#   Pins: v1.19.39's two fixed windows around the confirm converted to
+#   anchor slices (the .222 headroom ratchet caught one at 1%); the .261
+#   forward budget re-banked 1486 -> 1484; v1.14.15's call-shape pin updated.
+__version__ = "0.51.316"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

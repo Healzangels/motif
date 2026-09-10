@@ -12315,8 +12315,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 """, (decision,)).fetchall()
         return {"updates": [dict(r) for r in rows]}
 
+    def _updates_tab_scope(tab: str | None, fourk: int, all_res: int) -> tuple[str, dict | None]:
+        """v0.51.316: the library tab's own predicate (mirrors api_library's tab_where,
+        aliases pi2/ps2) for the bulk update endpoints — ACCEPT ALL on /tv counted and
+        acted on /movies rows too. No tab = the legacy global scope (topbar UPD)."""
+        if not tab:
+            return "", None
+        if tab == "movies":
+            pred = "pi2.media_type = 'movie' AND ps2.is_anime = 0"
+        elif tab == "tv":
+            pred = "pi2.media_type = 'show' AND ps2.is_anime = 0"
+        elif tab == "anime":
+            pred = "ps2.is_anime = 1 AND pi2.media_type IN ('movie', 'show')"
+        elif tab == "collections":
+            pred = "pi2.media_type = 'collection'"
+        else:
+            raise HTTPException(status_code=400, detail="unknown tab")
+        if tab != "collections" and not all_res:
+            pred += " AND ps2.is_4k = 1" if fourk else " AND ps2.is_4k = 0"
+        return f" AND ({pred})", {"tab": tab, "fourk": bool(fourk), "all_res": bool(all_res)}
+
     @app.get("/api/updates/count")
-    async def api_updates_count(db: Path = Depends(get_db_path)):
+    async def api_updates_count(
+        db: Path = Depends(get_db_path),
+        tab: str | None = Query(None), fourk: int = Query(0), all_res: int = Query(0),
+    ):
         """v1.12.120: counts only ACTIONABLE pending updates — must
         match the visible blue ↑ pill set. Pre-fix this returned the
         raw COUNT of pending_updates rows with decision='pending',
@@ -12326,6 +12349,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         that pass the v1.12.119 motif-presence + no-op gate, so
         the count, the row pill, the topbar UPD badge, and the
         tdb_pills=update filter all agree."""
+        scope_sql, scope = _updates_tab_scope(tab, fourk, all_res)
         with get_conn(db) as conn:
             # v1.19.4: f-string for _not_p_row_sql interpolation in
             # the urls_match gate below. Body has no other `{}`.
@@ -12362,8 +12386,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     OR {_pending_update_new_theme_kind_sql('t2', 'pi2')}
                 )
                 AND {_pending_update_actionable_sql('t2', 'pi2')}
+                {scope_sql}
             """).fetchone()
-        return {"pending": row["n"]}
+        return {"pending": row["n"], "scope": scope}
 
     @app.post("/api/updates/{media_type}/{tmdb_id}/accept")
     async def api_accept_update(
@@ -13594,6 +13619,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/updates/accept-all")
     async def api_accept_all_updates(
         request: Request, db: Path = Depends(get_db_path),
+        tab: str | None = Query(None), fourk: int = Query(0), all_res: int = Query(0),
     ):
         """v1.12.55: bulk-accept every pending_updates row with
         decision='pending'. Iterates server-side applying the same
@@ -13609,6 +13635,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         _require_admin(request)
         _username = request.state.principal.username
+        # v0.51.316: scoped to the library tab the user is looking at (the
+        # bulk bar's count is per tab; the action must be too).
+        scope_sql, scope = _updates_tab_scope(tab, fourk, all_res)
+        scope_note = f" in {scope['tab']}" if scope else ""
         # v0.51.296 (holistic review, class 12): the whole DB/loop
         # sequence runs off the event loop — the v1.22.69 audit measured
         # this SQL shape at seconds on a 10K library.
@@ -13673,6 +13703,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            , 'pending') = 'pending'
                            AND {_pending_update_detected_sql('t2', 'pi2')}
                            AND {_pending_update_actionable_sql('t2', 'pi2')}
+                           {scope_sql}
                        AND (
                            EXISTS (SELECT 1 FROM local_files lf2
                                     WHERE lf2.media_type = t2.media_type
@@ -13890,11 +13921,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     f"({eager_flipped} eager-flipped, "
                     f"{enqueued} downloads queued"
                     f"{f', {p_backup_count} as P-row backup' if p_backup_count else ''}"
+                    f"{scope_note}"
                     f")"
                 ),
+                detail={"scope": scope},
             )
             return {
                 "ok": True,
+                "scope": scope,
                 "accepted": accepted,
                 "eager_flipped": eager_flipped,
                 "downloads_queued": enqueued,
@@ -13905,6 +13939,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/updates/decline-all")
     async def api_decline_all_updates(
         request: Request, db: Path = Depends(get_db_path),
+        tab: str | None = Query(None), fourk: int = Query(0), all_res: int = Query(0),
     ):
         """v1.12.55: bulk-decline every pending update.
         v1.12.120: scoped to (section × title) tuples that pass the
@@ -13913,6 +13948,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cross-section-bleed rows alone."""
         _require_admin(request)
         _username = request.state.principal.username
+        scope_sql, scope = _updates_tab_scope(tab, fourk, all_res)  # v0.51.316
+        scope_note = f" in {scope['tab']}" if scope else ""
         # v0.51.296 (holistic review, class 12): the whole DB/loop
         # sequence runs off the event loop — the v1.22.69 audit measured
         # this SQL shape at seconds on a 10K library.
@@ -13955,6 +13992,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                            OR {_pending_update_new_theme_kind_sql('t2', 'pi2')}
                        )
                        AND {_pending_update_actionable_sql('t2', 'pi2')}
+                       {scope_sql}
                 """).fetchall()
                 for tup in tuples:
                     # v1.23.63 (audit #19): per-row BEGIN IMMEDIATE so each decision's
@@ -13976,10 +14014,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 message=(
                     f"Bulk-declined {declined} pending update"
                     f"{'s' if declined != 1 else ''} by "
-                    f"{_username}"
+                    f"{_username}{scope_note}"
                 ),
+                detail={"scope": scope},
             )
-            return {"ok": True, "declined": declined}
+            return {"ok": True, "declined": declined, "scope": scope}
         return await run_in_threadpool(_run)
 
     # --- JSON: items ---

@@ -147,10 +147,14 @@ def test_global_bulk_confirm_acknowledges_p_row_backup():
     """The no-selection (global) confirm must also acknowledge
     the P-row backup branch. Has its own confirm call after the
     `// No selection — global accept-all path.` marker."""
-    no_sel_marker_idx = APP_JS.index(
-        "// No selection — global accept-all path."
-    )
-    chunk = APP_JS[no_sel_marker_idx:no_sel_marker_idx + 2000]
+    # v0.51.316: the path is tab-scoped now (the comment marker moved with it),
+    # and the slice is anchor-based — the fixed 2000-char window sat at 1%
+    # headroom (the v0.51.222 ratchet caught it).
+    from _slice_helpers import slice_between
+    # code anchor (the .222 ratchet refuses comment anchors): the accept
+    # path's own empty-state alert, unique to this handler
+    chunk = slice_between(APP_JS, "alert(`No pending updates to accept in ${scopeLabel}.`);",
+                          "btn.textContent = `// ACCEPTING")
     assert "SRC=P" in chunk or "Plex serving" in chunk, (
         "v1.19.39: global bulk-accept confirm must acknowledge "
         "the v1.19.33 P-row backup branch"
@@ -160,10 +164,10 @@ def test_global_bulk_confirm_acknowledges_p_row_backup():
 def test_bulk_accept_toast_surfaces_p_backup_count():
     """The toast after global accept-all must surface the
     res.p_backup count (v1.19.39 server response)."""
-    no_sel_marker_idx = APP_JS.index(
-        "// No selection — global accept-all path."
-    )
-    chunk = APP_JS[no_sel_marker_idx:no_sel_marker_idx + 3500]
+    # v0.51.316: anchor-based slice — to the sibling KEEP ALL handler.
+    from _slice_helpers import slice_between
+    chunk = slice_between(APP_JS, "alert(`No pending updates to accept in ${scopeLabel}.`);",
+                          "getElementById('library-decline-all-updates-btn')")
     assert "res.p_backup" in chunk, (
         "v1.19.39: bulk-accept toast must read res.p_backup "
         "so the user sees `X ACCEPTED · N P-BACKUP`"

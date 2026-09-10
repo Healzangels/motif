@@ -611,6 +611,17 @@
     return fourk ? `4K ${tabName}` : tabName;
   }
 
+  // v0.51.316: the query string that scopes the bulk ACCEPT ALL / KEEP ALL
+  // endpoints to the tab + resolution being displayed. Reads the same
+  // inputs as libraryRefreshLabel so the confirm text and the action agree.
+  function libraryUpdatesScopeQs() {
+    const tabEl = document.getElementById('library-tab');
+    const tab = (tabEl && tabEl.value) || libraryState.tab || 'movies';
+    return `?tab=${encodeURIComponent(tab)}`
+      + `&fourk=${libraryState.fourk ? 1 : 0}`
+      + `&all_res=${libraryState.allRes ? 1 : 0}`;
+  }
+
   // v1.14.68: synchronous label-only update for the library
   // REFRESH button. Single source of truth shared by the
   // //4K toggle handler (called pre-async so the label flips
@@ -16310,14 +16321,19 @@
         setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 3000);
         return;
       }
-      // No selection — global accept-all path.
+      // No selection — tab-scoped accept-all path. v0.51.316: the bulk
+      // bar's count is per tab, but this path counted + accepted every
+      // section (the user: 1 pending on /tv, "Accept 7?"). Scope the
+      // count and the action to the tab + resolution being displayed.
+      const scopeQs = libraryUpdatesScopeQs();
+      const scopeLabel = libraryRefreshLabel();
       let pending = 0;
       try {
-        const res = await api('GET', '/api/updates/count');
+        const res = await api('GET', `/api/updates/count${scopeQs}`);
         pending = res.pending || 0;
       } catch (_) { /* fall through; the endpoint will handle the noop */ }
       if (pending === 0) {
-        alert('No pending updates to accept.');
+        alert(`No pending updates to accept in ${scopeLabel}.`);
         return;
       }
       // v1.19.39: same dialog-copy fix as the per-selection
@@ -16326,7 +16342,7 @@
       // claim doesn't hold for SRC=P rows in the global fan-out.
       const ok = confirm(
         `Accept ${pending} pending ThemerrDB update`
-          + `${pending !== 1 ? 's' : ''}?\n\n`
+          + `${pending !== 1 ? 's' : ''} in ${scopeLabel}?\n\n`
           + `For URL-match rows (your override URL == TDB URL) this is `
           + `instant — no download. For the rest motif will queue a `
           + `download per row. Rows currently SRC=P (Plex serving) `
@@ -16339,7 +16355,7 @@
       btn.disabled = true;
       btn.textContent = `// ACCEPTING ${pending}…`;
       try {
-        const res = await api('POST', '/api/updates/accept-all');
+        const res = await api('POST', `/api/updates/accept-all${scopeQs}`);
         const flipped = res.eager_flipped || 0;
         const queued = res.downloads_queued || 0;
         // v1.19.39: surface the P-row backup count from the API
@@ -16420,18 +16436,21 @@
         setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 2500);
         return;
       }
-      // No selection — global decline-all path.
+      // No selection — tab-scoped decline-all path (v0.51.316, same
+      // scope as ACCEPT ALL: the tab + resolution being displayed).
+      const scopeQs = libraryUpdatesScopeQs();
+      const scopeLabel = libraryRefreshLabel();
       let pending = 0;
       try {
-        const res = await api('GET', '/api/updates/count');
+        const res = await api('GET', `/api/updates/count${scopeQs}`);
         pending = res.pending || 0;
       } catch (_) { /* fall through */ }
       if (pending === 0) {
-        alert('No pending updates to dismiss.');
+        alert(`No pending updates to dismiss in ${scopeLabel}.`);
         return;
       }
       const ok = confirm(
-        `Dismiss ${pending} pending update${pending !== 1 ? 's' : ''}?\n\n`
+        `Dismiss ${pending} pending update${pending !== 1 ? 's' : ''} in ${scopeLabel}?\n\n`
           + `The blue ↑ pill stays on each row for filter/sort, but the `
           + `topbar UPD count drops to 0. Won't re-prompt unless ThemerrDB `
           + `updates again.\n\n`
@@ -16443,7 +16462,7 @@
       btn.disabled = true;
       btn.textContent = `// DISMISSING ${pending}…`;
       try {
-        const res = await api('POST', '/api/updates/decline-all');
+        const res = await api('POST', `/api/updates/decline-all${scopeQs}`);
         btn.textContent = `// ${res.declined} DISMISSED`;
       } catch (err) {
         btn.textContent = '// FAILED';

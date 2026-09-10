@@ -76,7 +76,7 @@ _MIN_WIDTH = 100
 # gate's catch line).
 # v0.51.308: 1490 → 1489 (test_v1_17_20's 4000-char openInfoDialog window,
 # rotted by the 404 empty-state — anchored to the success path's first read).
-_BUDGET = 1486  # v0.51.315: three windows converted (v1.14.2 preview label, v1.14.3 oembed routing, v1.14.20 diff tile)
+_BUDGET = 1484  # v0.51.316: two more converted (v1.19.39 bulk confirm + toast); v0.51.315: three (v1.14.2, v1.14.3, v1.14.20)
 
 # v0.51.309 (audit r2): the BACKWARD shape `x[a - N:a + M]` was invisible to
 # the detector (its lower bound is a BinOp, not a bare Name) — and a new one

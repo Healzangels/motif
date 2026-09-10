@@ -172,7 +172,9 @@ def test_accept_all_updates_still_has_global_path():
     # per-edition rating_key param builder, pushing the no-selection
     # global-path branch a few lines further down the handler body.
     body = js[handler_anchor:handler_anchor + 9000]
-    assert "'/api/updates/accept-all'" in body
+    # v0.51.316: the no-selection path is scoped to the displayed tab — the
+    # endpoint call carries the scope query string.
+    assert "`/api/updates/accept-all${scopeQs}`" in body
     # The "No selection — global accept-all path" branch comment
     # marks where the no-selection mode kicks in.
     assert "No selection" in body
