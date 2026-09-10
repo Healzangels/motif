@@ -20752,11 +20752,36 @@
   // lands through the manual-url endpoint like SET URL; the preview rides the
   // v0.51.281 candidate pipe (transcoded server-side — Safari won't play Vorbis).
   let _animeThemesCtx = { rk: '', mt: 'tv', id: 0, candidate: null, defaultLink: '', data: null };
-  const _AT_CONF_PILL = {
-    clean: ['pill btn-tone-ok', 'CLEAN MATCH'],
-    glance: ['pill pill-warn', 'NEEDS A GLANCE'],
-    name: ['pill btn-tone-attn', 'NAME MATCH'],
+  // v0.51.319: every word the picker shows lives here, spelled out — the
+  // catalogue's shorthand (OP1, BD, v2) read like episode codes to the operator.
+  const _AT_WORDS = {
+    type: { OP: 'OPENING', ED: 'ENDING' },
+    source: { BD: 'BLU-RAY', DVD: 'DVD', WEB: 'STREAMING', VHS: 'VHS', LD: 'LASERDISC', RAW: 'RAW' },
+    conf: {
+      clean: ['pill btn-tone-ok', 'CLEAN MATCH',
+        "Matched by id to the show's first season, and the years agree."],
+      glance: ['pill pill-warn', 'NEEDS A GLANCE',
+        'The catalogue lacks the first season or the year is off — check the resolved name before using it.'],
+      name: ['pill btn-tone-attn', 'NAME MATCH',
+        'No id bridge for this row — matched by title search only. Confirm it is the right show.'],
+    },
+    tips: {
+      size: 'download size',
+      source: 'where the catalogue ripped this from: Blu-ray, DVD or a streaming release',
+      versions: 'the same song aired with different animation over other episode ranges — this row is the best-quality cut',
+      nsfw: 'the catalogue marks this sequence as explicit',
+      hint: "Openings play over an episode's title sequence and endings over its credits; a show swaps them every arc. The first opening is the usual theme.",
+    },
   };
+
+  function _atThemeLabel(theme) {
+    // "OPENING 1" from OP1 — the number rides the slug (the API's sequence is null for a lone OP)
+    const word = _AT_WORDS.type[theme.type];
+    if (!word) return theme.slug;
+    const n = theme.sequence != null ? theme.sequence
+      : (parseInt(String(theme.slug || '').replace(/^\D+/, ''), 10) || 1);
+    return `${word} ${n}`;
+  }
 
   function _atFmtSize(bytes) {
     return bytes ? `${(bytes / 1048576).toFixed(1)} MB` : '';
@@ -20773,12 +20798,12 @@
       ? `<strong>${htmlEscape(theme.song)}</strong>${theme.artists && theme.artists.length ? ` <span class="muted">· ${htmlEscape(theme.artists.join(', '))}</span>` : ''}`
       : `<span class="muted">untitled</span>`;
     const pills = [
-      `<span class="pill">${htmlEscape(_atFmtSize(a.size))}</span>`,
-      a.source ? `<span class="pill">${htmlEscape(a.source)}</span>` : '',
-      theme.audio.length > 1 ? `<span class="pill" title="same song, other episode ranges / sources">${htmlEscape(String(theme.audio.length))} versions</span>` : '',
-      a.nsfw ? `<span class="pill pill-warn">NSFW</span>` : '',
+      `<span class="pill" title="${_AT_WORDS.tips.size}">${htmlEscape(_atFmtSize(a.size))}</span>`,
+      a.source ? `<span class="pill" title="${_AT_WORDS.tips.source}">${htmlEscape(_AT_WORDS.source[a.source] || a.source)}</span>` : '',
+      theme.audio.length > 1 ? `<span class="pill" title="${_AT_WORDS.tips.versions}">${htmlEscape(String(theme.audio.length))} VERSIONS</span>` : '',
+      a.nsfw ? `<span class="pill pill-warn" title="${_AT_WORDS.tips.nsfw}">NSFW</span>` : '',
     ].filter(Boolean).join(' ');
-    return `<dt>${htmlEscape(theme.slug)}</dt>`
+    return `<dt title="${htmlEscape(theme.slug)}">${htmlEscape(_atThemeLabel(theme))}</dt>`
       + `<dd>${song}<br>${pills} `
       + `<button class="btn btn-tiny btn-info" type="button" data-act="at-preview" data-link="${htmlEscape(a.link)}">// PREVIEW</button> `
       + `<button class="btn btn-tiny btn-warn" type="button" data-act="at-use" data-link="${htmlEscape(a.link)}"`
@@ -20792,8 +20817,8 @@
     const useDefault = document.getElementById('anime-themes-use-default');
     const ylabel = data.year ? ` (${htmlEscape(String(data.year))})` : '';
     const conf = data.confidence;
-    const pill = conf && _AT_CONF_PILL[conf]
-      ? ` <span class="${_AT_CONF_PILL[conf][0]}">${_AT_CONF_PILL[conf][1]}</span>` : '';
+    const cw = conf && _AT_WORDS.conf[conf];
+    const pill = cw ? ` <span class="${cw[0]}" title="${htmlEscape(cw[2])}">${cw[1]}</span>` : '';
     const resolved = data.default
       ? ` <span class="muted">→ ${htmlEscape(data.default.name || '')}`
         + `${data.default.year ? ` (${htmlEscape(String(data.default.year))})` : ''}</span>` : '';
@@ -20810,10 +20835,15 @@
     } else {
       warn.hidden = true;
     }
+    const hint = document.getElementById('anime-themes-hint');
+    if (hint) {
+      hint.textContent = _AT_WORDS.tips.hint;
+      hint.hidden = !(data.seasons && data.seasons.length);
+    }
     body.innerHTML = (data.seasons || []).map((s, si) => {
-      // season 0 = specials in the anime-lists bridge; null = the bridge gave no season
+      // season 0 = specials in the anime-lists bridge; null = the bridge gave no season (a name-search match)
       const head = s.season === 0 ? '// SPECIALS'
-        : s.season != null ? `// SEASON ${htmlEscape(String(s.season))}` : '// MATCH';
+        : s.season != null ? `// SEASON ${htmlEscape(String(s.season))}` : '// NAME MATCH';
       const name = `${htmlEscape(s.name || '')}${s.year ? ` (${htmlEscape(String(s.year))})` : ''}`;
       const rows = (s.themes || []).map((t) => _atThemeRows(si, t)).join('');
       return `<div class="dlg-section"><h4>${head} — ${name}</h4><dl class="dlg-grid">${rows}</dl></div>`;
@@ -20823,8 +20853,10 @@
     if (useDefault) {
       useDefault.style.display = _animeThemesCtx.defaultLink ? '' : 'none';
       if (_animeThemesCtx.defaultLink) {
+        const dseason = data.seasons[data.default.season_index] || {};
+        const dtheme = (dseason.themes || []).find((t) => t.slug === data.default.theme) || { slug: data.default.theme, type: 'OP', sequence: null };
         const dsong = data.default.song ? ` — ${htmlEscape(data.default.song)}` : '';
-        useDefault.textContent = `// USE ${htmlEscape(data.default.theme)}${dsong} (SEASON ${htmlEscape(String((data.seasons[data.default.season_index] || {}).season ?? 1))})`;
+        useDefault.textContent = `// USE ${htmlEscape(_atThemeLabel(dtheme))}${dsong} (SEASON ${htmlEscape(String(dseason.season ?? 1))})`;
       }
     }
   }

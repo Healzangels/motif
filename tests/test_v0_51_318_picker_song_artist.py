@@ -85,7 +85,7 @@ def test_rows_show_the_song_and_collapse_versions():
     assert "const a = theme.audio[0];" in b, "one row per theme: the server's best audio"
     assert "theme.audio.map(" not in b, "no row per version any more (Bleach ED3 rendered 13 rows)"
     assert "htmlEscape(theme.song)" in b and "theme.artists.join(', ')" in b
-    assert "versions</span>" in b and "same song, other episode ranges" in b
+    assert "VERSIONS</span>" in b and "_AT_WORDS.tips.versions" in b  # v0.51.319: worded via the label layer
     assert "<span class=\"muted\">untitled</span>" in b, "a theme without a song record still renders"
 
 

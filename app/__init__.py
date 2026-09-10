@@ -5989,7 +5989,18 @@
 #   harness records the default's song.
 #   Pins: v1.18.21's manual-url window converted to an anchor slice; the
 #   .261 forward budget re-banked per the ratchet.
-__version__ = "0.51.318"
+# 0.51.319: AnimeThemes picker — readable labels. The operator: "what are the
+#   OP1 and the other meanings behind the listed choices, that's a bit
+#   confusing". One label layer in app.js (`_AT_WORDS`) now owns every word the
+#   picker shows: OP1/ED3 read as OPENING 1 / ENDING 3 (the slug stays as the
+#   row's tooltip and the origin's `slug`), BD/DVD/WEB as BLU-RAY / DVD /
+#   STREAMING, "13 VERSIONS" with a tooltip saying it is the same song over
+#   other episode ranges, the CLEAN MATCH / NEEDS A GLANCE / NAME MATCH pills
+#   carry a one-sentence tooltip each, the name-search group is headed
+#   // NAME MATCH, and a muted explainer line under the header says what an
+#   opening is and why the first one is the usual theme. Copy-only; the wire
+#   shape, the resolver and the harness are untouched.
+__version__ = "0.51.319"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

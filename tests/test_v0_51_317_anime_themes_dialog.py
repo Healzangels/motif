@@ -364,7 +364,7 @@ def test_preview_and_use_flows():
 
 
 def test_confidence_pills_use_existing_tones_only():
-    b = _fn_block("const _AT_CONF_PILL = {", "};")
+    b = _fn_block("const _AT_WORDS = {", "\n  };")  # v0.51.319: the label layer
     assert "pill btn-tone-ok" in b and "pill pill-warn" in b and "pill btn-tone-attn" in b
     assert "chip-warn" not in APP_JS and "chip-ok" not in APP_JS, "the audited-out chip variants stay out"
 
