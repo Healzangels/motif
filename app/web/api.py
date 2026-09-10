@@ -82,6 +82,8 @@ log = logging.getLogger(__name__)
 _PLEX_ART_TRANSCODE_WARNED: bool = False
 # v0.51.311 (review): hot-path warn-once for art-proxy transport/auth failures.
 _PLEX_ART_FETCH_WARNED: bool = False
+# v0.51.322: the Plex THEME proxy's own warn-once flag (a dead Plex must be visible once).
+_PLEX_THEME_FETCH_WARNED: bool = False
 # v0.51.313 (audit): a per-ITEM empty poster must not burn the process-wide
 # 'Plex is dead' warn-once above.
 _PLEX_ART_EMPTY_WARNED: bool = False
@@ -13435,6 +13437,81 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return Response(
             content=body, media_type=ctype,
             headers={"Cache-Control": f"private, max-age={max_age}"})
+
+    # ── v0.51.322: same-origin proxy for the theme PLEX serves (P rows) ──
+    _PLEX_THEME_MAX_BYTES = 30 * 1024 * 1024
+
+    def _theme_fetch_warn(reason: str, rating_key: str) -> None:
+        global _PLEX_THEME_FETCH_WARNED
+        if not _PLEX_THEME_FETCH_WARNED:
+            _PLEX_THEME_FETCH_WARNED = True
+            log.warning("plex theme proxy fetch FAILED (%s) for rk=%s — served as "
+                        "UNCACHEABLE no-theme; further failures log at debug", reason, rating_key)
+        else:
+            log.debug("plex theme proxy fetch failed (%s) for rk=%s", reason, rating_key)
+
+    def _fetch_plex_theme_bytes(rating_key: str) -> "tuple[bytes, str] | str":
+        """GET the singular /theme association (what Plex PLAYS for the item) with the
+        token in a header. (bytes, content_type) or the art proxy's sentinels: "no_theme"
+        (Plex 404 / no plex_url — designed, cacheable) vs "failed" (transport, non-200,
+        empty, oversize — must not be cached as no-theme)."""
+        base = (settings.plex_url or "").rstrip("/")
+        if not base:
+            return "no_theme"
+        try:
+            import httpx
+            with httpx.Client(timeout=30.0, follow_redirects=False) as c:
+                resp = c.get(f"{base}/library/metadata/{rating_key}/theme",
+                             headers={"X-Plex-Token": settings.plex_token})
+        except Exception as e:  # noqa: BLE001
+            _theme_fetch_warn(f"transport: {e!r}", rating_key)
+            return "failed"
+        if resp.status_code == 404:
+            return "no_theme"
+        if resp.status_code != 200:
+            _theme_fetch_warn(f"HTTP {resp.status_code}", rating_key)
+            return "failed"
+        body = resp.content or b""
+        if not body:
+            _theme_fetch_warn("empty body", rating_key)
+            return "failed"
+        if len(body) > _PLEX_THEME_MAX_BYTES:
+            _theme_fetch_warn(f"oversize ({len(body)} bytes)", rating_key)
+            return "failed"
+        ctype = (resp.headers.get("content-type") or "").split(";")[0].strip().lower()
+        return body, (ctype if ctype.startswith("audio/") else "audio/mpeg")
+
+    @app.get("/api/plex/theme/{rating_key}.mp3")
+    async def api_plex_theme(request: Request, rating_key: str):
+        """v0.51.322: stream the theme Plex serves for a row (P rows: Plex Pass cloud
+        themes, themerr-plex embeds) so the INFO card can play it. Same posture as the
+        art proxy: digits-only rk, token server-side, 204 on no-theme (cacheable) vs
+        204 no-store on failure, .mp3 spelling for IDS static classification. Honours a
+        single byte Range so Safari's <audio> (which insists on 206) works."""
+        if not rating_key.isdigit():
+            raise HTTPException(status_code=400, detail="bad rating key")
+        got = await run_in_threadpool(_fetch_plex_theme_bytes, rating_key)
+        if got == "no_theme":
+            return Response(status_code=204, headers={"Cache-Control": "private, max-age=300"})
+        if not (isinstance(got, tuple) and len(got) == 2):
+            if got != "failed":
+                log.warning("plex theme proxy: unknown fetch result %r for rk=%s", got, rating_key)
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
+        body, ctype = got
+        total = len(body)
+        common = {"Cache-Control": "private, max-age=300", "Accept-Ranges": "bytes"}
+        rng = request.headers.get("range", "")
+        m = re.match(r"^bytes=(\d*)-(\d*)$", rng.strip()) if rng else None
+        if m and (m.group(1) or m.group(2)):
+            start = int(m.group(1)) if m.group(1) else max(0, total - int(m.group(2)))
+            end = int(m.group(2)) if (m.group(1) and m.group(2)) else total - 1
+            end = min(end, total - 1)
+            if start > end or start >= total:
+                return Response(status_code=416, headers={"Content-Range": f"bytes */{total}"})
+            chunk = body[start:end + 1]
+            return Response(content=chunk, status_code=206, media_type=ctype,
+                            headers={**common, "Content-Range": f"bytes {start}-{end}/{total}"})
+        return Response(content=body, media_type=ctype, headers=common)
 
     def _recently_placed_sync(db: Path) -> list:
         # Distinct titles whose theme motif most-recently PLACED, newest first.

@@ -73,8 +73,13 @@ def test_audio_uses_preload_auto():
     src = APP_JS.read_text()
     # The audioBlock construction must use preload="auto" — the
     # old preload="metadata" must be gone.
-    audio_idx = src.index("class=\"info-audio\"")
-    audio_window = src[max(0, audio_idx - 500):audio_idx]
+    # v0.51.322: anchor on the card's OWN player (the audioBlock) — the bare
+    # card's Plex-theme player (preload="none" by design: nothing fetched until
+    # play) now precedes it in the file, and the old first-match backward
+    # window landed on that instead.
+    block_idx = src.index("const audioBlock = lf")
+    audio_idx = src.index("class=\"info-audio\"", block_idx)
+    audio_window = src[src.rindex("<audio", block_idx, audio_idx):audio_idx]
     assert 'preload="auto"' in audio_window, (
         "v1.15.125: <audio> element must use preload=\"auto\" so "
         "Chrome can compute duration on VBR MP3s that lack a "

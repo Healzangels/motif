@@ -17393,6 +17393,12 @@
         <dt>folder</dt><dd class="muted small">${it.folder_path ? htmlEscape(it.folder_path) : '—'}</dd>
         <dt>rating key</dt><dd class="muted small">${htmlEscape(it.rating_key || '—')}</dd>
       </dl>
+      ${it.plex_has_theme
+        ? `<div class="dlg-section"><dl class="dlg-grid"><dt>plex theme</dt><dd class="info-play-row">`
+          + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(it.rating_key || '')}.mp3" class="info-audio" data-plex-theme="1">`
+          + `your browser doesn't support inline audio playback</audio>`
+          + `<span class="muted small info-probe-meta">what Plex serves for this item</span></dd></dl></div>`
+        : ''}
       <div class="dlg-section">
         <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3${anime ? '' : ', or ANIME THEMES on anime rows'}).</p>
         ${anime
@@ -17404,6 +17410,18 @@
   // v0.50.64: open the bare card. Looks the row up by rating_key in the
   // visible-page cache (libraryState.items is the deduped array set at
   // loadLibrary time) and renders synchronously — no fetch, no seq guard.
+  // v0.51.322: the Plex-theme player errors out on a 204 (no theme / Plex
+  // unreachable) — say so in the row's meta instead of a dead control.
+  function _bindPlexThemePlayer(body) {
+    const a = body.querySelector('audio[data-plex-theme]');
+    if (!a) return;
+    a.addEventListener('error', () => {
+      const meta = a.parentElement && a.parentElement.querySelector('.info-probe-meta');
+      if (meta) meta.textContent = 'Plex reports a theme but it did not play — removed, or Plex unreachable';
+      a.remove();
+    });
+  }
+
   // v0.51.320: the card-side // ANIME THEMES button — the full card's SOURCE
   // row and the bare card's "no theme yet" section share it.
   function _bindAnimeThemesCardButton(body) {
@@ -17439,6 +17457,7 @@
       body.querySelector('.info-poster')
         ?.addEventListener('error', (ev) => ev.target.remove());
       _bindAnimeThemesCardButton(body);  // v0.51.320
+      _bindPlexThemePlayer(body);  // v0.51.322
     }
     showModalNoFocusRing(dlg);
   }
@@ -18500,11 +18519,27 @@
     // downloaded path / backup / placement / playable audio — the same leak the LOUDNESS
     // picker exists to prevent. Blank the whole section; the picker is the CTA, and a
     // pick re-opens the card scoped so this section fills in for the chosen cut.
+    // v0.51.322: what Plex is actually PLAYING for a P row — proxied from Plex's
+    // own store (same-origin; the token stays server-side, like the art proxy).
+    // preload="none": no fetch until play. Shown when Plex claims a theme and
+    // motif has no file of its own, or the row's SRC is P (Plex serving its own
+    // theme beside motif's standing-by file). Blanks with the on-disk rows under
+    // an ambiguous cut (the v0.51.223 contract: the LOUDNESS picker is the CTA).
+    const _plexRk = ratingKey || data.plex_rating_key || '';
+    const _plexRowItem = (libraryState.items || []).find((it) => String(it.rating_key) === String(_plexRk));
+    const _plexSrc = _plexRowItem ? computeSrcLetter(_plexRowItem) : '';
+    const plexThemeBlock = (data.plex_has_theme === 1 && _plexRk && (!lf || _plexSrc === 'P'))
+      ? `<dt>plex theme</dt><dd class="info-play-row">`
+        + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" class="info-audio" data-plex-theme="1">`
+        + `your browser doesn't support inline audio playback</audio>`
+        + `<span class="muted small info-probe-meta">what Plex serves for this item</span></dd>`
+      : '';
     const _onDiskRows = _ambiguousCut ? '' : `
         ${dlBlock}
         ${backupBlock}
         ${placedBlock}
-        ${audioBlock}`;
+        ${audioBlock}
+        ${plexThemeBlock}`;
     // v0.51.207: at-a-glance loudness chip beside the 4K badge. Reads the SAME
     // server-derived marker (lf.loudness_marker) the library row glyphs use, so the card
     // and the list can't disagree. Colours are FIXED across themes — they ENCODE loudness
@@ -18995,6 +19030,7 @@
         }
       }));
     _bindAnimeThemesCardButton(body);  // v0.51.317 (v0.51.320: shared with the bare card)
+    _bindPlexThemePlayer(body);  // v0.51.322
     // v0.51.282: open the trim/fade editor with this row's key + current sha.
     body.querySelector('button[data-act="edit-audio"]')?.addEventListener('click', (ev) => {
       const b = ev.currentTarget;

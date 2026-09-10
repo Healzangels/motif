@@ -6022,7 +6022,22 @@
 #   truncates): read into a variable first, then open for write.
 #   The restored file's one fixed window (the banner slice) is anchor-based
 #   now — the .261 ratchet had banked its disappearance.
-__version__ = "0.51.321"
+# 0.51.322: preview the theme PLEX serves on a P row (the operator: "for P rows
+#   could we add the ability to preview what the Plex provided theme is"). A
+#   same-origin proxy GET /api/plex/theme/{rk}.mp3 streams the singular
+#   /library/metadata/{rk}/theme association with the token in a header (the
+#   art proxy's posture: digits-only rk, 204 cacheable on no-theme, 204
+#   no-store on failure with a warn-once breadcrumb, .mp3 for IDS static
+#   classification, 30 MB cap) and honours a single byte Range (206) because
+#   Safari's <audio> insists on it. The INFO card gains a "plex theme" play row
+#   (preload="none": nothing fetched until play) when Plex claims a theme and
+#   motif has no file of its own, or the row's SRC is P; the bare "no theme"
+#   card gets the same row; an <audio> error (204) replaces the control with
+#   "Plex reports a theme but it did not play". Blanks with the on-disk rows
+#   under an ambiguous cut (the v0.51.223 contract stands). Pins: v1.15.125's
+#   preload pin now anchors on the card's own player (its first-match backward
+#   window landed on the new bare-card element); .261 backward budget re-banked.
+__version__ = "0.51.322"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

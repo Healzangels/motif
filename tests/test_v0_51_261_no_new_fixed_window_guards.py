@@ -86,7 +86,7 @@ _BUDGET = 1481  # v0.51.318: v1.18.21 manual-url window converted (+1 banked by 
 # shapes it was blind to (`max(0, a - N)` and Call bases — 135 windows, the
 # measured 214 − 79), so the census sees the whole population. Still equality,
 # still only DOWN.
-_BACKWARD_BUDGET = 214
+_BACKWARD_BUDGET = 213  # v0.51.322: v1.15.125 preload window converted to an anchor slice
 
 
 def _backward_base(node):
