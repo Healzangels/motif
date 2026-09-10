@@ -6000,7 +6000,19 @@
 #   // NAME MATCH, and a muted explainer line under the header says what an
 #   opening is and why the first one is the usual theme. Copy-only; the wire
 #   shape, the resolver and the harness are untouched.
-__version__ = "0.51.319"
+# 0.51.320: AnimeThemes picker — visual polish pass (the operator's three
+#   screenshots after deploying .319): (1) the RESOLVING state showed the
+#   explainer left over from the previous open, jammed against the RESOLVING
+#   line — the hint hides on open and the resolving line has its own rhythm;
+#   (2) the rows are two stacked lines (song, then pills + actions) with token
+#   gaps, dt aligned to the song line, wider row gap; the warn/hint lines get
+#   bottom margins; (3) the card's // ANIME THEMES button moves out of the
+#   hero's section-chip row (it was the only button there and sat off the
+#   chips' baseline) into the SOURCE group as an action row in the probe row's
+#   shape; the bare "no theme yet" card gets the same button on anime rows; one
+#   shared binder (_bindAnimeThemesCardButton) serves both cards. CSS uses
+#   gap tokens only.
+__version__ = "0.51.320"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

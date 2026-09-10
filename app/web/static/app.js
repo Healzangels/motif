@@ -17347,7 +17347,9 @@
   // every field shown here — title/year/section/edition/ids/folder/rk).
   // Reuses the full card's .info-hero / .dlg-grid / .dlg-section classes
   // so a themed and an untemed row's cards read as the same surface.
-  function renderBareInfoCard(it) {
+  // v0.51.320: `anime` is a parameter, not a libraryState read — the v0.50.64
+  // tests evaluate this renderer alone in quickjs (a pure function of its inputs).
+  function renderBareInfoCard(it, { anime = false } = {}) {
     const title = htmlEscape(it.plex_title || '—');
     const yr = it.year ? ` (${htmlEscape(it.year)})` : '';
     // v0.50.65: no `|| ''` — the `=== 'show'`/`=== 'collection'` checks and
@@ -17392,13 +17394,30 @@
         <dt>rating key</dt><dd class="muted small">${htmlEscape(it.rating_key || '—')}</dd>
       </dl>
       <div class="dlg-section">
-        <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3, or ANIME THEMES on anime rows).</p>
+        <p class="muted small">No theme yet — add one from the row's <strong>SOURCE</strong> menu (SET URL / UPLOAD MP3${anime ? '' : ', or ANIME THEMES on anime rows'}).</p>
+        ${anime
+          ? `<p><button class="btn btn-tiny btn-info" data-act="anime-themes" data-rk="${htmlEscape(it.rating_key || '')}" data-title="${htmlEscape(it.plex_title || it.title || '')}" data-year="${htmlEscape(String(it.year || ''))}" title="Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row's theme.">// ANIME THEMES</button></p>`
+          : ''}
       </div>`;
   }
 
   // v0.50.64: open the bare card. Looks the row up by rating_key in the
   // visible-page cache (libraryState.items is the deduped array set at
   // loadLibrary time) and renders synchronously — no fetch, no seq guard.
+  // v0.51.320: the card-side // ANIME THEMES button — the full card's SOURCE
+  // row and the bare card's "no theme yet" section share it.
+  function _bindAnimeThemesCardButton(body) {
+    body.querySelector('button[data-act="anime-themes"]')?.addEventListener('click', (ev) => {
+      const b = ev.currentTarget;
+      const rowItem = (libraryState.items || []).find((it) => it.rating_key === b.dataset.rk);
+      closeInfoDialog();
+      openAnimeThemesDialog({
+        ratingKey: b.dataset.rk, title: b.dataset.title || '', year: b.dataset.year || '',
+        srcLetter: rowItem ? computeSrcLetter(rowItem) : (b.dataset.srcLetter || ''),
+      });
+    });
+  }
+
   function openBareInfoDialog(rk) {
     const dlg = document.getElementById('info-dlg');
     if (!dlg) return;
@@ -17414,11 +17433,12 @@
     if (!it) {
       body.innerHTML = `<p class="accent-red">Row not found — refresh the library and try again.</p>`;
     } else {
-      body.innerHTML = renderBareInfoCard(it);
+      body.innerHTML = renderBareInfoCard(it, { anime: libraryState.tab === 'anime' });  // v0.51.320
       // v0.50.66: mirror the full card's poster-error collapse — remove the
       // <img> on 204 (no art; was 404) / non-art so the hero falls back to just the meta.
       body.querySelector('.info-poster')
         ?.addEventListener('error', (ev) => ev.target.remove());
+      _bindAnimeThemesCardButton(body);  // v0.51.320
     }
     showModalNoFocusRing(dlg);
   }
@@ -18166,17 +18186,22 @@
         + (sc.edition
             ? `<span class="info-scope-chip info-scope-chip-edition">edition: ${htmlEscape(sc.edition)}</span>`
             : '')
-        // v0.51.317: the AnimeThemes picker from the card — anime sections only
-        // (section_context.is_anime has been on the wire since v1.21.68).
-        + ((sc.is_anime && ratingKey)
-            ? `<button class="btn btn-tiny btn-info" data-act="anime-themes"`
-              + ` data-rk="${htmlEscape(ratingKey)}"`
-              + ` data-title="${htmlEscape((data.theme && data.theme.title) || data.plex_title || '')}"`
-              + ` data-year="${htmlEscape(String((data.theme && data.theme.year) || ''))}"`
-              + ` title="Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row's theme.">// ANIME THEMES</button>`
-            : '')
         + `</div>`;
     }
+    // v0.51.320: the picker's card entry point is a SOURCE-group action row (the
+    // probe row's shape) — the .317 hero-chip button was the only button in the
+    // hero and sat off the chips' baseline. Anime sections only
+    // (section_context.is_anime has been on the wire since v1.21.68).
+    const animeThemesRowHtml = (sc && sc.is_anime && ratingKey)
+      ? `<dt>anime themes</dt><dd>
+           <button class="btn btn-tiny btn-info" data-act="anime-themes"
+                   data-rk="${htmlEscape(ratingKey)}"
+                   data-title="${htmlEscape((data.theme && data.theme.title) || data.plex_title || '')}"
+                   data-year="${htmlEscape(String((data.theme && data.theme.year) || ''))}"
+                   title="Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row's theme.">// ANIME THEMES</button>
+           <span class="muted small info-probe-meta">openings and endings from AnimeThemes.moe</span>
+         </dd>`
+      : '';
     // v1.14.20 (M2): harmonize the themerrdb / applied url /
     // previous url label format. All three now use the muted
     // parens form for the source tag — pre-fix `themerrdb url`
@@ -18460,7 +18485,8 @@
         <dt>${appliedUrlLabel}</dt><dd>${currentUrlLink}</dd>
         <dt>previous url</dt><dd>${previousUrlLink}</dd>
         <dt>video id</dt><dd>${htmlEscape(ytId || '—')}</dd>
-        ${probeBtnHtml}`;
+        ${probeBtnHtml}
+        ${animeThemesRowHtml}`;
     const _timelineRows = `
         ${t.upstream_source === 'plex_orphan' ? '' : `
         <dt>themerrdb added</dt><dd class="muted small">${htmlEscape(fmt.timeAuto(t.youtube_added_at))}</dd>
@@ -18968,16 +18994,7 @@
           b.disabled = false;
         }
       }));
-    // v0.51.317: AnimeThemes picker from the card (anime sections only).
-    body.querySelector('button[data-act="anime-themes"]')?.addEventListener('click', (ev) => {
-      const b = ev.currentTarget;
-      const rowItem = (libraryState.items || []).find((it) => it.rating_key === b.dataset.rk);
-      closeInfoDialog();
-      openAnimeThemesDialog({
-        ratingKey: b.dataset.rk, title: b.dataset.title || '', year: b.dataset.year || '',
-        srcLetter: rowItem ? computeSrcLetter(rowItem) : (b.dataset.srcLetter || ''),
-      });
-    });
+    _bindAnimeThemesCardButton(body);  // v0.51.317 (v0.51.320: shared with the bare card)
     // v0.51.282: open the trim/fade editor with this row's key + current sha.
     body.querySelector('button[data-act="edit-audio"]')?.addEventListener('click', (ev) => {
       const b = ev.currentTarget;
@@ -20803,11 +20820,12 @@
       theme.audio.length > 1 ? `<span class="pill" title="${_AT_WORDS.tips.versions}">${htmlEscape(String(theme.audio.length))} VERSIONS</span>` : '',
       a.nsfw ? `<span class="pill pill-warn" title="${_AT_WORDS.tips.nsfw}">NSFW</span>` : '',
     ].filter(Boolean).join(' ');
+    // v0.51.320: two stacked lines — the song, then pills + actions — with token gaps
     return `<dt title="${htmlEscape(theme.slug)}">${htmlEscape(_atThemeLabel(theme))}</dt>`
-      + `<dd>${song}<br>${pills} `
+      + `<dd class="anime-themes-row"><div>${song}</div><div class="anime-themes-pills">${pills} `
       + `<button class="btn btn-tiny btn-info" type="button" data-act="at-preview" data-link="${htmlEscape(a.link)}">// PREVIEW</button> `
       + `<button class="btn btn-tiny btn-warn" type="button" data-act="at-use" data-link="${htmlEscape(a.link)}"`
-      + ` data-slug="${htmlEscape(theme.slug)}">// USE THIS</button></dd>`;
+      + ` data-slug="${htmlEscape(theme.slug)}">// USE THIS</button></div></dd>`;
   }
 
   function renderAnimeThemesDialog(data) {
@@ -20877,7 +20895,9 @@
     const ylabel = year ? ` (${htmlEscape(String(year))})` : '';
     meta.innerHTML = `<p class="muted">// ${htmlEscape((title || 'untitled').toUpperCase())}${ylabel}</p>`;
     warn.hidden = true; warn.textContent = '';
-    body.innerHTML = '<p class="muted small">// RESOLVING…</p>';
+    const hint = document.getElementById('anime-themes-hint');
+    if (hint) hint.hidden = true;  // v0.51.320: no stale explainer from the previous open
+    body.innerHTML = '<p class="muted small anime-themes-resolving">// RESOLVING…</p>';
     status.textContent = ''; status.className = 'form-status';
     if (previewRow) previewRow.hidden = true;
     if (player) { player.pause(); player.removeAttribute('src'); }

@@ -59,7 +59,8 @@ def test_hover_prefetch_skips_bare_rows():
 # ── Static guards: the two new functions exist ──
 
 def test_bare_card_functions_defined():
-    assert "function renderBareInfoCard(it) {" in APP_JS
+    # v0.51.320: the anime gate became a parameter (kept a pure function of its inputs)
+    assert "function renderBareInfoCard(it, { anime = false } = {}) {" in APP_JS
     assert "function openBareInfoDialog(rk) {" in APP_JS
     # bare lookup is by rating_key against the visible-page cache
     assert ("(libraryState.items || []).find((row) => "

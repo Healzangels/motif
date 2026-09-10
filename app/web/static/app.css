@@ -3876,6 +3876,15 @@ body.help-mode .settings-help-about { display: block; }
 /* v0.51.311 (review): :first-child, not :only-child — 'leading' is the property
    that matters; a second element on the 404 card would have re-drawn the rule. */
 #info-dlg-body > .dlg-section:first-child { margin-top: 0; padding-top: 0; border-top: 0; }
+/* v0.51.320: the ANIME THEMES picker's rhythm — header, explainer, list, rows. */
+#anime-themes-hint { margin: 0 0 var(--gap-4); line-height: 1.5; }
+#anime-themes-warn { margin: 0 0 var(--gap-4); }
+#anime-themes-body .anime-themes-resolving { margin: var(--gap-2) 0 var(--gap-4); }
+#anime-themes-body .dlg-grid { row-gap: var(--gap-3); align-items: start; }
+#anime-themes-body .dlg-grid dt { padding-top: 1px; }
+.anime-themes-row { display: flex; flex-direction: column; gap: var(--gap-1); }
+.anime-themes-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-1) var(--gap-2); }
+#anime-themes-preview-row { margin-top: var(--gap-4); }
 /* v0.51.289 (design audit): 0.2em → 0.15em so the h4 group titles and the
    //-chip section titles (.diff/.recovery/.history-section-title) share one
    tracking — the card ran two header voices. */
