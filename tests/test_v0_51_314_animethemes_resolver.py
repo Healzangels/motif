@@ -205,7 +205,9 @@ def test_step2_query_shape_uses_a_scoped_filter_and_the_deep_include(client, api
     assert q["filter[anime][id]"] == "521,522", (
         "an UNSCOPED filter[id] is applied to the include too and returns anime with EMPTY theme lists")
     assert "filter[id]" not in q
-    assert q["include"] == "animethemes.animethemeentries.videos.audio"
+    inc = q["include"].split(",")
+    assert "animethemes.animethemeentries.videos.audio" in inc
+    assert "animethemes.song.artists" in inc  # v0.51.318: the song + artists ride the same call
     assert q["fields[audio]"] == "link,size"
 
 

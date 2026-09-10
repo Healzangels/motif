@@ -14901,7 +14901,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if isinstance(_origin_raw, dict):
             _origin = {k: (str(v)[:80] if v is not None else None)
                        for k, v in _origin_raw.items()
-                       if k in ("source", "slug", "anidb", "confidence", "name")}
+                       if k in ("source", "slug", "anidb", "confidence", "name", "song")}  # v0.51.318: + song
         # v1.14.9: route canonicalization by source. Pre-fix this
         # path called extract_video_id() and reconstructed the URL
         # as `https://www.youtube.com/watch?v={vid}` unconditionally.

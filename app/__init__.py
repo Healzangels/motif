@@ -5972,7 +5972,24 @@
 #   Pins: v1.18.19's manual-url window converted to an anchor slice (.261
 #   forward budget 1484 -> 1483); the origin test reads the audit row and pins
 #   the event at source (the flusher is process-global).
-__version__ = "0.51.317"
+# 0.51.318: AnimeThemes tag 3b — the song title + artist in the picker, one row
+#   per theme. The operator's read of the tag-3 dialog: Bleach's 15 openings and
+#   a 13-row ending "looked like episode or season themes". They are per-ARC
+#   openings and per-episode-range VERSIONS of one song, and the bare slug
+#   (OP1) was all the row said. Measured first (docs/specs/animethemes_eval/
+#   2026-09-09-tdb-agreement.md, 50 ThemerrDB-linked rows): every AnimeThemes
+#   OP1 is the show's first opening; where a human chose differently it was a
+#   preference among the show's own themes (a later season's OP, the ED, the
+#   instrumental main theme) — never a non-theme. So: the step-2 include
+#   carries animethemes.song.artists; Theme gains song/artists; the wire shape
+#   sends each theme's audio best-first (version 1, BD over WEB) and the
+#   default carries its song; the row reads "OP1 — *~Asterisk · Orange Range"
+#   with size / source / "N versions" pills and ONE row per theme; the USE
+#   button names the song; the manual-url origin keeps a `song` key; the
+#   harness records the default's song.
+#   Pins: v1.18.21's manual-url window converted to an anchor slice; the
+#   .261 forward budget re-banked per the ratchet.
+__version__ = "0.51.318"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

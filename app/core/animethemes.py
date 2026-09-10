@@ -34,12 +34,16 @@ _HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=20.0, write=10.0, pool=5.0)
 
 # v0.51.314: /resource refuses deep includes → two steps; list filters must be SCOPED (filter[anime][id]) or the include comes back empty.
 _STEP2_FIELDS: tuple[tuple[str, str], ...] = (
-    ("include", "animethemes.animethemeentries.videos.audio"),
+    # v0.51.318: + the song and its artists — "OP1 — Tank! · The Seatbelts" is what
+    # the operator recognises; a bare slug reads like an episode theme.
+    ("include", "animethemes.animethemeentries.videos.audio,animethemes.song.artists"),
     ("fields[anime]", "id,name,slug,year,season"),
     ("fields[animetheme]", "type,sequence,slug"),
     ("fields[animethemeentry]", "version,nsfw,spoiler"),
     ("fields[video]", "basename,nc,source,resolution"),
     ("fields[audio]", "link,size"),
+    ("fields[song]", "title"),
+    ("fields[artist]", "name"),
     ("page[size]", "100"),
 )
 
@@ -201,6 +205,8 @@ class Theme:
     type: str
     sequence: int | None
     audio: tuple[Audio, ...]
+    song: str | None = None                  # v0.51.318
+    artists: tuple[str, ...] = ()            # v0.51.318
 
 
 @dataclass(frozen=True)
@@ -222,8 +228,11 @@ def _parse_themes(anime: Mapping[str, Any]) -> tuple[Theme, ...]:
                 if au.get("link"):
                     auds.append(Audio(link=au["link"], size=au.get("size"), version=e.get("version"),
                                       source=v.get("source"), nc=bool(v.get("nc")), nsfw=bool(e.get("nsfw"))))
+        song = t.get("song") or {}
         out.append(Theme(slug=str(t.get("slug") or ""), type=str(t.get("type") or ""),
-                         sequence=t.get("sequence"), audio=tuple(auds)))
+                         sequence=t.get("sequence"), audio=tuple(auds),
+                         song=(str(song.get("title")) if song.get("title") else None),
+                         artists=tuple(str(a.get("name")) for a in (song.get("artists") or []) if a.get("name"))))
     return tuple(out)
 
 
@@ -477,15 +486,19 @@ def resolution_to_json(res: "Resolution", *, title: str | None = None, year: Any
             "name": sm.info.name, "year": sm.info.year, "slug": sm.info.slug,
             "themes": [{
                 "slug": t.slug, "type": t.type, "sequence": t.sequence,
+                "song": t.song, "artists": list(t.artists),  # v0.51.318
+                # v0.51.318: best audio FIRST (version 1, BD over WEB) — the picker shows one row per theme
                 "audio": [{"link": a.link, "size": a.size, "version": a.version, "source": a.source,
-                           "nc": a.nc, "nsfw": a.nsfw} for a in t.audio],
+                           "nc": a.nc, "nsfw": a.nsfw}
+                          for a in sorted(t.audio, key=lambda a: (a.version or 1, _SOURCE_RANK.get(a.source or "", 9), -(a.size or 0)))],
             } for t in sm.themes if t.audio],
         })
     default = None
     if res.default:
         sm, theme, audio = res.default
         default = {"season_index": res.seasons.index(sm), "theme": theme.slug, "link": audio.link,
-                   "size": audio.size, "name": sm.info.name, "year": sm.info.year}
+                   "size": audio.size, "name": sm.info.name, "year": sm.info.year,
+                   "song": theme.song, "artists": list(theme.artists)}  # v0.51.318
     return {"title": title, "year": year, "confidence": res.confidence, "via": res.via,
             "reason": res.reason, "seasons": seasons, "default": default}
 

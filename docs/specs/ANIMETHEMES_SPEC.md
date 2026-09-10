@@ -1,8 +1,13 @@
 # `// ANIME THEMES` — design spec (feature brief #2, candidate B)
 
 Status: v1 — 2026-09-09. Tag 1 (resolver + client + harness) shipped as v0.51.314;
-tag 2 (the `animethemes` source kind end to end) as v0.51.315. §6 decisions 1
-and 2 taken 2026-09-09 (dialog; backup default) — tag 3 builds §3.5.
+tag 2 (the `animethemes` source kind end to end) as v0.51.315; tag 3 (the picker
+dialog, §3.5, live-verified) as v0.51.317; tag 3b (song title + artist per
+theme, one row per theme) as v0.51.318. §6 decisions 1 and 2 taken 2026-09-09
+(dialog; backup default). The "are these real themes?" question is measured in
+`animethemes_eval/2026-09-09-tdb-agreement.md` (OP1 = the show's first opening;
+human picks differ only by preference among the show's own themes).
+Next: tag 4 (§3.6 review list + sweep).
 Candidate A (`// FIND THEME`) is shelved (see FIND_THEME_SPEC.md).
 
 ## 1. Problem

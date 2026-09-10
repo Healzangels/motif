@@ -38,7 +38,7 @@ def test_resolution_to_json_keeps_order_and_points_default_into_seasons():
     assert j["confidence"] == "clean" and j["via"] == "tvdb" and j["title"] == "Cowboy Bebop"
     assert [t["slug"] for t in j["seasons"][0]["themes"]] == ["OP1", "ED1"], "themes without audio are not rendered"
     assert j["default"] == {"season_index": 0, "theme": "OP1", "link": AT_LINK, "size": 3725835,
-                            "name": "Cowboy Bebop", "year": 1998}
+                            "name": "Cowboy Bebop", "year": 1998, "song": None, "artists": []}  # v0.51.318: + song keys
     assert j["seasons"][0]["themes"][0]["audio"][0]["source"] == "BD"
 
 

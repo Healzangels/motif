@@ -142,7 +142,9 @@ def test_manual_url_logs_normalize_title_fallback():
     stick at P with no breadcrumb."""
     src = API_PY.read_text()
     fn_idx = src.index("async def api_manual_url(")
-    body = src[fn_idx:fn_idx + 8000]
+    # v0.51.318: the whole handler (to the next route decorator), not a fixed
+    # 8000-char window — the picker's provenance keys pushed the fallback past it.
+    body = src[fn_idx:src.index("    @app.", fn_idx + 10)]
     assert "manual_url: normalize_title(" in body
     # The log line must explicitly mention the fallback path so
     # operators searching for "fall back" / "JOIN miss" find it.

@@ -20763,21 +20763,26 @@
   }
 
   function _atThemeRows(seasonIdx, theme) {
-    // one row per audio version (v2 gets its own pill); order = server order
-    return theme.audio.map((a, ai) => {
-      const pills = [
-        `<span class="pill">${htmlEscape(_atFmtSize(a.size))}</span>`,
-        a.source ? `<span class="pill">${htmlEscape(a.source)}</span>` : '',
-        (a.version && a.version > 1) ? `<span class="pill">v${htmlEscape(String(a.version))}</span>` : '',
-        a.nsfw ? `<span class="pill pill-warn">NSFW</span>` : '',
-      ].filter(Boolean).join(' ');
-      const label = theme.audio.length > 1 ? `${theme.slug} · ${ai + 1}/${theme.audio.length}` : theme.slug;
-      return `<dt>${htmlEscape(label)}</dt>`
-        + `<dd>${pills} `
-        + `<button class="btn btn-tiny btn-info" type="button" data-act="at-preview" data-link="${htmlEscape(a.link)}">// PREVIEW</button> `
-        + `<button class="btn btn-tiny btn-warn" type="button" data-act="at-use" data-link="${htmlEscape(a.link)}"`
-        + ` data-slug="${htmlEscape(theme.slug)}">// USE THIS</button></dd>`;
-    }).join('');
+    // v0.51.318: ONE row per theme — the server sends the best audio first
+    // (version 1, BD over WEB); the other versions are the same song with a
+    // different animation per episode range, so they fold into a count pill.
+    // The song + artist is what the operator recognises ("Tank! · The Seatbelts").
+    const a = theme.audio[0];
+    if (!a) return '';
+    const song = theme.song
+      ? `<strong>${htmlEscape(theme.song)}</strong>${theme.artists && theme.artists.length ? ` <span class="muted">· ${htmlEscape(theme.artists.join(', '))}</span>` : ''}`
+      : `<span class="muted">untitled</span>`;
+    const pills = [
+      `<span class="pill">${htmlEscape(_atFmtSize(a.size))}</span>`,
+      a.source ? `<span class="pill">${htmlEscape(a.source)}</span>` : '',
+      theme.audio.length > 1 ? `<span class="pill" title="same song, other episode ranges / sources">${htmlEscape(String(theme.audio.length))} versions</span>` : '',
+      a.nsfw ? `<span class="pill pill-warn">NSFW</span>` : '',
+    ].filter(Boolean).join(' ');
+    return `<dt>${htmlEscape(theme.slug)}</dt>`
+      + `<dd>${song}<br>${pills} `
+      + `<button class="btn btn-tiny btn-info" type="button" data-act="at-preview" data-link="${htmlEscape(a.link)}">// PREVIEW</button> `
+      + `<button class="btn btn-tiny btn-warn" type="button" data-act="at-use" data-link="${htmlEscape(a.link)}"`
+      + ` data-slug="${htmlEscape(theme.slug)}">// USE THIS</button></dd>`;
   }
 
   function renderAnimeThemesDialog(data) {
@@ -20818,7 +20823,8 @@
     if (useDefault) {
       useDefault.style.display = _animeThemesCtx.defaultLink ? '' : 'none';
       if (_animeThemesCtx.defaultLink) {
-        useDefault.textContent = `// USE ${htmlEscape(data.default.theme)} (SEASON ${htmlEscape(String((data.seasons[data.default.season_index] || {}).season ?? 1))})`;
+        const dsong = data.default.song ? ` — ${htmlEscape(data.default.song)}` : '';
+        useDefault.textContent = `// USE ${htmlEscape(data.default.theme)}${dsong} (SEASON ${htmlEscape(String((data.seasons[data.default.season_index] || {}).season ?? 1))})`;
       }
     }
   }
@@ -20928,8 +20934,10 @@
       if (btn) { btn.disabled = true; btn.textContent = '// SAVING…'; }
       status.textContent = ''; status.className = 'form-status';
       const d = _animeThemesCtx.data || {};
+      const theme = (d.seasons || []).flatMap((s) => s.themes || []).find((t) => t.audio && t.audio.some((x) => x.link === link));
       const body = { youtube_url: link,
                      origin: { source: 'animethemes', slug: slug || '', confidence: d.confidence || '',
+                               song: theme && theme.song ? `${theme.song}${theme.artists && theme.artists.length ? ' · ' + theme.artists.join(', ') : ''}` : '',
                                anidb: (d.default && d.seasons && d.seasons[d.default.season_index]) ? d.seasons[d.default.season_index].anidb : null,
                                name: (d.default && d.default.name) || '' } };
       if (dlOnly && dlOnly.checked) body.download_only = true;

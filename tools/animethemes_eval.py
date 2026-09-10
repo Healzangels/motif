@@ -90,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
                 "seasons": [{"season": s.season, "anidb": s.anidb, "name": s.info.name, "year": s.info.year,
                              "themes": [t.slug for t in s.themes if t.audio]} for s in res.seasons],
                 "default": ({"name": d[0].info.name, "year": d[0].info.year, "theme": d[1].slug,
+                             "song": d[1].song, "artists": list(d[1].artists),  # v0.51.318
                              "link": d[2].link, "size": d[2].size} if d else None),
             })
             if i % 100 == 0:
