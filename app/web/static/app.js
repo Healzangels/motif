@@ -14054,7 +14054,7 @@
           // silently stripped Pp from the URL — same mirror-
           // principle leak as v1.14.11's _pset miss, one layer
           // up the deep-link chain.
-          values: new Set(['T','U','A','M','P','Pp','-']) },
+          values: new Set(['T','U','AT','A','M','P','Pp','-']) },  // v0.51.330 (review): a ?src_pills=AT deep link was dropped on restore
         { param: 'dl_pills',   state: 'dlPills',   attr: 'dlPill',
           activeClass: 'state-pill-btn-active',
           values: new Set(['on','off','broken']) },
@@ -14492,10 +14492,17 @@
     if (document.getElementById('library-body')) {
       // v1.14.10: 'Pp' is the composite-+P-only token (rows where the
       // primary SRC letter is set AND Plex also serves its own theme
-      // — the yellow-dot indicator). Included in ALL so the inverse-
+      // — the yellow-dot indicator). It was in ALL so the inverse-
       // filter pattern ("light them all, then deselect what I don't
-      // want") covers the new chip too.
-      const allLetters = ['T', 'U', 'A', 'M', 'P', 'Pp', '-'];
+      // want") covered the new chip too.
+      // v0.51.330 (review): Pp is NOT in ALL any more. v1.14.99 made
+      // Pp a NARROWING modifier when primary letters are selected
+      // (T+Pp = "T rows that are also +P"), so ALL-with-Pp asked the
+      // server for "every letter, composite rows only" OR pure P and
+      // dropped every plain row — on a 6-row tab ALL showed 3. The
+      // primary letters already include their composite rows, so ALL
+      // is every letter; +P stays the user's deliberate narrowing.
+      const allLetters = ['T', 'U', 'AT', 'A', 'M', 'P', '-'];
       // v1.12.6: include data-tdb-only in the bind so the faded T
       // pill in the SRC row gets a click handler. It's a mode switch
       // (status='not_in_plex') rather than an additive filter, so
@@ -16121,7 +16128,7 @@
               // override-first so for U-letter rows it IS the user
               // URL. TDB rows export an empty Youtube_URL cell so
               // re-import is a no-op for them.
-              const userYt = (computeSrcLetter(it) === 'U')
+              const userYt = ['U', 'AT'].includes(computeSrcLetter(it))  // v0.51.330 (review): an AT pick exports its link too
                 ? (it.applied_youtube_url || '')
                 : '';
               rowsByKey.set(k, {

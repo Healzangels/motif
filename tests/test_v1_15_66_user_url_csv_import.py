@@ -130,7 +130,7 @@ def test_export_populates_youtube_url_only_for_u_rows():
     js = APP_JS.read_text()
     # The chain `computeSrcLetter(it) === 'U'` + `applied_youtube_url`
     # ternary is the source of truth for this rule.
-    assert "computeSrcLetter(it) === 'U'" in js, (
+    assert "['U', 'AT'].includes(computeSrcLetter(it))" in js, (  # v0.51.330: AT exports its link too
         "v1.15.66: export must gate Youtube_URL on the U src letter"
     )
     assert "it.applied_youtube_url" in js

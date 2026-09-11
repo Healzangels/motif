@@ -602,7 +602,7 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   resolves, **no name search**), `resolution_to_json` / `sweep_row_to_json`.
 - **Source kind `animethemes`** (v0.51.315): `sync.url_source` + its
   downloader mirror `_source_for`, `_FETCH_ALLOWED_HOSTS`, the generic-extractor
-  download branch. A pick is a plain manual-url (`U` row); the origin
+  download branch. A pick is a plain manual-url that reads `AT` (v0.51.329); the origin
   (slug / song / confidence / anidb) rides the event `detail` only — the
   `Manual URL set by <user>: <url>` message stays byte-identical (the recovery
   walker parses it).

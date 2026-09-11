@@ -568,6 +568,8 @@
              matches the dimmer row chip. #}
           <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb-only">T</span><span class="help-gloss-def">ThemerrDB-only — tracked upstream but not in your Plex library (shown when browsing TDB-only / filtering to not-in-Plex rows).</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-user">U</span><span class="help-gloss-def">User — a manual theme URL (YouTube / SoundCloud / Instagram / Facebook) or an uploaded MP3.</span></div>
+          {# v0.51.330 (review): the AT row belongs in the full reference too, not only the anime tab's legend. #}
+          <div class="help-gloss-row"><span class="link-badge link-badge-animethemes">AT</span><span class="help-gloss-def">AnimeThemes — an opening picked from AnimeThemes.moe (anime rows). A user URL by kind, so a pick kept as a backup shows UB in LINK.</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-adopt">A</span><span class="help-gloss-def">Adopted — motif claimed a theme.mp3 already in the Plex folder (no ThemerrDB link).</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-manual">M</span><span class="help-gloss-def">Manual sidecar — a loose theme.mp3 motif doesn't manage yet. Click ADOPT to take it over.</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-cloud">P</span><span class="help-gloss-def">Plex agent / cloud — Plex serves its own theme (Plex Pass cloud or the themerr-plex embed).</span></div>
@@ -575,7 +577,7 @@
              that ALSO has an independent Plex cloud/embed theme. Reuses the real
              link-badge-also-plex class (the ::after corner-dot) so the decode is
              identical to the row. #}
-          <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb link-badge-also-plex">T</span><span class="help-gloss-def">…with a corner dot — a managed theme (T / U / A / M) that Plex <em>also</em> serves its own theme for. The dot marks the composite state.</span></div>
+          <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb link-badge-also-plex">T</span><span class="help-gloss-def">…with a corner dot — a managed theme (T / U / AT / A / M) that Plex <em>also</em> serves its own theme for. The dot marks the composite state.</span></div>
           <div class="help-gloss-row"><span class="link-badge gc-none">–</span><span class="help-gloss-def">No theme — nothing placed, or ThemerrDB dropped the entry.</span></div>
         </div>
       </section>

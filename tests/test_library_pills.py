@@ -207,6 +207,24 @@ def test_src_all_pills(seeded_db):
     assert result["total"] == 6
 
 
+def test_src_all_button_set_returns_every_row(seeded_db):
+    """v0.51.330: the SRC row's ALL button fills the `allLetters` list
+    from app.js. Round-trip that exact set through the query — it must
+    return every row. v1.14.10 put the `Pp` modifier in the list and
+    v1.14.99 then made Pp NARROW the primary letters, so ALL-with-Pp
+    asked for composite-+P rows only OR pure P and dropped every plain
+    row (this fixture: 1 of 6). Pins the client list to the server's
+    semantics rather than to a literal."""
+    import re
+    js = (Path(__file__).resolve().parent.parent / "app" / "web" / "static" / "app.js").read_text()
+    m = re.search(r"const allLetters = \[([^\]]*)\];", js)
+    assert m, "allLetters literal not found in app.js"
+    letters = set(re.findall(r"'([^']+)'", m.group(1)))
+    everything = _run(seeded_db)["total"]
+    assert everything >= 6
+    assert _run(seeded_db, src_pills=letters)["total"] == everything, letters
+
+
 def _insert_synthetic(seeded_db, tmdb, label, has_theme, verified_ok):
     """Helper: add a synthetic plex_items+themes row for a focused test.
     Caller must call _delete_synthetic to clean up before fixture

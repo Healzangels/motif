@@ -6116,7 +6116,19 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
-__version__ = "0.51.329"
+# 0.51.330: AT review follow-ups (the operator: "making sure we've included in
+#   the legend and glossary as well as making sure its filtering works in all
+#   circumstances"). Found by reading every letter-keyed set: the SRC sort's
+#   CASE had no AT (it sorted with "no theme"); the filter row's ALL button and
+#   the URL/session restore token set didn't know AT (a ?src_pills=AT deep link
+#   was dropped on restore); the CSV export wrote no URL for AT rows (re-import
+#   would lose the pick); the site-wide // GLOSSARY dialog and the README's
+#   axis lines still listed five letters. All aligned. Live check of the ALL
+#   button then found an older fault: ALL selected the +P modifier too, and
+#   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
+#   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
+#   every primary letter and never the modifier.
+__version__ = "0.51.330"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

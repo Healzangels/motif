@@ -39,6 +39,7 @@ distinct surfaces:
 """
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -142,12 +143,19 @@ def test_pp_does_not_overlap_with_plain_p_pill():
 # ── JS ALL button picks up the new token ──────────────────────
 
 
-def test_all_letters_includes_pp_token():
-    """When the user clicks the SRC ALL button, the inverse-filter
-    pattern adds every chip — the new `Pp` chip must be in that set
-    or ALL would silently exclude composite-+P rows."""
+def test_all_letters_excludes_pp_modifier():
+    """v1.14.10 put `Pp` in the SRC ALL set so the inverse-filter
+    pattern covered the composite chip. v1.14.99 then made Pp a
+    NARROWING modifier whenever primary letters are selected, so
+    ALL-with-Pp asked the server for composite-only rows and dropped
+    every plain row. v0.51.330: ALL is every primary letter (their
+    composite rows come along) and never the Pp modifier."""
     js = (REPO / "app" / "web" / "static" / "app.js").read_text()
-    assert "const allLetters = ['T', 'U', 'A', 'M', 'P', 'Pp', '-'];" in js
+    m = re.search(r"const allLetters = \[([^\]]*)\];", js)
+    assert m, "allLetters literal not found"
+    letters = re.findall(r"'([^']+)'", m.group(1))
+    assert "Pp" not in letters, letters
+    assert "P" in letters and "-" in letters, letters
 
 
 # ── Behavioral: filter SQL agrees with the dot predicate ──────

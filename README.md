@@ -412,7 +412,7 @@ For anime rows ThemerrDB doesn't cover, motif can pull openings from [AnimeTheme
 * **Per row** — `SOURCE ▾ → // ANIME THEMES` on any row in an anime section (also on the INFO card). The picker lists every season and opening / ending with the song title and artist, a `// PREVIEW` (transcoded to MP3 so Safari can play it) and `// USE THIS`. Nothing is applied without a click; a row that already has a theme pre-ticks KEEP AS BACKUP so the pick lands as a revision, never a silent replace.
 * **In bulk** — `// ANIME THEMES ▸` on the anime tab (or Settings → Diagnostics) opens `/admin/anime-themes`. `// RUN SWEEP` resolves every anime row with no motif theme in a handful of API calls and sorts the results into **READY TO APPLY** (clean season-1 matches, first opening picked — tick and `// APPLY SELECTED`), **NEEDS A LOOK** (the match isn't clean — open the picker) and **NOT FOUND**. Rows Plex already serves land as backups. One `✅ Bulk ANIME THEMES done` notification summarises each apply run.
 
-How it resolves: the row's TVDB / TMDB id → an AniDB id via the [Fribb/anime-lists](https://github.com/Fribb/anime-lists) mapping (cached at `/config/animethemes/`, refreshed weekly on Sunday 03:20 UTC once you've used the feature) → the AnimeThemes API. A pick is a user URL (`U` in the SRC column) with its origin (slug, song, confidence) recorded in the row's history. Requests are paced well under the API's limit and cached for a day; the sweep never searches by name (the picker does, on a click).
+How it resolves: the row's TVDB / TMDB id → an AniDB id via the [Fribb/anime-lists](https://github.com/Fribb/anime-lists) mapping (cached at `/config/animethemes/`, refreshed weekly on Sunday 03:20 UTC once you've used the feature) → the AnimeThemes API. A pick reads `AT` in the SRC column (a user URL by kind, so one kept as a backup shows `UB` in LINK) with its origin (slug, song, confidence) recorded in the row's history. Requests are paced well under the API's limit and cached for a day; the sweep never searches by name (the picker does, on a click).
 
 **Attribution.** Audio and metadata come from [AnimeThemes.moe](https://animethemes.moe) — a community project; their terms allow personal, non-commercial use, which is what a home Plex library is. The id mapping is [Fribb/anime-lists](https://github.com/Fribb/anime-lists), whose README states no licence; motif uses it as data, with thanks, and identifies itself with a `motif/<version>` User-Agent to both.
 
@@ -445,7 +445,7 @@ When you adopt an orphan with a synthetic negative `tmdb_id`, motif keeps watchi
 
 ### Browse SRC column
 
-Adopted rows show up in `/movies` / `/tv` / `/anime` with a green `A` in the SRC column. Full SRC axis (`T` ThemerrDB / `A` adopted / `U` user URL / `M` manual sidecar / `P` Plex-served / `–` none) is documented in the [Web UI tour](#web-ui-tour) section above. Filter by clicking any SRC letter in the filter row.
+Adopted rows show up in `/movies` / `/tv` / `/anime` with a green `A` in the SRC column. Full SRC axis (`T` ThemerrDB / `A` adopted / `U` user URL / `AT` AnimeThemes.moe pick / `M` manual sidecar / `P` Plex-served / `–` none) is documented in the [Web UI tour](#web-ui-tour) section above. Filter by clicking any SRC letter in the filter row.
 
 ## Theme failures
 
@@ -472,7 +472,7 @@ If you've configured Apprise (see [Notifications](#notifications-v1170) below), 
 
 * `/` — dashboard with rolled-up stats, last sync results, recent activity, plus a SYNC HISTORY chart and STORAGE WASTE section (copy-mode placements + `// RE-LINK ALL` button — moved here from `/coverage` in v1.8.x)
 * `/movies` — searchable, filterable browse with per-item details, manual re-download, and overrides. Column axes:
-  - **SRC** — source of the theme: `T` (ThemerrDB-managed), `U` (user URL override), `A` (adopted sidecar — motif owns the inode), `M` (manual sidecar — someone else put theme.mp3 there), `P` (Plex serves its own), `–` (none / dropped). `+P` composites carry a yellow dot indicating Plex also serves an independent theme alongside motif's.
+  - **SRC** — source of the theme: `T` (ThemerrDB-managed), `U` (user URL override), `AT` (an AnimeThemes.moe pick — anime rows), `A` (adopted sidecar — motif owns the inode), `M` (manual sidecar — someone else put theme.mp3 there), `P` (Plex serves its own), `–` (none / dropped). `+P` composites carry a yellow dot indicating Plex also serves an independent theme alongside motif's.
   - **LINK** — placement type: `HL` (hardlink), `C` (copy fallback — different filesystem), `M` (mismatch — file on disk diverges from motif's canonical), `PS` (Plex-serving — let-plex-serve state), `–` (none).
   - **DL** / **PL** — download / placement state (green / amber / red dots).
   - **TDB** — ThemerrDB tracking state (green / blue ↑ / amber ⚠ / red ✗ pills).

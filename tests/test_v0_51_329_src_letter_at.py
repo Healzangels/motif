@@ -135,3 +135,37 @@ def test_notification_names_animethemes():
 def test_v0_51_329_version_pin():
     init_py = (REPO / "app" / "__init__.py").read_text()
     assert "0.51.329: the SRC letter `AT`" in init_py
+
+
+# ── v0.51.330 review follow-ups: every other letter-keyed site ─
+
+
+def test_src_sort_ranks_at_with_the_local_letters():
+    case = slice_between(API_PY, '    "src": (', "    ),")
+    order = [w for w in ("'T'", "'U'", "'AT'", "'A'", "'M'", "'P'") if f"WHEN {w} THEN" in case]
+    assert order == ["'T'", "'U'", "'AT'", "'A'", "'M'", "'P'"], "AT sorts after U, never with the ELSE ('no theme') bucket"
+
+
+def test_client_letter_lists_admit_at():
+    assert "values: new Set(['T','U','AT','A','M','P','Pp','-'])" in APP_JS, "the ?src_pills restore set"
+    assert "const allLetters = ['T', 'U', 'AT', 'A', 'M', 'P', '-'];" in APP_JS, "the SRC row's ALL button"
+
+
+def test_csv_export_carries_an_at_rows_link():
+    assert "const userYt = ['U', 'AT'].includes(computeSrcLetter(it))" in APP_JS
+
+
+def test_glossary_dialog_and_readme_list_at():
+    base = (REPO / "app" / "web" / "templates" / "base.html").read_text()
+    gloss = slice_between(base, '<span class="link-badge link-badge-animethemes">AT</span>', "</div>")
+    assert "AnimeThemes — an opening picked from AnimeThemes.moe" in gloss
+    assert base.index('link-badge-user">U</span>') < base.index('link-badge-animethemes">AT</span>') < base.index('link-badge-adopt">A</span>')
+    assert "(T / U / AT / A / M)" in base, "the composite-dot gloss names the AT row too"
+    readme = (REPO / "README.md").read_text()
+    assert "`AT` AnimeThemes.moe pick" in readme and "`AT` (an AnimeThemes.moe pick" in readme
+    assert "A pick reads `AT` in the SRC column" in readme
+
+
+def test_v0_51_330_version_pin():
+    init_py = (REPO / "app" / "__init__.py").read_text()
+    assert "0.51.330: AT review follow-ups" in init_py

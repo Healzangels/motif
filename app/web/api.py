@@ -1995,10 +1995,11 @@ _LIBRARY_SORTS_MAIN = {
         f"CASE ({_LIB_SRC_LETTER_SQL}) "
         "WHEN 'T' THEN 1 "
         "WHEN 'U' THEN 2 "
-        "WHEN 'A' THEN 3 "
-        "WHEN 'M' THEN 4 "
-        "WHEN 'P' THEN 5 "
-        "ELSE 6 END"
+        "WHEN 'AT' THEN 3 "  # v0.51.330 (review): an unlisted letter sorted with '-'
+        "WHEN 'A' THEN 4 "
+        "WHEN 'M' THEN 5 "
+        "WHEN 'P' THEN 6 "
+        "ELSE 7 END"
     ),
     # v1.13.67: sort by TDB pill class. Priority mirrors the row-pill
     # render priority in JS computeTdbPill: pending update wins over
