@@ -6116,6 +6116,21 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.332: pill ink centred, the whole family. The operator: "audit all our
+#   pills and guards etc to make sure they're all properly centered". Measured
+#   in the browser (ink vs box, both axes, every page + the INFO card and the
+#   glossary): every TRACKED family carried the .331 defect — the trailing
+#   letter-spacing sat the ink 0.5–0.9px left (.btn/.btn-tiny/.row-info-btn,
+#   .chip + section chips, .tab, .tdb-pill, .loudness-pill, .attn-pill, the
+#   filter row's ALL/CLEAR + LINK/ED buttons, .info-scope-chip, .tier-badge,
+#   .pill, .lib-flag-pill, .edition-pill, .form-env-badge, .sync-hist-status,
+#   the dashboard toggles, // FILTERS, the topbar INBOX label, the ⏻ glyph).
+#   Right padding = left − letter-spacing everywhere (one rule per family).
+#   Vertically: the DL/PL ● / — buttons sat 0.7 / 0.9px low and the ↺ ⟳ ⚠
+#   attention symbols 0.6–0.8px low beside "!" — lifted by moving padding,
+#   heights unchanged. Left alone on purpose: the ▂▄▆ loudness bars (bottom-
+#   anchored by design), 0.3–0.5px cap-height offsets (font metric, sub-pixel),
+#   the settings tabs' 2px transparent underline, the nav links.
 # 0.51.331: badge ink centred. The operator, from the live anime tab: "the AT
 #   isn't centered in its box … or the A for adopted". Measured: the text box
 #   IS centred (6px each side) but letter-spacing 0.15em trails the last glyph
@@ -6136,7 +6151,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.331"
+__version__ = "0.51.332"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

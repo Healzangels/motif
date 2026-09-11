@@ -36,6 +36,7 @@ Fixes:
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -110,6 +111,7 @@ def test_chip_sizing_rule_keeps_existing_values():
         '.chips[aria-label="resolution"] .chip,\n'
         '.chips[aria-label="section"] .chip'
     )
-    body = css[idx:idx + 200]
-    assert "padding: 10px 18px;" in body
+    body = css[idx:css.index("}", idx)]  # v0.51.332: the whole rule, not a 200-char window
+    # v0.51.332: the right pad gives the trailing letter-spacing back; 10/18 stay.
+    assert re.search(r"padding: 10px calc\(18px - [\d.]+em\) 10px 18px;", body)
     assert "font-size: var(--t-small);" in body

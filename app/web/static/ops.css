@@ -123,6 +123,10 @@
 .op-pill .op-pill-label {
   font-size: 10px;
   letter-spacing: 0.16em;
+  /* v0.51.332: the label is the pill's last run, so its trailing tracking
+     sat the pair 0.8px left of centre — give it back on the label itself
+     (its own em) rather than converting units into the pill's padding. */
+  margin-right: -0.16em;
   opacity: 0.75;
 }
 
