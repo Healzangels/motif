@@ -9,8 +9,9 @@ theme, one row per theme) as v0.51.318. §6 decisions 1 and 2 taken 2026-09-09
 human picks differ only by preference among the show's own themes).
 Tag 4 (§3.6 review page + sweep + apply-selected) shipped as v0.51.325 — as a
 page-scoped job, not an op kind (§6 decision 5). Tag 5 (polish: weekly bridge
-refresh, README/CLAUDE.md, the apply digest) shipped as v0.51.327. Series
-complete; decision 3 (a SRC letter) waits on the real-library sweep.
+refresh, README/CLAUDE.md, the apply digest) shipped as v0.51.327; v0.51.328
+closed out (TMDB movie index, harness re-banked). Series complete; decision 3
+(a SRC letter) has its numbers and waits on the operator's call.
 Candidate A (`// FIND THEME`) is shelved (see FIND_THEME_SPEC.md).
 
 ## 1. Problem
@@ -201,6 +202,7 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
 | 2 | source kind `animethemes` end-to-end: url_source/_source_for/allowlist, download branch, SET URL accepts an AnimeThemes link; mirror-drift pins | pytest; live: one row themed from a pasted `.ogg` link |
 | 3 | Phase 1 dialog, preview via the candidate pipe, entry points | pytest; live on 5 no-theme rows incl. one GLANCE |
 | 4 | Phase 2 review page + page-scoped sweep + apply-selected (v0.51.325) | pytest (offline sweep on the tag-1 fake API; eligibility SQL; endpoints; page); live on the scratch instance |
+| 5b | Close-out (v0.51.328): the bridge indexes TMDB *movie* ids and routes a movie row's lookup to them only (a movie id in the tv index could match the wrong show; the sweep includes movie rows); a film's season-less entry is CLEAN for a movie row when the year agrees (was always GLANCE); the harness re-run on the current code and banked — identical to the tag-3 numbers | pytest (offline bridge + resolver); harness |
 | 5 | Polish (v0.51.327): `refresh_bridge` + the weekly `animethemes_bridge_refresh` job (Sun 03:20 UTC, no-op until the cache exists), README section + attribution + CLAUDE.md map, one `bulk_action_completed` digest per APPLY SELECTED run (`POST …/animethemes-sweep/digest`) | pytest |
 
 ## 6. Open decisions
@@ -212,7 +214,15 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
    2026-09-09: backup — a row that already has a theme pre-ticks KEEP AS
    BACKUP so a pick lands as a revision, never a silent replace.
 3. A dedicated SRC letter for AnimeThemes-sourced rows later (six-site
-   cost) — not before phase 2 has run on the real library.
+   cost) — not before phase 2 has run on the real library. **Numbers in
+   (2026-09-11, `animethemes_eval/2026-09-11-series-close.md`):** a full
+   APPLY SELECTED sources 300 no-theme rows + 293 Plex-served backups —
+   up to ~593 of 1,280 anime rows (46 % of the tab) reading `U` like a
+   hand-typed URL. For: half the tab's provenance is invisible in the SRC
+   column and the U-filter stops meaning "I typed this". Against: six
+   sites + the SQL classifier + filters/donut/legend, for a cohort the
+   INFO card's provenance already names. Recommendation: yes if the bulk
+   apply is used, no if only a handful are cherry-picked. Operator's call.
 4. ~~Bridge file licence is unstated in its README; attribution line in
    README either way.~~ DONE v0.51.327: README "Anime themes" section
    carries the attribution for both AnimeThemes.moe and Fribb/anime-lists.

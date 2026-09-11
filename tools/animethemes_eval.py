@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             d = res.default
             results.append({
                 "rating_key": r["rating_key"], "title": r["title"], "year": r["year"], "bucket": b,
-                "bridged": bool(bridge.entries_for(r["guid_tvdb"], r["guid_tmdb"])[1]),
+                "bridged": bool(bridge.entries_for(r["guid_tvdb"], r["guid_tmdb"], r["media_type"])[1]),
                 "via": res.via, "confidence": res.confidence, "reason": res.reason,
                 "has_audio": res.has_audio, "has_op": res.has_op,
                 "seasons": [{"season": s.season, "anidb": s.anidb, "name": s.info.name, "year": s.info.year,

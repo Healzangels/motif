@@ -80,6 +80,11 @@ class BridgeEntry:
 class Bridge:
     by_tvdb: dict[int, list[BridgeEntry]] = field(default_factory=dict)
     by_tmdb_tv: dict[int, list[BridgeEntry]] = field(default_factory=dict)
+    # v0.51.328: TMDB *movie* ids are their own key space (the file carries
+    # them as `themoviedb_id: {"movie": [128]}` — a list); a movie row must
+    # never be looked up in the tv index, or a numerically equal tv id would
+    # match the wrong show. 1,363 entries in the 2026-09 file.
+    by_tmdb_movie: dict[int, list[BridgeEntry]] = field(default_factory=dict)
     entries: int = 0
 
     @classmethod
@@ -102,10 +107,23 @@ class Bridge:
             tm = e.get("themoviedb_id")
             if isinstance(tm, dict) and tm.get("tv"):
                 b.by_tmdb_tv.setdefault(int(tm["tv"]), []).append(ent)
+            if isinstance(tm, dict) and tm.get("movie"):
+                ids = tm["movie"] if isinstance(tm["movie"], list) else [tm["movie"]]
+                for mid in ids:
+                    if mid:
+                        b.by_tmdb_movie.setdefault(int(mid), []).append(ent)
         return b
 
-    def entries_for(self, guid_tvdb: int | None, guid_tmdb: int | None) -> tuple[str | None, list[BridgeEntry]]:
+    def entries_for(self, guid_tvdb: int | None, guid_tmdb: int | None,
+                    media_type: str | None = None) -> tuple[str | None, list[BridgeEntry]]:
         # v0.51.314: TVDB first (carries the season split); TMDB tv id as the fallback key.
+        # v0.51.328: a Plex movie row's guid_tmdb is a MOVIE id — route it to the
+        # movie index and never the tv one (shows keep the tv path; a show never
+        # consults the movie index).
+        if media_type == "movie":
+            if guid_tmdb and guid_tmdb in self.by_tmdb_movie:
+                return "tmdb", _season_order(self.by_tmdb_movie[guid_tmdb])
+            return None, []
         if guid_tvdb and guid_tvdb in self.by_tvdb:
             return "tvdb", _season_order(self.by_tvdb[guid_tvdb])
         if guid_tmdb and guid_tmdb in self.by_tmdb_tv:
@@ -153,8 +171,8 @@ def load_bridge(cache_dir: Path, *, client: httpx.Client | None = None,
         with path.open("rb") as fh:
             bridge = Bridge.from_json(json.load(fh))
         _BRIDGE_CACHE[key] = (mtime, bridge)
-        log.info("animethemes: bridge loaded — %d entries, %d tvdb keys, %d tmdb keys",
-                 bridge.entries, len(bridge.by_tvdb), len(bridge.by_tmdb_tv))
+        log.info("animethemes: bridge loaded — %d entries, %d tvdb keys, %d tmdb tv keys, %d tmdb movie keys",
+                 bridge.entries, len(bridge.by_tvdb), len(bridge.by_tmdb_tv), len(bridge.by_tmdb_movie))
         return bridge
 
 
@@ -433,7 +451,7 @@ def _year_ok(plex_year: Any, at_year: Any) -> bool:
 def resolve(row: Mapping[str, Any], bridge: Bridge, client: AnimeThemesClient, *,
             name_search: bool = True) -> Resolution:
     """One row → Resolution. Row needs title, year, guid_tvdb, guid_tmdb."""
-    via, ents = bridge.entries_for(row.get("guid_tvdb"), row.get("guid_tmdb"))
+    via, ents = bridge.entries_for(row.get("guid_tvdb"), row.get("guid_tmdb"), row.get("media_type"))
     seasons: list[SeasonMatch] = []
     if ents:
         anime = client.lookup_anidb([e.anidb for e in ents])
@@ -448,9 +466,14 @@ def resolve(row: Mapping[str, Any], bridge: Bridge, client: AnimeThemesClient, *
     if seasons:
         chosen = seasons[0]
         picked = pick_default(chosen)
-        if chosen.season == 1 and _year_ok(row.get("year"), chosen.info.year):
-            conf, reason = "clean", "season-1 entry, year agrees"
-        elif chosen.season != 1:
+        # v0.51.328: a film's bridge entry carries no season (there is none);
+        # for a Plex movie row that entry IS the clean match. Shows keep the
+        # season-1 rule.
+        season_ok = chosen.season == 1 or (row.get("media_type") == "movie" and chosen.season is None)
+        if season_ok and _year_ok(row.get("year"), chosen.info.year):
+            conf, reason = "clean", ("film entry, year agrees" if chosen.season is None
+                                     else "season-1 entry, year agrees")
+        elif not season_ok:
             conf, reason = "glance", f"season-1 entry absent on AnimeThemes; fell through to season {chosen.season}"
         else:
             conf, reason = "glance", f"year differs: Plex {row.get('year')} vs AnimeThemes {chosen.info.year}"
@@ -479,7 +502,7 @@ def prefetch(rows: Iterable[Mapping[str, Any]], bridge: Bridge, client: AnimeThe
     """Warm the client caches for many rows in ~2 batched passes (the harness + the sweep use this)."""
     anidb: set[int] = set()
     for r in rows:
-        _, ents = bridge.entries_for(r.get("guid_tvdb"), r.get("guid_tmdb"))
+        _, ents = bridge.entries_for(r.get("guid_tvdb"), r.get("guid_tmdb"), r.get("media_type"))
         anidb.update(e.anidb for e in ents)
     anime = client.lookup_anidb(anidb)
     client.themes_for(a.anime_id for lst in anime.values() for a in lst)

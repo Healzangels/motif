@@ -6094,7 +6094,20 @@
 #   hint and the README's notification tables name it. (3) README "Anime themes"
 #   section (both entry points, how it resolves, attribution for AnimeThemes.moe
 #   and Fribb/anime-lists — spec §6 decision 4) + a CLAUDE.md map of the source.
-__version__ = "0.51.327"
+# 0.51.328: ANIME THEMES close-out. (1) The anime-lists bridge now indexes TMDB
+#   *movie* ids (the file carries 1,363 entries as `themoviedb_id: {"movie":
+#   [id]}`) and routes a Plex movie row's guid_tmdb to that index only — a
+#   movie row used to look its movie id up in the tv index, where a numerically
+#   equal tv id would have matched the wrong show; the sweep includes movie
+#   rows, so an anime-films section was exposed (the operator's library has
+#   none). A film's bridge entry carries no season, so the confidence rule now
+#   reads it as the clean match for a movie row when the year agrees (it read
+#   every film as GLANCE). (2) The coverage harness re-run on the current code against the
+#   2026-07 library snapshot, banked as docs/specs/animethemes_eval/
+#   2026-09-11-series-close.md: identical to the tag-3 report (1,082 clean of
+#   1,280; 87 % with an opening) — nothing in .318–.327 moved the resolver.
+#   Spec §6 decision 3 (a SRC letter) now carries the numbers it waited on.
+__version__ = "0.51.328"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed
