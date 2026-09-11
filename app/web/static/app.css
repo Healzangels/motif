@@ -3176,7 +3176,11 @@ body.help-mode .settings-help-about { display: block; }
   cursor: pointer;
   font-family: var(--font-mono);
   font-weight: 700;
-  padding: 2px 8px;
+  /* v0.51.331: no padding of its own. Every key button also carries
+     .link-badge, whose later rule (equal specificity) won by source order,
+     so the `2px 8px` declared here since v1.11.66 never applied — the
+     buttons have always rendered at the badge's 6px. Removed while
+     centring the badge ink (see .link-badge) so one rule owns the value. */
   background: transparent;
   user-select: none;
 }
@@ -4382,7 +4386,14 @@ body.auth-page .auth-card { margin: 0; }
   font-weight: 600;
   letter-spacing: 0.15em;
   line-height: 1;
-  padding: 2px 6px;
+  /* v0.51.331: the operator saw AT / A sit left of centre. Letter-spacing
+     trails the LAST glyph too, so the centred text box carries 0.15em of
+     dead space on its right and the ink lands ~half of that left of
+     centre. The v1.12.30 .link-glyph idiom: give the trailing spacing back
+     through the right padding. The SRC key buttons take this same
+     padding (.src-key-btn declares none) — keep the calc in step with
+     the letter-spacing above. */
+  padding: 2px calc(6px - 0.15em) 2px 6px;
   border: 1px solid;
   border-radius: 0;
   /* v1.11.25: explicit default cursor so SRC column badges don't pick

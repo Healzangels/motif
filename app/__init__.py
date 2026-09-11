@@ -6116,6 +6116,14 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.331: badge ink centred. The operator, from the live anime tab: "the AT
+#   isn't centered in its box … or the A for adopted". Measured: the text box
+#   IS centred (6px each side) but letter-spacing 0.15em trails the last glyph
+#   too, so the ink sat ~0.7px left at zoom 1 (more on a scaled display) on
+#   EVERY .link-badge and SRC key button. The v1.12.30 LINK-glyph idiom applied:
+#   right padding gives the trailing spacing back (calc(left - 0.15em)). Found
+#   on the way: .src-key-btn's own `2px 8px` never applied (the later .link-badge
+#   rule wins by source order on every key button) — removed, one owner.
 # 0.51.330: AT review follow-ups (the operator: "making sure we've included in
 #   the legend and glossary as well as making sure its filtering works in all
 #   circumstances"). Found by reading every letter-keyed set: the SRC sort's
@@ -6128,7 +6136,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.330"
+__version__ = "0.51.331"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -144,7 +144,7 @@ Column-class conventions: `.col-state`, `.col-title`, `.col-imdb`, `.col-X` per 
 ### Pills, badges, chips
 
 * `.chip` — filter chip. Used by the topbar filter row + library page filter chips.
-* `.link-badge` + `.link-badge-X` — source-attribution pill (T/A/U/M/P palette). One canonical family across library, info card, and dashboard donut.
+* `.link-badge` + `.link-badge-X` — source-attribution pill (T/A/U/M/P palette). One canonical family across library, info card, and dashboard donut. Its `letter-spacing` trails the last glyph, so the right padding is `calc(left - 0.15em)` (v0.51.331, the v1.12.30 `.link-glyph` idiom) — keep the two in step or the ink drifts left of centre.
 * `.state-pill` + `.state-pill-pending` — row state dots (DL/PL). Pulse-amber for in-flight.
 * `.tdb-pill`, `.attn-pill`, `.op-pill` — semantic pills carrying status counts in the topbar.
 * `.tier-badge` + `.tier-badge-X` — small mono chips (v0.51.324 doc). In the INFO card title: `-4k` (library version), `-lvl` / `-loud` / `-raw` (loudness state). In the AUDIO group's play rows (v0.51.323): `-serving` (amber — what Plex plays), `-standing` (cyan — a backup-intent file waiting), `-placed` (green — motif's file deployed), `-unplaced` (dim outline). Colour ENCODES state — theme SPLIT, not chrome.
