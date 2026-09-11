@@ -6083,7 +6083,18 @@
 #   one template, one state, two places; the shared click handler scrolls the
 #   results head back into view after a footer click so the new page is read
 #   from its first row. Mobile centres it like the head's.
-__version__ = "0.51.326"
+# 0.51.327: ANIME THEMES tag 5 — polish; the series is complete. (1) A weekly
+#   scheduler job (`animethemes_bridge_refresh`, Sun 03:20 UTC) refreshes the
+#   Fribb/anime-lists bridge file ETag-conditionally, and only once the operator
+#   has used the feature (no cache file → no fetch, spec §3.7); `refresh_bridge`
+#   reports skipped / unchanged / refreshed. (2) One `bulk_action_completed`
+#   digest per APPLY SELECTED run — the page reports the batch to
+#   `POST /api/admin/animethemes-sweep/digest`, which logs it and notifies
+#   "✅ Bulk ANIME THEMES done — N queued" with the titles (max 10); the settings
+#   hint and the README's notification tables name it. (3) README "Anime themes"
+#   section (both entry points, how it resolves, attribution for AnimeThemes.moe
+#   and Fribb/anime-lists — spec §6 decision 4) + a CLAUDE.md map of the source.
+__version__ = "0.51.327"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

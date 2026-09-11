@@ -27209,6 +27209,58 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         rep["applied"] = applied
         return rep
 
+    @app.post("/api/admin/animethemes-sweep/digest")
+    async def api_animethemes_sweep_digest(request: Request, db: Path = Depends(get_db_path)):
+        """v0.51.327 (AnimeThemes tag 5): one summary after an APPLY SELECTED run.
+        The applies themselves are per-row manual-url calls the page walks, so the
+        page reports the batch boundary here; motif logs it and fires the
+        bulk_action_completed digest (its settings toggle) — never N per-row pings."""
+        _require_admin(request)
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail="invalid JSON body")
+        body = body or {}
+
+        def _n(k: str) -> int:
+            try:
+                return max(0, int(body.get(k) or 0))
+            except (TypeError, ValueError):
+                return 0
+        queued, failed, backups = _n("queued"), _n("failed"), _n("backups")
+        titles = [str(t)[:80] for t in (body.get("titles") or []) if t][:10]
+        if not queued and not failed:
+            return {"ok": True, "notified": False}
+        actor = request.state.principal.username
+        summary = (f"ANIME THEMES apply by {actor}: {queued} queued"
+                   f"{f' ({backups} as backups)' if backups else ''}"
+                   f"{f', {failed} failed' if failed else ''}")
+        log_event(db, level="INFO", component="api", message=summary,
+                  detail={"queued": queued, "failed": failed, "backups": backups, "titles": titles})
+        notified = False
+        if queued:
+            try:
+                from ..core import notify as _notify
+                more = _n("total_titles") - len(titles) if _n("total_titles") > len(titles) else 0
+                lines = [
+                    f"{queued} opening{'s' if queued != 1 else ''} queued from the ANIME THEMES review"
+                    + (f" — {backups} as backups behind Plex's own theme" if backups else "")
+                    + (f", {failed} failed" if failed else "")
+                    + ". Downloads run through the queue.",
+                ]
+                if titles:
+                    lines.append("🎵 Queued: " + " · ".join(titles) + (f" (+{more} more)" if more else ""))
+                _notify.dispatch(
+                    db, settings.cfg.notifications,
+                    event_kind="bulk_action_completed",
+                    title=f"✅ Bulk ANIME THEMES done — {queued} queued",
+                    body="\n".join(lines),
+                )
+                notified = True
+            except Exception as e:  # noqa: BLE001 — a digest never fails the apply
+                log.warning("anime-themes digest notification failed: %s", e)
+        return {"ok": True, "notified": notified}
+
     @app.get("/api/admin/provider-health")
     async def api_provider_health(request: Request,
                                   db: Path = Depends(get_db_path)):

@@ -47,10 +47,12 @@ def test_bulk_hint_no_longer_overclaims():
 
 
 def test_bulk_action_completed_still_only_two_dispatch_sites():
-    """Guard: bulk_action_completed fires from exactly 3 sites (PROBE TDB + LET PLEX
-    SERVE + BULK NORMALIZE + v0.51.199 BULK UNDO). If a fifth lands, the settings copy
-    must be revisited so it stops being a lie."""
-    assert API_PY.count('event_kind="bulk_action_completed"') == 4
+    """Guard: bulk_action_completed fires from exactly 5 sites (PROBE TDB + LET PLEX
+    SERVE + BULK NORMALIZE + v0.51.199 BULK UNDO + v0.51.327 ANIME THEMES apply digest).
+    If a sixth lands, the settings copy must be revisited so it stops being a lie."""
+    assert API_PY.count('event_kind="bulk_action_completed"') == 5
+    idx = SETTINGS_HTML.index('data-cfg-field="notifications.events.bulk_action_completed"')
+    assert "ANIME THEMES" in SETTINGS_HTML[idx:SETTINGS_HTML.index("</label>", idx)], "the hint names the fifth site"
 
 
 def test_theme_available_body_uses_click_verb():

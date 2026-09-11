@@ -7951,6 +7951,15 @@
       }
       rows = rows.filter((r) => !r.applied);
       applying = false;
+      // v0.51.327: one digest for the batch (the bulk_action_completed toggle) —
+      // the per-row applies above never ping on their own.
+      if (ok || failed) {
+        const done = targets.filter((r) => r.applied);
+        api('POST', '/api/admin/animethemes-sweep/digest', {
+          queued: ok, failed, backups: done.filter((r) => r.plex_has_theme).length,
+          titles: done.slice(0, 10).map((r) => r.title), total_titles: done.length,
+        }).catch(() => { /* the digest never blocks the page */ });
+      }
       applyStatus.textContent = `✓ queued ${num(ok)}${failed ? ` · ${num(failed)} failed` : ''}`
         + (ok ? ' — downloads run through the queue' : '');
       applyStatus.className = failed ? 'form-status form-status-fail' : 'form-status form-status-ok';

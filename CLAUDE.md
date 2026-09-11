@@ -583,6 +583,45 @@ C1 rows expected across 3,883 candidate P-rows (~4.2 GB).
 The anime cohort is the highest-ROI target — TDB-less
 rows where cloud-backup is the only viable recovery path.
 
+## AnimeThemes source (v0.51.314–.327)
+
+Feature brief #2 candidate B — openings from AnimeThemes.moe for the anime
+cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
+(decisions in §6; measured baseline under `docs/specs/animethemes_eval/`).
+
+- **`app/core/animethemes.py`** — `Bridge` / `load_bridge` (Fribb anime-lists
+  → AniDB ids; cache at `config_dir/animethemes/`, 7-day TTL + ETag, stale
+  beats nothing, `BridgeUnavailable` only with no cache), `refresh_bridge`
+  (the weekly scheduler job `animethemes_bridge_refresh`, Sun 03:20 UTC — a
+  no-op until the cache file exists: **never a fetch the operator didn't
+  cause**), `AnimeThemesClient` (60/min pacing, batches of 50, two-step
+  `/resource` → `/anime?filter[anime][id]`, 24h cache, errors raise and are
+  never cached), `resolve` (confidence `clean` / `glance` / `name`),
+  `pick_default` (OP1 v1 BD-over-WEB), `sweep` (one `prefetch`, cache-only
+  resolves, **no name search**), `resolution_to_json` / `sweep_row_to_json`.
+- **Source kind `animethemes`** (v0.51.315): `sync.url_source` + its
+  downloader mirror `_source_for`, `_FETCH_ALLOWED_HOSTS`, the generic-extractor
+  download branch. A pick is a plain manual-url (`U` row); the origin
+  (slug / song / confidence / anidb) rides the event `detail` only — the
+  `Manual URL set by <user>: <url>` message stays byte-identical (the recovery
+  walker parses it).
+- **Picker** `#anime-themes-dlg` (base.html; `openAnimeThemesDialog`,
+  `_AT_WORDS` owns every label word), preview through the v0.51.281 candidate
+  pipe (`transcode_to_candidate`, one in flight, close discards).
+- **Review page** `/admin/anime-themes` (v0.51.325): a page-scoped job
+  (`_AT_SWEEP_STATE` + `/api/admin/animethemes-sweep/{start,cancel,status}`),
+  NOT an op kind (spec §6 decision 5). Report file
+  `config_dir/animethemes/sweep.json`; `GET /api/admin/animethemes-sweep`
+  re-runs `_animethemes_eligible_rows` so applied rows drop out. **Trap:** an
+  applied orphan row keys its override by the minted plex_orphan theme's
+  negative tmdb_id, so eligibility must link through `pi.theme_id → themes`
+  as well as guid_tmdb. APPLY SELECTED = sequential per-row manual-url from
+  the page; one `bulk_action_completed` digest via
+  `POST /api/admin/animethemes-sweep/digest` (v0.51.327).
+- Never: auto-apply GLANCE / NAME; a background API call nobody clicked; a
+  new SRC letter (§6 decision 3 — not before the sweep has run on the real
+  library).
+
 ## Commit + release conventions
 
 - Subject: `vX.Y.Z: short summary` under 70 chars.

@@ -1046,6 +1046,27 @@ def _prune_history(db_path: Path) -> None:
         )
 
 
+def _refresh_animethemes_bridge(settings: "Settings") -> None:
+    """v0.51.327 (AnimeThemes tag 5): weekly refresh of the anime-lists bridge
+    file (config_dir/animethemes/anime-list-mini.json). ETag-conditional, so an
+    unchanged upstream costs a 304; skipped entirely until the operator has used
+    ANIME THEMES once (no cache file → no fetch — docs/specs/ANIMETHEMES_SPEC.md
+    §3.7). load_bridge's own 7-day TTL still guards the click path; this job just
+    keeps the first click after a quiet week from paying the 5.8 MB download."""
+    from .animethemes import refresh_bridge
+    cache_dir = Path(settings.config_dir) / "animethemes"
+    try:
+        status = refresh_bridge(cache_dir)
+    except Exception as e:  # noqa: BLE001 — network job: breadcrumb, never raise
+        log.warning("AnimeThemes bridge refresh failed: %s", e)
+        log_event(settings.db_path, level="WARNING", component="scheduler",
+                  message=f"AnimeThemes bridge refresh failed: {e}")
+        return
+    if status == "refreshed":
+        log_event(settings.db_path, level="INFO", component="scheduler",
+                  message="AnimeThemes bridge refreshed (Fribb/anime-lists)")
+
+
 def _cleanup_sessions_job(db_path: Path) -> None:
     """v1.13.10 (#14): daily sweep of expired auth_sessions rows.
 
@@ -1424,6 +1445,13 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     # cascade, local_files_history). Slotted at 03:15 UTC after
     # events_prune (03:10) and well clear of release_check (04:17)
     # + daily_sync (13:00). Hygiene audit Tier B.
+    # v0.51.327: weekly anime-lists bridge refresh (no-op until ANIME THEMES has
+    # been used once); Sunday in the 03:xx housekeeping band.
+    scheduler.add_job(
+        _refresh_animethemes_bridge, args=[settings],
+        trigger=CronTrigger(minute="20", hour="3", day_of_week="sun", timezone="UTC"),
+        id="animethemes_bridge_refresh", replace_existing=True, max_instances=1,
+    )
     scheduler.add_job(
         _prune_history, args=[settings.db_path],
         trigger=CronTrigger(minute="15", hour="3", timezone="UTC"),
@@ -1571,7 +1599,8 @@ def start_scheduler(settings: Settings) -> BackgroundScheduler:
     log.info(
         "Scheduler started: daily sync at %s UTC, placement retry hourly, "
         "section refresh 1h before sync, release check 04:17, "
-        "session cleanup 03:00, stuck-job sweep every 15min",
+        "session cleanup 03:00, stuck-job sweep every 15min, "
+        "anime-lists bridge refresh Sun 03:20",
         settings.sync_cron,
     )
     # v1.13.8: kick the release check once at startup (in a background

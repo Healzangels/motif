@@ -158,7 +158,18 @@ def load_bridge(cache_dir: Path, *, client: httpx.Client | None = None,
         return bridge
 
 
-def _refresh_bridge(path: Path, etag_path: Path, client: httpx.Client | None) -> None:
+def refresh_bridge(cache_dir: Path, *, client: httpx.Client | None = None) -> str:
+    """v0.51.327 (tag 5): the scheduled refresh. 'skipped' when the operator has
+    never used ANIME THEMES (no cache file → no fetch, spec §3.7), else the
+    ETag-conditional fetch: 'unchanged' on a 304 (mtime touched, so load_bridge's
+    TTL restarts), 'refreshed' on a new payload. Errors raise — the job logs them."""
+    path = cache_dir / BRIDGE_FILENAME
+    if not path.exists():
+        return "skipped"
+    return _refresh_bridge(path, cache_dir / (BRIDGE_FILENAME + ".etag"), client)
+
+
+def _refresh_bridge(path: Path, etag_path: Path, client: httpx.Client | None) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     headers = {"User-Agent": _user_agent()}
     if path.exists() and etag_path.exists():
@@ -169,7 +180,7 @@ def _refresh_bridge(path: Path, etag_path: Path, client: httpx.Client | None) ->
         r = c.get(BRIDGE_URL, headers=headers)
         if r.status_code == 304 and path.exists():
             path.touch()
-            return
+            return "unchanged"
         if r.status_code != 200:
             raise AnimeThemesError(r.status_code, BRIDGE_URL)
         data = r.json()
@@ -181,6 +192,7 @@ def _refresh_bridge(path: Path, etag_path: Path, client: httpx.Client | None) ->
         etag = r.headers.get("etag")
         if etag:
             etag_path.write_text(etag)
+        return "refreshed"
     finally:
         if own:
             c.close()

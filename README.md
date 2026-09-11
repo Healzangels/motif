@@ -405,6 +405,17 @@ The topbar shows a cyan **UPD <count>** badge whenever there are pending updates
 
 If you've manually overridden a theme via `/settings` and ThemerrDB later updates upstream, the update STILL appears in your queue — but accepting it will only re-download. The override URL in `user_overrides` continues to take precedence at download time. To actually replace a manual theme with the upstream version, clear the override from the item's detail dialog AND accept the update.
 
+## Anime themes (AnimeThemes.moe)
+
+For anime rows ThemerrDB doesn't cover, motif can pull openings from [AnimeThemes.moe](https://animethemes.moe). Two entry points:
+
+* **Per row** — `SOURCE ▾ → // ANIME THEMES` on any row in an anime section (also on the INFO card). The picker lists every season and opening / ending with the song title and artist, a `// PREVIEW` (transcoded to MP3 so Safari can play it) and `// USE THIS`. Nothing is applied without a click; a row that already has a theme pre-ticks KEEP AS BACKUP so the pick lands as a revision, never a silent replace.
+* **In bulk** — `// ANIME THEMES ▸` on the anime tab (or Settings → Diagnostics) opens `/admin/anime-themes`. `// RUN SWEEP` resolves every anime row with no motif theme in a handful of API calls and sorts the results into **READY TO APPLY** (clean season-1 matches, first opening picked — tick and `// APPLY SELECTED`), **NEEDS A LOOK** (the match isn't clean — open the picker) and **NOT FOUND**. Rows Plex already serves land as backups. One `✅ Bulk ANIME THEMES done` notification summarises each apply run.
+
+How it resolves: the row's TVDB / TMDB id → an AniDB id via the [Fribb/anime-lists](https://github.com/Fribb/anime-lists) mapping (cached at `/config/animethemes/`, refreshed weekly on Sunday 03:20 UTC once you've used the feature) → the AnimeThemes API. A pick is a user URL (`U` in the SRC column) with its origin (slug, song, confidence) recorded in the row's history. Requests are paced well under the API's limit and cached for a day; the sweep never searches by name (the picker does, on a click).
+
+**Attribution.** Audio and metadata come from [AnimeThemes.moe](https://animethemes.moe) — a community project; their terms allow personal, non-commercial use, which is what a home Plex library is. The id mapping is [Fribb/anime-lists](https://github.com/Fribb/anime-lists), whose README states no licence; motif uses it as data, with thanks, and identifies itself with a `motif/<version>` User-Agent to both.
+
 ## Plex Scans (adopting existing themes)
 
 If your Plex folders already have `theme.mp3` files in them — from a previous Themerr install, manual placement, or another tool — motif can scan them and adopt them rather than re-downloading.
@@ -472,6 +483,7 @@ If you've configured Apprise (see [Notifications](#notifications-v1170) below), 
 * `/libraries` — Plex sections with managed/excluded toggles, per-section placement counts, refresh button
 * `/queue` — live job queue and full event stream (auto-refreshes every 5s)
 * `/scans` — Plex folder scan history and findings triage (adopt/replace/keep/ignore)
+* `/admin/anime-themes` — the AnimeThemes.moe review page: sweep the anime rows with no theme, apply the clean matches in bulk (see **Anime themes**)
 * `/settings` — manage API tokens, change admin password, view Homepage widget config, toggle dry-run, configure paths / Plex / downloads / matching / schedule / import / runtime / notifications
 
 ## Notifications (v1.17.0+)
@@ -489,7 +501,7 @@ Subject lines use a cohesive emoji set so each event type is identifiable at a g
 |---|---|
 | Sync completed | `Motif sync — <state summary>` (the `✅ Sync complete` line closes the body — v1.19.55) |
 | Sync failed | `❌ Sync failed` |
-| Bulk action completed | `✅ Bulk PROBE TDB done — N/M` / `✅ Bulk LPS done — N` |
+| Bulk action completed | `✅ Bulk PROBE TDB done — N/M` / `✅ Bulk LPS done — N` / `✅ Bulk ANIME THEMES done — N queued` |
 | Themes added by sync | `🎵 N new themes added by sync` |
 | Theme added | `🎵 Theme added — <title>` |
 | Theme removed | `🗑️ Theme unmanaged / forgotten / deleted — <title>` |
@@ -506,7 +518,7 @@ Per-event toggles control what fires — **20 kinds** as of v0.51.259, every one
 
 * **Sync completed** — after each ThemerrDB sync, with counts of items processed / new / updated / errors
 * **Sync failed** — when a sync throws, with the error string + recovery hint
-* **Bulk action completed** — one summary per bulk LPS / PROBE TDB
+* **Bulk action completed** — one summary per bulk LPS / PROBE TDB / NORMALIZE / UNDO / ANIME THEMES apply
 * **Cookies needed** — YouTube cookies expired or missing. Rate-limited to once per 6 hours so a sync run hitting many cookie-failed rows pings once, not N times
 * **Disk space low** — themes directory below `paths.min_free_disk_mb`. Rate-limited to once per 12 hours; downloads continue retrying hourly until disk frees up
 * **Worker restarted** — fires only when motif's boot zombie-sweep finds stuck-running jobs from a prior session (signals unclean prior shutdown — SIGKILL, OOM, container crash). Clean restarts don't ping
