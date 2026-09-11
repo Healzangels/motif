@@ -59,7 +59,8 @@ def test_openinfodialog_builds_baseline_from_provenance():
     """baselineHistory is derived from the local_files provenance fields and
     passed as the 4th arg to renderRowHistory."""
     assert "const baselineHistory = lf" in APP_JS
-    assert "label: _humanSourceKind(lf.source_kind || '')," in APP_JS
+    # v0.51.329: the baseline label names AnimeThemes for an at- pick, else the source kind
+    assert "? 'Downloaded from AnimeThemes' : _humanSourceKind(lf.source_kind || '')," in APP_JS
     # v1.24.11: the date is pre-formatted via the card-wide fmt.timeAuto so
     # the ORIGIN row matches the other card timestamps (not bare toLocaleString).
     assert "at: fmt.timeAuto(lf.downloaded_at || data.motif_added_at || '')," in APP_JS

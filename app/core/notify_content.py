@@ -220,6 +220,8 @@ def enrich_item(
                 from .sync import extract_video_id
                 ctx["youtube_video_id"] = extract_video_id(uo["youtube_url"])
                 ctx["provenance"] = "user_url"
+                if "a.animethemes.moe" in uo["youtube_url"]:
+                    ctx["provenance"] = "animethemes"  # v0.51.329: the AT family (spec §3.8)
             # 3. local_files lookup — ALWAYS consulted now (v1.18.58).
             #    Pre-fix this branch only fired when title was still
             #    missing (orphans whose themes row title was blank).
@@ -490,6 +492,7 @@ _PROVENANCE_LABEL: dict[str, str] = {
     # reads "Source: User upload" so the operator can tell at
     # a glance which user-driven path the theme came from.
     "user_upload": "User upload",
+    "animethemes": "AnimeThemes",  # v0.51.329 — SRC=AT
     "manual":      "Manual sidecar",
     "adopted":     "Adopted",
     "plex_served": "Plex-served",
@@ -507,6 +510,7 @@ _PROVENANCE_DOT: dict[str, str] = {
     "themerrdb":   "🟢 ",  # green — SRC=T
     "user_url":    "🟣 ",  # violet — SRC=U
     "user_upload": "🟣 ",  # violet — user-driven, same family as user_url
+    "animethemes": "🟣 ",  # violet — a user URL in kind; no magenta circle emoji (SRC=AT)
     "adopted":     "🔵 ",  # blue — SRC=A (no cyan circle emoji)
     "manual":      "🟤 ",  # brown — SRC=M (no magenta circle emoji)
     "plex_served": "🟡 ",  # amber — SRC=P

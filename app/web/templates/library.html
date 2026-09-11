@@ -275,6 +275,14 @@
     <button type="button" class="link-badge link-badge-user src-key-btn"
             data-src-filter="U"
             title="User-provided — manual theme URL (YouTube, SoundCloud, Instagram, or Facebook) or MP3 upload.">U</button>
+    {# v0.51.329 (spec §3.8): the AnimeThemes pill. Only anime rows can produce
+       it, so it shows on the anime tab only — rendered on every tab (the
+       v0.51.12 shared-page rule: no tab-equality gates here) and shown /
+       hidden by data-tab-only + _syncTabOnlyEls, SSR'd by expression. #}
+    <button type="button" class="link-badge link-badge-animethemes src-key-btn"
+            data-src-filter="AT" data-tab-only="anime"
+            style="{{ '' if tab == 'anime' else 'display:none' }}"
+            title="AnimeThemes — an opening picked from AnimeThemes.moe.">AT</button>
     {# v1.18.50: SRC=A (adopted) and SRC=M (manual sidecar) both
        require a media folder + an on-disk theme.<ext>. Collections
        have neither — the v1.18.0 plex_upload placement_kind lives
@@ -872,6 +880,7 @@
         <div class="help-gloss-grid">
           <div class="help-gloss-row"><span class="link-badge link-badge-themerrdb">T</span><span class="help-gloss-def">ThemerrDB-managed</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-user">U</span><span class="help-gloss-def">User URL / upload</span></div>
+          <div class="help-gloss-row" data-tab-only="anime" style="{{ '' if tab == 'anime' else 'display:none' }}"><span class="link-badge link-badge-animethemes">AT</span><span class="help-gloss-def">AnimeThemes.moe opening</span></div>
           {% if tab != "collections" %}
           <div class="help-gloss-row"><span class="link-badge link-badge-adopt">A</span><span class="help-gloss-def">Adopted sidecar</span></div>
           <div class="help-gloss-row"><span class="link-badge link-badge-manual">M</span><span class="help-gloss-def">Manual sidecar — ADOPT</span></div>

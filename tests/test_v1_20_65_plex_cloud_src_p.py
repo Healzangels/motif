@@ -129,8 +129,10 @@ def test_placed_auto_provenance_non_cloud_still_T(db):
 def test_js_compute_src_letter_mirrors_sql():
     """Mirror-drift guard: computeSrcLetter must have the plex_cloud→P
     branch, placed BEFORE the placedProv==='auto'→T fallback."""
+    # v0.51.329: anchored to the function's end (the AT branch + its comment pushed
+    # the T fallback past the old 1600-char window — the .261 window class).
     start = APP_JS.index("function computeSrcLetter(")
-    body = APP_JS[start:start + 1600]
+    body = APP_JS[start:APP_JS.index("\n  }", start)]
     cloud = body.index("sourceKind === 'plex_cloud') return 'P'")
     auto = body.index("placedProv === 'auto') return 'T'")
     assert cloud < auto, (

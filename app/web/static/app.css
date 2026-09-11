@@ -2786,6 +2786,15 @@ body.help-mode .settings-help-about { display: block; }
   background: rgba(var(--violet-rgb), 0.10);
   border-color: var(--violet);
 }
+/* v0.51.329: the AT family's button tone (KEEP CURRENT on an AnimeThemes row). */
+.btn.lib-source-animethemes {
+  color: var(--magenta);
+  border-color: rgba(var(--magenta-rgb), 0.55);
+}
+.btn.lib-source-animethemes:hover:not(:disabled) {
+  background: rgba(var(--magenta-rgb), 0.10);
+  border-color: var(--magenta);
+}
 .btn.lib-source-adopt {
   color: var(--cyan);
   border-color: rgba(var(--cyan-rgb), 0.5);
@@ -4650,6 +4659,15 @@ body.auth-page .auth-card { margin: 0; }
   color: var(--violet);
   border-color: rgba(var(--violet-rgb), 0.55);
   background: rgba(var(--violet-rgb), 0.10);
+}
+/* v0.51.329 (spec §3.8): AT = an opening picked from AnimeThemes.moe. The anime
+   magenta (the ANIME tab underline + .stat-plex-anime tone) so the pill already
+   reads "anime"; not violet (U's tone) and not cyan (A's). Theme SPLIT — colour
+   encodes the source. */
+.link-badge-animethemes {
+  color: var(--magenta);
+  border-color: var(--magenta);
+  background: rgba(var(--magenta-rgb), 0.14);
 }
 .link-badge-themerrdb {
   color: var(--src-t-bright);
@@ -6798,6 +6816,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    A cyan, M magenta, P amber, "-" muted). */
 .source-pie-T { stroke: var(--src-t-bright); }
 .source-pie-U { stroke: var(--violet); }
+.source-pie-AT { stroke: var(--magenta); }  /* v0.51.329 */
 .source-pie-A { stroke: var(--cyan); }
 .source-pie-M { stroke: var(--magenta); }
 .source-pie-P { stroke: var(--amber); }
@@ -6805,6 +6824,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 
 .source-pie-T-text { color: var(--src-t-bright); }
 .source-pie-U-text { color: var(--violet); }
+.source-pie-AT-text { color: var(--magenta); }
 .source-pie-A-text { color: var(--cyan); }
 .source-pie-M-text { color: var(--magenta); }
 .source-pie-P-text { color: var(--amber); }
@@ -6812,6 +6832,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
 
 .source-legend-swatch-T { background: var(--src-t-bright); }
 .source-legend-swatch-U { background: var(--violet); }
+.source-legend-swatch-AT { background: var(--magenta); }
 .source-legend-swatch-A { background: var(--cyan); }
 .source-legend-swatch-M { background: var(--magenta); }
 .source-legend-swatch-P { background: var(--amber); }

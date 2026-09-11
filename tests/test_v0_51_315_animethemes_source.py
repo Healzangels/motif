@@ -94,7 +94,9 @@ def test_js_urlsource_mirror_has_animethemes():
 def test_js_preview_labels_and_prefix_sites():
     assert "detected: AnimeThemes" in APP_JS
     assert "Facebook, or AnimeThemes)" in APP_JS, "the not-recognized hint names every accepted source"
-    assert APP_JS.count("svid.startsWith('at-')") == 3, "all three svid sites classify at- as a user URL (mirrors SQL)"
+    assert APP_JS.count("svid.startsWith('at-')") == 5, (
+        "the three family sites classify at- as a user URL (mirrors SQL) + the two v0.51.329 "
+        "dedicated AT branches (computeSrcLetter + the inline render)")
     assert "ytId.startsWith('at-')" in APP_JS
     i = APP_JS.index("} else if (currentSrc === 'animethemes') {")
     blk = APP_JS[i:APP_JS.index("} else if", i + 10)]

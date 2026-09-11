@@ -220,7 +220,9 @@ These are the load-bearing UX patterns; any new screen should mirror an existing
 
 Every interactive label and every section title uses the `// ` prefix (e.g. `// SYNC THEMERRDB`, `// SOURCE BREAKDOWN`, `// PREVIEW IMPORT`). This is the canonical motif voice.
 
-### Source-letter axis (T/A/U/M/P/–)
+### Source-letter axis (T/A/U/AT/M/P/–)
+
+`AT` (v0.51.329) = an AnimeThemes.moe pick — `.link-badge-animethemes`, the anime magenta; anime tab only.
 
 The row "SRC" letter renders in three places — keep aligned when changing:
 * DB read path: `_SRC_LETTER_SQL` in `app/web/api.py`

@@ -60,6 +60,7 @@ and logs a loud `WRITABILITY:` uid-vs-owner error if it can't.
 | `T` | ThemerrDB-managed | upstream_source ∈ ('imdb','themoviedb') |
 | `A` | Adopted | sidecar matched, motif owns the inode |
 | `U` | User URL | manual youtube_url override in user_overrides |
+| `AT` | AnimeThemes | a url download whose `source_video_id` starts `at-` (v0.51.329, spec §3.8); magenta, the anime tone |
 | `M` | Manual sidecar | someone else put theme.mp3 there |
 | `P` | Plex-served | themerr-plex embed / Plex Pass cloud |
 | `–` | none / dropped | no theme, or `tdb_dropped_at` set |
@@ -618,9 +619,14 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   as well as guid_tmdb. APPLY SELECTED = sequential per-row manual-url from
   the page; one `bulk_action_completed` digest via
   `POST /api/admin/animethemes-sweep/digest` (v0.51.327).
-- Never: auto-apply GLANCE / NAME; a background API call nobody clicked; a
-  new SRC letter (§6 decision 3 — not before the sweep has run on the real
-  library).
+- **SRC letter `AT`** (v0.51.329, spec §3.8): placed + `source_kind='url'` +
+  `source_video_id LIKE 'at-%'`, the branch BEFORE `U` in both classifiers;
+  `src_pills` + `valid_letters` allow-lists, `_SOURCE_LETTER_META`,
+  `_GS_LOCAL_LETTERS`, `SRC_LETTER_TONE.AT='animethemes'` (+ the
+  `.btn.lib-source-animethemes` rule), the filter pill + legend row
+  (anime tab only via `data-tab-only`), the card wording keyed on the `at-`
+  id. Backups stay `UB` in LINK.
+- Never: auto-apply GLANCE / NAME; a background API call nobody clicked.
 
 ## Commit + release conventions
 

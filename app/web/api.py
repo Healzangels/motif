@@ -1253,6 +1253,9 @@ def _src_letter_sql(
         "CASE "
         f"WHEN {media_folder} IS NOT NULL AND {source_kind} = 'themerrdb' THEN 'T' "
         f"WHEN {media_folder} IS NOT NULL AND {source_kind} = 'adopt' THEN 'A' "
+        # v0.51.329 (spec §3.8): an AnimeThemes pick is a url download whose
+        # video id carries the at- prefix — its own letter, BEFORE the U branch.
+        f"WHEN {media_folder} IS NOT NULL AND {source_kind} = 'url' AND {source_video_id} LIKE 'at-%' THEN 'AT' "
         f"WHEN {media_folder} IS NOT NULL AND {source_kind} IN ('url','upload') THEN 'U' "
         # v1.20.65: a PROMOTED cloud-backup row (placement_kind='plex_upload'
         # → media_folder='', source_kind='plex_cloud') is Plex's OWN cloud
@@ -2518,7 +2521,7 @@ def _library_main_query(
         # (filter by letter, ignore plex_present). Multi-select OR
         # semantics carry over: P + M selected = letter=M OR
         # plex_present=1.
-        valid_letters = {"T", "U", "A", "M", "P", "-"}
+        valid_letters = {"T", "U", "AT", "A", "M", "P", "-"}  # v0.51.329: + AT
         # v1.14.10: `Pp` is the composite-+P-only token — filter to rows
         # where Plex also serves its own theme AND the primary SRC
         # letter is one of T/U/A/M (matches the yellow-dot indicator
@@ -14273,7 +14276,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # falling through to the unfiltered code path. Mirror-principle
         # leak: every place that lists the valid src tokens must
         # include 'Pp' or the new pill no-ops with no error surface.
-        src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "Pp", "-"})
+        src_set = _pset(src_pills, {"T", "U", "AT", "A", "M", "P", "Pp", "-"})  # v0.51.329: + AT
         tdb_set = _pset(tdb_pills, {"tdb", "update", "cookies", "dead", "none", "dropped", "empty"})
         dl_set = _pset(dl_pills, {"on", "off", "broken"})
         # v1.18.30: 'pushed' dropped from the whitelist alongside the

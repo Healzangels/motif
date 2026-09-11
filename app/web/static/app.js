@@ -2759,6 +2759,7 @@
     { letter: 'T', cls: 'T', name: 'ThemerrDB' },
     { letter: 'A', cls: 'A', name: 'Adopted' },
     { letter: 'U', cls: 'U', name: 'User-supplied' },
+    { letter: 'AT', cls: 'AT', name: 'AnimeThemes' },  // v0.51.329
     { letter: 'M', cls: 'M', name: 'Manual sidecar' },
     { letter: 'P', cls: 'P', name: 'Plex-served' },
     { letter: '-', cls: 'X', name: 'No theme' },
@@ -3099,7 +3100,7 @@
   // motif's SRC axis — no genre-skip column (motif has no genre-skip concept).
   // is_anime splits TV from ANIME (theme_sources carries it as of v1.24.56;
   // plex_items.media_type is 'show' for both).
-  const _GS_LOCAL_LETTERS = new Set(['T', 'A', 'U', 'M']);
+  const _GS_LOCAL_LETTERS = new Set(['T', 'A', 'U', 'AT', 'M']);  // v0.51.329: AT is a local theme too
   function _gsBucket(rows) {
     let local = 0, plex = 0, missing = 0;
     for (const r of rows) {
@@ -4670,7 +4671,7 @@
       );
     }
     const isUserSrcRow = rowItem
-      ? (computeSrcLetter(rowItem) === 'U')
+      ? ['U', 'AT'].includes(computeSrcLetter(rowItem))  // v0.51.329: an AnimeThemes pick is a user URL too
       : false;
     const currentUrl = rowItem
       ? (rowItem.override_url || rowItem.youtube_url || '')
@@ -10636,7 +10637,7 @@
   // implied "keep the TDB theme" (the user). M has no button tone
   // (M's axis color is red = danger on a button) and '-' has no
   // source to keep → both omitted, fall back to neutral green.
-  const SRC_LETTER_TONE = { T: 'themerrdb', A: 'adopt', U: 'user', P: 'plex' };
+  const SRC_LETTER_TONE = { T: 'themerrdb', A: 'adopt', U: 'user', AT: 'animethemes', P: 'plex' };  // v0.51.329: + AT
 
   function computeSrcLetter(it) {
     // v1.18.0: a plex_upload placement (collections — POST to
@@ -10657,6 +10658,10 @@
     const looksLikeYoutubeId = /^[A-Za-z0-9_-]{11}$/.test(svid);
     if (placed && sourceKind === 'themerrdb') return 'T';
     if (placed && sourceKind === 'adopt') return 'A';
+    // v0.51.329 (spec §3.8): an AnimeThemes pick is a url download whose video
+    // id carries the at- prefix — its own letter, BEFORE the U branch. Mirrors
+    // the _src_letter_sql WHEN exactly.
+    if (placed && sourceKind === 'url' && svid.startsWith('at-')) return 'AT';
     if (placed && (sourceKind === 'url' || sourceKind === 'upload')) return 'U';
     // v1.20.65: a PROMOTED cloud-backup row (plex_upload placement +
     // source_kind='plex_cloud') is Plex's own cloud theme re-deployed
@@ -10771,6 +10776,9 @@
       srcCell = '<span class="link-badge link-badge-themerrdb" title="Motif manages from ThemerrDB.">T</span>';
     } else if (placed && sourceKind === 'adopt') {
       srcCell = '<span class="link-badge link-badge-adopt" title="Adopted sidecar (no TDB link).">A</span>';
+    } else if (placed && sourceKind === 'url' && svid.startsWith('at-')) {
+      // v0.51.329: mirrors computeSrcLetter's AT branch (the inline-render site of the SRC axis)
+      srcCell = '<span class="link-badge link-badge-animethemes" title="AnimeThemes — an opening picked from AnimeThemes.moe.">AT</span>';
     } else if (placed && (sourceKind === 'url' || sourceKind === 'upload')) {
       srcCell = '<span class="link-badge link-badge-user" title="User-provided theme (upload or manual URL).">U</span>';
     } else if (placed && sourceKind === 'plex_cloud') {
@@ -11597,6 +11605,7 @@
       // which source state each action lands them in:
       //   themerrdb = T (green) — TDB download / re-download / revert
       //   user      = U (violet) — SET URL / UPLOAD MP3
+      //   animethemes = AT (magenta) — ANIME THEMES (v0.51.329: the picker's own entry, the AT family)
       //   adopt     = A (cyan) — ADOPT
       //   plex      = P (amber) — LET PLEX SERVE / ADOPT + LET PLEX SERVE
       //   place_file = HL (green) — PUSH TO PLEX (FILE) / RE-PUSH (FILE) / SWITCH TO SIDECAR
@@ -11874,7 +11883,7 @@
       sourceItems.push(menuItemHtml(
         'anime-themes', 'ANIME THEMES',
         'Pick an opening or ending from AnimeThemes.moe — preview, then set it as this row\'s theme.',
-        { rk: it.rating_key, tone: 'user', srcLetter: srcLetter },
+        { rk: it.rating_key, tone: 'animethemes', srcLetter: srcLetter },  // v0.51.329: the AT family's tone
       ));
     }
     sourceItems.push(menuItemHtml(
@@ -17894,7 +17903,9 @@
              + '(RE-DOWNLOAD TDB takes it over, PURGE clears it)';
       }
       if (!lf) return 'nothing on disk · no theme staged';
-      const held = _heldWord(lf.source_kind || '');
+      // v0.51.329: an AnimeThemes pick (at- video id) names its source, not "user-URL"
+      const held = String(lf.source_video_id || '').startsWith('at-')
+        ? 'AnimeThemes theme' : _heldWord(lf.source_kind || '');
       if ((lf.last_place_attempt_reason || '') === 'backup_only') {
         return `${held} on disk as backup · Plex serves its own theme`;
       }
@@ -18449,7 +18460,8 @@
     // the line doesn't read as an applied theme (mirrors v1.24.9).
     const baselineHistory = lf
       ? {
-          label: _humanSourceKind(lf.source_kind || ''),
+          label: String(lf.source_video_id || '').startsWith('at-')
+            ? 'Downloaded from AnimeThemes' : _humanSourceKind(lf.source_kind || ''),  // v0.51.329
           provenance: lf.provenance || '',
           // v1.24.11: pre-format here via the card-wide fmt.timeAuto
           // (MMM DD, YYYY · HH:MM) so the ORIGIN row's date matches the

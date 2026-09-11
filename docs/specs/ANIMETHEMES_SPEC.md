@@ -11,7 +11,7 @@ Tag 4 (§3.6 review page + sweep + apply-selected) shipped as v0.51.325 — as a
 page-scoped job, not an op kind (§6 decision 5). Tag 5 (polish: weekly bridge
 refresh, README/CLAUDE.md, the apply digest) shipped as v0.51.327; v0.51.328
 closed out (TMDB movie index, harness re-banked). Series complete; decision 3
-(a SRC letter) has its numbers and waits on the operator's call.
+(a SRC letter) decided — pill `AT`, shipped as v0.51.329 (tag 6).
 Candidate A (`// FIND THEME`) is shelved (see FIND_THEME_SPEC.md).
 
 ## 1. Problem
@@ -170,6 +170,57 @@ notifications apply unchanged. No new SRC letter in phases 1–2.
   running count; Plex-served rows send `download_only` (decision 2). The
   downloads then run through the normal queue + rate limit.
 
+### 3.8 Phase 3 — the SRC letter `AT` (decision 3, DECIDED 2026-09-11)
+
+Rows sourced from AnimeThemes read `U` today — a user URL — which a full
+`// APPLY SELECTED` would put on up to ~593 of 1,280 anime rows, making the
+`U` filter stop meaning "I typed this". Phase 3 gives them their own pill.
+
+- **Pill `AT`, tone = the anime magenta** (`--magenta`, the tone the ANIME
+  tab underline and the anime dashboard stat already carry, so it already
+  reads "anime" in motif). Not `A` (Adopted, cyan) and not violet (`U`'s
+  tone): a purple A would say "adopted" by letter and "user" by colour.
+  Two glyphs fit the `.link-badge` pill — the LINK column's `HL` / `PU` /
+  `TB` are the same primitive.
+- **Detection key, no schema change:** every AnimeThemes download stamps
+  `local_files.source_video_id` with an `at-` prefix (v0.51.315) and the
+  library row already carries that column. Rule: a PLACED row whose
+  `source_kind` is `url` and whose `source_video_id LIKE 'at-%'` is `AT`;
+  everything else is unchanged. The `AT` branch sits BEFORE the `U` branch
+  in both classifiers. Unplaced / backup-only rows keep their letter today
+  (`P` when Plex serves, `–` otherwise) — the SRC column says what plays.
+- **Backups stay in the LINK column.** A Plex-served row with an
+  AnimeThemes backup reads SRC `P` + LINK `UB` (it is a user-URL backup
+  standing by); the `UB` tooltip names AnimeThemes when the backup's
+  `source_video_id` is `at-`. No new backup glyph — `ATB` would be a third
+  glyph in a two-glyph family.
+- **Every site the axis renders (the CLAUDE.md table + these):**
+  `_src_letter_sql` (api.py — the frozen-constant pin test_v1_21_57 is
+  retargeted to the new constant, not widened); `computeSrcLetter` +
+  `SRC_LETTER_TONE` + the inline render in `renderLibraryRow` (app.js);
+  `src_pills` allow-list (`_pset(... {"T","U","A","M","P","Pp","-"})` gains
+  `"AT"`); the legend / filter pill row in library.html (a magenta `AT`
+  button after `U`, anime tab only — it is the only tab that can produce
+  it, and the shared-page rule means it renders on every tab hidden by
+  `data-tab-only`); the dashboard donut legend (`{ letter: 'AT', cls:
+  'AT', name: 'AnimeThemes' }` + a magenta slice class) and the general
+  stats letter set `_GS_LOCAL_LETTERS` (must gain `AT` or the rows fold
+  into "missing"); the INFO card headline (`_heldWord` → "AnimeThemes
+  theme") and history baseline (`_humanSourceKind` → "Downloaded from
+  AnimeThemes"); the notification provenance label (`_PROVENANCE_LABEL`
+  gains `animethemes` with the magenta dot; the platform chain already
+  says "AnimeThemes"); CSS `.link-badge-animethemes` (magenta, the
+  `.link-badge-manual` shape) and the donut slice tone.
+- **Predicates keyed on `'U'`** (`isUserSrcRow` in the SET URL dialog and
+  the picker's `hasTheme = srcLetter !== '-'`) are audited: `AT` must count
+  as a user-sourced, themed row wherever `U` does.
+- **Tests:** the letter matrix for both classifiers (placed `url` + `at-`
+  → `AT`; unplaced `at-` → unchanged; a YouTube `url` row stays `U`), the
+  SQL/JS mirror-drift guard, the filter allow-list, the legend + donut
+  entries, the general-stats set, the tooltip text, the card wording;
+  retargets across the ~55 files that pin the axis (mirror pins become
+  invariant pins where they are literal).
+
 ### 3.7 Never
 
 - No apply without a click; no auto-apply of GLANCE or NAME resolutions.
@@ -203,6 +254,7 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
 | 3 | Phase 1 dialog, preview via the candidate pipe, entry points | pytest; live on 5 no-theme rows incl. one GLANCE |
 | 4 | Phase 2 review page + page-scoped sweep + apply-selected (v0.51.325) | pytest (offline sweep on the tag-1 fake API; eligibility SQL; endpoints; page); live on the scratch instance |
 | 5b | Close-out (v0.51.328): the bridge indexes TMDB *movie* ids and routes a movie row's lookup to them only (a movie id in the tv index could match the wrong show; the sweep includes movie rows); a film's season-less entry is CLEAN for a movie row when the year agrees (was always GLANCE); the harness re-run on the current code and banked — identical to the tag-3 numbers | pytest (offline bridge + resolver); harness |
+| 6 | Phase 3 (v0.51.329): the `AT` SRC letter (§3.8) — both classifiers, filter allow-list, legend + filter pill, donut + general stats, card + notification wording, CSS tone; mirror pins retargeted | pytest incl. the SQL/JS drift guard; live on the scratch instance (an applied AnimeThemes row reads AT; a backup row reads P + UB) |
 | 5 | Polish (v0.51.327): `refresh_bridge` + the weekly `animethemes_bridge_refresh` job (Sun 03:20 UTC, no-op until the cache exists), README section + attribution + CLAUDE.md map, one `bulk_action_completed` digest per APPLY SELECTED run (`POST …/animethemes-sweep/digest`) | pytest |
 
 ## 6. Open decisions
@@ -213,8 +265,11 @@ include on `/resource`), 429 + Retry-After handling, pacing, caches,
 2. ~~Phase 2 default for P-rows: backup (proposed) vs replace.~~ DECIDED
    2026-09-09: backup — a row that already has a theme pre-ticks KEEP AS
    BACKUP so a pick lands as a revision, never a silent replace.
-3. A dedicated SRC letter for AnimeThemes-sourced rows later (six-site
-   cost) — not before phase 2 has run on the real library. **Numbers in
+3. ~~A dedicated SRC letter for AnimeThemes-sourced rows later (six-site
+   cost) — not before phase 2 has run on the real library.~~ DECIDED
+   2026-09-11 (the operator: "lets go with AT in magenta"): pill `AT` in
+   the anime magenta, §3.8; built as tag 6 after the mockup sign-off.
+   **Numbers in
    (2026-09-11, `animethemes_eval/2026-09-11-series-close.md`):** a full
    APPLY SELECTED sources 300 no-theme rows + 293 Plex-served backups —
    up to ~593 of 1,280 anime rows (46 % of the tab) reading `U` like a

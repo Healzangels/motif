@@ -79,7 +79,7 @@ def test_accept_update_preserves_isUserSrcRow_branch():
     fn_anchor = js.index("async function acceptUpdate(mediaType, tmdbId, btn)")
     body = js[fn_anchor:fn_anchor + 5000]
     assert "isUserSrcRow" in body
-    assert "computeSrcLetter(rowItem) === 'U'" in body
+    assert "['U', 'AT'].includes(computeSrcLetter(rowItem))" in body  # v0.51.329: AT is a user URL too
 
 
 # ── SET URL live preview ──────────────────────────────────────

@@ -21,6 +21,7 @@ _FROZEN_DEFAULT = (
     "CASE "
     "WHEN p.media_folder IS NOT NULL AND lf.source_kind = 'themerrdb' THEN 'T' "
     "WHEN p.media_folder IS NOT NULL AND lf.source_kind = 'adopt' THEN 'A' "
+    "WHEN p.media_folder IS NOT NULL AND lf.source_kind = 'url' AND lf.source_video_id LIKE 'at-%' THEN 'AT' "  # v0.51.329
     "WHEN p.media_folder IS NOT NULL AND lf.source_kind IN ('url','upload') THEN 'U' "
     "WHEN p.media_folder IS NOT NULL AND lf.source_kind = 'plex_cloud' THEN 'P' "
     "WHEN p.media_folder IS NOT NULL AND p.provenance = 'auto' THEN 'T' "

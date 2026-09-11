@@ -34,7 +34,7 @@ APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 
 def test_src_letter_tone_map_defined():
     assert ("const SRC_LETTER_TONE = "
-            "{ T: 'themerrdb', A: 'adopt', U: 'user', P: 'plex' };") in APP_JS, (
+            "{ T: 'themerrdb', A: 'adopt', U: 'user', AT: 'animethemes', P: 'plex' };") in APP_JS, (  # v0.51.329
         "v1.20.3: the shared SRC-letter → tone map must exist"
     )
 
@@ -52,7 +52,7 @@ def test_src_letter_tone_map_omits_m_and_dash():
 def test_tone_values_all_have_css_rules():
     """Every tone the map can emit must have a real .btn.lib-source-*
     rule (the v1.14.50 cross-reference contract)."""
-    for tone in ("themerrdb", "adopt", "user", "plex"):
+    for tone in ("themerrdb", "adopt", "user", "animethemes", "plex"):
         assert f".btn.lib-source-{tone} {{" in APP_CSS, (
             f"v1.20.3: SRC_LETTER_TONE emits lib-source-{tone} but no "
             f"CSS rule exists"

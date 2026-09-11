@@ -6107,7 +6107,16 @@
 #   2026-09-11-series-close.md: identical to the tag-3 report (1,082 clean of
 #   1,280; 87 % with an opening) — nothing in .318–.327 moved the resolver.
 #   Spec §6 decision 3 (a SRC letter) now carries the numbers it waited on.
-__version__ = "0.51.328"
+# 0.51.329: the SRC letter `AT` (AnimeThemes spec §3.8; §6 decision 3, the
+#   operator: "lets go with AT in magenta"). A placed row whose theme is a url
+#   download with an `at-` video id reads AT — the branch before U in both
+#   classifiers (_src_letter_sql + computeSrcLetter, mirrored in the inline
+#   render). Magenta, the anime tone. Follows the letter everywhere the axis
+#   renders: the src_pills allow-lists, the filter pill + legend row (anime tab
+#   only via data-tab-only), the dashboard donut + the general-stats local set,
+#   the KEEP CURRENT tone, the INFO headline + history baseline, the
+#   notification provenance. Backups stay UB in LINK; no schema change.
+__version__ = "0.51.329"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

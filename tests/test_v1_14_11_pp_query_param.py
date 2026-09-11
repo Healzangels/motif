@@ -33,7 +33,7 @@ def test_pset_valid_set_includes_pp():
     the token before the SQL gate gets a chance to act on it."""
     src = (REPO / "app" / "web" / "api.py").read_text()
     assert (
-        'src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "Pp", "-"})'
+        'src_set = _pset(src_pills, {"T", "U", "AT", "A", "M", "P", "Pp", "-"})'  # v0.51.329: + AT
         in src
     )
 
@@ -72,7 +72,7 @@ def test_pp_token_passes_through_pset_function():
             return set()
         return {p for p in (x.strip() for x in s.split(",")) if p in valid}
 
-    valid = {"T", "U", "A", "M", "P", "Pp", "-"}
+    valid = {"T", "U", "AT", "A", "M", "P", "Pp", "-"}
     assert pset("Pp", valid) == {"Pp"}
     assert pset("T,Pp,A", valid) == {"T", "Pp", "A"}
     # And with the pre-fix set, 'Pp' is silently dropped (this

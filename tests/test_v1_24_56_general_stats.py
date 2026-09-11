@@ -224,7 +224,7 @@ def test_js_renders_general_stats():
     assert "function renderGeneralStats(rows)" in js
     assert "function _gsBucket(rows)" in js
     # LOCAL letter set + the is_anime split for TV vs ANIME.
-    assert "_GS_LOCAL_LETTERS = new Set(['T', 'A', 'U', 'M'])" in js
+    assert "_GS_LOCAL_LETTERS = new Set(['T', 'A', 'U', 'AT', 'M'])" in js  # v0.51.329: AT is local too
     body = js[js.index("function renderGeneralStats(rows)"):][:1400]
     assert "isShow(r) && !r.is_anime" in body, "TV row excludes anime"
     assert "isShow(r) && !!r.is_anime" in body, "ANIME row is the anime split"

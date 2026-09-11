@@ -187,6 +187,6 @@ def test_v1_14_10_v1_14_11_v1_14_17_form_complete_pp_chain():
     # Layer 1: button render.
     assert 'data-src-filter="Pp"' in html
     # Layer 2: _pset query parser (added v1.14.11).
-    assert 'src_set = _pset(src_pills, {"T", "U", "A", "M", "P", "Pp", "-"})' in py
+    assert 'src_set = _pset(src_pills, {"T", "U", "AT", "A", "M", "P", "Pp", "-"})' in py  # v0.51.329
     # Layer 3: deep-link parser (added v1.14.17).
     assert "values: new Set(['T','U','A','M','P','Pp','-'])" in js
