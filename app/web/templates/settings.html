@@ -1402,7 +1402,7 @@
 <section class="block tab-panel" data-panel="database" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// DATABASE BACKUP</h2>
-    <span class="muted small">consistent snapshots of motif.db, on your /config mount</span>
+    <span class="muted small">consistent snapshots of motif.db, or a bundle of everything, on your /config mount</span>
   </header>
   <div class="block-body">
     <p class="form-hint block-intro">
@@ -1414,10 +1414,19 @@
       container restarts and sit alongside your other appdata so a
       backup of <code>/config</code> captures them too. Download any
       snapshot to keep an off-box copy.
+      {# v0.51.335: the bundle (docs/specs/BACKUP_BUNDLE_SPEC.md) #}
+      A <strong>bundle</strong> adds <code>motif.yaml</code>,
+      <code>cookies.txt</code> and a census of every theme, so a new box
+      can be rebuilt from it — <strong class="warn">it carries your Plex
+      token and notification URLs as-is</strong>; it is as sensitive as
+      <code>/config</code> itself. The theme files stay out (13 GB is a
+      job for your share backup).
     </p>
     <div class="form-actions">
       <button type="button" class="btn btn-warn"
               id="database-backup-create-btn">// CREATE BACKUP NOW</button>
+      <button type="button" class="btn btn-warn"
+              id="database-bundle-create-btn">// CREATE BUNDLE NOW</button>
       <span class="form-status" id="database-backup-status"></span>
     </div>
     <p class="form-subhead">// EXISTING BACKUPS</p>
@@ -1445,6 +1454,15 @@
           prunes to the retention count. Toggling this (and retention)
           takes effect on the next scheduled tick — no restart needed.
           The // CREATE BACKUP NOW button above always works regardless.
+        </p>
+      </label>
+      {# v0.51.335: bundle instead of a bare snapshot on the schedule #}
+      <label class="form-label form-checkbox">
+        <input type="checkbox" data-cfg-field="database_backup.bundle" />
+        <span class="form-label-text">WRITE A BUNDLE</span>
+        <p class="form-hint">
+          Each scheduled run writes a bundle (the snapshot is inside it)
+          instead of a bare snapshot. Retention counts both kinds.
         </p>
       </label>
       <label class="field-row">

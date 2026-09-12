@@ -1304,8 +1304,21 @@ def _scheduled_database_backup(settings: "Settings") -> None:
     from . import db_backup
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     try:
-        bf = db_backup.create_backup(
-            settings.db_path, settings.config_dir, now_stamp=stamp)
+        if getattr(settings, "db_backup_bundle", False):
+            # v0.51.335: a bundle — the snapshot plus motif.yaml, cookies.txt
+            # and the themes census — instead of a bare snapshot (spec § 3).
+            from app import __version__
+            from . import bundle as bundle_mod
+            from .db import CURRENT_SCHEMA_VERSION
+            bf = bundle_mod.create_bundle(
+                settings.db_path, settings.config_dir,
+                config_file=settings.config_dir / "motif.yaml",
+                cookies_file=settings.cookies_file, themes_dir=settings.themes_dir,
+                now_stamp=stamp, motif_version=__version__,
+                schema_version=CURRENT_SCHEMA_VERSION)
+        else:
+            bf = db_backup.create_backup(
+                settings.db_path, settings.config_dir, now_stamp=stamp)
     except FileExistsError:
         # A manual backup already landed this exact second — harmless.
         log.debug("scheduled backup: same-second snapshot exists, skipping")
@@ -1319,7 +1332,8 @@ def _scheduled_database_backup(settings: "Settings") -> None:
         return
     removed = db_backup.prune_backups(
         settings.config_dir, settings.db_backup_retention)
-    msg = f"Scheduled database backup created: {bf.name}"
+    msg = (f"Scheduled backup bundle created: {bf.name}" if bf.kind == "bundle"
+           else f"Scheduled database backup created: {bf.name}")
     if removed:
         msg += f" · pruned {len(removed)} old"
     log_event(settings.db_path, level="INFO", component="backup", message=msg)

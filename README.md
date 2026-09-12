@@ -354,6 +354,7 @@ Most settings are configured from the web UI at **/settings** and saved to `/con
 | TOKENS     | API token management                                                       |
 | PASSWORD   | admin password change                                                      |
 | HOMEPAGE   | Custom API widget config example for Homepage dashboard                   |
+| DATABASE   | snapshots of `motif.db` and **backup bundles** (snapshot + `motif.yaml` + `cookies.txt` + a themes census — as sensitive as `/config`), a schedule with retention, restore |
 
 ### Bootstrap env vars
 

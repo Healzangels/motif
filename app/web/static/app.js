@@ -7257,16 +7257,28 @@
           const name = htmlEscape(b.name);
           const href = '/api/admin/database-backup/download/'
             + encodeURIComponent(b.name);
+          // v0.51.335: one list, three kinds — a chip leads the name. Restore
+          // from a bundle lands with tag 2, so a bundle row has no RESTORE yet.
+          const kind = (b.kind === 'bundle' || b.kind === 'prerestore') ? b.kind : 'snapshot';
+          const chipTip = kind === 'bundle'
+            ? 'bundle: the database snapshot + motif.yaml + cookies.txt + a themes census'
+            : kind === 'prerestore' ? 'pre-restore safety copy — kept outside retention'
+            : 'database snapshot';
+          const chip = `<span class="tier-badge tier-badge-${kind}" title="${chipTip}">`
+            + (kind === 'prerestore' ? 'PRE-RESTORE' : kind.toUpperCase()) + '</span>';
+          const restoreBtn = kind !== 'bundle'
+            ? `<button type="button" class="btn btn-tiny btn-warn" `
+              + `data-backup-restore="${name}">// RESTORE</button>`
+            : '';
           return '<div class="backup-row">'
             + '<div class="backup-row-main">'
-            + `<div class="backup-row-name">${name}</div>`
+            + `<div class="backup-row-name">${chip}${name}</div>`
             + `<div class="backup-row-meta">${fmtBytes(b.size)} · `
             + `${htmlEscape(fmtDate(b.created_at))}</div>`
             + '</div>'
             + '<div class="backup-row-actions">'
             + `<a class="btn btn-tiny" href="${href}" download>// DOWNLOAD</a>`
-            + `<button type="button" class="btn btn-tiny btn-warn" `
-            + `data-backup-restore="${name}">// RESTORE</button>`
+            + restoreBtn
             + `<button type="button" class="btn btn-tiny btn-danger" `
             + `data-backup-delete="${name}">// DELETE</button>`
             + '</div></div>';
@@ -7334,7 +7346,7 @@
       const name = btn.getAttribute('data-backup-delete');
       const ok = confirm(
         'Delete backup ' + name + '?\n\n'
-        + 'Removes the snapshot file from /config/backups. Does NOT '
+        + 'Removes the file from /config/backups. Does NOT '
         + 'touch the live database.'
       );
       if (!ok) return;
@@ -7449,8 +7461,39 @@
 
     refreshPending();
 
+    // v0.51.335: the bundle button — the same create path with the
+    // endpoint's kind and its own busy label; both buttons lock while
+    // either runs (they write to the same dir).
+    const bundleBtn = document.getElementById('database-bundle-create-btn');
+    bundleBtn?.addEventListener('click', async () => {
+      bundleBtn.disabled = true;
+      createBtn.disabled = true;
+      const orig = bundleBtn.textContent;
+      bundleBtn.textContent = '// BUNDLING…';
+      if (status) { status.textContent = ''; status.className = 'form-status'; }
+      try {
+        const r = await api('POST', '/api/admin/database-backup?kind=bundle');
+        if (status) {
+          status.textContent = '✓ created ' + (r && r.backup ? r.backup.name : '');
+          status.classList.add('form-status-ok');
+        }
+        await refreshList();
+      } catch (e) {
+        const gw = gatewayTimeoutNote(e);
+        if (status) {
+          status.textContent = (gw ? '⚠ ' : '✗ ') + (gw || (e && e.message ? e.message : 'failed'));
+          status.classList.add(gw ? 'warn' : 'form-status-fail');
+        }
+        refreshList().catch(() => {});
+      } finally {
+        bundleBtn.disabled = false;
+        bundleBtn.textContent = orig;
+        createBtn.disabled = false;
+      }
+    });
     createBtn.addEventListener('click', async () => {
       createBtn.disabled = true;
+      if (bundleBtn) bundleBtn.disabled = true;
       const orig = createBtn.textContent;
       createBtn.textContent = '// BACKING UP…';
       if (status) { status.textContent = ''; status.className = 'form-status'; }
@@ -7472,6 +7515,7 @@
         refreshList().catch(() => {});   // surface a backup that landed despite the timeout
       } finally {
         createBtn.disabled = false;
+        if (bundleBtn) bundleBtn.disabled = false;
         createBtn.textContent = orig;
       }
     });

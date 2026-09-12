@@ -59,6 +59,7 @@ from ..core.auth import (
     revoke_api_token, setup_complete,
 )
 from ..core.config_file import validate as validate_config
+from ..core import bundle as bundle_mod  # v0.51.335
 from ..core import db_backup
 from ..core import notify_inbox
 from ..core.db import get_conn, transaction
@@ -26745,20 +26746,37 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # /config/backups; the // DATABASE settings card creates, lists,
     # downloads + deletes them.
     @app.post("/api/admin/database-backup")
-    async def api_admin_database_backup_create(request: Request):
-        """Create a fresh VACUUM INTO snapshot of motif.db. Offloaded
-        to a thread (VACUUM holds a read txn + writes the whole DB —
-        seconds on a large DB; blocking the event loop would freeze
+    async def api_admin_database_backup_create(request: Request,
+                                               kind: str = Query("snapshot")):
+        """Create a fresh VACUUM INTO snapshot of motif.db — or, with
+        ?kind=bundle (v0.51.335), a bundle: the snapshot plus motif.yaml,
+        cookies.txt and a themes census (docs/specs/BACKUP_BUNDLE_SPEC.md).
+        Offloaded to a thread (VACUUM holds a read txn + writes the whole
+        DB — seconds on a large DB; blocking the event loop would freeze
         every concurrent request, class-12)."""
         _require_admin(request)
+        if kind not in ("snapshot", "bundle"):
+            raise HTTPException(status_code=400, detail="kind must be snapshot or bundle")
         # UTC stamp minted here so db_backup stays clock-free (testable).
         from datetime import datetime, timezone
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         try:
-            bf = await run_in_threadpool(
-                db_backup.create_backup,
-                settings.db_path, settings.config_dir, now_stamp=stamp,
-            )
+            if kind == "bundle":
+                from .. import __version__
+                from ..core.db import CURRENT_SCHEMA_VERSION
+                bf = await run_in_threadpool(
+                    lambda: bundle_mod.create_bundle(
+                        settings.db_path, settings.config_dir,
+                        config_file=settings.config_dir / "motif.yaml",
+                        cookies_file=settings.cookies_file,
+                        themes_dir=settings.themes_dir, now_stamp=stamp,
+                        motif_version=__version__,
+                        schema_version=CURRENT_SCHEMA_VERSION))
+            else:
+                bf = await run_in_threadpool(
+                    db_backup.create_backup,
+                    settings.db_path, settings.config_dir, now_stamp=stamp,
+                )
         except FileExistsError:
             raise HTTPException(
                 status_code=409,
@@ -26768,14 +26786,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=503, detail=str(e))
         log_event(
             settings.db_path, level="info", component="backup",
-            message=f"Database backup created: {bf.name}",
-            detail={"name": bf.name, "size": bf.size},
+            message=(f"Backup bundle created: {bf.name}" if bf.kind == "bundle"
+                     else f"Database backup created: {bf.name}"),
+            detail={"name": bf.name, "size": bf.size, "kind": bf.kind},
         )
         return {
             "ok": True,
             "backup": {
                 "name": bf.name, "size": bf.size,
-                "created_at": bf.created_at,
+                "created_at": bf.created_at, "kind": bf.kind,
             },
         }
 
@@ -26792,7 +26811,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "ok": True,
             "dir": str(db_backup.backups_dir(settings.config_dir)),
             "backups": [
-                {"name": b.name, "size": b.size, "created_at": b.created_at}
+                {"name": b.name, "size": b.size, "created_at": b.created_at,
+                 "kind": b.kind}  # v0.51.335
                 for b in backups
             ],
         }
@@ -26807,7 +26827,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if path is None:
             raise HTTPException(status_code=404, detail="backup not found")
         return FileResponse(
-            path, media_type="application/octet-stream",
+            path,
+            media_type=("application/gzip" if db_backup.kind_of(name) == "bundle"
+                        else "application/octet-stream"),  # v0.51.335
             filename=name,
             headers={"Cache-Control": "no-store"},
         )

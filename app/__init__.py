@@ -6116,6 +6116,22 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.335: backup bundle, tag 1 — create + schedule (feature D; spec
+#   docs/specs/BACKUP_BUNDLE_SPEC.md, every proposed option taken). A bundle is
+#   one tar.gz next to the snapshots: a VACUUM INTO copy of motif.db, motif.yaml
+#   (secrets as-is — as sensitive as /config itself, the settings copy says so),
+#   cookies.txt when present, and manifest.json (versions, row counts, member
+#   sha256s, a census of every local_files row with source + placement kind so a
+#   lost themes directory becomes a re-download list; the theme bytes stay out).
+#   app/core/bundle.py builds it through db_backup.vacuum_into (the VACUUM step
+#   split out of create_backup); bundles share the name gate, the list (rows
+#   gain `kind`), retention (one window over snapshots + bundles, pre-restore
+#   copies exempt) and the four endpoints (POST ?kind=bundle; download as
+#   application/gzip). Settings: // CREATE BUNDLE NOW, a kind chip on every list
+#   row (.tier-badge-bundle / -snapshot / -prerestore), a WRITE A BUNDLE toggle
+#   (database_backup.bundle / MOTIF_DB_BACKUP_BUNDLE, off by default) so the
+#   scheduled run writes a bundle instead of a bare snapshot. Bundle rows carry
+#   no RESTORE yet — tag 2.
 # 0.51.334: row quick-play, tag 2 — NOW PLAYING in the results header (spec § 6).
 #   While a row plays, the header's action cluster shows "now playing · <title>
 #   · 0:12 / 1:30 · ■": the title scrolls to the playing row (when on this
@@ -6169,7 +6185,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.334"
+__version__ = "0.51.335"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

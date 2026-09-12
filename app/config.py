@@ -435,6 +435,11 @@ class Settings:
     def db_backup_retention(self) -> int:
         return int(self._cfg.database_backup.retention)
 
+    @property
+    def db_backup_bundle(self) -> bool:
+        # v0.51.335: the scheduled run writes a bundle (docs/specs/BACKUP_BUNDLE_SPEC.md)
+        return bool(self._cfg.database_backup.bundle)
+
     # ---- Session key ----
 
     def resolve_session_key(self) -> str:

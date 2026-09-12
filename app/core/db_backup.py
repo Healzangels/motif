@@ -47,6 +47,9 @@ _BACKUP_RE = re.compile(r"^motif-(\d{8}-\d{6})\.db$")
 # leaves them alone — the restore undo must survive retention. They're
 # still listed/downloadable/restorable (is_backup_name accepts both).
 _PRERESTORE_RE = re.compile(r"^motif-prerestore-(\d{8}-\d{6})\.db$")
+# v0.51.335: the backup bundle (bundle.py) — a tar.gz next to the snapshots,
+# sharing the list, the name gate, retention and the four endpoints.
+_BUNDLE_RE = re.compile(r"^motif-bundle-(\d{8}-\d{6})\.tar\.gz$")
 
 
 @dataclass
@@ -54,6 +57,7 @@ class BackupFile:
     name: str
     size: int
     created_at: str  # ISO-8601 derived from the embedded stamp (UTC)
+    kind: str = "snapshot"  # v0.51.335: snapshot | prerestore | bundle
 
 
 def backups_dir(config_dir: Path) -> Path:
@@ -68,13 +72,26 @@ def is_backup_name(name: str) -> bool:
     arbitrary file. Both regexes are fully anchored (^…$)."""
     if "/" in name or "\\" in name or name in (".", ".."):
         return False
-    return bool(_BACKUP_RE.match(name) or _PRERESTORE_RE.match(name))
+    return bool(_BACKUP_RE.match(name) or _PRERESTORE_RE.match(name)
+                or _BUNDLE_RE.match(name))
+
+
+def kind_of(name: str) -> str | None:
+    """v0.51.335: 'snapshot' / 'prerestore' / 'bundle' for a valid backup
+    name, None otherwise (the same gate as is_backup_name)."""
+    if not is_backup_name(name):
+        return None
+    if _BUNDLE_RE.match(name):
+        return "bundle"
+    if _PRERESTORE_RE.match(name):
+        return "prerestore"
+    return "snapshot"
 
 
 def _stamp_of(name: str) -> str | None:
     """The embedded YYYYMMDD-HHMMSS for a routine OR prerestore backup
     name, else None."""
-    m = _BACKUP_RE.match(name) or _PRERESTORE_RE.match(name)
+    m = _BACKUP_RE.match(name) or _PRERESTORE_RE.match(name) or _BUNDLE_RE.match(name)
     return m.group(1) if m else None
 
 
@@ -108,15 +125,25 @@ def create_backup(db_path: Path, config_dir: Path, *,
     dest = bdir / name
     if dest.exists():
         raise FileExistsError(f"backup already exists: {name}")
+    vacuum_into(db_path, dest)
+    st = dest.stat()
+    log.info("database backup written: %s (%d bytes)", name, st.st_size)
+    return BackupFile(name=name, size=st.st_size,
+                      created_at=_iso_from_stamp(now_stamp),
+                      kind="prerestore" if prerestore else "snapshot")
+
+
+def vacuum_into(db_path: Path, dest: Path) -> None:
+    """v0.51.335: the VACUUM INTO step on its own, so the bundle can write
+    its snapshot member through the same code. `dest` is always a path
+    this module or bundle.py minted — never user input."""
     conn = sqlite3.connect(str(db_path))
     try:
         # Wait out a concurrent writer rather than failing with
         # "database is locked" — VACUUM INTO takes a read lock.
         conn.execute("PRAGMA busy_timeout = 30000")
-        # VACUUM INTO can't bind parameters for its target path. The
-        # path is entirely ours (config_dir/backups/motif-<validated
-        # stamp>.db — never user input), but single-quote-escape
-        # defensively since it interpolates into SQL.
+        # VACUUM INTO can't bind parameters for its target path; single-
+        # quote-escape defensively since it interpolates into SQL.
         safe = str(dest).replace("'", "''")
         conn.execute(f"VACUUM INTO '{safe}'")
     except Exception:
@@ -132,10 +159,6 @@ def create_backup(db_path: Path, config_dir: Path, *,
         raise
     finally:
         conn.close()
-    st = dest.stat()
-    log.info("database backup written: %s (%d bytes)", name, st.st_size)
-    return BackupFile(name=name, size=st.st_size,
-                      created_at=_iso_from_stamp(now_stamp))
 
 
 def list_backups(config_dir: Path) -> list[BackupFile]:
@@ -158,7 +181,8 @@ def list_backups(config_dir: Path) -> list[BackupFile]:
             log.warning("backup stat failed (%s): %s — skipping", p.name, e)
             continue
         out.append(BackupFile(name=p.name, size=size,
-                              created_at=_iso_from_stamp(stamp)))
+                              created_at=_iso_from_stamp(stamp),
+                              kind=kind_of(p.name) or "snapshot"))
     # Sort by embedded stamp (true chronological across both name
     # shapes), newest first.
     out.sort(key=lambda b: (_stamp_of(b.name) or "", b.name), reverse=True)
@@ -202,8 +226,10 @@ def prune_backups(config_dir: Path, retention: int) -> list[str]:
     count toward + are eligible for the prune."""
     if retention <= 0:
         return []
+    # v0.51.335: bundles count with the snapshots — one retention window
+    # over both kinds; pre-restore copies stay exempt.
     routine = [b for b in list_backups(config_dir)
-               if _BACKUP_RE.match(b.name)]  # excludes prerestore copies
+               if _BACKUP_RE.match(b.name) or _BUNDLE_RE.match(b.name)]
     doomed = routine[retention:]  # newest-first → tail is oldest
     removed: list[str] = []
     bdir = backups_dir(config_dir)

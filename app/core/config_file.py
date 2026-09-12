@@ -341,6 +341,7 @@ class DatabaseBackupConfig:
     enabled: bool = False          # opt-in — off by default
     cron: str = "0 4 * * *"        # 04:00 UTC daily (clear of the 03:xx prunes)
     retention: int = 7             # keep newest N; 0 = keep all
+    bundle: bool = False           # v0.51.335: each scheduled run writes a bundle instead of a bare snapshot
 
 
 # v1.17.0: Apprise notification sinks + per-event toggles. Two
@@ -617,6 +618,7 @@ ENV_BINDINGS: list[tuple[str, str, Any]] = [
     ("MOTIF_DB_BACKUP_ENABLED",   "database_backup.enabled",         _to_bool),
     ("MOTIF_DB_BACKUP_CRON",      "database_backup.cron",            str),
     ("MOTIF_DB_BACKUP_RETENTION", "database_backup.retention",       int),
+    ("MOTIF_DB_BACKUP_BUNDLE",    "database_backup.bundle",          _to_bool),  # v0.51.335
     ("MOTIF_NORMALIZE_ON_DOWNLOAD", "loudness.normalize_on_download", _to_bool),
     ("MOTIF_NORMALIZE_AUTO_ADDED", "loudness.normalize_auto_added",  _to_bool),
     ("MOTIF_LOUDNESS_TARGET",     "loudness.target_lufs",            float),

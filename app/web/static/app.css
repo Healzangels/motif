@@ -4922,6 +4922,25 @@ body.auth-page .auth-card { margin: 0; }
   border: 1px solid var(--line);
   background: none;
 }
+/* v0.51.335: the backup list's kind chips (docs/specs/BACKUP_BUNDLE_SPEC.md
+   § 5) — the same family, one tone each: a bundle is the fuller artifact
+   (green), a snapshot the plain one (dim), a pre-restore copy the undo (amber). */
+.tier-badge-bundle {
+  color: var(--green-bright);
+  border: 1px solid rgba(var(--green-rgb), 0.55);
+  background: rgba(var(--green-rgb), 0.12);
+}
+.tier-badge-snapshot {
+  color: var(--fg-dim);
+  border: 1px solid var(--line-bright);
+  background: none;
+}
+.tier-badge-prerestore {
+  color: var(--amber-bright);
+  border: 1px solid rgba(var(--amber-rgb), 0.5);
+  background: rgba(var(--amber-rgb), 0.08);
+}
+.backup-row-name > .tier-badge { margin-right: var(--gap-2); }
 .info-play-row > .tier-badge { flex: 0 0 auto; }
 /* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
    overwrite something the user might care about; info (cyan) for
