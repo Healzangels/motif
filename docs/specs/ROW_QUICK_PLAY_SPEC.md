@@ -1,6 +1,6 @@
 # Row quick-play (feature E) — design spec
 
-Status: tag 1 BUILT as v0.51.333 (2026-09-12, all proposed options taken); tag 2 (NOW PLAYING strip) open.
+Status: tag 1 BUILT as v0.51.333, tag 2 (NOW PLAYING strip) BUILT as v0.51.334 (2026-09-12). Feature E complete.
 Mockup: see the session artifact "Row quick-play".
 
 ## 1. Goal

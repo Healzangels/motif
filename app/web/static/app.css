@@ -3418,6 +3418,32 @@ body.help-mode .settings-help-about { display: block; }
 }
 .row-play-on { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), 0.55); font-weight: 700; }
 .row-play-none { pointer-events: none; }
+/* v0.51.334 (tag 2): the NOW PLAYING strip in the results header. A composite
+   pill — label · title · clock · the row's ■ — so it compensates no tracking of
+   its own (its last run is the untracked glyph; the v0.51.332 convention).
+   Dashed line: it is a transient status, not a control cluster. */
+.now-playing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-2);
+  min-width: 0;
+  padding: 3px 10px;
+  border: 1px dashed var(--line-bright);
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  letter-spacing: 0.1em;
+  color: var(--fg);
+}
+.now-playing-label { color: var(--fg-dim); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; white-space: nowrap; }
+.now-playing-title {
+  background: transparent; border: 0; padding: 0; cursor: pointer;
+  font-family: inherit; font-size: inherit; letter-spacing: inherit; color: var(--fg);
+  max-width: 220px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+@media (hover: hover) {
+.now-playing-title:hover { color: var(--green); }
+}
+.now-playing-time { color: var(--fg-dim); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* v1.13.14: .title-glyph-pending removed. The in-flight spinner
    that used this class was dropped from the title-cell glyph
    hierarchy — DL/PL .state-pill-pending in the columns now
@@ -6044,6 +6070,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      six-row filter drawer) are untouched. */
   .help-toggle, .topbar-logout { min-height: 30px; min-width: 30px; }
   .row-play { flex-basis: 30px; width: 30px; min-height: 30px; } /* v0.51.333: the row play slot */
+  .now-playing { max-width: 100%; } .now-playing-title { max-width: 140px; } .now-playing-label { display: none; } /* v0.51.334: the strip fits a phone header; the ■ and the clock already say what it is, the title keeps the room */
   /* the filter-drawer pills are 20px to fit six rows on desktop; on a phone the
      drawer is a single scrollable column (line ~2883), so the extra height is free.
      Scope to .pill-filter-drawer so any inline pill rows keep their density. */

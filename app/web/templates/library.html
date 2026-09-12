@@ -834,6 +834,18 @@
          sits inline with the pager instead of floating in the
          empty middle of the block-head. -->
     <div class="block-head-actions">
+      {# v0.51.334 (spec § 6, tag 2): NOW PLAYING — the row quick-play's title
+         and clock at the top of the page, with a stop, so a play started far
+         down a 50-row page needs no scroll to end. Hidden until a row plays;
+         the ■ is the row's own glyph (the .title-glyph .row-play classes). #}
+      <div class="now-playing" id="now-playing" hidden>
+        <span class="now-playing-label">now playing</span>
+        <button type="button" class="now-playing-title" id="now-playing-title"
+                title="Scroll to the playing row (when it is on this page).">…</button>
+        <span class="now-playing-time" id="now-playing-time">0:00 / –:––</span>
+        <button type="button" class="title-glyph row-play row-play-on" data-act="quick-play-stop"
+                aria-label="Stop" title="Stop">■</button>
+      </div>
       <!-- v1.12.68: quick-access "needs work" sort. Re-orders the
            current filtered list by attention priority — failures
            first, then pending updates, then post-DEL await

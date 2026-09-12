@@ -6116,6 +6116,12 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.334: row quick-play, tag 2 — NOW PLAYING in the results header (spec § 6).
+#   While a row plays, the header's action cluster shows "now playing · <title>
+#   · 0:12 / 1:30 · ■": the title scrolls to the playing row (when on this
+#   page), the ■ stops from the top of a 50-row page. Hidden otherwise. The
+#   clock is lib/quick-play.js formatClock (node-tested); the ■ reuses the
+#   row's own glyph classes; timeupdate / durationchange drive the clock only.
 # 0.51.333: row quick-play, tag 1 (feature E; spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
 #   A leading ▶ on every library row plays the row's theme without opening the
 #   INFO card: what the card's headline says plays — motif's file (the items
@@ -6163,7 +6169,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.333"
+__version__ = "0.51.334"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

@@ -83,8 +83,19 @@
     return null;
   }
 
+  // v0.51.334 (tag 2): m:ss for the NOW PLAYING strip; an unknown or
+  // infinite duration (still loading, a live stream) reads as an en-dash clock.
+  function formatClock(seconds) {
+    if (typeof seconds !== "number" || !isFinite(seconds) || seconds < 0) return "\u2013:\u2013\u2013";
+    var s = Math.floor(seconds);
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return m + ":" + (r < 10 ? "0" : "") + r;
+  }
+
   return {
     computeQuickPlay: computeQuickPlay,
+    formatClock: formatClock,
     TIPS: {
       FILE_PLACED: TIP_FILE_PLACED,
       FILE_UNPLACED: TIP_FILE_UNPLACED,

@@ -449,7 +449,7 @@ Adopted rows show up in `/movies` / `/tv` / `/anime` with a green `A` in the SRC
 
 ### Play a theme from the row
 
-Every library row leads with `▶`. It plays what the INFO card's headline says plays — motif's file when one is on disk and not standing by as a backup, otherwise what Plex serves — without opening the card. One row at a time; `■` stops it, and starting any other player stops it too. Rows with nothing to play have no control.
+Every library row leads with `▶`. It plays what the INFO card's headline says plays — motif's file when one is on disk and not standing by as a backup, otherwise what Plex serves — without opening the card. One row at a time; `■` stops it, and starting any other player stops it too. Rows with nothing to play have no control. While something plays, the results header shows `now playing · <title> · 0:12 / 1:30 · ■`, so a play started far down the page can be stopped from the top; the title scrolls back to the row.
 
 ## Theme failures
 

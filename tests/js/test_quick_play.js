@@ -8,7 +8,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { computeQuickPlay, TIPS } = require("../../app/web/static/lib/quick-play.js");
+const { computeQuickPlay, formatClock, TIPS } = require("../../app/web/static/lib/quick-play.js");
 
 // A row with nothing anywhere; each subtest flips only what it cares about.
 function row(overrides) {
@@ -112,4 +112,22 @@ test("file src encodes the section and omits absent keys", () => {
 
 test("null row → null", () => {
   assert.equal(computeQuickPlay(null), null);
+});
+
+// v0.51.334 (tag 2): the NOW PLAYING clock.
+test("formatClock: m:ss with a zero-padded second field", () => {
+  assert.equal(formatClock(0), "0:00");
+  assert.equal(formatClock(7.9), "0:07");
+  assert.equal(formatClock(72.6), "1:12");
+  assert.equal(formatClock(600), "10:00");
+  assert.equal(formatClock(3661), "61:01");
+});
+
+test("formatClock: unknown, infinite or negative durations read as an en-dash clock", () => {
+  const dash = "\u2013:\u2013\u2013";
+  assert.equal(formatClock(NaN), dash);
+  assert.equal(formatClock(Infinity), dash);
+  assert.equal(formatClock(-1), dash);
+  assert.equal(formatClock(undefined), dash);
+  assert.equal(formatClock("12"), dash);
 });

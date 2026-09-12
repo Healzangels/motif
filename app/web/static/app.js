@@ -9100,8 +9100,8 @@
   const libraryState = {
     tab: null,
     fourk: false,
-    // v0.51.333: the row playing through #row-quick-play — { key, src, kind }
-    // or null. renderLibraryRow reads it so a filter / sort / page re-render
+    // v0.51.333: the row playing through #row-quick-play — { key, src, kind,
+    // title } or null. renderLibraryRow reads it so a filter / sort / page re-render
     // keeps the ■ on the playing row (spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
     quickPlay: null,
     // v0.51.21: the // ALL chip. When true, the view unions BOTH the
@@ -10724,6 +10724,26 @@
       b.title = isOn ? 'Stop' : (b.dataset.tip || '');
     });
   }
+  // v0.51.334 (tag 2): the NOW PLAYING strip in the results header — title +
+  // clock + the row's ■, shown only while a row plays. The clock updates on
+  // timeupdate / durationchange; nothing else re-renders it.
+  function _paintNowPlaying() {
+    const el = document.getElementById('now-playing');
+    if (!el) return;
+    const on = libraryState.quickPlay;
+    el.hidden = !on;
+    if (!on) return;
+    const t = document.getElementById('now-playing-title');
+    if (t) t.textContent = on.title || '';
+    _paintNowPlayingClock();
+  }
+  function _paintNowPlayingClock() {
+    const audio = _quickPlayAudio();
+    const c = document.getElementById('now-playing-time');
+    if (!audio || !c || !libraryState.quickPlay) return;
+    const fmt = window.motifQuickPlay ? window.motifQuickPlay.formatClock : (x) => String(Math.floor(x || 0));
+    c.textContent = `${fmt(audio.currentTime)} / ${fmt(audio.duration)}`;
+  }
   function _pauseOtherAudio(except) {
     document.querySelectorAll('audio').forEach((a) => { if (a !== except && !a.paused) a.pause(); });
   }
@@ -10738,21 +10758,38 @@
       return;
     }
     _pauseOtherAudio(audio);
-    libraryState.quickPlay = { key, src: btn.dataset.src, kind: btn.dataset.kind };
+    libraryState.quickPlay = { key, src: btn.dataset.src, kind: btn.dataset.kind, title: btn.dataset.title || '' };
     _quickPlayNote('');
     // Setting src on a playing element queues a stale 'pause'; play() below
     // flips paused=false synchronously, so the listener's `audio.paused`
     // check ignores it. Playback failures land on 'error' / a rejected play().
     audio.src = btn.dataset.src;
     _paintQuickPlay();
+    _paintNowPlaying();
     audio.play().catch(() => { /* 'pause' / 'error' do the cleanup */ });
   }
   function bindQuickPlay() {
     const audio = _quickPlayAudio();
     if (!audio || audio.dataset.bound) return;
     audio.dataset.bound = '1';
-    const clear = () => { libraryState.quickPlay = null; _paintQuickPlay(); };
+    const clear = () => { libraryState.quickPlay = null; _paintQuickPlay(); _paintNowPlaying(); };
     audio.addEventListener('ended', clear);
+    // v0.51.334: the strip's clock + its stop; the title scrolls to the row
+    // when it is on this page (a page turn leaves the audio playing off-page).
+    audio.addEventListener('timeupdate', _paintNowPlayingClock);
+    audio.addEventListener('durationchange', _paintNowPlayingClock);
+    document.querySelector('#now-playing [data-act="quick-play-stop"]')?.addEventListener('click', () => {
+      audio.pause();
+      audio.currentTime = 0;
+    });
+    document.getElementById('now-playing-title')?.addEventListener('click', () => {
+      const on = libraryState.quickPlay;
+      if (!on) return;
+      const b = document.querySelector(`#library-body button[data-act="quick-play"][data-key="${CSS.escape(on.key)}"]`);
+      if (!b) return;
+      b.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      b.focus({ preventScroll: true });
+    });
     // Only a REAL pause clears (Stop, another player starting, a media key);
     // the stale pause the src swap queues arrives with paused === false.
     audio.addEventListener('pause', () => { if (audio.paused) clear(); });
