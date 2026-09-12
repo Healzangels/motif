@@ -6116,6 +6116,18 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.333: row quick-play, tag 1 (feature E; spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
+#   A leading ▶ on every library row plays the row's theme without opening the
+#   INFO card: what the card's headline says plays — motif's file (the items
+#   endpoint) when one is on disk and not standing by as a backup, else what
+#   Plex serves (the v0.51.322 proxy), nothing for '–' / canonical-missing rows.
+#   The rule lives in lib/quick-play.js, loaded before app.js AND required by
+#   the node harness tests/js/test_quick_play.js — no hand-mirrored copy. One
+#   shared <audio preload=none>; one sound at a time both ways (a capture-phase
+#   'play' listener); ■ green while playing; the renderer reads
+#   libraryState.quickPlay so re-renders keep it; the quick-play click bypasses
+#   the job lock (a listen is not an operation). The "did not play" note uses
+#   the results header (auto-dismiss). Tag 2 (NOW PLAYING strip) not built.
 # 0.51.332: pill ink centred, the whole family. The operator: "audit all our
 #   pills and guards etc to make sure they're all properly centered". Measured
 #   in the browser (ink vs box, both axes, every page + the INFO card and the
@@ -6151,7 +6163,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.332"
+__version__ = "0.51.333"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

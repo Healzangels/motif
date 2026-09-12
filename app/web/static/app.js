@@ -9100,6 +9100,10 @@
   const libraryState = {
     tab: null,
     fourk: false,
+    // v0.51.333: the row playing through #row-quick-play — { key, src, kind }
+    // or null. renderLibraryRow reads it so a filter / sort / page re-render
+    // keeps the ■ on the playing row (spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
+    quickPlay: null,
     // v0.51.21: the // ALL chip. When true, the view unions BOTH the
     // standard and 4K sections (movies/tv/anime) or every collection
     // section (collections) — fourk / section_id are then ignored. Opt-in
@@ -10690,6 +10694,83 @@
                         || verified === 1);
     if (it.plex_has_theme && verifiedOk) return 'P';
     return '-';
+  }
+
+  // v0.51.333: row quick-play (feature E, spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
+  // One shared <audio id="row-quick-play" preload="none"> on the library page;
+  // the row's leading ▶ (a .title-glyph) plays what the INFO card's headline
+  // says plays — lib/quick-play.js decides (loaded before this file, and the
+  // same file the node harness tests). One sound at a time, both ways.
+  function _quickPlayAudio() { return document.getElementById('row-quick-play'); }
+  function _quickPlayNote(text) {
+    const n = document.getElementById('quick-play-note');
+    if (!n) return;
+    clearTimeout(_quickPlayNote._t);
+    n.textContent = text || '';
+    n.hidden = !text;
+    // the status-text auto-dismiss pattern (DESIGN_SYSTEM § 3): the note
+    // clears itself, the row's glyph already reverted.
+    if (text) _quickPlayNote._t = setTimeout(() => { n.textContent = ''; n.hidden = true; }, 6000);
+  }
+  // Repaint every play slot from libraryState.quickPlay — no re-render, no fetch.
+  function _paintQuickPlay() {
+    const on = libraryState.quickPlay;
+    document.querySelectorAll('#library-body button[data-act="quick-play"]').forEach((b) => {
+      const isOn = !!(on && b.dataset.key === on.key);
+      b.classList.toggle('row-play-on', isOn);
+      b.textContent = isOn ? '■' : '▶';
+      b.setAttribute('aria-pressed', isOn ? 'true' : 'false');
+      b.setAttribute('aria-label', (isOn ? 'Stop: ' : 'Play theme: ') + (b.dataset.title || ''));
+      b.title = isOn ? 'Stop' : (b.dataset.tip || '');
+    });
+  }
+  function _pauseOtherAudio(except) {
+    document.querySelectorAll('audio').forEach((a) => { if (a !== except && !a.paused) a.pause(); });
+  }
+  function quickPlayToggle(btn) {
+    const audio = _quickPlayAudio();
+    if (!audio) return;
+    const key = btn.dataset.key;
+    if (libraryState.quickPlay && libraryState.quickPlay.key === key) {
+      // Stop: pause + rewind. The 'pause' listener clears the state.
+      audio.pause();
+      audio.currentTime = 0;
+      return;
+    }
+    _pauseOtherAudio(audio);
+    libraryState.quickPlay = { key, src: btn.dataset.src, kind: btn.dataset.kind };
+    _quickPlayNote('');
+    // Setting src on a playing element queues a stale 'pause'; play() below
+    // flips paused=false synchronously, so the listener's `audio.paused`
+    // check ignores it. Playback failures land on 'error' / a rejected play().
+    audio.src = btn.dataset.src;
+    _paintQuickPlay();
+    audio.play().catch(() => { /* 'pause' / 'error' do the cleanup */ });
+  }
+  function bindQuickPlay() {
+    const audio = _quickPlayAudio();
+    if (!audio || audio.dataset.bound) return;
+    audio.dataset.bound = '1';
+    const clear = () => { libraryState.quickPlay = null; _paintQuickPlay(); };
+    audio.addEventListener('ended', clear);
+    // Only a REAL pause clears (Stop, another player starting, a media key);
+    // the stale pause the src swap queues arrives with paused === false.
+    audio.addEventListener('pause', () => { if (audio.paused) clear(); });
+    audio.addEventListener('error', () => {
+      const kind = libraryState.quickPlay && libraryState.quickPlay.kind;
+      clear();
+      // the v0.51.322 wording for the Plex proxy's 204; the items endpoint's
+      // 404 / 410 means the canonical went missing since the page rendered.
+      _quickPlayNote(kind === 'plex'
+        ? 'Plex reports a theme but it did not play — removed, or Plex unreachable'
+        : "motif's file did not play — missing on disk, or the browser can't decode it");
+    });
+    // One sound at a time, the other way: any other <audio> starting (the INFO
+    // card's players, EDIT AUDIO, the anime-themes picker) pauses the row.
+    document.addEventListener('play', (ev) => {
+      const a = ev.target;
+      if (a instanceof HTMLMediaElement && a !== audio && !audio.paused) audio.pause();
+    }, true);
   }
 
   function renderLibraryRow(it) {
@@ -12710,6 +12791,21 @@
 
     const selKey = libKey(it);
     const selected = libraryState.selected.has(selKey);
+    // v0.51.333 (spec § 3–4): the leading play slot. Reserved on every row so
+    // titles stay aligned; a button only when lib/quick-play.js finds
+    // something to play. The playing row reads ■ from libraryState.quickPlay
+    // so a re-render keeps it; data-tip / data-title let _paintQuickPlay
+    // restore the idle tooltip without re-rendering.
+    const _qp = (window.motifQuickPlay && window.motifQuickPlay.computeQuickPlay(it)) || null;
+    const _qpOn = !!(_qp && libraryState.quickPlay && libraryState.quickPlay.key === selKey);
+    const quickPlaySlot = _qp
+      ? `<button type="button" class="title-glyph row-play${_qpOn ? ' row-play-on' : ''}" data-act="quick-play"`
+        + ` data-key="${htmlEscape(selKey)}" data-src="${htmlEscape(_qp.src)}" data-kind="${htmlEscape(_qp.kind)}"`
+        + ` data-tip="${htmlEscape(_qp.tip)}" data-title="${htmlEscape(it.plex_title || '')}"`
+        + ` aria-pressed="${_qpOn ? 'true' : 'false'}"`
+        + ` aria-label="${htmlEscape((_qpOn ? 'Stop: ' : 'Play theme: ') + (it.plex_title || ''))}"`
+        + ` title="${htmlEscape(_qpOn ? 'Stop' : _qp.tip)}">${_qpOn ? '■' : '▶'}</button>`
+      : '<span class="row-play row-play-none" aria-hidden="true"></span>';
     // v1.10.29: hover-tooltip on the title cell shows the Plex folder
     // path so duplicate rows (same title+year, different folders) can
     // be told apart at a glance.
@@ -12726,6 +12822,7 @@
         <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
           <div class="title-cell" title="${htmlEscape(titleTooltip)}">
+            ${quickPlaySlot}
             ${titleGlyphs.join('')}
             <!-- v1.13.55: pills moved out of the truncated span so
                  long titles ellipsis on the title text only.
@@ -12785,6 +12882,7 @@
         <td class="col-state"><input type="checkbox" data-lib-select="${htmlEscape(selKey)}" ${selected ? 'checked' : ''} /></td>
         <td>
           <div class="title-cell">
+            <span class="row-play row-play-none" aria-hidden="true"></span>
             <span class="title-cell-name muted">${htmlEscape(it.plex_title)}</span>
             <span class="muted small" style="margin-left:6px">(not in your Plex library)</span>
           </div>
@@ -16994,9 +17092,13 @@
     });
 
     // Row clicks: redl, upload-theme, manual-url, delete-orphan, override, info
+    bindQuickPlay();  // v0.51.333
     document.getElementById('library-body')?.addEventListener('click', async (e) => {
       const btn = e.target.closest('button[data-act]');
       if (!btn) return;
+      // v0.51.333: quick-play is a listen, not an operation — no lock, no
+      // prefetch invalidation, no poll boost. Handled first and done.
+      if (btn.dataset.act === 'quick-play') { quickPlayToggle(btn); return; }
       // v1.10.24: action buttons inside a row-menu popover should close
       // the menu after firing. Schedule the close after the click
       // handler runs so other handlers see the open state if they

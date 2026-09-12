@@ -3403,6 +3403,21 @@ body.help-mode .settings-help-about { display: block; }
    required" glyphs share one visual treatment, color-coded by kind. */
 .title-glyph-action  { font-weight: 700;
                        animation: fail-pulse 2s ease-in-out infinite; }
+/* v0.51.333: the row quick-play slot (feature E). A .title-glyph that leads
+   the title on EVERY row — reserved (18px flex item) so titles align whether
+   or not a row is playable; a lone glyph, so no tracking (the v0.51.332
+   convention). Playing = ■ in green with the family's glow. The empty span
+   variant only holds the column. */
+.row-play {
+  flex: 0 0 18px;
+  width: 18px;
+  padding: 0;
+  letter-spacing: 0;
+  text-align: center;
+  color: var(--fg-dim);
+}
+.row-play-on { color: var(--green); text-shadow: 0 0 6px rgba(var(--green-rgb), 0.55); font-weight: 700; }
+.row-play-none { pointer-events: none; }
 /* v1.13.14: .title-glyph-pending removed. The in-flight spinner
    that used this class was dropped from the title-cell glyph
    hierarchy — DL/PL .state-pill-pending in the columns now
@@ -6028,6 +6043,7 @@ html[data-settings-tab] #settings-tabs .tab:hover {
      phone ONLY; the desktop layouts (deliberately dense — the topbar trio, the
      six-row filter drawer) are untouched. */
   .help-toggle, .topbar-logout { min-height: 30px; min-width: 30px; }
+  .row-play { flex-basis: 30px; width: 30px; min-height: 30px; } /* v0.51.333: the row play slot */
   /* the filter-drawer pills are 20px to fit six rows on desktop; on a phone the
      drawer is a single scrollable column (line ~2883), so the extra height is free.
      Scope to .pill-filter-drawer so any inline pill rows keep their density. */

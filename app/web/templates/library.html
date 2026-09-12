@@ -829,7 +829,7 @@
 
 <section class="block">
   <header class="block-head">
-    <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span></h2>
+    <h2 class="block-title">// RESULTS <span class="muted" id="library-count">…</span> <span class="muted small" id="quick-play-note" hidden></span></h2>
     <!-- v1.12.74: chip + pager grouped right so // NEEDS WORK
          sits inline with the pager instead of floating in the
          empty middle of the block-head. -->
@@ -851,6 +851,9 @@
       <button class="chip" id="library-sort-attention-btn" type="button"
               title="Sort by attention priority. Click again to undo.">NEEDS WORK</button>
       <div class="pager" id="library-pager"></div>
+      {# v0.51.333: the one shared row quick-play player — no controls, nothing
+         fetched until a row's ▶ is clicked (spec docs/specs/ROW_QUICK_PLAY_SPEC.md § 5) #}
+      <audio id="row-quick-play" preload="none" hidden></audio>
     </div>
   </header>
   {# v1.23.45: in-context LEGEND — every chip on THIS tab decoded right above the
