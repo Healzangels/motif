@@ -250,7 +250,9 @@ def enqueue_canonical_repairs(conn) -> dict:
 _PLACEMENT_SQL = (
     "SELECT media_folder, placement_kind, plex_rating_key, theme_present "
     "FROM placements WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-    "AND edition_key = ? ORDER BY theme_present DESC, placed_at DESC"
+    # v0.51.341: DESC sorts NULL last — a verified-missing (0) row outranked an unverified one.
+    "AND edition_key = ? ORDER BY CASE WHEN theme_present = 1 THEN 0 "
+    "WHEN theme_present IS NULL THEN 1 ELSE 2 END, placed_at DESC"
 )
 
 

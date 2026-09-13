@@ -250,10 +250,10 @@ def _apply_partial_config(cfg, body: dict) -> None:
             # round-trip wrote the masked `https://***@host` back over a real
             # db_url credential (the GET masked it, the PATCH didn't keep-on-marker
             # it). Added so the keep-on-mask contract is symmetric across all three.
-            if section_name == "sync" and k in ("git_url", "database_url", "db_url"):
-                from ..core.config_file import _is_masked_url_credentials
-                if isinstance(v, str) and _is_masked_url_credentials(v):
-                    continue
+            # v0.51.341: keyed by config_file.USERINFO_URL_KEYS (plex.url joined) — the mask takes the stored credentials back, a host edit is kept.
+            from ..core.config_file import USERINFO_URL_KEYS, _is_masked_url_credentials, unmask_url_credentials
+            if f"{section_name}.{k}" in USERINFO_URL_KEYS and isinstance(v, str) and _is_masked_url_credentials(v):
+                v = unmask_url_credentials(v, getattr(section, k))
             current = getattr(section, k)
             if isinstance(current, bool):
                 if isinstance(v, str):
@@ -11922,31 +11922,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 detail="themes_dir not configured")
         # v1.22.69: per-row link/copy + chunked sha256 froze the loop — offload.
         def _run():
+            from ..core.canonical_health import _placement_for, _stamp_present, restore_from_placement
             themes_dir = settings.themes_dir
             with get_conn(db) as conn:
-                rows = conn.execute(
-                    # v1.21.72: join + carry edition_key so each local_files row
-                    # matches ITS OWN edition's placement (the LEFT JOIN was
-                    # (mt,tmdb,section)-only → on a multi-edition title it paired
-                    # a row with an arbitrary sibling's placement, and the
-                    # placement_kind UPDATE below landed on the wrong edition).
-                    """SELECT lf.media_type, lf.tmdb_id, lf.section_id,
-                              lf.edition_key, lf.file_path,
-                              lf.file_size, lf.file_sha256, p.media_folder,
-                              p.placement_kind
-                       FROM local_files lf
-                       LEFT JOIN placements p
-                         ON p.media_type = lf.media_type
-                        AND p.tmdb_id = lf.tmdb_id
-                        AND p.section_id = lf.section_id
-                        AND p.edition_key = lf.edition_key
-                       WHERE lf.media_type = ? AND lf.tmdb_id = ?""",
+                lf_rows = conn.execute(
+                    """SELECT media_type, tmdb_id, section_id, edition_key,
+                              file_path, file_size, file_sha256
+                       FROM local_files
+                       WHERE media_type = ? AND tmdb_id = ?
+                       ORDER BY section_id, edition_key""",
                     (media_type, tmdb_id),
                 ).fetchall()
+                rows = []
+                for lf in lf_rows:
+                    # v1.21.72 edition scope rides _placement_for; v0.51.341: one pick per canonical, not a JOIN row per folder.
+                    p, _sidecar = _placement_for(conn, lf)
+                    rows.append({**dict(lf), "media_folder": p["media_folder"] if p else None,
+                                 "placement_kind": p["placement_kind"] if p else None})
             if not rows:
                 raise HTTPException(status_code=404,
                                     detail="no local_files row for this item")
-            from ..core.canonical_health import restore_from_placement
             restored = 0
             skipped: list[dict] = []
             for r in rows:
@@ -11954,8 +11949,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 res = restore_from_placement(db, themes_dir, r)
                 if res["ok"]:
                     restored += 1
-                else:
-                    skipped.append({"section_id": r["section_id"], "reason": res["reason"]})
+                    continue
+                if res["reason"] == "canonical_already_present":
+                    # v0.51.341: verify's rule, as the bulk stamps it — else the row stays listed until the daily verify.
+                    _stamp_present(db, r)
+                skipped.append({"section_id": r["section_id"], "reason": res["reason"]})
             log_event(db, level="INFO", component="api",
                       media_type=media_type, tmdb_id=tmdb_id,
                       message=f"Canonical restored from placement by "
@@ -14791,13 +14789,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         mismatch_value = "pending" if is_mismatch else None
 
         with get_conn(db) as conn, transaction(conn):
+            # v0.51.341: a non-empty canonical was just written (an empty upload 400s) — a stale 0 kept it listed broken.
             conn.execute(
                 """INSERT INTO local_files
                      (media_type, tmdb_id, section_id, edition_key, file_path,
                       file_sha256, file_size, downloaded_at, source_video_id,
-                      provenance, source_kind, mismatch_state)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'manual', 'upload', ?)
+                      provenance, source_kind, mismatch_state, canonical_present)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, '', 'manual', 'upload', ?, 1)
                    ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
+                       canonical_present = 1,
                        file_path = excluded.file_path,
                        file_sha256 = excluded.file_sha256,
                        file_size = excluded.file_size,
@@ -27228,7 +27228,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             live_cfg = settings.config_dir / "motif.yaml"
             if not (body or {}).get("confirm"):
                 try:
-                    pv = await run_in_threadpool(bundle_mod.preview, src, live_cfg)
+                    pv = await run_in_threadpool(bundle_mod.preview, src, live_cfg,
+                                                 cookies_target=settings.cookies_file)  # v0.51.341: the live path; a bundle config names its own
                 except ValueError as e:
                     raise HTTPException(status_code=422, detail=str(e))
                 return {"ok": True, "staged": False, "preview": pv}
@@ -27239,6 +27240,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     settings.config_dir, src, keep_config=keep)
             except ValueError as e:
                 raise HTTPException(status_code=422, detail=str(e))
+            except bundle_mod.StagingError as e:  # v0.51.341: an earlier staging's config could not be dropped — nothing new staged, and the answer says why
+                raise HTTPException(status_code=500, detail=str(e))
             log_event(
                 settings.db_path, level="warning", component="backup",
                 message=f"Bundle restore staged from {name} "
@@ -27253,15 +27256,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                               "motif container to apply it — what it replaces is backed "
                               "up automatically just before the swap.")
             return out
-        def _stage_snapshot() -> "db_backup.RestoreCheck":
-            chk = db_backup.stage_restore(settings.db_path, src)
-            bundle_mod.clear_pending_config(settings.config_dir)  # v0.51.339: an earlier bundle's config/cookies would apply beside THIS snapshot at boot
-            return chk
-
         try:
-            check = await run_in_threadpool(_stage_snapshot)
+            check = await run_in_threadpool(  # v0.51.339: an earlier bundle's config/cookies would apply beside THIS snapshot at boot
+                bundle_mod.stage_snapshot_restore, settings.db_path, settings.config_dir, src)  # v0.51.341: under the staging lock, the config dropped before the swap
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        except bundle_mod.StagingError as e:
+            raise HTTPException(status_code=500, detail=str(e))
         log_event(
             settings.db_path, level="warning", component="backup",
             message=f"Database restore staged from {name} "
@@ -27327,7 +27328,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             raise FileExistsError(name)
                     else:
                         os.replace(tmp, dest)
-                    return bundle_mod.preview(dest, settings.config_dir / "motif.yaml")
+                    return bundle_mod.preview(dest, settings.config_dir / "motif.yaml",
+                                              cookies_target=settings.cookies_file)  # v0.51.341: the live path; a bundle config names its own
                 finally:
                     try: os.unlink(tmp)
                     except OSError: pass
@@ -27352,9 +27354,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 with os.fdopen(fd, "wb") as f:
                     f.write(data)
-                chk = db_backup.stage_restore(settings.db_path, Path(tmp))
-                bundle_mod.clear_pending_config(settings.config_dir)  # v0.51.339: an uploaded snapshot stages the database only — drop a bundle's config/cookies
-                return chk
+                # v0.51.339: an uploaded snapshot stages the database only — drop a bundle's config/cookies
+                return bundle_mod.stage_snapshot_restore(settings.db_path, settings.config_dir, Path(tmp))  # v0.51.341: under the staging lock
             finally:
                 try: os.unlink(tmp)
                 except OSError: pass
@@ -27363,6 +27364,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             check = await run_in_threadpool(_stage_uploaded)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
+        except bundle_mod.StagingError as e:
+            raise HTTPException(status_code=500, detail=str(e))
         log_event(
             settings.db_path, level="warning", component="backup",
             message=f"Database restore staged from upload "
@@ -27384,8 +27387,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def api_admin_database_restore_cancel(request: Request):
         """Discard a staged restore before the next restart applies it."""
         _require_admin(request)
-        cancelled = await run_in_threadpool(
-            bundle_mod.cancel_pending, settings.db_path, settings.config_dir)  # v0.51.336: the config members too
+        try:
+            cancelled = await run_in_threadpool(
+                bundle_mod.cancel_pending, settings.db_path, settings.config_dir)  # v0.51.336: the config members too
+        except bundle_mod.StagingError as e:  # v0.51.341: a file that stays is named — never "cancelled" with a config left to go live alone
+            raise HTTPException(status_code=500, detail=str(e))
         if cancelled:
             log_event(
                 settings.db_path, level="info", component="backup",

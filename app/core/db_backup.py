@@ -303,19 +303,37 @@ def inspect_restore_source(path: Path) -> RestoreCheck:
     return RestoreCheck(True, sv, None)
 
 
-def stage_restore(db_path: Path, source_path: Path) -> RestoreCheck:
+def stage_restore(db_path: Path, source_path: Path, *, before_swap=None) -> RestoreCheck:
     """Validate `source_path`, then copy it to the restore-pending
     path next to db_path (temp-then-rename so a half-written pending
     file is never applied). The swap happens at the next boot via
-    apply_pending_restore. Raises ValueError if validation fails."""
+    apply_pending_restore. Raises ValueError if validation fails.
+    `before_swap()` runs once the copy is whole; if it raises, the
+    earlier pending file (if any) is left in place."""
     check = inspect_restore_source(source_path)
     if not check.ok:
         raise ValueError(check.error or "invalid restore source")
     pending = restore_pending_path(db_path)
     pending.parent.mkdir(parents=True, exist_ok=True)
     tmp = pending.with_name(pending.name + ".tmp")
-    shutil.copy2(source_path, tmp)
-    os.replace(tmp, pending)
+    try:
+        shutil.copyfile(source_path, tmp)  # v0.51.341: copy2's copystat raised PermissionError on a share that refuses chmod — the staging 500'd
+        try:
+            shutil.copystat(source_path, tmp)  # v0.51.341: copy2's mode + times whenever the share allows them
+        except OSError as e:
+            log.warning("restore staging: could not copy the mode/times of %s onto the pending file (%s) — "
+                        "it keeps the share's defaults", source_path.name, e)
+        if before_swap is not None:
+            before_swap()
+        os.replace(tmp, pending)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as ce:
+            log.warning("restore staging: could not remove %s (%s)", tmp.name, ce)
+        raise
     log.info("restore staged → %s (schema v%s); applies on next restart",
              pending.name, check.schema_version)
     return check
@@ -355,8 +373,11 @@ def apply_pending_restore(db_path: Path, config_dir: Path, *,
             log.error("pending restore REJECTED at boot (%s) — keeping the "
                       "current database; discarding the bad pending file",
                       check.error)
-            try: pending.unlink()
-            except OSError: pass
+            try:
+                pending.unlink()
+            except OSError as e:  # v0.51.341: was a bare pass — a rejected pending that stays is refused again at every boot
+                log.error("restore: could not discard the rejected pending file %s (%s) — remove it by hand; "
+                          "it is re-checked and refused at every restart", pending.name, e)
             return {"applied": False, "error": check.error}
         safety = None
         if db_path.exists():

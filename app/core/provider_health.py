@@ -61,7 +61,9 @@ def provider_for_url(url: str | None) -> str:
         return "instagram"
     if "facebook.com" in u or "fb.watch" in u:
         return "facebook"
-    if "a.animethemes.moe" in u:  # v0.51.315
+    from .sync import url_source
+    # v0.51.315 lane; v0.51.341: host-anchored (sync.url_source) — the bare substring matched a path or query.
+    if url_source(url) == "animethemes":
         return "animethemes"
     return "other"
 

@@ -204,6 +204,45 @@ def _probe_writability(settings, log) -> None:
             )
 
 
+class _BootLogBuffer(logging.Handler):
+    """Holds records logged before configure_logging, for replay into the handlers it installs."""
+
+    def __init__(self) -> None:
+        super().__init__(logging.NOTSET)
+        self.records: list[logging.LogRecord] = []
+        self._root_level = logging.WARNING
+        self._installed = False
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+    def install(self) -> None:
+        root = logging.getLogger()
+        if root.handlers:
+            return  # logging is configured already (a test, an embedding) — records reach it as they are logged
+        self._root_level = root.level
+        root.addHandler(self)
+        root.setLevel(logging.DEBUG)
+        self._installed = True
+
+    def detach(self) -> list[logging.LogRecord]:
+        if self._installed:
+            root = logging.getLogger()
+            root.removeHandler(self)
+            root.setLevel(self._root_level)
+            self._installed = False
+        records, self.records = self.records, []
+        return records
+
+
+def _replay_boot_log(records: list[logging.LogRecord]) -> None:
+    """Hand buffered records to the handlers configured now, at the levels configured now."""
+    for rec in records:
+        lg = logging.getLogger(rec.name)
+        if lg.isEnabledFor(rec.levelno):
+            lg.handle(rec)
+
+
 def main() -> int:
     # v1.23.17/.18: apply a staged database restore as the VERY FIRST
     # thing that touches the DB file, before any event-log call (which
@@ -213,22 +252,33 @@ def main() -> int:
     # os.replace). The swap is clean here: no open FDs, stale WAL
     # removed, current db safety-copied first; init_db (further down)
     # then migrates the restored file forward if needed.
-    from datetime import datetime as _dt, timezone as _tz
-    from .config import _DEFAULT_CONFIG_DIR as _cfg_dir
-    from .core import bundle as _bundle
-    from .core import db_backup as _db_backup
-    _stamp = _dt.now(_tz.utc).strftime("%Y%m%d-%H%M%S")
-    _db_path = _cfg_dir / "motif.db"  # v0.51.339: Settings.db_path's rule (the env's config dir, never the YAML) — so the DB applies before settings exist
-    _restore = _db_backup.apply_pending_restore(_db_path, _cfg_dir, now_stamp=_stamp)
-    # v0.51.339: a staged bundle config follows its database — never live beside a DB restore that did not apply
-    _config_follows = _restore is None or bool(_restore.get("applied"))
-    _cfg_restore = _cfg_dropped = None
-    if _config_follows:
-        _cfg_restore = _bundle.apply_pending_config(_cfg_dir, now_stamp=_stamp)
-    elif not _db_backup.restore_pending_path(_db_path).exists():
-        _cfg_dropped = _bundle.clear_pending_config(_cfg_dir)  # v0.51.339: the DB pending was rejected and discarded — kept, its config would go live alone next boot
-    settings = get_settings()
-    configure_logging(settings.log_level, settings.config_dir)
+    _boot_log = _BootLogBuffer()
+    _boot_log.install()  # v0.51.341: the hooks below ran unconfigured — INFO vanished, WARNING/ERROR went raw to stderr via lastResort, never motif.log
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        from .config import _DEFAULT_CONFIG_DIR as _cfg_dir
+        from .core import bundle as _bundle
+        from .core import db_backup as _db_backup
+        _stamp = _dt.now(_tz.utc).strftime("%Y%m%d-%H%M%S")
+        _db_path = _cfg_dir / "motif.db"  # v0.51.339: Settings.db_path's rule (the env's config dir, never the YAML) — so the DB applies before settings exist
+        _restore = _db_backup.apply_pending_restore(_db_path, _cfg_dir, now_stamp=_stamp)
+        # v0.51.339: a staged bundle config follows its database — never live beside a DB restore that did not apply
+        _config_follows = _restore is None or bool(_restore.get("applied"))
+        _cfg_restore = _cfg_dropped = None
+        _cfg_drop_failed: dict[str, str] = {}
+        if _config_follows:
+            _cfg_restore = _bundle.apply_pending_config(_cfg_dir, now_stamp=_stamp)
+        elif not _db_backup.restore_pending_path(_db_path).exists():
+            _cfg_dropped, _cfg_drop_failed = _bundle.clear_pending_config(_cfg_dir)  # v0.51.339: the DB pending was rejected and discarded — kept, its config would go live alone next boot
+        settings = get_settings()
+    except BaseException:
+        _replay_boot_log(_boot_log.detach())  # v0.51.341: no configured handler is coming — lastResort prints what it always printed
+        raise
+    _early_records = _boot_log.detach()
+    try:
+        configure_logging(settings.log_level, settings.config_dir)
+    finally:
+        _replay_boot_log(_early_records)
     log = logging.getLogger("motif.main")
     if _restore and _restore.get("applied"):
         log.warning("Database restored at boot (schema v%s; safety backup: %s)",
@@ -240,10 +290,17 @@ def main() -> int:
         log.info("no staged database restore pending")
     _cfg_waiting = [] if _config_follows else [
         m for m in _bundle.pending_members(_db_path, _cfg_dir) if m != "database"]
-    if _cfg_restore:
-        log.warning("Config restored at boot from a staged bundle: %s (pre-restore copies: %s; errors: %s)",
-                    ", ".join(_cfg_restore.get("applied") or []) or "(none)",
-                    _cfg_restore.get("safety") or "(none)", _cfg_restore.get("errors") or "(none)")
+    if _cfg_restore and _cfg_restore.get("applied"):
+        log.warning("Config restored at boot from a staged bundle: %s (pre-restore copies: %s)",
+                    ", ".join(_cfg_restore["applied"]), _cfg_restore.get("safety") or "(none)")
+    elif _cfg_restore:  # v0.51.341: a failed swap logged "Config restored at boot: (none)" at WARNING — it read as success
+        log.error("Staged config restore FAILED at boot (%s) — the live motif.yaml is kept and the pending file "
+                  "stays for a retry", _cfg_restore.get("errors") or "no error recorded")
+    elif _cfg_drop_failed:
+        log.error("Staged config restore could not be dropped (%s%s): its database was rejected at boot — remove the "
+                  "files still staged from the config directory before the next restart, or they go live without it",
+                  "; ".join(f"{n}: {e}" for n, e in _cfg_drop_failed.items()),
+                  f"; dropped: {', '.join(_cfg_dropped)}" if _cfg_dropped else "")  # v0.51.341: a partial drop named only what stayed — the member it did drop had no outcome line
     elif _cfg_dropped:
         log.error("Staged config restore dropped (%s): its database was rejected at boot — "
                   "re-stage the bundle to retry", ", ".join(_cfg_dropped))
@@ -252,9 +309,17 @@ def main() -> int:
                     "on the restart that applies the database", ", ".join(_cfg_waiting))
     else:
         log.info("no staged config restore pending")
-    if _config_follows:
+    _cookies_named = ("cookies" in _cfg_waiting or _bundle.COOKIES_PENDING in (_cfg_dropped or ())
+                      or _bundle.COOKIES_PENDING in _cfg_drop_failed)
+    if _config_follows and (_cfg_restore is None or _cfg_restore.get("applied")):  # v0.51.341: cookies follow only a config swap that applied, or none pending
         # v0.51.339: cookies land on the file yt-dlp reads (paths.cookies_file / MOTIF_COOKIES_FILE), never a hard-coded config_dir/cookies.txt
         if _bundle.apply_pending_cookies(_cfg_dir, settings.cookies_file, now_stamp=_stamp) is None:
+            log.info("no staged cookies restore pending")
+    elif not _cookies_named:  # v0.51.341: one outcome line per member — the config line above names the cookies when it covered them
+        if (_cfg_dir / _bundle.COOKIES_PENDING).exists():
+            log.warning("Staged cookies restore waits for its config — kept staged; it applies on the restart "
+                        "that restores motif.yaml")
+        else:
             log.info("no staged cookies restore pending")
 
     # Verify config dir exists (it might be a fresh appdata mount)
@@ -295,7 +360,8 @@ def main() -> int:
     _probe_writability(settings, log)
     log.info("  cookies_file = %s (%s)", settings.cookies_file,
              "present" if settings.cookies_file.exists() else "MISSING")
-    log.info("  plex_url     = %s", settings.plex_url or "(disabled)")
+    from .core.config_file import mask_url_credentials as _mask_url  # v0.51.341: plex.url userinfo is a supported shape now — never in motif.log
+    log.info("  plex_url     = %s", _mask_url(settings.plex_url) if settings.plex_url else "(disabled)")
     log.info("  forward_auth = %s", settings.trust_forward_auth)
     # v1.21.16 / v1.24.12: forward-auth trusting X-Authentik-Username from ANY
     # peer was an admin-bypass footgun (an empty forward_auth_allowed_ips used

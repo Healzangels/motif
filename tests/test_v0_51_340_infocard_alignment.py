@@ -14,6 +14,12 @@ These pin the invariants, not the pixels (the merger re-measures geometry):
      token is composed from the .btn-tiny primitive's own metrics;
   d. the fold caret hangs off the title into the gutter, on the title's first line (a
      phone-width summary wraps; a summary-centred caret fell between its lines).
+
+v0.51.341 (reviewer residuals): b. classifies a value by its FIRST element — a button,
+an a.btn, an audio or a .loud-ctl-row — not an allow-list of literal heads; the
+.history-section scope check reaches app.js itself; and the LOUDNESS row label is one
+button line tall, so its <dt> centres on line 1 when the stepper wraps under it at
+375px/360px (measured 3.3px low before).
 """
 from __future__ import annotations
 
@@ -159,9 +165,35 @@ def test_a_dead_player_clears_the_badge_from_its_label():
 
 # ── b. every control-first value labels its <dt> ──────────────────────────────
 
-# one-line labels (a "<dt>" in a JS comment never closes on its own line); the value head is a lookahead so the next row is not consumed.
-_DT_DD = re.compile(r"<dt(?P<attrs>[^>\n]*)>(?P<label>(?:(?!</dt>|<dt)[^\n])*?)</dt>\s*<dd[^>]*>(?=(?P<rest>.{0,80}))", re.S)
-_CONTROL_HEADS = ("<audio", "<button", '<div class="loud-ctl-row"', "${probeBtnHtml}")
+# one-line labels (a "<dt>" in a JS comment never closes on its own line).
+_DT_DD = re.compile(r"<dt(?P<attrs>[^>\n]*)>(?P<label>(?:(?!</dt>|<dt)[^\n])*?)</dt>\s*<dd[^>]*>", re.S)
+# v0.51.341: a value's FIRST element, read where its <dd> opens — a tag (optionally the first tag of a
+# nested `${xs.map((x) => \`…` literal), or a `${ref}` to a builder const resolved to its literal's first tag.
+_ATTRS = r"(?:[^>\"']|\"[^\"]*\"|'[^']*')*"
+_HEAD = re.compile(rf"\s*(?:\$\{{(?P<ref>\w+)\}}|(?:\$\{{[^`}}]*`\s*)?<(?P<tag>[a-zA-Z][\w-]*)(?P<attrs>{_ATTRS})>)")
+
+
+def _classes(attrs: str) -> set[str]:
+    m = re.search(r'\bclass="([^"]*)"', attrs)
+    return set(m.group(1).split()) if m else set()
+
+
+def _first_element(src: str, pos: int) -> tuple[str, set[str]] | None:
+    """(tag, classes) of the first element at `pos`, or None for a text value."""
+    h = _HEAD.match(src, pos)
+    if not h:
+        return None
+    if h.group("ref"):
+        d = re.search(rf"\b(?:const|let) {h.group('ref')} = [^`;]*`\s*<([a-zA-Z][\w-]*)({_ATTRS})>", src)
+        return (d.group(1), _classes(d.group(2))) if d else None
+    return h.group("tag"), _classes(h.group("attrs"))
+
+
+def _is_control(el: tuple[str, set[str]] | None) -> bool:
+    if el is None:
+        return False
+    tag, classes = el
+    return tag in ("button", "audio") or (tag == "a" and "btn" in classes) or "loud-ctl-row" in classes
 
 
 def _card_region() -> str:
@@ -169,12 +201,11 @@ def _card_region() -> str:
 
 
 def _card_rows() -> list:
+    region = _card_region()
     rows = []
-    for m in _DT_DD.finditer(_card_region()):
-        head = m.group("rest").lstrip()
+    for m in _DT_DD.finditer(region):
         label = re.split(r"<|\$\{", m.group("label"), maxsplit=1)[0].strip()
-        classes = re.search(r'class="([^"]*)"', m.group("attrs"))
-        rows.append((label, head, set(classes.group(1).split()) if classes else set()))
+        rows.append((label, _first_element(region, m.end()), _classes(m.group("attrs"))))
     return rows
 
 
@@ -183,15 +214,31 @@ def test_the_row_scan_sees_every_term_in_the_card():
         "a term the scan skips is a control row nobody checks")
 
 
+@pytest.mark.parametrize("snippet,control", [
+    ('<dt>x</dt><dd><a class="btn btn-tiny" href="#">// GO</a></dd>', True),
+    ('<dt>x</dt><dd>\n  <button class="notif-x" type="button">', True),
+    ('<dt>x</dt><dd class="info-play-row"><audio controls class="info-audio">', True),
+    ('<dt>x</dt><dd class="loud-controls">\n  <div class="loud-ctl-row">', True),
+    ('<dt>x</dt><dd>${xs.map((e) => `\n  <button class="btn btn-tiny">', True),
+    ('<dt>x</dt><dd>${goBtn}</dd> const goBtn = ok\n  ? `<a class="btn btn-info" href="#">`', True),
+    ('<dt>x</dt><dd><a class="info-source-link" href="#">', False),
+    ('<dt>x</dt><dd><span class="muted small">', False),
+    ('<dt>x</dt><dd>${htmlEscape(value)}</dd>', False),
+    ('<dt>x</dt><dd>${linkHtml}</dd> const linkHtml = linkOrDash(url);', False),
+])
+def test_the_control_classifier_reads_the_first_element_of_any_value(snippet, control):
+    m = _DT_DD.search(snippet)
+    assert m, snippet
+    assert _is_control(_first_element(snippet, m.end())) is control, snippet
+
+
 def test_every_control_first_value_centres_its_label_on_the_control_line():
     found = []
-    for label, head, classes in _card_rows():
-        control = head.startswith(_CONTROL_HEADS)
-        if control:
+    for label, el, classes in _card_rows():
+        if _is_control(el):
             found.append(label)
-            assert "info-ctl-label" in classes, f"<dt>{label}</dt> sits beside a control line"
-            player = head.startswith("<audio")
-            assert ("info-ctl-label-play" in classes) == player, (
+            assert "info-ctl-label" in classes, f"<dt>{label}</dt> sits beside a control line (<{el[0]}>)"
+            assert ("info-ctl-label-play" in classes) == (el[0] == "audio"), (
                 f"<dt>{label}</dt>: the player height for a player, the button line otherwise")
         else:
             assert "info-ctl-label" not in classes, (
@@ -252,6 +299,33 @@ def test_the_dead_in_row_badge_rule_is_gone():
     assert ".info-play-row > .tier-badge" not in APP_CSS
 
 
+def test_the_loudness_row_label_is_the_button_line_its_dt_centres_on():
+    """v0.51.341: at 375px/360px the first .loud-ctl-row wraps — 'target' alone on line 1
+    (a 16.5px t-tiny line box), the stepper on line 2 — so the <dt>, centred on --btn-tiny-h
+    (23.2px), sat (23.2 - 16.5) / 2 = 3.3px low. A label one button line tall makes line 1 that
+    line whether or not the stepper wraps; unwrapped, line 1 was already the stepper's 23.2px."""
+    label = _rule(".loud-ctl-label")
+    assert _decl(label, "min-height") == _decl(_rule(".dlg-grid dt.info-ctl-label"), "min-height") == "var(--btn-tiny-h)", (
+        "the label and the <dt> must share the one button-line token")
+    assert _decl(label, "display") in ("flex", "inline-flex") and _decl(label, "align-items") == "center", (
+        "the label text centres inside its button-line box")
+    assert _decl(_rule(".loud-ctl-row"), "align-items") == "center", "items on one line share one centre"
+
+
+def test_every_loudness_row_opens_on_a_button_line():
+    """Line 1 of a .loud-ctl-row holds its first item at least, so every row must open on a
+    .btn-tiny (exactly --btn-tiny-h) or the button-line-tall .loud-ctl-label — then its <dt>
+    lines up with line 1 whatever wraps."""
+    heads = [_first_element(APP_JS, m.end()) for m in re.finditer(r'<div class="loud-ctl-row">', APP_JS)]
+    assert len(heads) >= 3, "the which-cut picker, the leveled row and the raw rows"
+    for el in heads:
+        assert el is not None, "a .loud-ctl-row opening on bare text has a line shorter than its label's"
+        tag, classes = el
+        assert (tag == "button" and "btn-tiny" in classes) or "loud-ctl-label" in classes, (
+            f"a .loud-ctl-row opens on <{tag} class={sorted(classes)}> — its first line may be shorter "
+            "than the button line the <dt> centres on")
+
+
 # ── d. the fold caret hangs off the title into the gutter ─────────────────────
 
 
@@ -305,6 +379,16 @@ def test_history_sections_render_only_in_the_info_card():
               and p.name not in ("app.js", "app.css")]
     assert others and not [p.name for p in others if "history-section" in p.read_text()], (
         "the gutter caret is scoped by the base rule because only the INFO card uses it")
+    # v0.51.341: app.js itself — every emitter (a class value, not a `.history-section` selector) sits in the card.
+    start = APP_JS.index("async function openInfoDialog(")
+    end = APP_JS.index("function closeInfoDialog() {", start)
+    emitters = [m.start() for m in re.finditer(r"(?<!\.)\bhistory-section\b", APP_JS)
+                if not APP_JS[APP_JS.rindex("\n", 0, m.start()) + 1:m.start()].lstrip().startswith("//")]
+    assert len(emitters) >= 3, "the folds, PROVENANCE and HISTORY emit it — re-anchor"
+    outside = [APP_JS.count("\n", 0, i) + 1 for i in emitters if not start <= i < end]
+    assert not outside, (
+        f"app.js line(s) {outside} emit .history-section outside openInfoDialog…closeInfoDialog — "
+        "its caret hangs into a gutter only the INFO card body pads")
 
 
 def test_play_label_text_and_its_badge_read_as_two_words():
@@ -321,4 +405,3 @@ def test_play_label_text_and_its_badge_read_as_two_words():
                        "section_id:'3',rating_key:'778',plex_has_theme:1}")
     dt = out[out.index(_PLAY_DT):out.index("</dt>", out.index(_PLAY_DT))]
     assert re.sub(r"<[^>]+>", "", dt) == "plex serves SERVING"
-

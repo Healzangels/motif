@@ -223,7 +223,8 @@ def test_backup_headline_says_plex_serves_exactly_when_the_row_plays_plex(tmp_pa
     """A backup_only row across every (plex_has_theme, plex_theme_verified_ok)
     cell the payload can carry: the headline names Plex as serving iff the row's
     ▶ plays what Plex serves; otherwise it says Plex no longer serves and names
-    the one action that deploys motif's copy."""
+    the one action that deploys motif's copy — unless there is no plex_items row
+    at all (v0.51.341: the item is not in Plex, so there is nothing to deploy into)."""
     cells = [(has, ok) for has in (None, 0, 1) for ok in (None, 0, 1)]
     cases = [{
         "lf": {"source_kind": source_kind, "source_video_id": "vid", "last_place_attempt_reason": "backup_only"},
@@ -242,6 +243,10 @@ def test_backup_headline_says_plex_serves_exactly_when_the_row_plays_plex(tmp_pa
         if kind == "plex":
             assert label.endswith(" on disk as backup · Plex serves its own theme"), ((has, ok), label)
             assert "PROMOTE" not in label, label
+        elif has is None:
+            # v0.51.341: reversed on purpose — no plex_items row means the item left Plex, so PROMOTE is not offered
+            assert label.endswith(" on disk as backup · this item is not in Plex"), ((has, ok), label)
+            assert "PROMOTE" not in label and "Plex serves" not in label, ((has, ok), label)
         else:
             assert "Plex serves its own theme" not in label, ((has, ok), label)
             assert "Plex no longer serves a theme" in label and "PROMOTE TO ACTIVE" in label, ((has, ok), label)

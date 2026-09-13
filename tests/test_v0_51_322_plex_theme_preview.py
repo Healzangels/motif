@@ -143,7 +143,9 @@ def _blk(anchor: str, end: str) -> str:
 
 
 def test_full_card_plex_theme_row_gate_and_placement():
-    b = _blk("const plexThemeBlock = (data.plex_has_theme === 1 && _plexRk && (!lf || _plexSrc === 'P'))", "      : '';")
+    # v0.51.341: the rk gate is digits-only now — tests/test_v0_51_341_ui_residuals_2.py renders it per key.
+    b = _blk("const plexThemeBlock = (data.plex_has_theme === 1 && ", "      : '';")
+    assert "(!lf || _plexSrc === 'P'))" in b, "Plex's row shows with no motif file, or beside a P row's standing-by file"
     assert 'preload="none"' in b, "nothing is fetched until play (IDS-friendly)"
     assert "/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" in b and 'data-plex-theme="1"' in b
     assert '<dt class="info-ctl-label info-ctl-label-play">plex serves' in b and '<dd class="info-play-row"><audio' in b, (

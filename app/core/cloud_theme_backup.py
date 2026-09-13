@@ -938,7 +938,7 @@ def backup_cloud_theme(
     # the served bytes against an ARBITRARY sibling edition's canonical —
     # could falsely "skip identical" (or fail to) on the wrong row.
     existing = conn.execute(
-        "SELECT file_sha256 FROM local_files "
+        "SELECT file_sha256, file_path FROM local_files "
         " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
         "   AND edition_key = ?",
         (media_type, tmdb_id, section_id, edition_key),
@@ -948,7 +948,17 @@ def backup_cloud_theme(
             existing["file_sha256"] if hasattr(existing, "keys")
             else existing[0]
         )
-        if existing_sha and existing_sha == file_sha256:
+        existing_rel = existing["file_path"] if hasattr(existing, "keys") else existing[1]
+        # v0.51.341: a recorded sha is not the file — a missing/0-byte canonical is written, never deduped.
+        canonical_there = False
+        if existing_sha and existing_sha == file_sha256 and existing_rel:
+            try:
+                existing_abs = themes_dir / existing_rel
+                canonical_there = existing_abs.is_file() and existing_abs.stat().st_size > 0
+            except OSError as e:
+                log.warning("backup_cloud_theme: rk=%s could not stat the recorded canonical %s (%s) — "
+                            "writing the served bytes", rk, existing_rel, e)
+        if canonical_there:
             log.info(
                 "backup_cloud_theme: rk=%s served bytes identical to "
                 "existing canonical (sha256=%s) — no swap needed",

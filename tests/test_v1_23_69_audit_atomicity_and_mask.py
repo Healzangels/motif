@@ -34,8 +34,13 @@ def _handler(name: str) -> str:
 
 
 def test_db_url_kept_on_mask_marker_in_patch():
-    # the PATCH keep-on-`***` guard must cover all three credential URLs.
-    assert 'k in ("git_url", "database_url", "db_url"):' in API, (
+    # v0.51.341: retargeted from the literal key tuple onto behaviour — the guard now follows config_file.USERINFO_URL_KEYS.
+    from app.core.config_file import MotifConfig
+    from app.web.api import _apply_partial_config
+    cfg = MotifConfig()
+    cfg.sync.db_url = "https://u:pat@remote.example/x"
+    _apply_partial_config(cfg, {"sync": {"db_url": "https://***@remote.example/x"}})
+    assert cfg.sync.db_url == "https://u:pat@remote.example/x", (
         "v1.23.69: db_url must be kept (not overwritten with its mask) on a "
         "config SAVE round-trip"
     )

@@ -386,22 +386,65 @@ def test_the_missing_block_repaints_instead_of_keeping_the_last_rows(tmp_path):
     assert s3["canon-missing-tbody"]["html"] == "" and s3["canon-restore-plex-btn"]["display"] == "none"
 
 
+# v0.51.341: every reason the restore paths emit, with its words — the old list missed four, so a deleted entry stayed green.
+_SKIP_WORDING = {
+    "canonical_already_present": "already on disk",
+    "no_placement": "no Plex placement",
+    "placement_file_missing": "Plex folder copy gone",
+    "link_failed:": "copy failed",
+    "no_rating_key": "no Plex rating key",
+    "plex_unavailable": "Plex not configured",
+    "plex_themes:": "Plex fetch failed",
+    "no_theme_entry": "no theme selected in Plex",
+    "plex_fetch:": "Plex fetch failed",
+    "write_failed:": "copy failed",
+    "no_plex_copy": "no Plex copy",
+}
+
+
+def _emitted_skip_reasons() -> set[str]:
+    """The reason literals (an f-string's literal prefix) the three restore functions can return."""
+    import ast
+    tree = ast.parse((REPO / "app" / "core" / "canonical_health.py").read_text())
+    fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    out: set[str] = set()
+    for name in ("restore_from_placement", "refetch_from_plex_store", "restore_from_plex"):
+        for node in ast.walk(fns[name]):
+            if isinstance(node, ast.Dict):
+                for k, v in zip(node.keys, node.values):
+                    if isinstance(k, ast.Constant) and k.value == "reason":
+                        if isinstance(v, ast.Constant):
+                            out.add(v.value)
+                        elif isinstance(v, ast.JoinedStr):
+                            out.add(v.values[0].value)
+            elif isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or):
+                out.update(v.value for v in node.values
+                           if isinstance(v, ast.Constant) and isinstance(v.value, str))
+    return out
+
+
 @pytest.mark.skipif(not _NODE, reason="node not installed")
 def test_the_restore_status_words_each_skip_reason(tmp_path):
-    reasons = ["canonical_already_present", "canonical_already_present", "plex_unavailable",
-               "placement_file_missing", "link_failed:[Errno 1] Operation not permitted",
-               "plex_fetch:500", "plex_themes:None", "no_rating_key", "no_plex_copy"]
-    restore = {"ok": True, "broken": len(reasons), "restored": 0, "restored_sidecar": 0,
-               "restored_store": 0,
-               "skipped": [{"title": f"T{i}", "media_type": "movie", "tmdb_id": i, "section_id": "1",
-                            "reason": reason} for i, reason in enumerate(reasons)]}
+    assert _emitted_skip_reasons() == set(_SKIP_WORDING), "a restore reason has no wording here (and in SKIP_WORDS)"
+    samples = {"link_failed:": "link_failed:[Errno 1] Operation not permitted", "plex_themes:": "plex_themes:None",
+               "plex_fetch:": "plex_fetch:500", "write_failed:": "write_failed:[Errno 28] No space left"}
+    # a distinct count per reason, so a reason worded as another (or as the fallback) changes a group's total
+    skipped, expected = [], {}
+    for n, (reason, words) in enumerate(_SKIP_WORDING.items(), start=1):
+        skipped += [{"title": f"T{reason}{i}", "media_type": "movie", "tmdb_id": i, "section_id": "1",
+                     "reason": samples.get(reason, reason)} for i in range(n)]
+        expected[words] = expected.get(words, 0) + n
+    restore = {"ok": True, "broken": len(skipped), "restored": 0, "restored_sidecar": 0,
+               "restored_store": 0, "skipped": skipped}
     page = _report(missing=[_row(901, "Anything", "sidecar")], restorable=1)
     snaps = _run_page(tmp_path, [page, restore, _report()], ["canon-restore-plex-btn"])
     text = snaps[1]["canon-restore-plex-status"]["text"]
     assert "had no Plex copy" not in text, text
-    for words in ("9 skipped", "2 already on disk", "1 Plex not configured", "1 Plex folder copy gone",
-                  "1 copy failed", "2 Plex fetch failed", "2 no Plex copy"):
-        assert words in text, (words, text)
+    head = f" · {len(skipped)} skipped ("
+    assert head in text and text.endswith(")"), text
+    groups = text[text.index(head) + len(head):-1].split(", ")
+    shown = {g.split(" ", 1)[1]: int(g.split(" ", 1)[0]) for g in groups}
+    assert shown == expected, (shown, text)
 
 
 # ── 5: an already-present skip leaves the broken list ────────────────

@@ -187,6 +187,10 @@ def test_backup_dedup_skips_identical_bytes(tmp_path):
         _seed_existing_canonical(
             conn, tmdb_id=910, sha256=sha, source_kind="themerrdb")
         conn.commit()
+        # v0.51.341: the dedup compares against a canonical that is on disk — a recorded sha alone is re-fetched.
+        canonical = themes_dir / "movies" / "x" / "theme.mp3"
+        canonical.parent.mkdir(parents=True)
+        canonical.write_bytes(served)
         plex = MagicMock()
         _mock_fetch(plex, served)
         target = {

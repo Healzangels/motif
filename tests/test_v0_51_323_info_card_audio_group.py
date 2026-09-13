@@ -159,6 +159,11 @@ def _label(lf, data, placements, ambiguous=False) -> str:
      "ThemerrDB theme on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)"),
     ({"source_kind": "url", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1, "plex_theme_verified_ok": 0}, [],
      "user-URL theme on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)"),
+    # v0.51.341: no plex_items row at all (has_theme is NOT NULL, so null = the item left Plex) — PROMOTE has nowhere to deploy
+    ({"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": None}, [],
+     "ThemerrDB theme on disk as backup · this item is not in Plex"),
+    ({"source_kind": "plex_cloud", "last_place_attempt_reason": "backup_only"}, {"plex_theme_verified_ok": 0}, [],
+     "copy of Plex's cloud theme on disk as backup · this item is not in Plex"),
     ({"source_kind": "upload"}, {}, [{"placement_kind": "plex_upload"}],
      "uploaded MP3 on disk · placed: plex_upload"),
     ({"source_kind": "themerrdb"}, {}, [{"placement_kind": "sidecar"}, {"placement_kind": "hardlink"}],

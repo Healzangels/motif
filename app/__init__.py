@@ -6302,7 +6302,41 @@
 #   now zeros it (clearUnreadBadge, shared with MARK ALL READ) and re-reads
 #   past the /api/stats cache. The painted-hash reset happens only on a
 #   failed POST — resetting it always let a stale cached poll relight the 1.
-__version__ = "0.51.340"
+# 0.51.341: review residuals — the correctness findings the reviewers raised
+#   while building .338–.340, each reproduced before it was fixed.
+#   (1) Secrets: plex.url userinfo masks on GET /api/config and in the restore
+#   preview, and a PATCH carrying the mask keeps the stored credentials (host
+#   edits kept; a mask with nothing stored is a 400, never written).
+#   mask_url_credentials takes userinfo to the last "@" (a "/" or "@" in the
+#   password leaked), masks scheme-less user:pass@host and the events
+#   scrubber's secret query params. The boot banner masks plex_url too.
+#   (2) Bundle restore preview: a motif.yaml whose sections are the wrong shape
+#   ("plex: 5") is refused like a parse error (it hydrated, then crashed the
+#   boot); a YAML date inside a list no longer 500s; the live file decodes
+#   strictly; the cookies line names the file the boot really restores to
+#   (the bundle config's paths.cookies_file, env overrides applied).
+#   (3) Staging and boot: every stage and cancel runs under one lock; staging
+#   works on shares that refuse chmod (copyfile + tolerant chmod); an earlier
+#   staging's config is dropped BEFORE the database swap, and a drop that
+#   fails refuses the staging with a message saying exactly what is staged;
+#   cancel never reports success with a config left behind; a single-file
+#   bind-mounted cookies file or motif.yaml is restored in place, with one
+#   pre-restore copy however many boots retry; boot lines logged before
+#   logging is configured are buffered and replayed into motif.log; a failed
+#   config swap logs an ERROR and holds the cookies back; a rejected pending
+#   database that can't be discarded is logged.
+#   (4) Canonical writers: an UPLOAD MP3 stamps canonical_present; the cloud
+#   backup's dedup needs the canonical on disk; placements rank present >
+#   unverified > verified-missing; the INFO card's restore makes one call per
+#   file with the bulk's pick and stamps an already-present row; every
+#   RESTORE FROM PLEX skip reason has its own words; provider_health and the
+#   downloader classify AnimeThemes by host.
+#   (5) UI: EDIT AUDIO reads its own row's player (not Plex's); failed
+#   dismiss / group dismiss / mark-read POSTs repaint the INBOX count; no Plex
+#   player for a non-numeric rating key; the INFO headline says a backup's
+#   item is not in Plex when it has left; the loudness action label centres on
+#   its first line at phone width.
+__version__ = "0.51.341"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

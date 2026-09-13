@@ -4864,7 +4864,8 @@ body.auth-page .auth-card { margin: 0; }
    720px, and at 375px .loud-ctl-row's flex-wrap gives a row each with no overflow. */
 .loud-controls { grid-column: 2; display: flex; flex-direction: column; gap: var(--gap-2); }
 .loud-ctl-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--gap-2); }
-.loud-ctl-label { flex: 0 0 auto; min-width: 3.5em; }
+/* v0.51.341: one button line tall, text centred, so the dt label centres on line 1 when the stepper wraps under it (was 3.3px low at 375px). */
+.loud-ctl-label { flex: 0 0 auto; min-width: 3.5em; min-height: var(--btn-tiny-h); display: inline-flex; align-items: center; }
 .loud-stepper { display: inline-flex; align-items: center; gap: var(--gap-2); }
 /* the +/- steppers are single glyphs — drop the .btn-tiny 72px min-width to a compact square. */
 .loud-stepper .btn-tiny {

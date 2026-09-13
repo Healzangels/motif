@@ -687,7 +687,8 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   mask rule in `app/core/config_file.py` (`WHOLE_SECRET_KEYS` /
   `APPRISE_URL_LIST_KEYS` / `USERINFO_URL_KEYS`, applied by
   `mask_config_value`). GET `/api/config` and the bundle restore preview both
-  mask through it (v0.51.339).
+  mask through it (v0.51.339). A USERINFO_URL_KEYS field (plex.url since
+  v0.51.341) round-trips its mask through PATCH via `unmask_url_credentials`.
 - Commit secrets (Plex token, GitHub PATs, cookies.txt). The events
   log scrubber (`app/core/events.py`) redacts: (a) `detail` dict VALUES
   whose KEY contains `token|secret|password|cookie|auth|api_key|bearer`

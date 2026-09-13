@@ -441,7 +441,9 @@ def _source_for(url: str) -> str:
     # v0.51.315: AnimeThemes direct audio — yt-dlp's generic extractor (direct
     # media URL), the same non-YT opts path as Instagram/Facebook; the
     # FFmpegExtractAudio postprocessor turns the .ogg into theme.mp3.
-    if "a.animethemes.moe" in url:
+    from .sync import url_source
+    # v0.51.341: host-anchored like notify_content — the bare substring missed an uppercase host and matched a path.
+    if url_source(url) == "animethemes":
         return "animethemes"
     return "unknown"
 

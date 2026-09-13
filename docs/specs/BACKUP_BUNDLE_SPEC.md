@@ -138,7 +138,10 @@ the pending banner reads "A restore is staged (database + config)". At boot
 (v0.51.339) the database applies first; `motif.yaml` follows only a database
 that applied (after a `motif.yaml.prerestore-<stamp>` copy), and the cookies
 land on `paths.cookies_file` after a `<file>.prerestore-<stamp>` copy. A
-snapshot staging drops a bundle's staged config and cookies. `// CANCEL
+snapshot staging drops a bundle's staged config and cookies (before the
+database swap, under one staging lock — v0.51.341; a drop that fails refuses
+the staging). The preview's cookies line names the file the boot restores to:
+the bundle config's `paths.cookies_file`, env overrides applied. `// CANCEL
 RESTORE` drops all of it.
 
 **THEMES CHECK (tag 3, optional).** A block below RESTORE: `// CHECK THEMES`

@@ -7333,7 +7333,8 @@
           + '</div>').join('');
         diffEl.hidden = !diff.length || !!perr.bundle || !!perr.live;
       }
-      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ' — will replace yours unless you keep your config' : ''}`);
+      // v0.51.341: restored cookies land on settings.cookies_file (v0.51.339) — name that path, not the member
+      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ` — will replace ${pv.cookies_target || 'yours'} unless you keep your config` : ''}`);
       const keep = document.getElementById('database-restore-keep-config');
       if (keep) { keep.checked = !!perr.bundle; keep.disabled = !!perr.bundle; }
       previewEl.dataset.name = pv.name;
@@ -7767,6 +7768,10 @@
       ['write_failed:', 'copy failed'],
       ['plex_fetch:', 'Plex fetch failed'],
       ['plex_themes:', 'Plex fetch failed'],
+      // v0.51.341: the three reasons that fell through to "no Plex copy".
+      ['no_theme_entry', 'no theme selected in Plex'],
+      ['no_rating_key', 'no Plex rating key'],
+      ['no_placement', 'no Plex placement'],
     ];
     function skipWords(skipped) {
       const groups = new Map();
@@ -18064,7 +18069,7 @@
           <p class="info-hero-playback muted small">${it.plex_has_theme ? 'nothing on disk · Plex serves its own theme' : 'nothing on disk · no theme — Plex metadata only'}</p>
         </div>
       </div>
-      ${it.plex_has_theme
+      ${it.plex_has_theme && /^\d+$/.test(posterRk)  // v0.51.341: digits-only rk, the proxy's own rule — an empty key built a keyless player URL
         // v0.51.340: the badge rides the label column, so the player starts at the value edge.
         ? `<div class="dlg-section info-group"><h4>// audio</h4><dl class="dlg-grid"><dt class="info-ctl-label info-ctl-label-play">plex serves `
           + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
@@ -18289,6 +18294,10 @@
       if ((lf.last_place_attempt_reason || '') === 'backup_only') {
         // v0.51.339: "Plex serves" is the card player's and computeQuickPlay's test, not the backup stamp alone.
         const plexServes = data.plex_has_theme === 1 && data.plex_theme_verified_ok !== 0;
+        // v0.51.341: has_theme is NOT NULL, so null means no plex_items row — the item left Plex and PROMOTE has no folder to deploy into.
+        if (data.plex_has_theme === null || data.plex_has_theme === undefined) {
+          return `${held} on disk as backup · this item is not in Plex`;
+        }
         return plexServes
           ? `${held} on disk as backup · Plex serves its own theme`
           : `${held} on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)`;
@@ -19284,7 +19293,8 @@
     const _plexRowItem = (libraryState.items || []).find((it) => String(it.rating_key) === String(_plexRk));
     const _plexSrc = _plexRowItem ? computeSrcLetter(_plexRowItem) : '';
     // v0.51.340: the badge rides the label column, so this player and the motif file's share one left edge.
-    const plexThemeBlock = (data.plex_has_theme === 1 && _plexRk && (!lf || _plexSrc === 'P'))
+    // v0.51.341: digits-only rk (quick-play's rkOk, the proxy's 400 rule) — no player for a keyless or non-numeric key.
+    const plexThemeBlock = (data.plex_has_theme === 1 && /^\d+$/.test(String(_plexRk)) && (!lf || _plexSrc === 'P'))
       ? `<dt class="info-ctl-label info-ctl-label-play">plex serves `
         + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
         + `<dd class="info-play-row"><audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" class="info-audio" data-plex-theme="1">`
@@ -19718,7 +19728,8 @@
         mt: b.dataset.mt, id: b.dataset.id, sec: b.dataset.sec || '',
         edn: b.dataset.edn || '', sha: b.dataset.sha || '',
         duration: (() => {
-          const a = body.querySelector('.info-audio');
+          // v0.51.341: the button's own row — the card's first .info-audio is Plex's player when both rows render.
+          const a = b.closest('dd')?.querySelector('audio.info-audio');
           return (a && Number.isFinite(a.duration)) ? a.duration : null;
         })(),
       });
@@ -22325,7 +22336,8 @@
         li.dataset.dismissing = '1';
       }
       const wasUnread = !!li && li.classList.contains('unread');
-      try { await api('POST', `/api/notifications/${id}/dismiss`); } catch (_) { /* gone is fine */ }
+      // v0.51.341: a failed POST (gone is fine) drops the painted hash, so the re-read repaints the server's count over the local -1.
+      try { await api('POST', `/api/notifications/${id}/dismiss`); } catch (_) { refreshTopbarStatus._lastHash = ''; }
       if (wasUnread) bumpUnreadBadge(-1);
       if (li) li.remove();
       if (groupLi) {
@@ -22357,8 +22369,9 @@
       const unread = kids.filter((li) => li.classList.contains('unread')).length;
       if (unread) bumpUnreadBadge(-unread);
       groupLi.remove();
+      // v0.51.341: any failed child POST drops the painted hash — the badge already dropped by every unread child.
       await Promise.all(kids.map((li) =>
-        api('POST', `/api/notifications/${li.dataset.nid}/dismiss`).catch(() => {})));
+        api('POST', `/api/notifications/${li.dataset.nid}/dismiss`).catch(() => { refreshTopbarStatus._lastHash = ''; })));
       if (readAllBtn && listEl && !listEl.querySelector('.notif-row.unread')) {
         readAllBtn.hidden = true;
       }
@@ -22386,10 +22399,12 @@
       // navigation (openNotifRow assigns location.href in the same task), and
       // an aborted POST left the row unread server-side forever. keepalive
       // survives the page teardown.
+      // v0.51.341: fetch resolves on a 5xx — throw it, so every failed seen POST drops the painted hash and the re-read repaints.
       try {
-        await fetch(`/api/notifications/${li.dataset.nid}/seen`,
-                    { method: 'POST', cache: 'no-store', keepalive: true });
-      } catch (_) { /* the next poll re-reads the truth */ }
+        const r = await fetch(`/api/notifications/${li.dataset.nid}/seen`,
+                              { method: 'POST', cache: 'no-store', keepalive: true });
+        if (!r.ok) throw new Error(`seen POST ${r.status}`);
+      } catch (_) { refreshTopbarStatus._lastHash = ''; }
       setTimeout(refreshTopbarStatus, 1100);
     }
     // Keep the topbar badge honest between polls (the poll is authoritative).

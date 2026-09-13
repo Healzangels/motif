@@ -39,6 +39,8 @@ from typing import Any
 
 import yaml
 
+from .events import _URL_QUERY_SECRET_RE  # v0.51.341: the events scrubber's sensitive query-param list — never a second one
+
 log = logging.getLogger(__name__)
 
 
@@ -898,6 +900,22 @@ def _is_masked_apprise_url(url: str) -> bool:
     return suffix == _APPRISE_MASK
 
 
+_URL_SCHEME_PREFIX_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://")
+
+
+def _split_userinfo(url: str) -> tuple[str, str | None, str]:
+    # v0.51.341: userinfo runs to the LAST "@" — a "/" or "@" in the password, or a scheme-less user:pass@host, was shown in clear
+    m = _URL_SCHEME_PREFIX_RE.match(url)
+    prefix = m.group(0) if m else ""
+    body = url[len(prefix):]
+    at = body.rfind("@")
+    return (prefix, None, body) if at < 0 else (prefix, body[:at], body[at + 1:])
+
+
+def _query_secret_value(m: "re.Match[str]") -> str:
+    return m.group(0)[len(m.group(1)):]
+
+
 def mask_url_credentials(url: str) -> str:
     """v1.21.17 (security audit): redact ONLY the userinfo of a URL —
     `https://user:tok@host/path` → `https://***@host/path`. Unlike
@@ -905,21 +923,49 @@ def mask_url_credentials(url: str) -> str:
     non-secret and shown as an editable settings field, so we hide only the
     credential segment. A credential-free URL (the default public ThemerrDB
     URL) passes through unchanged so the operator still sees it in full."""
-    if not url or "://" not in url:
+    if not url:
         return url or ""
-    scheme, rest = url.split("://", 1)
-    authority = rest.split("/", 1)[0]
-    if "@" not in authority:
-        return url
-    host_and_path = rest.split("@", 1)[1]
-    return f"{scheme}://***@{host_and_path}"
+    prefix, userinfo, rest = _split_userinfo(url)
+    rest = _URL_QUERY_SECRET_RE.sub(lambda m: f"{m.group(1)}{_APPRISE_MASK}", rest)  # v0.51.341: ?token= / ?api_key= values too
+    return f"{prefix}{_APPRISE_MASK}@{rest}" if userinfo is not None else f"{prefix}{rest}"
 
 
 def _is_masked_url_credentials(url: str) -> bool:
     """v1.21.17: True if `url` carries the masked-userinfo marker
     `://***@`. PATCH treats a round-tripped value with this marker as
     'keep the stored credential' (mirrors plex.token '***' = keep)."""
-    return bool(url) and "://***@" in url
+    if not url or not isinstance(url, str):
+        return False
+    m = _URL_SCHEME_PREFIX_RE.match(url)
+    body = url[m.end():] if m else url
+    # v0.51.341: every shape mask_url_credentials emits — `***@` with or without a scheme, and a `name=***` secret param
+    return body.startswith(_APPRISE_MASK + "@") or any(
+        _query_secret_value(q) == _APPRISE_MASK for q in _URL_QUERY_SECRET_RE.finditer(body))
+
+
+def unmask_url_credentials(submitted: str, stored: str) -> str:
+    """v0.51.341: a PATCHed URL still carrying a mask takes the stored credentials back, its host/path edits kept; ValueError (naming no value) when nothing stored sits behind a mask, so a mask is never written."""
+    m = _URL_SCHEME_PREFIX_RE.match(submitted)
+    prefix = m.group(0) if m else ""
+    body = submitted[len(prefix):]
+    _, stored_userinfo, stored_rest = _split_userinfo(stored or "")
+    kept: dict[str, list[str]] = {}
+    for q in _URL_QUERY_SECRET_RE.finditer(stored_rest):
+        kept.setdefault(q.group(1)[1:], []).append(_query_secret_value(q))
+
+    def keep(q: "re.Match[str]") -> str:
+        if _query_secret_value(q) != _APPRISE_MASK:
+            return q.group(0)
+        stored_vals = kept.get(q.group(1)[1:])
+        if not stored_vals:
+            raise ValueError(f"the masked {q.group(1)[1:-1]} has no stored value to keep — type it in full")
+        return q.group(1) + stored_vals.pop(0)
+
+    if body.startswith(_APPRISE_MASK + "@"):
+        if stored_userinfo is None:
+            raise ValueError("the masked credentials (***@) have no stored credentials to keep — type them in full")
+        return f"{prefix}{stored_userinfo}@{_URL_QUERY_SECRET_RE.sub(keep, body[len(_APPRISE_MASK) + 1:])}"
+    return prefix + _URL_QUERY_SECRET_RE.sub(keep, body)
 
 
 # v0.51.339: the ONE secret-mask rule, keyed by flattened motif.yaml key — GET /api/config and the bundle restore preview both apply it.
@@ -931,7 +977,8 @@ WHOLE_SECRET_KEYS = (
 )
 APPRISE_URL_LIST_KEYS = ("notifications.apprise_urls",)  # v1.17.13: <scheme>://*** names the service, hides its tokens
 USERINFO_URL_KEYS = ("sync.git_url", "sync.database_url",  # v1.21.17: only the userinfo — host+path stay editable
-                     "sync.db_url")                        # v1.23.62 (audit #6): the third credential-capable sync URL
+                     "sync.db_url",                        # v1.23.62 (audit #6): the third credential-capable sync URL
+                     "plex.url")                           # v0.51.341: http://user:pass@plex:32400 is a working PlexClient base_url
 SECRET_CONFIG_KEYS = WHOLE_SECRET_KEYS + APPRISE_URL_LIST_KEYS + USERINFO_URL_KEYS
 # v0.51.339: the fallback for keys the tables don't name — LAST segment only, never cookie|auth (cookie_secure, trust_forward_auth are settings).
 _SECRET_LEAF_RE = re.compile(r"token|secret|password|passwd|api_key|apikey|webhook", re.I)

@@ -70,7 +70,8 @@ def test_config_diff_lists_only_differing_keys_and_masks_secrets():
     other = "plex:\n  url: http://b\n  token: B\nnotifications:\n  apprise_urls: [discord://y]\nruntime:\n  log_level: INFO\nnew:\n  key: 1\n"
     d = {r["key"]: r for r in bundle.config_diff(live, other)}
     assert set(d) == {"plex.url", "plex.token", "notifications.apprise_urls", "new.key"}
-    assert d["plex.url"] == {"key": "plex.url", "secret": False, "live": "http://a", "bundle": "http://b"}
+    # v0.51.341: reversed secret False→True — plex.url joined the userinfo mask; a credential-free URL still shows whole
+    assert d["plex.url"] == {"key": "plex.url", "secret": True, "live": "http://a", "bundle": "http://b"}
     assert d["plex.token"]["secret"] and d["plex.token"]["live"] == bundle.MASK and d["plex.token"]["bundle"] == bundle.MASK
     # v0.51.339: apprise URLs mask as GET /api/config masks them — the scheme shows, the token never does
     ap = d["notifications.apprise_urls"]

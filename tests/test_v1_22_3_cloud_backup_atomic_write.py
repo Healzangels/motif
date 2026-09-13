@@ -153,7 +153,8 @@ def test_dedup_query_is_edition_scoped():
            / "app" / "core" / "cloud_theme_backup.py").read_text()
     fn = src.index("def backup_cloud_theme(")
     body = src[fn:fn + 12000]
-    dedup = body[body.index("SELECT file_sha256 FROM local_files"):]
+    # v0.51.341: the dedup also reads file_path (it checks the canonical is on disk) — anchor on the widened SELECT.
+    dedup = body[body.index("SELECT file_sha256, file_path FROM local_files"):]
     head = dedup[:300]
     assert "AND edition_key = ?" in head, (
         "dedup guard must be edition-scoped or it compares a sibling edition")
