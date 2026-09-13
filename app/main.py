@@ -205,9 +205,22 @@ def _probe_writability(settings, log) -> None:
 
 
 def main() -> int:
+    # v0.51.336: a staged bundle restore swaps motif.yaml / cookies.txt HERE,
+    # before get_settings() reads the YAML — the swap after a pre-restore copy
+    # of each file (docs/specs/BACKUP_BUNDLE_SPEC.md § 9). The database member
+    # follows below through db_backup.apply_pending_restore as before.
+    from datetime import datetime as _dt, timezone as _tz
+    from .config import _DEFAULT_CONFIG_DIR as _cfg_dir
+    from .core import bundle as _bundle
+    _cfg_restore = _bundle.apply_pending_config(
+        _cfg_dir, now_stamp=_dt.now(_tz.utc).strftime("%Y%m%d-%H%M%S"))
     settings = get_settings()
     configure_logging(settings.log_level, settings.config_dir)
     log = logging.getLogger("motif.main")
+    if _cfg_restore:
+        log.warning("Config restored at boot from a staged bundle: %s (pre-restore copies: %s; errors: %s)",
+                    ", ".join(_cfg_restore.get("applied") or []) or "(none)",
+                    _cfg_restore.get("safety") or "(none)", _cfg_restore.get("errors") or "(none)")
 
     # Verify config dir exists (it might be a fresh appdata mount)
     settings.config_dir.mkdir(parents=True, exist_ok=True)

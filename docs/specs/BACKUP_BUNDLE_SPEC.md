@@ -1,6 +1,6 @@
 # Backup bundle (feature D) — definition
 
-Status: DECIDED 2026-09-12 — the operator took every proposed option (§ 4). Tag 1 BUILT as v0.51.335; tag 2 (restore) and the optional tag 3 open. Mockup: the session artifact "Backup bundle".
+Status: DECIDED 2026-09-12 — the operator took every proposed option (§ 4). Tag 1 BUILT as v0.51.335, tag 2 (restore) BUILT as v0.51.336; the optional tag 3 (themes check) open. Mockup: the session artifact "Backup bundle".
 
 ## 0. What exists today (v1.23.15–17)
 

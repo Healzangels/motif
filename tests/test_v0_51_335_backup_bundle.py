@@ -164,7 +164,7 @@ def test_bundle_is_renamed_into_place_never_copied():
     """The final step is an atomic rename of the finished .part; a copy could
     leave a half-written bundle under the listed name."""
     src = (REPO / "app" / "core" / "bundle.py").read_text()
-    assert "part.replace(dest)" in src and "copyfile" not in src
+    assert "part.replace(dest)" in src and "shutil.copyfile(" not in src
 
 
 # ── the snapshot machinery admits bundles ────────────────────────────
@@ -294,11 +294,11 @@ def test_settings_markup_has_the_button_and_the_toggle():
     assert "as sensitive as" in SETTINGS_HTML, "the secrets warning"
 
 
-def test_list_rows_carry_a_kind_chip_and_bundles_have_no_restore_yet():
+def test_list_rows_carry_a_kind_chip_and_a_restore():
     i = APP_JS.index("function bindDatabaseBackup() {")
     blk = APP_JS[i:APP_JS.index("async function refreshPending()", i)]
     assert "tier-badge tier-badge-${kind}" in blk
-    assert "kind !== 'bundle'" in blk and "data-backup-restore=" in blk
+    assert "data-backup-restore=" in blk  # v0.51.336: bundles restore too (through a preview)
     assert "'/api/admin/database-backup?kind=bundle'" in APP_JS
     assert "// BUNDLING…" in APP_JS
 

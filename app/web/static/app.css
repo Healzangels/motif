@@ -5361,6 +5361,34 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    ls'd /config, no file, banner stuck). Same footgun fixed for
    .live-indicator (2764) + .manual-url-preview (4173). */
 .restore-pending-banner[hidden] { display: none; }
+/* v0.51.336: the bundle restore preview (docs/specs/BACKUP_BUNDLE_SPEC.md
+   § 5) — what a restore would do, read before anything is staged. The
+   diff lists only the config keys that differ; secrets arrive masked. */
+.restore-preview {
+  margin: var(--gap-3) 0;
+  padding: var(--gap-3) var(--gap-4);
+  border: 1px solid var(--line-bright);
+  background: var(--bg-elev);
+}
+.restore-preview[hidden] { display: none; }
+.restore-preview-line {
+  margin: 0 0 var(--gap-1);
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+  color: var(--fg);
+}
+.restore-diff {
+  margin: var(--gap-2) 0 var(--gap-3);
+  padding-left: var(--gap-3);
+  border-left: 2px solid var(--line-bright);
+  font-family: var(--font-mono);
+  font-size: var(--t-tiny);
+}
+.restore-diff[hidden] { display: none; }
+.restore-diff-row + .restore-diff-row { margin-top: var(--gap-2); }
+.restore-diff-key { color: var(--fg-dim); }
+.restore-diff-del { color: var(--red); }
+.restore-diff-add { color: var(--green); }
 .restore-pending-text { color: var(--amber); flex: 1; min-width: 0; }
 .restore-upload-row { align-items: center; flex-wrap: wrap; gap: var(--gap-2); }
 .restore-file-input { flex: 0 1 auto; max-width: 320px; }

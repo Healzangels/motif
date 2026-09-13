@@ -1512,33 +1512,56 @@
     <p class="form-hint block-intro">
       Restoring <strong class="warn">replaces ALL current data</strong>
       — themes, placements, overrides, accounts — with the snapshot's.
-      motif validates the file (real database, integrity check, schema
-      not newer than this build), <strong>automatically backs up the
-      current database</strong>, then swaps it in on the next restart.
-      Use a // RESTORE button on a snapshot above, or upload an
+      {# v0.51.336: bundles restore the config too, after a preview #}
+      From a <strong>bundle</strong> it also replaces <code>motif.yaml</code>
+      and <code>cookies.txt</code> unless you keep yours — a bundle shows
+      a preview first. motif validates the file (real database, integrity
+      check, schema not newer than this build), <strong>automatically
+      backs up what it replaces</strong>, then swaps on the next restart.
+      Use a // RESTORE button on a snapshot or bundle above, or upload an
       off-box copy below.
     </p>
     {# pending-restore banner — shown by JS when a restore is staged. #}
     <div id="database-restore-pending" class="restore-pending-banner" hidden>
       <span class="restore-pending-text">
-        ⚠ A restore is staged. <strong>Restart the motif container</strong>
-        to apply it (the current database will be backed up first).
+        ⚠ A restore is staged<span id="database-restore-pending-members"></span>. <strong>Restart the motif container</strong>
+        to apply it (what it replaces will be backed up first).
       </span>
       <button type="button" class="btn btn-tiny"
               id="database-restore-cancel-btn">// CANCEL RESTORE</button>
     </div>
     <p class="form-subhead">// RESTORE FROM FILE</p>
     <div class="form-actions restore-upload-row">
-      <input type="file" id="database-restore-file" accept=".db,.sqlite,.sqlite3"
+      <input type="file" id="database-restore-file" accept=".db,.sqlite,.sqlite3,.tar.gz,.tgz"
              class="input restore-file-input" />
       <button type="button" class="btn btn-danger"
               id="database-restore-upload-btn">// RESTORE FROM FILE</button>
       <span class="form-status" id="database-restore-status"></span>
     </div>
     <p class="form-hint">
-      Pick a motif <code>.db</code> snapshot (e.g. one you downloaded
-      earlier). It's validated before anything is staged.
+      Pick a motif <code>.db</code> snapshot or a <code>.tar.gz</code>
+      bundle (e.g. one you downloaded earlier). It's validated before
+      anything is staged; a bundle joins the list above and shows its
+      preview here first.
     </p>
+    {# v0.51.336: the bundle restore preview — what a restore would do,
+       before anything is staged (docs/specs/BACKUP_BUNDLE_SPEC.md § 5). #}
+    <div id="database-restore-preview" class="restore-preview" hidden>
+      <p class="restore-preview-line" id="restore-preview-manifest"></p>
+      <p class="restore-preview-line" id="restore-preview-db"></p>
+      <p class="restore-preview-line" id="restore-preview-config"></p>
+      <div class="restore-diff" id="restore-preview-diff"></div>
+      <p class="restore-preview-line muted" id="restore-preview-cookies"></p>
+      <label class="form-label form-checkbox">
+        <input type="checkbox" id="database-restore-keep-config" />
+        <span class="form-label-text">KEEP MY CURRENT CONFIG</span>
+        <p class="form-hint">restore the database only; motif.yaml and cookies.txt stay as they are</p>
+      </label>
+      <div class="form-actions">
+        <button type="button" class="btn btn-danger" id="database-restore-stage-btn">// STAGE RESTORE</button>
+        <button type="button" class="btn btn-tiny" id="database-restore-preview-cancel-btn">// CANCEL</button>
+      </div>
+    </div>
   </div>
 </section>
 

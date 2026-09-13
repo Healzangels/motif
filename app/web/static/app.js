@@ -7257,8 +7257,8 @@
           const name = htmlEscape(b.name);
           const href = '/api/admin/database-backup/download/'
             + encodeURIComponent(b.name);
-          // v0.51.335: one list, three kinds — a chip leads the name. Restore
-          // from a bundle lands with tag 2, so a bundle row has no RESTORE yet.
+          // v0.51.335: one list, three kinds — a chip leads the name.
+          // v0.51.336: a bundle row's RESTORE previews first (restoreFromName).
           const kind = (b.kind === 'bundle' || b.kind === 'prerestore') ? b.kind : 'snapshot';
           const chipTip = kind === 'bundle'
             ? 'bundle: the database snapshot + motif.yaml + cookies.txt + a themes census'
@@ -7266,10 +7266,8 @@
             : 'database snapshot';
           const chip = `<span class="tier-badge tier-badge-${kind}" title="${chipTip}">`
             + (kind === 'prerestore' ? 'PRE-RESTORE' : kind.toUpperCase()) + '</span>';
-          const restoreBtn = kind !== 'bundle'
-            ? `<button type="button" class="btn btn-tiny btn-warn" `
-              + `data-backup-restore="${name}">// RESTORE</button>`
-            : '';
+          const restoreBtn = `<button type="button" class="btn btn-tiny btn-warn" `
+            + `data-backup-restore="${name}">// RESTORE</button>`;
           return '<div class="backup-row">'
             + '<div class="backup-row-main">'
             + `<div class="backup-row-name">${chip}${name}</div>`
@@ -7299,8 +7297,73 @@
       try {
         const r = await api('GET', '/api/admin/database-restore/pending');
         pendingBanner.hidden = !(r && r.pending);
+        // v0.51.336: name what is staged — "(database + config + cookies)".
+        const m = (r && r.members) || [];
+        const el = document.getElementById('database-restore-pending-members');
+        if (el) el.textContent = m.length ? ' (' + m.join(' + ') + ')' : '';
       } catch (e) { /* leave banner as-is on a transient error */ }
     }
+    // v0.51.336: the bundle restore preview. Nothing is staged until
+    // // STAGE RESTORE confirms by name with the keep-config choice.
+    const previewEl = document.getElementById('database-restore-preview');
+    function showBundlePreview(r) {
+      const pv = r && r.preview;
+      if (!previewEl || !pv) return;
+      const m = pv.manifest || {};
+      const line = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+      line('restore-preview-manifest', `✓ bundle ${pv.name} · motif v${m.motif_version || '?'} · schema v${m.schema_version || '?'} · ${m.created_at || ''} · ${m.census_rows || 0} themes in the census`);
+      line('restore-preview-db', pv.db && pv.db.ok
+        ? `✓ database: real SQLite, integrity ok, schema v${pv.db.schema_version}`
+        : '✗ database: failed validation');
+      const diff = pv.config_diff || [];
+      line('restore-preview-config', !pv.config_in_bundle
+        ? 'config: not in bundle — motif.yaml stays as it is'
+        : diff.length ? `config: ${diff.length} key${diff.length === 1 ? '' : 's'} differ from the live motif.yaml`
+          : 'config: identical to the live motif.yaml');
+      const diffEl = document.getElementById('restore-preview-diff');
+      if (diffEl) {
+        diffEl.innerHTML = diff.map((d) => '<div class="restore-diff-row">'
+          + `<div class="restore-diff-key">${htmlEscape(d.key)}</div>`
+          + `<div class="restore-diff-del">− ${htmlEscape(d.live)}</div>`
+          + `<div class="restore-diff-add">+ ${htmlEscape(d.bundle)}</div>`
+          + '</div>').join('');
+        diffEl.hidden = !diff.length;
+      }
+      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' ? ' — will replace yours unless you keep your config' : ''}`);
+      const keep = document.getElementById('database-restore-keep-config');
+      if (keep) keep.checked = false;
+      previewEl.dataset.name = pv.name;
+      previewEl.hidden = false;
+      previewEl.scrollIntoView({ block: 'nearest' });
+    }
+    function hideBundlePreview() {
+      if (!previewEl) return;
+      previewEl.hidden = true;
+      delete previewEl.dataset.name;
+    }
+    document.getElementById('database-restore-preview-cancel-btn')?.addEventListener('click', hideBundlePreview);
+    document.getElementById('database-restore-stage-btn')?.addEventListener('click', async () => {
+      const name = previewEl && previewEl.dataset.name;
+      if (!name) return;
+      const keep = !!document.getElementById('database-restore-keep-config')?.checked;
+      const ok = confirm(
+        'Restore from bundle ' + name + '?\n\n'
+        + 'This REPLACES the entire live database'
+        + (keep ? ' (your motif.yaml and cookies.txt stay as they are)' : ', motif.yaml and cookies.txt')
+        + ' with the bundle\'s.\n\nmotif backs up what it replaces first, then applies the '
+        + 'restore on the NEXT CONTAINER RESTART. Nothing changes until you restart.\n\nContinue?'
+      );
+      if (!ok) return;
+      try {
+        const r = await api('POST', '/api/admin/database-restore', { name, confirm: true, keep_config: keep });
+        hideBundlePreview();
+        showStaged(r && r.message);
+      } catch (e) {
+        const gw = gatewayTimeoutNote(e);
+        alert('Restore failed: ' + (gw || (e && e.message ? e.message : 'error')));
+        if (gw) refreshPending();
+      }
+    });
 
     function showStaged(msg) {
       if (restoreStatus) {
@@ -7311,6 +7374,16 @@
     }
 
     async function restoreFromName(name) {
+      if (/\.tar\.gz$/.test(name)) {
+        // v0.51.336: a bundle previews first; the preview card stages.
+        try {
+          const r = await api('POST', '/api/admin/database-restore', { name });
+          showBundlePreview(r);
+        } catch (e) {
+          alert('Could not read the bundle: ' + (e && e.detail != null ? String(e.detail) : (e && e.message ? e.message : 'error')));
+        }
+        return;
+      }
       const ok = confirm(
         'Restore from ' + name + '?\n\n'
         + 'This REPLACES the entire live database with this snapshot — '
@@ -7388,12 +7461,15 @@
         const file = fileInput.files && fileInput.files[0];
         if (!file) {
           if (restoreStatus) {
-            restoreStatus.textContent = '✗ choose a .db file first';
+            restoreStatus.textContent = '✗ choose a .db snapshot or a .tar.gz bundle first';
             restoreStatus.className = 'form-status form-status-fail';
           }
           return;
         }
-        const ok = confirm(
+        // v0.51.336: a bundle upload only previews (it joins the list); the
+        // preview card confirms. A bare snapshot keeps the confirm-then-stage flow.
+        const isBundle = /\.(tar\.gz|tgz)$/i.test(file.name);
+        const ok = isBundle || confirm(
           'Restore from uploaded file "' + file.name + '"?\n\n'
           + 'This REPLACES the entire live database. motif validates the '
           + 'file + backs up the current database first, then applies the '
@@ -7408,7 +7484,14 @@
           const fd = new FormData();
           fd.append('file', file);
           const r = await api('POST', '/api/admin/database-restore/upload', fd);
-          showStaged(r && r.message);
+          if (r && r.preview) {
+            // v0.51.336: a bundle — listed, previewed, not yet staged.
+            showBundlePreview(r);
+            refreshList().catch(() => {});
+            if (restoreStatus) { restoreStatus.textContent = '✓ bundle uploaded — review the preview below'; restoreStatus.className = 'form-status form-status-ok'; }
+          } else {
+            showStaged(r && r.message);
+          }
           fileInput.value = '';
         } catch (e) {
           if (restoreStatus) {

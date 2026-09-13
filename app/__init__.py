@@ -6116,6 +6116,21 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.336: backup bundle, tag 2 — restore from a bundle (spec § 3 / § 5).
+#   A bundle's RESTORE (from the list or an upload) previews first: the
+#   manifest line, the DB check, the config keys that differ from the live
+#   motif.yaml with secrets masked on both sides, the cookies verdict; then
+#   // STAGE RESTORE confirms by name with KEEP MY CURRENT CONFIG. Staging =
+#   the DB as a snapshot does (db_backup.stage_restore) plus motif.yaml /
+#   cookies.txt as <name>.restore-pending in /config. At boot,
+#   bundle.apply_pending_config swaps those BEFORE get_settings() reads the
+#   YAML (main.py's first lines), each after a .prerestore-<stamp> copy; the
+#   DB member follows through the v1.23.17 hook as before. inspect_bundle is
+#   the member gate: known member names only, a manifest format this build
+#   reads, every member matching its manifest sha256, the DB passing the
+#   snapshot checks. An uploaded bundle joins the list under its manifest
+#   stamp (same bytes: fine; different bytes: 409). /pending names the staged
+#   members; /cancel drops them all.
 # 0.51.335: backup bundle, tag 1 — create + schedule (feature D; spec
 #   docs/specs/BACKUP_BUNDLE_SPEC.md, every proposed option taken). A bundle is
 #   one tar.gz next to the snapshots: a VACUUM INTO copy of motif.db, motif.yaml
@@ -6185,7 +6200,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.335"
+__version__ = "0.51.336"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

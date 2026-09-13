@@ -78,7 +78,7 @@ def test_purge_guards_proxy_200_but_keeps_204():
 # ── 3. DB-restore discriminator (fixes v0.51.143) ────────────
 
 def test_restore_keys_on_detail_then_status_then_neither():
-    block = _slice("'/api/admin/database-restore/upload'", after=1500)
+    block = _slice("'/api/admin/database-restore/upload'", after=2600)  # v0.51.336: the bundle preview branch sits between the call and the catch
     # motif's own error carries e.detail; a proxy HTML page has a numeric e.status
     # but null detail; a 200 SSO/network drop has neither.
     assert "e.detail != null" in block

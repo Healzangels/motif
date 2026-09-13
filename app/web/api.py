@@ -27336,6 +27336,39 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         src = db_backup.resolve_backup(settings.config_dir, name)
         if src is None:
             raise HTTPException(status_code=404, detail="backup not found")
+        if db_backup.kind_of(name) == "bundle":
+            # v0.51.336: a bundle previews first (nothing staged), then stages
+            # on {"confirm": true, "keep_config": bool} — the DB as a snapshot
+            # does, plus motif.yaml / cookies.txt unless the operator keeps
+            # theirs (docs/specs/BACKUP_BUNDLE_SPEC.md § 5).
+            live_cfg = settings.config_dir / "motif.yaml"
+            if not (body or {}).get("confirm"):
+                try:
+                    pv = await run_in_threadpool(bundle_mod.preview, src, live_cfg)
+                except ValueError as e:
+                    raise HTTPException(status_code=422, detail=str(e))
+                return {"ok": True, "staged": False, "preview": pv}
+            keep = bool((body or {}).get("keep_config"))
+            try:
+                bc = await run_in_threadpool(
+                    bundle_mod.stage_bundle_restore, settings.db_path,
+                    settings.config_dir, src, keep_config=keep)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+            log_event(
+                settings.db_path, level="warning", component="backup",
+                message=f"Bundle restore staged from {name} "
+                        f"({' + '.join(bc.staged)}; schema v{bc.db.schema_version}); "
+                        f"applies on restart",
+                detail={"name": name, "members": bc.staged,
+                        "schema_version": bc.db.schema_version, "keep_config": keep},
+            )
+            out = _stage_restore_response(bc.db)
+            out["members"] = bc.staged
+            out["message"] = ("Restore staged (" + " + ".join(bc.staged) + "). Restart the "
+                              "motif container to apply it — what it replaces is backed "
+                              "up automatically just before the swap.")
+            return out
         try:
             check = await run_in_threadpool(
                 db_backup.stage_restore, settings.db_path, src)
@@ -27377,6 +27410,52 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not data:
             raise HTTPException(status_code=400, detail="empty file")
 
+        # v0.51.336: an uploaded BUNDLE is not staged — it joins the list
+        # under its manifest's stamp and comes back as a preview; the
+        # operator then confirms by name (the same path as a listed bundle).
+        _fname = str(getattr(upload, "filename", "") or "")
+        if data[:2] == b"\x1f\x8b" or _fname.endswith((".tar.gz", ".tgz")):
+            def _import_bundle() -> dict:
+                import os
+                import tempfile as _tf
+                bdir = db_backup.backups_dir(settings.config_dir)
+                bdir.mkdir(parents=True, exist_ok=True)
+                fd, tmp = _tf.mkstemp(prefix=".restore-upload.", suffix=".tar.gz", dir=str(bdir))
+                tmp_p = Path(tmp)
+                try:
+                    with os.fdopen(fd, "wb") as f:
+                        f.write(data)
+                    chk = bundle_mod.inspect_bundle(tmp_p)
+                    if not chk.ok:
+                        raise ValueError(chk.error or "invalid bundle")
+                    created = str((chk.manifest or {}).get("created_at") or "")
+                    stamp = created[:19].replace("-", "").replace(":", "").replace("T", "-")
+                    name = bundle_mod.bundle_name(stamp)
+                    if not db_backup.is_backup_name(name):
+                        raise ValueError("bundle manifest has no usable created_at stamp")
+                    dest = bdir / name
+                    if dest.exists():
+                        if bundle_mod._sha256_file(dest) != bundle_mod._sha256_file(tmp_p):
+                            raise FileExistsError(name)
+                    else:
+                        os.replace(tmp, dest)
+                    return bundle_mod.preview(dest, settings.config_dir / "motif.yaml")
+                finally:
+                    try: os.unlink(tmp)
+                    except OSError: pass
+            try:
+                pv = await run_in_threadpool(_import_bundle)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail=str(e))
+            except FileExistsError as e:
+                raise HTTPException(status_code=409,
+                                    detail=f"a different bundle already exists as {e} — delete it first")
+            log_event(
+                settings.db_path, level="info", component="backup",
+                message=f"Bundle uploaded: {pv['name']} (preview shown; nothing staged)",
+                detail={"name": pv["name"]},
+            )
+            return {"ok": True, "staged": False, "preview": pv}
         def _stage_uploaded() -> "db_backup.RestoreCheck":
             import os
             import tempfile as _tf
@@ -27407,15 +27486,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """Whether a restore is staged (so the UI can keep showing the
         restart banner across reloads)."""
         _require_admin(request)
-        pending = db_backup.restore_pending_path(settings.db_path)
-        return {"ok": True, "pending": pending.exists()}
+        # v0.51.336: a bundle restore stages more than the database.
+        members = bundle_mod.pending_members(settings.db_path, settings.config_dir)
+        return {"ok": True, "pending": bool(members), "members": members}
 
     @app.post("/api/admin/database-restore/cancel")
     async def api_admin_database_restore_cancel(request: Request):
         """Discard a staged restore before the next restart applies it."""
         _require_admin(request)
         cancelled = await run_in_threadpool(
-            db_backup.cancel_pending_restore, settings.db_path)
+            bundle_mod.cancel_pending, settings.db_path, settings.config_dir)  # v0.51.336: the config members too
         if cancelled:
             log_event(
                 settings.db_path, level="info", component="backup",
