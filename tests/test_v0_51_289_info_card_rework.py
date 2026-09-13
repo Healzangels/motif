@@ -69,8 +69,8 @@ def test_actionable_sections_render_before_the_reference_tail():
 
 
 def test_edit_audio_joined_the_play_row():
-    row = slice_to_next(APP_JS, '<dt>motif file</dt><dd class="info-play-row">',
-                        "</dd>")  # v0.51.323: the row is labelled by what it is
+    row = slice_to_next(APP_JS, '<dt class="info-ctl-label info-ctl-label-play">motif file',
+                        "</dd>")  # v0.51.340: labelled by what it is, badged in the <dt>
     assert 'data-act="edit-audio"' in row, (
         "one file, one row of controls — EDIT AUDIO rides the play row")
     assert "<dt>edit</dt>" not in APP_JS, "the separate edit grid row is gone"

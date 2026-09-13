@@ -39,7 +39,7 @@ def test_play_bar_is_width_capped_not_full_bleed():
     assert "max-width: none" not in block, (
         "v0.51.58: the pre-fix full-bleed max-width:none must be gone")
     # still fills up to the cap + keeps its taller controls.
-    assert "width: 100%" in block and "height: 40px" in block
+    assert "width: 100%" in block and "height: var(--info-player-h)" in block  # v0.51.340: the 40px token
 
 
 def test_play_bar_and_thumbnail_same_width():

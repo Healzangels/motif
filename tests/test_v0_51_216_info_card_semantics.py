@@ -36,7 +36,7 @@ def _loudness_rows() -> str:
 def test_controls_ride_in_a_dt_dd_pair():
     """Every branch must emit a labelled term + definition, not a bare div sibling."""
     blk = _loudness_rows()
-    assert "<dt>action</dt><dd class=\"loud-controls\"" in blk
+    assert "<dt class=\"info-ctl-label\">action</dt><dd class=\"loud-controls\"" in blk  # v0.51.340: centres on the button line
     assert "<dt>cannot level</dt><dd class=\"loud-controls\"" in blk
     assert '`<div class="loud-controls' not in blk, (
         "a bare div is not valid as a sibling of dt/dd inside a dl")

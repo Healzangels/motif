@@ -57,10 +57,11 @@ def test_op_card_caret_rotates_when_expanded():
 def test_history_section_summary_has_caret():
     """The // HISTORY / // PROVENANCE disclosure gains a custom caret
     (the native marker is hidden) that rotates open."""
-    assert ".history-section > summary::before" in APP_CSS
-    i = APP_CSS.index(".history-section > summary::before")
+    # v0.51.340: the caret hangs off the title span (was summary::before), so it stays on the title's line.
+    assert ".history-section-title::before" in APP_CSS
+    i = APP_CSS.index(".history-section-title::before")
     block = APP_CSS[i:i + 260]
     assert "\\25B8" in block, "caret glyph (▸) via content"
     assert "transition: transform var(--motion-fast)" in block
-    oi = APP_CSS.index(".history-section[open] > summary::before")
+    oi = APP_CSS.index(".history-section[open] .history-section-title::before")
     assert "rotate(90deg)" in APP_CSS[oi:oi + 120]

@@ -82,9 +82,9 @@ def test_one_fold_voice():
     title = _rule(".history-section-title")
     assert "color: var(--fg-dim)" in title and "text-transform: uppercase" in title
     assert ".history-section[open] .history-section-title { color: var(--fg); }" in APP_CSS
-    caret_open = _rule(".history-section[open] > summary::before")
+    caret_open = _rule(".history-section[open] .history-section-title::before")  # v0.51.340: the caret moved onto the title
     assert "color: var(--fg-dim)" in caret_open and "rotate(90deg)" in caret_open
-    region = APP_CSS[APP_CSS.index(".history-section > summary::before {"):APP_CSS.index(".info-clear-btn {")]
+    region = APP_CSS[APP_CSS.index(".history-section-title::before {"):APP_CSS.index(".info-clear-btn {")]
     for tone in ("--cyan", "--green-bright", "--green-deep"):
         assert tone not in region, f"{tone} is not a fold voice"
     for gone in (".info-fold .history-section-title {",
@@ -121,7 +121,7 @@ def test_bare_card_with_a_plex_theme_leads_with_audio():
     i_meta = out.index('<div class="dlg-section info-group"><h4>// plex metadata</h4>')
     i_copy = out.index("No theme yet")
     assert i_hero_end < i_audio < i_meta < i_copy
-    assert "<dt>plex serves</dt>" in out and 'class="tier-badge tier-badge-serving"' in out
+    assert '<dt class="info-ctl-label info-ctl-label-play">plex serves <span class="tier-badge tier-badge-serving"' in out  # v0.51.340
     assert 'data-plex-theme="1"' in out and 'preload="none"' in out
     assert "<dt>plex theme</dt>" not in out and "what Plex serves for this item" not in out
 

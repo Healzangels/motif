@@ -62,7 +62,7 @@ def test_save_button_starts_disabled_until_a_preview_exists():
 
 def test_card_offers_edit_only_where_a_canonical_plays():
     i = APP_JS.index('data-act="edit-audio"')
-    block = APP_JS[APP_JS.rindex("<dt>motif file</dt>", 0, i):i + 600]  # v0.51.323 label
+    block = APP_JS[APP_JS.rindex('info-ctl-label-play">motif file', 0, i):i + 600]  # v0.51.340 label
     assert "info-play-row" in block, (
         "the button lives in the same conditional branch as the player — "
         "no canonical, no editor")

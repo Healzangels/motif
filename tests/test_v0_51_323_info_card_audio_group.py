@@ -66,14 +66,15 @@ def test_audio_group_blank_under_an_ambiguous_cut_and_plex_first():
 
 def test_plex_row_is_labelled_and_badged_serving():
     b = slice_between(APP_JS, "const plexThemeBlock = ", "      : '';")
-    assert '<dt>plex serves</dt><dd class="info-play-row">' in b
-    assert 'class="tier-badge tier-badge-serving"' in b and ">SERVING</span>" in b
+    # v0.51.340: the badge moved under the label (the <dt>); the <dd> opens on the player.
+    assert '<dt class="info-ctl-label info-ctl-label-play">plex serves' in b
+    assert 'class="tier-badge tier-badge-serving"' in b and ">SERVING</span></dt>" in b
     assert "what Plex serves for this item" not in b, "the label says it now (bare card: tag B)"
 
 
 def test_motif_row_badge_follows_the_file_state():
     b = slice_between(APP_JS, "const audioBlock = lf", "      : '';")
-    assert '<dt>motif file</dt><dd class="info-play-row">' in b
+    assert '<dt class="info-ctl-label info-ctl-label-play">motif file' in b  # v0.51.340: badge in the <dt>
     assert "<dt>play</dt>" not in APP_JS
     i_standing = b.index("'tier-badge-standing', 'STANDING BY'")
     i_placed = b.index("'tier-badge-placed', 'PLACED'")
@@ -113,7 +114,7 @@ def test_previous_url_is_omitted_not_dashed_when_hidden():
 
 def test_probe_and_anime_themes_share_one_actions_row():
     row = slice_between(APP_JS, "const _actionsRow = ", ";\n")
-    assert '<dt>actions</dt><dd class="info-play-row">' in row
+    assert '<dt class="info-ctl-label">actions</dt><dd class="info-play-row">' in row  # v0.51.340: centres on the button line
     assert (row.index("${probeBtnHtml}") < row.index("${animeThemesBtnHtml}")
             < row.index("${probeMetaHtml}")), "buttons first, then the probe metas"
     assert "<dt>probe</dt>" not in APP_JS and "<dt>anime themes</dt>" not in APP_JS
@@ -220,8 +221,9 @@ def test_audio_badge_rules_use_tokens_only():
         assert "#" not in r, f"{sel}: no hardcoded colours"
         assert "px" not in r.replace("1px solid", ""), f"{sel}: only the 1px border is literal"
         assert f"'{sel}'" in APP_JS or f'"tier-badge {sel}"' in APP_JS, f"{sel} is rendered"
-    assert ".info-play-row > .tier-badge { flex: 0 0 auto; }" in APP_CSS, (
-        "the player shrinks, the badge doesn't")
+    # v0.51.340: the badge left the play row for the label column, so its flex guard went with it.
+    assert ".info-play-row > .tier-badge" not in APP_CSS, "no badge rides a play row any more"
+    assert ".dlg-grid dt.info-ctl-label-play {" in APP_CSS, "the badge's label-column rule"
 
 
 def test_strip_and_first_group_drop_the_divider_under_the_hero():

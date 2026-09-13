@@ -6278,7 +6278,31 @@
 #   UPGRADE NOTE: a bundle staged and then a snapshot staged over it on
 #   .336–.338 still applies the bundle's config at the first .339 boot —
 #   CANCEL RESTORE and re-stage before restarting.
-__version__ = "0.51.339"
+# 0.51.340: the INFO card, aligned — and CLEAR ALL empties the INBOX count.
+#   The operator (a prod INFO card): "audit and edit the info card to make
+#   things align and more professional looking the misaligned playback for
+#   examples looks bad". MEASURED at the 720px drawer before the change:
+#   players started at x 232.5 / 239 / 258.5 / 265 by badge width
+#   (PLACED / SERVING / NOT PLACED / STANDING BY), play labels sat 11.2px
+#   above the player, actions/measure labels 2.8px above their buttons, the
+#   motif file row wrapped to three lines, and fold titles began 18.8px right
+#   of the group titles. After: every player at the value edge (174), the
+#   label+badge pair +0.5px on the player line, control labels −0.3px, the
+#   motif file row one line (player · EDIT AUDIO), fold "//" at the h4's x.
+#   (1) The state badge moved under its label in the <dt> (a space keeps the
+#   spoken/copied text "plex serves SERVING"); the dead-player path finds it
+#   through the row's <dt>.
+#   (2) .info-ctl-label / .info-ctl-label-play centre a label on its value's
+#   FIRST line; heights come from tokens (--info-player-h shared with
+#   .info-audio; --btn-tiny-h built from .btn-tiny's own tokens).
+#   (3) The fold caret hangs off .history-section-title into the gutter,
+#   pinned to the title's first line (a wrapped phone summary can't move it).
+#   (4) The operator: "after clearing the inbox it still shows for a while a
+#   1". clearAll dismissed every row but never touched the topbar count; it
+#   now zeros it (clearUnreadBadge, shared with MARK ALL READ) and re-reads
+#   past the /api/stats cache. The painted-hash reset happens only on a
+#   failed POST — resetting it always let a stale cached poll relight the 1.
+__version__ = "0.51.340"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

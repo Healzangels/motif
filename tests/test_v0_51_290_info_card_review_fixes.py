@@ -115,7 +115,7 @@ def test_fold_open_overrides_out_specify_the_audit_rules():
     # no longer disagrees with them. The invariant: an open fold's title is fg
     # and its caret dim — and nothing later in the file paints them green.
     assert ".history-section[open] .history-section-title { color: var(--fg); }" in APP_CSS
-    i = APP_CSS.index(".history-section[open] > summary::before {")
+    i = APP_CSS.index(".history-section[open] .history-section-title::before {")  # v0.51.340: the caret moved onto the title
     assert "color: var(--fg-dim)" in APP_CSS[i:APP_CSS.index("}", i)]
     assert ".history-section.info-fold[open]" not in APP_CSS
     assert "green-bright" not in APP_CSS[APP_CSS.index(".history-section-title {"):APP_CSS.index(".info-clear-btn {")]

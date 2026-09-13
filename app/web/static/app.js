@@ -18065,9 +18065,10 @@
         </div>
       </div>
       ${it.plex_has_theme
-        ? `<div class="dlg-section info-group"><h4>// audio</h4><dl class="dlg-grid"><dt>plex serves</dt><dd class="info-play-row">`
-          + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span>`
-          + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(it.rating_key || '')}.mp3" class="info-audio" data-plex-theme="1">`
+        // v0.51.340: the badge rides the label column, so the player starts at the value edge.
+        ? `<div class="dlg-section info-group"><h4>// audio</h4><dl class="dlg-grid"><dt class="info-ctl-label info-ctl-label-play">plex serves `
+          + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
+          + `<dd class="info-play-row"><audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(it.rating_key || '')}.mp3" class="info-audio" data-plex-theme="1">`
           + `your browser doesn't support inline audio playback</audio>`
           + `<span class="muted small info-probe-meta"></span></dd></dl></div>`
         : ''}
@@ -18099,8 +18100,10 @@
     a.addEventListener('error', () => {
       const meta = a.parentElement && a.parentElement.querySelector('.info-probe-meta');
       if (meta) meta.textContent = 'Plex reports a theme but it did not play — removed, or Plex unreachable';
-      const badge = a.parentElement && a.parentElement.querySelector('.tier-badge');
+      const label = a.parentElement && a.parentElement.previousElementSibling;  // v0.51.340: the badge rides the row's <dt>
+      const badge = label && label.querySelector('.tier-badge');
       if (badge) badge.remove();  // v0.51.323: no SERVING badge on a player that didn't
+      if (label) label.classList.remove('info-ctl-label', 'info-ctl-label-play');  // v0.51.340: a text row again, top-aligned
       a.remove();
     });
   }
@@ -18751,9 +18754,10 @@
                  `motif's file is placed where Plex reads it (${_placedKinds.join(', ')}).`]
               : ['tier-badge-unplaced', 'NOT PLACED',
                  "motif's file is on disk but not placed for Plex yet."];
-          return `<dt>motif file</dt><dd class="info-play-row">`
-            + `<span class="tier-badge ${_fileBadge[0]}" title="${htmlEscape(_fileBadge[2])}">${_fileBadge[1]}</span>`
-            + `<audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
+          // v0.51.340: the badge sits under the label, so every player starts at the value edge.
+          return `<dt class="info-ctl-label info-ctl-label-play">motif file `
+            + `<span class="tier-badge ${_fileBadge[0]}" title="${htmlEscape(_fileBadge[2])}">${_fileBadge[1]}</span></dt>`
+            + `<dd class="info-play-row"><audio controls preload="auto" src="${htmlEscape(src)}" class="info-audio">`
             + `your browser doesn't support inline audio playback`
             + `</audio>`
             + `<button class="btn btn-tiny btn-info" data-act="edit-audio"`
@@ -19044,10 +19048,11 @@
       const measured = (typeof li === 'number' && Number.isFinite(li)) ? li : null;
       if (measured === null) {
         // v0.51.208: a per-row // MEASURE NOW instead of only "run the whole audit".
+        // v0.51.340: a control-first value — its <dt> centres on the button line.
         return `<dt>loudness</dt><dd class="muted small">not measured${
           li === null || li === undefined ? '' : ' (unmeasurable — silent?)'
         }</dd>
-        <dt>measure</dt><dd>
+        <dt class="info-ctl-label">measure</dt><dd>
           <button class="btn btn-tiny btn-info" data-act="loud-measure" ${_mpk}
                   title="Measure this theme's loudness from the file on disk now — no need to run the whole LOUDNESS AUDIT.">// MEASURE NOW</button>
           <span id="loud-measure-note" class="muted small info-probe-meta"></span>
@@ -19087,7 +19092,7 @@
         : '';
       // v0.51.208: // RE-MEASURE — re-reads the file's actual loudness on demand (the
       // loudness // PROBE TDB URL). Sits under 'plays at' with a 'last measured' note.
-      const measuredRow = `<dt>measured</dt><dd>
+      const measuredRow = `<dt class="info-ctl-label">measured</dt><dd>
              <button class="btn btn-tiny btn-info" data-act="loud-measure" ${_mpk}
                      title="Re-read this theme's actual loudness from the file on disk and update 'plays at' above. Doesn't change the audio or Plex.">// RE-MEASURE</button>
              <span id="loud-measure-note" class="muted small info-probe-meta">${
@@ -19117,7 +19122,7 @@
         controls = `<dt>cannot level</dt><dd class="loud-controls" title="Plex 500s on a theme POST over ~10MB, and re-upload is the ONLY way to tell Plex the bytes changed (CLAUDE.md § 11). Leveling this would change the file and change nothing you can hear."><span class="accent-red">can't level — ${
           fmt.bytes(lf.file_size)} is over Plex's upload ceiling, so a leveled copy could not reach Plex</span></dd>`;
       } else if (leveled) {
-        controls = `<dt>action</dt><dd class="loud-controls"><div class="loud-ctl-row">
+        controls = `<dt class="info-ctl-label">action</dt><dd class="loud-controls"><div class="loud-ctl-row">
              <button class="btn btn-tiny btn-warn" data-act="loud-undo"
                      data-mt="${htmlEscape(lf.media_type || '')}"
                      data-id="${htmlEscape(lf.tmdb_id ?? '')}"
@@ -19127,7 +19132,7 @@
              <span id="loud-result" class="muted small info-probe-meta"></span>
            </div></dd>`;
       } else {
-        controls = `<dt>action</dt><dd class="loud-controls">
+        controls = `<dt class="info-ctl-label">action</dt><dd class="loud-controls">
              <div class="loud-ctl-row">
                <span class="loud-ctl-label muted small">target</span>
                <span class="loud-stepper">
@@ -19247,8 +19252,9 @@
     const _vidSuffix = ytId
       ? ` <span class="muted small" title="video id">· ${htmlEscape(ytId)}</span>`
       : '';
+    // v0.51.340: buttons first, so the label centres on the button line.
     const _actionsRow = (probeBtnHtml || animeThemesBtnHtml)
-      ? `<dt>actions</dt><dd class="info-play-row">${probeBtnHtml}${animeThemesBtnHtml}${probeMetaHtml}</dd>`
+      ? `<dt class="info-ctl-label">actions</dt><dd class="info-play-row">${probeBtnHtml}${animeThemesBtnHtml}${probeMetaHtml}</dd>`
       : '';
     const _linksRows = `
         ${t.upstream_source === 'plex_orphan' ? '' : `<dt>themerrdb url${tdbSrcTag}${tdbDeadTag}</dt><dd>${tdbUrlLink}${tdbWasTag}${_appliedShown ? '' : _vidSuffix}</dd>`}
@@ -19277,10 +19283,11 @@
     const _plexRk = ratingKey || data.plex_rating_key || '';
     const _plexRowItem = (libraryState.items || []).find((it) => String(it.rating_key) === String(_plexRk));
     const _plexSrc = _plexRowItem ? computeSrcLetter(_plexRowItem) : '';
+    // v0.51.340: the badge rides the label column, so this player and the motif file's share one left edge.
     const plexThemeBlock = (data.plex_has_theme === 1 && _plexRk && (!lf || _plexSrc === 'P'))
-      ? `<dt>plex serves</dt><dd class="info-play-row">`
-        + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span>`
-        + `<audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" class="info-audio" data-plex-theme="1">`
+      ? `<dt class="info-ctl-label info-ctl-label-play">plex serves `
+        + `<span class="tier-badge tier-badge-serving" title="What Plex plays for this item right now.">SERVING</span></dt>`
+        + `<dd class="info-play-row"><audio controls preload="none" src="/api/plex/theme/${encodeURIComponent(_plexRk)}.mp3" class="info-audio" data-plex-theme="1">`
         + `your browser doesn't support inline audio playback</audio>`
         + `<span class="muted small info-probe-meta"></span></dd>`
       : '';
@@ -22398,22 +22405,31 @@
       el.hidden = next === 0;
       if (!next) pill.classList.remove('has-unread');
     }
-    async function markAllRead() {
-      listEl?.querySelectorAll('.notif-row.unread, .notif-group.unread')
-        .forEach((el) => { el.classList.remove('unread'); el.classList.add('seen'); });
+    // v0.51.340: the bulk actions' badge reset — hidden reads as zero (bumpUnreadBadge's rule).
+    function clearUnreadBadge() {
       const el = document.getElementById('topbar-inbox-count');
       if (el) { el.textContent = '0'; el.hidden = true; }
       pill.classList.remove('has-unread');
+    }
+    async function markAllRead() {
+      listEl?.querySelectorAll('.notif-row.unread, .notif-group.unread')
+        .forEach((el) => { el.classList.remove('unread'); el.classList.add('seen'); });
+      clearUnreadBadge();
       if (readAllBtn) readAllBtn.hidden = true;
-      try { await api('POST', '/api/notifications/seen'); } catch (_) { /* best-effort */ }
+      // v0.51.340: only a FAILED POST drops the painted hash — a stale identical poll must not relight the zero.
+      try { await api('POST', '/api/notifications/seen'); } catch (_) { refreshTopbarStatus._lastHash = ''; }
       // v0.51.274: land past the /api/stats 1s TTL (bug class #7) — the 2s
       // ops-cadence poll could re-read the pre-mutation cache and resurrect
       // the old count for a full poll gap.
       setTimeout(refreshTopbarStatus, 1100);
     }
     async function clearAll() {
-      try { await api('POST', '/api/notifications/dismiss-all'); } catch (_) { /* best-effort */ }
+      // v0.51.340: a failed POST leaves the server count unchanged — drop the hash so the re-read repaints it.
+      try { await api('POST', '/api/notifications/dismiss-all'); } catch (_) { refreshTopbarStatus._lastHash = ''; }
+      // v0.51.340: dismissed rows leave the unread count — zero the pill, re-read past the stats TTL.
+      clearUnreadBadge();
       renderEmpty();
+      setTimeout(refreshTopbarStatus, 1100);
     }
     // v0.51.209: expand/collapse a group header. Extracted so BOTH mouse click and
     // keyboard (Enter/Space) drive it — the head is role="button" tabindex="0" but had

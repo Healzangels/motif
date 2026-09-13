@@ -19,7 +19,8 @@ def test_no_sibling_download_arrow_in_play_row():
 def test_info_audio_capped_width_and_taller_controls():
     i = APP_CSS.index(".info-audio {")
     block = APP_CSS[i:APP_CSS.index("}", i)]
-    assert "height: 40px" in block, (
+    # v0.51.340: the 40px lives in the --info-player-h token the label beside the player shares.
+    assert "height: var(--info-player-h)" in block and "--info-player-h: 40px;" in APP_CSS, (
         "v0.51.29: the player must be taller (40px, was a squished 32px) so the "
         "native controls aren't cramped")
     # v0.51.58: the player is WIDTH-CAPPED (was max-width:none / full-bleed) so it

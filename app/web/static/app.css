@@ -160,6 +160,13 @@
   --t-med: 15px;
   --t-large: 22px;
   --t-huge: 64px;
+  /* v0.51.340: .btn-tiny's line metrics — the primitive and the control-label line both read them. */
+  --btn-tiny-lh: 1.2;
+  --btn-tiny-pad-y: 4px;
+  /* v0.51.340: one .btn-tiny line = font x line-height + both vertical paddings + the .btn 1px border twice. */
+  --btn-tiny-h: calc(var(--t-tiny) * var(--btn-tiny-lh) + 2 * var(--btn-tiny-pad-y) + 2px);
+  /* v0.51.340: the INFO card player's height — .info-audio and the label beside it share it. */
+  --info-player-h: 40px;
 
   --radius: 2px;
   --shadow-glow: 0 0 12px rgba(var(--green-rgb), 0.08);
@@ -886,10 +893,10 @@ html.viz-no-hero-wave .hero { min-height: var(--hero-content-zone); padding-bott
 }
 .btn:active { transform: translateY(1px); }
 .btn-tiny {
-  padding: 4px calc(10px - 0.15em) 4px 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
+  padding: var(--btn-tiny-pad-y) calc(10px - 0.15em) var(--btn-tiny-pad-y) 10px; /* v0.51.332: right = left − the trailing letter-spacing (ink centred) */
   font-size: var(--t-tiny);
   font-weight: 600;
-  line-height: 1.2;
+  line-height: var(--btn-tiny-lh);  /* v0.51.340: tokens, so --btn-tiny-h (the control-label line) can't drift */
   min-width: 72px;
   text-align: center;
 }
@@ -3996,6 +4003,10 @@ body.help-mode .settings-help-about { display: block; }
    "theme.mp3" stays whole instead of chopping to "theme.mp"+"3", while a too-long
    URL still wraps rather than overflowing the value column. */
 .dlg-grid dd { color: var(--fg); overflow-wrap: anywhere; }
+/* v0.51.340: a label beside a control line centres on that FIRST line; align-self:start keeps a wrapped value from dragging it down. */
+.dlg-grid dt.info-ctl-label { align-self: start; display: flex; flex-direction: column; justify-content: center; align-items: flex-start; min-height: var(--btn-tiny-h); }
+/* v0.51.340: a player's label stacks its state badge under the text, the pair centred on the player line. */
+.dlg-grid dt.info-ctl-label-play { min-height: var(--info-player-h); gap: var(--gap-1); }
 /* v1.19.89: info-card URL source/state tags — promoted from inline
    color styles. user=violet (SRC=U), themerrdb=green (SRC=T),
    pending=blue (informational). Placed after .muted so the tone
@@ -4046,7 +4057,8 @@ body.help-mode .settings-help-about { display: block; }
 /* v0.51.61 (the user, polish): color-scheme:dark makes the native player render as
    a dark control instead of a bright-white pill that clashed with the CRT card;
    accent-color greens the progress/volume fills to match the theme. */
-.info-audio { flex: 1 1 auto; min-width: 0; max-width: 360px; width: 100%; height: 40px; color-scheme: dark; accent-color: var(--green); }
+/* v0.51.340: height is the --info-player-h token, the same one .dlg-grid dt.info-ctl-label-play centres on. */
+.info-audio { flex: 1 1 auto; min-width: 0; max-width: 360px; width: 100%; height: var(--info-player-h); color-scheme: dark; accent-color: var(--green); }
 /* v1.15.144 / v1.16.1: source-thumbnail primitive — wrapper +
    img split.
    Used by the info card's YouTube + SoundCloud preview blocks
@@ -4907,8 +4919,7 @@ body.auth-page .auth-card { margin: 0; }
    the Plex amber (the P tone: .btn-plex, the strip title); STANDING BY is cyan,
    the policy-hold tone (a backup-intent row waits by choice); PLACED is green,
    the deployed/ok tone; NOT PLACED is the quiet outlined dim so a file that is
-   not in play doesn't compete with the one that is. The badge keeps its width
-   when the play row is squeezed — the player is the one that shrinks. */
+   not in play doesn't compete with the one that is. */
 .tier-badge-serving {
   color: var(--amber-bright);
   border: 1px solid var(--amber);
@@ -4948,7 +4959,6 @@ body.auth-page .auth-card { margin: 0; }
   background: rgba(var(--amber-rgb), 0.08);
 }
 .backup-row-name > .tier-badge { margin-right: var(--gap-2); }
-.info-play-row > .tier-badge { flex: 0 0 auto; }
 /* v1.10.47: REASON cell on /pending. Warn (amber) when approval will
    overwrite something the user might care about; info (cyan) for
    policy-driven holds; muted for transient queued state. */
@@ -6515,13 +6525,19 @@ html[data-settings-tab] #settings-tabs .tab:hover {
    // HISTORY / // PROVENANCE sections only hinted at expandability via the
    browser's tiny triangle (easy to miss on a first visit). A custom caret
    rotates 90deg when the section is open, matching the op-card affordance. */
-.history-section > summary::before {
+.history-section-title::before {
   content: "\25B8";
   font-size: var(--t-tiny);
   color: var(--fg-mute);
   transition: transform var(--motion-fast) ease;
+  /* v0.51.340: hangs off the TITLE into the gutter, pinned to its first line box, so a wrapped summary can't pull it off that line. */
+  position: absolute;
+  right: 100%;
+  top: 0;
+  margin-right: var(--gap-1);
+  letter-spacing: 0;  /* v0.51.340: no inherited 0.15em tail widening the gap to the title */
 }
-.history-section[open] > summary::before {
+.history-section[open] .history-section-title::before {
   transform: rotate(90deg);
   color: var(--fg-dim);  /* v0.51.324: one fold voice (was green-deep) */
 }
@@ -6536,6 +6552,8 @@ html[data-settings-tab] #settings-tabs .tab:hover {
   letter-spacing: 0.15em;
   color: var(--fg-dim);
   text-transform: uppercase;
+  position: relative;  /* v0.51.340: the gutter caret's containing block */
+  white-space: nowrap;  /* v0.51.340: a phone-width summary wraps the note, never "//" off its name */
 }
 .history-section[open] .history-section-title { color: var(--fg); }
 /* v1.12.83: CLEAR button in the // HISTORY / // PROVENANCE summary
