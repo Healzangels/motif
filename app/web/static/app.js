@@ -7727,6 +7727,12 @@
     const missCount = document.getElementById('canon-missing-count');
     const missBody = document.getElementById('canon-missing-tbody');
     const clearBlock = document.getElementById('canon-clear-block');
+    // v0.51.337: RESTORE FROM PLEX (the bulk) + the CHANGED block.
+    const restorePlexBtn = document.getElementById('canon-restore-plex-btn');
+    const restorePlexStatus = document.getElementById('canon-restore-plex-status');
+    const chgBlock = document.getElementById('canon-changed-block');
+    const chgCount = document.getElementById('canon-changed-count');
+    const chgBody = document.getElementById('canon-changed-tbody');
     const fmt = (n) => (n == null ? '?' : Number(n).toLocaleString());
 
     function link(r) {
@@ -7762,8 +7768,9 @@
       }
       if (rep.canonical_missing && rep.canonical_missing.length) {
         missBody.innerHTML = rep.canonical_missing.map((r) => {
-          const hint = r.has_live_placement
-            ? '<span class="muted">RESTORE FROM PLEX ▸</span>'
+          const hint = r.plex_copy === 'sidecar'
+            ? '<span class="muted">Plex folder copy survives ▸</span>'
+            : r.plex_copy === 'store' ? '<span class="muted">in Plex\'s store ▸</span>'
             : '<span class="muted">re-place from INFO ▸</span>';
           return `<tr><td>${link(r)}</td><td class="col-src">${src(r)}</td><td>${hint}</td></tr>`;
         }).join('');
@@ -7772,12 +7779,35 @@
       } else {
         missBlock.style.display = 'none';
       }
+      // v0.51.337: the bulk shows only when it applies — some broken row
+      // (either bucket) still has a copy in Plex.
+      if (restorePlexBtn) {
+        const n = c.restorable_from_plex || 0;
+        restorePlexBtn.style.display = n ? '' : 'none';
+        restorePlexBtn.textContent = `// RESTORE FROM PLEX (${fmt(n)})`;
+        if (n && missBlock.style.display === 'none') missBlock.style.display = '';
+      }
+      if (chgBlock) {
+        const chg = rep.changed || [];
+        if (chg.length) {
+          chgBody.innerHTML = chg.map((r) =>
+            `<tr><td>${link(r)}</td><td class="col-src">${src(r)}</td>`
+            + `<td>${fmtBytes(r.recorded)}</td><td>${fmtBytes(r.on_disk)}</td></tr>`).join('');
+          chgCount.textContent = `${fmt(chg.length)} present but not the recorded size`;
+          chgBlock.style.display = '';
+        } else {
+          chgBlock.style.display = 'none';
+        }
+      }
       const broken = c.broken || 0;
-      if (broken) {
+      const changedN = c.changed || 0;
+      if (broken || changedN) {
         summary.textContent =
           `${fmt(broken)} broken canonical${broken === 1 ? '' : 's'} · `
           + `${fmt(c.redownloadable)} re-downloadable · `
-          + `${fmt(c.canonical_missing)} need manual re-place`;
+          + `${fmt(c.restorable_from_plex || 0)} restorable from Plex · `
+          + `${fmt(c.canonical_missing)} need manual re-place`
+          + (changedN ? ` · ${fmt(changedN)} changed on disk` : '');
         summary.style.display = '';
         clearBlock.style.display = 'none';
       } else {
@@ -7811,6 +7841,31 @@
       }
     });
 
+    if (restorePlexBtn) {
+      restorePlexBtn.addEventListener('click', async () => {
+        const orig = restorePlexBtn.textContent;
+        restorePlexBtn.disabled = true;
+        restorePlexBtn.textContent = '// RESTORING…';
+        restorePlexStatus.textContent = '';
+        restorePlexStatus.className = 'form-status';
+        try {
+          const res = await api('POST', '/api/admin/canonical-health/restore-from-plex');
+          const skipped = (res.skipped || []).length;
+          restorePlexStatus.textContent =
+            `✓ restored ${fmt(res.restored)} (${fmt(res.restored_sidecar)} from Plex folders, `
+            + `${fmt(res.restored_store)} from Plex's store)`
+            + (skipped ? ` · ${fmt(skipped)} had no Plex copy` : '');
+          restorePlexStatus.className = 'form-status form-status-ok';
+          await load();
+        } catch (e) {
+          restorePlexStatus.textContent = '✗ ' + (e && e.message ? e.message : 'restore failed');
+          restorePlexStatus.className = 'form-status form-status-fail';
+        } finally {
+          restorePlexBtn.disabled = false;
+          restorePlexBtn.textContent = orig;
+        }
+      });
+    }
     if (repairBtn) {
       repairBtn.addEventListener('click', async () => {
         const orig = repairBtn.textContent;

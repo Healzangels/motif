@@ -6116,6 +6116,20 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
+# 0.51.337: backup bundle, tag 3 — the themes check (spec § 3), realized on the
+#   v0.51.167 // CANONICAL HEALTH page rather than a new block (it already
+#   stats every canonical and splits the broken rows into re-downloadable vs
+#   canonical-missing). Added: // RESTORE FROM PLEX (N) — every broken row Plex
+#   still holds a copy of comes back at once, the sidecar in its Plex folder
+#   first (hardlink, copy across filesystems; no network), else Plex's own
+#   store for a plex_upload placement (get_themes → the selected entry →
+#   fetch_theme_bytes); rows with neither are skipped with a reason; nothing
+#   is re-downloaded (REPAIR ALL). The report says per row which Plex copy
+#   exists (plex_copy: sidecar / store). // CHANGED — present on disk but not
+#   the recorded size (a truncated write, an external edit); report-only. The
+#   DATABASE tab's restore card links here. canonical_health.py owns the three
+#   paths (restore_from_placement, refetch_from_plex_store, restore_from_plex,
+#   changed_canonicals); the per-item restore-canonical endpoint is unchanged.
 # 0.51.336: backup bundle, tag 2 — restore from a bundle (spec § 3 / § 5).
 #   A bundle's RESTORE (from the list or an upload) previews first: the
 #   manifest line, the DB check, the config keys that differ from the live
@@ -6200,7 +6214,7 @@
 #   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
 #   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
 #   every primary letter and never the modifier.
-__version__ = "0.51.336"
+__version__ = "0.51.337"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

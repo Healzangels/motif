@@ -27763,8 +27763,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _require_admin(request)
         from ..core.canonical_health import broken_canonical_report
         from ..core.db import get_conn
-        with get_conn(db) as conn:
-            return broken_canonical_report(conn)
+        # v0.51.337: the CHANGED bucket stats every present canonical — a thread.
+        _td = settings.themes_dir if (settings.is_paths_ready() and settings.themes_dir) else None
+        def _run():
+            with get_conn(db) as conn:
+                return broken_canonical_report(conn, _td)
+        return await run_in_threadpool(_run)
 
     @app.post("/api/admin/canonical-health/check")
     async def api_admin_canonical_health_check(
@@ -27781,10 +27785,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from ..core.db import get_conn
 
         def _run():
-            if settings.is_paths_ready() and settings.themes_dir:
-                verify_canonical_health(db, settings.themes_dir)
+            _td = settings.themes_dir if (settings.is_paths_ready() and settings.themes_dir) else None
+            if _td:
+                verify_canonical_health(db, _td)
             with get_conn(db) as conn:
-                return broken_canonical_report(conn)
+                return broken_canonical_report(conn, _td)  # v0.51.337: + changed
 
         return await run_in_threadpool(_run)
 
@@ -27811,6 +27816,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                           f"{summary['repaired_rows']} re-downloaded "
                           f"({summary['enqueued_sections']} sections), "
                           f"{summary['surfaced']} surfaced (no URL)")
+        return {"ok": True, **summary}
+
+    @app.post("/api/admin/canonical-health/restore-from-plex")
+    async def api_admin_canonical_health_restore_from_plex(
+        request: Request, db: Path = Depends(get_db_path),
+    ):
+        """v0.51.337 (feature D tag 3, docs/specs/BACKUP_BUNDLE_SPEC.md § 3):
+        re-create every broken canonical Plex still holds a copy of — the
+        sidecar in its Plex folder first (no network), else Plex's own store
+        for a plex_upload placement (fetch_theme_bytes). Rows with neither are
+        skipped with a reason; nothing is re-downloaded (REPAIR ALL does that).
+        Threadpool: file copies + Plex round-trips (class-12)."""
+        _require_admin(request)
+        if not settings.is_paths_ready() or not settings.themes_dir:
+            raise HTTPException(status_code=409, detail="themes_dir not configured")
+        from ..core.canonical_health import restore_from_plex
+        themes_dir = settings.themes_dir
+        def _run():
+            if settings.plex_enabled and settings.plex_url and settings.plex_token:
+                cfg = PlexConfig(
+                    url=settings.plex_url, token=settings.plex_token,
+                    movie_section=settings.plex_movie_section,
+                    tv_section=settings.plex_tv_section, enabled=True,
+                )
+                with PlexClient(cfg, plus_mode=settings.plus_equiv_mode) as plex:
+                    return restore_from_plex(db, themes_dir, plex)
+            return restore_from_plex(db, themes_dir, None)
+        summary = await run_in_threadpool(_run)
+        with get_conn(db) as conn, transaction(conn):
+            _record_audit(conn, actor=request.state.user, action="canonical_restore_from_plex",
+                          details={k: v for k, v in summary.items() if k != "skipped"})
+        log_event(db, level="INFO", component="api",
+                  message=f"Canonical restore from Plex by {request.state.user}: "
+                          f"{summary['restored_sidecar']} from sidecars, "
+                          f"{summary['restored_store']} from Plex's store, "
+                          f"{len(summary['skipped'])} skipped of {summary['broken']} broken")
         return {"ok": True, **summary}
 
     @app.post("/api/admin/loudness/normalize-one")

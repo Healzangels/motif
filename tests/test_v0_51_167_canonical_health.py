@@ -240,7 +240,10 @@ def test_report_splits_broken_rows(tmp_path):
         conn.commit()
         rep = broken_canonical_report(conn)
 
-    assert rep["counts"] == {"broken": 3, "redownloadable": 2, "canonical_missing": 1}
+    # v0.51.337 added restorable_from_plex + changed to counts; the three
+    # original figures are the invariant here.
+    assert {k: rep["counts"][k] for k in ("broken", "redownloadable", "canonical_missing")} \
+        == {"broken": 3, "redownloadable": 2, "canonical_missing": 1}
     assert {e["tmdb_id"] for e in rep["redownloadable"]} == {101, 102}
     assert [e["tmdb_id"] for e in rep["canonical_missing"]] == [103]
     # the manual entry carries the RESTORE-FROM-PLEX hint + INFO deep-link fields.

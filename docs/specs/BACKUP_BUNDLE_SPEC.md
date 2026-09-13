@@ -1,6 +1,6 @@
 # Backup bundle (feature D) — definition
 
-Status: DECIDED 2026-09-12 — the operator took every proposed option (§ 4). Tag 1 BUILT as v0.51.335, tag 2 (restore) BUILT as v0.51.336; the optional tag 3 (themes check) open. Mockup: the session artifact "Backup bundle".
+Status: DECIDED 2026-09-12 — the operator took every proposed option (§ 4). Tag 1 BUILT as v0.51.335, tag 2 (restore) BUILT as v0.51.336, tag 3 (themes check) BUILT as v0.51.337 on the existing // CANONICAL HEALTH page (§ 3 note). Feature D complete. Mockup: the session artifact "Backup bundle".
 
 ## 0. What exists today (v1.23.15–17)
 
@@ -75,6 +75,11 @@ browser sensibly. Decision 3 keeps this on the table as an opt-in.
   missing / changed; "re-download the N missing rows with a source" through
   the download queue; "re-fetch the M missing `plex_upload` rows from Plex"
   through the v1.18.36 entry-bytes path. No full archive.
+  *Built (v0.51.337) on the existing `/admin/canonical-health` page, which
+  already stats every canonical (the live `local_files` IS the restored
+  bundle's census) and offers REPAIR ALL for the rows with a source: it gains
+  `// RESTORE FROM PLEX (N)` (sidecar first, then Plex's store) and a CHANGED
+  block; the DATABASE tab's restore card links to it.*
 
 ## 4. Decisions for the operator
 

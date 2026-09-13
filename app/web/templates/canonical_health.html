@@ -63,13 +63,21 @@
 <section class="block" id="canon-missing-block" style="display:none">
   <header class="block-head">
     <h2 class="block-title">// CANONICAL MISSING</h2>
-    <span class="muted small" id="canon-missing-count"></span>
+    <div class="chips chips-inline">
+      <span class="muted small" id="canon-missing-count"></span>
+      {# v0.51.337 (feature D tag 3): the bulk — every broken row Plex still
+         holds a copy of, the sidecar in its Plex folder or Plex's own store. #}
+      <button type="button" id="canon-restore-plex-btn" class="btn btn-warn" style="display:none">// RESTORE FROM PLEX</button>
+      <span id="canon-restore-plex-status" class="form-status"></span>
+    </div>
   </header>
   <p class="form-hint">
     These have no source URL to re-fetch — the bytes came from an upload, an
-    adopted sidecar, or a Plex-cloud backup. Open each theme's INFO card to
-    re-place it (SET URL / UPLOAD MP3, or RESTORE FROM PLEX where a Plex copy
-    survives).
+    adopted sidecar, or a Plex-cloud backup. Where Plex still holds a copy —
+    the <code>theme.mp3</code> in its Plex folder, or Plex's own store for a
+    pushed theme — <strong>// RESTORE FROM PLEX</strong> brings every such
+    canonical back at once, byte for byte, without a download. The rest need
+    a re-place from the INFO card (SET URL / UPLOAD MP3).
   </p>
   <div class="table-scroll">
     <table class="table table-compact">
@@ -79,6 +87,27 @@
   </div>
 </section>
 
+{# v0.51.337: CHANGED — present on disk but no longer the size the database
+   recorded: a truncated write, an external edit, a file swapped underneath
+   motif. Report-only; the INFO card's revisions / RESTORE FROM PLEX / a
+   re-download are the ways back. #}
+<section class="block" id="canon-changed-block" style="display:none">
+  <header class="block-head">
+    <h2 class="block-title">// CHANGED</h2>
+    <span class="muted small" id="canon-changed-count"></span>
+  </header>
+  <p class="form-hint">
+    The file is there, but its size no longer matches what motif recorded when
+    it downloaded or placed it. Open the INFO card to compare, restore a
+    revision, or re-download.
+  </p>
+  <div class="table-scroll">
+    <table class="table table-compact">
+      <thead><tr><th>THEME</th><th class="col-src">SRC</th><th>RECORDED</th><th>ON DISK</th></tr></thead>
+      <tbody id="canon-changed-tbody"></tbody>
+    </table>
+  </div>
+</section>
 {# All-clear state — shown when a check finds zero broken canonicals. #}
 <section class="block" id="canon-clear-block" style="display:none">
   <p class="form-hint">✓ Every tracked canonical is present. Nothing to repair.</p>
