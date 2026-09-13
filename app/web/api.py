@@ -6688,6 +6688,16 @@ def _measure_plex_serving(settings, *, rk: str, canonical_i, norm_gain_db=None) 
     }
 
 
+def _size_after_write(theme: Path):
+    # v0.51.338: an in-place rewrite changes the size too; None keeps the prior stamp.
+    try:
+        return theme.stat().st_size
+    except OSError as e:
+        log.warning("loudness: could not stat %s after rewriting it (%s) — keeping the "
+                    "prior file_size stamp", theme, e)
+        return None
+
+
 def _normalize_one_row(db: Path, settings, row, target: float) -> dict:
     """v0.51.194: the per-row normalize chokepoint, extracted verbatim from
     normalize-one's _run so // NORMALIZE (one row) and the Phase-2 bulk op share ONE
@@ -6794,13 +6804,15 @@ def _normalize_one_row(db: Path, settings, row, target: float) -> dict:
             cur = wconn.execute(
                 "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
                 "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+                "  file_size=COALESCE(?, file_size), "
                 "  norm_state='normalized', norm_gain_db=?, norm_target=?, norm_at=?, "
                 "  norm_orig_sha256=?, norm_orig_pcm_sha256=?, "
                 "  norm_plex_entry_uri=? "
                 "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=? "
                 "  AND norm_state IS NULL",
                 (res["new_i"], res["new_tp"], res["new_lra"], measured_at,
-                 measured_sha, res["new_sha"], res["applied_db"], target, ts,
+                 measured_sha, res["new_sha"], _size_after_write(theme),
+                 res["applied_db"], target, ts,
                  res["old_sha"], res["old_pcm_sha"], entry_before,
                  row["media_type"], row["tmdb_id"],
                  row["section_id"], row["edition_key"]),
@@ -7010,9 +7022,11 @@ def _undo_one_row(db: Path, settings, row) -> dict:
         with get_conn(db) as wconn:
             wconn.execute(
                 "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
-                "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=? "
+                "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+                "  file_size=COALESCE(?, file_size) "
                 "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
                 (res["new_i"], res["new_tp"], res["new_lra"], _dmat, _dmsha, res["new_sha"],
+                 _size_after_write(theme),
                  row["media_type"], row["tmdb_id"], row["section_id"], row["edition_key"]),
             )
             wconn.commit()
@@ -7032,12 +7046,13 @@ def _undo_one_row(db: Path, settings, row) -> dict:
         wconn.execute(
             "UPDATE local_files SET loudness_i=?, loudness_tp=?, loudness_lra=?, "
             "  loudness_measured_at=?, loudness_measured_sha256=?, file_sha256=?, "
+            "  file_size=COALESCE(?, file_size), "
             "  norm_state=NULL, norm_gain_db=NULL, norm_target=NULL, norm_at=NULL, "
             "  norm_orig_sha256=NULL, norm_orig_pcm_sha256=NULL, "
             "  norm_plex_entry_uri=NULL "
             "WHERE media_type=? AND tmdb_id=? AND section_id=? AND edition_key=?",
             (res["new_i"], res["new_tp"], res["new_lra"], measured_at, measured_sha,
-             res["new_sha"], row["media_type"], row["tmdb_id"],
+             res["new_sha"], _size_after_write(theme), row["media_type"], row["tmdb_id"],
              row["section_id"], row["edition_key"]),
         )
         wconn.commit()

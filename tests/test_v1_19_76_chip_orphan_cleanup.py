@@ -109,11 +109,13 @@ def test_src_all_handler_derives_from_dom():
     """The SRC // ALL click handler must derive from DOM-present
     src-filter chips, not the static `allLetters` list. v1.18.50
     hides A/M on /collections; pre-fix ALL added them anyway."""
-    idx = APP_JS.index("b.dataset.srcFilterAll")
-    block = APP_JS[idx: idx + 1200]
+    from _slice_helpers import slice_between
+    # v0.51.338: the chip read moved into _srcFilterChips() (shared with the prune); anchored, not windowed.
+    block = slice_between(APP_JS, "if (b.dataset.srcFilterAll) {", "} else {")
+    chips = slice_between(APP_JS, "function _srcFilterChips() {", "\n  }\n")
     # The fix: iterate DOM-present src-filter chips.
-    assert "querySelectorAll('[data-src-filter]')" in block, (
-        "v1.19.76: SRC ALL must use querySelectorAll('[data-src-filter]')"
+    assert "_srcFilterChips()" in block and "querySelectorAll('[data-src-filter]')" in chips, (
+        "v1.19.76: SRC ALL must derive from querySelectorAll('[data-src-filter]')"
     )
     # Intersection allowlist preserved (allLetters used as gate).
     assert "allowedLetters" in block

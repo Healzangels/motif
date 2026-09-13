@@ -2398,17 +2398,18 @@ class Worker:
                      media_type, tmdb_id),
                 )
             mismatch_value = "pending" if is_mismatch_job else None
+            # v0.51.338: the canonical was just written — a stale 0 let RESTORE FROM PLEX overwrite it.
             conn.execute(
                 """
                 INSERT INTO local_files
                     (media_type, tmdb_id, section_id, edition_key, file_path,
                      file_sha256, file_size,
                      downloaded_at, source_video_id, provenance, source_kind,
-                     mismatch_state,
+                     mismatch_state, canonical_present,
                      loudness_i, loudness_tp, loudness_lra, loudness_measured_at,
                      loudness_measured_sha256, norm_state, norm_gain_db, norm_target,
                      norm_at, norm_orig_sha256, norm_orig_pcm_sha256)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1,
                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
                     file_path = excluded.file_path,
@@ -2419,6 +2420,7 @@ class Worker:
                     provenance = excluded.provenance,
                     source_kind = excluded.source_kind,
                     mismatch_state = excluded.mismatch_state,
+                    canonical_present = 1,
                     -- v0.51.188: a re-download REPLACES the bytes, so its loudness and
                     -- normalize state replace the old row's too. Carrying a stale
                     -- norm_state='normalized' onto fresh raw bytes would tell // UNDO to

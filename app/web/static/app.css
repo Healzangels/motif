@@ -3434,6 +3434,8 @@ body.help-mode .settings-help-about { display: block; }
   letter-spacing: 0.1em;
   color: var(--fg);
 }
+/* v0.51.338: inline-flex outranks the UA [hidden] rule; without this the strip showed on every load. */
+.now-playing[hidden] { display: none; }
 .now-playing-label { color: var(--fg-dim); font-size: 9px; letter-spacing: 0.15em; text-transform: uppercase; white-space: nowrap; }
 .now-playing-title {
   background: transparent; border: 0; padding: 0; cursor: pointer;

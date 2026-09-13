@@ -6116,35 +6116,59 @@
 #   only via data-tab-only), the dashboard donut + the general-stats local set,
 #   the KEEP CURRENT tone, the INFO headline + history baseline, the
 #   notification provenance. Backups stay UB in LINK; no schema change.
-# 0.51.337: backup bundle, tag 3 — the themes check (spec § 3), realized on the
-#   v0.51.167 // CANONICAL HEALTH page rather than a new block (it already
-#   stats every canonical and splits the broken rows into re-downloadable vs
-#   canonical-missing). Added: // RESTORE FROM PLEX (N) — every broken row Plex
-#   still holds a copy of comes back at once, the sidecar in its Plex folder
-#   first (hardlink, copy across filesystems; no network), else Plex's own
-#   store for a plex_upload placement (get_themes → the selected entry →
-#   fetch_theme_bytes); rows with neither are skipped with a reason; nothing
-#   is re-downloaded (REPAIR ALL). The report says per row which Plex copy
-#   exists (plex_copy: sidecar / store). // CHANGED — present on disk but not
-#   the recorded size (a truncated write, an external edit); report-only. The
-#   DATABASE tab's restore card links here. canonical_health.py owns the three
-#   paths (restore_from_placement, refetch_from_plex_store, restore_from_plex,
-#   changed_canonicals); the per-item restore-canonical endpoint is unchanged.
-# 0.51.336: backup bundle, tag 2 — restore from a bundle (spec § 3 / § 5).
-#   A bundle's RESTORE (from the list or an upload) previews first: the
-#   manifest line, the DB check, the config keys that differ from the live
-#   motif.yaml with secrets masked on both sides, the cookies verdict; then
-#   // STAGE RESTORE confirms by name with KEEP MY CURRENT CONFIG. Staging =
-#   the DB as a snapshot does (db_backup.stage_restore) plus motif.yaml /
-#   cookies.txt as <name>.restore-pending in /config. At boot,
-#   bundle.apply_pending_config swaps those BEFORE get_settings() reads the
-#   YAML (main.py's first lines), each after a .prerestore-<stamp> copy; the
-#   DB member follows through the v1.23.17 hook as before. inspect_bundle is
-#   the member gate: known member names only, a manifest format this build
-#   reads, every member matching its manifest sha256, the DB passing the
-#   snapshot checks. An uploaded bundle joins the list under its manifest
-#   stamp (same bytes: fine; different bytes: 409). /pending names the staged
-#   members; /cancel drops them all.
+# 0.51.330: AT review follow-ups (the operator: "making sure we've included in
+#   the legend and glossary as well as making sure its filtering works in all
+#   circumstances"). Found by reading every letter-keyed set: the SRC sort's
+#   CASE had no AT (it sorted with "no theme"); the filter row's ALL button and
+#   the URL/session restore token set didn't know AT (a ?src_pills=AT deep link
+#   was dropped on restore); the CSV export wrote no URL for AT rows (re-import
+#   would lose the pick); the site-wide // GLOSSARY dialog and the README's
+#   axis lines still listed five letters. All aligned. Live check of the ALL
+#   button then found an older fault: ALL selected the +P modifier too, and
+#   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
+#   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
+#   every primary letter and never the modifier.
+# 0.51.331: badge ink centred. The operator, from the live anime tab: "the AT
+#   isn't centered in its box … or the A for adopted". Measured: the text box
+#   IS centred (6px each side) but letter-spacing 0.15em trails the last glyph
+#   too, so the ink sat ~0.7px left at zoom 1 (more on a scaled display) on
+#   EVERY .link-badge and SRC key button. The v1.12.30 LINK-glyph idiom applied:
+#   right padding gives the trailing spacing back (calc(left - 0.15em)). Found
+#   on the way: .src-key-btn's own `2px 8px` never applied (the later .link-badge
+#   rule wins by source order on every key button) — removed, one owner.
+# 0.51.332: pill ink centred, the whole family. The operator: "audit all our
+#   pills and guards etc to make sure they're all properly centered". Measured
+#   in the browser (ink vs box, both axes, every page + the INFO card and the
+#   glossary): every TRACKED family carried the .331 defect — the trailing
+#   letter-spacing sat the ink 0.5–0.9px left (.btn/.btn-tiny/.row-info-btn,
+#   .chip + section chips, .tab, .tdb-pill, .loudness-pill, .attn-pill, the
+#   filter row's ALL/CLEAR + LINK/ED buttons, .info-scope-chip, .tier-badge,
+#   .pill, .lib-flag-pill, .edition-pill, .form-env-badge, .sync-hist-status,
+#   the dashboard toggles, // FILTERS, the topbar INBOX label, the ⏻ glyph).
+#   Right padding = left − letter-spacing everywhere (one rule per family).
+#   Vertically: the DL/PL ● / — buttons sat 0.7 / 0.9px low and the ↺ ⟳ ⚠
+#   attention symbols 0.6–0.8px low beside "!" — lifted by moving padding,
+#   heights unchanged. Left alone on purpose: the ▂▄▆ loudness bars (bottom-
+#   anchored by design), 0.3–0.5px cap-height offsets (font metric, sub-pixel),
+#   the settings tabs' 2px transparent underline, the nav links.
+# 0.51.333: row quick-play, tag 1 (feature E; spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
+#   A leading ▶ on every library row plays the row's theme without opening the
+#   INFO card: what the card's headline says plays — motif's file (the items
+#   endpoint) when one is on disk and not standing by as a backup, else what
+#   Plex serves (the v0.51.322 proxy), nothing for '–' / canonical-missing rows.
+#   The rule lives in lib/quick-play.js, loaded before app.js AND required by
+#   the node harness tests/js/test_quick_play.js — no hand-mirrored copy. One
+#   shared <audio preload=none>; one sound at a time both ways (a capture-phase
+#   'play' listener); ■ green while playing; the renderer reads
+#   libraryState.quickPlay so re-renders keep it; the quick-play click bypasses
+#   the job lock (a listen is not an operation). The "did not play" note uses
+#   the results header (auto-dismiss). Tag 2 (NOW PLAYING strip) not built.
+# 0.51.334: row quick-play, tag 2 — NOW PLAYING in the results header (spec § 6).
+#   While a row plays, the header's action cluster shows "now playing · <title>
+#   · 0:12 / 1:30 · ■": the title scrolls to the playing row (when on this
+#   page), the ■ stops from the top of a 50-row page. Hidden otherwise. The
+#   clock is lib/quick-play.js formatClock (node-tested); the ■ reuses the
+#   row's own glyph classes; timeupdate / durationchange drive the clock only.
 # 0.51.335: backup bundle, tag 1 — create + schedule (feature D; spec
 #   docs/specs/BACKUP_BUNDLE_SPEC.md, every proposed option taken). A bundle is
 #   one tar.gz next to the snapshots: a VACUUM INTO copy of motif.db, motif.yaml
@@ -6161,60 +6185,64 @@
 #   (database_backup.bundle / MOTIF_DB_BACKUP_BUNDLE, off by default) so the
 #   scheduled run writes a bundle instead of a bare snapshot. Bundle rows carry
 #   no RESTORE yet — tag 2.
-# 0.51.334: row quick-play, tag 2 — NOW PLAYING in the results header (spec § 6).
-#   While a row plays, the header's action cluster shows "now playing · <title>
-#   · 0:12 / 1:30 · ■": the title scrolls to the playing row (when on this
-#   page), the ■ stops from the top of a 50-row page. Hidden otherwise. The
-#   clock is lib/quick-play.js formatClock (node-tested); the ■ reuses the
-#   row's own glyph classes; timeupdate / durationchange drive the clock only.
-# 0.51.333: row quick-play, tag 1 (feature E; spec docs/specs/ROW_QUICK_PLAY_SPEC.md).
-#   A leading ▶ on every library row plays the row's theme without opening the
-#   INFO card: what the card's headline says plays — motif's file (the items
-#   endpoint) when one is on disk and not standing by as a backup, else what
-#   Plex serves (the v0.51.322 proxy), nothing for '–' / canonical-missing rows.
-#   The rule lives in lib/quick-play.js, loaded before app.js AND required by
-#   the node harness tests/js/test_quick_play.js — no hand-mirrored copy. One
-#   shared <audio preload=none>; one sound at a time both ways (a capture-phase
-#   'play' listener); ■ green while playing; the renderer reads
-#   libraryState.quickPlay so re-renders keep it; the quick-play click bypasses
-#   the job lock (a listen is not an operation). The "did not play" note uses
-#   the results header (auto-dismiss). Tag 2 (NOW PLAYING strip) not built.
-# 0.51.332: pill ink centred, the whole family. The operator: "audit all our
-#   pills and guards etc to make sure they're all properly centered". Measured
-#   in the browser (ink vs box, both axes, every page + the INFO card and the
-#   glossary): every TRACKED family carried the .331 defect — the trailing
-#   letter-spacing sat the ink 0.5–0.9px left (.btn/.btn-tiny/.row-info-btn,
-#   .chip + section chips, .tab, .tdb-pill, .loudness-pill, .attn-pill, the
-#   filter row's ALL/CLEAR + LINK/ED buttons, .info-scope-chip, .tier-badge,
-#   .pill, .lib-flag-pill, .edition-pill, .form-env-badge, .sync-hist-status,
-#   the dashboard toggles, // FILTERS, the topbar INBOX label, the ⏻ glyph).
-#   Right padding = left − letter-spacing everywhere (one rule per family).
-#   Vertically: the DL/PL ● / — buttons sat 0.7 / 0.9px low and the ↺ ⟳ ⚠
-#   attention symbols 0.6–0.8px low beside "!" — lifted by moving padding,
-#   heights unchanged. Left alone on purpose: the ▂▄▆ loudness bars (bottom-
-#   anchored by design), 0.3–0.5px cap-height offsets (font metric, sub-pixel),
-#   the settings tabs' 2px transparent underline, the nav links.
-# 0.51.331: badge ink centred. The operator, from the live anime tab: "the AT
-#   isn't centered in its box … or the A for adopted". Measured: the text box
-#   IS centred (6px each side) but letter-spacing 0.15em trails the last glyph
-#   too, so the ink sat ~0.7px left at zoom 1 (more on a scaled display) on
-#   EVERY .link-badge and SRC key button. The v1.12.30 LINK-glyph idiom applied:
-#   right padding gives the trailing spacing back (calc(left - 0.15em)). Found
-#   on the way: .src-key-btn's own `2px 8px` never applied (the later .link-badge
-#   rule wins by source order on every key button) — removed, one owner.
-# 0.51.330: AT review follow-ups (the operator: "making sure we've included in
-#   the legend and glossary as well as making sure its filtering works in all
-#   circumstances"). Found by reading every letter-keyed set: the SRC sort's
-#   CASE had no AT (it sorted with "no theme"); the filter row's ALL button and
-#   the URL/session restore token set didn't know AT (a ?src_pills=AT deep link
-#   was dropped on restore); the CSV export wrote no URL for AT rows (re-import
-#   would lose the pick); the site-wide // GLOSSARY dialog and the README's
-#   axis lines still listed five letters. All aligned. Live check of the ALL
-#   button then found an older fault: ALL selected the +P modifier too, and
-#   since v1.14.99 made +P NARROW the primary letters, ALL asked for composite
-#   rows only and dropped every plain row (a 6-row tab showed 3). ALL is now
-#   every primary letter and never the modifier.
-__version__ = "0.51.337"
+# 0.51.336: backup bundle, tag 2 — restore from a bundle (spec § 3 / § 5).
+#   A bundle's RESTORE (from the list or an upload) previews first: the
+#   manifest line, the DB check, the config keys that differ from the live
+#   motif.yaml with secrets masked on both sides, the cookies verdict; then
+#   // STAGE RESTORE confirms by name with KEEP MY CURRENT CONFIG. Staging =
+#   the DB as a snapshot does (db_backup.stage_restore) plus motif.yaml /
+#   cookies.txt as <name>.restore-pending in /config. At boot,
+#   bundle.apply_pending_config swaps those BEFORE get_settings() reads the
+#   YAML (main.py's first lines), each after a .prerestore-<stamp> copy; the
+#   DB member follows through the v1.23.17 hook as before. inspect_bundle is
+#   the member gate: known member names only, a manifest format this build
+#   reads, every member matching its manifest sha256, the DB passing the
+#   snapshot checks. An uploaded bundle joins the list under its manifest
+#   stamp (same bytes: fine; different bytes: 409). /pending names the staged
+#   members; /cancel drops them all.
+# 0.51.337: backup bundle, tag 3 — the themes check (spec § 3), realized on the
+#   v0.51.167 // CANONICAL HEALTH page rather than a new block (it already
+#   stats every canonical and splits the broken rows into re-downloadable vs
+#   canonical-missing). Added: // RESTORE FROM PLEX (N) — every broken row Plex
+#   still holds a copy of comes back at once, the sidecar in its Plex folder
+#   first (hardlink, copy across filesystems; no network), else Plex's own
+#   store for a plex_upload placement (get_themes → the selected entry →
+#   fetch_theme_bytes); rows with neither are skipped with a reason; nothing
+#   is re-downloaded (REPAIR ALL). The report says per row which Plex copy
+#   exists (plex_copy: sidecar / store). // CHANGED — present on disk but not
+#   the recorded size (a truncated write, an external edit); report-only. The
+#   DATABASE tab's restore card links here. canonical_health.py owns the three
+#   paths (restore_from_placement, refetch_from_plex_store, restore_from_plex,
+#   changed_canonicals); the per-item restore-canonical endpoint is unchanged.
+# 0.51.338: review follow-ups, tag 1 of 3 — the production-visible and
+#   data-affecting findings of the fresh-eyes review of .328–.337.
+#   (1) NOW PLAYING: the strip's display:inline-flex outranked the UA [hidden]
+#   rule, so it showed on every library load. .now-playing[hidden] added, and
+#   test_v0_51_338_library_ui now checks every hidden element in every
+#   template; the older v1.23.29 guard had gone blind (its global-reset regex
+#   matched any `.x[hidden]{…!important}` companion) and is anchored again.
+#   (2) SRC filter: a letter whose chip this page does not offer (AT off
+#   /anime, A/M on /collections) is pruned in loadLibrary before the save,
+#   the request and the badge, so a selected AT no longer narrows movies/tv to
+#   zero rows with nothing lit. SRC ALL fills through the same rule
+#   (lib/src-filter.js, tested under node).
+#   (3) CANONICAL HEALTH CHANGED: the level and undo writers stamped the new
+#   sha but not the new size (mp3gain appends a tag), so every levelled theme
+#   read CHANGED and ALL CLEAR never showed. They stamp file_size now, and
+#   verify_canonical_health heals a stale size whose bytes still hash to
+#   file_sha256 (compare-and-set, so a writer that landed meanwhile wins).
+#   (4) RESTORE FROM PLEX never overwrites a present canonical: the store path
+#   checks first, a sidecar "already present" ends the row, and the worker's
+#   upsert stamps canonical_present=1 so a fresh REPAIR ALL download is not
+#   still flagged broken. The sidecar restore links through
+#   placement._safe_link_or_copy (any OSError copies, e.g. EPERM on SMB),
+#   staged so a copy that dies leaves no partial canonical. Restored bytes
+#   with a new sha, or a re-hash that fails, clear the loudness/norm anchors
+#   so // UNDO cannot un-gain raw bytes.
+#   (5) Notifications: a downloaded AnimeThemes pick read "User URL"; the
+#   local_files step now reads the at- id first, like the SRC classifiers.
+#   The ladder below .329 is back in ascending order.
+__version__ = "0.51.338"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

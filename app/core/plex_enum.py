@@ -1114,7 +1114,8 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     _scope_sql, _scope_params = _section_scope_clause(section_ids)
     with get_conn(db_path) as conn:
         rows = conn.execute(
-            "SELECT media_type, tmdb_id, section_id, edition_key, file_path "
+            "SELECT media_type, tmdb_id, section_id, edition_key, file_path, "
+            "       file_size, file_sha256 "
             "FROM local_files WHERE file_path IS NOT NULL AND file_path != ''"
             + _scope_sql, _scope_params
         ).fetchall()
@@ -1147,27 +1148,43 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
     # health); the bucketing below stays serial so the accounting + mount-fault
     # cap are unchanged.
     from concurrent.futures import ThreadPoolExecutor
+    from .adopt import _hash_file
+
+    def _healed_size(p, row_r, st_size):
+        # v0.51.338: a size-stale row whose bytes still hash to file_sha256 gets its size back.
+        rec = row_r["file_size"]
+        if not (rec and row_r["file_sha256"] and st_size > 0 and st_size != rec):
+            return None
+        try:
+            sha, n = _hash_file(p)
+        except OSError as e:
+            log.debug("verify_canonical_health: hash %s failed (%s) — size stamp left "
+                      "as-is, the row stays CHANGED", row_r["file_path"], e)
+            return None
+        return n if sha == row_r["file_sha256"] else None
 
     def _stat_present(row_r):
         try:
             p = themes_dir / row_r["file_path"]
             if not p.is_file():
-                return (row_r, False, None)
+                return (row_r, False, None, None)
             # v0.51.167: a 0-byte theme.mp3 is a corrupt/failed download — the
             # downloader itself removes + re-downloads one (downloader.py:589), and
             # ffmpeg can't measure it (the loudness audit's rc=254 "No such file"
             # cohort). Functionally missing, so stamp canonical_present=0 and let the
             # CANONICAL HEALTH repair surface it instead of ranking it healthy.
-            return (row_r, p.stat().st_size > 0, None)
+            st_size = p.stat().st_size
+            return (row_r, st_size > 0, None, _healed_size(p, row_r, st_size))
         except OSError as e:
-            return (row_r, None, e)
+            return (row_r, None, e, None)
 
     if rows:
         with ThreadPoolExecutor(max_workers=16) as _ex:
             stat_results = list(_ex.map(_stat_present, rows))
     else:
         stat_results = []
-    for r, present, err in stat_results:
+    size_heals: list = []
+    for r, present, err, heal_size in stat_results:
         if err is not None:
             skipped += 1
             (log.warning if skipped == 1 else log.debug)(
@@ -1177,6 +1194,9 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
         row = (1 if present else 0, now, r["media_type"], r["tmdb_id"],
                r["section_id"], r["edition_key"])
         (present_updates if present else missing_updates).append(row)
+        if heal_size is not None:
+            size_heals.append((heal_size, r["media_type"], r["tmdb_id"], r["section_id"],
+                               r["edition_key"], r["file_size"], r["file_sha256"]))
     cap = max(50, total // 4)
     # v1.23.42: fold the OSError-skipped count into the suspect total (mirror
     # of verify_placement_health). A partial mount fault is a MIX — some stats
@@ -1198,6 +1218,7 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
         missing_updates = []
     updates = present_updates + missing_updates
     missing = len(missing_updates)
+    healed = 0
     if updates:
         with get_conn(db_path) as conn, transaction(conn):
             conn.executemany(
@@ -1206,6 +1227,16 @@ def verify_canonical_health(db_path: Path, themes_dir: Path, *,
                 "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
                 "  AND edition_key = ?",
                 updates)
+            if size_heals:
+                # v0.51.338: compare-and-set so a writer that re-stamped the row meanwhile wins.
+                healed = conn.executemany(
+                    "UPDATE local_files SET file_size = ? "
+                    "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
+                    "  AND edition_key = ? AND file_size = ? AND file_sha256 = ?",
+                    size_heals).rowcount
+    if healed:
+        log.info("verify_canonical_health: healed %d stale file_size stamp(s) on "
+                 "canonicals whose bytes still match file_sha256", healed)
     return {"checked": len(updates), "missing": missing, "skipped": skipped}
 
 

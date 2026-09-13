@@ -269,6 +269,8 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
     import hashlib
     from .db import get_conn, transaction
     from .events import now_iso
+    from .worker import _cond_columns
+    rehash_failed = False  # v0.51.338: unknown bytes were written — clear the anchors rather than keep them
     try:
         size = canonical.stat().st_size
         h = hashlib.sha256()
@@ -280,12 +282,20 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
         log.warning("restore: re-hash failed for %s/%s section=%s: %s — keeping prior size/sha",
                     r["media_type"], r["tmdb_id"], r["section_id"], e)
         size, sha = prior_size, prior_sha
+        rehash_failed = True
+    # v0.51.338: new bytes void the loudness/norm anchors (revisions.py rule) — else // UNDO un-gains raw bytes.
+    new_bytes = rehash_failed or sha != prior_sha
     with get_conn(db_path) as conn, transaction(conn):
         conn.execute(
             "UPDATE local_files SET file_size = ?, file_sha256 = ?, downloaded_at = ?, "
-            "canonical_present = 1 "
-            "WHERE media_type = ? AND tmdb_id = ? AND section_id = ? AND edition_key = ?",
-            (size, sha, now_iso(), r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
+            "canonical_present = 1"
+            + (", loudness_i=?, loudness_tp=?, loudness_lra=?, loudness_measured_at=?, "
+               "loudness_measured_sha256=?, norm_state=?, norm_gain_db=?, norm_target=?, "
+               "norm_at=?, norm_orig_sha256=?, norm_orig_pcm_sha256=?, norm_plex_entry_uri = NULL"
+               if new_bytes else "")
+            + " WHERE media_type = ? AND tmdb_id = ? AND section_id = ? AND edition_key = ?",
+            (size, sha, now_iso(), *(_cond_columns(None, sha) if new_bytes else ()),
+             r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
         )
         if placement_kind is not None:
             conn.execute(
@@ -301,15 +311,15 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r) -> dict:
     section_id, edition_key, file_path, file_size, file_sha256, media_folder,
     placement_kind. Returns {ok, kind} or {ok: False, reason} with the reasons
     the per-item endpoint has always reported."""
-    import os
-    import shutil
+    from .placement import _safe_link_or_copy
     from .plex_enum import _candidate_local_paths
     canonical = themes_dir / r["file_path"]
     try:
         if canonical.is_file() and canonical.stat().st_size > 0:
             return {"ok": False, "reason": "canonical_already_present"}
-    except OSError:
-        pass
+    except OSError as e:
+        # v0.51.338: was a bare pass (class 9) — only EACCES/EIO reach here, so say so before trying.
+        log.warning("restore-canonical: could not stat %s (%s) — attempting the restore anyway", canonical, e)
     if not r["media_folder"]:
         return {"ok": False, "reason": "no_placement"}
     src: Path | None = None
@@ -325,19 +335,16 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r) -> dict:
         return {"ok": False, "reason": "placement_file_missing"}
     try:
         canonical.parent.mkdir(parents=True, exist_ok=True)
-        if canonical.exists():
-            canonical.unlink()  # a 0-byte stub
-        kind = "hardlink"
-        try:
-            os.link(src, canonical)
-        except OSError as e:
-            if e.errno != 18:  # EXDEV — cross-device, fall back to a copy
-                raise
-            shutil.copy2(src, canonical)
-            kind = "copy"
+        # v0.51.338: placement's link — any OSError (EPERM on SMB/FUSE) copies, staged so a dead copy leaves no partial.
+        kind = _safe_link_or_copy(src, canonical)
     except OSError as e:
         log.warning("restore-canonical: %s/%s section=%s failed: %s",
                     r["media_type"], r["tmdb_id"], r["section_id"], e)
+        staged = canonical.with_suffix(canonical.suffix + ".motif-tmp")
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError as ue:
+            log.warning("restore-canonical: could not remove staged %s: %s", staged, ue)
         return {"ok": False, "reason": f"link_failed:{e}"}
     _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
                     placement_kind=kind if r["placement_kind"] != kind else None)
@@ -364,6 +371,13 @@ def refetch_from_plex_store(db_path: Path, themes_dir: Path, plex_client, r) -> 
     item (a plex_upload placement lives in Plex's metadata store, not a folder).
     Returns {ok, bytes, entry_uri} or {ok: False, reason}."""
     import os
+    canonical = themes_dir / r["file_path"]
+    try:
+        # v0.51.338: a REPAIR ALL download lands before verify re-stamps canonical_present — never replace it.
+        if canonical.is_file() and canonical.stat().st_size > 0:
+            return {"ok": False, "reason": "canonical_already_present"}
+    except OSError as e:
+        log.warning("restore-from-plex-store: could not stat %s (%s) — attempting the refetch anyway", canonical, e)
     rk = r["plex_rating_key"]
     if not rk or not str(rk).isdigit():
         return {"ok": False, "reason": "no_rating_key"}
@@ -379,7 +393,6 @@ def refetch_from_plex_store(db_path: Path, themes_dir: Path, plex_client, r) -> 
     data = got.get("bytes") if got.get("ok") else None
     if not data:
         return {"ok": False, "reason": f"plex_fetch:{got.get('http_status') or got.get('error')}"}
-    canonical = themes_dir / r["file_path"]
     try:
         canonical.parent.mkdir(parents=True, exist_ok=True)
         tmp = canonical.with_name(canonical.name + ".part")
@@ -433,7 +446,10 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client) -> dict:
             if res["ok"]:
                 restored_sidecar += 1
                 continue
-        if r["placement_kind"] == "plex_upload" or (r["media_folder"] in (None, "") and r["plex_rating_key"]):
+        # v0.51.338: a present canonical ends the row — falling through let the store overwrite it.
+        present = res is not None and res.get("reason") == "canonical_already_present"
+        if not present and (r["placement_kind"] == "plex_upload"
+                            or (r["media_folder"] in (None, "") and r["plex_rating_key"])):
             res2 = refetch_from_plex_store(db_path, themes_dir, plex_client, r)
             if res2["ok"]:
                 restored_store += 1

@@ -53,8 +53,9 @@ def _class_sets_display(cls: str) -> bool:
     return False
 
 
+# v0.51.338: anchored to a BARE [hidden] selector — unanchored it matched any `.x[hidden]{…!important}` companion and blinded the whole check.
 _GLOBAL_HIDDEN_RESET = re.compile(
-    r"\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important")
+    r"(?:\A|[};,])\s*\[hidden\]\s*\{[^}]*display\s*:\s*none\s*!important")
 
 
 def _class_has_hidden_override(cls: str) -> bool:

@@ -9776,6 +9776,29 @@
     });
   }
 
+  // v0.51.338: the SRC chips this page renders, in the shape lib/src-filter.js reads.
+  function _srcFilterChips() {
+    return Array.from(document.querySelectorAll('[data-src-filter]'), (el) => ({
+      letter: el.dataset.srcFilter || '',
+      tabOnly: el.dataset.tabOnly || '',
+    }));
+  }
+
+  // v0.51.338: a SRC letter whose chip is absent or hidden for this tab must not narrow invisibly.
+  function _pruneSrcFilterToOfferedChips() {
+    const lib = window.motifSrcFilter;
+    if (!lib || !libraryState.srcFilter || libraryState.srcFilter.size === 0) return;
+    const kept = new Set(lib.keepOfferedLetters(libraryState.srcFilter, _srcFilterChips(), libraryState.tab));
+    const dropped = Array.from(libraryState.srcFilter).filter((v) => !kept.has(v));
+    if (dropped.length === 0) return;
+    dropped.forEach((v) => libraryState.srcFilter.delete(v));
+    document.querySelectorAll('[data-src-filter]').forEach((x) => {
+      if (x.dataset.srcFilter && !libraryState.srcFilter.has(x.dataset.srcFilter)) {
+        x.classList.remove('src-key-btn-active');
+      }
+    });
+  }
+
   function hydrateLibraryStateForTab(tab, sp) {
     libraryState.tab = tab;
     _syncTabOnlyEls(tab);
@@ -9983,6 +10006,8 @@
     // handlers, well after _infoPrefetch is initialized.
     _infoPrefetch.clear();
     libraryState.tab = tabEl.value;
+    // v0.51.338: before the save, the badge and the request — tab switch, deep link and storage all land here.
+    _pruneSrcFilterToOfferedChips();
     // v1.13.13: persist filter combo so a hop to another library
     // tab (MOVIES → TV SHOWS) lands with the same filters applied.
     _saveLibraryFilterState();
@@ -14871,12 +14896,12 @@
             // intersection allowlist so a future stray
             // data-src-filter token can't sneak in.
             const allowedLetters = new Set(allLetters);
-            document.querySelectorAll('[data-src-filter]').forEach((chip) => {
-              const v = chip.dataset.srcFilter;
-              if (v && allowedLetters.has(v)) {
-                libraryState.srcFilter.add(v);
-              }
-            });
+            const chips = _srcFilterChips().filter((c) => allowedLetters.has(c.letter));
+            const letters = chips.map((c) => c.letter);
+            const srcLib = window.motifSrcFilter;
+            // v0.51.338: ALL is every letter THIS tab shows — a chip hidden for another tab (AT off /anime) is skipped.
+            (srcLib ? srcLib.keepOfferedLetters(letters, chips, libraryState.tab) : letters)
+              .forEach((v) => libraryState.srcFilter.add(v));
           } else {
             const want = b.dataset.srcFilter;
             if (!want) {

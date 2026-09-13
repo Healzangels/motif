@@ -217,10 +217,11 @@ def enrich_item(
             if uo and uo["youtube_url"]:
                 ctx["theme_url"] = uo["youtube_url"]
                 # Re-derive video id from the override URL.
-                from .sync import extract_video_id
+                from .sync import extract_video_id, url_source
                 ctx["youtube_video_id"] = extract_video_id(uo["youtube_url"])
                 ctx["provenance"] = "user_url"
-                if "a.animethemes.moe" in uo["youtube_url"]:
+                # v0.51.338: host-anchored classifier — the bare substring also matched a.animethemes.moe in a path/query
+                if url_source(uo["youtube_url"]) == "animethemes":
                     ctx["provenance"] = "animethemes"  # v0.51.329: the AT family (spec §3.8)
             # 3. local_files lookup — ALWAYS consulted now (v1.18.58).
             #    Pre-fix this branch only fired when title was still
@@ -290,7 +291,9 @@ def enrich_item(
                     # Already 'user_url' if user_overrides hit above;
                     # also set here for the case where overrides got
                     # cleared but the source_kind stamp survives.
-                    ctx["provenance"] = "user_url"
+                    # v0.51.338: a downloaded AT pick is a url row with an at- id; it overwrote step 2's animethemes with user_url
+                    ctx["provenance"] = ("animethemes" if (lf["source_video_id"] or "").startswith("at-")
+                                         else "user_url")
                 elif sk == "themerrdb":
                     ctx["provenance"] = "themerrdb"
                 elif sk == "adopt":

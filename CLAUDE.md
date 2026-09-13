@@ -92,6 +92,7 @@ this list grows, audit every existing site.
 | `computeSrcLetter` | `app.js:~10828` | SRC pill T/U/A vs P/– classification |
 | `renderLibraryRow` inline-SRC | `app.js:~11076` | row table cell render (v1.18.24; plex_cloud→P branch v1.21.8) |
 | row quick-play | `lib/quick-play.js` (the rule, loaded by base.html + required by `tests/js/test_quick_play.js`) · `app.js` `quickPlayToggle` / `bindQuickPlay` / the slot in `renderLibraryRow` | the row's leading ▶ plays what the INFO card headline says plays (v0.51.333) |
+| SRC filter prune | `lib/src-filter.js` `keepOfferedLetters` (loaded by base.html + required by `tests/js/test_src_filter.js`) · `app.js` `_pruneSrcFilterToOfferedChips` in `loadLibrary` + the SRC ALL branch | the filter holds only letters whose chip this page offers — AT off /anime, A/M on /collections; no server gate on purpose (at- ids come from URL shape) (v0.51.338) |
 | `updateLibrarySelectionUi` selection bucket | `app.js:~13349` | themed-vs-not counts for bulk-bar (v1.18.24) |
 | `isPlexAgentRow` | `app.js:~17238` | "Plex already supplying" confirm prompt gate (v1.18.75) |
 | Bulk PUSH predicates (3 sites) | `app.js:~13506` / `~13663` / `~15750` | pushableCount + pushCount + bulk-PUSH click handler (v1.19.38 fix) |
@@ -626,7 +627,8 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
   `_GS_LOCAL_LETTERS`, `SRC_LETTER_TONE.AT='animethemes'` (+ the
   `.btn.lib-source-animethemes` rule), the filter pill + legend row
   (anime tab only via `data-tab-only`), the card wording keyed on the `at-`
-  id. Backups stay `UB` in LINK.
+  id, and `notify_content.enrich_item`'s provenance (v0.51.338: the `at-`
+  id is read before the generic `url` branch). Backups stay `UB` in LINK.
 - Never: auto-apply GLANCE / NAME; a background API call nobody clicked.
 
 ## Commit + release conventions
