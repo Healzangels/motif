@@ -70,7 +70,10 @@ plays the same thing, decided from the fields the row already has
 | no theme (–), or canonical missing (dlBroken) | no control | — |
 
 "Plex serves" is `plex_has_theme && verified ok`, the test `computeSrcLetter`
-uses for `P`. A 204 from the Plex proxy (Plex claims a theme it will not
+uses for `P`. The INFO card headline's backup sentence uses the same test (v0.51.339):
+a backup row whose Plex theme dropped (has_theme 0) or failed verify
+(verified_ok 0) reads "… on disk as backup · Plex no longer serves a theme
+(PROMOTE TO ACTIVE deploys it)", and its row ▶ plays motif's file. A 204 from the Plex proxy (Plex claims a theme it will not
 serve, or Plex unreachable) reverts the glyph and the results status line
 says what the card says: "Plex reports a theme but it did not play".
 

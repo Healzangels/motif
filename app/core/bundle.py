@@ -64,31 +64,36 @@ def table_counts(db_path: Path) -> dict[str, int]:
         for t in CENSUS_TABLES:
             try:
                 out[t] = int(conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0])
-            except sqlite3.OperationalError:
-                continue
+            except sqlite3.OperationalError as e:
+                if "no such table" not in str(e):
+                    raise  # v0.51.339: only an older schema's missing table is "absent"; I/O, malformed, locked propagate
+                log.info("bundle counts: %s is absent on this schema (%s)", t, e)
     finally:
         conn.close()
     return out
 
 
 def themes_census(db_path: Path) -> list[dict]:
-    """Every local_files row, joined to its placement (same media_type /
-    tmdb_id / section_id / edition), as the fields a rebuild needs: where
-    the file was, how big, its hash, where it came from, how it was placed.
-    The hash comes from the DB (never recomputed here — a bundle must not
-    walk 13 GB of themes)."""
+    """Every local_files row, with ONE of its placements (same media_type /
+    tmdb_id / section_id / edition; a present one first, then the newest),
+    as the fields a rebuild needs: where the file was, how big, its hash,
+    where it came from, how it was placed. The hash comes from the DB (never
+    recomputed here — a bundle must not walk 13 GB of themes)."""
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
         rows = conn.execute(
             "SELECT lf.media_type, lf.tmdb_id, lf.section_id, lf.edition_key, "
             "       lf.file_path, lf.file_size, lf.file_sha256, lf.source_kind, "
-            "       lf.source_video_id, lf.provenance, p.placement_kind "
+            "       lf.source_video_id, lf.provenance, "
+            # v0.51.339: a subquery, not a join — placements' PK includes media_folder, so two folders fanned one file into two rows.
+            "       (SELECT p.placement_kind FROM placements p "
+            "         WHERE p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id "
+            "           AND p.section_id = lf.section_id "
+            "           AND COALESCE(p.edition_key, '') = COALESCE(lf.edition_key, '') "
+            "         ORDER BY p.theme_present DESC, p.placed_at DESC, p.media_folder "
+            "         LIMIT 1) AS placement_kind "
             "FROM local_files lf "
-            "LEFT JOIN placements p "
-            "  ON p.media_type = lf.media_type AND p.tmdb_id = lf.tmdb_id "
-            " AND p.section_id = lf.section_id "
-            " AND COALESCE(p.edition_key, '') = COALESCE(lf.edition_key, '') "
             "ORDER BY lf.media_type, lf.tmdb_id, lf.section_id"
         ).fetchall()
     finally:
@@ -169,7 +174,8 @@ def create_bundle(db_path: Path, config_dir: Path, *,
         )
         payload = json.dumps(manifest, indent=1, sort_keys=True).encode("utf-8")
         part = tmp / (name + ".part")
-        with tarfile.open(part, "w:gz") as tar:
+        # v0.51.339: dereference — a symlinked motif.yaml/cookies.txt was archived as a 0-byte SYMTYPE (its target path leaked) and every restore refused it.
+        with tarfile.open(part, "w:gz", dereference=True) as tar:
             for arcname, src in parts:
                 tar.add(str(src), arcname=arcname, recursive=False)
             ti = tarfile.TarInfo(MEMBER_MANIFEST)
@@ -208,18 +214,17 @@ def read_manifest(path: Path) -> dict:
 # of what they replace. A preview (manifest line, DB check, the config keys
 # that differ with secrets masked, the cookies verdict) is computed before
 # anything is staged, and the operator may keep the live config.
+# v0.51.339: boot applies the DB first; apply_pending_config then apply_pending_cookies (settings.cookies_file) follow only a DB that applied.
 
 import os as _os
-import re as _re
 from dataclasses import dataclass as _dataclass, field as _field
+
+from .config_file import SECRET_MASK, is_secret_config_key, mask_config_value
 
 CONFIG_PENDING = "motif.yaml" + db_backup.RESTORE_PENDING_SUFFIX
 COOKIES_PENDING = "cookies.txt" + db_backup.RESTORE_PENDING_SUFFIX
-# Keys whose values never leave the box in a preview: masked on BOTH sides.
-_SECRET_KEY_RE = _re.compile(
-    r"token|secret|password|passwd|api_key|apikey|cookie|auth|apprise|webhook",
-    _re.I)
-MASK = "••••"
+# v0.51.339: the preview masks through GET /api/config's rule (config_file.mask_config_value), never a second regex.
+MASK = SECRET_MASK
 
 
 @_dataclass
@@ -233,16 +238,27 @@ class BundleCheck:
     staged: list[str] = _field(default_factory=list)
 
 
-def flatten_config(text: str) -> dict[str, object]:
-    """motif.yaml text → {dotted.key: scalar-or-list}. Malformed YAML is an
-    empty mapping (the diff then shows every bundle key as new)."""
+def _parse_error_summary(e: Exception) -> str:
+    # v0.51.339: type + position only — a YAML error's own text quotes the offending line, which can hold a secret.
+    mark = getattr(e, "problem_mark", None)
+    return type(e).__name__ + (f" at line {mark.line + 1}, column {mark.column + 1}" if mark is not None else "")
+
+
+def flatten_config(text: str | bytes, *, side: str) -> tuple[dict[str, object], str | None]:
+    """motif.yaml text (bytes decode as strict UTF-8, as the boot read does) →
+    ({dotted.key: scalar-or-list}, None), or ({}, why) when it does not parse to
+    the mapping ConfigFile.load() needs — logged at WARNING naming the side."""
     import yaml
     try:
-        raw = yaml.safe_load(text) or {}
-    except Exception:
-        raw = {}
+        raw = yaml.safe_load(text.decode("utf-8") if isinstance(text, bytes) else text) or {}
+    except Exception as e:  # v0.51.339: was a silent {} — a full false diff, then a staged file that crashed the next boot
+        err = _parse_error_summary(e)
+        log.warning("bundle restore: the %s motif.yaml does not parse (%s) — no config diff", side, err)
+        return {}, err
     if not isinstance(raw, dict):
-        return {}
+        err = f"its top level is a {type(raw).__name__}, not a mapping"
+        log.warning("bundle restore: the %s motif.yaml does not parse (%s) — no config diff", side, err)
+        return {}, err
     flat: dict[str, object] = {}
 
     def walk(node, path):
@@ -256,7 +272,7 @@ def flatten_config(text: str) -> dict[str, object]:
         else:
             flat[path] = node
     walk(raw, "")
-    return flat
+    return flat, None
 
 
 def _render(v) -> str:
@@ -267,22 +283,26 @@ def _render(v) -> str:
     return str(v)
 
 
-def config_diff(live_text: str, bundle_text: str) -> list[dict]:
-    """The keys whose values differ between the live motif.yaml and the
-    bundle's, as [{key, live, bundle, secret}] sorted by key. A secret key
-    reads MASK on both sides — still listed, never shown."""
-    live, other = flatten_config(live_text), flatten_config(bundle_text)
+def _diff_rows(live: dict, other: dict) -> list[dict]:
     out = []
     for key in sorted(set(live) | set(other)):
-        if live.get(key) == other.get(key):
+        if live.get(key) == other.get(key):  # raw values: two secrets that mask alike still differ
             continue
-        secret = bool(_SECRET_KEY_RE.search(key))
         out.append({
-            "key": key, "secret": secret,
-            "live": MASK if secret else _render(live.get(key)),
-            "bundle": MASK if secret else _render(other.get(key)),
+            "key": key, "secret": is_secret_config_key(key),
+            "live": _render(mask_config_value(key, live[key]) if live.get(key) is not None else None),
+            "bundle": _render(mask_config_value(key, other[key]) if other.get(key) is not None else None),
         })
     return out
+
+
+def config_diff(live_text: str, bundle_text: str) -> list[dict]:
+    """The keys whose values differ between the live motif.yaml and the
+    bundle's, as [{key, live, bundle, secret}] sorted by key, each side shown
+    as GET /api/config shows it. Empty when either side does not parse."""
+    live, live_err = flatten_config(live_text, side="live")
+    other, bundle_err = flatten_config(bundle_text, side="bundle")
+    return [] if (live_err or bundle_err) else _diff_rows(live, other)
 
 
 def _extract_members(path: Path, into: Path) -> dict[str, Path]:
@@ -301,6 +321,8 @@ def _extract_members(path: Path, into: Path) -> dict[str, Path]:
             dest = into / m.name
             with dest.open("wb") as out:
                 shutil.copyfileobj(f, out)
+            if m.name in (MEMBER_CONFIG, MEMBER_COOKIES):
+                _owner_only(dest)  # v0.51.339: 0600 rides copy2 and the boot swap live — never the umask's 0644 or the archive's m.mode; a chmod-refusing share warns, it never refuses the bundle
             got[m.name] = dest
     return got
 
@@ -315,13 +337,16 @@ def inspect_bundle(path: Path) -> BundleCheck:
         try:
             got = _extract_members(path, tmp)
         except (tarfile.TarError, OSError, ValueError, EOFError) as e:
-            return BundleCheck(False, f"not a motif bundle: {e}")
+            msg = str(e)  # v0.51.339: _extract_members' refusals carry the prefix already — never "not a motif bundle: not a motif bundle:"
+            return BundleCheck(False, msg if msg.startswith("not a motif bundle:") else f"not a motif bundle: {msg}")
         if MEMBER_MANIFEST not in got or MEMBER_DB not in got:
             return BundleCheck(False, "not a motif bundle: manifest.json or motif.db missing")
         try:
             manifest = json.loads(got[MEMBER_MANIFEST].read_text("utf-8"))
         except Exception as e:
             return BundleCheck(False, f"not a motif bundle: manifest unreadable ({e})")
+        if not isinstance(manifest, dict):  # v0.51.339: a foreign manifest's shapes are guarded, not trusted (was a 500)
+            return BundleCheck(False, "not a motif bundle: manifest.json is not an object")
         if manifest.get("kind") != "motif-bundle":
             return BundleCheck(False, "not a motif bundle: manifest kind mismatch")
         fmt = manifest.get("format")
@@ -329,10 +354,14 @@ def inspect_bundle(path: Path) -> BundleCheck:
             return BundleCheck(False, f"bundle format {fmt!r} is newer than this build reads "
                                       f"({BUNDLE_FORMAT}) — upgrade motif before restoring")
         members = manifest.get("members") or {}
+        if not isinstance(members, dict):
+            return BundleCheck(False, "not a motif bundle: manifest members is not an object")
         for name, meta in members.items():
             if name not in got:
                 return BundleCheck(False, f"bundle is missing {name} the manifest lists")
-            if _sha256_file(got[name]) != (meta or {}).get("sha256"):
+            if not isinstance(meta, dict):
+                return BundleCheck(False, f"not a motif bundle: the manifest entry for {name} is not an object")
+            if _sha256_file(got[name]) != meta.get("sha256"):
                 return BundleCheck(False, f"{name} does not match the manifest checksum")
         for name in got:
             if name != MEMBER_MANIFEST and name not in members:
@@ -346,15 +375,15 @@ def inspect_bundle(path: Path) -> BundleCheck:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def bundle_config_text(path: Path) -> str | None:
-    """The bundle's motif.yaml text, or None when it carries none."""
+def bundle_config_bytes(path: Path) -> bytes | None:
+    """The bundle's motif.yaml bytes, or None when it carries none."""
     with tarfile.open(path, "r:gz") as tar:
         try:
             m = tar.getmember(MEMBER_CONFIG)
         except KeyError:
             return None
         f = tar.extractfile(m)
-        return f.read().decode("utf-8", "replace") if f else None
+        return f.read() if f else None
 
 
 def preview(path: Path, live_config: Path | None) -> dict:
@@ -365,19 +394,28 @@ def preview(path: Path, live_config: Path | None) -> dict:
         raise ValueError(check.error or "invalid bundle")
     m = check.manifest or {}
     live_text = live_config.read_text("utf-8", "replace") if (live_config and live_config.is_file()) else ""
-    diff = config_diff(live_text, bundle_config_text(path) or "") if check.has_config else []
+    diff: list[dict] = []
+    # v0.51.339: a side that does not parse is named, and there is no diff — never a false "every key differs".
+    parse_error: dict[str, str | None] = {"live": None, "bundle": None}
+    if check.has_config:
+        live, parse_error["live"] = flatten_config(live_text, side="live")
+        other, parse_error["bundle"] = flatten_config(bundle_config_bytes(path) or b"", side="bundle")
+        if not (parse_error["live"] or parse_error["bundle"]):
+            diff = _diff_rows(live, other)
+    census, counts = m.get("themes_census"), m.get("counts")
     return {
         "name": path.name,
         "manifest": {
             "format": m.get("format"), "motif_version": m.get("motif_version"),
             "schema_version": m.get("schema_version"), "created_at": m.get("created_at"),
-            "census_rows": len(m.get("themes_census") or []),
-            "counts": m.get("counts") or {},
+            "census_rows": len(census) if isinstance(census, list) else 0,  # v0.51.339: a non-list census was a TypeError 500
+            "counts": counts if isinstance(counts, dict) else {},
         },
         "db": {"ok": check.db.ok if check.db else False,
                "schema_version": check.db.schema_version if check.db else None},
         "config_in_bundle": check.has_config,
         "config_diff": diff,
+        "config_parse_error": parse_error,
         "cookies": "in bundle" if check.has_cookies else "not in bundle",
     }
 
@@ -400,20 +438,20 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
     tmp = Path(tempfile.mkdtemp(prefix=".bundle-stage-", dir=config_dir))
     try:
         got = _extract_members(bundle_path, tmp)
+        if not keep_config and MEMBER_CONFIG in got:
+            _, cfg_err = flatten_config(got[MEMBER_CONFIG].read_bytes(), side="bundle")
+            if cfg_err:  # v0.51.339: staged, it swaps in at boot and ConfigFile.load() raises — the next boot would crash
+                raise ValueError(f"the bundle's motif.yaml does not parse ({cfg_err}) — "
+                                 "restore with KEEP MY CURRENT CONFIG, or fix the bundle")
         db_backup.stage_restore(db_path, got[MEMBER_DB])
         check.staged.append("database")
-        cfg_pending = config_dir / CONFIG_PENDING
-        ck_pending = config_dir / COOKIES_PENDING
-        if keep_config:
-            for p in (cfg_pending, ck_pending):
-                if p.exists():
-                    p.unlink()
-        else:
+        clear_pending_config(config_dir)  # v0.51.339: a bundle stages exactly its own members — an earlier staging's cookies never ride along
+        if not keep_config:
             if MEMBER_CONFIG in got:
-                _stage_file(got[MEMBER_CONFIG], cfg_pending)
+                _stage_file(got[MEMBER_CONFIG], config_dir / CONFIG_PENDING)
                 check.staged.append("config")
             if MEMBER_COOKIES in got:
-                _stage_file(got[MEMBER_COOKIES], ck_pending)
+                _stage_file(got[MEMBER_COOKIES], config_dir / COOKIES_PENDING)
                 check.staged.append("cookies")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -433,44 +471,96 @@ def pending_members(db_path: Path, config_dir: Path) -> list[str]:
     return out
 
 
-def cancel_pending(db_path: Path, config_dir: Path) -> bool:
-    """Drop everything staged — the DB (db_backup) and the config members."""
-    any_ = db_backup.cancel_pending_restore(db_path)
+def clear_pending_config(config_dir: Path) -> list[str]:
+    """Unlink the staged motif.yaml / cookies.txt; returns the names removed."""
+    removed = []
     for name in (CONFIG_PENDING, COOKIES_PENDING):
         p = config_dir / name
         if p.exists():
             p.unlink()
-            any_ = True
-    return any_
+            removed.append(name)
+    if removed:
+        log.info("staged config restore dropped: %s", ", ".join(removed))
+    return removed
+
+
+def cancel_pending(db_path: Path, config_dir: Path) -> bool:
+    """Drop everything staged — the DB (db_backup) and the config members."""
+    any_ = db_backup.cancel_pending_restore(db_path)
+    return bool(clear_pending_config(config_dir)) or any_
+
+
+def _owner_only(path: Path) -> None:
+    try:
+        path.chmod(0o600)
+    except OSError as e:  # v0.51.339: a share that refuses chmod keeps the restore — the mode is a belt, not the swap
+        log.warning("bundle restore: could not chmod 0600 %s (%s) — it keeps its current mode", path, e)
 
 
 def apply_pending_config(config_dir: Path, *, now_stamp: str) -> dict | None:
-    """BOOT hook, before get_settings() reads motif.yaml. Swap a staged
-    motif.yaml / cookies.txt into place, each after a .prerestore-<stamp>
-    copy of the file it replaces. Never raises; a failure leaves the live
-    file and the pending file in place and logs WHY (cold-path rule)."""
-    targets = ((CONFIG_PENDING, "motif.yaml"), (COOKIES_PENDING, "cookies.txt"))
-    if not any((config_dir / p).exists() for p, _ in targets):
+    """BOOT hook, before get_settings() reads motif.yaml, once the staged
+    database applied (or none was staged). Swap a staged motif.yaml into
+    place after a .prerestore-<stamp> copy. Never raises; a failure keeps
+    the live and pending files and logs WHY (cold-path rule)."""
+    pending = config_dir / CONFIG_PENDING
+    if not pending.exists():
         return None
-    applied: list[str] = []
+    live = config_dir / MEMBER_CONFIG
     safety: dict[str, str] = {}
-    errors: dict[str, str] = {}
-    for pending_name, live_name in targets:
-        pending = config_dir / pending_name
-        if not pending.exists():
-            continue
-        live = config_dir / live_name
-        try:
-            if live.exists():
-                keep = config_dir / f"{live_name}.prerestore-{now_stamp}"
-                shutil.copy2(live, keep)
-                safety[live_name] = keep.name
-            _os.replace(pending, live)
-            applied.append(live_name)
-            log.warning("%s RESTORED from a staged bundle (pre-restore copy: %s)",
-                        live_name, safety.get(live_name, "(none)"))
-        except OSError as e:
-            errors[live_name] = str(e)
-            log.error("apply_pending_config: %s not swapped (%s) — live file kept, "
-                      "pending file kept for a retry", live_name, e)
-    return {"applied": applied, "safety": safety, "errors": errors}
+    try:
+        if live.exists():
+            keep = config_dir / f"{MEMBER_CONFIG}.prerestore-{now_stamp}"
+            shutil.copy2(live, keep)
+            safety[MEMBER_CONFIG] = keep.name
+        _os.replace(pending, live)
+    except OSError as e:
+        log.error("apply_pending_config: motif.yaml not swapped (%s) — live file kept, "
+                  "pending file kept for a retry", e)
+        return {"applied": [], "safety": safety, "errors": {MEMBER_CONFIG: str(e)}}
+    _owner_only(live)  # v0.51.339: a pending staged by .336-.338 is 0644 — the live config holds the Plex token
+    log.warning("motif.yaml RESTORED from a staged bundle (pre-restore copy: %s)",
+                safety.get(MEMBER_CONFIG, "(none)"))
+    return {"applied": [MEMBER_CONFIG], "safety": safety, "errors": {}}
+
+
+def apply_pending_cookies(config_dir: Path, live: Path, *, now_stamp: str) -> dict | None:
+    """BOOT hook, after get_settings(): copy a staged cookies.txt onto the
+    cookies file yt-dlp reads (settings.cookies_file, any mount) after a
+    <live>.prerestore-<stamp> copy. Never raises; a failure keeps the live
+    and pending files and logs WHY (cold-path rule)."""
+    pending = config_dir / COOKIES_PENDING
+    if not pending.exists():
+        return None
+    safety: dict[str, str] = {}
+    dest: Path | None = None
+    tmp: Path | None = None
+    try:
+        dest = Path(_os.path.realpath(live))  # v0.51.339: a symlinked cookies file is restored through its link, never replaced by a plain file
+        tmp = dest.with_name(dest.name + ".restore-tmp")
+        if dest.exists():
+            keep = dest.with_name(f"{dest.name}.prerestore-{now_stamp}")
+            shutil.copyfile(dest, keep)  # v0.51.339: copyfile + a chmod that may fail — copy2's copystat raised on a chmod-refusing share
+            _owner_only(keep)
+            safety[str(dest)] = keep.name
+        shutil.copyfile(pending, tmp)
+        _owner_only(tmp)
+        _os.replace(tmp, dest)  # v0.51.339: the temp sits beside the target, so the swap is atomic on the target's own mount
+    except (OSError, ValueError) as e:  # ValueError: a cookies path with no file name (e.g. "/") — never-raises holds at boot
+        log.error("apply_pending_cookies: %s not restored (%s) — live file kept, "
+                  "pending file kept for a retry", dest or live, e)
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+            except OSError as ce:
+                log.warning("apply_pending_cookies: could not remove %s (%s)", tmp, ce)
+        return {"applied": [], "safety": safety, "errors": {str(dest or live): str(e)}}
+    log.warning("cookies RESTORED from a staged bundle to %s (pre-restore copy: %s)",
+                dest, safety.get(str(dest), "(none)"))
+    try:
+        pending.unlink()
+    except OSError as e:
+        log.error("apply_pending_cookies: %s is restored but %s could not be removed (%s) — "
+                  "it applies again on the next restart", dest, pending.name, e)
+    return {"applied": [str(dest)], "safety": safety, "errors": {}}

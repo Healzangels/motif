@@ -201,12 +201,15 @@ def test_bulk_without_plex_still_restores_sidecars(tmp_path):
 def test_report_carries_plex_copy_restorable_count_and_changed(tmp_path):
     db, themes, plexdir = _seed(tmp_path)
     with get_conn(db) as conn:
-        rep = ch.broken_canonical_report(conn, themes)
+        rep = ch.broken_canonical_report(conn, themes, plex_available=True)
+        # v0.51.339: the store copy is only promised when the bulk can reach Plex.
+        off = ch.broken_canonical_report(conn, themes)
     copies = {r["tmdb_id"]: r["plex_copy"] for r in rep["canonical_missing"]}
     assert copies == {101: "sidecar", 102: "store", 103: None}, "101 by stat (no theme_present stamp), 102 by kind"
+    assert {r["tmdb_id"]: r["plex_copy"] for r in off["canonical_missing"]}[102] is None
     (plexdir / "101" / "theme.mp3").unlink()
     with get_conn(db) as conn:
-        rep2 = ch.broken_canonical_report(conn, themes)
+        rep2 = ch.broken_canonical_report(conn, themes, plex_available=True)
     assert {r["tmdb_id"]: r["plex_copy"] for r in rep2["canonical_missing"]}[101] is None, "the sidecar gone → no copy"
     assert rep["counts"]["restorable_from_plex"] == 2
     assert [c["tmdb_id"] for c in rep["changed"]] == [104]
@@ -256,7 +259,8 @@ def test_endpoint_restores_from_folders_without_plex_and_reports(admin_client):
     r = client.get("/api/admin/canonical-health/report", headers=AUTH)
     assert r.status_code == 200
     j = r.json()
-    assert j["counts"]["restorable_from_plex"] == 2 and j["counts"]["changed"] == 1
+    # v0.51.339: was 2 — Plex is off here, so 102's store copy is not restorable (the bulk skips it plex_unavailable).
+    assert j["counts"]["restorable_from_plex"] == 1 and j["counts"]["changed"] == 1
     r = client.post("/api/admin/canonical-health/restore-from-plex", headers=AUTH)
     assert r.status_code == 200, r.text
     j = r.json()

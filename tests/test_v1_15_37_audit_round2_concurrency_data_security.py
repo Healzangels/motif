@@ -215,7 +215,7 @@ def test_high_stakes_routes_wrapped_in_transactions():
         "api_redownload",
         "api_download_backup",
         "api_replace_item",
-        "api_restore_canonical",
+        # v0.51.339: api_restore_canonical writes through canonical_health — pinned in the next test.
         "api_convert_to_manual",
         "api_cancel_job",
     ):
@@ -228,6 +228,20 @@ def test_high_stakes_routes_wrapped_in_transactions():
             f"in transaction(conn) — pre-fix multi-row writes "
             f"could half-commit on partial failure"
         )
+
+
+def test_restore_canonical_writes_through_the_transactional_stamp():
+    """v0.51.339: api_restore_canonical runs canonical_health.restore_from_placement,
+    whose _stamp_restored holds the local_files + placements UPDATEs in one transaction."""
+    src = API_PY.read_text()
+    i = src.index("async def api_restore_canonical(")
+    body = src[i:src.index("\n    @app.", i)]
+    assert "restore_from_placement(db, themes_dir, r)" in body
+    ch_src = (API_PY.parent.parent / "core" / "canonical_health.py").read_text()
+    j = ch_src.index("def _stamp_restored(")
+    stamp = ch_src[j:ch_src.index("\ndef ", j + 1)]
+    assert "with get_conn(db_path) as conn, transaction(conn):" in stamp
+    assert "UPDATE placements SET placement_kind" in stamp
 
 
 def test_all_multi_write_get_conn_blocks_now_use_transaction():

@@ -22,6 +22,7 @@ from _slice_helpers import slice_between
 REPO = Path(__file__).resolve().parent.parent
 APP_CSS = (REPO / "app" / "web" / "static" / "app.css").read_text()
 OPS_CSS = (REPO / "app" / "web" / "static" / "ops.css").read_text()
+APP_JS = (REPO / "app" / "web" / "static" / "app.js").read_text()
 
 
 def _block(css: str, selector: str) -> str:
@@ -98,8 +99,32 @@ def test_topbar_inbox_label_compensates_on_itself():
     assert ls and _decl(block, "margin-right") == f"-{ls}", block
 
 
-def test_lone_glyph_logout_button_has_no_tracking():
-    assert _decl(_block(APP_CSS, ".topbar-logout"), "letter-spacing") == "0"
+def _side_paddings(block: str) -> tuple[str | None, str | None]:
+    left, right = _decl(block, "padding-left"), _decl(block, "padding-right")
+    if left is None and right is None:
+        parts = re.split(r"\s+(?![^()]*\))", _decl(block, "padding") or "")
+        right = parts[1] if len(parts) > 1 else parts[0]
+        left = parts[3] if len(parts) == 4 else right
+    return left, right
+
+
+# lone-glyph labels keep symmetric padding, so the tracking itself goes (the .topbar-logout idiom)
+LONE_GLYPH = [".topbar-logout", ".loud-stepper .btn-tiny"]
+
+
+@pytest.mark.parametrize("selector", LONE_GLYPH)
+def test_lone_glyph_buttons_have_no_tracking(selector):
+    block = _block(APP_CSS, selector)
+    # v0.51.339: a one-line rule has no "\n}" of its own — the slice ran into later rules and read their letter-spacing
+    assert block.count("{") == 1 and "}" not in block, f"{selector} must be its own multi-line rule:\n{block[:400]}"
+    left, right = _side_paddings(block)
+    assert left and left == right, (selector, left, right)
+    assert _decl(block, "letter-spacing") == "0", block
+
+
+def test_loud_stepper_labels_are_lone_glyphs():
+    labels = re.findall(r'data-act="loud-step"[^>]*>([^<]*)</button>', APP_JS)
+    assert len(labels) == 2 and all(len(label.strip()) == 1 for label in labels), labels
 
 
 def test_state_dot_buttons_are_lifted_without_growing():

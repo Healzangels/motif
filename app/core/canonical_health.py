@@ -145,7 +145,8 @@ def _sidecar_survives(media_folder) -> bool:
     return False
 
 
-def broken_canonical_report(conn, themes_dir: "Path | None" = None) -> dict:
+def broken_canonical_report(conn, themes_dir: "Path | None" = None, *,
+                            plex_available: bool = False) -> dict:
     """Read-only: every confirmed-broken canonical, split into the re-downloadable
     set (REPAIR ALL can fix these) and the canonical-missing set (manual re-place).
     Writes nothing — the /admin/canonical-health page renders this.
@@ -158,14 +159,12 @@ def broken_canonical_report(conn, themes_dir: "Path | None" = None) -> dict:
     restorable = 0
     for r in rows:
         entry = _entry(r)
-        p = _placement_for(conn, r)
+        p, sidecar = _placement_for(conn, r)
         entry["has_live_placement"] = bool(r["has_live_placement"])
-        # a pushed theme lives in Plex's store (no folder to copy from); any other
-        # live placement is a sidecar still in the Plex folder.
-        entry["plex_copy"] = (
-            "store" if (p and p["placement_kind"] == "plex_upload")
-            else "sidecar" if (r["has_live_placement"] or _sidecar_survives(p["media_folder"] if p else None))
-            else None)
+        # v0.51.339: restore_from_plex's own gates — the stored flag and a bare kind promised rows the bulk skips.
+        store = bool(plex_available and p is not None and str(p["plex_rating_key"] or "").isdigit()
+                     and (p["placement_kind"] == "plex_upload" or not p["media_folder"]))
+        entry["plex_copy"] = "sidecar" if sidecar else "store" if store else None
         if entry["plex_copy"]:
             restorable += 1
         if classify_repair(conn, r) == "redownload":
@@ -251,14 +250,25 @@ def enqueue_canonical_repairs(conn) -> dict:
 _PLACEMENT_SQL = (
     "SELECT media_folder, placement_kind, plex_rating_key, theme_present "
     "FROM placements WHERE media_type = ? AND tmdb_id = ? AND section_id = ? "
-    "AND COALESCE(edition_key, '') = COALESCE(?, '')"
+    "AND edition_key = ? ORDER BY theme_present DESC, placed_at DESC"
 )
 
 
 def _placement_for(conn, r):
-    return conn.execute(
+    """(placement, sidecar_survives): the first placement whose sidecar is still
+    on disk, else the first Plex's store can serve, else the first by theme_present
+    then recency; (None, False) if none."""
+    rows = conn.execute(
         _PLACEMENT_SQL, (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
-    ).fetchone()
+    ).fetchall()
+    # v0.51.339: the PK includes media_folder — fetchone() took the dead folder while a sibling held the sidecar.
+    for p in rows:
+        if _sidecar_survives(p["media_folder"]):
+            return p, True
+    # v0.51.339: plex_upload inserts leave theme_present NULL (sorts last) — a dead folder row hid the store.
+    store = next((p for p in rows if (p["placement_kind"] == "plex_upload" or not p["media_folder"])
+                  and str(p["plex_rating_key"] or "").isdigit()), None)
+    return (store or (rows[0] if rows else None)), False
 
 
 def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
@@ -298,11 +308,25 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
              r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
         )
         if placement_kind is not None:
+            # v0.51.339: only the folder the bytes came from — edition-wide, a plex_upload sibling ('') became 'hardlink'.
             conn.execute(
                 "UPDATE placements SET placement_kind = ? WHERE media_type = ? AND tmdb_id = ? "
-                "AND section_id = ? AND edition_key = ?",
-                (placement_kind, r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
+                "AND section_id = ? AND edition_key = ? AND media_folder = ?",
+                (placement_kind, r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"],
+                 r["media_folder"]),
             )
+
+
+def _stamp_present(db_path: Path, r) -> None:
+    """The restore guard found a non-empty canonical: stamp canonical_present = 1
+    only — size/sha stay as recorded, so CHANGED still reports a mismatch."""
+    from .db import get_conn, transaction
+    with get_conn(db_path) as conn, transaction(conn):
+        conn.execute(
+            "UPDATE local_files SET canonical_present = 1 WHERE media_type = ? AND tmdb_id = ? "
+            "AND section_id = ? AND edition_key = ?",
+            (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
+        )
 
 
 def restore_from_placement(db_path: Path, themes_dir: Path, r) -> dict:
@@ -417,7 +441,7 @@ def _broken_rows_with_placement(conn) -> list[dict]:
             "AND section_id = ? AND edition_key = ?",
             (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
         ).fetchone()
-        p = _placement_for(conn, r)
+        p, _sidecar = _placement_for(conn, r)
         d = {k: r[k] for k in r.keys()}
         d["file_size"] = lf["file_size"] if lf else None
         d["file_sha256"] = lf["file_sha256"] if lf else None
@@ -455,10 +479,13 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client) -> dict:
                 restored_store += 1
                 continue
             res = res2
+        reason = (res or {}).get("reason") or "no_plex_copy"
+        if reason == "canonical_already_present":
+            # v0.51.339: verify's own rule (non-empty = present) — else the row stays listed until the daily verify.
+            _stamp_present(db_path, r)
         skipped.append({"title": r["title"] or f'{r["media_type"]}/{r["tmdb_id"]}',
                         "media_type": r["media_type"], "tmdb_id": r["tmdb_id"],
-                        "section_id": r["section_id"],
-                        "reason": (res or {}).get("reason") or "no_plex_copy"})
+                        "section_id": r["section_id"], "reason": reason})
     log.info("restore from plex: %d from sidecars, %d from Plex's store, %d skipped of %d broken",
              restored_sidecar, restored_store, len(skipped), len(rows))
     return {"broken": len(rows), "restored_sidecar": restored_sidecar,

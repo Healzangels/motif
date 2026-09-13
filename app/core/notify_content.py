@@ -539,9 +539,12 @@ def _format_provenance_line(ctx: ItemContext) -> str:
     url = ctx.get("theme_url") or ""
     if not url:
         return f"Source: {dot}{prov}"
-    # Cheap platform classification — no need to re-import url_source here.
+    from .sync import url_source
     plat = "URL"
-    if "youtube.com" in url or "youtu.be" in url:
+    # v0.51.339: host-anchored and first — the bare "a.animethemes.moe" substring missed an uppercase host.
+    if url_source(url) == "animethemes":
+        plat = "AnimeThemes"
+    elif "youtube.com" in url or "youtu.be" in url:
         plat = "YouTube"
     elif "soundcloud.com" in url:
         plat = "SoundCloud"
@@ -549,8 +552,6 @@ def _format_provenance_line(ctx: ItemContext) -> str:
         plat = "Instagram"
     elif "facebook.com" in url or "fb.watch" in url:  # v1.22.90
         plat = "Facebook"
-    elif "a.animethemes.moe" in url:  # v0.51.315
-        plat = "AnimeThemes"
     return f"Source: {dot}{prov} · {plat}"
 
 

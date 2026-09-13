@@ -683,6 +683,11 @@ cohort ThemerrDB doesn't cover. Spec: `docs/specs/ANIMETHEMES_SPEC.md`
 - Add backwards-compat code paths for removed features.
 - Write multi-paragraph docstrings or block comments.
 - Invent abstractions for hypothetical reuse.
+- Add a credential-capable `motif.yaml` field without adding it to the ONE
+  mask rule in `app/core/config_file.py` (`WHOLE_SECRET_KEYS` /
+  `APPRISE_URL_LIST_KEYS` / `USERINFO_URL_KEYS`, applied by
+  `mask_config_value`). GET `/api/config` and the bundle restore preview both
+  mask through it (v0.51.339).
 - Commit secrets (Plex token, GitHub PATs, cookies.txt). The events
   log scrubber (`app/core/events.py`) redacts: (a) `detail` dict VALUES
   whose KEY contains `token|secret|password|cookie|auth|api_key|bearer`

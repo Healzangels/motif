@@ -6242,7 +6242,43 @@
 #   (5) Notifications: a downloaded AnimeThemes pick read "User URL"; the
 #   local_files step now reads the at- id first, like the SRC classifiers.
 #   The ladder below .329 is back in ascending order.
-__version__ = "0.51.338"
+# 0.51.339: review follow-ups, tag 2 of 3 — the backup bundle's staging and
+#   boot, CANONICAL HEALTH's restore counts, and the remaining correctness
+#   findings of the .328–.337 review.
+#   (1) Boot: a staged database applies FIRST; the bundle's motif.yaml follows
+#   only a database that applied (a database rejected at boot drops its
+#   config), and restored cookies land on paths.cookies_file — any path —
+#   after a pre-restore copy of that file. Both live files end 0600; a share
+#   that refuses chmod keeps the restore.
+#   (2) Staging: a snapshot staging (listed or uploaded) drops an earlier
+#   bundle's config/cookies pendings; a bundle stages exactly its own members.
+#   A bundle whose motif.yaml does not parse is refused (422) unless KEEP MY
+#   CURRENT CONFIG — staged, it crashed the next boot — and the preview names
+#   the side that does not parse instead of a false full diff.
+#   (3) Secrets: GET /api/config and the restore preview mask through one rule
+#   (config_file.mask_config_value). The preview had shown proxy_url and the
+#   sync URLs' credentials in clear and hidden the forward-auth allowlist.
+#   (4) Bundles: a symlinked motif.yaml/cookies.txt archives its bytes (was an
+#   unrestorable SYMTYPE member); a malformed manifest is a 422, not a 500;
+#   the census carries one placement per file; table_counts skips only a
+#   missing table.
+#   (5) CANONICAL HEALTH: RESTORE FROM PLEX (N) counts what the bulk can do
+#   (a sidecar by stat; Plex's store only when Plex is configured and the row
+#   has a numeric rating key); the placement pick prefers a surviving sidecar;
+#   the status line words each skip; an already-present row is stamped
+#   present; the missing block always repaints. The INFO card's restore uses
+#   the bulk's (it passed 0-byte stubs and never stamped canonical_present),
+#   and adopt and the cloud-theme backup stamp canonical_present too.
+#   (6) INFO headline: a backup row whose Plex theme dropped or failed verify
+#   says so and points at PROMOTE TO ACTIVE (it claimed Plex still served).
+#   (7) Small: a deep link with an off-tab SRC letter no longer opens an empty
+#   FILTERS drawer; the loudness stepper's – / + are centred; the notification
+#   platform suffix is host-anchored; the scheduler reads db_backup_bundle
+#   directly.
+#   UPGRADE NOTE: a bundle staged and then a snapshot staged over it on
+#   .336–.338 still applies the bundle's config at the first .339 boot —
+#   CANCEL RESTORE and re-stage before restarting.
+__version__ = "0.51.339"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +
 #   90px bar (~370px alone) plus .topbar-status having no shrink floor pushed

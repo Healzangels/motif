@@ -808,6 +808,13 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
     # download path. Pre-1.10.13 stored absolute, which broke the
     # canonical-layout migration on existing installs.
     rel_path = str(canonical_path.relative_to(settings.themes_dir))
+    # v0.51.339: verify's rule on the canonical just linked — a stale 0 kept the row in CANONICAL HEALTH.
+    try:
+        canonical_present = 1 if canonical_path.stat().st_size > 0 else 0
+    except OSError as e:
+        log.warning("adopt: could not stat the new canonical %s (%s) — keeping its prior canonical_present",
+                    canonical_path, e)
+        canonical_present = None
     # v1.24.13 (holistic review): wrap the 4-statement write cluster in ONE
     # transaction. Pre-fix this ran on the autocommit connection, so a crash
     # between the local_files upsert and the placements upsert left a tracked
@@ -826,9 +833,10 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
             """INSERT INTO local_files
                  (media_type, tmdb_id, section_id, edition_key, theme_id,
                   file_path, file_sha256, file_size, downloaded_at,
-                  source_video_id, provenance, source_kind)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                  source_video_id, provenance, source_kind, canonical_present)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
+                   canonical_present = COALESCE(excluded.canonical_present, local_files.canonical_present),
                    theme_id = excluded.theme_id,
                    file_path = excluded.file_path,
                    file_sha256 = excluded.file_sha256,
@@ -839,7 +847,7 @@ def _do_adopt(db_path: Path, finding, settings, decided_by: str) -> dict:
                    source_kind = excluded.source_kind""",
             (media_type, tmdb_id, section_id, edition_key, theme_id,
              rel_path, finding["file_sha256"], finding["file_size"],
-             now_iso(), source_vid, provenance, source_kind),
+             now_iso(), source_vid, provenance, source_kind, canonical_present),
         )
         conn.execute(
             """INSERT INTO placements

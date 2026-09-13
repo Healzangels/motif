@@ -7316,22 +7316,26 @@
         ? `✓ database: real SQLite, integrity ok, schema v${pv.db.schema_version}`
         : '✗ database: failed validation');
       const diff = pv.config_diff || [];
+      // v0.51.339: a bundle motif.yaml that does not parse would crash the boot that swaps it in — no diff, and the config stays.
+      const perr = pv.config_parse_error || {};
       line('restore-preview-config', !pv.config_in_bundle
         ? 'config: not in bundle — motif.yaml stays as it is'
+        : perr.bundle ? `✗ config: the bundle's motif.yaml could not be parsed (${perr.bundle}) — only the database can be restored; your motif.yaml and cookies.txt stay`
+        : perr.live ? `config: your live motif.yaml could not be parsed (${perr.live}) — no diff to show`
         : diff.length ? `config: ${diff.length} key${diff.length === 1 ? '' : 's'} differ from the live motif.yaml`
           : 'config: identical to the live motif.yaml');
       const diffEl = document.getElementById('restore-preview-diff');
       if (diffEl) {
         diffEl.innerHTML = diff.map((d) => '<div class="restore-diff-row">'
-          + `<div class="restore-diff-key">${htmlEscape(d.key)}</div>`
+          + `<div class="restore-diff-key">${htmlEscape(d.key)}${d.secret && d.live === d.bundle ? ' <span class="muted">(secret — differs, masked)</span>' : ''}</div>`
           + `<div class="restore-diff-del">− ${htmlEscape(d.live)}</div>`
           + `<div class="restore-diff-add">+ ${htmlEscape(d.bundle)}</div>`
           + '</div>').join('');
-        diffEl.hidden = !diff.length;
+        diffEl.hidden = !diff.length || !!perr.bundle || !!perr.live;
       }
-      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' ? ' — will replace yours unless you keep your config' : ''}`);
+      line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ' — will replace yours unless you keep your config' : ''}`);
       const keep = document.getElementById('database-restore-keep-config');
-      if (keep) keep.checked = false;
+      if (keep) { keep.checked = !!perr.bundle; keep.disabled = !!perr.bundle; }
       previewEl.dataset.name = pv.name;
       previewEl.hidden = false;
       previewEl.scrollIntoView({ block: 'nearest' });
@@ -7754,6 +7758,26 @@
       return `<a href="${tab}?${p.toString()}">${htmlEscape(r.title)}</a>${yr}`;
     }
     const src = (r) => htmlEscape((r.source_kind || '—').toUpperCase());
+    // v0.51.339: each skip reason in plain words — "had no Plex copy" also covered already-on-disk and Plex-off rows.
+    const SKIP_WORDS = [
+      ['canonical_already_present', 'already on disk'],
+      ['plex_unavailable', 'Plex not configured'],
+      ['placement_file_missing', 'Plex folder copy gone'],
+      ['link_failed:', 'copy failed'],
+      ['write_failed:', 'copy failed'],
+      ['plex_fetch:', 'Plex fetch failed'],
+      ['plex_themes:', 'Plex fetch failed'],
+    ];
+    function skipWords(skipped) {
+      const groups = new Map();
+      for (const s of skipped) {
+        const reason = String((s && s.reason) || '');
+        const hit = SKIP_WORDS.find(([prefix]) => reason.startsWith(prefix));
+        const words = hit ? hit[1] : 'no Plex copy';
+        groups.set(words, (groups.get(words) || 0) + 1);
+      }
+      return Array.from(groups, ([words, n]) => `${fmt(n)} ${words}`).join(', ');
+    }
 
     function render(rep) {
       if (!rep) return;
@@ -7766,26 +7790,23 @@
       } else {
         rdBlock.style.display = 'none';
       }
-      if (rep.canonical_missing && rep.canonical_missing.length) {
-        missBody.innerHTML = rep.canonical_missing.map((r) => {
-          const hint = r.plex_copy === 'sidecar'
-            ? '<span class="muted">Plex folder copy survives ▸</span>'
-            : r.plex_copy === 'store' ? '<span class="muted">in Plex\'s store ▸</span>'
-            : '<span class="muted">re-place from INFO ▸</span>';
-          return `<tr><td>${link(r)}</td><td class="col-src">${src(r)}</td><td>${hint}</td></tr>`;
-        }).join('');
-        missCount.textContent = `${fmt(c.canonical_missing)} with no source URL`;
-        missBlock.style.display = '';
-      } else {
-        missBlock.style.display = 'none';
-      }
+      // v0.51.339: always repaint — an emptied bucket kept the last render's rows + count under the RESTORE un-hide.
+      const missing = rep.canonical_missing || [];
+      missBody.innerHTML = missing.map((r) => {
+        const hint = r.plex_copy === 'sidecar'
+          ? '<span class="muted">Plex folder copy survives ▸</span>'
+          : r.plex_copy === 'store' ? '<span class="muted">in Plex\'s store ▸</span>'
+          : '<span class="muted">re-place from INFO ▸</span>';
+        return `<tr><td>${link(r)}</td><td class="col-src">${src(r)}</td><td>${hint}</td></tr>`;
+      }).join('');
+      missCount.textContent = `${fmt(c.canonical_missing || 0)} with no source URL`;
       // v0.51.337: the bulk shows only when it applies — some broken row
       // (either bucket) still has a copy in Plex.
+      const restorable = c.restorable_from_plex || 0;
+      missBlock.style.display = (missing.length || restorable) ? '' : 'none';
       if (restorePlexBtn) {
-        const n = c.restorable_from_plex || 0;
-        restorePlexBtn.style.display = n ? '' : 'none';
-        restorePlexBtn.textContent = `// RESTORE FROM PLEX (${fmt(n)})`;
-        if (n && missBlock.style.display === 'none') missBlock.style.display = '';
+        restorePlexBtn.style.display = restorable ? '' : 'none';
+        restorePlexBtn.textContent = `// RESTORE FROM PLEX (${fmt(restorable)})`;
       }
       if (chgBlock) {
         const chg = rep.changed || [];
@@ -7850,11 +7871,11 @@
         restorePlexStatus.className = 'form-status';
         try {
           const res = await api('POST', '/api/admin/canonical-health/restore-from-plex');
-          const skipped = (res.skipped || []).length;
+          const skipped = res.skipped || [];
           restorePlexStatus.textContent =
             `✓ restored ${fmt(res.restored)} (${fmt(res.restored_sidecar)} from Plex folders, `
             + `${fmt(res.restored_store)} from Plex's store)`
-            + (skipped ? ` · ${fmt(skipped)} had no Plex copy` : '');
+            + (skipped.length ? ` · ${fmt(skipped.length)} skipped (${skipWords(skipped)})` : '');
           restorePlexStatus.className = 'form-status form-status-ok';
           await load();
         } catch (e) {
@@ -14646,6 +14667,9 @@
         const drawer = document.getElementById('library-filter-drawer');
         if (drawer) _setFilterDrawerOpen(drawer.hidden);
       });
+    // v0.51.339: prune before the auto-open — an off-tab SRC letter (/movies?src_pills=AT) opened the drawer with nothing lit.
+    libraryState.tab = tabEl.value;
+    _pruneSrcFilterToOfferedChips();
     let _drawerWasOpen = false;
     try {
       _drawerWasOpen =
@@ -18260,7 +18284,11 @@
       const held = String(lf.source_video_id || '').startsWith('at-')
         ? 'AnimeThemes theme' : _heldWord(lf.source_kind || '');
       if ((lf.last_place_attempt_reason || '') === 'backup_only') {
-        return `${held} on disk as backup · Plex serves its own theme`;
+        // v0.51.339: "Plex serves" is the card player's and computeQuickPlay's test, not the backup stamp alone.
+        const plexServes = data.plex_has_theme === 1 && data.plex_theme_verified_ok !== 0;
+        return plexServes
+          ? `${held} on disk as backup · Plex serves its own theme`
+          : `${held} on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)`;
       }
       const placedKinds = placements
         .map((p) => p.placement_kind)

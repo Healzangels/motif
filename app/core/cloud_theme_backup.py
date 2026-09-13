@@ -1091,6 +1091,7 @@ def backup_cloud_theme(
             # Mirrors worker.py:1754 (downloader writer) shape exactly —
             # any column drift between writers is a class-9 contract-drift
             # bug waiting to happen.
+            # v0.51.339: a non-empty canonical was just os.replace'd in — a stale 0 kept the row listed broken.
             conn.execute(
                 """
                 INSERT INTO local_files
@@ -1098,10 +1099,11 @@ def backup_cloud_theme(
                      file_sha256, file_size, downloaded_at,
                      source_video_id, provenance, source_kind,
                      last_place_attempt_reason, last_place_attempt_at,
-                     mismatch_state)
+                     mismatch_state, canonical_present)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'auto', 'plex_cloud',
-                        'backup_only', ?, NULL)
+                        'backup_only', ?, NULL, 1)
                 ON CONFLICT(media_type, tmdb_id, section_id, edition_key) DO UPDATE SET
+                    canonical_present = 1,
                     file_path = excluded.file_path,
                     file_sha256 = excluded.file_sha256,
                     file_size = excluded.file_size,

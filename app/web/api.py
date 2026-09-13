@@ -11207,81 +11207,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         cfg = settings.cfg
         from dataclasses import asdict
         payload = asdict(cfg)
-        # Mask the token value (frontend just wants to know if it's set)
-        if payload.get("plex", {}).get("token"):
-            payload["plex"]["token"] = "***"
-            payload["plex"]["token_set"] = True
-        else:
-            payload["plex"]["token_set"] = False
-            payload["plex"]["token"] = ""
-        # Same for the optional TMDB API key (and legacy tvdb_api_key)
-        if payload.get("plex", {}).get("tvdb_api_key"):
-            payload["plex"]["tvdb_api_key"] = "***"
-            payload["plex"]["tvdb_api_key_set"] = True
-        else:
-            payload["plex"]["tvdb_api_key_set"] = False
-            payload["plex"]["tvdb_api_key"] = ""
-        if payload.get("plex", {}).get("tmdb_api_key"):
-            payload["plex"]["tmdb_api_key"] = "***"
-            payload["plex"]["tmdb_api_key_set"] = True
-        else:
-            payload["plex"]["tmdb_api_key_set"] = False
-            payload["plex"]["tmdb_api_key"] = ""
-        # v1.13.53: mask proxy_url too — supports inline credentials
-        # (socks5://user:pass@host:port). Same empty-vs-mask UX as
-        # plex.token: empty string in the GET → user has nothing
-        # configured; "***" → set, leave alone on next PATCH.
-        if payload.get("downloads", {}).get("proxy_url"):
-            payload["downloads"]["proxy_url"] = "***"
-            payload["downloads"]["proxy_url_set"] = True
-        else:
-            payload["downloads"]["proxy_url_set"] = False
-            payload["downloads"]["proxy_url"] = ""
-        # v1.21.15 (security audit M1): mask apprise_external_url too —
-        # it routinely carries basic-auth creds (http://user:pass@apprise
-        # -api.local/notify/...) or a token in the path, and was the one
-        # credential-capable URL field returned in cleartext. Same empty
-        # -vs-"***" UX as proxy_url; PATCH preserves on "***" / empty.
-        if payload.get("notifications", {}).get("apprise_external_url"):
-            payload["notifications"]["apprise_external_url"] = "***"
-            payload["notifications"]["apprise_external_url_set"] = True
-        else:
-            payload["notifications"]["apprise_external_url_set"] = False
-            payload["notifications"]["apprise_external_url"] = ""
-        # v1.17.13: mask each apprise_urls entry as `<scheme>://***`
-        # so embedded credentials (Discord webhook tokens, Pushover
-        # app/user keys, Telegram bot tokens, mailto user:pass)
-        # don't leak through GET. PATCH handler resolves masked
-        # entries positionally → "keep the existing URL at this
-        # slot" so round-tripping the GET-then-PATCH doesn't wipe
-        # credentials. Security audit HIGH 2.
-        from ..core.config_file import mask_apprise_url
-        notif_urls = (
-            payload.get("notifications", {}).get("apprise_urls") or []
-        )
-        if notif_urls:
-            payload["notifications"]["apprise_urls"] = [
-                mask_apprise_url(u) for u in notif_urls
-            ]
-            payload["notifications"]["apprise_urls_set_count"] = (
-                len(notif_urls)
-            )
-        else:
-            payload["notifications"]["apprise_urls_set_count"] = 0
-        # v1.21.17 (security audit MED): sync.git_url / database_url were the
-        # only two credential-capable fields returned in cleartext. They're
-        # normally public (the default ThemerrDB URLs), but a private
-        # authenticated mirror can embed a PAT in the userinfo
-        # (https://user:ghp_xxx@host/...). Redact only the userinfo so the
-        # editable host+path stays visible; PATCH preserves on the masked
-        # marker so a GET-then-PATCH round-trip can't corrupt the stored URL.
-        from ..core.config_file import mask_url_credentials
-        # v1.23.62 (audit #6): db_url was the third credential-capable sync URL
-        # (the per-item-JSON remote source) but was never added alongside
-        # git_url/database_url, so its userinfo leaked in cleartext on GET /api/config.
-        for _uk in ("git_url", "database_url", "db_url"):
-            if payload.get("sync", {}).get(_uk):
-                payload["sync"][_uk] = mask_url_credentials(payload["sync"][_uk])
+        # v0.51.339: every credential field masks through config_file's one rule — the bundle restore preview applies the same one.
+        from ..core.config_file import SECRET_CONFIG_KEYS, WHOLE_SECRET_KEYS, mask_config_value
+        for _dotted in SECRET_CONFIG_KEYS:
+            _sec, _leaf = _dotted.split(".", 1)
+            _raw = payload[_sec].get(_leaf)
+            payload[_sec][_leaf] = mask_config_value(_dotted, _raw)
+            if _dotted in WHOLE_SECRET_KEYS:
+                payload[_sec][f"{_leaf}_set"] = bool(_raw)  # "" = nothing configured; "***" = set, PATCH keeps it
+        # v1.17.13: how many apprise URLs are configured, without their values (PATCH resolves masked entries positionally).
+        payload["notifications"]["apprise_urls_set_count"] = len(payload["notifications"].get("apprise_urls") or [])
         return {
             "config": payload,
             "env_overrides": settings.env_overrides(),
@@ -11995,7 +11930,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     # (mt,tmdb,section)-only → on a multi-edition title it paired
                     # a row with an arbitrary sibling's placement, and the
                     # placement_kind UPDATE below landed on the wrong edition).
-                    """SELECT lf.section_id, lf.edition_key, lf.file_path,
+                    """SELECT lf.media_type, lf.tmdb_id, lf.section_id,
+                              lf.edition_key, lf.file_path,
                               lf.file_size, lf.file_sha256, p.media_folder,
                               p.placement_kind
                        FROM local_files lf
@@ -12010,91 +11946,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not rows:
                 raise HTTPException(status_code=404,
                                     detail="no local_files row for this item")
-            from ..core.plex_enum import _candidate_local_paths
-            import hashlib
-            import os
-            import shutil
+            from ..core.canonical_health import restore_from_placement
             restored = 0
             skipped: list[dict] = []
             for r in rows:
-                canonical = themes_dir / r["file_path"]
-                if canonical.is_file():
-                    skipped.append({"section_id": r["section_id"],
-                                    "reason": "canonical_already_present"})
-                    continue
-                if not r["media_folder"]:
-                    skipped.append({"section_id": r["section_id"],
-                                    "reason": "no_placement"})
-                    continue
-                # Find a readable placement file (try host→container
-                # translations the same way plex_enum does)
-                placement_src: Path | None = None
-                for cand in _candidate_local_paths(r["media_folder"]):
-                    p = cand / "theme.mp3"
-                    try:
-                        if p.is_file():
-                            placement_src = p
-                            break
-                    except OSError:
-                        continue
-                if placement_src is None:
-                    skipped.append({"section_id": r["section_id"],
-                                    "reason": "placement_file_missing"})
-                    continue
-                try:
-                    canonical.parent.mkdir(parents=True, exist_ok=True)
-                    kind = "hardlink"
-                    try:
-                        os.link(placement_src, canonical)
-                    except OSError as e:
-                        if e.errno != 18:  # EXDEV (cross-device)
-                            raise
-                        shutil.copy2(placement_src, canonical)
-                        kind = "copy"
-                except OSError as e:
-                    log.warning("restore-canonical: %s/%s section=%s failed: %s",
-                                media_type, tmdb_id, r["section_id"], e)
-                    skipped.append({"section_id": r["section_id"],
-                                    "reason": f"link_failed:{e}"})
-                    continue
-                # Re-stat for accurate file_size + sha256
-                try:
-                    size = canonical.stat().st_size
-                    h = hashlib.sha256()
-                    with canonical.open("rb") as f:
-                        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-                            h.update(chunk)
-                    sha = h.hexdigest()
-                except OSError as e:
-                    # v1.20.42: re-hash of the just-restored canonical failed.
-                    # Keep the prior size/sha (usually still correct — we just
-                    # re-linked the same bytes) but leave a breadcrumb (class 9)
-                    # so a genuinely-wrong hash isn't written into local_files
-                    # silently.
-                    log.warning("restore: re-hash failed for %s/%s section=%s: "
-                                "%s — keeping prior size/sha",
-                                media_type, tmdb_id, r["section_id"], e)
-                    size, sha = r["file_size"], r["file_sha256"]
-                with get_conn(db) as conn, transaction(conn):
-                    conn.execute(
-                        """UPDATE local_files SET file_size = ?, file_sha256 = ?,
-                                                  downloaded_at = ?
-                           WHERE media_type = ? AND tmdb_id = ? AND section_id = ?
-                             AND edition_key = ?""",
-                        (size, sha, now_iso(),
-                         media_type, tmdb_id, r["section_id"], r["edition_key"]),
-                    )
-                    # If a placement existed but its kind was 'copy' and
-                    # we just made a hardlink, update placements too.
-                    if r["placement_kind"] != kind:
-                        conn.execute(
-                            """UPDATE placements SET placement_kind = ?
-                               WHERE media_type = ? AND tmdb_id = ?
-                                 AND section_id = ? AND edition_key = ?""",
-                            (kind, media_type, tmdb_id, r["section_id"],
-                             r["edition_key"]),
-                        )
-                restored += 1
+                # v0.51.339: the bulk's restore — its clone here passed 0-byte stubs, EEXIST'd, never stamped canonical_present.
+                res = restore_from_placement(db, themes_dir, r)
+                if res["ok"]:
+                    restored += 1
+                else:
+                    skipped.append({"section_id": r["section_id"], "reason": res["reason"]})
             log_event(db, level="INFO", component="api",
                       media_type=media_type, tmdb_id=tmdb_id,
                       message=f"Canonical restored from placement by "
@@ -17373,14 +17234,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # while Plex was visibly still serving (the user's confusing state).
             _pi_independent = None
             _pi_has_theme = None
+            _pi_verified_ok = None
             with get_conn(db) as conn:
                 if rating_key:
                     _pind = conn.execute(
-                        "SELECT plex_independent_theme, has_theme FROM plex_items "
+                        "SELECT plex_independent_theme, has_theme, plex_theme_verified_ok FROM plex_items "
                         "WHERE rating_key = ?", (rating_key,)).fetchone()
                     if _pind:
                         _pi_independent = _pind["plex_independent_theme"]
                         _pi_has_theme = _pind["has_theme"]
+                        _pi_verified_ok = _pind["plex_theme_verified_ok"]
                 # v0.51.42 (code-review): resolve each flag INDEPENDENTLY. The
                 # v0.51.37 gate `_pi_independent is None AND _pi_has_theme is None`
                 # coupled them — has_theme is NOT NULL, so a tier-1 rk-hit always
@@ -17394,7 +17257,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # scope (the .312 guid-NULL-only arm broke orphan/imdb bonds).
                 if (_pi_independent is None or _pi_has_theme is None) and section_id:
                     _pind = conn.execute(
-                        "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
+                        "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h, "
+                        "       MAX(CASE WHEN has_theme = 1 THEN COALESCE(plex_theme_verified_ok, 1) END) AS ok "
                         "FROM plex_items "
                         "WHERE section_id = ? AND (guid_tmdb = ? OR (theme_id = ? AND NOT EXISTS ("
                         "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
@@ -17408,9 +17272,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             _pi_independent = _pind["v"]
                         if _pi_has_theme is None:
                             _pi_has_theme = _pind["h"]
+                            _pi_verified_ok = _pind["ok"]
                 if _pi_independent is None or _pi_has_theme is None:
                     _pind = conn.execute(
-                        "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h "
+                        "SELECT MAX(plex_independent_theme) AS v, MAX(has_theme) AS h, "
+                        "       MAX(CASE WHEN has_theme = 1 THEN COALESCE(plex_theme_verified_ok, 1) END) AS ok "
                         "FROM plex_items "
                         "WHERE (guid_tmdb = ? OR (theme_id = ? AND NOT EXISTS ("
                         "         SELECT 1 FROM plex_items g WHERE g.guid_tmdb = ? "
@@ -17423,6 +17289,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                             _pi_independent = _pind["v"]
                         if _pi_has_theme is None:
                             _pi_has_theme = _pind["h"]
+                            _pi_verified_ok = _pind["ok"]
 
                 # v0.51.308: resolve THIS card's plex rating_key — every
                 # deep-link producer (inbox, /queue OPEN ROW, loudness,
@@ -17485,6 +17352,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 # Plex-served / no-motif-theme row (incl. the transient window
                 # after UNMANAGE of a plex_upload row) instead of "(none)".
                 "plex_has_theme": _pi_has_theme,
+                # v0.51.339: the headline's "Plex serves" test needs the verify stamp (a 404 leaves has_theme 1).
+                "plex_theme_verified_ok": _pi_verified_ok,
                 "local_file": local_payloads[0] if local_payloads else None,
                 "local_files": local_payloads,
                 # v0.51.218: which cut the card is showing, and whether that was a
@@ -27384,9 +27253,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                               "motif container to apply it — what it replaces is backed "
                               "up automatically just before the swap.")
             return out
+        def _stage_snapshot() -> "db_backup.RestoreCheck":
+            chk = db_backup.stage_restore(settings.db_path, src)
+            bundle_mod.clear_pending_config(settings.config_dir)  # v0.51.339: an earlier bundle's config/cookies would apply beside THIS snapshot at boot
+            return chk
+
         try:
-            check = await run_in_threadpool(
-                db_backup.stage_restore, settings.db_path, src)
+            check = await run_in_threadpool(_stage_snapshot)
         except ValueError as e:
             raise HTTPException(status_code=422, detail=str(e))
         log_event(
@@ -27479,7 +27352,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             try:
                 with os.fdopen(fd, "wb") as f:
                     f.write(data)
-                return db_backup.stage_restore(settings.db_path, Path(tmp))
+                chk = db_backup.stage_restore(settings.db_path, Path(tmp))
+                bundle_mod.clear_pending_config(settings.config_dir)  # v0.51.339: an uploaded snapshot stages the database only — drop a bundle's config/cookies
+                return chk
             finally:
                 try: os.unlink(tmp)
                 except OSError: pass
@@ -27780,9 +27655,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         from ..core.db import get_conn
         # v0.51.337: the CHANGED bucket stats every present canonical — a thread.
         _td = settings.themes_dir if (settings.is_paths_ready() and settings.themes_dir) else None
+        # v0.51.339: the bulk refetches from Plex's store only when Plex is configured — count the same.
+        _plex = bool(settings.plex_enabled and settings.plex_url and settings.plex_token)
         def _run():
             with get_conn(db) as conn:
-                return broken_canonical_report(conn, _td)
+                return broken_canonical_report(conn, _td, plex_available=_plex)
         return await run_in_threadpool(_run)
 
     @app.post("/api/admin/canonical-health/check")
@@ -27803,8 +27680,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             _td = settings.themes_dir if (settings.is_paths_ready() and settings.themes_dir) else None
             if _td:
                 verify_canonical_health(db, _td)
+            # v0.51.339: same Plex gate as the bulk, so RESTORE FROM PLEX (N) is what it can restore.
+            _plex = bool(settings.plex_enabled and settings.plex_url and settings.plex_token)
             with get_conn(db) as conn:
-                return broken_canonical_report(conn, _td)  # v0.51.337: + changed
+                return broken_canonical_report(conn, _td, plex_available=_plex)  # v0.51.337: + changed
 
         return await run_in_threadpool(_run)
 

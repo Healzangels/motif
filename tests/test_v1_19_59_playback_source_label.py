@@ -103,7 +103,8 @@ def test_helper_handles_bk_rows():
     # v0.51.323: one source-agnostic backup branch; the strip owns the badge
     # letters and the action, so neither may creep back into the headline.
     assert "badge" not in body
-    assert "PROMOTE TO ACTIVE" not in body
+    # v0.51.339: named once, only where Plex no longer serves — the matrix is tests/test_v0_51_339_ui_residuals.py
+    assert body.count("PROMOTE TO ACTIVE") == 1 and "Plex no longer serves a theme (PROMOTE TO ACTIVE" in body
     assert "Plex serves its own theme" in body
 
 

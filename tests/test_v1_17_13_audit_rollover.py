@@ -391,10 +391,13 @@ def test_api_get_config_masks_apprise_urls():
     idx = src.index("@app.get(\"/api/config\")")
     end = src.index("@app.patch(\"/api/config\")", idx)
     block = src[idx:end]
-    assert "mask_apprise_url" in block, (
+    # v0.51.339: the handler masks through the shared config_file rule, which applies mask_apprise_url.
+    assert "mask_config_value" in block, (
         "v1.17.13: GET /api/config must mask apprise_urls "
         "(prevents credential leak via admin token theft)."
     )
+    from app.core.config_file import mask_config_value
+    assert mask_config_value("notifications.apprise_urls", ["discord://abc123/xyz789"]) == ["discord://***"]
     # Set-count metadata for the UI.
     assert "apprise_urls_set_count" in block, (
         "v1.17.13: GET response should expose "

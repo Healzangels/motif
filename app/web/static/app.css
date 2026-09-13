@@ -4855,7 +4855,12 @@ body.auth-page .auth-card { margin: 0; }
 .loud-ctl-label { flex: 0 0 auto; min-width: 3.5em; }
 .loud-stepper { display: inline-flex; align-items: center; gap: var(--gap-2); }
 /* the +/- steppers are single glyphs — drop the .btn-tiny 72px min-width to a compact square. */
-.loud-stepper .btn-tiny { min-width: 2.2em; padding-left: var(--gap-2); padding-right: var(--gap-2); }
+.loud-stepper .btn-tiny {
+  min-width: 2.2em;
+  padding-left: var(--gap-2);
+  padding-right: var(--gap-2);
+  letter-spacing: 0; /* v0.51.339: lone glyphs, symmetric padding — the inherited .btn tracking sat them 0.8px left */
+}
 .loud-stepper #loud-target { min-width: 3.2em; text-align: right; color: var(--fg); font-variant-numeric: tabular-nums; }
 /* the gain note drops to its own line so it never crowds the stepper on a narrow drawer. */
 .loud-gain-note { flex: 1 1 100%; }

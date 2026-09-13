@@ -72,13 +72,17 @@ def test_config_diff_lists_only_differing_keys_and_masks_secrets():
     assert set(d) == {"plex.url", "plex.token", "notifications.apprise_urls", "new.key"}
     assert d["plex.url"] == {"key": "plex.url", "secret": False, "live": "http://a", "bundle": "http://b"}
     assert d["plex.token"]["secret"] and d["plex.token"]["live"] == bundle.MASK and d["plex.token"]["bundle"] == bundle.MASK
-    assert d["notifications.apprise_urls"]["live"] == bundle.MASK, "webhook URLs carry tokens"
+    # v0.51.339: apprise URLs mask as GET /api/config masks them — the scheme shows, the token never does
+    ap = d["notifications.apprise_urls"]
+    assert ap["secret"] and ap["live"] == ap["bundle"] == '["discord://***"]', "webhook URLs carry tokens"
     assert d["new.key"]["live"] == "(unset)" and d["new.key"]["bundle"] == "1"
-    assert "B" not in json.dumps(d) and "discord://" not in json.dumps(d)
+    assert "B" not in json.dumps(d) and "discord://x" not in json.dumps(d) and "discord://y" not in json.dumps(d)
 
 
-def test_config_diff_survives_malformed_yaml():
-    assert bundle.config_diff("a: [unclosed", "a: 1") == [{"key": "a", "secret": False, "live": "(unset)", "bundle": "1"}]
+def test_config_diff_is_empty_when_a_side_does_not_parse():
+    # v0.51.339: reversed — this pinned a false diff ("a" unset → 1) for YAML that does not parse
+    assert bundle.config_diff("a: [unclosed", "a: 1") == []
+    assert bundle.config_diff("a: 1", "a: [unclosed") == []
 
 
 # ── inspect ───────────────────────────────────────────────────────────
@@ -187,17 +191,22 @@ def test_apply_pending_config_swaps_after_prerestore_copies(tmp_path):
     b = _make_bundle(tmp_path)
     db, cd = _live(tmp_path)
     bundle.stage_bundle_restore(db, cd, b, keep_config=False)
+    # v0.51.339: retargeted — the cookies leg is apply_pending_cookies onto settings.cookies_file, after get_settings()
     res = bundle.apply_pending_config(cd, now_stamp="20260913-010203")
-    assert res["applied"] == ["motif.yaml", "cookies.txt"] and res["errors"] == {}
-    assert res["safety"] == {"motif.yaml": "motif.yaml.prerestore-20260913-010203",
-                             "cookies.txt": "cookies.txt.prerestore-20260913-010203"}
+    assert res["applied"] == ["motif.yaml"] and res["errors"] == {}
+    assert res["safety"] == {"motif.yaml": "motif.yaml.prerestore-20260913-010203"}
+    ck = bundle.apply_pending_cookies(cd, cd / "cookies.txt", now_stamp="20260913-010203")
+    assert ck["applied"] == [str((cd / "cookies.txt").resolve())] and ck["errors"] == {}
+    assert ck["safety"] == {str((cd / "cookies.txt").resolve()): "cookies.txt.prerestore-20260913-010203"}
     assert "OLD-TOKEN" in (cd / "motif.yaml").read_text(), "the bundle's config is live"
     assert "LIVE-TOKEN" in (cd / "motif.yaml.prerestore-20260913-010203").read_text(), "the undo copy"
     assert (cd / "cookies.txt").read_text() == "# cookies\n"
+    assert (cd / "cookies.txt.prerestore-20260913-010203").read_text() == "# live cookies\n"
     assert not (cd / bundle.CONFIG_PENDING).exists() and not (cd / bundle.COOKIES_PENDING).exists()
     # the DB member still waits for db_backup's own boot hook
     assert db_backup.restore_pending_path(db).exists()
     assert bundle.apply_pending_config(cd, now_stamp="20260913-010204") is None
+    assert bundle.apply_pending_cookies(cd, cd / "cookies.txt", now_stamp="20260913-010204") is None
 
 
 def test_stage_refuses_a_bad_bundle_and_touches_nothing(tmp_path):

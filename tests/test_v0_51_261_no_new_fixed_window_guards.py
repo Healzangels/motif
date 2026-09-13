@@ -86,7 +86,7 @@ _BUDGET = 1478  # v0.51.338: v1.19.76's 1200-char SRC ALL window converted to an
 # shapes it was blind to (`max(0, a - N)` and Call bases — 135 windows, the
 # measured 214 − 79), so the census sees the whole population. Still equality,
 # still only DOWN.
-_BACKWARD_BUDGET = 212  # v0.51.336: v0.51.143's restore-upload [i-200:i+1500] window converted to an anchored slice; v0.51.322: v1.15.125 preload window converted to an anchor slice
+_BACKWARD_BUDGET = 211  # v0.51.339: v1.20.42's restore re-hash [anchor-120:anchor+80] window converted to a _stamp_restored slice; v0.51.336: v0.51.143's restore-upload [i-200:i+1500] window converted to an anchored slice; v0.51.322: v1.15.125 preload window converted to an anchor slice
 
 
 def _backward_base(node):

@@ -205,26 +205,6 @@ def _probe_writability(settings, log) -> None:
 
 
 def main() -> int:
-    # v0.51.336: a staged bundle restore swaps motif.yaml / cookies.txt HERE,
-    # before get_settings() reads the YAML — the swap after a pre-restore copy
-    # of each file (docs/specs/BACKUP_BUNDLE_SPEC.md § 9). The database member
-    # follows below through db_backup.apply_pending_restore as before.
-    from datetime import datetime as _dt, timezone as _tz
-    from .config import _DEFAULT_CONFIG_DIR as _cfg_dir
-    from .core import bundle as _bundle
-    _cfg_restore = _bundle.apply_pending_config(
-        _cfg_dir, now_stamp=_dt.now(_tz.utc).strftime("%Y%m%d-%H%M%S"))
-    settings = get_settings()
-    configure_logging(settings.log_level, settings.config_dir)
-    log = logging.getLogger("motif.main")
-    if _cfg_restore:
-        log.warning("Config restored at boot from a staged bundle: %s (pre-restore copies: %s; errors: %s)",
-                    ", ".join(_cfg_restore.get("applied") or []) or "(none)",
-                    _cfg_restore.get("safety") or "(none)", _cfg_restore.get("errors") or "(none)")
-
-    # Verify config dir exists (it might be a fresh appdata mount)
-    settings.config_dir.mkdir(parents=True, exist_ok=True)
-
     # v1.23.17/.18: apply a staged database restore as the VERY FIRST
     # thing that touches the DB file, before any event-log call (which
     # spawns the events-flusher thread that opens its own long-lived
@@ -233,17 +213,52 @@ def main() -> int:
     # os.replace). The swap is clean here: no open FDs, stale WAL
     # removed, current db safety-copied first; init_db (further down)
     # then migrates the restored file forward if needed.
-    from datetime import datetime, timezone
+    from datetime import datetime as _dt, timezone as _tz
+    from .config import _DEFAULT_CONFIG_DIR as _cfg_dir
+    from .core import bundle as _bundle
     from .core import db_backup as _db_backup
-    _restore = _db_backup.apply_pending_restore(
-        settings.db_path, settings.config_dir,
-        now_stamp=datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S"))
+    _stamp = _dt.now(_tz.utc).strftime("%Y%m%d-%H%M%S")
+    _db_path = _cfg_dir / "motif.db"  # v0.51.339: Settings.db_path's rule (the env's config dir, never the YAML) — so the DB applies before settings exist
+    _restore = _db_backup.apply_pending_restore(_db_path, _cfg_dir, now_stamp=_stamp)
+    # v0.51.339: a staged bundle config follows its database — never live beside a DB restore that did not apply
+    _config_follows = _restore is None or bool(_restore.get("applied"))
+    _cfg_restore = _cfg_dropped = None
+    if _config_follows:
+        _cfg_restore = _bundle.apply_pending_config(_cfg_dir, now_stamp=_stamp)
+    elif not _db_backup.restore_pending_path(_db_path).exists():
+        _cfg_dropped = _bundle.clear_pending_config(_cfg_dir)  # v0.51.339: the DB pending was rejected and discarded — kept, its config would go live alone next boot
+    settings = get_settings()
+    configure_logging(settings.log_level, settings.config_dir)
+    log = logging.getLogger("motif.main")
     if _restore and _restore.get("applied"):
         log.warning("Database restored at boot (schema v%s; safety backup: %s)",
                     _restore.get("schema_version"),
                     _restore.get("safety_backup") or "(none)")
     elif _restore and _restore.get("error"):
         log.error("Staged restore not applied: %s", _restore["error"])
+    else:
+        log.info("no staged database restore pending")
+    _cfg_waiting = [] if _config_follows else [
+        m for m in _bundle.pending_members(_db_path, _cfg_dir) if m != "database"]
+    if _cfg_restore:
+        log.warning("Config restored at boot from a staged bundle: %s (pre-restore copies: %s; errors: %s)",
+                    ", ".join(_cfg_restore.get("applied") or []) or "(none)",
+                    _cfg_restore.get("safety") or "(none)", _cfg_restore.get("errors") or "(none)")
+    elif _cfg_dropped:
+        log.error("Staged config restore dropped (%s): its database was rejected at boot — "
+                  "re-stage the bundle to retry", ", ".join(_cfg_dropped))
+    elif _cfg_waiting:
+        log.warning("Staged config restore (%s) waits for its database — kept staged; it applies "
+                    "on the restart that applies the database", ", ".join(_cfg_waiting))
+    else:
+        log.info("no staged config restore pending")
+    if _config_follows:
+        # v0.51.339: cookies land on the file yt-dlp reads (paths.cookies_file / MOTIF_COOKIES_FILE), never a hard-coded config_dir/cookies.txt
+        if _bundle.apply_pending_cookies(_cfg_dir, settings.cookies_file, now_stamp=_stamp) is None:
+            log.info("no staged cookies restore pending")
+
+    # Verify config dir exists (it might be a fresh appdata mount)
+    settings.config_dir.mkdir(parents=True, exist_ok=True)
 
     # v0.51.302 (holistic r2): schema BEFORE the first log_event — the
     # fail-closed forward-auth WARNING at boot wrote to a table that did not

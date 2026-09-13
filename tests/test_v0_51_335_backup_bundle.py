@@ -160,11 +160,28 @@ def test_mid_write_failure_leaves_nothing_behind(tmp_path, monkeypatch):
     assert sorted(p.name for p in (cd / "backups").iterdir()) == []
 
 
-def test_bundle_is_renamed_into_place_never_copied():
+def test_bundle_is_renamed_into_place_never_copied(tmp_path, monkeypatch):
     """The final step is an atomic rename of the finished .part; a copy could
     leave a half-written bundle under the listed name."""
-    src = (REPO / "app" / "core" / "bundle.py").read_text()
-    assert "part.replace(dest)" in src and "shutil.copyfile(" not in src
+    import shutil
+    db, cfg, cookies, cd = _prep(tmp_path)
+
+    def no_copy(*a, **k):
+        raise AssertionError("create_bundle must rename the finished bundle into place, never copy it")
+    # v0.51.339: behavioural — the old whole-module "shutil.copyfile(" ban also forbade the cookies restore's temp copy.
+    for name in ("copy", "copy2", "copyfile", "move"):
+        monkeypatch.setattr(shutil, name, no_copy)
+    renames = []
+    real_replace = Path.replace
+
+    def replace(self, target):
+        renames.append((self.name, Path(target).name))
+        return real_replace(self, target)
+    monkeypatch.setattr(Path, "replace", replace)
+    bf = bundle.create_bundle(db, cd, config_file=cfg, cookies_file=cookies,
+                              themes_dir=tmp_path / "data" / "themes", now_stamp=NOW,
+                              motif_version="0.51.335", schema_version=CURRENT_SCHEMA_VERSION)
+    assert (f"{bf.name}.part", bf.name) in renames
 
 
 # ── the snapshot machinery admits bundles ────────────────────────────

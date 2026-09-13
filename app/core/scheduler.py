@@ -1304,7 +1304,7 @@ def _scheduled_database_backup(settings: "Settings") -> None:
     from . import db_backup
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     try:
-        if getattr(settings, "db_backup_bundle", False):
+        if settings.db_backup_bundle:  # v0.51.339: no getattr shim — a settings surface without the toggle fails loudly, never a silent bare snapshot
             # v0.51.335: a bundle — the snapshot plus motif.yaml, cookies.txt
             # and the themes census — instead of a bare snapshot (spec § 3).
             from app import __version__

@@ -56,7 +56,11 @@ def test_href_sinks_use_safehref():
 # ── M1: apprise_external_url masking ─────────────────────────
 
 def test_apprise_external_url_masked_in_get():
-    assert 'payload["notifications"]["apprise_external_url"] = "***"' in API_PY
+    # v0.51.339: the GET handler masks through the shared config_file rule; pin the rule's behaviour, not a line.
+    from app.core.config_file import WHOLE_SECRET_KEYS, mask_config_value
+    assert "for _dotted in SECRET_CONFIG_KEYS:" in API_PY
+    assert "notifications.apprise_external_url" in WHOLE_SECRET_KEYS
+    assert mask_config_value("notifications.apprise_external_url", "http://u:pw@apprise.lan/notify") == "***"
 
 
 def test_apprise_external_url_preserved_in_patch():

@@ -125,14 +125,21 @@ staged, shows a **restore preview** card:
   04:00 UTC · 2,822 themes in the census`;
 - the DB check line the snapshot restore already prints;
 - a **config diff** — only the keys that differ between the bundle's
-  `motif.yaml` and the live one, secrets shown as `••••` on both sides — with
+  `motif.yaml` and the live one, secrets shown the way GET `/api/config`
+  shows them (`***`, `<scheme>://***`, `://***@host`; v0.51.339) — with
   a checkbox `KEEP MY CURRENT CONFIG (restore the database only)`, unticked;
-- `cookies.txt: in bundle, will replace yours` or `not in bundle`.
+- `cookies.txt: in bundle, will replace yours` or `not in bundle`;
+- (v0.51.339) when either `motif.yaml` does not parse there is no diff: the card
+  names the side (`config_parse_error`), and a bundle config that does not
+  parse forces KEEP MY CURRENT CONFIG — staging it without that is a 422.
 
 `// STAGE RESTORE` then stages the DB (as today) plus the config and cookies;
-the pending banner reads "A restore is staged (database + config)"; the
-boot-time apply writes `motif.yaml.prerestore-<stamp>` next to the DB's
-pre-restore copy, then swaps both. `// CANCEL RESTORE` drops all of it.
+the pending banner reads "A restore is staged (database + config)". At boot
+(v0.51.339) the database applies first; `motif.yaml` follows only a database
+that applied (after a `motif.yaml.prerestore-<stamp>` copy), and the cookies
+land on `paths.cookies_file` after a `<file>.prerestore-<stamp>` copy. A
+snapshot staging drops a bundle's staged config and cookies. `// CANCEL
+RESTORE` drops all of it.
 
 **THEMES CHECK (tag 3, optional).** A block below RESTORE: `// CHECK THEMES`
 walks the newest bundle's census (or an uploaded one) against `themes_dir`
@@ -188,18 +195,21 @@ Mirrors the four snapshot endpoints under one list:
   the census matches `local_files`, excluded files stay out; the name gate
   refuses traversal and foreign names; prune counts both kinds.
 - Restore: a TestClient flow — upload a bundle, get the preview with the
-  right diff, stage, and the boot-time `apply_pending_restore` swaps both
-  files and leaves both pre-restore copies; `keep_config` leaves `motif.yaml`
+  right diff, stage, and the boot applies the database, then `motif.yaml`,
+  then the cookies file, leaving each pre-restore copy (v0.51.339); `keep_config` leaves `motif.yaml`
   untouched; a newer `format` or schema is refused with the existing 422.
-- Secrets never reach the events log or the preview (`••••`), pinned.
+- Secrets never reach the events log or the preview (masked by GET
+  `/api/config`'s own rule since v0.51.339), pinned.
 - Settings markup, the list chip rendering, the schedule toggle's config key
   (`database_backup.bundle`) in `_ALLOWED_TOP_LEVEL` and the env mirror.
 
 ## 9. Traps to design around
 
-- **Boot order.** Config is read before the DB opens; `apply_pending_restore`
-  must swap `motif.yaml` first, then the DB, and log both — the cold path
-  logs more, not less (CLAUDE.md class 9).
+- **Boot order.** Config is read before the DB opens, so the swaps run before
+  `get_settings()` — and (v0.51.339) the DB applies FIRST: `motif.yaml`
+  follows only a DB that applied, and the cookies follow the settings read
+  (they land on `paths.cookies_file`). Log every outcome — the cold path logs
+  more, not less (CLAUDE.md class 9).
 - **Ownership.** Files written at boot must carry the PUID/PGID the
   entrypoint drops to, or the next write fails (the `WRITABILITY:` probe).
 - **Secrets in logs.** The manifest and the preview never carry secret

@@ -43,10 +43,12 @@ def test_adopt_link_fail_surfaces_non_exdev():
 
 
 def test_restore_rehash_failure_logged():
-    assert "re-hash failed for" in API_PY
-    anchor = API_PY.index("re-hash failed for")
-    block = API_PY[anchor - 120:anchor + 80]
-    assert "log.warning" in block
+    # v0.51.339: the per-item restore runs canonical_health.restore_from_placement — its re-hash lives in _stamp_restored.
+    ch_py = (REPO / "app" / "core" / "canonical_health.py").read_text()
+    start = ch_py.index("def _stamp_restored(")
+    block = ch_py[start:ch_py.index("\ndef ", start + 1)]
+    assert "re-hash failed for" in block
+    assert "log.warning" in block[:block.index("re-hash failed for")]
 
 
 # ── #4 title_norm migration breadcrumb ───────────────────────

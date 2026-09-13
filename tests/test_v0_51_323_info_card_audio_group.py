@@ -147,12 +147,17 @@ def _label(lf, data, placements, ambiguous=False) -> str:
      "nothing on disk · Plex is serving a theme motif no longer manages "
      "(RE-DOWNLOAD TDB takes it over, PURGE clears it)"),
     (None, {}, [], "nothing on disk · no theme staged"),
-    ({"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"}, {}, [],
+    # v0.51.339: a backup row says Plex serves only when Plex does (has_theme, not a verify 404)
+    ({"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1}, [],
      "ThemerrDB theme on disk as backup · Plex serves its own theme"),
-    ({"source_kind": "plex_cloud", "last_place_attempt_reason": "backup_only"}, {}, [],
+    ({"source_kind": "plex_cloud", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1}, [],
      "copy of Plex's cloud theme on disk as backup · Plex serves its own theme"),
-    ({"source_kind": "adopt", "last_place_attempt_reason": "backup_only"}, {}, [],
+    ({"source_kind": "adopt", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1, "plex_theme_verified_ok": 1}, [],
      "adopted sidecar theme on disk as backup · Plex serves its own theme"),
+    ({"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 0}, [],
+     "ThemerrDB theme on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)"),
+    ({"source_kind": "url", "last_place_attempt_reason": "backup_only"}, {"plex_has_theme": 1, "plex_theme_verified_ok": 0}, [],
+     "user-URL theme on disk as backup · Plex no longer serves a theme (PROMOTE TO ACTIVE deploys it)"),
     ({"source_kind": "upload"}, {}, [{"placement_kind": "plex_upload"}],
      "uploaded MP3 on disk · placed: plex_upload"),
     ({"source_kind": "themerrdb"}, {}, [{"placement_kind": "sidecar"}, {"placement_kind": "hardlink"}],
@@ -166,7 +171,7 @@ def test_headline_is_what_motif_holds_and_what_plays(lf, data, placements, expec
 def test_headline_never_names_a_badge_or_the_action():
     for lf in (None, {"source_kind": "themerrdb", "last_place_attempt_reason": "backup_only"},
                {"source_kind": "upload"}):
-        out = _label(lf, {"plex_independent_theme": 1}, [])
+        out = _label(lf, {"plex_independent_theme": 1, "plex_has_theme": 1}, [])  # v0.51.339: a Plex-serving row
         assert "badge" not in out and "PROMOTE" not in out, out
 
 

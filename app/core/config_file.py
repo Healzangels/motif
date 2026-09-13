@@ -30,6 +30,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 import os
+import re
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -919,6 +920,46 @@ def _is_masked_url_credentials(url: str) -> bool:
     `://***@`. PATCH treats a round-tripped value with this marker as
     'keep the stored credential' (mirrors plex.token '***' = keep)."""
     return bool(url) and "://***@" in url
+
+
+# v0.51.339: the ONE secret-mask rule, keyed by flattened motif.yaml key — GET /api/config and the bundle restore preview both apply it.
+SECRET_MASK = _APPRISE_MASK
+WHOLE_SECRET_KEYS = (
+    "plex.token", "plex.tvdb_api_key", "plex.tmdb_api_key",
+    "downloads.proxy_url",                   # v1.13.53: socks5://user:pass@host inline credentials
+    "notifications.apprise_external_url",    # v1.21.15 (security audit M1): basic-auth creds or a path token
+)
+APPRISE_URL_LIST_KEYS = ("notifications.apprise_urls",)  # v1.17.13: <scheme>://*** names the service, hides its tokens
+USERINFO_URL_KEYS = ("sync.git_url", "sync.database_url",  # v1.21.17: only the userinfo — host+path stay editable
+                     "sync.db_url")                        # v1.23.62 (audit #6): the third credential-capable sync URL
+SECRET_CONFIG_KEYS = WHOLE_SECRET_KEYS + APPRISE_URL_LIST_KEYS + USERINFO_URL_KEYS
+# v0.51.339: the fallback for keys the tables don't name — LAST segment only, never cookie|auth (cookie_secure, trust_forward_auth are settings).
+_SECRET_LEAF_RE = re.compile(r"token|secret|password|passwd|api_key|apikey|webhook", re.I)
+
+
+def _named_secret_key(key: str) -> str | None:
+    for k in SECRET_CONFIG_KEYS:
+        if key == k or key.startswith(k + "."):  # v0.51.339: a mapping where a credential field belongs is secret whole
+            return k
+    return None
+
+
+def is_secret_config_key(key: str) -> bool:
+    """True when the mask rule hides this flattened key's value."""
+    return _named_secret_key(key) is not None or bool(_SECRET_LEAF_RE.search(key.rsplit(".", 1)[-1]))
+
+
+def mask_config_value(key: str, value: Any) -> Any:
+    """The shown form of one flattened motif.yaml value: a whole secret reads SECRET_MASK when set ("" when not), apprise URLs keep only their scheme, sync URLs lose only their userinfo, anything else passes through."""
+    if key in APPRISE_URL_LIST_KEYS:
+        if isinstance(value, list):
+            return [mask_apprise_url(u) if isinstance(u, str) else SECRET_MASK for u in value]
+        return mask_apprise_url(value) if isinstance(value, str) else (SECRET_MASK if value else value)
+    if key in USERINFO_URL_KEYS:
+        return mask_url_credentials(value) if isinstance(value, str) else (SECRET_MASK if value else value)
+    if is_secret_config_key(key):
+        return SECRET_MASK if value else ""
+    return value
 
 
 # ----------------------------------------------------------------------------

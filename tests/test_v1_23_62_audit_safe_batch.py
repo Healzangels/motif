@@ -60,8 +60,11 @@ def test_real_api_still_passes_the_blocking_lint():
 
 
 def test_db_url_masked_and_validated_alongside_the_other_sync_urls():
-    # GET /api/config redaction loop now covers db_url.
-    assert 'for _uk in ("git_url", "database_url", "db_url"):' in API
+    # GET /api/config redaction loop now covers db_url (v0.51.339: through the shared config_file rule).
+    from app.core.config_file import SECRET_CONFIG_KEYS, mask_config_value
+    assert "for _dotted in SECRET_CONFIG_KEYS:" in API
+    assert "sync.db_url" in SECRET_CONFIG_KEYS
+    assert mask_config_value("sync.db_url", "https://u:pat@remote.example/x") == "https://***@remote.example/x"
     # config_file scheme-validation loop now covers db_url.
     assert 'for _u_field in ("database_url", "git_url", "db_url"):' in CONFIG_FILE
 
