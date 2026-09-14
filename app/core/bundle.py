@@ -273,6 +273,7 @@ class BundleCheck:
     cookies_bytes: bytes | None = _field(default=None, repr=False)
     db_source: db_backup.VerifiedSource | None = _field(default=None, repr=False)
     oversize: dict[str, int] = _field(default_factory=dict)  # v0.51.342: config/cookies over their cap — hashed, never held
+    left_as_is: dict[str, str] = _field(default_factory=dict)  # v0.51.342: a member this staging leaves live, and why
 
 
 def _parse_error_summary(e: Exception) -> str:
@@ -591,8 +592,9 @@ def _inspect_into(path: Path, workdir: Path, *, beside: str = "the bundle") -> B
     if not dbc.ok:
         return BundleCheck(False, dbc.error, manifest=manifest, db=dbc)
     if oversize:
-        log.warning("bundle check: %s carries %s — only its database can be restored (KEEP MY CURRENT CONFIG)",
-                    path.name, "; ".join(_over_cap(n, s) for n, s in oversize.items()))
+        log.warning("bundle check: %s carries %s — %s", path.name, "; ".join(_over_cap(n, s) for n, s in oversize.items()),
+                    "only its database can be restored (KEEP MY CURRENT CONFIG)" if MEMBER_CONFIG in oversize  # v0.51.342: cookies alone no longer block the config
+                    else "a restore leaves the live cookies file as it is")
     return BundleCheck(True, None, manifest=manifest, db=dbc,
                        has_config=MEMBER_CONFIG in shas, has_cookies=MEMBER_COOKIES in shas,
                        config_bytes=small.get(MEMBER_CONFIG), cookies_bytes=small.get(MEMBER_COOKIES),
@@ -647,6 +649,8 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
         # v0.51.341: boot reads settings.cookies_file from the config this bundle swaps in — the live path only when it carries none
         cookies_at = None if parse_error["bundle"] else _cookies_file_after_swap(bundle_bytes, live_config)
     census, counts = m.get("themes_census"), m.get("counts")
+    left_out = _left_out(m, check)
+    cookies_why = left_out.get(MEMBER_COOKIES)
     return {
         "name": path.name,
         "manifest": {
@@ -660,11 +664,27 @@ def preview(path: Path, live_config: Path | None, *, cookies_target: Path | None
         "config_in_bundle": check.has_config,
         "config_diff": diff,
         "config_parse_error": parse_error,
-        "cookies": ("not in bundle" if not check.has_cookies else "in bundle" if MEMBER_COOKIES not in check.oversize
-                    else f"in bundle, but {_over_cap(MEMBER_COOKIES, check.oversize[MEMBER_COOKIES])} — "
-                         "restore with KEEP MY CURRENT CONFIG"),  # v0.51.342: staged, it is refused in these words
+        # v0.51.342: an over-cap cookies.txt is left out of the staging, not fatal to it — the config still restores
+        "cookies": ("in bundle" if check.has_cookies and not cookies_why
+                    else f"in bundle, but {cookies_why} — it is not restored, and your cookies file stays as it is" if check.has_cookies
+                    else f"not in bundle — {cookies_why}; your cookies file stays as it is" if cookies_why else "not in bundle"),
         "cookies_target": cookies_at,  # v0.51.341: restored cookies land on the boot's settings.cookies_file
+        "left_out": left_out,
     }
+
+
+def _left_out(manifest: dict, check: BundleCheck) -> dict[str, str]:
+    """{member: why a restore from this bundle leaves it as it is} — over its cap here, or noted left out when the bundle was made."""
+    out = {n: _over_cap(n, s) for n, s in check.oversize.items()}
+    noted = manifest.get("left_out")
+    for name, present in ((MEMBER_CONFIG, check.has_config), (MEMBER_COOKIES, check.has_cookies)):
+        meta = noted.get(name) if isinstance(noted, dict) else None  # v0.51.342: a foreign manifest's shapes are guarded, never trusted
+        if present or not isinstance(meta, dict):
+            continue
+        size, cap = meta.get("size"), meta.get("cap")
+        if all(isinstance(v, int) and not isinstance(v, bool) for v in (size, cap)):
+            out[name] = f"{name} was left out when the bundle was made ({size} bytes, over its {cap}-byte cap)"
+    return out
 
 
 def _cookies_file_after_swap(config_bytes: bytes, live_config: Path | None) -> str | None:
@@ -797,7 +817,7 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
             check = _inspect_into(bundle_path, tmp, beside=db_path.name)  # v0.51.342: one pass + one integrity_check — was inspect_bundle, a second extraction, then stage_restore's own re-check
             if not check.ok:
                 raise ValueError(check.error or "invalid bundle")
-            if not keep_config and check.oversize:  # v0.51.342: only a staging that writes the member refuses it — KEEP MY CURRENT CONFIG still restores the database
+            if not keep_config and MEMBER_CONFIG in check.oversize:  # v0.51.342: only an over-cap motif.yaml refuses — an over-cap cookies.txt is left as it is, below
                 raise ValueError(f"the bundle's {'; '.join(_over_cap(n, s) for n, s in check.oversize.items())} — "
                                  "restore with KEEP MY CURRENT CONFIG to restore its database")
             if not keep_config and check.has_config:
@@ -818,7 +838,7 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
                         _stage_file(check.config_bytes, config_dir / CONFIG_PENDING)
                         check.staged.append("config")
                     member = MEMBER_COOKIES
-                    if check.has_cookies:
+                    if check.has_cookies and MEMBER_COOKIES not in check.oversize:  # v0.51.342: never read in — the database and config restore without it
                         _stage_file(check.cookies_bytes, config_dir / COOKIES_PENDING)
                         check.staged.append("cookies")
                 except BaseException as e:  # v0.51.342: an ENOSPC here left the new database staged with no config — it applied at boot beside the live motif.yaml
@@ -827,10 +847,15 @@ def stage_bundle_restore(db_path: Path, config_dir: Path, bundle_path: Path, *,
                     if not isinstance(e, Exception):
                         raise
                     raise undone from e
+                if MEMBER_COOKIES in check.oversize:
+                    check.left_as_is[MEMBER_COOKIES] = (f"{_over_cap(MEMBER_COOKIES, check.oversize[MEMBER_COOKIES])} — "
+                                                        "it is not restored, and your cookies file is left as it is")
         finally:
             _remove_tree(tmp)
         log.info("bundle restore staged from %s: %s; applies on next restart",
                  bundle_path.name, ", ".join(check.staged))
+        for words in check.left_as_is.values():
+            log.warning("bundle restore from %s: %s", bundle_path.name, words)
         return _replace(check, db_source=None, config_bytes=None, cookies_bytes=None)  # v0.51.342: the token's file is gone and the caller never needs the bytes
 
 

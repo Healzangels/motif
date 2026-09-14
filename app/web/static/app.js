@@ -7300,7 +7300,9 @@
         // v0.51.336: name what is staged — "(database + config + cookies)".
         const m = (r && r.members) || [];
         const el = document.getElementById('database-restore-pending-members');
-        if (el) el.textContent = m.length ? ' (' + m.join(' + ') + ')' : '';
+        // v0.51.342: a config staged without cookies (none in the bundle, or over its cap) leaves the live cookies file as it is
+        const stays = m.includes('config') && !m.includes('cookies') ? ' — your cookies file stays as it is' : '';
+        if (el) el.textContent = m.length ? ' (' + m.join(' + ') + stays + ')' : '';
       } catch (e) { /* leave banner as-is on a transient error */ }
     }
     // v0.51.336: the bundle restore preview. Nothing is staged until
@@ -7318,8 +7320,9 @@
       const diff = pv.config_diff || [];
       // v0.51.339: a bundle motif.yaml that does not parse would crash the boot that swaps it in — no diff, and the config stays.
       const perr = pv.config_parse_error || {};
+      const leftOut = pv.left_out || {};  // v0.51.342: a member left out at create, or over its cap here — named with its size and cap
       line('restore-preview-config', !pv.config_in_bundle
-        ? 'config: not in bundle — motif.yaml stays as it is'
+        ? `config: not in bundle — ${leftOut['motif.yaml'] ? leftOut['motif.yaml'] + '; ' : ''}motif.yaml stays as it is`
         : perr.bundle ? `✗ config: the bundle's motif.yaml could not be parsed (${perr.bundle}) — only the database can be restored; your motif.yaml and cookies.txt stay`
         : perr.live ? `config: your live motif.yaml could not be parsed (${perr.live}) — no diff to show`
         : diff.length ? `config: ${diff.length} key${diff.length === 1 ? '' : 's'} differ from the live motif.yaml`
@@ -7337,6 +7340,7 @@
       line('restore-preview-cookies', `cookies.txt: ${pv.cookies}${pv.cookies === 'in bundle' && !perr.bundle ? ` — will replace ${pv.cookies_target || 'yours'} unless you keep your config` : ''}`);
       const keep = document.getElementById('database-restore-keep-config');
       if (keep) { keep.checked = !!perr.bundle; keep.disabled = !!perr.bundle; }
+      previewEl.dataset.cookiesStay = pv.cookies === 'in bundle' ? '' : '1';  // v0.51.342: the confirm names cookies.txt only when the restore writes it
       previewEl.dataset.name = pv.name;
       previewEl.hidden = false;
       previewEl.scrollIntoView({ block: 'nearest' });
@@ -7345,6 +7349,7 @@
       if (!previewEl) return;
       previewEl.hidden = true;
       delete previewEl.dataset.name;
+      delete previewEl.dataset.cookiesStay;
     }
     document.getElementById('database-restore-preview-cancel-btn')?.addEventListener('click', hideBundlePreview);
     document.getElementById('database-restore-stage-btn')?.addEventListener('click', async () => {
@@ -7354,7 +7359,8 @@
       const ok = confirm(
         'Restore from bundle ' + name + '?\n\n'
         + 'This REPLACES the entire live database'
-        + (keep ? ' (your motif.yaml and cookies.txt stay as they are)' : ', motif.yaml and cookies.txt')
+        + (keep ? ' (your motif.yaml and cookies.txt stay as they are)'
+          : previewEl.dataset.cookiesStay ? ' and motif.yaml (your cookies file stays as it is)' : ', motif.yaml and cookies.txt')
         + ' with the bundle\'s.\n\nmotif backs up what it replaces first, then applies the '
         + 'restore on the NEXT CONTAINER RESTART. Nothing changes until you restart.\n\nContinue?'
       );
@@ -7571,7 +7577,8 @@
       } catch (e) {
         const gw = gatewayTimeoutNote(e);
         if (status) {
-          status.textContent = (gw ? '⚠ ' : '✗ ') + (gw || (e && e.message ? e.message : 'failed'));
+          // v0.51.342: an over-cap refusal's own words, never '422: {"detail": …}'
+          status.textContent = (gw ? '⚠ ' : '✗ ') + (gw || (e && e.detail != null ? String(e.detail) : (e && e.message ? e.message : 'failed')));
           status.classList.add(gw ? 'warn' : 'form-status-fail');
         }
         refreshList().catch(() => {});

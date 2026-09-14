@@ -303,12 +303,14 @@ def test_an_over_cap_config_or_cookies_leaves_the_database_restorable(tmp_path, 
     p = bundle.preview(b, cd / "motif.yaml")
     if member == bundle.MEMBER_CONFIG:
         assert p["config_parse_error"]["bundle"] == words and p["config_diff"] == [], "the page then keeps the config"
+        with pytest.raises(ValueError) as refused:
+            bundle.stage_bundle_restore(db, cd, b, keep_config=False)
+        assert words in str(refused.value) and "KEEP MY CURRENT CONFIG" in str(refused.value), refused.value
+        assert bundle.pending_members(db, cd) == [] and not bundle.STAGING_LOCK.locked()
     else:
-        assert p["cookies"].startswith("in bundle, but " + words) and "KEEP MY CURRENT CONFIG" in p["cookies"]
-    with pytest.raises(ValueError) as refused:
-        bundle.stage_bundle_restore(db, cd, b, keep_config=False)
-    assert words in str(refused.value) and "KEEP MY CURRENT CONFIG" in str(refused.value), refused.value
-    assert bundle.pending_members(db, cd) == [] and not bundle.STAGING_LOCK.locked()
+        # v0.51.342: reversed — an over-cap cookies.txt is left as it is and the config still stages (test_v0_51_342_config_bundle_followups)
+        assert p["cookies"].startswith("in bundle, but " + words) and "your cookies file stays as it is" in p["cookies"]
+        assert bundle.stage_bundle_restore(db, cd, b, keep_config=False).staged == ["database", "config"]
     assert bundle.stage_bundle_restore(db, cd, b, keep_config=True).staged == ["database"]
     assert _marker_rows(db_backup.restore_pending_path(db)) == 1, "the bundle's own database is what stages"
 

@@ -26724,6 +26724,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         except FileNotFoundError as e:
             raise HTTPException(status_code=503, detail=str(e))
+        except ValueError as e:  # v0.51.342: an over-cap database or manifest refuses the bundle in words — was a wordless 500
+            log.warning("database backup (%s) refused: %s", kind, e)
+            raise HTTPException(status_code=422, detail=str(e))
         log_event(
             settings.db_path, level="info", component="backup",
             message=(f"Backup bundle created: {bf.name}" if bf.kind == "bundle"

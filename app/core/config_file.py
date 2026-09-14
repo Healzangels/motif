@@ -673,9 +673,9 @@ def validate(cfg: MotifConfig, *, require_themes_dir: bool = True) -> list[str]:
     user has set the path — sync still runs (only download/place are blocked).
 
     v0.50.89 (audit MEDIUM): the checks below assume each field already has
-    the type its dataclass declares, but `_hydrate_dataclass` does NOT
-    coerce types on YAML load ("intentionally minimal", per its own
-    docstring) — a hand-edited or corrupted motif.yaml can hand a numeric
+    the type its dataclass declares, but `_hydrate_dataclass` coerces a
+    scalar only where that loses nothing (`_coerce_leaf`) — so a
+    hand-edited or corrupted motif.yaml can still hand a numeric
     field a string (`rate_per_hour: abc`), which raised an unhandled
     TypeError here on a bare `<` comparison. main.py calls this with no
     surrounding try/except, so that crashed boot on every subsequent
@@ -1174,8 +1174,8 @@ class ConfigFile:
 
 def _hydrate_dataclass(target: Any, src: dict) -> None:
     """Recursively populate a dataclass from a dict. Unknown keys are
-    silently ignored (forward-compat). Type coercion is intentionally
-    minimal — YAML's parser handles most of it.
+    silently ignored (forward-compat). A scalar leaf takes its declared
+    type only where that spelling loses nothing (`_coerce_leaf`).
 
     v1.17.1 (class P fix): when both `cur` and `v` are dicts (the
     only example today: `notifications.events`), MERGE rather than
@@ -1211,14 +1211,24 @@ def _coerce_leaf(default: Any, value: Any) -> Any:
         return value  # v0.51.342: bool leaves stay strict, and true/false never stands in for a number or a string
     if isinstance(default, str):
         if isinstance(value, (int, float)):
-            return str(value)  # v0.51.342: an unquoted `movie_section: 1` — every reader interpolates it
+            try:
+                return str(value)  # v0.51.342: an unquoted `movie_section: 1` — every reader interpolates it
+            except ValueError:  # v0.51.342: a long hex literal is past Python's 4300-digit int-to-text limit — raised here and stopped boot; kept, the leaf rule refuses it by key
+                log.warning("motif.yaml: a text setting holds a %d-bit integer too long to write as text — kept as written",
+                            value.bit_length())
+                return value
         # v0.51.342: only where "" is the declared default (token, url, API keys, themes_dir) — every reader treats it as unset; a null cookies_file is Path("."), a directory
         return "" if value is None and default == "" else value
     if isinstance(default, int):
         return int(value) if isinstance(value, float) and value.is_integer() else value
     if isinstance(default, float):
         if isinstance(value, int):
-            return float(value)
+            try:
+                return float(value)
+            except OverflowError:  # v0.51.342: a 310-digit literal raised here and stopped boot — kept as written, validate() reports its range
+                log.warning("motif.yaml: a number setting holds a %d-bit integer no float can hold — kept as written",
+                            value.bit_length())
+                return value
         if isinstance(value, str):
             try:
                 num = float(value)
