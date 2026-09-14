@@ -6361,11 +6361,39 @@
 #   page loaded mid-run whose first status poll fails keeps polling, with one
 #   poll chain however clicks and polls interleave; the finished run's marker
 #   lands before a new START can claim the job; // CANCEL drops the fetches
-#   not yet started and wakes any asleep in a no-answer backoff, so Plex is
-#   never asked after a cancel. The settings restore hint says to RUN CHECK.
+#   not yet started and wakes any asleep in a no-answer backoff — in the pool
+#   and the serial shared-path pass alike — so no row that had not started
+#   asks Plex after a cancel (requests already in flight finish), and a cancel
+#   on the last row reads cancelled. A container stop cancels a running
+#   restore before Python joins its fetch pool, then lets the in-flight rows
+#   publish and stamp: docker stop mid-restore took 11.6 s with Plex refusing
+#   and 18.1 s with a slow Plex — past Docker's 10 s grace — and now takes
+#   1.1 s and 8.1 s. A run stopped by a shutdown is a cut-off (the next start
+#   asks for RUN CHECK), never a cancel or a failure. The settings restore
+#   hint says to RUN CHECK.
+#   A check no longer overwrites a restore: verify's present/missing stamp is
+#   a compare-and-set on what it read, so the daily 03:25 pass, a section's
+#   Plex refresh, a reconciliation run or a CHECK already in flight keep the
+#   rows RESTORE FROM PLEX brought back (they were re-stamped broken, and
+#   REPAIR ALL would have re-downloaded over them); its counts and the daily
+#   event count only the rows it stamped. A restore whose re-read fails lists
+#   its row as CHANGED; a // CANCEL that never reached motif says so.
+#   Restores of one theme can no longer collide: every canonical writer holds
+#   that path's lock from its check to its stamp and stages under its own
+#   temporary name (two restores of one row could publish a half-written file
+#   and clear its loudness UNDO data); the INFO card and library restores and
+#   REPAIR ALL answer 409 while RESTORE FROM PLEX runs; a row whose download is
+#   still queued or running is skipped (the download rewrites theme.mp3 in
+#   place and could truncate a Plex copy linked there). The library // RESTORE
+#   FROM PLEX makes one call per title and counts restored themes. The page
+#   no longer shows an older run as a failed START's result, words its errors
+#   instead of printing JSON, says when the session or contact is lost mid-run,
+#   and quiets the cut-off alarm after a successful RUN CHECK. Exit waits at
+#   most 8 s for a restore's in-flight rows (a hung Plex request carried it
+#   past docker stop's 10 s grace).
 #   (3) Bundles: one forward pass per flow (GzipFile + tarfile "r|"), one
 #   integrity_check, and the checked database MOVED into the pending slot and
-#   re-hashed before the swap. 300 MiB upload + stage 22.8 s → ~10.5 s:
+#   re-hashed before the swap. 300 MiB upload + stage 22.8 s → 11.0 s:
 #   archive opens 5 → 2, 3,094 → 619 MiB inflated, integrity checks 4 → 2,
 #   copies 3 → 0. Deliberate changes: a corrupt deflate stream is a 422, not
 #   a 500; the gzip trailer's CRC and length are verified (a corrupt census
@@ -6377,28 +6405,48 @@
 #   What follows the archive's end is bounded — one 2 MiB raw allowance shared
 #   by the last tar fetch and the trailer read, 4 MiB inflated (a crafted tail
 #   held the staging lock 8.6 s) — and the allowance renews per 1 MiB tarfile
-#   reads, so a database of any size passes. tarfile's IndexError and
-#   RecursionError on a malformed header chain are refusals, not 500s.
-#   Pendings are 0600 from verified bytes; an upload name collision compares
-#   bytes.
+#   reads, so any database up to the 4 GiB member cap passes. Create and
+#   restore read one member-cap table: an over-cap database or manifest writes
+#   no bundle (// CREATE BUNDLE NOW says so in words); an over-cap motif.yaml
+#   (1 MiB) or cookies.txt (16 MiB) is left out with a manifest note and a
+#   WARNING, the preview names it, and at restore an over-cap cookies.txt is
+#   skipped while the rest stages. tarfile's IndexError and RecursionError on
+#   a malformed header chain are refusals, not 500s; a disk fault while
+#   extracting answers 507 / 500 ("could not write the extraction beside
+#   motif.db"), never "not a motif bundle". Every pending is owner-only,
+#   motif.db.restore-pending included (it took the umask mode), so the live
+#   database is 0600 after a restore; an upload name collision compares bytes.
 #   (4) Staging (carried .341 notes): an in-place (bind-mount) cookies restore
 #   leaves the file's mode as the host set it (motif.yaml still ends 0600); an
 #   in-place write that fails part-way writes the original bytes back; a
 #   member that fails after the database swap unstages the whole bundle and
-#   says so; a bundle motif.yaml leaf of the wrong type is refused by its
-#   dotted key (a hand-edited unquoted `movie_section: 1` now keeps the live
-#   config); the settings restore and cancel errors show motif's words and
-#   re-read the pending banner.
+#   says so, naming members and errors, never paths. The config loader
+#   coerces lossless spellings to the declared type — an unquoted
+#   `movie_section: 1`, a null `token:`, `port: 8080.0`, a quoted
+#   `target_lufs: '-16'` (which broke the library page before) — and keeps
+#   what it cannot convert as written with a WARNING, so boot never stops on
+#   a spelling; the bundle leaf rule and the preview judge the same coerced
+#   values, so such a live config previews bundles with a diff and such a
+#   bundle stages its config. A mapping where text belongs, a bool or text in
+#   a number, and other nulls stay refused by dotted key; bool leaves stay
+#   strict. A settings save heals a hand-edited bool, int or float. The
+#   settings restore and cancel errors show motif's words and re-read the
+#   pending banner.
 #   (5) SAVE DOWNLOADS: since v0.51.189 every save of the DOWNLOADS tab
 #   answered 400 — TARGET LOUDNESS arrives as a number, _apply_partial_config
 #   stored the float as text, and validate() refused the whole body, so
 #   nothing on that tab saved. A float field now saves a float whatever type
 #   motif.yaml loaded it as (a hand-edited -16 or '-16' too); a bool, NaN,
 #   infinity, text or null is a 400 naming the key, never the value. A test
-#   PATCHes every settings field with its own default at its own type.
+#   PATCHes every settings field with its own default at its own type. The
+#   tab now reports its result: its status span was marked "downloads" while
+#   the button is "downloads loudness", so every saving / saved / error line
+#   rendered nowhere — the mechanism that hid the 400.
 #   UPGRADE NOTE: schema v80. CANONICAL HEALTH reads "Not checked yet" after
 #   the upgrade until // RUN CHECK. Re-check any DOWNLOADS setting changed
-#   since mid-July — none of those saves landed.
+#   since mid-July — none of those saves landed, and the tab now says whether
+#   a save did. A hand-edited quoted number in a number field now loads as a
+#   number.
 __version__ = "0.51.342"
 # 0.50.88: mobile bug batch round 3 — a much bigger sweep from on-device
 #   testing. (1) TOPBAR: the op-mini job-progress pill's 220px label cap +

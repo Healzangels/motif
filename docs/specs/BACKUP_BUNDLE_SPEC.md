@@ -149,6 +149,18 @@ file is written in place: the cookies file keeps the mode the host gave it,
 `motif.yaml` ends 0600, and a write that fails part-way puts the original
 bytes back.
 
+(v0.51.342) Create and restore read one member-cap table: database 4 GiB,
+manifest 64 MiB, `motif.yaml` 1 MiB, `cookies.txt` 16 MiB. An over-cap
+database or manifest writes no bundle (take a plain snapshot). An over-cap
+`motif.yaml` or `cookies.txt` is left out at create, with a manifest
+`left_out` note and a WARNING, and the preview names it. At restore an
+over-cap `cookies.txt` is skipped (the live cookies file stays as it is),
+while an over-cap `motif.yaml` forces KEEP MY CURRENT CONFIG. The config
+loader coerces lossless spellings — an unquoted number in a text setting, a
+quoted number in a number setting — and the preview and staging judge the
+same coerced values, so a config motif runs on is never refused for its
+spelling.
+
 **THEMES CHECK (tag 3, optional).** A block below RESTORE: `// CHECK THEMES`
 walks the newest bundle's census (or an uploaded one) against `themes_dir`
 and reports `present · missing · changed`, with two buttons that appear only
