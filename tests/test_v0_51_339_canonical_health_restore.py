@@ -395,7 +395,7 @@ def _run_page(tmp_path, responses, clicks, ssr=None):
     start = APP_JS.index("  function bindCanonicalHealth() {")
     tmp_path.mkdir(parents=True, exist_ok=True)
     # v0.51.342: the page's own fmtRelativePast + gatewayTimeoutNote ride along — the restore poll words with them.
-    (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("gatewayTimeoutNote")
+    (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("proxyStatusHint") + _app_fn("gatewayTimeoutNote")
                                       + APP_JS[start:APP_JS.index("\n  function ", start + 1)])
     (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks, "ssr": ssr or {}}))
     (tmp_path / "driver.js").write_text(_DRIVER)
@@ -456,6 +456,8 @@ _SKIP_WORDING = {
     "no_plex_copy": "no Plex copy",
     # v0.51.342: the run stopped asking a Plex that gave no answer.
     "plex_unreachable": "Plex gave no answer — not tried",
+    # v0.51.342: a row whose download is in flight is left to it.
+    "download_in_flight": "download still in flight — not touched",
 }
 
 

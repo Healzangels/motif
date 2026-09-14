@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import weakref
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import nullcontext
@@ -328,6 +329,31 @@ def _run_conn(db_path: Path, conn):
     return nullcontext(conn) if conn is not None else get_conn(db_path)
 
 
+# v0.51.342: every canonical writer holds its path's lock from the guard to the stamp — two restores of one row raced its tmp.
+_CANON_WRITE_LOCKS: "weakref.WeakValueDictionary[str, threading.Lock]" = weakref.WeakValueDictionary()
+_CANON_WRITE_LOCKS_GUARD = threading.Lock()
+
+
+def _canonical_write_lock(canonical: Path) -> threading.Lock:
+    """The one lock for this canonical path — casefolded, as the bulk's shared paths are."""
+    key = str(canonical).casefold()
+    with _CANON_WRITE_LOCKS_GUARD:
+        lock = _CANON_WRITE_LOCKS.get(key)
+        if lock is None:
+            lock = _CANON_WRITE_LOCKS[key] = threading.Lock()
+        return lock
+
+
+def _download_in_flight(conn, r) -> bool:
+    """A queued or running download for this canonical — the edition rides the job's payload."""
+    return conn.execute(
+        "SELECT 1 FROM jobs WHERE job_type = 'download' AND status IN ('pending', 'running') "
+        "AND media_type = ? AND tmdb_id = ? AND section_id = ? "
+        "AND COALESCE(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.edition_key') END, '') = ? LIMIT 1",
+        (r["media_type"], r["tmdb_id"], r["section_id"], r["edition_key"]),
+    ).fetchone() is not None
+
+
 def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
                     placement_kind: str | None, conn=None) -> None:
     """After bytes landed at the canonical path: re-hash, stamp size / sha /
@@ -357,8 +383,8 @@ def _stamp_restored(db_path: Path, r, canonical: Path, *, prior_size, prior_sha,
         c.execute(
             "UPDATE local_files SET file_size = ?, file_sha256 = ?, downloaded_at = ?, "
             "canonical_present = 1"
-            # v0.51.342: the kept size may not be these bytes' — make it a candidate so CHANGED re-reads it
-            + (", canonical_changed_candidate = 1" if rehash_failed else "")
+            # v0.51.342: a kept size, or a stamped size that moved, may not be the bytes on disk — CHANGED re-reads it
+            + (", canonical_changed_candidate = 1" if rehash_failed or size != prior_size else "")
             + (", loudness_i=?, loudness_tp=?, loudness_lra=?, loudness_measured_at=?, "
                "loudness_measured_sha256=?, norm_state=?, norm_gain_db=?, norm_target=?, "
                "norm_at=?, norm_orig_sha256=?, norm_orig_pcm_sha256=?, norm_plex_entry_uri = NULL"
@@ -400,40 +426,42 @@ def restore_from_placement(db_path: Path, themes_dir: Path, r, *, conn=None) -> 
     from .placement import _safe_link_or_copy
     from .plex_enum import _candidate_local_paths
     canonical = themes_dir / r["file_path"]
-    try:
-        if canonical.is_file() and canonical.stat().st_size > 0:
-            return {"ok": False, "reason": "canonical_already_present"}
-    except OSError as e:
-        # v0.51.338: was a bare pass (class 9) — only EACCES/EIO reach here, so say so before trying.
-        log.warning("restore-canonical: could not stat %s (%s) — attempting the restore anyway", canonical, e)
-    if not r["media_folder"]:
-        return {"ok": False, "reason": "no_placement"}
-    src: Path | None = None
-    for cand in _candidate_local_paths(r["media_folder"]):
-        p = cand / "theme.mp3"
+    # v0.51.342: guard → stage → replace → stamp under the path's lock — the job and an INFO restore staged one row at once.
+    with _canonical_write_lock(canonical):
         try:
-            if p.is_file() and p.stat().st_size > 0:
-                src = p
-                break
-        except OSError:
-            continue
-    if src is None:
-        return {"ok": False, "reason": "placement_file_missing"}
-    try:
-        canonical.parent.mkdir(parents=True, exist_ok=True)
-        # v0.51.338: placement's link — any OSError (EPERM on SMB/FUSE) copies, staged so a dead copy leaves no partial.
-        kind = _safe_link_or_copy(src, canonical)
-    except OSError as e:
-        log.warning("restore-canonical: %s/%s section=%s failed: %s",
-                    r["media_type"], r["tmdb_id"], r["section_id"], e)
-        staged = canonical.with_suffix(canonical.suffix + ".motif-tmp")
+            if canonical.is_file() and canonical.stat().st_size > 0:
+                return {"ok": False, "reason": "canonical_already_present"}
+        except OSError as e:
+            # v0.51.338: was a bare pass (class 9) — only EACCES/EIO reach here, so say so before trying.
+            log.warning("restore-canonical: could not stat %s (%s) — attempting the restore anyway", canonical, e)
+        with _run_conn(db_path, conn) as c:
+            in_flight = _download_in_flight(c, r)
+        if in_flight:
+            # v0.51.342: the download's ffmpeg -y re-opens theme.mp3 with O_TRUNC — a link here truncated Plex's copy.
+            return {"ok": False, "reason": "download_in_flight"}
+        if not r["media_folder"]:
+            return {"ok": False, "reason": "no_placement"}
+        src: Path | None = None
+        for cand in _candidate_local_paths(r["media_folder"]):
+            p = cand / "theme.mp3"
+            try:
+                if p.is_file() and p.stat().st_size > 0:
+                    src = p
+                    break
+            except OSError:
+                continue
+        if src is None:
+            return {"ok": False, "reason": "placement_file_missing"}
         try:
-            staged.unlink(missing_ok=True)
-        except OSError as ue:
-            log.warning("restore-canonical: could not remove staged %s: %s", staged, ue)
-        return {"ok": False, "reason": f"link_failed:{e}"}
-    _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
-                    placement_kind=kind if r["placement_kind"] != kind else None, conn=conn)
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            # v0.51.338: placement's link — any OSError (EPERM on SMB/FUSE) copies, staged so a dead copy leaves no partial.
+            kind = _safe_link_or_copy(src, canonical, unique_tmp=True)  # v0.51.342: its own tmp, removed only by this call
+        except OSError as e:
+            log.warning("restore-canonical: %s/%s section=%s failed: %s",
+                        r["media_type"], r["tmdb_id"], r["section_id"], e)
+            return {"ok": False, "reason": f"link_failed:{e}"}
+        _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
+                        placement_kind=kind if r["placement_kind"] != kind else None, conn=conn)
     return {"ok": True, "kind": kind}
 
 
@@ -483,23 +511,30 @@ def _fetch_from_plex_store(plex_client, r) -> dict:
 def _publish_store_bytes(db_path: Path, themes_dir: Path, r, data: bytes, uri: str, *, conn=None) -> dict:
     """Write fetched store bytes to the canonical and stamp them: {ok, bytes, entry_uri} or {ok: False, reason}."""
     import os
-    # v0.51.342: a download that landed while the bytes were in flight wins.
-    guard = _store_guard(themes_dir, r)
-    if guard is not None:
-        return guard
     canonical = themes_dir / r["file_path"]
-    try:
-        canonical.parent.mkdir(parents=True, exist_ok=True)
-        tmp = canonical.with_name(canonical.name + ".part")
-        with tmp.open("wb") as f:
-            f.write(data)
-        os.replace(tmp, canonical)
-    except OSError as e:
-        log.warning("restore-from-plex-store: %s/%s section=%s write failed: %s",
-                    r["media_type"], r["tmdb_id"], r["section_id"], e)
-        return {"ok": False, "reason": f"write_failed:{e}"}
-    _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
-                    placement_kind=None, conn=conn)
+    # v0.51.342: under the path's lock, as restore_from_placement — the guard, the write and the stamp are one step.
+    with _canonical_write_lock(canonical):
+        # v0.51.342: a download that landed while the bytes were in flight wins.
+        guard = _store_guard(themes_dir, r)
+        if guard is not None:
+            return guard
+        with _run_conn(db_path, conn) as c:
+            in_flight = _download_in_flight(c, r)
+        if in_flight:
+            # v0.51.342: its ffmpeg -y truncates whatever lands on theme.mp3 before it finishes.
+            return {"ok": False, "reason": "download_in_flight"}
+        try:
+            canonical.parent.mkdir(parents=True, exist_ok=True)
+            tmp = canonical.with_name(canonical.name + ".part")
+            with tmp.open("wb") as f:
+                f.write(data)
+            os.replace(tmp, canonical)
+        except OSError as e:
+            log.warning("restore-from-plex-store: %s/%s section=%s write failed: %s",
+                        r["media_type"], r["tmdb_id"], r["section_id"], e)
+            return {"ok": False, "reason": f"write_failed:{e}"}
+        _stamp_restored(db_path, r, canonical, prior_size=r["file_size"], prior_sha=r["file_sha256"],
+                        placement_kind=None, conn=conn)
     return {"ok": True, "bytes": len(data), "entry_uri": uri}
 
 
@@ -634,6 +669,9 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
 
         def store_refusal(r):
             refusal = _store_guard(themes_dir, r)
+            if refusal is None and _download_in_flight(conn, r):
+                # v0.51.342: the publish would refuse these bytes — never ask Plex for them.
+                refusal = {"ok": False, "reason": "download_in_flight"}
             if refusal is None and (not r["plex_rating_key"] or not str(r["plex_rating_key"]).isdigit()):
                 refusal = {"ok": False, "reason": "no_rating_key"}
             if refusal is None and not plex_on:

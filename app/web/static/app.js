@@ -7759,6 +7759,15 @@
     let cancelNote = null;
     let checking = false;
     let repairing = false;
+    // v0.51.342: the last answered poll's started_at (undefined: none answered) — a 502 START is judged against it.
+    let lastSeenStartedAt;
+    let startUnconfirmed = null;
+    // v0.51.342: failed polls in a row mid-run and since when — a stale progress line must not read as live.
+    let lostPolls = 0;
+    let lostSince = null;
+    let liveText = null;
+    // v0.51.342: the cut-off alarm on screen (its run's started_at) — the RUN CHECK it asks for quiets it.
+    let cutOffStartedAt = null;
     const chgBlock = document.getElementById('canon-changed-block');
     const chgCount = document.getElementById('canon-changed-count');
     const chgBody = document.getElementById('canon-changed-tbody');
@@ -7798,6 +7807,8 @@
       ['no_placement', 'no Plex placement'],
       // v0.51.342: the run stopped asking a Plex that gave no answer.
       ['plex_unreachable', 'Plex gave no answer — not tried'],
+      // v0.51.342: its download writes theme.mp3 in place — a restore under it would be truncated.
+      ['download_in_flight', 'download still in flight — not touched'],
     ];
     function skipWords(skipped) {
       const groups = new Map();
@@ -7934,6 +7945,27 @@
         + (st.not_attempted ? ` · ${fmt(st.not_attempted)} not tried` : '');
     }
 
+    // v0.51.342: the settings page's error shape — motif's words or the proxy's status in words, never FastAPI's JSON.
+    function failWords(e) {
+      const gw = gatewayTimeoutNote(e);
+      if (gw) return gw;
+      if (e && (e.status === 401 || e.status === 403) && e.detail != null) {
+        return `${e.detail} — reload the page and sign in again`;
+      }
+      if (e && e.detail != null) return String(e.detail);
+      if (e && typeof e.status === 'number') return proxyStatusHint(e.status);
+      return 'could not reach motif — a reverse proxy / WAF may have returned a non-motif page (SSO login or a '
+        + 'size/security block), or the network dropped. Reload, sign in, then retry.';
+    }
+
+    // v0.51.342: a run is this 502 START's only if it started after what the page saw (none seen: the click, a minute's skew).
+    function newerRun(st, since) {
+      const t = Date.parse(st.started_at || '');
+      if (Number.isNaN(t)) return false;
+      if (since.seen === undefined) return t >= since.clickedAt - 60000;
+      return since.seen === null || t > Date.parse(since.seen);
+    }
+
     async function pollRestore(gen = restoreGen) {
       // v0.51.342: one poll chain — a poll sent before a click's START answers into no chain.
       if (gen !== restoreGen) return;
@@ -7943,6 +7975,16 @@
       catch (e) {
         // v0.51.342: no ceiling (class 10) — a blip mid-run re-arms slower instead of dropping the run.
         if (gen === restoreGen && restoreRunning) {
+          lostPolls += 1;
+          if (!lostSince) lostSince = new Date();
+          // v0.51.342: a lost session (401/403, or a login page where JSON belongs) never heals alone; blips say since when after 3.
+          const session = !!e && (e.status === 401 || e.status === 403 || e.name === 'SyntaxError');
+          if (session || lostPolls >= 3) {
+            if (liveText === null) liveText = restorePlexStatus.textContent;
+            const hhmm = `${String(lostSince.getHours()).padStart(2, '0')}:${String(lostSince.getMinutes()).padStart(2, '0')}`;
+            restorePlexStatus.textContent = liveText
+              + (session ? ' — lost contact: the session expired, reload and sign in' : ` — lost contact since ${hhmm}`);
+          }
           restoreTimer = setTimeout(() => pollRestore(gen), 5000);
         } else if (!restoreRunning) {
           console.error('canonical health restore status failed:', e);  // v0.51.342: nothing retries an idle page's poll
@@ -7950,7 +7992,14 @@
         return;
       }
       if (!st || gen !== restoreGen) return;
+      lostPolls = 0;
+      lostSince = null;
+      liveText = null;
+      const since = startUnconfirmed;
+      startUnconfirmed = null;
+      lastSeenStartedAt = st.started_at || null;
       if (st.status === 'running') {
+        cutOffStartedAt = null;
         setRestoreBusy(true);
         restoreWatching = true;
         restoreShown = true;
@@ -7976,28 +8025,41 @@
         return;
       }
       cancelNote = null;
-      const watched = restoreWatching;
+      // v0.51.342: a 502 START answered by an older run (or by none) never reached motif — that answer is not this click's.
+      const neverRan = !!since && !newerRun(st, since);
+      const watched = restoreWatching && !neverRan;
+      restoreWatching = watched;
       setRestoreBusy(false);
       const lastRun = watched ? '' : `last run ${fmtRelativePast(st.finished_at) || st.finished_at}: `;
+      let text = null;
+      let cls = 'form-status';
+      cutOffStartedAt = null;
       if (st.status === 'done' || st.status === 'cancelled') {
-        restorePlexStatus.textContent = lastRun + (st.status === 'done' ? '✓ ' : '✓ cancelled — ') + restoreWords(st);
-        restorePlexStatus.className = 'form-status form-status-ok';
+        text = lastRun + (st.status === 'done' ? '✓ ' : '✓ cancelled — ') + restoreWords(st);
+        cls = 'form-status form-status-ok';
       } else if (st.status === 'failed') {
-        restorePlexStatus.textContent = lastRun
+        text = lastRun
           + `✗ restore failed — ${st.error || 'unknown error'} (${fmt(st.restored || 0)} restored before it stopped)`;
-        restorePlexStatus.className = 'form-status form-status-fail';
+        cls = 'form-status form-status-fail';
       } else if (st.status === 'interrupted' && (st.first_report || watched)) {
         // v0.51.342: a staged database restore may be what restarted motif — so RUN CHECK first.
         restoreShown = true;
         missBlock.style.display = '';
-        restorePlexStatus.textContent = `✗ the run started ${fmtRelativePast(st.started_at) || st.started_at} was cut off `
+        text = `✗ the run started ${fmtRelativePast(st.started_at) || st.started_at} was cut off `
           + 'by a motif restart — RUN CHECK, then RESTORE FROM PLEX restores what is left';
-        restorePlexStatus.className = 'form-status form-status-fail';
+        cls = 'form-status form-status-fail';
+        cutOffStartedAt = st.started_at;
       } else if (st.status === 'interrupted') {
         // v0.51.342: reported once already — now a last run like any other, not an alarm on every visit.
-        restorePlexStatus.textContent = `last run started ${fmtRelativePast(st.started_at) || st.started_at}: `
-          + 'cut off by a motif restart';
-        restorePlexStatus.className = 'form-status';
+        text = `last run started ${fmtRelativePast(st.started_at) || st.started_at}: cut off by a motif restart`;
+      }
+      if (neverRan) {
+        text = '✗ the start never reached motif — nothing ran; press RESTORE FROM PLEX again' + (text ? ` · ${text}` : '');
+        cls = 'form-status form-status-fail';
+      }
+      if (text !== null) {
+        restorePlexStatus.textContent = text;
+        restorePlexStatus.className = cls;
       }
       if (watched) {
         restoreWatching = false;
@@ -8036,8 +8098,15 @@
           checkStatus.className = 'form-status form-status-ok';
           _autoDismissOpStatus(checkStatus, 6000);
         }
+        // v0.51.342: the check the cut-off alarm asked for re-read the files — the alarm becomes the quiet last-run line.
+        if (ck && !(ck.checked === 0 && ck.skipped > 0) && cutOffStartedAt && !restoreRunning) {
+          restorePlexStatus.textContent = `last run started ${fmtRelativePast(cutOffStartedAt) || cutOffStartedAt}: `
+            + 'cut off by a motif restart';
+          restorePlexStatus.className = 'form-status';
+          cutOffStartedAt = null;
+        }
       } catch (e) {
-        checkStatus.textContent = '✗ ' + (e && e.message ? e.message : 'check failed');
+        checkStatus.textContent = '✗ ' + failWords(e);
         checkStatus.className = 'form-status form-status-fail';
       } finally {
         checking = false;
@@ -8056,18 +8125,21 @@
         setRestoreBusy(true);
         restorePlexStatus.textContent = 'starting…';
         restorePlexStatus.className = 'form-status';
+        startUnconfirmed = null;
+        const since = { seen: lastSeenStartedAt, clickedAt: Date.now() };
         try {
           await api('POST', '/api/admin/canonical-health/restore-from-plex');
         } catch (e) {
           const note = gatewayTimeoutNote(e);
           if (!note) {
             setRestoreBusy(false);
-            restorePlexStatus.textContent = '✗ ' + (e && e.message ? e.message : 'restore failed');
+            restorePlexStatus.textContent = '✗ ' + failWords(e);
             restorePlexStatus.className = 'form-status form-status-fail';
             return;
           }
           // v0.51.342: the proxy timed out on the start — the run may be going; the poll finds out.
           restorePlexStatus.textContent = note;
+          startUnconfirmed = since;
         }
         restoreWatching = true;
         pollRestore();
@@ -8107,7 +8179,7 @@
           repairStatus.className = 'form-status form-status-ok';
           _autoDismissOpStatus(repairStatus, 9000);
         } catch (e) {
-          repairStatus.textContent = '✗ ' + (e && e.message ? e.message : 'repair failed');
+          repairStatus.textContent = '✗ ' + failWords(e);
           repairStatus.className = 'form-status form-status-fail';
         } finally {
           repairing = false;
@@ -16353,11 +16425,13 @@
       }
       const scope = useSelection ? 'selected' : 'visible';
       if (!confirm(`Restore canonical from Plex on ${targets.length} ${scope} row${targets.length === 1 ? '' : 's'}?`)) return;
+      // v0.51.342: one call restores every section of a title — a second row's call found them present and read FAILED.
+      const titles = [...new Map(targets.map((t) => [`${t.mt}/${t.id}`, t])).values()];
       btn.disabled = true;
       const orig = btn.textContent;
       // v1.15.51: per-row progress + ` · ` separator (consistent
       // with PUSH / REVERT / ADOPT / ADOPT + LPS handlers).
-      btn.textContent = `// RESTORING 0/${targets.length}`;
+      btn.textContent = `// RESTORING 0/${titles.length}`;
       // v1.19.53: optimistic placeholder — RESTORE FROM PLEX
       // re-fetches the canonical from Plex (effectively a
       // download flow from motif's POV) so surface via
@@ -16371,13 +16445,18 @@
       } catch (_) { /* placeholder is cosmetic */ }
       let ok = 0;
       let failed = 0;
-      for (let i = 0; i < targets.length; i++) {
-        const t = targets[i];
+      for (let i = 0; i < titles.length; i++) {
+        const t = titles[i];
         try {
-          await api('POST', `/api/items/${t.mt}/${t.id}/restore-canonical`);
-          ok++;
+          const res = await api('POST', `/api/items/${t.mt}/${t.id}/restore-canonical`);
+          // v0.51.342: a 200 can restore nothing (a skip) — count the canonicals it restored; one already present is no failure.
+          if (!res || typeof res.restored !== 'number') failed++;
+          else {
+            ok += res.restored;
+            failed += (res.skipped || []).filter((s) => s.reason !== 'canonical_already_present').length;
+          }
         } catch (_) { failed++; }
-        btn.textContent = `// RESTORING ${i + 1}/${targets.length}`;
+        btn.textContent = `// RESTORING ${i + 1}/${titles.length}`;
       }
       btn.textContent = failed
         ? `// ${ok} RESTORED · ${failed} FAILED`

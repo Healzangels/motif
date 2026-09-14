@@ -250,7 +250,8 @@ def test_a_restore_whose_rehash_fails_lists_the_row_as_changed(world, monkeypatc
     changed = [(r["tmdb_id"], r["recorded"], r["on_disk"]) for r in _report_of(db, themes)["changed"]]
     assert changed == [(11, 111, 40)], "the kept size is not these bytes' — CHANGED must re-read it"
     assert _cols(db, 11, ("canonical_present", "canonical_changed_candidate")) == (1, 1)
-    assert _cols(db, 12, ("file_size", "canonical_changed_candidate")) == (50, None), "a re-hash that worked is no candidate"
+    # v0.51.342: reversed — a stamp whose size moved (112 → 50) is a candidate too; CHANGED re-reads it and lists nothing.
+    assert _cols(db, 12, ("file_size", "canonical_changed_candidate")) == (50, 1)
 
 
 # ── F6: the boot lines agree on what a restore carried ──────────────
@@ -338,7 +339,7 @@ def _run(tmp_path, responses, clicks, ssr=None):
     assert driver != _DRIVER
     start = APP_JS.index("  function bindCanonicalHealth() {")
     tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("gatewayTimeoutNote")
+    (tmp_path / "bind.js").write_text(_app_fn("fmtRelativePast") + _app_fn("proxyStatusHint") + _app_fn("gatewayTimeoutNote")
                                       + APP_JS[start:APP_JS.index("\n  function ", start + 1)])
     (tmp_path / "scenario.json").write_text(json.dumps({"responses": responses, "clicks": clicks, "ssr": ssr or {}}))
     (tmp_path / "driver.js").write_text(driver)

@@ -16,6 +16,7 @@ import signal
 import sqlite3
 import sys
 import threading
+import time
 from pathlib import Path
 
 import uvicorn
@@ -804,14 +805,16 @@ def main() -> int:
             restore_job = canon_restore_shutdown()
         except Exception as e:  # noqa: BLE001
             log.warning("could not cancel RESTORE FROM PLEX at shutdown — exit waits for its Plex fetches: %s", e)
+        # v0.51.342: docker stop SIGKILLs 10 s after SIGTERM — a 10 s join from here (~0.6 s in) exited at 10.6 s.
+        restore_by = time.monotonic() + 8.0
         stop_event.set()
         for _t in worker_threads:
             _t.join(timeout=10.0)
         if restore_job is not None:
             # v0.51.342: its in-flight fetches publish and stamp first — exit froze the daemon job mid-write (a file, no stamp).
-            restore_job.join(timeout=10.0)
+            restore_job.join(timeout=max(0.0, restore_by - time.monotonic()))
             if restore_job.is_alive():
-                log.warning("RESTORE FROM PLEX was still finishing its in-flight Plex fetches after 10 s — exit may cut "
+                log.warning("RESTORE FROM PLEX was still finishing its in-flight Plex fetches after 8 s — exit may cut "
                             "its last write; RUN CHECK after the restart")
         log.info("motif stopped")
     return 0

@@ -200,10 +200,15 @@ def _can_hardlink(src: Path, dst_dir: Path) -> bool:
         return False
 
 
-def _safe_link_or_copy(src: Path, dst: Path) -> str:
+def _safe_link_or_copy(src: Path, dst: Path, *, unique_tmp: bool = False) -> str:
     """Hardlink when possible, copy otherwise. Atomic via temp+rename."""
-    dst_tmp = dst.with_suffix(dst.suffix + ".motif-tmp")
-    if dst_tmp.exists():
+    if unique_tmp:
+        import secrets
+        # v0.51.342: a canonical restore's own staging name — two restores of one row shared theme.mp3.motif-tmp.
+        dst_tmp = dst.with_name(f"{dst.name}.{secrets.token_hex(8)}.motif-tmp")
+    else:
+        dst_tmp = dst.with_suffix(dst.suffix + ".motif-tmp")
+    if not unique_tmp and dst_tmp.exists():
         # v1.15.117: tolerate OSError on the pre-clean unlink. Pre-
         # fix a stale .motif-tmp left behind by a prior crashed run
         # (permission held / lock / filesystem hiccup) would raise
@@ -223,18 +228,27 @@ def _safe_link_or_copy(src: Path, dst: Path) -> str:
                 dst_tmp, e,
             )
     kind: str
-    if _can_hardlink(src, dst.parent):
-        try:
-            os.link(src, dst_tmp)
-            kind = "hardlink"
-        except OSError as e:
-            log.warning("Hardlink failed (%s), falling back to copy", e)
+    try:
+        if _can_hardlink(src, dst.parent):
+            try:
+                os.link(src, dst_tmp)
+                kind = "hardlink"
+            except OSError as e:
+                log.warning("Hardlink failed (%s), falling back to copy", e)
+                shutil.copy2(src, dst_tmp)
+                kind = "copy"
+        else:
             shutil.copy2(src, dst_tmp)
             kind = "copy"
-    else:
-        shutil.copy2(src, dst_tmp)
-        kind = "copy"
-    os.replace(dst_tmp, dst)
+        os.replace(dst_tmp, dst)
+    except BaseException:
+        if unique_tmp:
+            # v0.51.342: only the staging file this call made — the old cleanup unlinked whoever held the fixed name.
+            try:
+                dst_tmp.unlink(missing_ok=True)
+            except OSError as ue:
+                log.warning("place: could not remove staged %s: %s", dst_tmp, ue)
+        raise
     return kind
 
 

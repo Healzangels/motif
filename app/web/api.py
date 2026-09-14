@@ -11993,6 +11993,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if not settings.is_paths_ready():
             raise HTTPException(status_code=409,
                                 detail="themes_dir not configured")
+        with _CANON_RESTORE_LOCK:
+            if _CANON_RESTORE_STATE.get("status") == "running":
+                # v0.51.342: as RUN CHECK — this restore and the job's bulk staged and stamped one row at once.
+                raise HTTPException(status_code=409,
+                                    detail="RESTORE FROM PLEX is running — restore this item when it finishes")
         # v1.22.69: per-row link/copy + chunked sha256 froze the loop — offload.
         def _run():
             from ..core.canonical_health import _placement_for, _stamp_present, restore_from_placement
@@ -27802,6 +27807,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         manual re-place — never auto-overwritten. Returns the enqueue summary; the
         page re-fetches /report afterwards to show what's left."""
         _require_admin(request)
+        with _CANON_RESTORE_LOCK:
+            if _CANON_RESTORE_STATE.get("status") == "running":
+                # v0.51.342: a queued download's ffmpeg -y truncates the Plex copy a restore links onto theme.mp3.
+                raise HTTPException(status_code=409,
+                                    detail="RESTORE FROM PLEX is running — repair when it finishes")
         from ..core.canonical_health import enqueue_canonical_repairs
 
         with get_conn(db) as conn, transaction(conn):
@@ -27864,13 +27874,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _canon_restore_run(db_path: Path, themes_dir: Path, plex_cfg, plus_mode, actor: str) -> None:
         """v0.51.342: the RESTORE FROM PLEX thread — progress into the page state, the
         summary into the state + marker, then the audit row and the event."""
-        global _CANON_RESTORE_THREAD
         from ..core.canonical_health import restore_from_plex
         t0 = time.monotonic()
         with _CANON_RESTORE_LOCK:
             _CANON_RESTORE_STATE["t0"] = t0
             started_at = _CANON_RESTORE_STATE.get("started_at")
-            _CANON_RESTORE_THREAD = threading.current_thread()
         try:
             with _CANON_RESTORE_MARKER_LOCK:
                 _canon_restore_write({"status": "running", "started_at": started_at, "actor": actor},
@@ -27945,6 +27953,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         skipped with a reason; nothing is re-downloaded (REPAIR ALL does that).
         v0.51.342: starts a page-scoped background job and returns at once —
         .../status carries the progress and the summary, .../cancel stops it."""
+        global _CANON_RESTORE_THREAD
         _require_admin(request)
         if not settings.is_paths_ready() or not settings.themes_dir:
             raise HTTPException(status_code=409, detail="themes_dir not configured")
@@ -27965,9 +27974,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 status="running", stage="listing", started_at=now_iso(), actor=request.state.user,
                 done=0, total=0, restored_sidecar=0, restored_store=0, skipped_count=0, error=None,
                 cancel=False, plex=bool(cfg), workers=RESTORE_PLEX_WORKERS)
-        threading.Thread(target=_canon_restore_run,
-                         args=(db, settings.themes_dir, cfg, settings.plus_equiv_mode, request.state.user),
-                         name="canonical-restore-from-plex", daemon=True).start()
+            # v0.51.342: the handle lands with the claim — a shutdown before the thread's first line joined the last run's.
+            _CANON_RESTORE_THREAD = threading.Thread(
+                target=_canon_restore_run,
+                args=(db, settings.themes_dir, cfg, settings.plus_equiv_mode, request.state.user),
+                name="canonical-restore-from-plex", daemon=True)
+            _CANON_RESTORE_THREAD.start()
         return {"ok": True, "started": True}
 
     @app.post("/api/admin/canonical-health/restore-from-plex/cancel")
