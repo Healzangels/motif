@@ -6530,6 +6530,9 @@ _CANON_RESTORE_FILE = "restore_from_plex.json"
 _CANON_RESTORE_INTERRUPT_LOGGED = False
 # v0.51.342: every marker write and the read that settles a cut-off run hold this — never the event loop.
 _CANON_RESTORE_MARKER_LOCK = threading.Lock()
+# v0.51.342: set by motif's shutdown path — a run that stops after it was cut off by the restart, not cancelled or failed.
+_CANON_RESTORE_SHUTDOWN = threading.Event()
+_CANON_RESTORE_THREAD: threading.Thread | None = None  # v0.51.342: the last run's thread — exit joins it
 
 
 def _canon_restore_view() -> dict:
@@ -6560,6 +6563,20 @@ def _canon_restore_read(settings) -> dict | None:
         log.warning("canonical restore marker %s is not an object — the page shows no last run", p)
         return None
     return marker
+
+
+def canon_restore_shutdown() -> threading.Thread | None:
+    """v0.51.342: motif is exiting — cancel a running RESTORE FROM PLEX; returns its thread, for the exit path to join."""
+    _CANON_RESTORE_SHUTDOWN.set()
+    with _CANON_RESTORE_LOCK:
+        running = _CANON_RESTORE_STATE.get("status") == "running"
+        if running:
+            _CANON_RESTORE_STATE["cancel"] = True
+    if not running:
+        return None
+    log.info("canonical restore: motif is shutting down — cancelling the running RESTORE FROM PLEX (backoffs "
+             "wake, queued Plex fetches are dropped); the next start reports it cut off")
+    return _CANON_RESTORE_THREAD
 
 
 def _loudness_audit_run(settings: "Settings", db_path: Path) -> None:
@@ -27837,14 +27854,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 log.warning("canonical restore: could not remove %s (%s) — after a restart the page calls this "
                             "finished run cut off by a restart", dest, e)
 
+    def _canon_restore_cut_off(actor: str, t0: float, how: str) -> None:
+        """v0.51.342: stopped by motif's shutdown — the running marker stays, so the next start reports the run cut off."""
+        with _CANON_RESTORE_LOCK:
+            _CANON_RESTORE_STATE.update(status="interrupted", stage=None, elapsed_s=round(time.monotonic() - t0, 1))
+        log.warning("canonical restore from Plex by %s was cut off by a motif shutdown (%s) — its running marker "
+                    "stays, so the next start reports it cut off and asks for RUN CHECK", actor, how)
+
     def _canon_restore_run(db_path: Path, themes_dir: Path, plex_cfg, plus_mode, actor: str) -> None:
         """v0.51.342: the RESTORE FROM PLEX thread — progress into the page state, the
         summary into the state + marker, then the audit row and the event."""
+        global _CANON_RESTORE_THREAD
         from ..core.canonical_health import restore_from_plex
         t0 = time.monotonic()
         with _CANON_RESTORE_LOCK:
             _CANON_RESTORE_STATE["t0"] = t0
             started_at = _CANON_RESTORE_STATE.get("started_at")
+            _CANON_RESTORE_THREAD = threading.current_thread()
         try:
             with _CANON_RESTORE_MARKER_LOCK:
                 _canon_restore_write({"status": "running", "started_at": started_at, "actor": actor},
@@ -27861,6 +27887,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
             summary = restore_from_plex(db_path, themes_dir, None, plex_client_factory=factory,
                                         progress_cb=_cb, cancel_check=_cancel)
+            if summary["cancelled"] and _CANON_RESTORE_SHUTDOWN.is_set():
+                _canon_restore_cut_off(actor, t0, f"{summary['restored']} restored, {summary['not_attempted']} not tried")
+                return
             final = {"status": "cancelled" if summary["cancelled"] else "done", "started_at": started_at,
                      "finished_at": now_iso(), "elapsed_s": round(time.monotonic() - t0, 1), "actor": actor,
                      "skipped_count": len(summary["skipped"]), **summary}
@@ -27885,6 +27914,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 log.warning("canonical restore from Plex by %s finished, but its audit row / event could not "
                             "be written: %s", actor, e)
         except Exception as e:  # noqa: BLE001 — the job must end in a named state, never a stuck "running"
+            if _CANON_RESTORE_SHUTDOWN.is_set():
+                # v0.51.342: exit refuses new pool work ('cannot schedule new futures') — the restart, not a failure.
+                _canon_restore_cut_off(actor, t0, f"{type(e).__name__}: {e}")
+                return
             log.exception("canonical restore from Plex failed")
             with _CANON_RESTORE_LOCK:
                 failed = {k: v for k, v in _CANON_RESTORE_STATE.items() if k not in ("cancel", "t0")}

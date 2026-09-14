@@ -319,6 +319,7 @@ _PLEX_BACKOFF_BASE_S = 0.5  # v0.51.342: first backoff after a no-answer
 _PLEX_BACKOFF_CAP_S = 8.0  # v0.51.342: the backoff never sleeps longer than this
 _PLEX_TRIP_AFTER = 8  # v0.51.342: consecutive no-answers before the run may stop asking
 _PLEX_TRIP_WINDOW_S = 60.0  # v0.51.342: …and only this long after the first — a Plex restart must not end the run
+_PLEX_CANCEL_POLL_S = 0.25  # v0.51.342: how often a backoff asks whether the run was cancelled
 
 
 def _run_conn(db_path: Path, conn):
@@ -545,8 +546,22 @@ class _PlexGate:
         self._first_at = None
         self.tripped = False
         self.cancelled = threading.Event()
+        # v0.51.342: the serial tail's only — the pool's loop sees the cancel and wakes its backoffs; a worker never asks.
+        self.cancel_check = None
         # v0.51.342: the default backoff is a wait the cancel ends — a cancelled run never sleeps one out.
-        self._clock, self._sleep = clock, sleep if sleep is not None else self.cancelled.wait
+        self._clock, self._sleep = clock, sleep if sleep is not None else self._wait
+
+    def _wait(self, s) -> None:
+        if self.cancel_check is None:
+            self.cancelled.wait(s)
+            return
+        end = time.monotonic() + s
+        # v0.51.342: the shared-path tail backs off on the one thread that polls the cancel — the wait asks, or nothing wakes it.
+        while not self.cancelled.wait(max(0.0, min(end - time.monotonic(), _PLEX_CANCEL_POLL_S))):
+            if self.cancel_check():
+                self.cancelled.set()
+            elif time.monotonic() >= end:
+                return
 
     def before(self) -> bool:
         with self._lock:
@@ -741,10 +756,14 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
             def fetch_now(i, r):
                 if not gate.before():
                     return {"ok": False, "reason": "plex_unreachable"}
+                if gate.cancelled.is_set():
+                    return None  # v0.51.342: as the pool's work() — woke from a backoff after the cancel; not tried.
                 got = refetch_from_plex_store(db_path, themes_dir, tail_client(), r, conn=conn)
                 gate.after(None if got["ok"] else got["reason"])
                 return got
 
+            # v0.51.342: nothing else polls the cancel here, so a tail row's backoff must ask it — the pool's never do.
+            gate.cancel_check = cancel_check
             try:
                 for i in later:
                     if cancel_check is not None and cancel_check():
@@ -758,6 +777,8 @@ def restore_from_plex(db_path: Path, themes_dir: Path, plex_client, *, plex_clie
                         c.close()
                     except Exception as e:  # noqa: BLE001 — a close error must not relabel a finished run
                         log.debug("restore from plex: closing a Plex client failed: %s", e)
+            # v0.51.342: a cancel that woke the LAST row's backoff left no row to see it — the run still read done.
+            cancelled = cancelled or gate.cancelled.is_set()
 
     skipped = [{"title": rows[i]["title"] or f'{rows[i]["media_type"]}/{rows[i]["tmdb_id"]}',
                 "media_type": rows[i]["media_type"], "tmdb_id": rows[i]["tmdb_id"],
